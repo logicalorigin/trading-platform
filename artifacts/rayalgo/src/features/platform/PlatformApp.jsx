@@ -492,10 +492,7 @@ export default function PlatformApp() {
     { mode: sessionQuery.data?.environment || "paper" },
     {
       query: {
-        enabled: Boolean(
-          sessionQuery.data?.ibkrBridge?.authenticated &&
-            sessionQuery.data?.ibkrBridge?.healthFresh !== false,
-        ),
+        enabled: Boolean(sessionQuery.data),
         staleTime: 60_000,
         retry: false,
       },

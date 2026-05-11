@@ -18,6 +18,13 @@ export type SignalOptionsExecutionProfile = {
     maxOpenSymbols: number;
     maxDailyLoss: number;
   };
+  entryGate: {
+    bearishRegime: {
+      enabled: boolean;
+      minAdx: number;
+      rejectFullyBullishMtf: boolean;
+    };
+  };
   liquidityGate: {
     maxSpreadPctOfMid: number;
     minBid: number;
@@ -57,6 +64,13 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       maxContracts: 3,
       maxOpenSymbols: 5,
       maxDailyLoss: 1_000,
+    },
+    entryGate: {
+      bearishRegime: {
+        enabled: true,
+        minAdx: 25,
+        rejectFullyBullishMtf: true,
+      },
     },
     liquidityGate: {
       maxSpreadPctOfMid: 35,
@@ -138,6 +152,10 @@ export function resolveSignalOptionsExecutionProfile(
   const defaults = defaultSignalOptionsExecutionProfile;
   const optionSelection = asRecord(root.optionSelection);
   const riskCaps = asRecord(root.riskCaps);
+  const entryGate = asRecord(root.entryGate);
+  const bearishRegime = asRecord(
+    entryGate.bearishRegime ?? root.bearishRegime,
+  );
   const liquidityGate = asRecord(root.liquidityGate);
   const fillPolicy = asRecord(root.fillPolicy);
   const exitPolicy = asRecord(root.exitPolicy);
@@ -204,6 +222,25 @@ export function resolveSignalOptionsExecutionProfile(
         1,
         10_000_000,
       ),
+    },
+    entryGate: {
+      bearishRegime: {
+        enabled: booleanValue(
+          bearishRegime.enabled ?? root.bearishRegimeEnabled,
+          defaults.entryGate.bearishRegime.enabled,
+        ),
+        minAdx: finiteNumber(
+          bearishRegime.minAdx ?? root.bearishRegimeMinAdx,
+          defaults.entryGate.bearishRegime.minAdx,
+          0,
+          200,
+        ),
+        rejectFullyBullishMtf: booleanValue(
+          bearishRegime.rejectFullyBullishMtf ??
+            root.bearishRegimeRejectFullyBullishMtf,
+          defaults.entryGate.bearishRegime.rejectFullyBullishMtf,
+        ),
+      },
     },
     liquidityGate: {
       maxSpreadPctOfMid: finiteNumber(

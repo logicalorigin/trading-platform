@@ -103,6 +103,16 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.doesNotMatch(source, /useUnderfilledChartBackfill/);
 });
 
+test("Market mini chart grid uses one-column phone density", () => {
+  const source = readLocalSource("./MultiChartGrid.jsx");
+
+  assert.match(source, /const phoneGrid = gridBodyWidth > 0 && gridBodyWidth < 768;/);
+  assert.match(source, /const renderedCols = phoneGrid \? 1/);
+  assert.match(source, /visibleSlotEntries\.length/);
+  assert.match(source, /const showGridResizeControl =\s*\n\s*!phoneGrid/);
+  assert.match(source, /phoneGrid\s*\?\s*430/);
+});
+
 test("Trade spot chart forwards market viewport layout context to the chart surface", () => {
   const panelSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");

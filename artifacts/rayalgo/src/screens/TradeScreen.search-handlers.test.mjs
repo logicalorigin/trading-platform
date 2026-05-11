@@ -80,6 +80,18 @@ test("TradeScreen queues active ticker flow refreshes through the scanner", () =
   );
 });
 
+test("TradeScreen phone layout uses tabs plus ticket sheet and L2 drawer", () => {
+  assert.match(source, /const TRADE_PHONE_PANELS = \[/);
+  assert.match(source, /id:\s*"chart"/);
+  assert.match(source, /id:\s*"chain"/);
+  assert.match(source, /id:\s*"ticket"/);
+  assert.match(source, /id:\s*"positions"/);
+  assert.match(source, /data-testid="trade-mobile-tabs"/);
+  assert.match(source, /testId="trade-mobile-ticket-sheet"/);
+  assert.match(source, /testId="trade-mobile-l2-drawer"/);
+  assert.match(source, /activeTradePhonePanel === "chart"/);
+});
+
 test("Platform does not passively reset Trade to the first active watchlist item", () => {
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\.some\(\(item\) => item\.symbol === sym\)/);
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\[0\]\?\.symbol/);

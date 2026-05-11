@@ -3,6 +3,13 @@ import {
   type SignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
 import {
+  evaluateRayReplicaSignals,
+  RAY_REPLICA_SIGNAL_WARMUP_BARS,
+  resolveRayReplicaSignalSettings,
+  type RayReplicaBar,
+  type RayReplicaSignalEvent,
+} from "@workspace/rayreplica-core";
+import {
   algoDeploymentsTable,
   algoStrategiesTable,
   backtestRunsTable,
@@ -19,20 +26,30 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
+import type { BrokerBarSnapshot } from "../providers/ibkr/client";
 import {
   evaluateSignalMonitor,
+  getSignalMonitorProfileRow,
   getSignalMonitorState,
+  resolveSignalMonitorProfileUniverse,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
 import {
+  getBars,
   getOptionChainWithDebug,
+  getOptionChartBarsWithDebug,
   getOptionExpirationsWithDebug,
+  listWatchlists,
 } from "./platform";
 import {
   getAlgoGatewayReadiness,
   throwAlgoGatewayNotReady,
   type AlgoGatewayReadiness,
 } from "./algo-gateway";
+import {
+  isSignalOptionsShadowConfig,
+  normalizeAlgoDeploymentProviderAccountId,
+} from "./algo-deployment-account";
 import { recordShadowAutomationEvent } from "./shadow-account";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
@@ -368,7 +385,7 @@ async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeploymen
     });
   }
 
-  return deployment;
+  return normalizeSignalOptionsDeploymentAccount(deployment);
 }
 
 async function listDeploymentEvents(deploymentId: string, limit = 500) {
@@ -378,6 +395,56 @@ async function listDeploymentEvents(deploymentId: string, limit = 500) {
     .where(eq(executionEventsTable.deploymentId, deploymentId))
     .orderBy(desc(executionEventsTable.occurredAt))
     .limit(Math.min(Math.max(limit, 1), 1_000));
+}
+
+async function listDeploymentBackfillEvents(deploymentId: string) {
+  return db
+    .select()
+    .from(executionEventsTable)
+    .where(eq(executionEventsTable.deploymentId, deploymentId))
+    .orderBy(desc(executionEventsTable.occurredAt))
+    .limit(10_000);
+}
+
+async function normalizeSignalOptionsDeploymentAccount(
+  deployment: AlgoDeployment,
+): Promise<AlgoDeployment> {
+  if (!deploymentHasSignalOptionsProfile(deployment)) {
+    return deployment;
+  }
+
+  const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
+    providerAccountId: deployment.providerAccountId,
+    config: deployment.config,
+  });
+  if (providerAccountId === deployment.providerAccountId) {
+    return deployment;
+  }
+
+  const [updated] = await db
+    .update(algoDeploymentsTable)
+    .set({
+      providerAccountId,
+      updatedAt: new Date(),
+      lastError: null,
+    })
+    .where(eq(algoDeploymentsTable.id, deployment.id))
+    .returning();
+  const normalized = updated ?? { ...deployment, providerAccountId };
+
+  await db.insert(executionEventsTable).values({
+    deploymentId: deployment.id,
+    providerAccountId,
+    eventType: "deployment_account_normalized",
+    summary: `Routed ${deployment.name} to the Shadow account`,
+    payload: {
+      previousProviderAccountId: deployment.providerAccountId,
+      providerAccountId,
+      reason: "signal_options_shadow_execution",
+    },
+  });
+
+  return normalized;
 }
 
 async function insertSignalOptionsEvent(input: {
@@ -422,13 +489,7 @@ function resolveDeploymentProfile(deployment: AlgoDeployment) {
 }
 
 export function deploymentHasSignalOptionsProfile(deployment: AlgoDeployment) {
-  const config = asRecord(deployment.config);
-  const signalOptions = asRecord(config.signalOptions);
-  const parameters = asRecord(config.parameters);
-  return (
-    Object.keys(signalOptions).length > 0 ||
-    parameters.executionMode === "signal_options"
-  );
+  return isSignalOptionsShadowConfig(deployment.config);
 }
 
 function buildCandidateId(input: {
@@ -882,6 +943,49 @@ function computePositionStop(input: {
   };
 }
 
+function numericArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => Number(entry))
+        .filter((entry) => Number.isFinite(entry))
+    : [];
+}
+
+function evaluateSignalOptionsEntryGate(input: {
+  candidate: SignalOptionsCandidate;
+  profile: SignalOptionsExecutionProfile;
+}) {
+  const gate = input.profile.entryGate.bearishRegime;
+  if (!gate.enabled || input.candidate.optionRight !== "put") {
+    return { ok: true as const, reason: null, reasons: [] as string[] };
+  }
+
+  const filterState = asRecord(asRecord(input.candidate.signal).filterState);
+  const adx = finiteNumber(filterState.adx);
+  const mtfDirections = numericArray(filterState.mtfDirections);
+  const fullyBullishMtf =
+    mtfDirections.length > 0 && mtfDirections.every((direction) => direction > 0);
+  const reasons: string[] = [];
+
+  if (adx == null || adx < gate.minAdx) {
+    reasons.push("adx_below_minimum");
+  }
+  if (gate.rejectFullyBullishMtf && fullyBullishMtf) {
+    reasons.push("mtf_fully_bullish");
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reason: reasons.length ? "bear_regime_gate_failed" : null,
+    reasons,
+    adx,
+    minAdx: gate.minAdx,
+    mtfDirections,
+    fullyBullishMtf,
+    rejectFullyBullishMtf: gate.rejectFullyBullishMtf,
+  };
+}
+
 function buildCandidateFromSignal(input: {
   deployment: AlgoDeployment;
   state: SignalMonitorState;
@@ -1291,6 +1395,15 @@ function mergeProfilePatch(
     riskCaps: {
       ...current.riskCaps,
       ...asRecord(patch.riskCaps),
+    },
+    entryGate: {
+      ...current.entryGate,
+      ...asRecord(patch.entryGate),
+      bearishRegime: {
+        ...current.entryGate.bearishRegime,
+        ...asRecord(asRecord(patch.entryGate).bearishRegime),
+        ...asRecord(patch.bearishRegime),
+      },
     },
     liquidityGate: {
       ...current.liquidityGate,
@@ -2044,7 +2157,11 @@ export async function listEnabledSignalOptionsDeployments() {
     .where(eq(algoDeploymentsTable.enabled, true))
     .orderBy(desc(algoDeploymentsTable.updatedAt));
 
-  return deployments.filter(deploymentHasSignalOptionsProfile);
+  return Promise.all(
+    deployments
+      .filter(deploymentHasSignalOptionsProfile)
+      .map((deployment) => normalizeSignalOptionsDeploymentAccount(deployment)),
+  );
 }
 
 async function refreshActivePosition(input: {
@@ -2192,6 +2309,21 @@ async function processEntryCandidate(input: {
   candidate: SignalOptionsCandidate;
   signalKey: string;
 }) {
+  const entryGate = evaluateSignalOptionsEntryGate({
+    candidate: input.candidate,
+    profile: input.profile,
+  });
+  if (!entryGate.ok) {
+    await emitSkippedCandidate({
+      deployment: input.deployment,
+      candidate: input.candidate,
+      signalKey: input.signalKey,
+      reason: entryGate.reason ?? "entry_gate_failed",
+      detail: { entryGate },
+    });
+    return false;
+  }
+
   const expirations = await getOptionExpirationsWithDebug({
     underlying: input.candidate.symbol,
   });
@@ -2459,6 +2591,1597 @@ export async function recordSignalOptionsManualDeviation(input: {
   };
 }
 
+type SignalOptionsBackfillSession = "regular" | "all";
+
+type SignalOptionsBackfillWindow = {
+  startDate: string;
+  endDate: string;
+  session: SignalOptionsBackfillSession;
+  from: Date;
+  to: Date;
+  warmupFrom: Date;
+};
+
+type SignalOptionsBackfillEventWrite = {
+  inserted: boolean;
+  existing: boolean;
+  event: ExecutionEvent | null;
+};
+
+type SignalOptionsBackfillSummary = {
+  symbolsEvaluated: number;
+  symbolUniverse: SignalOptionsBackfillUniverse;
+  signalsEvaluated: number;
+  entriesOpened: number;
+  exitsClosed: number;
+  marksRecorded: number;
+  candidatesSkipped: number;
+  existingEvents: number;
+  mirrorRepairsAttempted: number;
+  missingOptionBars: number;
+  realizedPnl: number;
+  winningTrades: number;
+  losingTrades: number;
+  exitReasons: Record<string, number>;
+  skippedReasons: Record<string, number>;
+  closedTrades: Array<{
+    candidateId: string;
+    symbol: string;
+    direction: SignalDirection;
+    optionRight: OptionRight;
+    openedAt: string;
+    closedAt: string;
+    entryPrice: number;
+    exitPrice: number;
+    quantity: number;
+    pnl: number;
+    reason: string;
+    selectedContract: Record<string, unknown>;
+  }>;
+  errors: Array<{ symbol?: string | null; message: string }>;
+};
+
+type SignalOptionsBackfillUniverse = {
+  source: "signal_monitor_watchlist" | "deployment";
+  symbols: string[];
+  watchlistId: string | null;
+  skippedSymbols: string[];
+  truncated: boolean;
+};
+
+type HistoricalBackfillSignal = {
+  symbol: string;
+  signal: RayReplicaSignalEvent;
+  signalAt: Date;
+  direction: SignalDirection;
+  signalPrice: number | null;
+};
+
+type HistoricalBackfillResolvedOption = {
+  selectedContract: Record<string, unknown>;
+  optionBars: BrokerBarSnapshot[];
+  entryBar: BrokerBarSnapshot;
+  quote: Record<string, unknown>;
+  liquidity: Record<string, unknown>;
+  orderPlan: Record<string, unknown>;
+  selectedExpiration: { expirationDate: Date; dte: number };
+};
+
+type HistoricalBackfillOpenPosition = SignalOptionsPosition & {
+  optionBars: BrokerBarSnapshot[];
+  nextBarIndex: number;
+};
+
+const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-05-04";
+const DEFAULT_SIGNAL_OPTIONS_BACKFILL_END = "2026-05-08";
+const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
+const SIGNAL_OPTIONS_BACKFILL_VERSION = 1;
+const BACKFILL_WARMUP_DAYS = 90;
+const BACKFILL_OPTION_BAR_LIMIT = 5_000;
+const BACKFILL_EQUITY_BAR_LIMIT = Math.max(
+  1_500,
+  RAY_REPLICA_SIGNAL_WARMUP_BARS + 500,
+);
+const MARKET_TIME_ZONE = "America/New_York";
+const MARKET_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: MARKET_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function parseBackfillDate(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new HttpError(400, "Invalid backfill date.", {
+      code: "invalid_signal_options_backfill_date",
+      detail: "Use YYYY-MM-DD dates.",
+      expose: true,
+    });
+  }
+  const date = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) {
+    throw new HttpError(400, "Invalid backfill date.", {
+      code: "invalid_signal_options_backfill_date",
+      detail: "Use a real calendar date in YYYY-MM-DD format.",
+      expose: true,
+    });
+  }
+  return raw;
+}
+
+function resolveSignalOptionsBackfillWindow(input: {
+  start?: unknown;
+  end?: unknown;
+  session?: unknown;
+}): SignalOptionsBackfillWindow {
+  const startDate = parseBackfillDate(
+    input.start,
+    DEFAULT_SIGNAL_OPTIONS_BACKFILL_START,
+  );
+  const endDate = parseBackfillDate(
+    input.end,
+    DEFAULT_SIGNAL_OPTIONS_BACKFILL_END,
+  );
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (start.getTime() > end.getTime()) {
+    throw new HttpError(400, "Invalid backfill date range.", {
+      code: "invalid_signal_options_backfill_range",
+      detail: "start must be on or before end.",
+      expose: true,
+    });
+  }
+  const session: SignalOptionsBackfillSession =
+    input.session === "all" ? "all" : "regular";
+  return {
+    startDate,
+    endDate,
+    session,
+    from: start,
+    to: new Date(end.getTime() + 24 * 60 * 60_000 - 1),
+    warmupFrom: new Date(start.getTime() - BACKFILL_WARMUP_DAYS * 86_400_000),
+  };
+}
+
+function marketParts(value: Date): Record<string, string> {
+  return Object.fromEntries(
+    MARKET_PARTS_FORMATTER.formatToParts(value).map((part) => [
+      part.type,
+      part.value,
+    ]),
+  );
+}
+
+function marketDateKeyFromDate(value: Date): string {
+  const parts = marketParts(value);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function isRegularMarketSession(value: Date): boolean {
+  const parts = marketParts(value);
+  if (parts.weekday === "Sat" || parts.weekday === "Sun") {
+    return false;
+  }
+  const minutes =
+    Number.parseInt(parts.hour ?? "0", 10) * 60 +
+    Number.parseInt(parts.minute ?? "0", 10);
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
+function isWithinBackfillWindow(value: Date, window: SignalOptionsBackfillWindow) {
+  if (value.getTime() < window.from.getTime() || value.getTime() > window.to.getTime()) {
+    return false;
+  }
+  return window.session === "all" || isRegularMarketSession(value);
+}
+
+function brokerBarsToRayReplicaBars(
+  bars: BrokerBarSnapshot[],
+): RayReplicaBar[] {
+  return bars
+    .map((bar): RayReplicaBar | null => {
+      const timestamp = dateOrNull(bar.timestamp);
+      if (!timestamp) {
+        return null;
+      }
+      const open = finiteNumber(bar.open);
+      const high = finiteNumber(bar.high);
+      const low = finiteNumber(bar.low);
+      const close = finiteNumber(bar.close);
+      const volume = finiteNumber(bar.volume) ?? 0;
+      if (open == null || high == null || low == null || close == null) {
+        return null;
+      }
+      return {
+        time: Math.floor(timestamp.getTime() / 1000),
+        ts: timestamp.toISOString(),
+        o: open,
+        h: high,
+        l: low,
+        c: close,
+        v: volume,
+      };
+    })
+    .filter((bar): bar is RayReplicaBar => Boolean(bar))
+    .sort((left, right) => left.time - right.time);
+}
+
+function signalDirection(signal: RayReplicaSignalEvent): SignalDirection {
+  return signal.eventType === "sell_signal" ? "sell" : "buy";
+}
+
+function signalPrice(signal: RayReplicaSignalEvent): number | null {
+  return finiteNumber(signal.price) ?? finiteNumber(signal.close);
+}
+
+function backfillEventKey(parts: Array<string | number | null | undefined>) {
+  return [
+    SIGNAL_OPTIONS_BACKFILL_SOURCE,
+    SIGNAL_OPTIONS_BACKFILL_VERSION,
+    ...parts.map((part) => String(part ?? "")),
+  ].join(":");
+}
+
+function buildBackfillEventIndexes(events: ExecutionEvent[]) {
+  const byKey = new Map<string, ExecutionEvent>();
+  signalOptionsEvents(events).forEach((event) => {
+    const key = compactString(asRecord(event.payload).backfillEventKey);
+    if (key) {
+      byKey.set(key, event);
+    }
+  });
+  return byKey;
+}
+
+async function insertSignalOptionsBackfillEvent(input: {
+  deployment: AlgoDeployment;
+  symbol?: string | null;
+  eventType: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  occurredAt: Date;
+  backfillEventKey: string;
+  existingBackfillEvents: Map<string, ExecutionEvent>;
+  commit: boolean;
+  summaryCounters: SignalOptionsBackfillSummary;
+}): Promise<SignalOptionsBackfillEventWrite> {
+  const existing = input.existingBackfillEvents.get(input.backfillEventKey);
+  if (existing) {
+    input.summaryCounters.existingEvents += 1;
+    if (
+      input.commit &&
+      (existing.eventType === SIGNAL_OPTIONS_ENTRY_EVENT ||
+        existing.eventType === SIGNAL_OPTIONS_EXIT_EVENT)
+    ) {
+      input.summaryCounters.mirrorRepairsAttempted += 1;
+      await recordShadowAutomationEvent(existing).catch((error) => {
+        logger.warn?.(
+          { err: error, eventId: existing.id, backfillEventKey: input.backfillEventKey },
+          "Failed to repair existing signal-options backfill shadow mirror",
+        );
+      });
+    }
+    return { inserted: false, existing: true, event: existing };
+  }
+
+  if (!input.commit) {
+    return { inserted: false, existing: false, event: null };
+  }
+
+  const event = await insertSignalOptionsEvent({
+    deployment: input.deployment,
+    symbol: input.symbol,
+    eventType: input.eventType,
+    summary: input.summary,
+    occurredAt: input.occurredAt,
+    payload: {
+      ...input.payload,
+      backfillEventKey: input.backfillEventKey,
+      backfill: {
+        source: SIGNAL_OPTIONS_BACKFILL_SOURCE,
+        version: SIGNAL_OPTIONS_BACKFILL_VERSION,
+      },
+    },
+  });
+  input.existingBackfillEvents.set(input.backfillEventKey, event);
+  return { inserted: true, existing: false, event };
+}
+
+function selectHistoricalExpirationCandidates(
+  signalAt: Date,
+  profile: SignalOptionsExecutionProfile,
+) {
+  const minDte = profile.optionSelection.allowZeroDte
+    ? profile.optionSelection.minDte
+    : Math.max(1, profile.optionSelection.minDte);
+  const maxDte = Math.max(minDte, profile.optionSelection.maxDte);
+  const targetDte = Math.min(
+    maxDte,
+    Math.max(minDte, profile.optionSelection.targetDte),
+  );
+  const signalDate = new Date(
+    Date.UTC(
+      signalAt.getUTCFullYear(),
+      signalAt.getUTCMonth(),
+      signalAt.getUTCDate(),
+    ),
+  );
+
+  return Array.from({ length: maxDte - minDte + 1 }, (_, index) => {
+    const dte = minDte + index;
+    const expirationDate = new Date(signalDate.getTime() + dte * 86_400_000);
+    return { expirationDate, dte };
+  })
+    .filter(({ expirationDate }) => {
+      const day = expirationDate.getUTCDay();
+      return day !== 0 && day !== 6;
+    })
+    .sort((left, right) => {
+      const targetDelta =
+        Math.abs(left.dte - targetDte) - Math.abs(right.dte - targetDte);
+      return targetDelta || left.dte - right.dte;
+    });
+}
+
+function roundStrike(value: number): number {
+  return Number(value.toFixed(3));
+}
+
+function historicalStrikeForSlot(input: {
+  signalPrice: number;
+  direction: SignalDirection;
+  profile: SignalOptionsExecutionProfile;
+}) {
+  const step = 1;
+  const below = Math.floor(input.signalPrice / step) * step;
+  const above = Math.ceil(input.signalPrice / step) * step;
+  const slot =
+    optionRightForSignal(input.direction) === "put"
+      ? input.profile.optionSelection.putStrikeSlot
+      : input.profile.optionSelection.callStrikeSlot;
+  const target =
+    slot === 0
+      ? below - 2 * step
+      : slot === 1
+        ? below - step
+        : slot === 2
+          ? below
+          : slot === 3
+            ? above
+            : slot === 4
+              ? above + step
+              : above + 2 * step;
+  return roundStrike(target);
+}
+
+function selectHistoricalStrikeCandidates(input: {
+  signalPrice: number | null;
+  direction: SignalDirection;
+  profile: SignalOptionsExecutionProfile;
+}) {
+  if (input.signalPrice == null || input.signalPrice <= 0) {
+    return [];
+  }
+  const primary = historicalStrikeForSlot({
+    signalPrice: input.signalPrice,
+    direction: input.direction,
+    profile: input.profile,
+  });
+  const offsets = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5];
+  return Array.from(
+    new Set(
+      offsets
+        .map((offset) => roundStrike(primary + offset))
+        .filter((strike) => strike > 0),
+    ),
+  );
+}
+
+function buildHistoricalPolygonOptionTicker(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: OptionRight;
+}) {
+  const underlying = normalizeSymbol(input.underlying)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (!underlying || !Number.isFinite(input.strike) || input.strike <= 0) {
+    return null;
+  }
+  const yy = String(input.expirationDate.getUTCFullYear()).slice(-2);
+  const mm = String(input.expirationDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(input.expirationDate.getUTCDate()).padStart(2, "0");
+  const side = input.right === "put" ? "P" : "C";
+  const strike = String(Math.round(input.strike * 1000)).padStart(8, "0");
+  return `O:${underlying}${yy}${mm}${dd}${side}${strike}`;
+}
+
+function backfillBarPrice(bar: BrokerBarSnapshot): number | null {
+  return finiteNumber(bar.close);
+}
+
+function quoteFromHistoricalBar(bar: BrokerBarSnapshot) {
+  const price = backfillBarPrice(bar);
+  return {
+    bid: null,
+    ask: null,
+    last: price,
+    mark: price,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    openInterest: null,
+    volume: finiteNumber(bar.volume),
+    quoteFreshness: "historical_option_bars",
+    marketDataMode: bar.marketDataMode ?? null,
+    quoteUpdatedAt: toIsoString(bar.timestamp),
+    dataUpdatedAt: toIsoString(bar.dataUpdatedAt) ?? toIsoString(bar.timestamp),
+    updatedAt: toIsoString(bar.timestamp),
+    ageMs: null,
+  };
+}
+
+function buildHistoricalOrderPlan(
+  fillPrice: number,
+  profile: SignalOptionsExecutionProfile,
+) {
+  const simulatedFillPrice = Number(fillPrice.toFixed(2));
+  const quantity = Math.min(
+    profile.riskCaps.maxContracts,
+    Math.floor(profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100)),
+  );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return {
+      ok: false,
+      reason: "premium_budget_too_small",
+      liquidity: {
+        ok: true,
+        reasons: [],
+        mid: simulatedFillPrice,
+        quoteFreshness: "historical_option_bars",
+      },
+    };
+  }
+  return {
+    ok: true,
+    entryLimitPrice: simulatedFillPrice,
+    simulatedFillPrice,
+    quantity,
+    premiumAtRisk: Number((simulatedFillPrice * 100 * quantity).toFixed(2)),
+    fillPolicy: profile.fillPolicy,
+    liquidity: {
+      ok: true,
+      reasons: [],
+      bid: null,
+      ask: null,
+      mid: simulatedFillPrice,
+      spread: null,
+      spreadPctOfMid: null,
+      quoteFreshness: "historical_option_bars",
+      marketDataMode: "historical",
+    },
+    historicalPricing: true,
+  };
+}
+
+async function resolveHistoricalOptionForBackfill(input: {
+  candidate: SignalOptionsCandidate;
+  profile: SignalOptionsExecutionProfile;
+  window: SignalOptionsBackfillWindow;
+}): Promise<HistoricalBackfillResolvedOption | null> {
+  const signalAt = dateOrNull(input.candidate.signalAt);
+  if (!signalAt) {
+    return null;
+  }
+  const expirations = selectHistoricalExpirationCandidates(signalAt, input.profile);
+  const strikes = selectHistoricalStrikeCandidates({
+    signalPrice: input.candidate.signalPrice,
+    direction: input.candidate.direction,
+    profile: input.profile,
+  });
+  for (const selectedExpiration of expirations) {
+    for (const strike of strikes) {
+      const optionTicker = buildHistoricalPolygonOptionTicker({
+        underlying: input.candidate.symbol,
+        expirationDate: selectedExpiration.expirationDate,
+        strike,
+        right: input.candidate.optionRight,
+      });
+      if (!optionTicker) {
+        continue;
+      }
+      const result = await getOptionChartBarsWithDebug({
+        underlying: input.candidate.symbol,
+        expirationDate: selectedExpiration.expirationDate,
+        strike,
+        right: input.candidate.optionRight,
+        optionTicker,
+        timeframe: input.candidate.timeframe,
+        from: new Date(Math.max(input.window.from.getTime(), signalAt.getTime() - 15 * 60_000)),
+        to: input.window.to,
+        limit: BACKFILL_OPTION_BAR_LIMIT,
+        outsideRth: input.window.session === "all",
+      });
+      const optionBars = result.bars
+        .filter((bar) => {
+          const timestamp = dateOrNull(bar.timestamp);
+          const price = backfillBarPrice(bar);
+          return Boolean(
+            timestamp &&
+              price != null &&
+              price > 0 &&
+              isWithinBackfillWindow(timestamp, input.window),
+          );
+        })
+        .sort((left, right) => {
+          const leftTime = dateOrNull(left.timestamp)?.getTime() ?? 0;
+          const rightTime = dateOrNull(right.timestamp)?.getTime() ?? 0;
+          return leftTime - rightTime;
+        });
+      const entryBar =
+        optionBars.find((bar) => {
+          const timestamp = dateOrNull(bar.timestamp);
+          return Boolean(timestamp && timestamp.getTime() >= signalAt.getTime());
+        }) ?? null;
+      const fillPrice = entryBar ? backfillBarPrice(entryBar) : null;
+      if (!entryBar || fillPrice == null || fillPrice <= 0) {
+        continue;
+      }
+      const orderPlan = buildHistoricalOrderPlan(fillPrice, input.profile);
+      if (!orderPlan.ok) {
+        continue;
+      }
+      const selectedContract = {
+        ticker: optionTicker,
+        underlying: input.candidate.symbol,
+        expirationDate: selectedExpiration.expirationDate.toISOString().slice(0, 10),
+        strike,
+        right: input.candidate.optionRight,
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: result.providerContractId ?? optionTicker,
+      };
+      return {
+        selectedContract,
+        optionBars,
+        entryBar,
+        quote: quoteFromHistoricalBar(entryBar),
+        liquidity: asRecord(orderPlan.liquidity),
+        orderPlan,
+        selectedExpiration,
+      };
+    }
+  }
+  return null;
+}
+
+async function emitBackfillSkippedCandidate(input: {
+  deployment: AlgoDeployment;
+  candidate: SignalOptionsCandidate;
+  signalKey: string;
+  reason: string;
+  detail?: Record<string, unknown>;
+  occurredAt: Date;
+  existingBackfillEvents: Map<string, ExecutionEvent>;
+  commit: boolean;
+  summary: SignalOptionsBackfillSummary;
+}) {
+  const write = await insertSignalOptionsBackfillEvent({
+    deployment: input.deployment,
+    symbol: input.candidate.symbol,
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    summary: `${input.candidate.symbol} shadow backfill candidate skipped: ${input.reason}`,
+    occurredAt: input.occurredAt,
+    backfillEventKey: backfillEventKey([
+      input.deployment.id,
+      input.signalKey,
+      "skip",
+      input.reason,
+    ]),
+    existingBackfillEvents: input.existingBackfillEvents,
+    commit: input.commit,
+    summaryCounters: input.summary,
+    payload: {
+      signalKey: input.signalKey,
+      signal: input.candidate.signal ?? null,
+      action: input.candidate.action ?? null,
+      candidate: {
+        ...input.candidate,
+        status: "skipped",
+      },
+      reason: input.reason,
+      ...(input.detail ?? {}),
+    },
+  });
+  if (!write.existing) {
+    input.summary.candidatesSkipped += 1;
+    input.summary.skippedReasons[input.reason] =
+      (input.summary.skippedReasons[input.reason] ?? 0) + 1;
+  }
+}
+
+function buildBackfillPosition(input: {
+  deployment: AlgoDeployment;
+  candidate: SignalOptionsCandidate;
+  selectedContract: Record<string, unknown>;
+  orderPlan: Record<string, unknown>;
+  entryAt: Date;
+  optionBars: BrokerBarSnapshot[];
+  nextBarIndex: number;
+  profile: SignalOptionsExecutionProfile;
+}): HistoricalBackfillOpenPosition | null {
+  const entryPrice = finiteNumber(input.orderPlan.simulatedFillPrice);
+  const quantity = finiteNumber(input.orderPlan.quantity);
+  const premiumAtRisk = finiteNumber(input.orderPlan.premiumAtRisk);
+  if (entryPrice == null || quantity == null || premiumAtRisk == null) {
+    return null;
+  }
+  return {
+    id: `${input.deployment.id}:${input.candidate.symbol}`,
+    candidateId: input.candidate.id,
+    symbol: input.candidate.symbol,
+    direction: input.candidate.direction,
+    optionRight: input.candidate.optionRight,
+    timeframe: input.candidate.timeframe,
+    signalAt: input.candidate.signalAt,
+    openedAt: input.entryAt.toISOString(),
+    entryPrice,
+    quantity,
+    peakPrice: entryPrice,
+    stopPrice: buildInitialStopPrice(entryPrice, input.profile),
+    premiumAtRisk,
+    selectedContract: input.selectedContract,
+    lastMarkPrice: entryPrice,
+    lastMarkedAt: input.entryAt.toISOString(),
+    optionBars: input.optionBars,
+    nextBarIndex: input.nextBarIndex,
+  };
+}
+
+function backfillPositionPayload(
+  position: HistoricalBackfillOpenPosition,
+): SignalOptionsPosition {
+  return {
+    id: position.id,
+    candidateId: position.candidateId,
+    symbol: position.symbol,
+    direction: position.direction,
+    optionRight: position.optionRight,
+    timeframe: position.timeframe,
+    signalAt: position.signalAt,
+    openedAt: position.openedAt,
+    entryPrice: position.entryPrice,
+    quantity: position.quantity,
+    peakPrice: position.peakPrice,
+    stopPrice: position.stopPrice,
+    premiumAtRisk: position.premiumAtRisk,
+    selectedContract: position.selectedContract,
+    lastMarkPrice: position.lastMarkPrice,
+    lastMarkedAt: position.lastMarkedAt,
+  };
+}
+
+function dailyPnlForBackfill(input: {
+  dayKey: string;
+  realizedByDay: Map<string, number>;
+  openPositions: Iterable<HistoricalBackfillOpenPosition>;
+}) {
+  let pnl = input.realizedByDay.get(input.dayKey) ?? 0;
+  for (const position of input.openPositions) {
+    const mark = finiteNumber(position.lastMarkPrice) ?? position.entryPrice;
+    pnl += (mark - position.entryPrice) * position.quantity * 100;
+  }
+  return pnl;
+}
+
+function backfillPositionExpirationKey(
+  position: HistoricalBackfillOpenPosition,
+): string | null {
+  const expirationDate = dateOrNull(
+    asRecord(position.selectedContract).expirationDate,
+  );
+  return expirationDate ? expirationDate.toISOString().slice(0, 10) : null;
+}
+
+function shouldCloseBackfillPositionAtExpiration(input: {
+  position: HistoricalBackfillOpenPosition;
+  until: Date;
+}) {
+  if (input.position.nextBarIndex < input.position.optionBars.length) {
+    return false;
+  }
+  const expirationKey = backfillPositionExpirationKey(input.position);
+  if (!expirationKey) {
+    return false;
+  }
+  return expirationKey <= marketDateKeyFromDate(input.until);
+}
+
+async function closeBackfillPosition(input: {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+  position: HistoricalBackfillOpenPosition;
+  reason: string;
+  occurredAt: Date;
+  exitPrice: number;
+  signalKey?: string | null;
+  candidate?: SignalOptionsCandidate | null;
+  existingBackfillEvents: Map<string, ExecutionEvent>;
+  commit: boolean;
+  summary: SignalOptionsBackfillSummary;
+  realizedByDay: Map<string, number>;
+}) {
+  const pnl = Number(
+    ((input.exitPrice - input.position.entryPrice) *
+      input.position.quantity *
+      100).toFixed(2),
+  );
+  const dayKey = input.occurredAt.toISOString().slice(0, 10);
+  input.realizedByDay.set(
+    dayKey,
+    (input.realizedByDay.get(dayKey) ?? 0) + pnl,
+  );
+  const positionPatch = {
+    ...backfillPositionPayload(input.position),
+    lastMarkPrice: input.exitPrice,
+    lastMarkedAt: input.occurredAt.toISOString(),
+  };
+  const write = await insertSignalOptionsBackfillEvent({
+    deployment: input.deployment,
+    symbol: input.position.symbol,
+    eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+    summary: `${input.position.symbol} shadow backfill exit ${input.reason} at ${input.exitPrice.toFixed(2)}`,
+    occurredAt: input.occurredAt,
+    backfillEventKey: backfillEventKey([
+      input.deployment.id,
+      input.position.candidateId,
+      "exit",
+      input.reason,
+      input.occurredAt.toISOString(),
+    ]),
+    existingBackfillEvents: input.existingBackfillEvents,
+    commit: input.commit,
+    summaryCounters: input.summary,
+    payload: {
+      signalKey: input.signalKey ?? null,
+      reason: input.reason,
+      signal: input.candidate?.signal ?? null,
+      action: input.candidate?.action ?? null,
+      candidate: input.candidate ?? null,
+      exitPrice: input.exitPrice,
+      pnl,
+      position: positionPatch,
+      selectedContract: input.position.selectedContract,
+      profile: input.profile,
+    },
+  });
+  if (!write.existing) {
+    input.summary.exitsClosed += 1;
+    input.summary.realizedPnl = Number(
+      (input.summary.realizedPnl + pnl).toFixed(2),
+    );
+    if (pnl > 0) {
+      input.summary.winningTrades += 1;
+    } else if (pnl < 0) {
+      input.summary.losingTrades += 1;
+    }
+    input.summary.exitReasons[input.reason] =
+      (input.summary.exitReasons[input.reason] ?? 0) + 1;
+    input.summary.closedTrades.push({
+      candidateId: input.position.candidateId,
+      symbol: input.position.symbol,
+      direction: input.position.direction,
+      optionRight: input.position.optionRight,
+      openedAt: input.position.openedAt,
+      closedAt: input.occurredAt.toISOString(),
+      entryPrice: input.position.entryPrice,
+      exitPrice: input.exitPrice,
+      quantity: input.position.quantity,
+      pnl,
+      reason: input.reason,
+      selectedContract: input.position.selectedContract,
+    });
+  }
+}
+
+async function markBackfillPositionsThrough(input: {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+  positionsBySymbol: Map<string, HistoricalBackfillOpenPosition>;
+  until: Date;
+  existingBackfillEvents: Map<string, ExecutionEvent>;
+  commit: boolean;
+  summary: SignalOptionsBackfillSummary;
+  realizedByDay: Map<string, number>;
+}) {
+  for (const [symbol, position] of Array.from(input.positionsBySymbol.entries())) {
+    while (position.nextBarIndex < position.optionBars.length) {
+      const bar = position.optionBars[position.nextBarIndex];
+      const barAt = dateOrNull(bar?.timestamp);
+      if (!bar || !barAt || barAt.getTime() > input.until.getTime()) {
+        break;
+      }
+      position.nextBarIndex += 1;
+      const markPrice = backfillBarPrice(bar);
+      if (markPrice == null || markPrice <= 0) {
+        continue;
+      }
+      const peakPrice = Math.max(position.peakPrice, markPrice);
+      const stop = computePositionStop({
+        entryPrice: position.entryPrice,
+        peakPrice,
+        markPrice,
+        profile: input.profile,
+      });
+      position.peakPrice = peakPrice;
+      position.stopPrice = stop.stopPrice;
+      position.lastMarkPrice = Number(markPrice.toFixed(2));
+      position.lastMarkedAt = barAt.toISOString();
+
+      if (stop.exitReason) {
+        const exitPrice = Number(markPrice.toFixed(2));
+        await closeBackfillPosition({
+          deployment: input.deployment,
+          profile: input.profile,
+          position,
+          reason: stop.exitReason,
+          occurredAt: barAt,
+          exitPrice,
+          existingBackfillEvents: input.existingBackfillEvents,
+          commit: input.commit,
+          summary: input.summary,
+          realizedByDay: input.realizedByDay,
+        });
+        input.positionsBySymbol.delete(symbol);
+        break;
+      }
+
+      const write = await insertSignalOptionsBackfillEvent({
+        deployment: input.deployment,
+        symbol: position.symbol,
+        eventType: SIGNAL_OPTIONS_MARK_EVENT,
+        summary: `${position.symbol} shadow backfill mark ${markPrice.toFixed(2)} stop ${stop.stopPrice.toFixed(2)}`,
+        occurredAt: barAt,
+        backfillEventKey: backfillEventKey([
+          input.deployment.id,
+          position.candidateId,
+          "mark",
+          barAt.toISOString(),
+        ]),
+        existingBackfillEvents: input.existingBackfillEvents,
+        commit: input.commit,
+        summaryCounters: input.summary,
+        payload: {
+          position: {
+            ...backfillPositionPayload(position),
+            lastMarkPrice: Number(markPrice.toFixed(2)),
+            lastMarkedAt: barAt.toISOString(),
+          },
+          selectedContract: position.selectedContract,
+          quote: quoteFromHistoricalBar(bar),
+          liquidity: {
+            ok: true,
+            reasons: [],
+            mid: Number(markPrice.toFixed(2)),
+            quoteFreshness: "historical_option_bars",
+          },
+          stop,
+        },
+      });
+      if (!write.existing) {
+        input.summary.marksRecorded += 1;
+      }
+    }
+
+    if (
+      input.positionsBySymbol.has(symbol) &&
+      shouldCloseBackfillPositionAtExpiration({ position, until: input.until })
+    ) {
+      const exitPrice =
+        finiteNumber(position.lastMarkPrice) ?? position.entryPrice;
+      await closeBackfillPosition({
+        deployment: input.deployment,
+        profile: input.profile,
+        position,
+        reason: "expiration",
+        occurredAt:
+          dateOrNull(position.lastMarkedAt) ??
+          dateOrNull(position.openedAt) ??
+          input.until,
+        exitPrice,
+        existingBackfillEvents: input.existingBackfillEvents,
+        commit: input.commit,
+        summary: input.summary,
+        realizedByDay: input.realizedByDay,
+      });
+      input.positionsBySymbol.delete(symbol);
+    }
+  }
+}
+
+function buildBackfillSignalSnapshot(input: {
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  signal: RayReplicaSignalEvent;
+}): SignalMonitorState {
+  const signalAt = new Date(input.signal.time * 1000);
+  return {
+    profileId: input.profileId,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    currentSignalDirection: signalDirection(input.signal),
+    currentSignalAt: signalAt,
+    currentSignalPrice: signalPrice(input.signal),
+    latestBarAt: signalAt,
+    barsSinceSignal: 0,
+    fresh: true,
+    status: "ok",
+  };
+}
+
+async function loadHistoricalBackfillSignals(input: {
+  profileId: string;
+  profileSettings: Record<string, unknown>;
+  symbols: string[];
+  timeframe: SignalMonitorTimeframe;
+  window: SignalOptionsBackfillWindow;
+}) {
+  const signals: HistoricalBackfillSignal[] = [];
+  const errors: SignalOptionsBackfillSummary["errors"] = [];
+  const settings = resolveRayReplicaSignalSettings(input.profileSettings);
+
+  for (const symbol of input.symbols) {
+    try {
+      const bars = await getBars({
+        symbol,
+        timeframe: input.timeframe,
+        limit: BACKFILL_EQUITY_BAR_LIMIT,
+        from: input.window.warmupFrom,
+        to: input.window.to,
+        assetClass: "equity",
+        outsideRth: input.window.session === "all",
+        source: "trades",
+        allowHistoricalSynthesis: true,
+      });
+      const chartBars = brokerBarsToRayReplicaBars(bars.bars);
+      const evaluation = evaluateRayReplicaSignals({
+        chartBars,
+        settings,
+        includeProvisionalSignals: false,
+      });
+      evaluation.signalEvents.forEach((signal) => {
+        const signalAt = new Date(signal.time * 1000);
+        if (!isWithinBackfillWindow(signalAt, input.window)) {
+          return;
+        }
+        signals.push({
+          symbol,
+          signal,
+          signalAt,
+          direction: signalDirection(signal),
+          signalPrice: signalPrice(signal),
+        });
+      });
+    } catch (error) {
+      errors.push({
+        symbol,
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Failed to load historical backfill bars.",
+      });
+    }
+  }
+
+  return {
+    signals: signals.sort(
+      (left, right) =>
+        left.signalAt.getTime() - right.signalAt.getTime() ||
+        left.symbol.localeCompare(right.symbol),
+    ),
+    errors,
+  };
+}
+
+async function resolveDefaultSignalOptionsSymbols() {
+  const { watchlists } = await listWatchlists();
+  const watchlist =
+    watchlists.find((item) => item.name.toLowerCase() === "core") ??
+    watchlists.find((item) => item.isDefault) ??
+    watchlists[0] ??
+    null;
+  const symbols =
+    watchlist?.items
+      .map((item) => normalizeSymbol(item.symbol).toUpperCase())
+      .filter(Boolean) ?? [];
+  return Array.from(new Set(symbols));
+}
+
+function normalizeSignalOptionsUniverseSymbols(symbols: readonly unknown[]) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of symbols) {
+    const symbol =
+      typeof value === "string" ? normalizeSymbol(value).toUpperCase() : "";
+    if (symbol && !seen.has(symbol)) {
+      seen.add(symbol);
+      normalized.push(symbol);
+    }
+  }
+  return normalized;
+}
+
+function buildSignalOptionsBackfillUniverse(input: {
+  deploymentSymbols: readonly unknown[];
+  signalMonitorSymbols: readonly unknown[];
+  watchlistId?: string | null;
+  skippedSymbols?: readonly unknown[];
+  truncated?: boolean;
+}): SignalOptionsBackfillUniverse {
+  const signalMonitorSymbols = normalizeSignalOptionsUniverseSymbols(
+    input.signalMonitorSymbols,
+  );
+  if (signalMonitorSymbols.length) {
+    return {
+      source: "signal_monitor_watchlist",
+      symbols: signalMonitorSymbols,
+      watchlistId: input.watchlistId ?? null,
+      skippedSymbols: normalizeSignalOptionsUniverseSymbols(
+        input.skippedSymbols ?? [],
+      ),
+      truncated: input.truncated === true,
+    };
+  }
+
+  return {
+    source: "deployment",
+    symbols: normalizeSignalOptionsUniverseSymbols(input.deploymentSymbols),
+    watchlistId: null,
+    skippedSymbols: [],
+    truncated: false,
+  };
+}
+
+function isDefaultSignalOptionsSeedConfig(value: unknown): boolean {
+  const config = asRecord(value);
+  return (
+    config.source === "default_signal_options_seed" ||
+    asRecord(config.parameters).executionMode === "signal_options"
+  );
+}
+
+export async function ensureDefaultSignalOptionsPaperDeployment(input: {
+  enabled?: boolean;
+} = {}) {
+  const symbols = await resolveDefaultSignalOptionsSymbols();
+  if (!symbols.length) {
+    throw new HttpError(409, "No symbols are available for the default signal-options deployment.", {
+      code: "signal_options_default_universe_empty",
+      expose: true,
+    });
+  }
+  const enabled = input.enabled !== false;
+  const existingStrategies = await db
+    .select()
+    .from(algoStrategiesTable)
+    .where(eq(algoStrategiesTable.mode, "paper"))
+    .orderBy(desc(algoStrategiesTable.updatedAt));
+  let strategy =
+    existingStrategies.find((row) => isDefaultSignalOptionsSeedConfig(row.config)) ??
+    null;
+
+  if (!strategy) {
+    [strategy] = await db
+      .insert(algoStrategiesTable)
+      .values({
+        name: "RayReplica Signal Options Shadow",
+        mode: "paper",
+        enabled: false,
+        symbolUniverse: symbols,
+        config: {
+          source: "default_signal_options_seed",
+          strategyId: "ray_replica_signals",
+          strategyVersion: "v1",
+          parameters: {
+            executionMode: "signal_options",
+          },
+          signalOptions: resolveSignalOptionsExecutionProfile({}),
+        },
+      })
+      .returning();
+  }
+
+  const existingDeployments = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.mode, "paper"))
+    .orderBy(desc(algoDeploymentsTable.updatedAt));
+  let deployment =
+    existingDeployments.find(
+      (row) =>
+        row.strategyId === strategy.id ||
+        row.name === "RayReplica Signal Options Shadow Paper",
+    ) ?? null;
+
+  if (!deployment) {
+    [deployment] = await db
+      .insert(algoDeploymentsTable)
+      .values({
+        strategyId: strategy.id,
+        name: "RayReplica Signal Options Shadow Paper",
+        mode: "paper",
+        enabled,
+        providerAccountId: "shadow",
+        symbolUniverse: symbols,
+        config: {
+          ...(strategy.config as Record<string, unknown>),
+          signalOptions: resolveSignalOptionsExecutionProfile(strategy.config),
+        },
+      })
+      .returning();
+
+    await db.insert(executionEventsTable).values({
+      deploymentId: deployment.id,
+      providerAccountId: deployment.providerAccountId,
+      eventType: "deployment_created",
+      summary: `Created deployment ${deployment.name}`,
+      payload: {
+        strategyId: deployment.strategyId,
+        mode: deployment.mode,
+        symbolUniverse: deployment.symbolUniverse,
+        source: "default_signal_options_seed",
+      },
+    });
+  } else if (enabled && !deployment.enabled) {
+    const [updated] = await db
+      .update(algoDeploymentsTable)
+      .set({
+        enabled: true,
+        symbolUniverse: symbols,
+        updatedAt: new Date(),
+        lastError: null,
+      })
+      .where(eq(algoDeploymentsTable.id, deployment.id))
+      .returning();
+    deployment = updated ?? deployment;
+    await db.insert(executionEventsTable).values({
+      deploymentId: deployment.id,
+      providerAccountId: deployment.providerAccountId,
+      eventType: "deployment_enabled",
+      summary: `Enabled deployment ${deployment.name}`,
+      payload: {
+        enabled: true,
+        source: "default_signal_options_seed",
+      },
+    });
+  }
+
+  deployment = await normalizeSignalOptionsDeploymentAccount(deployment);
+
+  return {
+    strategy: {
+      id: strategy.id,
+      name: strategy.name,
+      mode: strategy.mode,
+      enabled: strategy.enabled,
+      symbolUniverse: strategy.symbolUniverse,
+      config: strategy.config,
+      createdAt: strategy.createdAt,
+      updatedAt: strategy.updatedAt,
+    },
+    deployment: deploymentToResponse(deployment),
+  };
+}
+
+export async function runSignalOptionsShadowBackfill(input: {
+  deploymentId: string;
+  start?: unknown;
+  end?: unknown;
+  session?: unknown;
+  commit?: boolean;
+  profilePatch?: unknown;
+}) {
+  if (activeScanDeploymentIds.has(input.deploymentId)) {
+    throw new HttpError(409, "Signal-options scan is already running.", {
+      code: "signal_options_scan_running",
+      detail:
+        "A worker, manual scan, or backfill is already active for this deployment.",
+      expose: true,
+    });
+  }
+
+  activeScanDeploymentIds.add(input.deploymentId);
+  try {
+    const deployment = await getDeploymentOrThrow(input.deploymentId);
+    const window = resolveSignalOptionsBackfillWindow(input);
+    const commit = input.commit !== false;
+    const baseProfile = resolveDeploymentProfile(deployment);
+    const profilePatch = asRecord(input.profilePatch);
+    const profile = Object.keys(profilePatch).length
+      ? mergeProfilePatch(baseProfile, profilePatch)
+      : baseProfile;
+    const signalProfile = await getSignalMonitorProfileRow({
+      environment: deployment.mode,
+    });
+    const signalUniverse =
+      await resolveSignalMonitorProfileUniverse(signalProfile);
+    const backfillUniverse = buildSignalOptionsBackfillUniverse({
+      deploymentSymbols: deployment.symbolUniverse,
+      signalMonitorSymbols: signalUniverse.symbols,
+      watchlistId: signalUniverse.profile.watchlistId,
+      skippedSymbols: signalUniverse.skippedSymbols,
+      truncated: signalUniverse.truncated,
+    });
+    const timeframe = String(
+      signalUniverse.profile.timeframe || "15m",
+    ) as SignalMonitorTimeframe;
+    const summary: SignalOptionsBackfillSummary = {
+      symbolsEvaluated: backfillUniverse.symbols.length,
+      symbolUniverse: backfillUniverse,
+      signalsEvaluated: 0,
+      entriesOpened: 0,
+      exitsClosed: 0,
+      marksRecorded: 0,
+      candidatesSkipped: 0,
+      existingEvents: 0,
+      mirrorRepairsAttempted: 0,
+      missingOptionBars: 0,
+      realizedPnl: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      exitReasons: {},
+      skippedReasons: {},
+      closedTrades: [],
+      errors: [],
+    };
+    const initialEvents = await listDeploymentBackfillEvents(deployment.id);
+    const seenSignals = seenSignalKeys(initialEvents);
+    const existingBackfillEvents = buildBackfillEventIndexes(initialEvents);
+    const positionsBySymbol = new Map<string, HistoricalBackfillOpenPosition>();
+    const realizedByDay = new Map<string, number>();
+    const { signals, errors } = await loadHistoricalBackfillSignals({
+      profileId: signalProfile.id,
+      profileSettings: asRecord(signalProfile.rayReplicaSettings),
+      symbols: backfillUniverse.symbols,
+      timeframe,
+      window,
+    });
+    summary.errors.push(...errors);
+    summary.signalsEvaluated = signals.length;
+
+    let lastSignalAt: Date | null = null;
+    for (const historicalSignal of signals) {
+      await markBackfillPositionsThrough({
+        deployment,
+        profile,
+        positionsBySymbol,
+        until: historicalSignal.signalAt,
+        existingBackfillEvents,
+        commit,
+        summary,
+        realizedByDay,
+      });
+
+      const state = buildBackfillSignalSnapshot({
+        profileId: signalProfile.id,
+        symbol: historicalSignal.symbol,
+        timeframe,
+        signal: historicalSignal.signal,
+      });
+      const signalAt = historicalSignal.signalAt.toISOString();
+      const signalKey = buildSignalKey(state, signalAt);
+      if (seenSignals.has(signalKey)) {
+        summary.existingEvents += 1;
+        continue;
+      }
+      seenSignals.add(signalKey);
+      const candidate = buildCandidateFromSignal({
+        deployment,
+        state,
+        signalAt,
+        signalKey,
+        signalMetadata: {
+          source: "rayreplica-backfill",
+          filterState: asRecord(historicalSignal.signal.filterState),
+        },
+      });
+      const symbol = normalizeSymbol(candidate.symbol).toUpperCase();
+      const currentPosition = positionsBySymbol.get(symbol);
+
+      if (currentPosition && currentPosition.direction === candidate.direction) {
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: "same_direction_position_open",
+          detail: { position: backfillPositionPayload(currentPosition) },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      if (currentPosition && currentPosition.direction !== candidate.direction) {
+        if (!profile.exitPolicy.flipOnOppositeSignal) {
+          await emitBackfillSkippedCandidate({
+            deployment,
+            candidate,
+            signalKey,
+            reason: "opposite_signal_flip_disabled",
+            detail: { position: backfillPositionPayload(currentPosition) },
+            occurredAt: historicalSignal.signalAt,
+            existingBackfillEvents,
+            commit,
+            summary,
+          });
+          continue;
+        }
+        const exitPrice =
+          finiteNumber(currentPosition.lastMarkPrice) ?? currentPosition.entryPrice;
+        await closeBackfillPosition({
+          deployment,
+          profile,
+          position: currentPosition,
+          reason: "opposite_signal",
+          occurredAt: historicalSignal.signalAt,
+          exitPrice,
+          signalKey,
+          candidate,
+          existingBackfillEvents,
+          commit,
+          summary,
+          realizedByDay,
+        });
+        positionsBySymbol.delete(symbol);
+      }
+
+      const entryGate = evaluateSignalOptionsEntryGate({ candidate, profile });
+      if (!entryGate.ok) {
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: entryGate.reason ?? "entry_gate_failed",
+          detail: { entryGate },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      const dayKey = historicalSignal.signalAt.toISOString().slice(0, 10);
+      const dailyPnl = dailyPnlForBackfill({
+        dayKey,
+        realizedByDay,
+        openPositions: positionsBySymbol.values(),
+      });
+      if (dailyPnl <= -Math.abs(profile.riskCaps.maxDailyLoss)) {
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: "daily_loss_halt_active",
+          detail: {
+            dailyPnl,
+            maxDailyLoss: profile.riskCaps.maxDailyLoss,
+          },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      if (positionsBySymbol.size >= profile.riskCaps.maxOpenSymbols) {
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: "max_open_symbols_reached",
+          detail: {
+            openSymbols: positionsBySymbol.size,
+            maxOpenSymbols: profile.riskCaps.maxOpenSymbols,
+          },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      const resolved = await resolveHistoricalOptionForBackfill({
+        candidate,
+        profile,
+        window,
+      }).catch((error) => {
+        summary.errors.push({
+          symbol,
+          message:
+            error instanceof Error && error.message
+              ? error.message
+              : "Historical option resolution failed.",
+        });
+        return null;
+      });
+      if (!resolved) {
+        summary.missingOptionBars += 1;
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: "historical_option_bars_unavailable",
+          detail: {
+            signalPrice: candidate.signalPrice,
+            optionRight: candidate.optionRight,
+          },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      const entryAt = dateOrNull(resolved.entryBar.timestamp) ?? historicalSignal.signalAt;
+      const firstFutureBarIndex = resolved.optionBars.findIndex((bar) => {
+        const barAt = dateOrNull(bar.timestamp);
+        return Boolean(barAt && barAt.getTime() > entryAt.getTime());
+      });
+      const nextBarIndex =
+        firstFutureBarIndex >= 0
+          ? firstFutureBarIndex
+          : resolved.optionBars.length;
+      const position = buildBackfillPosition({
+        deployment,
+        candidate,
+        selectedContract: resolved.selectedContract,
+        orderPlan: resolved.orderPlan,
+        entryAt,
+        optionBars: resolved.optionBars,
+        nextBarIndex,
+        profile,
+      });
+      if (!position) {
+        await emitBackfillSkippedCandidate({
+          deployment,
+          candidate,
+          signalKey,
+          reason: "invalid_historical_shadow_order_plan",
+          detail: {
+            selectedContract: resolved.selectedContract,
+            orderPlan: resolved.orderPlan,
+          },
+          occurredAt: historicalSignal.signalAt,
+          existingBackfillEvents,
+          commit,
+          summary,
+        });
+        continue;
+      }
+
+      const write = await insertSignalOptionsBackfillEvent({
+        deployment,
+        symbol: candidate.symbol,
+        eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+        summary: `${candidate.symbol} shadow backfill ${candidate.optionRight.toUpperCase()} ${resolved.selectedContract.strike ?? "strike"} ${resolved.selectedContract.expirationDate ?? "expiry"} x${resolved.orderPlan.quantity}`,
+        occurredAt: entryAt,
+        backfillEventKey: backfillEventKey([
+          deployment.id,
+          signalKey,
+          "entry",
+        ]),
+        existingBackfillEvents,
+        commit,
+        summaryCounters: summary,
+        payload: {
+          signalKey,
+          signal: candidate.signal ?? null,
+          action: candidate.action ?? null,
+          candidate: {
+            ...candidate,
+            status: "open",
+            selectedContract: resolved.selectedContract,
+            quote: resolved.quote,
+            orderPlan: resolved.orderPlan,
+          },
+          profile,
+          selectedExpiration: {
+            expirationDate: resolved.selectedExpiration.expirationDate.toISOString(),
+            dte: resolved.selectedExpiration.dte,
+          },
+          selectedContract: resolved.selectedContract,
+          quote: resolved.quote,
+          orderPlan: resolved.orderPlan,
+          liquidity: resolved.liquidity,
+          position: backfillPositionPayload(position),
+          historicalPricing: {
+            source: "polygon-option-aggregates",
+            entryBarAt: entryAt.toISOString(),
+          },
+        },
+      });
+      if (!write.existing) {
+        summary.entriesOpened += 1;
+      }
+      positionsBySymbol.set(symbol, position);
+      lastSignalAt = historicalSignal.signalAt;
+    }
+
+    await markBackfillPositionsThrough({
+      deployment,
+      profile,
+      positionsBySymbol,
+      until: window.to,
+      existingBackfillEvents,
+      commit,
+      summary,
+      realizedByDay,
+    });
+
+    if (commit) {
+      await db
+        .update(algoDeploymentsTable)
+        .set({
+          lastEvaluatedAt: new Date(),
+          lastSignalAt: lastSignalAt ?? deployment.lastSignalAt,
+          lastError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(algoDeploymentsTable.id, deployment.id));
+    }
+
+    const finalState = commit
+      ? await listSignalOptionsAutomationState({ deploymentId: deployment.id })
+      : null;
+
+    return {
+      deployment: deploymentToResponse(deployment),
+      window: {
+        start: window.startDate,
+        end: window.endDate,
+        session: window.session,
+        from: window.from.toISOString(),
+        to: window.to.toISOString(),
+      },
+      commit,
+      summary,
+      openPositions:
+        finalState?.activePositions ??
+        Array.from(positionsBySymbol.values()).map((position) => ({
+          id: position.id,
+          candidateId: position.candidateId,
+          symbol: position.symbol,
+          direction: position.direction,
+          optionRight: position.optionRight,
+          openedAt: position.openedAt,
+          entryPrice: position.entryPrice,
+          quantity: position.quantity,
+          lastMarkPrice: position.lastMarkPrice ?? null,
+          lastMarkedAt: position.lastMarkedAt ?? null,
+          selectedContract: position.selectedContract,
+        })),
+      state: finalState,
+    };
+  } finally {
+    activeScanDeploymentIds.delete(input.deploymentId);
+  }
+}
+
 export async function runSignalOptionsShadowScan(input: {
   deploymentId: string;
   forceEvaluate?: boolean;
@@ -2618,6 +4341,18 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       openSymbols = Math.max(0, openSymbols - 1);
     }
 
+    const entryGate = evaluateSignalOptionsEntryGate({ candidate, profile });
+    if (!entryGate.ok) {
+      await emitSkippedCandidate({
+        deployment,
+        candidate,
+        signalKey,
+        reason: entryGate.reason ?? "entry_gate_failed",
+        detail: { entryGate },
+      });
+      continue;
+    }
+
     if (dailyHaltActive) {
       await emitSkippedCandidate({
         deployment,
@@ -2734,4 +4469,13 @@ export const __signalOptionsAutomationInternalsForTests = {
   computeSignalOptionsDailyPnl,
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,
+  evaluateSignalOptionsEntryGate,
+  buildHistoricalPolygonOptionTicker,
+  buildHistoricalOrderPlan,
+  buildSignalOptionsBackfillUniverse,
+  backfillEventKey,
+  resolveSignalOptionsBackfillWindow,
+  selectHistoricalExpirationCandidates,
+  selectHistoricalStrikeCandidates,
+  shouldCloseBackfillPositionAtExpiration,
 };

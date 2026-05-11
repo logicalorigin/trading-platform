@@ -10,6 +10,12 @@ const premiumSymbols = [
   "MU",
   "META",
   "MSFT",
+  "GOOG",
+  "AMZN",
+  "NFLX",
+  "BABA",
+  "INTC",
+  "PLTR",
 ];
 const basePrices = Object.fromEntries(
   flowSymbols.map((symbol, index) => [symbol, 420 + index * 18]),
@@ -207,6 +213,8 @@ async function mockFlowApi(
     invalidFirstProviderContractId?: boolean;
     missingFirstProviderContractId?: boolean;
     onFlowEventsRequest?: (url: URL) => void;
+    onPremiumDistributionRequest?: (url: URL) => void;
+    premiumDistributionFailure?: boolean;
     resolveContractFailure?: boolean;
     skipChainMatch?: boolean;
     watchlistSymbols?: string[];
@@ -215,6 +223,7 @@ async function mockFlowApi(
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     let body: unknown = {};
+    let status = 200;
 
     if (url.pathname === "/api/session") {
       body = {
@@ -262,45 +271,56 @@ async function mockFlowApi(
         },
       };
     } else if (url.pathname === "/api/flow/premium-distribution") {
-      const timeframe =
-        url.searchParams.get("timeframe") === "week" ? "week" : "today";
-      body = {
-        status: "ok",
-        asOf: new Date().toISOString(),
-        timeframe,
-        source: {
-          provider: "polygon",
-          label: "Polygon premium snapshots",
+      options.onPremiumDistributionRequest?.(url);
+      if (options.premiumDistributionFailure) {
+        status = 503;
+        body = {
+          type: "https://rayalgo.local/problems/premium-distribution",
+          title: "Premium distribution unavailable",
+          status,
+          detail: "Premium distribution is unavailable.",
+        };
+      } else {
+        const timeframe =
+          url.searchParams.get("timeframe") === "week" ? "week" : "today";
+        body = {
+          status: "ok",
+          asOf: new Date().toISOString(),
           timeframe,
-          providerHost: "api.polygon.io",
-          sideBasis: "quote_match",
-          quoteAccess: "available",
-          tradeAccess: "available",
-          classifiedPremium: premiumSymbols.reduce(
-            (sum, symbol, index) =>
-              sum +
-              makePremiumWidget(symbol, index).classifiedPremium,
-            0,
-          ),
-          classificationCoverage: 0.96,
-          classificationConfidence: "high",
-          coverageMode: "universe",
-          hydrationStatus: "complete",
-          hydrationWarning: null,
-          hydratedSymbolCount: premiumSymbols.length,
-          hydrationDiagnostics: makePremiumHydrationDiagnostics(),
-          candidateDate: "2026-05-06",
-          candidateCount: premiumSymbols.length,
-          rankedCount: premiumSymbols.length,
-          errorCount: 0,
-          errorMessage: null,
-          cache: "miss",
-        },
-        widgets: premiumSymbols.map((symbol, index) => ({
-          ...makePremiumWidget(symbol, index),
-          timeframe,
-        })),
-      };
+          source: {
+            provider: "polygon",
+            label: "Polygon premium snapshots",
+            timeframe,
+            providerHost: "api.polygon.io",
+            sideBasis: "quote_match",
+            quoteAccess: "available",
+            tradeAccess: "available",
+            classifiedPremium: premiumSymbols.reduce(
+              (sum, symbol, index) =>
+                sum +
+                makePremiumWidget(symbol, index).classifiedPremium,
+              0,
+            ),
+            classificationCoverage: 0.96,
+            classificationConfidence: "high",
+            coverageMode: "universe",
+            hydrationStatus: "complete",
+            hydrationWarning: null,
+            hydratedSymbolCount: premiumSymbols.length,
+            hydrationDiagnostics: makePremiumHydrationDiagnostics(),
+            candidateDate: "2026-05-06",
+            candidateCount: premiumSymbols.length,
+            rankedCount: premiumSymbols.length,
+            errorCount: 0,
+            errorMessage: null,
+            cache: "miss",
+          },
+          widgets: premiumSymbols.map((symbol, index) => ({
+            ...makePremiumWidget(symbol, index),
+            timeframe,
+          })),
+        };
+      }
     } else if (url.pathname === "/api/quotes/snapshot") {
       const requested = (url.searchParams.get("symbols") || "SPY")
         .split(",")
@@ -465,6 +485,32 @@ async function mockFlowApi(
           ? []
           : makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()),
       };
+    } else if (url.pathname === "/api/flow/events/aggregate") {
+      body = {
+        events: premiumSymbols.flatMap((symbol) => makeFlowEvents(symbol, options)),
+        source: {
+          provider: "ibkr",
+          status: "live",
+          fallbackUsed: false,
+          attemptedProviders: ["ibkr"],
+          unusualThreshold: 1,
+          scannerCoverage: {
+            mode: "market",
+            targetSize: premiumSymbols.length,
+            activeTargetSize: premiumSymbols.length,
+            selectedSymbols: premiumSymbols.length,
+            selectedShortfall: 0,
+            fallbackUsed: false,
+            stale: false,
+            cooldownCount: 0,
+            scannedSymbols: premiumSymbols.length,
+            cycleScannedSymbols: premiumSymbols.length,
+            currentBatch: premiumSymbols,
+            degradedReason: null,
+            promotedSymbols: [],
+          },
+        },
+      };
     } else if (url.pathname === "/api/flow/events") {
       options.onFlowEventsRequest?.(url);
       const requested =
@@ -518,7 +564,7 @@ async function mockFlowApi(
     }
 
     await route.fulfill({
-      status: 200,
+      status,
       contentType: "application/json",
       body: JSON.stringify(body),
     });
@@ -614,31 +660,38 @@ async function expectChartCanvasDrawn(page: Page, chartTestId: string) {
     .toBe(true);
 }
 
-test("Flow premium distribution renders ten compact Webull-style widgets", async ({
+test("Flow premium distribution renders 16 compact tiles in the combined scanner panel", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockFlowApi(page);
+  const premiumDistributionLimits: string[] = [];
+  await mockFlowApi(page, {
+    onPremiumDistributionRequest: (url) => {
+      premiumDistributionLimits.push(url.searchParams.get("limit") ?? "");
+    },
+  });
   await openFlow(page);
 
-  const strip = page.getByTestId("flow-premium-distribution-strip");
-  await expect(strip).toBeVisible();
-  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(10);
-  await expect(strip.locator('section[aria-label="Inflow order bars"]')).toHaveCount(0);
-  await expect(strip.locator('section[aria-label="Outflow order bars"]')).toHaveCount(0);
-  await expect(strip.getByTestId("flow-premium-bucket-row")).toHaveCount(0);
-  await expect(strip.getByText(/Quote matched · 96% classified/)).toBeVisible();
-  await expect(strip.getByText("Kilo USD", { exact: true })).toHaveCount(0);
-  await expect(strip.getByRole("img", { name: /Order flow distribution donut chart/ })).toHaveCount(10);
+  const panel = page.getByTestId("flow-distribution-scanner-panel");
+  await expect(panel).toBeVisible();
+  expect(premiumDistributionLimits).toContain("16");
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(16);
+  await expect(panel.locator('section[aria-label="Inflow order bars"]')).toHaveCount(0);
+  await expect(panel.locator('section[aria-label="Outflow order bars"]')).toHaveCount(0);
+  await expect(panel.getByTestId("flow-premium-bucket-row")).toHaveCount(0);
+  await expect(panel.getByText(/Quote matched · 96% classified/)).toBeVisible();
+  await expect(panel.getByText("Kilo USD", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("img", { name: /Order flow distribution donut chart/ })).toHaveCount(16);
   await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText("SPY");
-  await expect(strip.getByText(/#1/)).toHaveCount(0);
+  await expect(panel.getByText(/#1/)).toHaveCount(0);
   await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText(/M/);
-  await expect(strip.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);
-  await expect(strip.getByText(/cls · N/)).toHaveCount(0);
-  await expect(strip.getByText(/trades · Vol/)).toHaveCount(0);
-  await expect(strip.getByText(/L>=/)).toHaveCount(0);
-  await expect(strip.getByText("XL")).toHaveCount(0);
-  await expect(strip.getByRole("button", { name: "Today" })).toBeVisible();
+  await expect(panel.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);
+  await expect(panel.getByText(/cls · N/)).toHaveCount(0);
+  await expect(panel.getByText(/trades · Vol/)).toHaveCount(0);
+  await expect(panel.getByText(/L>=/)).toHaveCount(0);
+  await expect(panel.getByText("XL")).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Today" })).toBeVisible();
+  await expect(page.getByTestId("flow-distribution-status-rail")).toBeVisible();
   const desktopBoxes = await page
     .getByTestId("flow-premium-distribution-widget")
     .evaluateAll((nodes) =>
@@ -649,20 +702,45 @@ test("Flow premium distribution renders ten compact Webull-style widgets", async
     );
   expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(155);
   expect(Math.max(...desktopBoxes.map((box) => box.height))).toBeLessThanOrEqual(120);
-  await strip.screenshot({
+  await panel.screenshot({
     path: testInfo.outputPath("flow-premium-distribution-desktop.png"),
   });
 
-  await strip.getByRole("button", { name: "Week" }).click();
-  await expect(strip.getByRole("button", { name: "Week" })).toBeVisible();
+  await panel.getByRole("button", { name: "Week" }).click();
+  await expect(panel.getByRole("button", { name: "Week" })).toBeVisible();
+
+  // Click the first widget and confirm the symbol filter chip appears.
+  await page.getByTestId("flow-premium-distribution-widget").first().click();
+  await expect(page.getByTestId("flow-symbol-filter-chip")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 900 });
-  await expect(strip).toBeVisible();
-  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(10);
-  await strip.screenshot({
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(16);
+  await panel.screenshot({
     path: testInfo.outputPath("flow-premium-distribution-mobile.png"),
   });
   await expectNoDocumentOverflow(page);
+});
+
+test("Flow premium distribution falls back to scanner donuts when premium endpoint is unavailable", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page, { premiumDistributionFailure: true });
+  await openFlow(page);
+
+  const panel = page.getByTestId("flow-distribution-scanner-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText(/Flow scanner distribution/)).toBeVisible();
+  await expect(panel.getByText("Premium distribution unavailable")).toHaveCount(0);
+  await expect(page.getByTestId("flow-premium-distribution-empty")).toHaveCount(0);
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(16);
+  await expect(
+    panel.getByRole("img", { name: /Order flow distribution donut chart/ }),
+  ).toHaveCount(16);
+  await panel.screenshot({
+    path: testInfo.outputPath("flow-scanner-distribution-fallback.png"),
+  });
 });
 
 test("Flow scanner keeps scanning after leaving the Flow page", async ({

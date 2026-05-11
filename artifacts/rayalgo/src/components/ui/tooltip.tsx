@@ -101,6 +101,8 @@ function AppTooltip({
   className,
   contentClassName,
 }: AppTooltipProps) {
+  const [open, setOpen] = React.useState(false)
+
   if (
     disabled ||
     content == null ||
@@ -126,10 +128,28 @@ function AppTooltip({
       {children}
     </span>
   )
+  const touchTrigger = React.isValidElement<{
+    onPointerDown?: React.PointerEventHandler<HTMLElement>
+  }>(trigger)
+    ? React.cloneElement(trigger, {
+        onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+          trigger.props.onPointerDown?.(event)
+          if (event.defaultPrevented) return
+          if (event.pointerType !== "touch" && event.pointerType !== "pen") return
+          if (!open) {
+            event.preventDefault()
+            event.stopPropagation()
+            setOpen(true)
+            return
+          }
+          setOpen(false)
+        },
+      })
+    : trigger
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger asChild>{touchTrigger}</TooltipTrigger>
       <TooltipContent
         side={side}
         align={align}

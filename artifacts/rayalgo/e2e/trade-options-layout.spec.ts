@@ -1267,7 +1267,7 @@ test("Trade, Flow, and Research pages fill the available viewport width", async 
   }
 });
 
-test("Trade phone layout loads lazy module and exposes full trading stack", async ({
+test("Trade phone layout uses tabbed panels and sheet-based secondary panels", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1276,27 +1276,40 @@ test("Trade phone layout loads lazy module and exposes full trading stack", asyn
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
   await expect(page.locator('[data-trade-layout="phone"]')).toBeVisible();
+  await expect(page.getByTestId("trade-mobile-tabs")).toBeVisible();
   await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
   await expect(page.getByTestId("trade-contract-chart-panel")).toBeVisible();
-  await expect(page.getByTestId("trade-order-ticket")).toBeVisible();
+  await expect(page.getByTestId("trade-middle-zone")).toBeHidden();
+  await expect(page.getByTestId("trade-bottom-zone")).toBeHidden();
+
+  await page.getByTestId("trade-mobile-tabs").getByRole("button", { name: "Chain" }).click();
   await expect(page.getByTestId("trade-options-chain-panel")).toBeVisible();
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
+
+  await page.getByTestId("trade-mobile-tabs").getByRole("button", { name: "Ticket" }).click();
+  await expect(page.getByTestId("trade-order-ticket")).toBeVisible();
+
+  await page.getByTestId("trade-mobile-tabs").getByRole("button", { name: "Positions" }).click();
   await expect(page.getByTestId("trade-bottom-zone")).toBeVisible();
+  await page.getByTestId("trade-bottom-zone").getByRole("button", { name: "L2" }).click();
+  await expect(page.getByTestId("trade-mobile-l2-drawer")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("trade-bottom-zone").getByRole("button", { name: "Ticket" }).click();
+  await expect(page.getByTestId("trade-mobile-ticket-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("trade-mobile-tabs").getByRole("button", { name: "Chart" }).click();
 
   const metrics = await page.evaluate(() => ({
     viewportWidth: window.innerWidth,
     scrollWidth: document.documentElement.scrollWidth,
-    topColumns: getComputedStyle(
+    topDisplay: getComputedStyle(
       document.querySelector('[data-testid="trade-top-zone"]') as Element,
-    ).gridTemplateColumns,
-    middleColumns: getComputedStyle(
-      document.querySelector('[data-testid="trade-middle-zone"]') as Element,
-    ).gridTemplateColumns,
+    ).display,
   }));
 
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
-  expect(metrics.topColumns.split(" ").length).toBe(1);
-  expect(metrics.middleColumns.split(" ").length).toBe(1);
+  expect(metrics.topDisplay).toBe("grid");
 });
 
 test("Trade option chain loading state shows a spinner while chain request is pending", async ({

@@ -196,15 +196,26 @@ export function compactEquitySnapshotRows(
   }
 
   const byBucket = new Map<string, EquitySnapshotRow>();
+  const firstByDay = new Map<string, EquitySnapshotRow>();
   rows.forEach((row) => {
     const bucketStart = Math.floor(row.asOf.getTime() / bucketSizeMs);
-    byBucket.set(`${row.providerAccountId}:${bucketStart}`, {
-      ...row,
-      asOf: new Date(bucketStart * bucketSizeMs),
-    });
+    byBucket.set(`${row.providerAccountId}:${bucketStart}`, row);
+
+    const dayKey = `${row.providerAccountId}:${formatDateOnly(row.asOf)}`;
+    const currentFirst = firstByDay.get(dayKey);
+    if (!currentFirst || row.asOf.getTime() < currentFirst.asOf.getTime()) {
+      firstByDay.set(dayKey, row);
+    }
   });
 
-  return Array.from(byBucket.values()).sort(
+  const byAccountTimestamp = new Map<string, EquitySnapshotRow>();
+  const addRow = (row: EquitySnapshotRow) => {
+    byAccountTimestamp.set(`${row.providerAccountId}:${row.asOf.getTime()}`, row);
+  };
+  byBucket.forEach(addRow);
+  firstByDay.forEach(addRow);
+
+  return Array.from(byAccountTimestamp.values()).sort(
     (left, right) => left.asOf.getTime() - right.asOf.getTime(),
   );
 }

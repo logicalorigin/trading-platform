@@ -10,6 +10,27 @@ type ResponsiveSize = {
   height: number;
 };
 
+export const BREAKPOINTS = {
+  phone: 768,
+  desktop: 1024,
+} as const;
+
+type BreakpointName = keyof typeof BREAKPOINTS;
+
+export type ResponsiveFlags = {
+  isPhone: boolean;
+  isTablet: boolean;
+  isNarrow: boolean;
+  isDesktop: boolean;
+};
+
+export type ViewportState = ResponsiveSize & {
+  flags: ResponsiveFlags;
+};
+
+const resolveBreakpoint = (breakpoint: number | BreakpointName) =>
+  typeof breakpoint === "number" ? breakpoint : BREAKPOINTS[breakpoint];
+
 const getViewportSize = (): ResponsiveSize => {
   if (typeof window === "undefined") {
     return { width: 0, height: 0 };
@@ -48,6 +69,19 @@ export const useViewportSize = (): ResponsiveSize => {
   }, []);
 
   return size;
+};
+
+export const useViewport = (): ViewportState => {
+  const size = useViewportSize();
+  return {
+    ...size,
+    flags: responsiveFlags(size.width),
+  };
+};
+
+export const useViewportBelow = (breakpoint: number | BreakpointName) => {
+  const viewport = useViewport();
+  return viewport.width > 0 && viewport.width < resolveBreakpoint(breakpoint);
 };
 
 export const useElementSize = <TElement extends HTMLElement = HTMLDivElement>(): [
@@ -93,9 +127,14 @@ export const useElementSize = <TElement extends HTMLElement = HTMLDivElement>():
   return [ref, size];
 };
 
-export const responsiveFlags = (width: number) => ({
-  isPhone: width > 0 && width < 768,
-  isTablet: width >= 768 && width < 1024,
-  isNarrow: width > 0 && width < 1024,
-  isDesktop: width >= 1024,
+export const responsiveFlags = (width: number): ResponsiveFlags => ({
+  isPhone: width > 0 && width < BREAKPOINTS.phone,
+  isTablet: width >= BREAKPOINTS.phone && width < BREAKPOINTS.desktop,
+  isNarrow: width > 0 && width < BREAKPOINTS.desktop,
+  isDesktop: width >= BREAKPOINTS.desktop,
 });
+
+export const viewportBelow = (
+  width: number,
+  breakpoint: number | BreakpointName,
+) => width > 0 && width < resolveBreakpoint(breakpoint);

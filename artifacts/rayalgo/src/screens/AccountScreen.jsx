@@ -24,6 +24,7 @@ import {
 } from "../features/platform/live-streams";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
@@ -389,6 +390,10 @@ export const AccountScreen = ({
   const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
   const [hoveredEquityDate, setHoveredEquityDate] = useState(null);
   const [pinnedEquityDate, setPinnedEquityDate] = useState(null);
+  const [accountLayoutRef, accountLayoutSize] = useElementSize();
+  const accountLayoutFlags = responsiveFlags(accountLayoutSize.width);
+  const accountIsPhone = accountLayoutFlags.isPhone;
+  const accountIsNarrow = accountLayoutFlags.isNarrow;
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
@@ -442,9 +447,9 @@ export const AccountScreen = ({
   );
   const modeParams = useMemo(
     () => ({
-      mode: environment || "paper",
+      mode: shadowMode ? "paper" : environment || "paper",
     }),
-    [environment],
+    [environment, shadowMode],
   );
   const equityHistoryQuerySettings = useMemo(
     () => ({
@@ -474,7 +479,8 @@ export const AccountScreen = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
-  const benchmarkQueriesEnabled = Boolean(accountQueriesEnabled && !shadowMode);
+  const equityHistoryQueriesEnabled = Boolean(accountQueriesEnabled);
+  const benchmarkQueriesEnabled = equityHistoryQueriesEnabled;
   const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
     accountQueriesEnabled,
   );
@@ -519,7 +525,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: benchmarkQueriesEnabled,
+        enabled: equityHistoryQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -584,7 +590,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: benchmarkQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -771,6 +777,11 @@ export const AccountScreen = ({
       },
     },
   });
+
+  useEffect(() => {
+    setHoveredEquityDate(null);
+    setPinnedEquityDate(null);
+  }, [accountRequestId]);
   const testFlexMutation = useTestFlexToken({
     mutation: {
       onSuccess: () => {
@@ -1093,7 +1104,9 @@ export const AccountScreen = ({
 
   return (
     <div
+      ref={accountLayoutRef}
       data-testid="account-screen"
+      data-layout={accountIsPhone ? "phone" : accountIsNarrow ? "tablet" : "desktop"}
       className="ra-panel-enter"
       style={{
         flex: 1,
@@ -1202,7 +1215,7 @@ export const AccountScreen = ({
           className="ra-panel-enter"
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)",
+            gridTemplateColumns: accountIsNarrow ? "minmax(0, 1fr)" : "minmax(0, 2fr) minmax(0, 1fr)",
             gap: sp(8),
           }}
         >
@@ -1213,6 +1226,11 @@ export const AccountScreen = ({
             loading={positionsQuery.isLoading}
             error={positionsQuery.error}
             onRetry={positionsQuery.refetch}
+            emptyBody={
+              shadowMode
+                ? "Treemap renders once Shadow ledger positions are opened or marked."
+                : undefined
+            }
           />
           <IntradayPnlPanel
             query={intradayPnlQuery}
@@ -1241,6 +1259,7 @@ export const AccountScreen = ({
           pinnedEquityDate={pinnedEquityDate}
           currentPositionsCount={positionsQuery.data?.positions?.length || 0}
           onClearEquityPin={() => setPinnedEquityDate(null)}
+          isPhone={accountIsPhone}
         />
 
         <TradingPatternsPanel
@@ -1336,6 +1355,7 @@ export const AccountScreen = ({
                 : undefined
             }
             maskValues={maskAccountValues}
+            isPhone={accountIsPhone}
           />
           <SelectedTradeAnalysisPanel
             analysis={accountTradingAnalysis}
@@ -1360,6 +1380,7 @@ export const AccountScreen = ({
                 : undefined
             }
             maskValues={maskAccountValues}
+            isPhone={accountIsPhone}
           />
         </div>
 
@@ -1398,7 +1419,9 @@ export const AccountScreen = ({
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gridTemplateColumns: accountIsPhone
+                      ? "repeat(2, minmax(0, 1fr))"
+                      : "repeat(4, minmax(0, 1fr))",
                     gap: sp(4),
                     paddingTop: sp(2),
                   }}

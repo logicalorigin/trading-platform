@@ -141,6 +141,8 @@ const FLEX_GET_STATEMENT_URL =
 const SNAPSHOT_WRITE_INTERVAL_MS = 60_000;
 const FLEX_POLL_INTERVAL_MS = 5_000;
 const FLEX_MAX_POLLS = 18;
+const FLEX_REFERENCE_MAX_ATTEMPTS = FLEX_MAX_POLLS;
+const FLEX_RETRYABLE_ERROR_CODES = new Set(["1001", "1002", "1018"]);
 const OPTION_GREEK_CACHE_TTL_MS = 15_000;
 const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
@@ -642,7 +644,7 @@ function dateFromDateOnly(value: string | Date): Date {
   if (value instanceof Date) {
     return value;
   }
-  return new Date(`${value}T00:00:00.000Z`);
+  return new Date(`${value}T12:00:00.000Z`);
 }
 
 function dateWindowUtc(value: string | Date): {
@@ -1202,6 +1204,7 @@ async function requestFlexReference(config: {
   queryId: string;
   fromDate?: string | null;
   toDate?: string | null;
+  maxAttempts?: number;
 }): Promise<{ referenceCode: string; statementUrl: string | null; rawXml: string }> {
   const params: Record<string, string> = {
     t: config.token,
@@ -1213,29 +1216,55 @@ async function requestFlexReference(config: {
     params.td = config.toDate;
   }
 
-  const rawXml = await fetchFlexEndpoint(FLEX_SEND_REQUEST_URL, params);
-  const status = extractTagText(rawXml, "Status");
-  const referenceCode =
-    extractTagText(rawXml, "ReferenceCode") ??
-    extractTagText(rawXml, "Reference") ??
-    "";
-  const statementUrl = extractTagText(rawXml, "Url");
+  const maxAttempts = config.maxAttempts ?? FLEX_REFERENCE_MAX_ATTEMPTS;
+  let lastXml = "";
 
-  if (!referenceCode) {
-    throw new HttpError(502, "IBKR Flex did not return a reference code.", {
-      code: "ibkr_flex_missing_reference",
-      detail: rawXml.slice(0, 500),
-    });
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const rawXml = await fetchFlexEndpoint(FLEX_SEND_REQUEST_URL, params);
+    lastXml = rawXml;
+    const status = extractTagText(rawXml, "Status");
+    const errorCode = extractTagText(rawXml, "ErrorCode");
+    const referenceCode =
+      extractTagText(rawXml, "ReferenceCode") ??
+      extractTagText(rawXml, "Reference") ??
+      "";
+    const statementUrl = extractTagText(rawXml, "Url");
+
+    if (referenceCode) {
+      if (status && !/^success$/i.test(status)) {
+        throw new HttpError(502, `IBKR Flex returned status "${status}".`, {
+          code: "ibkr_flex_request_rejected",
+          detail: rawXml.slice(0, 500),
+        });
+      }
+
+      return { referenceCode, statementUrl, rawXml };
+    }
+
+    if (errorCode && FLEX_RETRYABLE_ERROR_CODES.has(errorCode)) {
+      if (attempt < maxAttempts - 1) {
+        await sleep(FLEX_POLL_INTERVAL_MS);
+        continue;
+      }
+
+      throw new HttpError(504, "IBKR Flex reference was not ready before timeout.", {
+        code: "ibkr_flex_reference_timeout",
+        detail: rawXml.slice(0, 500),
+      });
+    }
+
+    if (status && !/^success$/i.test(status)) {
+      throw new HttpError(502, `IBKR Flex returned status "${status}".`, {
+        code: "ibkr_flex_request_rejected",
+        detail: rawXml.slice(0, 500),
+      });
+    }
   }
 
-  if (status && !/^success$/i.test(status)) {
-    throw new HttpError(502, `IBKR Flex returned status "${status}".`, {
-      code: "ibkr_flex_request_rejected",
-      detail: rawXml.slice(0, 500),
-    });
-  }
-
-  return { referenceCode, statementUrl, rawXml };
+  throw new HttpError(502, "IBKR Flex did not return a reference code.", {
+    code: "ibkr_flex_missing_reference",
+    detail: lastXml.slice(0, 500),
+  });
 }
 
 async function downloadFlexStatement(input: {
@@ -1444,6 +1473,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         firstString(attrs, ["symbol", "underlyingSymbol", "conid"]) ?? "",
       ) || "UNKNOWN";
     const tradeDate =
+      parseDate(firstString(attrs, ["dateTime", "when"])) ??
       parseDate(
         [
           firstString(attrs, ["tradeDate", "date"]),
@@ -1451,7 +1481,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         ]
           .filter(Boolean)
           .join(" "),
-      ) ?? parseDate(firstString(attrs, ["dateTime", "when"]));
+      );
 
     if (!tradeDate) {
       return [];
@@ -1463,6 +1493,9 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
     const rawSide =
       firstString(attrs, ["buySell", "side", "transactionType"]) ?? "";
     const side = /^s/i.test(rawSide) ? "sell" : "buy";
+    const settleDate = parseDate(
+      firstString(attrs, ["settleDate", "settleDateTarget"]),
+    );
 
     return [
       {
@@ -1482,8 +1515,7 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         ),
         currency: firstString(attrs, ["currency"]) ?? "USD",
         tradeDate,
-        settleDate:
-          parseDate(firstString(attrs, ["settleDate"])) ? formatDateOnly(parseDate(firstString(attrs, ["settleDate"])) as Date) : null,
+        settleDate: settleDate ? formatDateOnly(settleDate) : null,
         openClose: firstString(attrs, ["openCloseIndicator", "openClose"]),
         realizedPnl: numericString(
           firstNumber(attrs, ["fifoPnlRealized", "realizedPnl", "realizedPnL"]),
@@ -1501,9 +1533,14 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
       .onConflictDoUpdate({
         target: [flexTradesTable.providerAccountId, flexTradesTable.tradeId],
         set: {
+          side: sql`excluded.side`,
+          quantity: sql`excluded.quantity`,
           price: sql`excluded.price`,
           amount: sql`excluded.amount`,
           commission: sql`excluded.commission`,
+          tradeDate: sql`excluded.trade_date`,
+          settleDate: sql`excluded.settle_date`,
+          openClose: sql`excluded.open_close`,
           realizedPnl: sql`excluded.realized_pnl`,
           raw: sql`excluded.raw`,
           sourceRunId: sql`excluded.source_run_id`,
@@ -1646,7 +1683,9 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         costBasis: numericString(
           firstNumber(attrs, ["costBasisMoney", "costBasis", "cost"]),
         ),
-        marketValue: numericString(firstNumber(attrs, ["marketValue", "value"])),
+        marketValue: numericString(
+          firstNumber(attrs, ["marketValue", "positionValue", "value"]),
+        ),
         currency: firstString(attrs, ["currency"]) ?? "USD",
         asOf,
         sourceRunId: runId,
@@ -1797,11 +1836,57 @@ export async function refreshFlexReport(reason = "scheduled"): Promise<{
   };
 }
 
+async function flexTablesHaveRows(): Promise<boolean> {
+  const [navRows, tradeRows, cashRows, dividendRows, positionRows] = await Promise.all([
+    db.select({ id: flexNavHistoryTable.id }).from(flexNavHistoryTable).limit(1),
+    db.select({ id: flexTradesTable.id }).from(flexTradesTable).limit(1),
+    db.select({ id: flexCashActivityTable.id }).from(flexCashActivityTable).limit(1),
+    db.select({ id: flexDividendsTable.id }).from(flexDividendsTable).limit(1),
+    db.select({ id: flexOpenPositionsTable.id }).from(flexOpenPositionsTable).limit(1),
+  ]);
+
+  return Boolean(
+    navRows.length ||
+      tradeRows.length ||
+      cashRows.length ||
+      dividendRows.length ||
+      positionRows.length,
+  );
+}
+
+async function shouldRunInitialFlexRefresh(): Promise<boolean> {
+  const schema = await getOptionalAccountSchemaReadiness();
+  if (schema.missingTables.length || schema.schemaError) {
+    return false;
+  }
+
+  const [activeRun] = await db
+    .select({ id: flexReportRunsTable.id })
+    .from(flexReportRunsTable)
+    .where(sql`${flexReportRunsTable.status} in ('requested', 'polling')`)
+    .limit(1);
+  if (activeRun) {
+    return false;
+  }
+
+  return !(await flexTablesHaveRows());
+}
+
 export function startAccountFlexRefreshScheduler(): void {
   if (!flexConfigured()) {
     logger.info("IBKR Flex env vars are not configured; daily Flex refresh disabled");
     return;
   }
+
+  setTimeout(() => {
+    shouldRunInitialFlexRefresh()
+      .then((shouldRun) =>
+        shouldRun ? refreshFlexReport("scheduled-initial") : null,
+      )
+      .catch((error) => {
+        logger.warn({ err: error }, "Initial IBKR Flex refresh failed");
+      });
+  }, 0).unref?.();
 
   const scheduleNext = () => {
     const now = new Date();
@@ -1954,6 +2039,66 @@ export async function recordAccountSnapshots(
   for (const account of persistableDueAccounts) {
     snapshotWriteTimestamps.set(account.id, now);
   }
+}
+
+type ListAccountsOptions = {
+  listLiveAccounts?: (mode: RuntimeMode) => Promise<BrokerAccountSnapshot[]>;
+  getPersistedAccounts?: (
+    requestedAccountId: string,
+    mode: RuntimeMode,
+  ) => Promise<{
+    accounts: BrokerAccountSnapshot[];
+    latestSnapshotAt: Date | null;
+  }>;
+  getFlexAccounts?: (
+    requestedAccountId: string,
+    mode: RuntimeMode,
+  ) => Promise<BrokerAccountSnapshot[]>;
+  recordSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
+};
+
+export async function listAccounts(
+  input: { mode?: RuntimeMode },
+  options: ListAccountsOptions = {},
+) {
+  const mode = input.mode ?? getRuntimeMode();
+  const listLiveAccounts = options.listLiveAccounts ?? listIbkrAccounts;
+  const getPersistedAccounts =
+    options.getPersistedAccounts ?? getPersistedBackedAccounts;
+  const getFlexAccounts = options.getFlexAccounts ?? getFlexBackedAccounts;
+  const recordSnapshots = options.recordSnapshots ?? recordAccountSnapshots;
+
+  try {
+    const liveAccounts = await listLiveAccounts(mode);
+    if (liveAccounts.length) {
+      void recordSnapshots(liveAccounts).catch((error) => {
+        logger.warn(
+          { err: error },
+          "Account snapshot persistence failed after live account list",
+        );
+      });
+      return { accounts: liveAccounts };
+    }
+  } catch {
+    // A stale or unavailable bridge should not prevent persisted account views.
+  }
+
+  const persistedAccounts = await withAccountSnapshotReadFallback({
+    message:
+      "Account snapshot database unavailable; returning account list without persisted fallback",
+    fallback: () => ({ accounts: [], latestSnapshotAt: null }),
+    run: () => getPersistedAccounts(COMBINED_ACCOUNT_ID, mode),
+  });
+  if (persistedAccounts.accounts.length) {
+    return { accounts: persistedAccounts.accounts };
+  }
+
+  const flexAccounts = await getFlexAccounts(COMBINED_ACCOUNT_ID, mode);
+  if (flexAccounts.length) {
+    return { accounts: flexAccounts };
+  }
+
+  return { accounts: [] };
 }
 
 export async function getAccountSummary(input: {
@@ -2929,7 +3074,24 @@ export async function getAccountPositionsAtDate(input: {
     positionConditions.push(eq(flexOpenPositionsTable.assetClass, input.assetClass));
   }
 
-  const [positionRows, tradeRows, cashRows, dividendRows] = await Promise.all([
+  const balanceConditions = [
+    inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
+    gte(balanceSnapshotsTable.asOf, window.start),
+    lt(balanceSnapshotsTable.asOf, window.end),
+  ];
+  const previousBalanceConditions = [
+    inArray(brokerAccountsTable.providerAccountId, universe.accountIds),
+    lt(balanceSnapshotsTable.asOf, window.start),
+  ];
+
+  const [
+    positionRows,
+    tradeRows,
+    cashRows,
+    dividendRows,
+    balanceRows,
+    previousBalanceRows,
+  ] = await Promise.all([
     withOptionalAccountSchemaFallback({
       tables: ["flex_open_positions"],
       fallback: () => [],
@@ -2987,6 +3149,52 @@ export async function getAccountPositionsAtDate(input: {
             ),
           )
           .orderBy(flexDividendsTable.paidDate),
+    }),
+    withAccountSnapshotReadFallback({
+      fallback: () => [],
+      message:
+        "Account date balance snapshot database unavailable; returning positions without balance summary",
+      run: async () =>
+        db
+          .select({
+            providerAccountId: brokerAccountsTable.providerAccountId,
+            asOf: balanceSnapshotsTable.asOf,
+            currency: balanceSnapshotsTable.currency,
+            cash: balanceSnapshotsTable.cash,
+            buyingPower: balanceSnapshotsTable.buyingPower,
+            netLiquidation: balanceSnapshotsTable.netLiquidation,
+            maintenanceMargin: balanceSnapshotsTable.maintenanceMargin,
+          })
+          .from(balanceSnapshotsTable)
+          .innerJoin(
+            brokerAccountsTable,
+            eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
+          )
+          .where(and(...balanceConditions))
+          .orderBy(balanceSnapshotsTable.asOf),
+    }),
+    withAccountSnapshotReadFallback({
+      fallback: () => [],
+      message:
+        "Account previous balance snapshot database unavailable; returning date balance without P&L",
+      run: async () =>
+        db
+          .select({
+            providerAccountId: brokerAccountsTable.providerAccountId,
+            asOf: balanceSnapshotsTable.asOf,
+            currency: balanceSnapshotsTable.currency,
+            cash: balanceSnapshotsTable.cash,
+            buyingPower: balanceSnapshotsTable.buyingPower,
+            netLiquidation: balanceSnapshotsTable.netLiquidation,
+            maintenanceMargin: balanceSnapshotsTable.maintenanceMargin,
+          })
+          .from(balanceSnapshotsTable)
+          .innerJoin(
+            brokerAccountsTable,
+            eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
+          )
+          .where(and(...previousBalanceConditions))
+          .orderBy(desc(balanceSnapshotsTable.asOf)),
     }),
   ]);
 
@@ -3098,20 +3306,55 @@ export async function getAccountPositionsAtDate(input: {
   const activity = [...tradeActivity, ...cashActivity, ...dividendActivity].sort(
     (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
   );
+  const latestBalanceRows = selectBalanceBoundaryRows(balanceRows, "latest");
+  const firstBalanceRows = selectBalanceBoundaryRows(balanceRows, "earliest");
+  const previousLatestBalanceRows = selectBalanceBoundaryRows(
+    previousBalanceRows,
+    "latest",
+  );
+  const balanceSnapshot = aggregateBalanceRows(
+    latestBalanceRows,
+    universe.primaryCurrency,
+  );
+  const balanceBaseline =
+    aggregateBalanceRows(previousLatestBalanceRows, universe.primaryCurrency) ??
+    aggregateBalanceRows(firstBalanceRows, universe.primaryCurrency);
+  const externalTransfer = cashRows.reduce((sum, row) => {
+    const transfer = classifyExternalCashTransfer(row);
+    return transfer === null ? sum : sum + transfer;
+  }, 0);
+  const dayPnl =
+    balanceSnapshot && balanceBaseline
+      ? balanceSnapshot.netLiquidation -
+        balanceBaseline.netLiquidation -
+        externalTransfer
+      : null;
+  const dayPnlPercent =
+    dayPnl !== null && balanceBaseline && balanceBaseline.netLiquidation
+      ? (dayPnl / Math.abs(balanceBaseline.netLiquidation)) * 100
+      : null;
   const snapshotDate = positionRows.reduce<Date | null>(
     (latest, row) => (!latest || row.asOf.getTime() > latest.getTime() ? row.asOf : latest),
     null,
   );
+  const effectiveSnapshotDate =
+    snapshotDate && balanceSnapshot?.asOf
+      ? snapshotDate.getTime() >= balanceSnapshot.asOf.getTime()
+        ? snapshotDate
+        : balanceSnapshot.asOf
+      : (snapshotDate ?? balanceSnapshot?.asOf ?? null);
 
   return {
     accountId: universe.requestedAccountId,
     date: window.date,
     currency: universe.primaryCurrency,
-    status: positions.length ? "historical" : "unavailable",
-    snapshotDate,
+    status: positions.length || balanceSnapshot ? "historical" : "unavailable",
+    snapshotDate: effectiveSnapshotDate,
     message: positions.length
       ? null
-      : "No Flex open-position snapshot exists for this date.",
+      : balanceSnapshot
+        ? "No Flex open-position snapshot exists for this date; showing recorded balance snapshot."
+        : "No Flex open-position snapshot or recorded balance snapshot exists for this date.",
     positions,
     activity,
     totals: {
@@ -3124,8 +3367,86 @@ export async function getAccountPositionsAtDate(input: {
         .filter((row) => row.marketValue < 0)
         .reduce((sum, row) => sum + Math.abs(row.marketValue), 0),
       netExposure: nav,
+      balance: balanceSnapshot
+        ? {
+            ...balanceSnapshot,
+            previousNetLiquidation: balanceBaseline?.netLiquidation ?? null,
+            dayPnl,
+            dayPnlPercent,
+            externalTransfer,
+            source: "LOCAL_LEDGER",
+          }
+        : null,
     },
     updatedAt: new Date(),
+  };
+}
+
+type AccountDateBalanceRow = {
+  providerAccountId: string;
+  asOf: Date;
+  currency: string;
+  cash: string;
+  buyingPower: string;
+  netLiquidation: string;
+  maintenanceMargin: string | null;
+};
+
+function selectBalanceBoundaryRows(
+  rows: AccountDateBalanceRow[],
+  boundary: "earliest" | "latest",
+): AccountDateBalanceRow[] {
+  const byAccount = new Map<string, AccountDateBalanceRow>();
+  rows.forEach((row) => {
+    const current = byAccount.get(row.providerAccountId);
+    if (!current) {
+      byAccount.set(row.providerAccountId, row);
+      return;
+    }
+    const useCandidate =
+      boundary === "latest"
+        ? row.asOf.getTime() > current.asOf.getTime()
+        : row.asOf.getTime() < current.asOf.getTime();
+    if (useCandidate) {
+      byAccount.set(row.providerAccountId, row);
+    }
+  });
+  return Array.from(byAccount.values());
+}
+
+function aggregateBalanceRows(
+  rows: AccountDateBalanceRow[],
+  fallbackCurrency: string,
+): {
+  asOf: Date;
+  currency: string;
+  cash: number;
+  buyingPower: number;
+  netLiquidation: number;
+  maintenanceMargin: number | null;
+} | null {
+  if (!rows.length) {
+    return null;
+  }
+  return {
+    asOf: rows.reduce(
+      (latest, row) =>
+        row.asOf.getTime() > latest.getTime() ? row.asOf : latest,
+      rows[0]!.asOf,
+    ),
+    currency: rows[0]?.currency || fallbackCurrency,
+    cash: rows.reduce((sum, row) => sum + (toNumber(row.cash) ?? 0), 0),
+    buyingPower: rows.reduce(
+      (sum, row) => sum + (toNumber(row.buyingPower) ?? 0),
+      0,
+    ),
+    netLiquidation: rows.reduce(
+      (sum, row) => sum + (toNumber(row.netLiquidation) ?? 0),
+      0,
+    ),
+    maintenanceMargin: sumNullableValues(
+      rows.map((row) => toNumber(row.maintenanceMargin)),
+    ),
   };
 }
 
@@ -3917,18 +4238,33 @@ export async function getAccountCashActivity(input: {
 
 export async function getFlexHealth() {
   const schema = await getOptionalAccountSchemaReadiness();
-  const lastRun = await withOptionalAccountSchemaFallback({
-    tables: ["flex_report_runs"],
-    fallback: () => null,
-    run: async () => {
-      const [row] = await db
-        .select()
-        .from(flexReportRunsTable)
-        .orderBy(desc(flexReportRunsTable.requestedAt))
-        .limit(1);
-      return row ?? null;
-    },
-  });
+  const [lastRun, lastCompletedRun] = await Promise.all([
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_report_runs"],
+      fallback: () => null,
+      run: async () => {
+        const [row] = await db
+          .select()
+          .from(flexReportRunsTable)
+          .orderBy(desc(flexReportRunsTable.requestedAt))
+          .limit(1);
+        return row ?? null;
+      },
+    }),
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_report_runs"],
+      fallback: () => null,
+      run: async () => {
+        const [row] = await db
+          .select()
+          .from(flexReportRunsTable)
+          .where(eq(flexReportRunsTable.status, "completed"))
+          .orderBy(desc(flexReportRunsTable.completedAt))
+          .limit(1);
+        return row ?? null;
+      },
+    }),
+  ]);
   const latestSnapshot = await withAccountSnapshotReadFallback({
     fallback: () => [],
     message:
@@ -3965,6 +4301,54 @@ export async function getFlexHealth() {
         })
         .from(flexNavHistoryTable),
   });
+  const [tradeCoverage] = await withOptionalAccountSchemaFallback({
+    tables: ["flex_trades"],
+    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    run: async () =>
+      db
+        .select({
+          firstAt: sql<Date | null>`min(${flexTradesTable.tradeDate})`,
+          lastAt: sql<Date | null>`max(${flexTradesTable.tradeDate})`,
+          rowCount: sql<number>`count(*)::int`,
+        })
+        .from(flexTradesTable),
+  });
+  const [cashCoverage] = await withOptionalAccountSchemaFallback({
+    tables: ["flex_cash_activity"],
+    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    run: async () =>
+      db
+        .select({
+          firstAt: sql<Date | null>`min(${flexCashActivityTable.activityDate})`,
+          lastAt: sql<Date | null>`max(${flexCashActivityTable.activityDate})`,
+          rowCount: sql<number>`count(*)::int`,
+        })
+        .from(flexCashActivityTable),
+  });
+  const [dividendCoverage] = await withOptionalAccountSchemaFallback({
+    tables: ["flex_dividends"],
+    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    run: async () =>
+      db
+        .select({
+          firstAt: sql<Date | null>`min(${flexDividendsTable.paidDate})`,
+          lastAt: sql<Date | null>`max(${flexDividendsTable.paidDate})`,
+          rowCount: sql<number>`count(*)::int`,
+        })
+        .from(flexDividendsTable),
+  });
+  const [openPositionCoverage] = await withOptionalAccountSchemaFallback({
+    tables: ["flex_open_positions"],
+    fallback: () => [{ firstAt: null, lastAt: null, rowCount: 0 }],
+    run: async () =>
+      db
+        .select({
+          firstAt: sql<Date | null>`min(${flexOpenPositionsTable.asOf})`,
+          lastAt: sql<Date | null>`max(${flexOpenPositionsTable.asOf})`,
+          rowCount: sql<number>`count(*)::int`,
+        })
+        .from(flexOpenPositionsTable),
+  });
 
   return {
     bridgeConnected: null,
@@ -3974,8 +4358,7 @@ export async function getFlexHealth() {
     schemaReady: schema.missingTables.length === 0 && schema.schemaError === null,
     missingTables: schema.missingTables,
     schemaError: schema.schemaError,
-    lastSuccessfulRefreshAt:
-      lastRun?.status === "completed" ? lastRun.completedAt : null,
+    lastSuccessfulRefreshAt: lastCompletedRun?.completedAt ?? null,
     lastAttemptAt: lastRun?.requestedAt ?? null,
     lastStatus: lastRun?.status ?? null,
     lastError: lastRun?.errorMessage ?? null,
@@ -3991,6 +4374,18 @@ export async function getFlexHealth() {
       ? dateFromDateOnly(flexCoverage.lastDate)
       : null,
     flexNavRowCount: flexCoverage?.rowCount ?? 0,
+    flexTradeCoverageStartAt: tradeCoverage?.firstAt ?? null,
+    flexTradeCoverageEndAt: tradeCoverage?.lastAt ?? null,
+    flexTradeRowCount: tradeCoverage?.rowCount ?? 0,
+    flexCashCoverageStartAt: cashCoverage?.firstAt ?? null,
+    flexCashCoverageEndAt: cashCoverage?.lastAt ?? null,
+    flexCashRowCount: cashCoverage?.rowCount ?? 0,
+    flexDividendCoverageStartAt: dividendCoverage?.firstAt ?? null,
+    flexDividendCoverageEndAt: dividendCoverage?.lastAt ?? null,
+    flexDividendRowCount: dividendCoverage?.rowCount ?? 0,
+    flexOpenPositionCoverageStartAt: openPositionCoverage?.firstAt ?? null,
+    flexOpenPositionCoverageEndAt: openPositionCoverage?.lastAt ?? null,
+    flexOpenPositionRowCount: openPositionCoverage?.rowCount ?? 0,
   };
 }
 
@@ -4013,9 +4408,11 @@ export const __accountEquityHistoryInternalsForTests = {
 };
 
 export const __accountPositionInternalsForTests = {
+  aggregateBalanceRows,
   buildPositionMarketHydration,
   filterOpenBrokerPositions,
   isOpenBrokerPosition,
+  selectBalanceBoundaryRows,
   withAccountPositionLotsReadFallback,
 };
 
@@ -4063,4 +4460,5 @@ export const __accountFlexInternalsForTests = {
   extractTagText,
   flexConfigured,
   getFlexConfigs,
+  upsertFlexReport,
 };

@@ -458,6 +458,37 @@ export const gammaPriceProfile = (rows = [], spot, now = new Date()) => {
   });
 };
 
+const formatPriceForNarrative = (value) => {
+  if (!isFiniteNumber(value)) return "?";
+  return `$${value.toFixed(value >= 100 ? 2 : 3)}`;
+};
+
+const formatPercentForNarrative = (value) => {
+  if (!isFiniteNumber(value)) return "0%";
+  const pct = Math.abs(value * 100);
+  return `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+};
+
+export const resolveSignalDescription = (
+  kind,
+  { level, spot, source = "default" } = {},
+) => {
+  if (kind === "Volatility" && source === "positive-gex") {
+    return "Long-gamma regime: dealer hedging dampens moves and favors selling volatility into spikes.";
+  }
+  if (kind === "Magnet" && isFiniteNumber(level)) {
+    return `Peak gamma at ${formatPriceForNarrative(level)} — price tends to gravitate toward this strike when option flow concentrates here.`;
+  }
+  if (kind === "Support" && isFiniteNumber(level) && isFiniteNumber(spot)) {
+    const delta = (level - spot) / spot;
+    return `Zero-gamma at ${formatPriceForNarrative(level)} sits ${formatPercentForNarrative(delta)} below spot — crossing it flips dealers from dampening to amplifying moves.`;
+  }
+  if (kind === "Volatility" && source === "put-wall" && isFiniteNumber(level)) {
+    return `Put wall at ${formatPriceForNarrative(level)} — a break below it removes a dealer-supported floor and expands realized volatility.`;
+  }
+  return "";
+};
+
 export const computeSignals = (metrics, spot) => {
   const signals = [];
   if (!metrics || !isFiniteNumber(spot)) return signals;
@@ -467,7 +498,11 @@ export const computeSignals = (metrics, spot) => {
       severity: "STRONG",
       level: spot,
       delta: 0,
-      description: "Price movements likely to be dampened, good for selling volatility.",
+      description: resolveSignalDescription("Volatility", {
+        level: spot,
+        spot,
+        source: "positive-gex",
+      }),
     });
   }
   if (metrics.peakGexStrike != null) {
@@ -478,7 +513,10 @@ export const computeSignals = (metrics, spot) => {
         severity: Math.abs(delta) < 0.0025 ? "STRONG" : "MODERATE",
         level: metrics.peakGexStrike,
         delta,
-        description: "Price likely to gravitate toward this level.",
+        description: resolveSignalDescription("Magnet", {
+          level: metrics.peakGexStrike,
+          spot,
+        }),
       });
     }
   }
@@ -489,7 +527,10 @@ export const computeSignals = (metrics, spot) => {
       severity: Math.abs(delta) < 0.005 ? "STRONG" : "MODERATE",
       level: metrics.zeroGamma,
       delta,
-      description: "Market dynamics change significantly if breached.",
+      description: resolveSignalDescription("Support", {
+        level: metrics.zeroGamma,
+        spot,
+      }),
     });
   }
   if (metrics.putWall != null && metrics.putWall < spot * 0.97) {
@@ -498,7 +539,11 @@ export const computeSignals = (metrics, spot) => {
       severity: "STRONG",
       level: metrics.putWall,
       delta: (metrics.putWall - spot) / spot,
-      description: "Expect increased volatility if price falls below this level.",
+      description: resolveSignalDescription("Volatility", {
+        level: metrics.putWall,
+        spot,
+        source: "put-wall",
+      }),
     });
   }
   return signals;
@@ -589,4 +634,127 @@ export const chunkGexExpirations = (values = [], chunkSize = 2) => {
     chunks.push(values.slice(index, index + chunkSize));
   }
   return chunks;
+};
+
+const SQUEEZE_FACTOR_BULLETS = {
+  gammaRegime:
+    "Wait for the broader regime to flip net-negative — short-gamma is the structural condition for a squeeze.",
+  wallProximity:
+    "Wait for spot to push closer to the wall — proximity within ~2% is what triggers the dealer-flow cascade.",
+  flowAlignment:
+    "Wait for confirming option flow — directional premium should outweigh the opposing side.",
+  volumeConfirm:
+    "Wait for above-average underlying volume — squeezes need participation, not just options activity.",
+  dexBias:
+    "Wait for stronger directional delta build — net dealer hedge demand should lean the same way.",
+};
+
+const buildSqueezeImplication = ({ direction, verdict, gammaRegime, wallStrike }) => {
+  const directionLabel = direction === "bullish" ? "upside" : "downside";
+  const wallPart = isFiniteNumber(wallStrike)
+    ? ` near ${formatPriceForNarrative(wallStrike)}`
+    : "";
+
+  if (verdict === "Imminent") {
+    return `Short-gamma regime + aligned flow leaves dealers chasing hedges${wallPart}; expect accelerated ${directionLabel} on confirming volume.`;
+  }
+  if (verdict === "Likely") {
+    return `Conditions are tilted for a ${directionLabel} squeeze${wallPart}; ride continuation as long as flow stays aligned.`;
+  }
+  if (verdict === "Possible") {
+    if (gammaRegime === 0) {
+      return `Long-gamma environment dampens the squeeze${wallPart}; favor mean-reversion until the regime flips.`;
+    }
+    return `Setup is forming${wallPart} but missing confirmation — keep size light until more factors clear.`;
+  }
+  return `No actionable squeeze${wallPart} — dealer hedging neutralizes price action; trade the chop, not the breakout.`;
+};
+
+const toEpochMillis = (value) => {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const buildIntradaySnapshots = (
+  snapshots = [],
+  { recentWindowMinutes = 30, sparseFallbackPoints = 5 } = {},
+) => {
+  const series = (snapshots || [])
+    .map((point) => ({
+      ts: toEpochMillis(point?.ts),
+      netGex: finiteOrNull(point?.netGex),
+    }))
+    .filter((point) => point.ts != null && point.netGex != null)
+    .sort((left, right) => left.ts - right.ts);
+
+  if (series.length === 0) {
+    return {
+      series: [],
+      deltaSession: null,
+      deltaRecent: null,
+      isSparse: true,
+      recentAnchorTs: null,
+      sessionAnchorTs: null,
+    };
+  }
+
+  const first = series[0];
+  const last = series[series.length - 1];
+  const deltaSession = series.length >= 2 ? last.netGex - first.netGex : 0;
+  const recentWindowMs = recentWindowMinutes * 60_000;
+  const recentCutoff = last.ts - recentWindowMs;
+
+  let recentAnchor = null;
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    if (series[index].ts <= recentCutoff) {
+      recentAnchor = series[index];
+      break;
+    }
+  }
+
+  let isSparse = false;
+  if (!recentAnchor) {
+    isSparse = true;
+    if (series.length > sparseFallbackPoints) {
+      recentAnchor = series[series.length - sparseFallbackPoints - 1];
+    } else if (series.length >= 2) {
+      recentAnchor = first;
+    }
+  }
+
+  const deltaRecent = recentAnchor ? last.netGex - recentAnchor.netGex : 0;
+
+  return {
+    series,
+    deltaSession,
+    deltaRecent,
+    isSparse,
+    recentAnchorTs: recentAnchor?.ts ?? null,
+    sessionAnchorTs: first.ts,
+  };
+};
+
+export const resolveSqueezeNarrative = (
+  squeeze,
+  { lowFactorThreshold = 10 } = {},
+) => {
+  if (!squeeze) {
+    return { stronger: [], implication: "" };
+  }
+
+  const factors = squeeze.factors || {};
+  const stronger = Object.entries(SQUEEZE_FACTOR_BULLETS)
+    .filter(([key]) => (factors[key] ?? 0) < lowFactorThreshold)
+    .map(([, copy]) => copy);
+
+  const implication = buildSqueezeImplication({
+    direction: squeeze.direction,
+    verdict: squeeze.verdict,
+    gammaRegime: factors.gammaRegime ?? 0,
+    wallStrike: squeeze.wallStrike,
+  });
+
+  return { stronger, implication };
 };

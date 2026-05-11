@@ -12,7 +12,7 @@ export type GetFlowPremiumDistributionParams = {
 /**
  * Number of premium distribution widgets to return.
  * @minimum 1
- * @maximum 10
+ * @maximum 16
  */
 limit?: number;
 /**

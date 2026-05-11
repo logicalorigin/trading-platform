@@ -42,6 +42,14 @@ import {
   type FlowChartBucket,
   type FlowTooltipModel,
 } from "./flowChartEvents";
+import {
+  EMPTY_CHART_POSITION_OVERLAYS,
+  type ChartPositionEntryLine,
+  type ChartPositionFillMarker,
+  type ChartPositionOffPaneIndicator,
+  type ChartPositionOverlays,
+  type ChartPositionPnlBubble,
+} from "./chartPositionOverlays";
 import { registerChart, unregisterChart } from "./chartLifecycle";
 import {
   buildUsEquityExtendedSessionWindows,
@@ -460,6 +468,34 @@ type OverlayShape = {
   labelSize?: "tiny" | "small" | "normal";
   radius?: number;
   opacity?: number;
+};
+
+type PositionBubbleOverlay = {
+  id: string;
+  dataTestId?: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  color: string;
+  border: string;
+  fill: string;
+  label: string;
+  detail: string;
+};
+
+type PositionOffPaneOverlay = {
+  id: string;
+  dataTestId?: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  color: string;
+  border: string;
+  fill: string;
+  direction: "above" | "below";
+  label: string;
 };
 
 type TradeMarkerTarget = {
@@ -1106,6 +1142,11 @@ export type ChartSurfaceControls = {
   setShowGrid: (next: boolean | ((value: boolean) => boolean)) => void;
   showTimeScale: boolean;
   setShowTimeScale: (next: boolean | ((value: boolean) => boolean)) => void;
+  positionOverlaysAvailable: boolean;
+  positionOverlaysEnabled: boolean;
+  setPositionOverlaysEnabled: (
+    next: boolean | ((value: boolean) => boolean),
+  ) => void;
   autoScale: boolean;
   setAutoScale: (next: boolean | ((value: boolean) => boolean)) => void;
   invertScale: boolean;
@@ -1164,6 +1205,12 @@ type ResearchChartSurfaceProps = {
   }>;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
+  positionOverlays?: ChartPositionOverlays | null;
+  positionOverlaysAvailable?: boolean;
+  positionOverlaysEnabled?: boolean;
+  onPositionOverlaysEnabledChange?: (
+    next: boolean | ((value: boolean) => boolean),
+  ) => void;
   latestQuotePrice?: number | null;
   latestQuoteUpdatedAt?: string | Date | number | null;
   emptyState?: {
@@ -3577,6 +3624,133 @@ const buildBoxDrawingOverlays = (
     return result;
   }, []);
 
+const resolvePositionDirectionColor = (
+  direction: "long" | "short",
+  theme: ResearchChartTheme,
+): string => (direction === "long" ? theme.green : theme.red);
+
+const resolvePositionPnlColor = (
+  pnl: number,
+  theme: ResearchChartTheme,
+): string => (pnl >= 0 ? theme.green : theme.red);
+
+const isPositionEntryLineInPane = (
+  series: any,
+  line: ChartPositionEntryLine,
+  viewportHeight: number,
+): boolean => {
+  const y = series.priceToCoordinate?.(line.price);
+  return Number.isFinite(y) && y >= 0 && y <= viewportHeight;
+};
+
+const buildPositionBubbleOverlays = (
+  series: any,
+  bubbles: ChartPositionPnlBubble[],
+  theme: ResearchChartTheme,
+  viewportWidth: number,
+  viewportHeight: number,
+): PositionBubbleOverlay[] =>
+  bubbles.flatMap((bubble, index) => {
+    const rawAnchorY = series.priceToCoordinate?.(bubble.anchorPrice);
+    if (viewportWidth <= 0 || viewportHeight <= 0) {
+      return [];
+    }
+    const anchorY = Number.isFinite(rawAnchorY)
+      ? rawAnchorY
+      : 24 + index * 34;
+
+    const width = Math.max(74, estimateMonoTextWidth(bubble.label, 10, 9));
+    const height = 32;
+    const left = Math.max(4, viewportWidth - width - 8);
+    const clamped = clampOverlayRectPosition({
+      left,
+      top: anchorY - height / 2 + index * 2,
+      width,
+      height,
+      viewportWidth,
+      viewportHeight,
+    });
+    const color = resolvePositionPnlColor(bubble.pnl, theme);
+
+    return [
+      {
+        id: bubble.id,
+        dataTestId: `chart-position-pnl-${bubble.id}`,
+        left: clamped.left,
+        top: clamped.top,
+        width,
+        height,
+        color,
+        border: withAlpha(color, "cc"),
+        fill: withAlpha(theme.bg4, "ec"),
+        label: bubble.label,
+        detail: bubble.detail,
+      },
+    ];
+  });
+
+const buildPositionOffPaneOverlays = ({
+  entryLines,
+  offPaneIndicators,
+  series,
+  theme,
+  viewportWidth,
+  viewportHeight,
+}: {
+  entryLines: ChartPositionEntryLine[];
+  offPaneIndicators: ChartPositionOffPaneIndicator[];
+  series: any;
+  theme: ResearchChartTheme;
+  viewportWidth: number;
+  viewportHeight: number;
+}): PositionOffPaneOverlay[] => {
+  if (viewportWidth <= 0 || viewportHeight <= 0) {
+    return [];
+  }
+
+  const indicators = [
+    ...offPaneIndicators,
+    ...entryLines.flatMap<ChartPositionOffPaneIndicator>((line) => {
+      const y = series.priceToCoordinate?.(line.price);
+      if (!Number.isFinite(y) || (y >= 0 && y <= viewportHeight)) {
+        return [];
+      }
+      return [
+        {
+          id: line.id,
+          direction: y < 0 ? "above" : "below",
+          price: line.price,
+          label: line.price >= 100 ? line.price.toFixed(2) : line.price.toFixed(3),
+        },
+      ];
+    }),
+  ];
+
+  return indicators.map((indicator, index) => {
+    const width = Math.max(54, estimateMonoTextWidth(indicator.label, 9, 7));
+    const height = 20;
+    const directionOffset = indicator.direction === "above" ? index * 22 : -index * 22;
+    const top =
+      indicator.direction === "above"
+        ? 4 + directionOffset
+        : Math.max(4, viewportHeight - height - 4 + directionOffset);
+    const color = theme.amber;
+    return {
+      id: indicator.id,
+      dataTestId: `chart-position-offpane-${indicator.id}`,
+      left: Math.max(4, viewportWidth - width - 6),
+      top,
+      width,
+      height,
+      color,
+      border: withAlpha(color, "b8"),
+      fill: withAlpha(theme.bg4, "ec"),
+      direction: indicator.direction,
+      label: indicator.label,
+    };
+  });
+};
+
 const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
   const entryMarkers = model.tradeMarkerGroups.entryGroups
     .filter((group) => group.barIndex != null)
@@ -4497,6 +4671,10 @@ export const ResearchChartSurface = ({
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
+  positionOverlays = EMPTY_CHART_POSITION_OVERLAYS,
+  positionOverlaysAvailable = false,
+  positionOverlaysEnabled = false,
+  onPositionOverlaysEnabledChange,
   latestQuotePrice = null,
   latestQuoteUpdatedAt = null,
   emptyState = null,
@@ -4511,6 +4689,8 @@ export const ResearchChartSurface = ({
   persistScalePrefs = true,
 }: ResearchChartSurfaceProps) => {
   const { preferences: userPreferences } = useUserPreferences();
+  const resolvedPositionOverlays =
+    positionOverlays || EMPTY_CHART_POSITION_OVERLAYS;
   const persistLocalChartState =
     persistScalePrefs && userPreferences.privacy.persistChartViewports;
   const keepStoredChartViewport =
@@ -4691,6 +4871,8 @@ export const ResearchChartSurface = ({
   };
   const hasChartBars = model.chartBars.length > 0;
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
+  const [tapSelectedBar, setTapSelectedBar] = useState<HoverBar | null>(null);
+  const tapSelectedBarRef = useRef<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
@@ -4754,6 +4936,12 @@ export const ResearchChartSurface = ({
   ]);
   const [overlayRevision, setOverlayRevision] = useState(0);
   const [windowOverlays, setWindowOverlays] = useState<OverlayShape[]>([]);
+  const [positionBubbleOverlays, setPositionBubbleOverlays] = useState<
+    PositionBubbleOverlay[]
+  >([]);
+  const [positionOffPaneOverlays, setPositionOffPaneOverlays] = useState<
+    PositionOffPaneOverlay[]
+  >([]);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
   const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<
     OverlayShape[]
@@ -5717,6 +5905,9 @@ export const ResearchChartSurface = ({
         },
       ]),
     );
+    setTapSelectedBar((current) =>
+      current && !barLookupRef.current.has(current.time) ? null : current,
+    );
   }, [model.chartBars]);
 
   useEffect(() => {
@@ -5731,6 +5922,10 @@ export const ResearchChartSurface = ({
         } satisfies Record<BaseSeriesType, any>
       )[baseSeriesType] || candleSeriesRef.current;
   }, [baseSeriesType]);
+
+  useEffect(() => {
+    tapSelectedBarRef.current = tapSelectedBar;
+  }, [tapSelectedBar]);
 
   useLayoutEffect(() => {
     if (!containerRef.current || !hasChartBars) {
@@ -5899,6 +6094,9 @@ export const ResearchChartSurface = ({
         publishVisibleLogicalRange(range, { source });
       };
       handleCrosshairMove = (param: any) => {
+        if (tapSelectedBarRef.current) {
+          return;
+        }
         const rawTime = param?.time;
         const time = typeof rawTime === "number" ? rawTime : null;
         if (time == null) {
@@ -5912,6 +6110,35 @@ export const ResearchChartSurface = ({
         );
       };
       handleClick = (param: any) => {
+        if (!interactionRef.current.drawMode) {
+          const rawTime =
+            typeof param?.time === "number"
+              ? param.time
+              : param?.point
+                ? chart.timeScale().coordinateToTime(param.point.x)
+                : null;
+          const resolvedTime = typeof rawTime === "number" ? rawTime : null;
+          const bar = resolvedTime == null
+            ? null
+            : barLookupRef.current.get(resolvedTime) || null;
+
+          if (!bar) {
+            chart.clearCrosshairPosition?.();
+            setTapSelectedBar((current) => (current === null ? current : null));
+            return;
+          }
+
+          chart.setCrosshairPosition?.(
+            bar.close,
+            bar.time,
+            activePriceSeriesRef.current,
+          );
+          setTapSelectedBar((current) =>
+            hoverBarsEqual(current, bar) ? current : bar,
+          );
+          return;
+        }
+
         if (!interactionRef.current.drawMode || !param?.point) {
           return;
         }
@@ -6636,9 +6863,22 @@ export const ResearchChartSurface = ({
 
     const visibleLogicalRange = visibleLogicalRangeRef.current;
     const chart = chartRef.current;
+    const positionMarkers =
+      positionOverlaysEnabled && resolvedPositionOverlays.density !== "mini"
+        ? resolvedPositionOverlays.fillMarkers.map((marker: ChartPositionFillMarker) => ({
+            time: marker.time,
+            barIndex: marker.barIndex,
+            position: marker.position,
+            shape: marker.shape,
+            color: resolvePositionDirectionColor(marker.direction, theme),
+            text: marker.text,
+            size: marker.size,
+          }))
+        : [];
     const markers = [
       ...deferredModel.indicatorMarkerPayload.overviewMarkers,
       ...buildTradeMarkers(deferredModel, theme),
+      ...positionMarkers,
     ]
       .filter((marker) =>
         isMarkerVisibleInLogicalRange(
@@ -6689,6 +6929,9 @@ export const ResearchChartSurface = ({
     overlayRevision,
     plotSize.height,
     plotSize.width,
+    resolvedPositionOverlays.density,
+    resolvedPositionOverlays.fillMarkers,
+    positionOverlaysEnabled,
     theme,
   ]);
 
@@ -6763,10 +7006,41 @@ export const ResearchChartSurface = ({
         };
         addPriceLine(referenceLine);
       });
+
+    if (positionOverlaysEnabled) {
+      resolvedPositionOverlays.entryLines
+        .filter((line) => Number.isFinite(line.price))
+        .filter((line) => {
+          if (resolvedPositionOverlays.density !== "mini" || !plotSize.height) {
+            return true;
+          }
+          return isPositionEntryLineInPane(
+            activePriceSeriesRef.current,
+            line,
+            plotSize.height,
+          );
+        })
+        .forEach((line) => {
+          addPriceLine({
+            price: line.price,
+            color: resolvePositionDirectionColor(line.direction, theme),
+            lineWidth: resolvedPositionOverlays.density === "mini" ? 1 : 2,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: line.title,
+          });
+        });
+    }
   }, [
     drawings,
+    plotSize.height,
+    resolvedPositionOverlays.density,
+    resolvedPositionOverlays.entryLines,
+    positionOverlaysEnabled,
     referenceLines,
     theme.amber,
+    theme.green,
+    theme.red,
   ]);
 
   useLayoutEffect(() => {
@@ -6776,6 +7050,8 @@ export const ResearchChartSurface = ({
       !containerRef.current
     ) {
       syncOverlayState(setWindowOverlays, []);
+      setPositionBubbleOverlays([]);
+      setPositionOffPaneOverlays([]);
       syncOverlayState(setZoneOverlays, []);
       syncOverlayState(setVerticalDrawingOverlays, []);
       syncOverlayState(setBoxDrawingOverlays, []);
@@ -6812,6 +7088,29 @@ export const ResearchChartSurface = ({
         viewportHeight,
         extendedSessionWindows,
       ),
+    );
+    setPositionBubbleOverlays(
+      positionOverlaysEnabled
+        ? buildPositionBubbleOverlays(
+            activePriceSeriesRef.current,
+            resolvedPositionOverlays.pnlBubbles,
+            theme,
+            viewportWidth,
+            viewportHeight,
+          )
+        : [],
+    );
+    setPositionOffPaneOverlays(
+      positionOverlaysEnabled && resolvedPositionOverlays.density === "mini"
+        ? buildPositionOffPaneOverlays({
+            entryLines: resolvedPositionOverlays.entryLines,
+            offPaneIndicators: resolvedPositionOverlays.offPaneIndicators,
+            series: activePriceSeriesRef.current,
+            theme,
+            viewportWidth,
+            viewportHeight,
+          })
+        : [],
     );
     syncOverlayState(
       setZoneOverlays,
@@ -6937,6 +7236,11 @@ export const ResearchChartSurface = ({
     overlayRevision,
     plotSize.height,
     plotSize.width,
+    resolvedPositionOverlays.density,
+    resolvedPositionOverlays.entryLines,
+    resolvedPositionOverlays.offPaneIndicators,
+    resolvedPositionOverlays.pnlBubbles,
+    positionOverlaysEnabled,
     rootWidth,
     scaleMode,
     showTradePositionOverlays,
@@ -6952,6 +7256,7 @@ export const ResearchChartSurface = ({
   ]);
 
   const displayBar =
+    tapSelectedBar ||
     hoverBar ||
     (() => {
       const lastBar = model.chartBars[model.chartBars.length - 1];
@@ -7832,6 +8137,10 @@ export const ResearchChartSurface = ({
       setShowGrid,
       showTimeScale: showTimeScaleState,
       setShowTimeScale: setShowTimeScaleState,
+      positionOverlaysAvailable,
+      positionOverlaysEnabled,
+      setPositionOverlaysEnabled:
+        onPositionOverlaysEnabledChange || (() => undefined),
       autoScale,
       setAutoScale,
       invertScale,
@@ -7856,6 +8165,9 @@ export const ResearchChartSurface = ({
       hideCrosshair,
       invertScale,
       isFullscreen,
+      onPositionOverlaysEnabledChange,
+      positionOverlaysAvailable,
+      positionOverlaysEnabled,
       scaleMode,
       showGrid,
       showPriceLine,
@@ -8032,6 +8344,17 @@ export const ResearchChartSurface = ({
           active: showPriceLine,
           onClick: () => setShowPriceLine((value) => !value),
         },
+        ...(positionOverlaysAvailable
+          ? [
+              {
+                key: "positions",
+                label: "Positions",
+                active: positionOverlaysEnabled,
+                onClick: () =>
+                  onPositionOverlaysEnabledChange?.((value) => !value),
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -8434,6 +8757,8 @@ export const ResearchChartSurface = ({
             }}
           />
           {windowOverlays.length ||
+          positionBubbleOverlays.length ||
+          positionOffPaneOverlays.length ||
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||
           boxDrawingOverlays.length ||
@@ -8483,6 +8808,97 @@ export const ResearchChartSurface = ({
                     opacity: overlay.opacity ?? 1,
                   }}
                 />
+              ))}
+              {positionBubbleOverlays.map((overlay) => (
+                <div
+                  key={`position-pnl-${overlay.id}`}
+                  data-testid={overlay.dataTestId}
+                  style={{
+                    position: "absolute",
+                    left: overlay.left,
+                    top: overlay.top,
+                    width: overlay.width,
+                    height: overlay.height,
+                    boxSizing: "border-box",
+                    border: `1px solid ${overlay.border}`,
+                    borderRadius: 4,
+                    background: overlay.fill,
+                    color: overlay.color,
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    padding: "2px 6px",
+                    fontFamily: theme.mono,
+                    boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "88")}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: TYPE_CSS_VAR.bodyStrong,
+                      lineHeight: 1.1,
+                      fontWeight: 400,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {overlay.label}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 2,
+                      color: theme.textMuted,
+                      fontSize: TYPE_CSS_VAR.label,
+                      lineHeight: 1,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {overlay.detail}
+                  </div>
+                </div>
+              ))}
+              {positionOffPaneOverlays.map((overlay) => (
+                <div
+                  key={`position-offpane-${overlay.id}`}
+                  data-testid={overlay.dataTestId}
+                  style={{
+                    position: "absolute",
+                    left: overlay.left,
+                    top: overlay.top,
+                    width: overlay.width,
+                    height: overlay.height,
+                    boxSizing: "border-box",
+                    border: `1px solid ${overlay.border}`,
+                    borderRadius: 4,
+                    background: overlay.fill,
+                    color: overlay.color,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 4,
+                    fontFamily: theme.mono,
+                    fontSize: TYPE_CSS_VAR.label,
+                    lineHeight: 1,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: "4px solid transparent",
+                      borderRight: "4px solid transparent",
+                      borderBottom:
+                        overlay.direction === "above"
+                          ? `7px solid ${overlay.color}`
+                          : "none",
+                      borderTop:
+                        overlay.direction === "below"
+                          ? `7px solid ${overlay.color}`
+                          : "none",
+                    }}
+                  />
+                  <span>{overlay.label}</span>
+                </div>
               ))}
               {verticalDrawingOverlays.map((overlay) => (
                 <div

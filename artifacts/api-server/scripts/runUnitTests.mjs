@@ -12,6 +12,7 @@ const unitTestFiles = [
   "src/services/account-equity-history.test.ts",
   "src/services/account-positions.test.ts",
   "src/services/account-flex.test.ts",
+  "src/services/account-list.test.ts",
   "src/services/account-orders.test.ts",
   "src/services/account-risk.test.ts",
   "src/services/account-snapshot-persistence.test.ts",

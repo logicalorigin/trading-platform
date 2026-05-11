@@ -536,6 +536,18 @@ const SettingsMenu = ({
       >
         Last price line
       </DropdownMenuCheckboxItem>
+      {controls.positionOverlaysAvailable ? (
+        <DropdownMenuCheckboxItem
+          className={chartMenuItemClassName}
+          checked={controls.positionOverlaysEnabled}
+          onCheckedChange={() =>
+            controls.setPositionOverlaysEnabled((value) => !value)
+          }
+          style={menuItemStyle(theme)}
+        >
+          Positions
+        </DropdownMenuCheckboxItem>
+      ) : null}
       <DropdownMenuCheckboxItem
         className={chartMenuItemClassName}
         checked={controls.showTimeScale}

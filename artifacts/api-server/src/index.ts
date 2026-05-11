@@ -2,10 +2,12 @@ import { createServer } from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDiagnosticsCollector } from "./services/diagnostics";
-import { startAccountFlexRefreshScheduler } from "./services/account";
+import {
+  listAccounts,
+  startAccountFlexRefreshScheduler,
+} from "./services/account";
 import {
   getRuntimeDiagnostics,
-  listAccounts,
   listOrders,
   listPositions,
   startOptionsFlowScanner,

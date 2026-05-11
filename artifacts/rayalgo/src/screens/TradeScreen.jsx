@@ -176,6 +176,8 @@ import {
 } from "../lib/motion";
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { BottomSheet } from "../components/platform/BottomSheet.jsx";
+import { Drawer } from "../components/platform/Drawer.jsx";
 
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
@@ -1255,6 +1257,18 @@ const TradeContractDetailPanel = ({
             rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
             viewportLayoutKey={optionChartViewportLayoutKey}
             model={chartModel}
+            positionOverlayContext={{
+              surfaceKind: "option",
+              symbol: ticker,
+              optionContract: {
+                ticker: optionTicker,
+                underlying: ticker,
+                expirationDate: optionExpirationIso,
+                strike: contract.strike,
+                right: optionRight,
+                providerContractId,
+              },
+            }}
             chartEvents={chartEvents}
             chartFlowDiagnostics={chartEventConversion}
             emptyState={optionChartEmptyState}
@@ -1594,6 +1608,13 @@ const MemoTradeL2Panel = memo(function MemoTradeL2Panel(props) {
 const MemoTradePositionsPanel = memo(function MemoTradePositionsPanel(props) {
   return <TradePositionsPanel {...props} />;
 });
+
+const TRADE_PHONE_PANELS = [
+  { id: "chart", label: "Chart" },
+  { id: "chain", label: "Chain" },
+  { id: "ticket", label: "Ticket" },
+  { id: "positions", label: "Positions" },
+];
 
 const TradeQuoteRuntime = ({
   ticker,
@@ -2755,6 +2776,9 @@ export const TradeScreen = ({
     ),
   );
   const [visibleOptionChainRows, setVisibleOptionChainRows] = useState([]);
+  const [activeTradePhonePanel, setActiveTradePhonePanel] = useState("chart");
+  const [phoneTicketSheetOpen, setPhoneTicketSheetOpen] = useState(false);
+  const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -2938,6 +2962,12 @@ export const TradeScreen = ({
   useEffect(() => {
     setVisibleOptionChainRows([]);
   }, [activeTicker, contract.exp, tradeOptionChainCoverage]);
+  useEffect(() => {
+    if (!tradeIsPhone) {
+      setPhoneTicketSheetOpen(false);
+      setPhoneL2DrawerOpen(false);
+    }
+  }, [tradeIsPhone]);
   useEffect(() => {
     if (typeof activeWorkspace.chainHeatmapEnabled === "boolean") {
       setTradeChainHeatmapEnabled(activeWorkspace.chainHeatmapEnabled);
@@ -3260,6 +3290,147 @@ export const TradeScreen = ({
       axisLabelVisible: true,
       title: level.label || "Level",
     }));
+
+  const tradeMobileTabButtonStyle = (active) => ({
+    minHeight: dim(40),
+    border: `1px solid ${active ? T.accent : T.border}`,
+    borderRadius: dim(4),
+    background: active ? `${T.accent}18` : T.bg1,
+    color: active ? T.text : T.textSec,
+    fontFamily: T.sans,
+    fontSize: fs(10),
+    fontWeight: 400,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  });
+  const tradeMobileActionButtonStyle = {
+    minHeight: dim(38),
+    border: `1px solid ${T.border}`,
+    borderRadius: dim(4),
+    background: T.bg2,
+    color: T.textSec,
+    fontFamily: T.sans,
+    fontSize: fs(10),
+    fontWeight: 400,
+    cursor: "pointer",
+    padding: sp("0 10px"),
+  };
+  const tradeMobileSectionStyle = {
+    display: "grid",
+    gap: sp(6),
+    minWidth: 0,
+  };
+
+  const equityPanel = (
+    <MemoTradeEquityPanel
+      ticker={activeTicker}
+      flowEvents={activeTickerChartFlowEvents}
+      historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
+      stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
+      onOpenSearch={openEquitySearch}
+      searchOpen={tradeTickerSearchAnchor === "equity"}
+      onSearchOpenChange={handleEquitySearchOpenChange}
+      searchContent={renderTradeTickerSearch(
+        tradeTickerSearchAnchor === "equity",
+      )}
+      workspaceChart={activeWorkspace.equityChart}
+      onWorkspaceChartChange={(patch) =>
+        upsertTradeWorkspace(activeTicker, {
+          equityChart: {
+            ...activeWorkspace.equityChart,
+            ...patch,
+          },
+        })
+      }
+      referenceLines={workspaceReferenceLines}
+    />
+  );
+  const contractDetailPanel = (
+    <MemoTradeContractDetailPanel
+      ticker={activeTicker}
+      contract={contract}
+      heldContracts={heldContracts}
+      flowEvents={activeTickerChartFlowEvents}
+      historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
+      liveDataEnabled={tradeLiveStreamsEnabled}
+    />
+  );
+  const orderTicketPanel = (
+    <MemoTradeOrderTicket
+      slot={slot}
+      accountId={accountId}
+      environment={environment}
+      brokerConfigured={brokerConfigured}
+      brokerAuthenticated={brokerAuthenticated}
+      gatewayTradingReady={gatewayTradingReady}
+      gatewayTradingMessage={gatewayTradingMessage}
+      brokerPositions={tradePositionsQuery.data?.positions || []}
+      brokerOrders={tradeOrdersQuery.data?.orders || []}
+      brokerPositionContextReady={Boolean(
+        brokerAuthenticated && accountId && tradePositionsQuery.data,
+      )}
+      brokerOrderContextReady={Boolean(
+        brokerAuthenticated &&
+          accountId &&
+          tradeOrdersQuery.data &&
+          !tradeOrdersQuery.data.degraded,
+      )}
+      automationContext={automationContextVisible ? automationContext : null}
+    />
+  );
+  const chainPanel = (
+    <MemoTradeChainPanel
+      ticker={activeTicker}
+      contract={contract}
+      heldContracts={heldContracts}
+      onSelectContract={handleSelectContract}
+      onChangeExp={handleChangeExpiration}
+      onRetryExpiration={handleRetryExpiration}
+      heatmapEnabled={tradeChainHeatmapEnabled}
+      onToggleHeatmap={() =>
+        setTradeChainHeatmapEnabled((current) => {
+          const next = !current;
+          upsertTradeWorkspace(activeTicker, { chainHeatmapEnabled: next });
+          return next;
+        })
+      }
+      chainCoverageValue={tradeOptionChainCoverage}
+      chainCoverageOptions={OPTION_CHAIN_COVERAGE_VALUES}
+      onChangeChainCoverage={handleChangeOptionChainCoverage}
+      onVisibleRowsChange={handleVisibleOptionChainRowsChange}
+    />
+  );
+  const spotFlowPanel = <MemoTradeSpotFlowPanel ticker={activeTicker} />;
+  const optionsFlowPanel = <MemoTradeOptionsFlowPanel ticker={activeTicker} />;
+  const strategyGreeksPanel = (
+    <MemoTradeStrategyGreeksPanel
+      slot={slot}
+      onApplyStrategy={applyStrategy}
+    />
+  );
+  const l2Panel = (
+    <MemoTradeL2Panel
+      slot={slot}
+      accountId={accountId}
+      brokerConfigured={brokerConfigured}
+      brokerAuthenticated={brokerAuthenticated}
+      isVisible={isVisible}
+      streamingPaused={!tradeBrokerStreamingEnabled}
+    />
+  );
+  const positionsPanel = (
+    <MemoTradePositionsPanel
+      accountId={accountId}
+      environment={environment}
+      brokerConfigured={brokerConfigured}
+      brokerAuthenticated={brokerAuthenticated}
+      gatewayTradingReady={gatewayTradingReady}
+      gatewayTradingMessage={gatewayTradingMessage}
+      isVisible={isVisible}
+      streamingPaused={!tradeBrokerStreamingEnabled}
+      onLoadPosition={handleLoadPosition}
+    />
+  );
   return (
     <div
       ref={tradeRootRef}
@@ -3432,6 +3603,134 @@ export const TradeScreen = ({
             </button>
           </div>
         )}
+        {tradeIsPhone ? (
+          <>
+            <div
+              data-testid="trade-mobile-tabs"
+              className="ra-hide-scrollbar"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: sp(4),
+                overflowX: "auto",
+                flexShrink: 0,
+              }}
+            >
+              {TRADE_PHONE_PANELS.map((panel) => (
+                <button
+                  key={panel.id}
+                  type="button"
+                  aria-pressed={activeTradePhonePanel === panel.id}
+                  onClick={() => setActiveTradePhonePanel(panel.id)}
+                  style={tradeMobileTabButtonStyle(activeTradePhonePanel === panel.id)}
+                >
+                  {panel.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTradePhonePanel === "chart" ? (
+              <div
+                data-testid="trade-top-zone"
+                className="ra-panel-enter"
+                style={tradeMobileSectionStyle}
+              >
+                {equityPanel}
+                <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPhoneTicketSheetOpen(true)}
+                    style={tradeMobileActionButtonStyle}
+                  >
+                    Ticket
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPhoneL2DrawerOpen(true)}
+                    style={tradeMobileActionButtonStyle}
+                  >
+                    L2
+                  </button>
+                </div>
+                {contractDetailPanel}
+              </div>
+            ) : null}
+
+            {activeTradePhonePanel === "chain" ? (
+              <div
+                data-testid="trade-middle-zone"
+                className="ra-panel-enter"
+                style={tradeMobileSectionStyle}
+              >
+                {chainPanel}
+                {spotFlowPanel}
+                {optionsFlowPanel}
+              </div>
+            ) : null}
+
+            {activeTradePhonePanel === "ticket" ? (
+              <div
+                data-testid="trade-order-ticket-zone"
+                className="ra-panel-enter"
+                style={tradeMobileSectionStyle}
+              >
+                {orderTicketPanel}
+              </div>
+            ) : null}
+
+            {activeTradePhonePanel === "positions" ? (
+              <div
+                data-testid="trade-bottom-zone"
+                className="ra-panel-enter"
+                style={tradeMobileSectionStyle}
+              >
+                <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPhoneTicketSheetOpen(true)}
+                    style={tradeMobileActionButtonStyle}
+                  >
+                    Ticket
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPhoneL2DrawerOpen(true)}
+                    style={tradeMobileActionButtonStyle}
+                  >
+                    L2
+                  </button>
+                </div>
+                {positionsPanel}
+                {strategyGreeksPanel}
+              </div>
+            ) : null}
+
+            <BottomSheet
+              open={phoneTicketSheetOpen}
+              onClose={() => setPhoneTicketSheetOpen(false)}
+              title={`${activeTicker} Order Ticket`}
+              maxHeight="88dvh"
+              testId="trade-mobile-ticket-sheet"
+            >
+              <div data-trade-layout="phone" style={{ padding: sp(6) }}>
+                {orderTicketPanel}
+              </div>
+            </BottomSheet>
+            <Drawer
+              open={phoneL2DrawerOpen}
+              onClose={() => setPhoneL2DrawerOpen(false)}
+              side="right"
+              title={`${activeTicker} L2`}
+              width={390}
+              testId="trade-mobile-l2-drawer"
+            >
+              <div style={{ minHeight: dim(540), padding: sp(6) }}>
+                {l2Panel}
+              </div>
+            </Drawer>
+          </>
+        ) : (
+          <>
         {/* Top zone: Equity chart + selected contract chart + order ticket */}
         <div
           data-testid="trade-top-zone"
@@ -3573,6 +3872,8 @@ export const TradeScreen = ({
             onLoadPosition={handleLoadPosition}
           />
         </div>
+          </>
+        )}
       </div>
     </div>
   );

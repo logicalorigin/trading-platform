@@ -752,19 +752,27 @@ export const MultiChartGrid = ({
   const denseGrid = cfg.count > 4;
   const gridGap = sp(denseGrid ? 4 : 6);
   const gridPadding = sp(denseGrid ? 4 : 6);
+  const phoneGrid = gridBodyWidth > 0 && gridBodyWidth < 768;
   const baseCardMinWidth = dim(
     MULTI_CHART_LAYOUT_CARD_WIDTH[layout] ||
       MULTI_CHART_LAYOUT_CARD_WIDTH["2x3"],
   );
   const baseCellHeight = dim(
-    MULTI_CHART_LAYOUT_CARD_HEIGHT[layout] ||
-      MULTI_CHART_LAYOUT_CARD_HEIGHT["2x3"],
+    phoneGrid
+      ? 430
+      : MULTI_CHART_LAYOUT_CARD_HEIGHT[layout] ||
+        MULTI_CHART_LAYOUT_CARD_HEIGHT["2x3"],
   );
-  const renderedCols = layout === "1x1" ? 1 : cfg.cols;
-  const renderedRows = layout === "1x1" ? 1 : cfg.rows;
-  const hasVerticalResizeGap = renderedCols > 1;
-  const hasHorizontalResizeGap = renderedRows > 1;
-  const showGridResizeControl = hasVerticalResizeGap || hasHorizontalResizeGap;
+  const renderedCols = phoneGrid ? 1 : layout === "1x1" ? 1 : cfg.cols;
+  const renderedRows = phoneGrid
+    ? visibleSlotEntries.length
+    : layout === "1x1"
+      ? 1
+      : cfg.rows;
+  const hasVerticalResizeGap = !phoneGrid && renderedCols > 1;
+  const hasHorizontalResizeGap = !phoneGrid && renderedRows > 1;
+  const showGridResizeControl =
+    !phoneGrid && (hasVerticalResizeGap || hasHorizontalResizeGap);
   const effectiveGridWidth = Math.max(0, (gridBodyWidth || 0) - gridPadding * 2);
   const trackAreaWidth = Math.max(
     0,

@@ -221,6 +221,37 @@ test("buildDailyPnlSeries derives total and unrealized only when NAV is anchored
   assert.equal(jan2.pnlSource, "total");
 });
 
+test("buildDailyPnlSeries uses same-day opening NAV when the first available day has intraday snapshots", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 8),
+    endDate: new Date(2026, 4, 8),
+    equityPoints: [
+      equityPoint("2026-05-08T18:26:02.932Z", 5753.34),
+      equityPoint("2026-05-08T19:56:58.939Z", 5778.57),
+      equityPoint("2026-05-08T20:57:22.819Z", 5752.74),
+    ],
+  });
+
+  assert.equal(Number(series[0].total.toFixed(2)), -0.6);
+  assert.equal(Number(series[0].unrealized.toFixed(2)), -0.6);
+  assert.equal(Number(series[0].pnl.toFixed(2)), -0.6);
+  assert.equal(series[0].pnlSource, "total");
+});
+
+test("buildDailyPnlSeries does not let one unanchored NAV point mask realized P&L", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 8),
+    endDate: new Date(2026, 4, 8),
+    trades: [trade("2026-05-08T16:00:00.000Z", 12)],
+    equityPoints: [equityPoint("2026-05-08T20:00:00.000Z", 5752.74)],
+  });
+
+  assert.equal(series[0].total, null);
+  assert.equal(series[0].unrealized, null);
+  assert.equal(series[0].pnl, 12);
+  assert.equal(series[0].pnlSource, "realized");
+});
+
 test("buildDailyPnlSeries falls back to realized P&L when NAV total is unavailable", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 0, 2),

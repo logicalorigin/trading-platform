@@ -2315,6 +2315,22 @@ export const AccountTradeSourceType = {
   mixed: 'mixed',
 } as const;
 
+export type AccountTradeSelectedContract = { [key: string]: unknown } | null;
+
+export type AccountTradeOptionContract = { [key: string]: unknown } | null;
+
+export type AccountTradeOptionRight = typeof AccountTradeOptionRight[keyof typeof AccountTradeOptionRight] | null;
+
+
+export const AccountTradeOptionRight = {
+  call: 'call',
+  put: 'put',
+} as const;
+
+export type AccountTradeFilterState = { [key: string]: unknown } | null;
+
+export type AccountTradeMetadata = { [key: string]: unknown };
+
 export interface AccountTrade {
   id: string;
   source: AccountTradeSource;
@@ -2338,6 +2354,25 @@ export interface AccountTrade {
   deploymentId?: string | null;
   deploymentName?: string | null;
   sourceEventId?: string | null;
+  exitReason?: string | null;
+  selectedContract?: AccountTradeSelectedContract;
+  optionContract?: AccountTradeOptionContract;
+  optionRight?: AccountTradeOptionRight;
+  expirationDate?: string | null;
+  dte?: number | null;
+  strike?: number | null;
+  strikeSlot?: number | null;
+  strikeDistancePct?: number | null;
+  signalPrice?: number | null;
+  filterState?: AccountTradeFilterState;
+  adx?: number | null;
+  mtfDirections?: number[];
+  filterDirection?: number | null;
+  peakPrice?: number | null;
+  mfePercent?: number | null;
+  givebackPercent?: number | null;
+  premiumAtRisk?: number | null;
+  metadata?: AccountTradeMetadata;
 }
 
 export interface AccountClosedTradesResponse {
@@ -2482,6 +2517,18 @@ export interface FlexHealthResponse {
   flexNavCoverageStartDate: string | null;
   flexNavCoverageEndDate: string | null;
   flexNavRowCount: number;
+  flexTradeCoverageStartAt: string | null;
+  flexTradeCoverageEndAt: string | null;
+  flexTradeRowCount: number;
+  flexCashCoverageStartAt: string | null;
+  flexCashCoverageEndAt: string | null;
+  flexCashRowCount: number;
+  flexDividendCoverageStartAt: string | null;
+  flexDividendCoverageEndAt: string | null;
+  flexDividendRowCount: number;
+  flexOpenPositionCoverageStartAt: string | null;
+  flexOpenPositionCoverageEndAt: string | null;
+  flexOpenPositionRowCount: number;
 }
 
 export interface FlexTestResponse {
@@ -4465,7 +4512,7 @@ export type GetFlowPremiumDistributionParams = {
 /**
  * Number of premium distribution widgets to return.
  * @minimum 1
- * @maximum 10
+ * @maximum 16
  */
 limit?: number;
 /**

@@ -46,6 +46,7 @@ const DEFAULT_FLOW_TAPE_FILTER_STATE = Object.freeze({
   minPrem: 0,
   includeQuery: "",
   excludeQuery: "",
+  symbol: null,
 });
 
 const readPersistedState = () => {
@@ -71,6 +72,7 @@ const persistFlowTapeFilterState = (state) => {
         flowMinPrem: state.minPrem,
         flowIncludeQuery: state.includeQuery,
         flowExcludeQuery: state.excludeQuery,
+        flowSymbol: state.symbol,
       }),
     );
   } catch (_error) {}
@@ -82,6 +84,12 @@ const normalizeOptionalString = (value) =>
 const normalizeMinPremium = (value) => {
   const parsed = typeof value === "string" ? Number(value) : value;
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0;
+};
+
+const normalizeFilterSymbol = (value) => {
+  if (value == null || value === "") return null;
+  const normalized = normalizeTickerSymbol(value);
+  return normalized || null;
 };
 
 export const parseFlowTapeTickerTokens = (value) =>
@@ -250,6 +258,7 @@ export const flowTapeEventMatchesFilters = (
   const right = getFlowTapeEventRight(event);
   const type = getFlowTapeEventType(event);
 
+  if (resolved.symbol && ticker !== resolved.symbol) return false;
   if (includeTokens.length && !includeTokens.includes(ticker)) return false;
   if (excludeTokens.includes(ticker)) return false;
   if (resolved.filter === "calls" && right !== "C") return false;
@@ -308,7 +317,8 @@ export const flowTapeFiltersAreActive = (filters = DEFAULT_FLOW_TAPE_FILTER_STAT
       resolved.filter !== "all" ||
       resolved.minPrem > 0 ||
       resolved.includeQuery.trim() ||
-      resolved.excludeQuery.trim(),
+      resolved.excludeQuery.trim() ||
+      resolved.symbol,
   );
 };
 
@@ -328,6 +338,7 @@ export const normalizeFlowTapeFilterState = (value = {}) => {
     minPrem: normalizeMinPremium(input.minPrem),
     includeQuery: normalizeOptionalString(input.includeQuery),
     excludeQuery: normalizeOptionalString(input.excludeQuery),
+    symbol: normalizeFilterSymbol(input.symbol),
   };
 };
 
@@ -339,6 +350,7 @@ const readInitialFlowTapeFilterState = () => {
     minPrem: persisted.flowMinPrem,
     includeQuery: persisted.flowIncludeQuery,
     excludeQuery: persisted.flowExcludeQuery,
+    symbol: persisted.flowSymbol,
   });
 };
 
@@ -376,6 +388,20 @@ export const setFlowTapeFilterState = (patch = {}) => {
   persistFlowTapeFilterState(next);
   notifyFlowTapeFilterListeners();
   return next;
+};
+
+export const setFlowTapeFilterSymbol = (symbol) =>
+  setFlowTapeFilterState({ symbol });
+
+export const clearFlowTapeFilterSymbol = () =>
+  setFlowTapeFilterState({ symbol: null });
+
+export const toggleFlowTapeFilterSymbol = (symbol) => {
+  const normalized = normalizeFilterSymbol(symbol);
+  const current = getFlowTapeFilterState().symbol;
+  return setFlowTapeFilterState({
+    symbol: normalized && normalized === current ? null : normalized,
+  });
 };
 
 export const resetFlowTapeFilterStateForTests = (

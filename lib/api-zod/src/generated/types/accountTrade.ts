@@ -5,6 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { AccountTradeFilterState } from './accountTradeFilterState';
+import type { AccountTradeMetadata } from './accountTradeMetadata';
+import type { AccountTradeOptionContract } from './accountTradeOptionContract';
+import type { AccountTradeOptionRight } from './accountTradeOptionRight';
+import type { AccountTradeSelectedContract } from './accountTradeSelectedContract';
 import type { AccountTradeSource } from './accountTradeSource';
 import type { AccountTradeSourceType } from './accountTradeSourceType';
 
@@ -31,4 +36,23 @@ export interface AccountTrade {
   deploymentId?: string | null;
   deploymentName?: string | null;
   sourceEventId?: string | null;
+  exitReason?: string | null;
+  selectedContract?: AccountTradeSelectedContract;
+  optionContract?: AccountTradeOptionContract;
+  optionRight?: AccountTradeOptionRight;
+  expirationDate?: string | null;
+  dte?: number | null;
+  strike?: number | null;
+  strikeSlot?: number | null;
+  strikeDistancePct?: number | null;
+  signalPrice?: number | null;
+  filterState?: AccountTradeFilterState;
+  adx?: number | null;
+  mtfDirections?: number[];
+  filterDirection?: number | null;
+  peakPrice?: number | null;
+  mfePercent?: number | null;
+  givebackPercent?: number | null;
+  premiumAtRisk?: number | null;
+  metadata?: AccountTradeMetadata;
 }

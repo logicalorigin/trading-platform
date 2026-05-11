@@ -149,3 +149,61 @@ test("account analysis readiness distinguishes waiting and optional inputs", () 
   assert.equal(readiness.find((row) => row.key === "fee-coverage").state, "optional");
   assert.equal(readiness.find((row) => row.key === "order-context").detail, "No order rows");
 });
+
+test("account trading analysis groups option outcomes and stop scenarios", () => {
+  const model = buildAccountTradingAnalysisModel({
+    trades: [
+      {
+        id: "opt-1",
+        source: "SHADOW",
+        symbol: "SPY",
+        side: "sell",
+        assetClass: "Options",
+        quantity: 2,
+        avgOpen: 1,
+        avgClose: 0.4,
+        closeDate: "2026-05-01T16:00:00.000Z",
+        realizedPnl: -120,
+        commissions: 2,
+        optionRight: "put",
+        dte: 1,
+        strikeSlot: 2,
+        exitReason: "hard_stop",
+        peakPrice: 1.7,
+        mfePercent: 70,
+        givebackPercent: 130,
+        adx: 18,
+        mtfDirections: [1, 1, 1],
+      },
+      {
+        id: "opt-2",
+        source: "SHADOW",
+        symbol: "QQQ",
+        side: "sell",
+        assetClass: "Options",
+        quantity: 1,
+        avgOpen: 1,
+        avgClose: 2.2,
+        closeDate: "2026-05-01T17:00:00.000Z",
+        realizedPnl: 120,
+        commissions: 1,
+        optionRight: "call",
+        dte: 3,
+        strikeSlot: 3,
+        exitReason: "expiration",
+        peakPrice: 2.4,
+        mfePercent: 140,
+        givebackPercent: 20,
+        adx: 30,
+        mtfDirections: [1, 1, 1],
+      },
+    ],
+  });
+
+  assert.equal(model.bucketGroups.optionRight.length, 2);
+  assert.equal(model.bucketGroups.exitReason.some((group) => group.key === "hard_stop"), true);
+  assert.equal(model.bucketGroups.dte.some((group) => group.key === "1dte"), true);
+  assert.equal(model.bucketGroups.mfeGiveback.some((group) => group.key === "large-giveback"), true);
+  assert.ok(model.stopScenarios.length >= 3);
+  assert.equal(model.contractBreakdowns.strikeSlot.some((group) => group.key === "2"), true);
+});

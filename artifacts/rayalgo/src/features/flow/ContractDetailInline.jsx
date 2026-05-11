@@ -996,6 +996,18 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 rangeIdentityKey={optionChartScopeKey}
                 viewportLayoutKey={optionChartViewportLayoutKey}
                 model={optionChartModel}
+                positionOverlayContext={{
+                  surfaceKind: "option",
+                  symbol: chartSymbol,
+                  optionContract: {
+                    ticker: optionTicker,
+                    underlying: chartSymbol,
+                    expirationDate: optionExpirationIso,
+                    strike: optionStrike,
+                    right: optionRight,
+                    providerContractId: effectiveProviderContractId || providerContractId,
+                  },
+                }}
                 onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
                 showSurfaceToolbar={false}
                 showLegend

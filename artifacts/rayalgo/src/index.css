@@ -75,6 +75,19 @@ textarea {
   font: inherit;
 }
 
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+.ra-shell[data-viewport="phone"] .ra-touch-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 table {
   max-width: 100%;
 }

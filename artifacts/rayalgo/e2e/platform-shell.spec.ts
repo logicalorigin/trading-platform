@@ -1069,11 +1069,16 @@ test("platform phone layout navigates all primary screens without document overf
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
   const nav = page.getByTestId("platform-screen-nav");
+  await expect(nav.getByRole("button", { name: "Open navigation", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("mobile-nav-drawer")).toBeHidden();
   await expect(nav.getByRole("button", { name: "Open watchlist", exact: true })).toBeVisible();
   await nav.getByRole("button", { name: "Open watchlist", exact: true }).click();
-  await expect(nav.getByRole("button", { name: "Close watchlist", exact: true })).toBeVisible();
-  await nav.getByRole("button", { name: "Close watchlist", exact: true }).click();
-  await expect(nav.getByRole("button", { name: "Open watchlist", exact: true })).toBeVisible();
+  await expect(page.getByTestId("mobile-watchlist-drawer")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("mobile-watchlist-drawer")).toBeHidden();
 
   const screens = [
     ["Market", "market", "market-workspace"],

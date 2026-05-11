@@ -1,5 +1,7 @@
-import { RadioTower } from "lucide-react";
+import { RadioTower, Settings } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { useViewport } from "../../lib/responsive";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   formatOptionContractLabel,
@@ -182,25 +184,33 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
   );
 };
 
-const HeaderLaneSettingsPopover = ({ children, testId }) => (
+const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
   <div
     data-testid={testId}
     className="ra-popover-enter"
-    style={{
-      position: "absolute",
-      top: 0,
-      left: `calc(100% + ${dim(4)}px)`,
-      zIndex: 80,
-      width: dim(238),
-      padding: sp(8),
-      maxHeight: `calc(100vh - ${dim(18)}px)`,
-      overflowY: "auto",
-      background: T.bg0,
-      border: `1px solid ${T.border}`,
-      boxShadow: "0 12px 28px rgba(0,0,0,0.32)",
-      color: T.text,
-      fontFamily: T.sans,
-    }}
+    style={sheet
+      ? {
+          padding: sp(10),
+          overflowY: "auto",
+          background: T.bg0,
+          color: T.text,
+          fontFamily: T.sans,
+        }
+      : {
+          position: "absolute",
+          top: 0,
+          left: `calc(100% + ${dim(4)}px)`,
+          zIndex: 80,
+          width: dim(238),
+          padding: sp(8),
+          maxHeight: `calc(100vh - ${dim(18)}px)`,
+          overflowY: "auto",
+          background: T.bg0,
+          border: `1px solid ${T.border}`,
+          boxShadow: "0 12px 28px rgba(0,0,0,0.32)",
+          color: T.text,
+          fontFamily: T.sans,
+        }}
   >
     {children}
   </div>
@@ -450,6 +460,7 @@ const HeaderBroadcastLane = ({
   settingsOpen = false,
   onToggleSettings,
   settingsContent,
+  compactSettings = false,
 }) => {
   const shouldScroll = items.length >= 4;
   const renderedItems = shouldScroll ? [...items, ...items] : items;
@@ -459,7 +470,9 @@ const HeaderBroadcastLane = ({
       data-testid={testId}
       style={{
         display: "grid",
-        gridTemplateColumns: "72px minmax(0, 1fr) auto",
+        gridTemplateColumns: compactSettings
+          ? `${dim(38)}px minmax(0, 1fr) auto`
+          : "72px minmax(0, 1fr) auto",
         alignItems: "center",
         minHeight: dim(25),
         minWidth: 0,
@@ -480,6 +493,7 @@ const HeaderBroadcastLane = ({
           type="button"
           data-testid={`${testId}-settings-trigger`}
           aria-expanded={settingsOpen}
+          aria-label={`${label} settings`}
           onClick={onToggleSettings}
           style={{
             width: "100%",
@@ -498,7 +512,7 @@ const HeaderBroadcastLane = ({
             whiteSpace: "nowrap",
           }}
         >
-          {label}
+          {compactSettings ? <Settings size={14} strokeWidth={2} /> : label}
         </button>
         {settingsOpen ? settingsContent : null}
       </div>
@@ -590,6 +604,8 @@ export const HeaderBroadcastScrollerStack = memo(({
   onToggleSignalScan,
 }) => {
   const rootRef = useRef(null);
+  const viewport = useViewport();
+  const isPhone = viewport.flags.isPhone;
   const signalSnapshot = useSignalMonitorSnapshot({
     subscribeToUpdates: enabled,
   });
@@ -869,7 +885,10 @@ export const HeaderBroadcastScrollerStack = memo(({
           ? "SCAN ON"
           : "SCAN OFF";
   const signalSettings = (
-    <HeaderLaneSettingsPopover testId="header-signal-settings-popover">
+    <HeaderLaneSettingsPopover
+      testId="header-signal-settings-popover"
+      sheet={isPhone}
+    >
       <HeaderLaneSettingsTitle
         label="SIGNALS"
         status={signalStatusLabel}
@@ -974,7 +993,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? `${unusualCoverage.cycleScannedSymbols}/${unusualCoverage.totalSymbols || unusualCoverage.activeTargetSize || unusualCoverage.cycleScannedSymbols}`
       : MISSING_VALUE;
   const unusualSettings = (
-    <HeaderLaneSettingsPopover testId="header-unusual-settings-popover">
+    <HeaderLaneSettingsPopover
+      testId="header-unusual-settings-popover"
+      sheet={isPhone}
+    >
       <HeaderLaneSettingsTitle
         label="FLOW"
         status={flowScanStatusLabel}
@@ -1175,7 +1197,8 @@ export const HeaderBroadcastScrollerStack = memo(({
         onToggleSettings={() =>
           setOpenSettingsLane((lane) => (lane === "signals" ? null : "signals"))
         }
-        settingsContent={signalSettings}
+        settingsContent={isPhone ? null : signalSettings}
+        compactSettings={isPhone}
         action={
           <AppTooltip content={signalToggleTitle}><button
             type="button"
@@ -1220,7 +1243,8 @@ export const HeaderBroadcastScrollerStack = memo(({
         onToggleSettings={() =>
           setOpenSettingsLane((lane) => (lane === "unusual" ? null : "unusual"))
         }
-        settingsContent={unusualSettings}
+        settingsContent={isPhone ? null : unusualSettings}
+        compactSettings={isPhone}
         action={
           <AppTooltip content={broadToggleTitle}><button
             type="button"
@@ -1253,6 +1277,22 @@ export const HeaderBroadcastScrollerStack = memo(({
           />
         )}
       </HeaderBroadcastLane>
+      <BottomSheet
+        open={isPhone && openSettingsLane === "signals"}
+        onClose={() => setOpenSettingsLane(null)}
+        title="Signal Tape Settings"
+        testId="header-signal-settings-sheet"
+      >
+        {signalSettings}
+      </BottomSheet>
+      <BottomSheet
+        open={isPhone && openSettingsLane === "unusual"}
+        onClose={() => setOpenSettingsLane(null)}
+        title="Flow Tape Settings"
+        testId="header-unusual-settings-sheet"
+      >
+        {unusualSettings}
+      </BottomSheet>
     </div>
   );
 });

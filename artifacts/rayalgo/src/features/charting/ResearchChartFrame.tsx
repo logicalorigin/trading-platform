@@ -8,6 +8,8 @@ import {
 } from "./ResearchChartSurface";
 import type { ChartModel } from "./types";
 import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
+import { useChartPositionOverlays } from "./useChartPositionOverlays";
+import type { ChartPositionOverlayContext } from "./chartPositionOverlays";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -98,6 +100,7 @@ type ResearchChartFrameProps = {
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
   persistScalePrefs?: boolean;
   frameSignalState?: FrameSignalState;
+  positionOverlayContext?: ChartPositionOverlayContext | null;
 };
 
 export const ResearchChartFrame = ({
@@ -140,7 +143,12 @@ export const ResearchChartFrame = ({
   onViewportSnapshotChange,
   persistScalePrefs,
   frameSignalState = null,
+  positionOverlayContext = null,
 }: ResearchChartFrameProps) => {
+  const positionOverlayState = useChartPositionOverlays({
+    chartContext: positionOverlayContext,
+    model,
+  });
   const signalActive = Boolean(
     frameSignalState?.active &&
       (frameSignalState.direction === "buy" ||
@@ -214,6 +222,10 @@ export const ResearchChartFrame = ({
           externalViewportUserTouched={viewportUserTouched}
           onViewportSnapshotChange={onViewportSnapshotChange}
           persistScalePrefs={persistScalePrefs}
+          positionOverlays={positionOverlayState.overlays}
+          positionOverlaysAvailable={positionOverlayState.available}
+          positionOverlaysEnabled={positionOverlayState.enabled}
+          onPositionOverlaysEnabledChange={positionOverlayState.setLocalEnabled}
         />
       </div>
       {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}

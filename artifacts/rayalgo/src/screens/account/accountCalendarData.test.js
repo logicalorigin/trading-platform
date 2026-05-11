@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildPerformanceCalendarParams,
@@ -36,3 +37,23 @@ test("resolveReturnsCalendarData uses the dedicated calendar query payload", () 
   assert.deepEqual(resolved.equityPoints, performanceEquity.points);
 });
 
+test("account screen wires shadow account queries through the paper ledger path", () => {
+  const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /mode:\s*shadowMode\s*\?\s*"paper"\s*:\s*environment\s*\|\|\s*"paper"/);
+  assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(accountQueriesEnabled\)/);
+  assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
+  assert.match(source, /setHoveredEquityDate\(null\);[\s\S]*setPinnedEquityDate\(null\);/);
+});
+
+test("shadow account treemap empty state does not mention bridge streaming", () => {
+  const accountSource = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
+  const treemapSource = readFileSync(
+    new URL("./PositionTreemapPanel.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(accountSource, /Shadow ledger positions are opened or marked/);
+  assert.match(treemapSource, /emptyBody\s*=/);
+  assert.match(treemapSource, /body=\{emptyBody\}/);
+});

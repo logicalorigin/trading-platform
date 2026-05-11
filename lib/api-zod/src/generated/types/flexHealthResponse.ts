@@ -26,4 +26,16 @@ export interface FlexHealthResponse {
   flexNavCoverageStartDate: Date | null;
   flexNavCoverageEndDate: Date | null;
   flexNavRowCount: number;
+  flexTradeCoverageStartAt: Date | null;
+  flexTradeCoverageEndAt: Date | null;
+  flexTradeRowCount: number;
+  flexCashCoverageStartAt: Date | null;
+  flexCashCoverageEndAt: Date | null;
+  flexCashRowCount: number;
+  flexDividendCoverageStartAt: Date | null;
+  flexDividendCoverageEndAt: Date | null;
+  flexDividendRowCount: number;
+  flexOpenPositionCoverageStartAt: Date | null;
+  flexOpenPositionCoverageEndAt: Date | null;
+  flexOpenPositionRowCount: number;
 }

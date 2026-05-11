@@ -62,7 +62,6 @@ import {
   getOptionsFlowUniverse,
   getSession,
   getUniverseLogos,
-  listAccounts,
   listBrokerConnections,
   listExecutions,
   listAggregateFlowEvents,
@@ -121,6 +120,7 @@ import {
   getAccountRisk,
   getAccountSummary,
   getFlexHealth,
+  listAccounts,
   testFlexToken,
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";

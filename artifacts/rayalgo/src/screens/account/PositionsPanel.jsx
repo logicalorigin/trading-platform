@@ -10,6 +10,7 @@ import {
   formatAccountMoney,
   formatAccountPercent,
   formatAccountPrice,
+  formatAccountSignedMoney,
   formatNumber,
   moveTableFocus,
   mutedLabelStyle,
@@ -82,6 +83,40 @@ const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
+const mobileCardStyle = {
+  border: `1px solid ${T.border}`,
+  borderRadius: dim(5),
+  background: T.bg1,
+  padding: sp("8px 9px"),
+  display: "grid",
+  gap: sp(7),
+  minWidth: 0,
+};
+
+const mobileMetricGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: sp("6px 8px"),
+};
+
+const MobileMetric = ({ label, value, tone = T.text }) => (
+  <div style={{ minWidth: 0 }}>
+    <div style={mutedLabelStyle}>{label}</div>
+    <div
+      style={{
+        color: tone,
+        fontFamily: T.data,
+        fontSize: fs(10),
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </div>
+  </div>
+);
+
 const dateLabel = (date) => {
   if (!date) return "Live";
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -129,6 +164,7 @@ export const PositionsAtDateInspector = ({
   });
   const positions = inspectorState.positions;
   const activity = inspectorState.activity;
+  const balance = inspectorState.balance;
   const title = pinnedDate
     ? `Positions @ ${dateLabel(pinnedDate)}`
     : activeDate
@@ -172,6 +208,49 @@ export const PositionsAtDateInspector = ({
         />
       ) : (
         <div style={{ display: "grid", gap: sp(6) }}>
+          {balance ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))",
+                gap: sp(5),
+              }}
+            >
+              {[
+                ["Net Liq", formatAccountMoney(balance.netLiquidation, currency, false, maskValues), T.text],
+                ["Day P&L", formatAccountSignedMoney(balance.dayPnl, currency, false, maskValues), toneForValue(balance.dayPnl)],
+                ["Cash", formatAccountMoney(balance.cash, currency, false, maskValues), T.text],
+                ["Buying Power", formatAccountMoney(balance.buyingPower, currency, false, maskValues), T.text],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    background: T.bg0,
+                    padding: sp("5px 6px"),
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={mutedLabelStyle}>{label}</div>
+                  <div
+                    style={{
+                      marginTop: sp(2),
+                      color,
+                      fontFamily: T.data,
+                      fontSize: fs(11),
+                      fontWeight: 400,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
             <Pill tone="cyan">
               {positions.length} positions
@@ -179,12 +258,22 @@ export const PositionsAtDateInspector = ({
             <Pill tone="purple">
               {activity.length} activity rows
             </Pill>
+            {balance?.dayPnlPercent != null ? (
+              <Pill tone={Number(balance.dayPnlPercent) >= 0 ? "green" : "red"}>
+                {formatAccountPercent(balance.dayPnlPercent, 2, maskValues)}
+              </Pill>
+            ) : null}
             {data?.snapshotDate ? (
               <Pill tone="default">
                 as of {formatAppDateTime(data.snapshotDate)}
               </Pill>
             ) : null}
           </div>
+          {!positions.length && inspectorState.message ? (
+            <div style={{ color: T.textMuted, fontSize: fs(9), lineHeight: 1.35 }}>
+              {inspectorState.message}
+            </div>
+          ) : null}
 
           <div
             style={{
@@ -325,6 +414,7 @@ export const PositionsPanel = ({
   pinnedEquityDate,
   currentPositionsCount,
   onClearEquityPin,
+  isPhone = false,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
@@ -396,6 +486,190 @@ export const PositionsPanel = ({
             title="No open positions"
             body={emptyBody}
           />
+        </div>
+      ) : isPhone ? (
+        <div
+          data-testid="account-positions-card-list"
+          style={{
+            display: "grid",
+            gap: sp(6),
+            padding: sp(6),
+          }}
+        >
+          {sortedRows.map((row) => {
+            const expanded = expandedRows.has(row.id);
+            return (
+              <article key={row.id} style={mobileCardStyle}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: sp(6),
+                    minWidth: 0,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onJumpToChart?.(row.symbol)}
+                    style={{
+                      border: "none",
+                      padding: 0,
+                      background: "transparent",
+                      color: T.text,
+                      textAlign: "left",
+                      minWidth: 0,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <MarketIdentityInline
+                      item={{
+                        ticker: row.symbol,
+                        name: row.description || row.symbol,
+                        market: marketForAssetClass(row.assetClass),
+                        sector: row.sector || null,
+                      }}
+                      size={16}
+                      showMark={false}
+                      showChips
+                      style={{ maxWidth: "100%" }}
+                    />
+                    <div
+                      style={{
+                        marginTop: sp(2),
+                        color: T.textDim,
+                        fontSize: fs(9),
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {row.description || row.assetClass || "Position"}
+                    </div>
+                  </button>
+                  <Pill tone={row.quantity < 0 ? "red" : "green"}>
+                    {row.quantity < 0 ? "Short" : "Long"}
+                  </Pill>
+                </div>
+
+                <div style={mobileMetricGridStyle}>
+                  <MobileMetric label="Qty" value={formatNumber(row.quantity, 4)} tone={row.quantity < 0 ? T.red : T.text} />
+                  <MobileMetric label="Avg Cost" value={formatAccountPrice(row.averageCost, 2, maskValues)} />
+                  <MobileMetric label="Mark" value={formatAccountPrice(row.mark, 2, maskValues)} />
+                  <MobileMetric label="Day" value={formatAccountSignedMoney(row.dayChange, currency, false, maskValues)} tone={toneForValue(row.dayChange)} />
+                  <MobileMetric
+                    label="Unrealized"
+                    value={`${formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)} / ${formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}`}
+                    tone={toneForValue(row.unrealizedPnl)}
+                  />
+                  <MobileMetric label="Value" value={formatAccountMoney(row.marketValue, currency, false, maskValues)} />
+                </div>
+
+                <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+                  {(row.accounts || []).slice(0, 3).map((accountId) => (
+                    <Pill key={`${row.id}:${accountId}`} tone="cyan">
+                      {accountId}
+                    </Pill>
+                  ))}
+                  {row.assetClass ? <Pill tone="purple">{row.assetClass}</Pill> : null}
+                  {row.sourceType ? (
+                    <Pill tone={sourceTone(row.sourceType)}>
+                      {row.strategyLabel || row.sourceType}
+                    </Pill>
+                  ) : null}
+                </div>
+
+                {expanded ? (
+                  <div
+                    style={{
+                      borderTop: `1px solid ${T.border}`,
+                      paddingTop: sp(6),
+                      display: "grid",
+                      gap: sp(6),
+                    }}
+                  >
+                    <div>
+                      <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Tax Lots</div>
+                      {row.lots?.length ? (
+                        <div style={{ display: "grid", gap: sp(3) }}>
+                          {row.lots.slice(0, 4).map((lot, index) => (
+                            <div
+                              key={`${row.id}:mobile-lot:${index}`}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0, 1fr) auto",
+                                gap: sp(6),
+                                color: T.textSec,
+                                fontFamily: T.data,
+                                fontSize: fs(9),
+                              }}
+                            >
+                              <span>{lot.accountId} · {formatNumber(lot.quantity, 4)} @ {formatAccountPrice(lot.averageCost, 2, maskValues)}</span>
+                              <span style={{ color: toneForValue(lot.unrealizedPnl) }}>
+                                {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: T.textMuted, fontSize: fs(10) }}>
+                          No tax-lot detail recorded yet.
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Open Orders</div>
+                      {row.openOrders?.length ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+                          {row.openOrders.slice(0, 4).map((order) => (
+                            <Pill key={order.id} tone={/buy/i.test(order.side) ? "green" : "red"}>
+                              {order.side} {formatNumber(order.quantity, 2)}
+                            </Pill>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: T.textMuted, fontSize: fs(10) }}>
+                          No working orders tied to this position.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div style={{ display: "flex", gap: sp(5), justifyContent: "space-between" }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(row.id)}
+                    aria-expanded={expanded}
+                    style={{ ...secondaryButtonStyle, minHeight: dim(36) }}
+                  >
+                    {expanded ? "Hide Details" : "Details"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onJumpToChart?.(row.symbol)}
+                    style={{ ...secondaryButtonStyle, minHeight: dim(36) }}
+                  >
+                    Chart
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          <div
+            style={{
+              ...mobileCardStyle,
+              background: T.bg0,
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            }}
+          >
+            <MobileMetric label="Total Day" value={formatAccountMoney(totalDayChange, currency, false, maskValues)} tone={toneForValue(totalDayChange)} />
+            <MobileMetric label="Net Exposure" value={formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues)} />
+            <MobileMetric
+              label="Unrealized"
+              value={formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, false, maskValues)}
+              tone={toneForValue(query.data?.totals?.unrealizedPnl)}
+            />
+            <MobileMetric label="Weight" value={formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues)} />
+          </div>
         </div>
       ) : (
         <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: "34vh" }}>

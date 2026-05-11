@@ -94,6 +94,7 @@ export const PositionTreemapPanel = ({
   loading = false,
   error = null,
   onRetry,
+  emptyBody = "Treemap renders once open positions are streamed from the bridge.",
 }) => {
   const [mode, setMode] = useState("DAY");
   const items = useMemo(() => buildTreemapItems(positions), [positions]);
@@ -132,7 +133,7 @@ export const PositionTreemapPanel = ({
       {!items.length ? (
         <EmptyState
           title="No positions"
-          body="Treemap renders once open positions are streamed from the bridge."
+          body={emptyBody}
         />
       ) : (
         <div style={{ display: "grid", gap: sp(4) }}>

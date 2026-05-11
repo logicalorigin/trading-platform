@@ -111,10 +111,16 @@ const buildEquityDailyMap = (equityPoints = []) => {
       (finiteNumber(point?.deposits) ?? 0) - (finiteNumber(point?.withdrawals) ?? 0);
     const current = byDay.get(key) || {
       iso: key,
+      firstNav: null,
+      firstTs: Infinity,
       eodNav: null,
       eodTs: -Infinity,
       transfers: 0,
     };
+    if (timestamp.getTime() <= current.firstTs) {
+      current.firstNav = nav;
+      current.firstTs = timestamp.getTime();
+    }
     if (timestamp.getTime() >= current.eodTs) {
       current.eodNav = nav;
       current.eodTs = timestamp.getTime();
@@ -170,8 +176,15 @@ export const buildDailyPnlSeries = ({
     const realized = tradeRow?.realized ?? 0;
     const tradeCount = tradeRow?.trades ?? 0;
     let total = null;
-    if (equityRow?.eodNav != null && priorNav != null) {
-      total = equityRow.eodNav - priorNav - (equityRow.transfers || 0);
+    const intradayBaselineAvailable =
+      equityRow?.firstNav != null &&
+      Number.isFinite(equityRow.firstTs) &&
+      Number.isFinite(equityRow.eodTs) &&
+      equityRow.firstTs < equityRow.eodTs;
+    const baselineNav =
+      priorNav ?? (intradayBaselineAvailable ? equityRow.firstNav : null);
+    if (equityRow?.eodNav != null && baselineNav != null) {
+      total = equityRow.eodNav - baselineNav - (equityRow.transfers || 0);
     }
     if (equityRow?.eodNav != null) {
       priorNav = equityRow.eodNav;

@@ -122,7 +122,7 @@ import {
   recordBridgeWorkFailure,
   runBridgeWork,
 } from "./bridge-governor";
-import { listIbkrAccounts, listIbkrExecutions } from "./ibkr-account-bridge";
+import { listIbkrExecutions } from "./ibkr-account-bridge";
 import {
   getBridgeOrderReadSuppression,
 } from "./bridge-order-read-state";
@@ -943,6 +943,7 @@ const FLOW_EVENTS_CACHE_STALE_TTL_MS = 5 * 60_000;
 const FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS = 45_000;
 const FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS = 10 * 60_000;
 const FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT = 10;
+const FLOW_PREMIUM_DISTRIBUTION_MAX_LIMIT = 16;
 const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_LIMIT = 24;
 const FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES = 60;
 const FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY = 4;
@@ -1317,7 +1318,10 @@ function isPremiumDistributionCandidate(symbol: string): boolean {
 
 function normalizeFlowPremiumDistributionLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT;
-  return Math.max(1, Math.min(Math.floor(value as number), 10));
+  return Math.max(
+    1,
+    Math.min(Math.floor(value as number), FLOW_PREMIUM_DISTRIBUTION_MAX_LIMIT),
+  );
 }
 
 function normalizeFlowPremiumDistributionCandidateLimit(
@@ -2106,12 +2110,6 @@ export async function listBrokerConnections() {
         updatedAt: timestamp,
       },
     ],
-  };
-}
-
-export async function listAccounts(input: { mode?: "paper" | "live" }) {
-  return {
-    accounts: await listIbkrAccounts(input.mode ?? getRuntimeMode()),
   };
 }
 

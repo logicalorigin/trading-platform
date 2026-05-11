@@ -41,7 +41,7 @@ import {
   providerSummaryHasVisibleFlowDegradation,
 } from "../features/platform/flowSourceState.js";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
-import { FlowScannerStatusPanel } from "../features/flow/FlowScannerStatusPanel.jsx";
+import { FlowDistributionScannerPanel } from "../features/flow/FlowDistributionScannerPanel.jsx";
 import {
   OrderFlowDonut,
   SizeBucketRow,
@@ -68,7 +68,9 @@ import {
   DataUnavailableState,
   Pill,
 } from "../components/platform/primitives.jsx";
+import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
+import { Drawer } from "../components/platform/Drawer.jsx";
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
   fmtCompactNumber,
@@ -100,12 +102,14 @@ import {
   FLOW_TAPE_FILTER_OPTIONS,
   buildFlowTapeEventClusters,
   buildFlowTapePresetPatch,
+  clearFlowTapeFilterSymbol,
   filterFlowTapeEvents,
   flowTapeFiltersAreActive,
   getFlowTapeEventCluster,
   getFlowBuiltInPreset,
   parseFlowTapeTickerTokens,
   setFlowTapeFilterState,
+  toggleFlowTapeFilterSymbol,
   useFlowTapeFilterState,
 } from "../features/platform/flowFilterStore";
 import {
@@ -145,7 +149,7 @@ const getDisplayableFlowError = (providerSummary) => {
   }
   return message;
 };
-const FLOW_PREMIUM_WIDGET_COUNT = 10;
+const FLOW_PREMIUM_WIDGET_COUNT = 16;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
@@ -653,6 +657,290 @@ const buildPremiumDistributionRows = (widget) => {
   }));
 };
 
+const FLOW_SCANNER_DISTRIBUTION_BUCKET_THRESHOLDS = {
+  smallMin: 0,
+  mediumMin: 100_000,
+  largeMin: 500_000,
+};
+
+const createEmptyPremiumDistributionBucket = () => ({
+  inflowPremium: 0,
+  outflowPremium: 0,
+  buyPremium: 0,
+  sellPremium: 0,
+  neutralPremium: 0,
+  totalPremium: 0,
+  count: 0,
+});
+
+const resolveFlowScannerDistributionBucket = (premium) => {
+  if (premium >= FLOW_SCANNER_DISTRIBUTION_BUCKET_THRESHOLDS.largeMin) {
+    return "large";
+  }
+  if (premium >= FLOW_SCANNER_DISTRIBUTION_BUCKET_THRESHOLDS.mediumMin) {
+    return "medium";
+  }
+  return "small";
+};
+
+const addPremiumToBucket = (bucket, premium, side) => {
+  bucket.totalPremium += premium;
+  bucket.count += 1;
+  if (side === "BUY") {
+    bucket.inflowPremium += premium;
+    bucket.buyPremium += premium;
+    return;
+  }
+  if (side === "SELL") {
+    bucket.outflowPremium += premium;
+    bucket.sellPremium += premium;
+    return;
+  }
+  bucket.neutralPremium += premium;
+};
+
+const buildFlowScannerDistributionWidgets = ({
+  events,
+  limit,
+  timeframe,
+}) => {
+  const grouped = new Map();
+
+  (events || []).forEach((event) => {
+    const symbol = normalizeTickerSymbol(
+      event?.ticker || event?.underlying || event?.symbol,
+    );
+    const premium = isFiniteNumber(event?.premium)
+      ? Math.max(0, event.premium)
+      : 0;
+    if (!symbol || premium <= 0) return;
+
+    const entry =
+      grouped.get(symbol) ||
+      {
+        symbol,
+        asOf: null,
+        stockDayVolume: null,
+        buckets: {
+          small: createEmptyPremiumDistributionBucket(),
+          medium: createEmptyPremiumDistributionBucket(),
+          large: createEmptyPremiumDistributionBucket(),
+        },
+        premiumTotal: 0,
+        classifiedPremium: 0,
+        inflowPremium: 0,
+        outflowPremium: 0,
+        buyPremium: 0,
+        sellPremium: 0,
+        neutralPremium: 0,
+        callPremium: 0,
+        putPremium: 0,
+        contractCount: 0,
+        tradeCount: 0,
+        classifiedTradeCount: 0,
+        quoteMatchedCount: 0,
+        tickTestMatchedCount: 0,
+        scoreTotal: 0,
+      };
+
+    const side = String(event?.side || "").toUpperCase();
+    const right = String(event?.cp || event?.right || "").toUpperCase();
+    const bucket = entry.buckets[resolveFlowScannerDistributionBucket(premium)];
+    addPremiumToBucket(bucket, premium, side);
+
+    entry.premiumTotal += premium;
+    entry.tradeCount += 1;
+    entry.contractCount += 1;
+    entry.scoreTotal += isFiniteNumber(event?.score) ? event.score : 0;
+    if (side === "BUY") {
+      entry.inflowPremium += premium;
+      entry.buyPremium += premium;
+      entry.classifiedPremium += premium;
+      entry.classifiedTradeCount += 1;
+      entry.tickTestMatchedCount += 1;
+    } else if (side === "SELL") {
+      entry.outflowPremium += premium;
+      entry.sellPremium += premium;
+      entry.classifiedPremium += premium;
+      entry.classifiedTradeCount += 1;
+      entry.tickTestMatchedCount += 1;
+    } else {
+      entry.neutralPremium += premium;
+    }
+    if (right === "C" || right === "CALL") {
+      entry.callPremium += premium;
+    } else if (right === "P" || right === "PUT") {
+      entry.putPremium += premium;
+    }
+
+    const eventTime = Date.parse(
+      event?.occurredAt || event?.updatedAt || event?.timestamp || "",
+    );
+    if (Number.isFinite(eventTime)) {
+      entry.asOf = Math.max(entry.asOf || 0, eventTime);
+    }
+    if (isFiniteNumber(event?.underlyingPrice)) {
+      entry.underlyingPrice = event.underlyingPrice;
+    }
+    grouped.set(symbol, entry);
+  });
+
+  return Array.from(grouped.values())
+    .sort((left, right) => {
+      const premiumDelta = right.premiumTotal - left.premiumTotal;
+      if (premiumDelta !== 0) return premiumDelta;
+      return left.symbol.localeCompare(right.symbol);
+    })
+    .slice(0, limit)
+    .map((entry, index) => {
+      const classificationCoverage = entry.premiumTotal
+        ? entry.classifiedPremium / entry.premiumTotal
+        : 0;
+      const hasInflow = entry.inflowPremium > 0;
+      const hasOutflow = entry.outflowPremium > 0;
+      return {
+        rank: index + 1,
+        symbol: entry.symbol,
+        asOf: new Date(entry.asOf || Date.now()).toISOString(),
+        timeframe,
+        stockDayVolume: entry.stockDayVolume,
+        marketCap: null,
+        marketCapTier: "small_or_unknown",
+        bucketThresholds: FLOW_SCANNER_DISTRIBUTION_BUCKET_THRESHOLDS,
+        premiumTotal: entry.premiumTotal,
+        classifiedPremium: entry.classifiedPremium,
+        classificationCoverage,
+        classificationConfidence: classificationCoverage > 0 ? "high" : "none",
+        hydrationWarning: null,
+        hydrationDiagnostics: {
+          snapshotCount: entry.contractCount,
+          usablePremiumSnapshotCount: entry.contractCount,
+          usablePremiumTotal: entry.premiumTotal,
+          selectedPremiumTotal: entry.premiumTotal,
+          classificationTargetPremiumCoverage: 0,
+          selectedPremiumCoverage: 1,
+          pageCount: 0,
+          snapshotTradingDate: null,
+          tradeLookbackStartDate: null,
+          quoteProbeDate: null,
+          quoteProbeStatus: "not_attempted",
+          quoteProbeMessage: null,
+          tradeContractCandidateCount: entry.contractCount,
+          tradeContractHydratedCount: entry.contractCount,
+          tradeCallAttemptCount: 0,
+          tradeCallSuccessCount: 0,
+          tradeCallErrorCount: 0,
+          tradeCallForbiddenCount: 0,
+          eligibleTradeCount: entry.tradeCount,
+          ineligibleTradeCount: 0,
+          unknownConditionTradeCount: 0,
+          conditionCodes: [],
+          exchangeCodes: [],
+          classifiedContractCoverage: entry.contractCount ? 1 : 0,
+        },
+        netPremium: entry.inflowPremium - entry.outflowPremium,
+        inflowPremium: entry.inflowPremium,
+        outflowPremium: entry.outflowPremium,
+        buyPremium: entry.buyPremium,
+        sellPremium: entry.sellPremium,
+        neutralPremium: entry.neutralPremium,
+        callPremium: entry.callPremium,
+        putPremium: entry.putPremium,
+        buckets: entry.buckets,
+        contractCount: entry.contractCount,
+        tradeCount: entry.tradeCount,
+        classifiedTradeCount: entry.classifiedTradeCount,
+        quoteMatchedCount: entry.quoteMatchedCount,
+        tickTestMatchedCount: entry.tickTestMatchedCount,
+        sideBasis: hasInflow && hasOutflow ? "mixed" : entry.classifiedPremium > 0 ? "tick_test" : "none",
+        quoteAccess: "unknown",
+        tradeAccess: entry.tradeCount ? "available" : "unknown",
+        source: "flow-scanner",
+        confidence: entry.tradeCount ? "snapshot" : "partial",
+        delayed: false,
+        pageCount: 0,
+      };
+    });
+};
+
+const buildFlowScannerDistributionResponse = ({
+  widgets,
+  timeframe,
+  providerSummary,
+}) => {
+  const premiumTotal = widgets.reduce(
+    (sum, widget) => sum + widget.premiumTotal,
+    0,
+  );
+  const classifiedPremium = widgets.reduce(
+    (sum, widget) => sum + widget.classifiedPremium,
+    0,
+  );
+  const classificationCoverage = premiumTotal
+    ? classifiedPremium / premiumTotal
+    : 0;
+  const hasInflow = widgets.some((widget) => widget.inflowPremium > 0);
+  const hasOutflow = widgets.some((widget) => widget.outflowPremium > 0);
+  const sourceProvider =
+    providerSummary?.providers?.find((provider) => provider && provider !== "none") ||
+    "ibkr";
+
+  return {
+    status: widgets.length ? "ok" : "empty",
+    asOf: new Date().toISOString(),
+    timeframe,
+    source: {
+      provider: "flow-scanner",
+      label: "Flow scanner distribution",
+      timeframe,
+      providerHost: sourceProvider,
+      sideBasis: hasInflow && hasOutflow ? "mixed" : classifiedPremium > 0 ? "tick_test" : "none",
+      quoteAccess: "unknown",
+      tradeAccess: widgets.length ? "available" : "unknown",
+      classifiedPremium,
+      classificationCoverage,
+      classificationConfidence: classificationCoverage > 0 ? "high" : "none",
+      coverageMode: "scanner",
+      hydrationStatus: "complete",
+      hydrationWarning: null,
+      hydratedSymbolCount: widgets.length,
+      hydrationDiagnostics: {
+        snapshotCount: widgets.reduce((sum, widget) => sum + widget.contractCount, 0),
+        usablePremiumSnapshotCount: widgets.reduce((sum, widget) => sum + widget.contractCount, 0),
+        usablePremiumTotal: premiumTotal,
+        selectedPremiumTotal: premiumTotal,
+        classificationTargetPremiumCoverage: 0,
+        selectedPremiumCoverage: 1,
+        pageCount: 0,
+        snapshotTradingDate: null,
+        tradeLookbackStartDate: null,
+        quoteProbeDate: null,
+        quoteProbeStatus: "not_attempted",
+        quoteProbeMessage: null,
+        tradeContractCandidateCount: widgets.reduce((sum, widget) => sum + widget.contractCount, 0),
+        tradeContractHydratedCount: widgets.reduce((sum, widget) => sum + widget.contractCount, 0),
+        tradeCallAttemptCount: 0,
+        tradeCallSuccessCount: 0,
+        tradeCallErrorCount: 0,
+        tradeCallForbiddenCount: 0,
+        eligibleTradeCount: widgets.reduce((sum, widget) => sum + widget.tradeCount, 0),
+        ineligibleTradeCount: 0,
+        unknownConditionTradeCount: 0,
+        conditionCodes: [],
+        exchangeCodes: [],
+        classifiedContractCoverage: widgets.length ? 1 : 0,
+      },
+      candidateDate: null,
+      candidateCount: widgets.length,
+      rankedCount: widgets.length,
+      errorCount: 0,
+      errorMessage: null,
+      cache: "flow-scanner",
+    },
+    widgets,
+  };
+};
+
 const getPremiumNeutralPremium = (widget) => {
   if (isFiniteNumber(widget?.neutralPremium)) return widget.neutralPremium;
   return Object.values(widget?.buckets || {}).reduce(
@@ -909,6 +1197,7 @@ const PremiumDistributionWidget = ({
   widget,
   loading = false,
   onSelectTicker,
+  selected = false,
 }) => {
   if (loading || !widget) {
     return (
@@ -924,6 +1213,7 @@ const PremiumDistributionWidget = ({
           minHeight: dim(96),
           borderRadius: dim(8),
           background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
+          width: "100%",
         }}
       >
         <FlowLoadingBlock width="86%" height={dim(74)} />
@@ -945,10 +1235,12 @@ const PremiumDistributionWidget = ({
     lowClassificationConfidence && widget.hydrationWarning
       ? widget.hydrationWarning
       : null;
+  const accentBorder = selected ? `1px solid ${T.accent}` : `1px solid transparent`;
 
   return (
     <Card
       data-testid="flow-premium-distribution-widget"
+      data-selected={selected ? "true" : "false"}
       className="ra-panel-enter"
       style={{
         ...motionVars({ accent: netColor }),
@@ -957,15 +1249,23 @@ const PremiumDistributionWidget = ({
         flexDirection: "column",
         gap: sp(1),
         minWidth: 0,
+        width: "100%",
         minHeight: dim(widgetHydrationWarning ? 96 : 84),
         borderRadius: dim(8),
-        background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
-        boxShadow: `0 8px 20px ${T.bg0}32`,
+        background: selected
+          ? `linear-gradient(180deg, ${T.bg3}, ${T.bg2})`
+          : `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
+        boxShadow: selected
+          ? `0 8px 22px ${T.accent}33`
+          : `0 8px 20px ${T.bg0}32`,
+        outline: accentBorder,
+        outlineOffset: selected ? "-1px" : 0,
       }}
     >
       <button
         type="button"
         aria-label={`Filter Flow tape to ${widget.symbol} premium distribution`}
+        aria-pressed={selected}
         onClick={() => onSelectTicker?.(widget.symbol)}
         style={{
           display: "grid",
@@ -1009,178 +1309,6 @@ const PremiumDistributionWidget = ({
   );
 };
 
-const PremiumDistributionStrip = ({
-  query,
-  timeframe,
-  onTimeframeChange,
-  onSelectTicker,
-}) => {
-  const widgets = query.data?.widgets || [];
-  const loading = query.isLoading || query.isPending;
-  const empty =
-    !loading &&
-    !widgets.length &&
-    (query.isError || query.data?.status === "unconfigured" || query.data?.status === "empty");
-  const detail = query.isError
-    ? "Premium distribution is unavailable."
-    : query.data?.source?.errorMessage ||
-      "Polygon premium snapshots have not produced ranked symbols yet.";
-  const sourceMeta = getPremiumSideBasisMeta(query.data?.source?.sideBasis);
-  const sourceCoverage = isFiniteNumber(query.data?.source?.classificationCoverage)
-    ? query.data.source.classificationCoverage
-    : 0;
-  const sourceConfidence =
-    query.data?.source?.classificationConfidence ??
-    inferPremiumClassificationConfidence(sourceCoverage);
-  const sourceConfidenceMeta =
-    getPremiumClassificationConfidenceMeta(sourceConfidence);
-  const sourceTone = sourceConfidenceMeta.muted
-    ? sourceConfidenceMeta.color
-    : sourceMeta.color;
-  const sourceHydrationWarning = query.data?.source?.hydrationWarning || null;
-  const sourceHydrationStatus = query.data?.source?.hydrationStatus;
-  const sourceTargetCoverage =
-    query.data?.source?.hydrationDiagnostics?.classificationTargetPremiumCoverage;
-  const sourceSelectedCoverage =
-    query.data?.source?.hydrationDiagnostics?.selectedPremiumCoverage;
-  const sourceDeepScanActive =
-    sourceHydrationStatus === "refreshing" &&
-    isFiniteNumber(sourceTargetCoverage) &&
-    sourceTargetCoverage > 0 &&
-    (!isFiniteNumber(sourceSelectedCoverage) ||
-      sourceSelectedCoverage < sourceTargetCoverage);
-  const sourceStatusParts = [
-    sourceMeta.label,
-    `${formatCoveragePercent(sourceCoverage)} classified`,
-  ];
-  if (sourceDeepScanActive) {
-    sourceStatusParts.push("deep scan running");
-  }
-
-  if (empty) {
-    return (
-      <Card
-        data-testid="flow-premium-distribution-empty"
-        style={{ padding: "8px 10px" }}
-      >
-        <DataUnavailableState
-          title="Premium distribution unavailable"
-          detail={detail}
-          tone={query.data?.status === "unconfigured" ? T.amber : T.textDim}
-          minHeight={96}
-        />
-      </Card>
-    );
-  }
-
-  return (
-    <div
-      data-testid="flow-premium-distribution-strip"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(4),
-        minWidth: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: sp(8),
-          minWidth: 0,
-        }}
-      >
-        <span
-          style={{
-            color: sourceTone,
-            fontFamily: T.mono,
-            fontSize: fs(7),
-            fontWeight: 400,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {sourceStatusParts.join(" · ")}
-        </span>
-        <div
-          data-testid="flow-premium-distribution-timeframe"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(2),
-            padding: 2,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
-            background: T.bg2,
-          }}
-        >
-          {FLOW_PREMIUM_TIMEFRAME_OPTIONS.map(([value, label]) => {
-            const active = timeframe === value;
-            return (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => onTimeframeChange?.(value)}
-                style={{
-                  border: "none",
-                  borderRadius: dim(3),
-                  background: active ? T.bg3 : "transparent",
-                  color: active ? T.text : T.textMuted,
-                  cursor: "pointer",
-                  fontFamily: T.mono,
-                  fontSize: fs(8),
-                  fontWeight: 400,
-                  padding: "3px 7px",
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      {sourceHydrationWarning ? (
-        <div
-          title={sourceHydrationWarning}
-          style={{
-            color: sourceConfidenceMeta.muted ? T.amber : T.textMuted,
-            fontFamily: T.mono,
-            fontSize: fs(7),
-            fontWeight: 400,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            minWidth: 0,
-          }}
-        >
-          {sourceHydrationWarning}
-        </div>
-      ) : null}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 128px), 1fr))",
-          gap: 5,
-          minWidth: 0,
-        }}
-      >
-        {Array.from({ length: FLOW_PREMIUM_WIDGET_COUNT }).map((_, index) => (
-          <PremiumDistributionWidget
-            key={widgets[index]?.symbol || `premium_${index}`}
-            widget={widgets[index]}
-            loading={loading && !widgets[index]}
-            onSelectTicker={onSelectTicker}
-          />
-        ))}
-      </div>
-    </div>
-  );
-};
-
 const FlowOverviewPanel = ({
   onJumpToTrade,
   session,
@@ -1201,6 +1329,8 @@ const FlowOverviewPanel = ({
   );
   const [premiumDistributionTimeframe, setPremiumDistributionTimeframe] =
     useState("today");
+  const [premiumDistributionCoverageMode, setPremiumDistributionCoverageMode] =
+    useState("universe");
   const flowTapeFilters = useFlowTapeFilterState();
   const {
     activeFlowPresetId,
@@ -1208,6 +1338,7 @@ const FlowOverviewPanel = ({
     minPrem,
     includeQuery,
     excludeQuery,
+    symbol: flowFilterSymbol,
   } = flowTapeFilters;
   const [sortBy, setSortBy] = useState(() =>
     normalizeFlowSortBy(_initialState.flowSortBy),
@@ -1533,7 +1664,7 @@ const FlowOverviewPanel = ({
     {
       limit: FLOW_PREMIUM_WIDGET_COUNT,
       timeframe: premiumDistributionTimeframe,
-      coverageMode: "universe",
+      coverageMode: premiumDistributionCoverageMode,
     },
     {
       query: {
@@ -1545,6 +1676,84 @@ const FlowOverviewPanel = ({
       },
     },
   );
+  const flowScannerDistributionWidgets = useMemo(
+    () =>
+      buildFlowScannerDistributionWidgets({
+        events: flowEvents,
+        limit: FLOW_PREMIUM_WIDGET_COUNT,
+        timeframe: premiumDistributionTimeframe,
+      }),
+    [flowEvents, premiumDistributionTimeframe],
+  );
+  const flowScannerDistributionData = useMemo(
+    () =>
+      buildFlowScannerDistributionResponse({
+        widgets: flowScannerDistributionWidgets,
+        timeframe: premiumDistributionTimeframe,
+        providerSummary,
+      }),
+    [flowScannerDistributionWidgets, premiumDistributionTimeframe, providerSummary],
+  );
+  const premiumDistributionPanelQuery = useMemo(() => {
+    const premiumWidgets = premiumDistributionQuery.data?.widgets || [];
+    if (premiumWidgets.length || !flowScannerDistributionWidgets.length) {
+      return premiumDistributionQuery;
+    }
+
+    return {
+      ...premiumDistributionQuery,
+      data: flowScannerDistributionData,
+      isError: false,
+      isLoading: false,
+      isPending: false,
+      error: null,
+    };
+  }, [
+    flowScannerDistributionData,
+    flowScannerDistributionWidgets.length,
+    premiumDistributionQuery,
+  ]);
+  const premiumDistributionSourceMeta = useMemo(() => {
+    const data = premiumDistributionPanelQuery.data;
+    const sourceMeta = getPremiumSideBasisMeta(data?.source?.sideBasis);
+    const sourceLabel =
+      data?.source?.provider === "flow-scanner"
+        ? data.source.label || "Flow scanner distribution"
+        : sourceMeta.label;
+    const sourceCoverage = isFiniteNumber(data?.source?.classificationCoverage)
+      ? data.source.classificationCoverage
+      : 0;
+    const sourceConfidence =
+      data?.source?.classificationConfidence ??
+      inferPremiumClassificationConfidence(sourceCoverage);
+    const sourceConfidenceMeta = getPremiumClassificationConfidenceMeta(sourceConfidence);
+    const sourceTone = sourceConfidenceMeta.muted
+      ? sourceConfidenceMeta.color
+      : sourceMeta.color;
+    const hydrationStatus = data?.source?.hydrationStatus;
+    const targetCoverage =
+      data?.source?.hydrationDiagnostics?.classificationTargetPremiumCoverage;
+    const selectedCoverage =
+      data?.source?.hydrationDiagnostics?.selectedPremiumCoverage;
+    const deepScanActive =
+      hydrationStatus === "refreshing" &&
+      isFiniteNumber(targetCoverage) &&
+      targetCoverage > 0 &&
+      (!isFiniteNumber(selectedCoverage) || selectedCoverage < targetCoverage);
+    const labelParts = [
+      sourceLabel,
+      `${formatCoveragePercent(sourceCoverage)} classified`,
+    ];
+    if (deepScanActive) {
+      labelParts.push("deep scan running");
+    }
+    return {
+      label: labelParts.join(" · "),
+      tone: sourceTone,
+      warning: data?.source?.hydrationWarning || null,
+      warningTone: sourceConfidenceMeta.muted ? T.amber : T.textMuted,
+    };
+  }, [premiumDistributionPanelQuery.data]);
   const newsItems = useMemo(() => {
     const articles = newsQuery.data?.articles || [];
     return articles.map((article) => ({
@@ -2962,8 +3171,12 @@ const FlowOverviewPanel = ({
         flexDirection: "column",
         gap: sp(8),
         height: showInlineFilterPanel ? "fit-content" : "auto",
-        maxHeight: showOverlayFilterPanel ? "calc(100vh - 132px)" : undefined,
-        overflowY: showOverlayFilterPanel ? "auto" : "visible",
+        maxHeight:
+          showOverlayFilterPanel && !isMobileFlowLayout
+            ? "calc(100vh - 132px)"
+            : undefined,
+        overflowY:
+          showOverlayFilterPanel && !isMobileFlowLayout ? "auto" : "visible",
       }}
     >
       <div
@@ -3206,23 +3419,23 @@ const FlowOverviewPanel = ({
     </Card>
   );
 
-  const columnDrawer = columnsOpen ? (
+  const columnDrawerPanel = (
     <Card
       data-testid="flow-column-drawer"
       className="ra-popover-enter"
       style={{
-        position: "absolute",
-        top: dim(62),
-        right: dim(8),
-        width: isMobileFlowLayout ? "calc(100% - 16px)" : dim(310),
-        zIndex: 20,
+        position: isMobileFlowLayout ? "relative" : "absolute",
+        top: isMobileFlowLayout ? undefined : dim(62),
+        right: isMobileFlowLayout ? undefined : dim(8),
+        width: isMobileFlowLayout ? "auto" : dim(310),
+        zIndex: isMobileFlowLayout ? undefined : 20,
         padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
         gap: sp(7),
-        boxShadow: `0 18px 48px ${T.bg0}cc`,
-        maxHeight: "calc(100vh - 128px)",
-        overflowY: "auto",
+        boxShadow: isMobileFlowLayout ? undefined : `0 18px 48px ${T.bg0}cc`,
+        maxHeight: isMobileFlowLayout ? undefined : "calc(100vh - 128px)",
+        overflowY: isMobileFlowLayout ? "visible" : "auto",
       }}
     >
       <div
@@ -3336,7 +3549,18 @@ const FlowOverviewPanel = ({
         Reset columns
       </button>
     </Card>
-  ) : null;
+  );
+  const columnDrawer = !columnsOpen ? null : isMobileFlowLayout ? (
+    <Drawer
+      open={columnsOpen}
+      onClose={() => setColumnsOpen(false)}
+      side="right"
+      title="Flow Columns"
+      testId="flow-column-drawer-shell"
+    >
+      {columnDrawerPanel}
+    </Drawer>
+  ) : columnDrawerPanel;
 
   const renderFlowMobileCard = (event, index = 0) => {
     const selected = selectedEvt?.id === event.id;
@@ -3510,27 +3734,25 @@ const FlowOverviewPanel = ({
     );
   };
 
-  const flowScannerStatusPanel = (
-    <FlowScannerStatusPanel
-      enabled={flowScannerEnabled}
-      ownerActive={flowScannerOwnerActive}
-      flowDisplayLabel={flowDisplayLabel}
-      flowDisplayColor={flowDisplayColor}
-      flowQuality={flowQuality}
-      coverage={coverage}
-      coverageModeLabel={coverageModeLabel}
-      scannedCoverageSymbols={scannedCoverageSymbols}
-      totalCoverageSymbols={totalCoverageSymbols}
-      intendedCoverageSymbols={intendedCoverageSymbols}
-      selectedCoverageSymbols={selectedCoverageSymbols}
-      newestScanAt={newestScanAt}
-      oldestScanAt={oldestScanAt}
-      scannerConfig={flowScannerControl.config}
-      onToggle={toggleFlowScanner}
-      toggleTone={flowScannerTone}
-      formatAppTime={formatFlowAppTime}
-    />
-  );
+  const flowScannerStatusProps = {
+    enabled: flowScannerEnabled,
+    ownerActive: flowScannerOwnerActive,
+    flowDisplayLabel,
+    flowDisplayColor,
+    flowQuality,
+    coverage,
+    coverageModeLabel,
+    scannedCoverageSymbols,
+    totalCoverageSymbols,
+    intendedCoverageSymbols,
+    selectedCoverageSymbols,
+    newestScanAt,
+    oldestScanAt,
+    scannerConfig: flowScannerControl.config,
+    onToggle: toggleFlowScanner,
+    toggleTone: flowScannerTone,
+    formatAppTime: formatFlowAppTime,
+  };
 
   const flowPresetBar = (
     <div
@@ -3594,6 +3816,30 @@ const FlowOverviewPanel = ({
           Clear
         </button>
       ) : null}
+      {flowFilterSymbol ? (
+        <button
+          type="button"
+          data-testid="flow-symbol-filter-chip"
+          onClick={() => clearFlowTapeFilterSymbol()}
+          aria-label={`Clear symbol filter ${flowFilterSymbol}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
+            padding: sp("4px 8px"),
+            border: `1px solid ${T.accent}`,
+            background: `${T.accent}18`,
+            color: T.accent,
+            fontSize: fs(8),
+            fontFamily: T.mono,
+            fontWeight: 400,
+            cursor: "pointer",
+          }}
+        >
+          <span>Symbol: {flowFilterSymbol}</span>
+          <span aria-hidden="true">×</span>
+        </button>
+      ) : null}
     </div>
   );
   const isFlowLoadingShell = flowStatus === "loading" && !flowEvents.length;
@@ -3631,8 +3877,6 @@ const FlowOverviewPanel = ({
           minWidth: 0,
         }}
       >
-        {flowScannerStatusPanel}
-
         <Card
           data-testid="flow-top-toolbar"
           style={{
@@ -3772,16 +4016,34 @@ const FlowOverviewPanel = ({
           </div>
         </Card>
 
-        <PremiumDistributionStrip
-          query={premiumDistributionQuery}
+        <FlowDistributionScannerPanel
+          query={premiumDistributionPanelQuery}
           timeframe={premiumDistributionTimeframe}
           onTimeframeChange={setPremiumDistributionTimeframe}
-          onSelectTicker={(symbol) => {
-            updateFlowTapeFilters({ includeQuery: symbol || "" });
+          coverageMode={premiumDistributionCoverageMode}
+          onCoverageModeChange={setPremiumDistributionCoverageMode}
+          timeframeOptions={FLOW_PREMIUM_TIMEFRAME_OPTIONS}
+          widgetCount={FLOW_PREMIUM_WIDGET_COUNT}
+          selectedSymbol={flowTapeFilters.symbol}
+          onWidgetSelect={(symbol) => {
+            toggleFlowTapeFilterSymbol(symbol);
           }}
+          renderWidget={({ widget, loading, selected, onSelect }) => (
+            <PremiumDistributionWidget
+              widget={widget}
+              loading={loading}
+              selected={selected}
+              onSelectTicker={() => onSelect?.()}
+            />
+          )}
+          sourceLabel={premiumDistributionSourceMeta.label}
+          sourceTone={premiumDistributionSourceMeta.tone}
+          sourceWarning={premiumDistributionSourceMeta.warning}
+          warningTone={premiumDistributionSourceMeta.warningTone}
+          scannerStatus={flowScannerStatusProps}
         />
 
-        {showOverlayFilterPanel ? (
+        {showOverlayFilterPanel && !isMobileFlowLayout ? (
           <div
             style={{
               position: "absolute",
@@ -3795,6 +4057,14 @@ const FlowOverviewPanel = ({
             {filterPanel}
           </div>
         ) : null}
+        <BottomSheet
+          open={showOverlayFilterPanel && isMobileFlowLayout}
+          onClose={() => setFiltersOpen(false)}
+          title="Flow Filters"
+          testId="flow-filter-sheet"
+        >
+          {filterPanel}
+        </BottomSheet>
         {columnDrawer}
 
         {flowPresetBar}

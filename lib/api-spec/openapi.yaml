@@ -1442,7 +1442,7 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 10
+            maximum: 16
         - name: candidateLimit
           in: query
           required: false
@@ -6055,6 +6055,68 @@ components:
         sourceEventId:
           type: string
           nullable: true
+        exitReason:
+          type: string
+          nullable: true
+        selectedContract:
+          type: object
+          nullable: true
+          additionalProperties: true
+        optionContract:
+          type: object
+          nullable: true
+          additionalProperties: true
+        optionRight:
+          type: string
+          enum: [call, put]
+          nullable: true
+        expirationDate:
+          type: string
+          nullable: true
+        dte:
+          type: number
+          nullable: true
+        strike:
+          type: number
+          nullable: true
+        strikeSlot:
+          type: number
+          nullable: true
+        strikeDistancePct:
+          type: number
+          nullable: true
+        signalPrice:
+          type: number
+          nullable: true
+        filterState:
+          type: object
+          nullable: true
+          additionalProperties: true
+        adx:
+          type: number
+          nullable: true
+        mtfDirections:
+          type: array
+          items:
+            type: number
+        filterDirection:
+          type: number
+          nullable: true
+        peakPrice:
+          type: number
+          nullable: true
+        mfePercent:
+          type: number
+          nullable: true
+        givebackPercent:
+          type: number
+          nullable: true
+        premiumAtRisk:
+          type: number
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
       required:
         - id
         - source
@@ -6432,6 +6494,46 @@ components:
           nullable: true
         flexNavRowCount:
           type: integer
+        flexTradeCoverageStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexTradeCoverageEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexTradeRowCount:
+          type: integer
+        flexCashCoverageStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexCashCoverageEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexCashRowCount:
+          type: integer
+        flexDividendCoverageStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexDividendCoverageEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexDividendRowCount:
+          type: integer
+        flexOpenPositionCoverageStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexOpenPositionCoverageEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        flexOpenPositionRowCount:
+          type: integer
       required:
         - bridgeConnected
         - flexConfigured
@@ -6452,6 +6554,18 @@ components:
         - flexNavCoverageStartDate
         - flexNavCoverageEndDate
         - flexNavRowCount
+        - flexTradeCoverageStartAt
+        - flexTradeCoverageEndAt
+        - flexTradeRowCount
+        - flexCashCoverageStartAt
+        - flexCashCoverageEndAt
+        - flexCashRowCount
+        - flexDividendCoverageStartAt
+        - flexDividendCoverageEndAt
+        - flexDividendRowCount
+        - flexOpenPositionCoverageStartAt
+        - flexOpenPositionCoverageEndAt
+        - flexOpenPositionRowCount
 
     FlexTestResponse:
       type: object

@@ -447,3 +447,39 @@ test("flow premium distribution ranks widgets by scored premium", async () => {
     [1, 2, 3],
   );
 });
+
+test("flow premium distribution supports the 16-widget Flow page request", async () => {
+  configurePolygonEnv();
+  const symbols = Array.from({ length: 18 }, (_, index) => `AAL${index}`);
+
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getGroupedDailyStockAggregates: async () =>
+          symbols.map((symbol, index) => makeAggregate(symbol, index)),
+        getOptionPremiumDistribution: async (input: {
+          underlying: string;
+          stockDayVolume?: number | null;
+          timeframe?: "today" | "week";
+        }) =>
+          makeDistribution({
+            symbol: input.underlying,
+            volume: input.stockDayVolume,
+            timeframe: input.timeframe,
+          }),
+      }) as any,
+  );
+
+  const response = await getFlowPremiumDistribution({
+    candidateLimit: 18,
+    coverageMode: "ranked",
+    limit: 16,
+  });
+
+  assert.equal(response.status, "ok");
+  assert.equal(response.widgets.length, 16);
+  assert.deepEqual(
+    response.widgets.map((widget) => widget.symbol),
+    symbols.slice(0, 16),
+  );
+});

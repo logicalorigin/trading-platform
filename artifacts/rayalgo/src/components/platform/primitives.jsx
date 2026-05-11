@@ -1,27 +1,29 @@
 import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
-export const Pill = ({ children, active, onClick, color }) => (
-  <button
-    onClick={onClick}
-    className={onClick ? "ra-interactive" : undefined}
-    style={{
-      ...motionVars({ accent: color || T.accent }),
-      padding: sp("3px 7px"),
-      fontSize: textSize("bodyStrong"),
-      fontFamily: T.sans,
-      fontWeight: 400,
-      border: `1px solid ${active ? color || T.accent : T.border}`,
-      borderRadius: dim(4),
-      cursor: "pointer",
-      transition: "all 0.15s",
-      background: active ? `${color || T.accent}18` : "transparent",
-      color: active ? color || T.accent : T.textDim,
-    }}
-  >
-    {children}
-  </button>
-);
+export const Pill = ({ children, active, onClick, color }) => {
+  return (
+    <button
+      onClick={onClick}
+      className={onClick ? "ra-interactive ra-touch-target" : undefined}
+      style={{
+        ...motionVars({ accent: color || T.accent }),
+        padding: sp("3px 7px"),
+        fontSize: textSize("bodyStrong"),
+        fontFamily: T.sans,
+        fontWeight: 400,
+        border: `1px solid ${active ? color || T.accent : T.border}`,
+        borderRadius: dim(4),
+        cursor: onClick ? "pointer" : "default",
+        transition: "all 0.15s",
+        background: active ? `${color || T.accent}18` : "transparent",
+        color: active ? color || T.accent : T.textDim,
+      }}
+    >
+      {children}
+    </button>
+  );
+};
 
 export const Badge = ({ children, color = T.textDim }) => (
   <span

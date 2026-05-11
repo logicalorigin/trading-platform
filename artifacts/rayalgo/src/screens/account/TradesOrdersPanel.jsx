@@ -48,6 +48,40 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
+const mobileCardStyle = {
+  border: `1px solid ${T.border}`,
+  borderRadius: dim(5),
+  background: T.bg1,
+  padding: sp("8px 9px"),
+  display: "grid",
+  gap: sp(7),
+  minWidth: 0,
+};
+
+const mobileMetricGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: sp("6px 8px"),
+};
+
+const MobileMetric = ({ label, value, tone = T.text }) => (
+  <div style={{ minWidth: 0 }}>
+    <div style={mutedLabelStyle}>{label}</div>
+    <div
+      style={{
+        color: tone,
+        fontFamily: T.data,
+        fontSize: fs(10),
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </div>
+  </div>
+);
+
 const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
@@ -139,6 +173,7 @@ export const OrdersPanel = ({
   onSourceFilterChange,
   emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
   maskValues = false,
+  isPhone = false,
 }) => {
   const orders = (query.data?.orders || []).filter((order) =>
     sourceFilter === "all" ? true : order.sourceType === sourceFilter,
@@ -178,6 +213,84 @@ export const OrdersPanel = ({
           title={`No ${tab} orders`}
           body={emptyBody}
         />
+      </div>
+    ) : isPhone ? (
+      <div
+        data-testid="account-orders-card-list"
+        style={{
+          display: "grid",
+          gap: sp(6),
+          padding: sp(6),
+        }}
+      >
+        {orders.map((order) => (
+          <article key={order.id} style={mobileCardStyle}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: sp(6),
+                alignItems: "flex-start",
+              }}
+            >
+              <MarketIdentityInline
+                item={{
+                  ticker: order.symbol,
+                  market: marketForAssetClass(order.assetClass),
+                }}
+                size={16}
+                showMark={false}
+                showChips
+                style={{ maxWidth: "100%" }}
+              />
+              <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
+            </div>
+            <div style={mobileMetricGridStyle}>
+              <MobileMetric label="Type" value={order.type} />
+              <MobileMetric label="Qty" value={`${formatNumber(order.filledQuantity, 2)} / ${formatNumber(order.quantity, 2)}`} />
+              <MobileMetric
+                label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
+                value={
+                  tab === "working"
+                    ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
+                    : order.averageFillPrice != null
+                      ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
+                      : "----"
+                }
+              />
+              <MobileMetric label="Status" value={order.status} tone={order.status === "filled" ? T.green : T.text} />
+              <MobileMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
+              <MobileMetric label={tab === "working" ? "TIF" : "Filled"} value={tab === "working" ? order.timeInForce : formatAppDateTime(order.filledAt)} />
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
+              {order.sourceType ? (
+                <Pill tone={sourceTone(order.sourceType)}>
+                  {order.strategyLabel || order.sourceType}
+                </Pill>
+              ) : null}
+              {tab === "working" ? (
+                <AppTooltip content={cancelDisabled ? cancelDisabledReason : "Cancel order"}>
+                  <button
+                    type="button"
+                    className="ra-interactive"
+                    disabled={cancelPending || cancelDisabled}
+                    onClick={() => onCancelOrder(order)}
+                    style={{
+                      ...secondaryButtonStyle,
+                      color: T.red,
+                      minHeight: dim(36),
+                      marginLeft: "auto",
+                      opacity: cancelPending || cancelDisabled ? 0.55 : 1,
+                      cursor: cancelPending || cancelDisabled ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </AppTooltip>
+              ) : null}
+            </div>
+          </article>
+        ))}
       </div>
     ) : (
       <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
@@ -326,6 +439,7 @@ export const ClosedTradesPanel = ({
   maskValues = false,
   selectedTradeId = "",
   onTradeSelect,
+  isPhone = false,
 }) => {
   const rows = (query.data?.trades || []).filter((trade) =>
     (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
@@ -389,7 +503,9 @@ export const ClosedTradesPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(92px, 0.8fr) minmax(96px, 0.85fr) minmax(108px, 0.75fr) minmax(108px, 0.75fr) minmax(0, 1.6fr)",
+              gridTemplateColumns: isPhone
+                ? "minmax(0, 1fr)"
+                : "minmax(92px, 0.8fr) minmax(96px, 0.85fr) minmax(108px, 0.75fr) minmax(108px, 0.75fr) minmax(0, 1.6fr)",
               gap: sp(4),
               alignItems: "center",
             }}
@@ -425,10 +541,10 @@ export const ClosedTradesPanel = ({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gridTemplateColumns: isPhone ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
                 gap: sp("3px 8px"),
-                paddingLeft: sp(5),
-                borderLeft: `1px solid ${T.border}`,
+                paddingLeft: isPhone ? 0 : sp(5),
+                borderLeft: isPhone ? "none" : `1px solid ${T.border}`,
               }}
             >
               <SummaryCard
@@ -457,6 +573,85 @@ export const ClosedTradesPanel = ({
             title="No closed trades in this window"
             body={emptyBody}
           />
+        ) : isPhone ? (
+          <div
+            data-testid="account-trades-card-list"
+            style={{
+              display: "grid",
+              gap: sp(6),
+            }}
+          >
+            {rows.map((trade) => {
+              const tradeId = getAccountTradeId(trade);
+              const rowSelected = Boolean(selectedTradeId && tradeId === selectedTradeId);
+              return (
+                <article
+                  key={`${trade.source}:${trade.id}`}
+                  onClick={() => onTradeSelect?.(tradeId)}
+                  style={{
+                    ...mobileCardStyle,
+                    background: rowSelected ? `${T.cyan}16` : T.bg1,
+                    boxShadow: rowSelected ? `inset 3px 0 0 ${T.cyan}` : "none",
+                    cursor: onTradeSelect ? "pointer" : "default",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: sp(6),
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <MarketIdentityInline
+                      item={{
+                        ticker: trade.symbol,
+                        market: marketForAssetClass(trade.assetClass),
+                      }}
+                      size={16}
+                      showMark={false}
+                      showChips
+                      style={{ maxWidth: "100%" }}
+                    />
+                    <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
+                  </div>
+                  <div style={mobileMetricGridStyle}>
+                    <MobileMetric label="Qty" value={formatNumber(trade.quantity, 3)} />
+                    <MobileMetric
+                      label="Realized"
+                      value={`${formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}${trade.realizedPnlPercent != null ? ` / ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}` : ""}`}
+                      tone={toneForValue(trade.realizedPnl)}
+                    />
+                    <MobileMetric label="Open" value={formatAppDate(trade.openDate)} />
+                    <MobileMetric label="Close" value={formatAppDate(trade.closeDate)} />
+                    <MobileMetric
+                      label="Avg In / Out"
+                      value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
+                    />
+                    <MobileMetric
+                      label="Hold"
+                      value={trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+                    <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
+                      {trade.source}
+                    </Pill>
+                    {trade.sourceType ? (
+                      <Pill tone={sourceTone(trade.sourceType)}>
+                        {trade.strategyLabel || trade.sourceType}
+                      </Pill>
+                    ) : null}
+                    {trade.commissions != null ? (
+                      <Pill tone="default">
+                        Fees {formatAccountMoney(trade.commissions, currency, false, maskValues)}
+                      </Pill>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         ) : (
           <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 278 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
@@ -1143,6 +1338,44 @@ export const SelectedTradeAnalysisPanel = ({
             />
             <DetailRow label="Opened" value={formatAppDateTime(trade.openDate)} />
             <DetailRow label="Closed" value={formatAppDateTime(trade.closeDate)} />
+            <DetailRow
+              label="Exit Reason"
+              value={trade.exitReason ? String(trade.exitReason).replaceAll("_", " ") : "----"}
+            />
+            <DetailRow
+              label="Contract"
+              value={
+                trade.optionRight || trade.strike || trade.expirationDate
+                  ? `${String(trade.optionRight || trade.selectedContract?.right || "option").toUpperCase()} ${
+                      trade.strike ?? trade.selectedContract?.strike ?? "strike"
+                    } ${trade.expirationDate || trade.selectedContract?.expirationDate || ""}`.trim()
+                  : "----"
+              }
+            />
+            <DetailRow
+              label="DTE / Slot"
+              value={`${trade.dte == null ? "----" : formatNumber(trade.dte, 0)} / ${
+                trade.strikeSlot == null ? "----" : formatNumber(trade.strikeSlot, 0)
+              }`}
+            />
+            <DetailRow
+              label="MFE / Giveback"
+              value={`${trade.mfePercent == null ? "----" : formatAccountPercent(trade.mfePercent, 0, maskValues)} / ${
+                trade.givebackPercent == null
+                  ? "----"
+                  : formatAccountPercent(trade.givebackPercent, 0, maskValues)
+              }`}
+            />
+            <DetailRow
+              label="Regime"
+              value={
+                trade.adx == null && !Array.isArray(trade.mtfDirections)
+                  ? "----"
+                  : `ADX ${trade.adx == null ? "----" : formatNumber(trade.adx, 1)} · MTF ${
+                      Array.isArray(trade.mtfDirections) ? trade.mtfDirections.join("/") : "----"
+                    }`
+              }
+            />
           </div>
 
           <LifecycleTimeline

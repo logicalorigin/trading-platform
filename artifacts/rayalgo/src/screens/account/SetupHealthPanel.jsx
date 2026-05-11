@@ -176,6 +176,46 @@ export const SetupHealthPanel = ({
                 "No Flex NAV rows imported yet",
               )}
             />
+            <StatusRow
+              label="Flex trade coverage"
+              ok={Boolean(health.flexTradeRowCount)}
+              detail={formatCoverage(
+                health.flexTradeCoverageStartAt,
+                health.flexTradeCoverageEndAt,
+                health.flexTradeRowCount,
+                "No Flex trade rows imported yet",
+              )}
+            />
+            <StatusRow
+              label="Flex cash coverage"
+              ok={Boolean(health.flexCashRowCount)}
+              detail={formatCoverage(
+                health.flexCashCoverageStartAt,
+                health.flexCashCoverageEndAt,
+                health.flexCashRowCount,
+                "No Flex cash rows imported yet",
+              )}
+            />
+            <StatusRow
+              label="Flex dividend coverage"
+              ok={Boolean(health.flexDividendRowCount)}
+              detail={formatCoverage(
+                health.flexDividendCoverageStartAt,
+                health.flexDividendCoverageEndAt,
+                health.flexDividendRowCount,
+                "No Flex dividend rows imported yet",
+              )}
+            />
+            <StatusRow
+              label="Flex position coverage"
+              ok={Boolean(health.flexOpenPositionRowCount)}
+              detail={formatCoverage(
+                health.flexOpenPositionCoverageStartAt,
+                health.flexOpenPositionCoverageEndAt,
+                health.flexOpenPositionRowCount,
+                "No Flex open-position rows imported yet",
+              )}
+            />
           </div>
 
           {!health.schemaReady ? (
@@ -214,7 +254,7 @@ export const SetupHealthPanel = ({
                 <Pill tone="default">
                   Attempt {formatAppDateTime(health.lastAttemptAt)}
                 </Pill>
-                <Pill tone={health.lastStatus === "ok" ? "green" : "amber"}>
+                <Pill tone={health.lastStatus === "completed" ? "green" : "amber"}>
                   Status {health.lastStatus || "----"}
                 </Pill>
                 {health.lastError ? <Pill tone="red">{health.lastError}</Pill> : null}

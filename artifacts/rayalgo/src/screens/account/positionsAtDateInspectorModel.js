@@ -18,13 +18,15 @@ export const buildPositionsAtDateInspectorState = ({
   const mode = pinnedDate ? "pinned" : "hover";
   const positions = Array.isArray(response?.positions) ? response.positions : [];
   const activity = Array.isArray(response?.activity) ? response.activity : [];
-  const unavailable = response?.status === "unavailable";
+  const balance = response?.totals?.balance || null;
+  const unavailable = response?.status === "unavailable" && !balance;
   return {
     mode,
     title: `Positions @ ${activeDate}`,
     rightRail: pinnedDate ? "Pinned date" : "Hover preview",
     positions,
     activity,
+    balance,
     unavailable,
     message: response?.message || null,
   };

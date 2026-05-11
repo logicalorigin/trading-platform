@@ -7,6 +7,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { assertAlgoGatewayReady } from "./algo-gateway";
+import { normalizeAlgoDeploymentProviderAccountId } from "./algo-deployment-account";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -98,6 +99,14 @@ export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
 
 export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
   const strategy = await getStrategyOrThrow(input.strategyId);
+  const config = {
+    ...(strategy.config as Record<string, unknown>),
+    ...(input.config ?? {}),
+  };
+  const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
+    providerAccountId: input.providerAccountId,
+    config,
+  });
 
   const [deployment] = await db
     .insert(algoDeploymentsTable)
@@ -106,15 +115,12 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
       name: input.name,
       mode: input.mode,
       enabled: false,
-      providerAccountId: input.providerAccountId,
+      providerAccountId,
       symbolUniverse:
         input.symbolUniverse && input.symbolUniverse.length > 0
           ? input.symbolUniverse
           : strategy.symbolUniverse,
-      config: {
-        ...(strategy.config as Record<string, unknown>),
-        ...(input.config ?? {}),
-      },
+      config,
     })
     .returning();
 
@@ -127,6 +133,8 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
       strategyId: deployment.strategyId,
       mode: deployment.mode,
       symbolUniverse: deployment.symbolUniverse,
+      requestedProviderAccountId: input.providerAccountId,
+      providerAccountNormalized: providerAccountId !== input.providerAccountId,
     },
   });
 
@@ -152,11 +160,18 @@ export async function setAlgoDeploymentEnabled(input: {
   if (input.enabled) {
     await assertAlgoGatewayReady();
   }
+  const providerAccountId = input.enabled
+    ? normalizeAlgoDeploymentProviderAccountId({
+        providerAccountId: existing.providerAccountId,
+        config: existing.config,
+      })
+    : existing.providerAccountId;
 
   const [deployment] = await db
     .update(algoDeploymentsTable)
     .set({
       enabled: input.enabled,
+      providerAccountId,
       updatedAt: new Date(),
       lastError: null,
     })
@@ -172,6 +187,8 @@ export async function setAlgoDeploymentEnabled(input: {
       : `Paused deployment ${deployment.name}`,
     payload: {
       enabled: input.enabled,
+      previousProviderAccountId: existing.providerAccountId,
+      providerAccountNormalized: providerAccountId !== existing.providerAccountId,
     },
   });
 

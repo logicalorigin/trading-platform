@@ -2551,18 +2551,14 @@ export async function getShadowAccountClosedTrades(input: {
   await ensureShadowAccount();
   const conditions: SQL<unknown>[] = [
     eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
-    eq(shadowFillsTable.side, "sell"),
   ];
-  if (input.from) conditions.push(gte(shadowFillsTable.occurredAt, input.from));
   if (input.to) conditions.push(lte(shadowFillsTable.occurredAt, input.to));
-  if (input.symbol) conditions.push(eq(shadowFillsTable.symbol, normalizeSymbol(input.symbol).toUpperCase()));
   const fills = await db
     .select()
     .from(shadowFillsTable)
     .where(and(...conditions))
-    .orderBy(desc(shadowFillsTable.occurredAt))
-    .limit(500);
-  const orderIds = fills.map((fill) => fill.orderId);
+    .orderBy(shadowFillsTable.occurredAt);
+  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
   const orders = orderIds.length
     ? await db
         .select()
@@ -2570,8 +2566,23 @@ export async function getShadowAccountClosedTrades(input: {
         .where(inArray(shadowOrdersTable.id, orderIds))
     : [];
   const ordersById = new Map(orders.map((order) => [order.id, order]));
-  const trades = fills
-    .map((fill) => fillRowToClosedTrade(fill, ordersById.get(fill.orderId)))
+  const { roundTrips } = buildShadowAnalysisRoundTrips(
+    fills.map((fill) => shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId))),
+  );
+  const trades = roundTrips
+    .filter((trade) => {
+      const closeDate = new Date(trade.closeDate);
+      if (input.from && closeDate < input.from) return false;
+      if (input.to && closeDate > input.to) return false;
+      if (
+        input.symbol &&
+        trade.symbol !== normalizeSymbol(input.symbol).toUpperCase()
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map(shadowRoundTripToClosedTrade)
     .filter((trade) => {
       if (
         input.assetClass &&
@@ -2583,7 +2594,13 @@ export async function getShadowAccountClosedTrades(input: {
       if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) return false;
       if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) return false;
       return true;
-    });
+    })
+    .sort((left, right) => {
+      const leftTime = left.closeDate ? new Date(left.closeDate).getTime() : 0;
+      const rightTime = right.closeDate ? new Date(right.closeDate).getTime() : 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 500);
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
@@ -2697,6 +2714,7 @@ type ShadowAnalysisRoundTrip = {
   sourceType: ShadowAnalysisTradeEvent["sourceType"];
   strategyLabel: string | null;
   candidateId: string | null;
+  entryMetadata: Record<string, unknown>;
   metadata: Record<string, unknown>;
 };
 
@@ -2743,8 +2761,35 @@ function shadowAnalysisTradeEvent(
 ): ShadowAnalysisTradeEvent {
   const sourceMetadata = shadowSourceMetadata(order);
   const payloadParts = shadowAnalysisEventMetadata(order);
+  const payloadSelectedContract =
+    readRecord(payloadParts.payload.selectedContract) ??
+    readRecord(payloadParts.position.selectedContract) ??
+    readRecord(payloadParts.candidate.selectedContract) ??
+    {};
   const metadata = {
     ...payloadParts.metadata,
+    reason:
+      readString(payloadParts.payload.reason) ??
+      readString(payloadParts.metadata.reason) ??
+      null,
+    signal: readRecord(payloadParts.payload.signal) ?? {},
+    action: readRecord(payloadParts.payload.action) ?? {},
+    selectedContract: payloadSelectedContract,
+    selectedExpiration: readRecord(payloadParts.payload.selectedExpiration) ?? {},
+    orderPlan:
+      readRecord(payloadParts.payload.orderPlan) ??
+      readRecord(payloadParts.candidate.orderPlan) ??
+      {},
+    profile: readRecord(payloadParts.payload.profile) ?? {},
+    liquidity:
+      readRecord(payloadParts.payload.liquidity) ??
+      readRecord(payloadParts.candidate.liquidity) ??
+      {},
+    quote:
+      readRecord(payloadParts.payload.quote) ??
+      readRecord(payloadParts.candidate.quote) ??
+      {},
+    stop: readRecord(payloadParts.payload.stop) ?? {},
     candidate: payloadParts.candidate,
     position: payloadParts.position,
   };
@@ -2829,6 +2874,176 @@ function summarizeRoundTrips(roundTrips: ShadowAnalysisRoundTrip[]) {
   };
 }
 
+function firstRecord(...values: unknown[]) {
+  for (const value of values) {
+    const record = readRecord(value);
+    if (record && Object.keys(record).length) {
+      return record;
+    }
+  }
+  return {};
+}
+
+function numberArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry))
+    : [];
+}
+
+function roundTripFilterState(trade: ShadowAnalysisRoundTrip) {
+  const entryCandidate = readRecord(trade.entryMetadata.candidate) ?? {};
+  const exitCandidate = readRecord(trade.metadata.candidate) ?? {};
+  const entrySignal = readRecord(entryCandidate.signal) ?? {};
+  const exitSignal = readRecord(exitCandidate.signal) ?? {};
+  const signal = firstRecord(trade.entryMetadata.signal, trade.metadata.signal, entrySignal, exitSignal);
+  return firstRecord(signal.filterState, entrySignal.filterState, exitSignal.filterState);
+}
+
+function roundTripSelectedContract(trade: ShadowAnalysisRoundTrip) {
+  const entryCandidate = readRecord(trade.entryMetadata.candidate) ?? {};
+  const exitCandidate = readRecord(trade.metadata.candidate) ?? {};
+  const entryPosition = readRecord(trade.entryMetadata.position) ?? {};
+  const exitPosition = readRecord(trade.metadata.position) ?? {};
+  return firstRecord(
+    trade.metadata.selectedContract,
+    trade.entryMetadata.selectedContract,
+    exitPosition.selectedContract,
+    entryPosition.selectedContract,
+    exitCandidate.selectedContract,
+    entryCandidate.selectedContract,
+  );
+}
+
+function roundTripCandidate(trade: ShadowAnalysisRoundTrip) {
+  return firstRecord(trade.entryMetadata.candidate, trade.metadata.candidate);
+}
+
+function roundTripProfile(trade: ShadowAnalysisRoundTrip) {
+  return firstRecord(trade.entryMetadata.profile, trade.metadata.profile);
+}
+
+function roundTripSelectedExpiration(trade: ShadowAnalysisRoundTrip) {
+  return firstRecord(trade.entryMetadata.selectedExpiration, trade.metadata.selectedExpiration);
+}
+
+function roundTripDte(input: {
+  expirationDate: string | null;
+  openDate: string | null;
+  selectedExpiration: Record<string, unknown>;
+}) {
+  const explicit = toNumber(input.selectedExpiration.dte);
+  if (explicit != null) return explicit;
+  if (!input.expirationDate || !input.openDate) return null;
+  const open = new Date(input.openDate);
+  const expiration = new Date(`${input.expirationDate}T00:00:00.000Z`);
+  if (Number.isNaN(open.getTime()) || Number.isNaN(expiration.getTime())) return null;
+  const openDay = Date.UTC(open.getUTCFullYear(), open.getUTCMonth(), open.getUTCDate());
+  const expirationDay = Date.UTC(
+    expiration.getUTCFullYear(),
+    expiration.getUTCMonth(),
+    expiration.getUTCDate(),
+  );
+  return Math.max(0, Math.round((expirationDay - openDay) / 86_400_000));
+}
+
+function roundTripStrikeSlot(input: {
+  right: string | null;
+  profile: Record<string, unknown>;
+}) {
+  const optionSelection = readRecord(input.profile.optionSelection) ?? {};
+  return input.right === "put"
+    ? toNumber(optionSelection.putStrikeSlot)
+    : toNumber(optionSelection.callStrikeSlot);
+}
+
+function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
+  const selectedContract = roundTripSelectedContract(trade);
+  const contract = asOptionContract(selectedContract);
+  const candidate = roundTripCandidate(trade);
+  const profile = roundTripProfile(trade);
+  const selectedExpiration = roundTripSelectedExpiration(trade);
+  const filterState = roundTripFilterState(trade);
+  const position = firstRecord(trade.metadata.position, trade.entryMetadata.position);
+  const signalPrice = toNumber(candidate.signalPrice);
+  const strike = toNumber(contract?.strike ?? selectedContract.strike);
+  const optionRight =
+    readString(contract?.right) ??
+    readString(selectedContract.right) ??
+    readString(candidate.optionRight);
+  const expirationDate =
+    contract?.expirationDate == null
+      ? readString(selectedContract.expirationDate)
+      : optionDateKey(contract.expirationDate);
+  const dte = roundTripDte({
+    expirationDate,
+    openDate: trade.openDate,
+    selectedExpiration,
+  });
+  const peakPrice = toNumber(position.peakPrice);
+  const entryPrice = trade.avgOpen;
+  const exitPrice = trade.avgClose;
+  const mfePercent =
+    entryPrice != null && entryPrice > 0 && peakPrice != null
+      ? ((peakPrice - entryPrice) / entryPrice) * 100
+      : null;
+  const givebackPercent =
+    entryPrice != null && entryPrice > 0 && peakPrice != null && exitPrice != null
+      ? ((peakPrice - exitPrice) / entryPrice) * 100
+      : null;
+  const mtfDirections = numberArray(filterState.mtfDirections);
+  const adx = toNumber(filterState.adx);
+
+  return {
+    id: trade.id,
+    source: "SHADOW",
+    accountId: SHADOW_ACCOUNT_ID,
+    symbol: trade.symbol,
+    side: "sell",
+    assetClass: trade.assetClass === "option" ? "Options" : "Stocks",
+    quantity: trade.quantity,
+    openDate: trade.openDate,
+    closeDate: trade.closeDate,
+    avgOpen: trade.avgOpen,
+    avgClose: trade.avgClose,
+    realizedPnl: trade.realizedPnl,
+    realizedPnlPercent: trade.realizedPnlPercent,
+    holdDurationMinutes: trade.holdDurationMinutes,
+    fees: trade.fees,
+    commissions: trade.fees,
+    currency: SHADOW_CURRENCY,
+    sourceType: trade.sourceType,
+    strategyLabel: trade.strategyLabel,
+    candidateId: trade.candidateId,
+    exitReason: readString(trade.metadata.reason),
+    selectedContract: Object.keys(selectedContract).length
+      ? selectedContract
+      : optionPayload(contract),
+    optionContract: optionPayload(contract),
+    optionRight,
+    expirationDate,
+    dte,
+    strike,
+    strikeSlot: roundTripStrikeSlot({ right: optionRight, profile }),
+    strikeDistancePct:
+      signalPrice != null && signalPrice > 0 && strike != null
+        ? ((strike - signalPrice) / signalPrice) * 100
+        : null,
+    signalPrice,
+    filterState,
+    adx,
+    mtfDirections,
+    filterDirection: toNumber(filterState.direction),
+    peakPrice,
+    mfePercent,
+    givebackPercent,
+    premiumAtRisk: toNumber(position.premiumAtRisk),
+    metadata: {
+      entry: trade.entryMetadata,
+      exit: trade.metadata,
+    },
+  };
+}
+
 function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
   const lotsByKey = new Map<string, ShadowAnalysisOpenLot[]>();
   const roundTrips: ShadowAnalysisRoundTrip[] = [];
@@ -2859,6 +3074,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
     let entryValue = 0;
     let entryFees = 0;
     let earliestEntry: Date | null = null;
+    let entryMetadata: Record<string, unknown> | null = null;
     while (remaining > 0.000001 && lots.length) {
       const lot = lots[0]!;
       const closeQuantity = Math.min(remaining, lot.quantity);
@@ -2866,6 +3082,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       matchedQuantity += closeQuantity;
       entryValue += closeQuantity * lot.entryPrice;
       entryFees += lot.fees * closeRatio;
+      entryMetadata ??= lot.metadata;
       if (!earliestEntry || lot.entryAt.getTime() < earliestEntry.getTime()) {
         earliestEntry = lot.entryAt;
       }
@@ -2910,6 +3127,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       sourceType: event.sourceType,
       strategyLabel: event.strategyLabel,
       candidateId: event.candidateId,
+      entryMetadata: entryMetadata ?? {},
       metadata: event.metadata,
     });
   }

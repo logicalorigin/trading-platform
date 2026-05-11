@@ -401,6 +401,8 @@ export const ListBrokerConnectionsResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }))
 })
+
+
 /**
  * @summary List broker accounts
  */
@@ -461,7 +463,19 @@ export const GetFlexHealthResponse = zod.object({
   "snapshotPointCount": zod.number(),
   "flexNavCoverageStartDate": zod.coerce.date().nullable(),
   "flexNavCoverageEndDate": zod.coerce.date().nullable(),
-  "flexNavRowCount": zod.number()
+  "flexNavRowCount": zod.number(),
+  "flexTradeCoverageStartAt": zod.coerce.date().nullable(),
+  "flexTradeCoverageEndAt": zod.coerce.date().nullable(),
+  "flexTradeRowCount": zod.number(),
+  "flexCashCoverageStartAt": zod.coerce.date().nullable(),
+  "flexCashCoverageEndAt": zod.coerce.date().nullable(),
+  "flexCashRowCount": zod.number(),
+  "flexDividendCoverageStartAt": zod.coerce.date().nullable(),
+  "flexDividendCoverageEndAt": zod.coerce.date().nullable(),
+  "flexDividendRowCount": zod.number(),
+  "flexOpenPositionCoverageStartAt": zod.coerce.date().nullable(),
+  "flexOpenPositionCoverageEndAt": zod.coerce.date().nullable(),
+  "flexOpenPositionRowCount": zod.number()
 })
 
 
@@ -1003,7 +1017,26 @@ export const GetAccountClosedTradesResponse = zod.object({
   "candidateId": zod.string().nullish(),
   "deploymentId": zod.string().nullish(),
   "deploymentName": zod.string().nullish(),
-  "sourceEventId": zod.string().nullish()
+  "sourceEventId": zod.string().nullish(),
+  "exitReason": zod.string().nullish(),
+  "selectedContract": zod.record(zod.string(), zod.unknown()).nullish(),
+  "optionContract": zod.record(zod.string(), zod.unknown()).nullish(),
+  "optionRight": zod.enum(['call', 'put']).nullish(),
+  "expirationDate": zod.string().nullish(),
+  "dte": zod.number().nullish(),
+  "strike": zod.number().nullish(),
+  "strikeSlot": zod.number().nullish(),
+  "strikeDistancePct": zod.number().nullish(),
+  "signalPrice": zod.number().nullish(),
+  "filterState": zod.record(zod.string(), zod.unknown()).nullish(),
+  "adx": zod.number().nullish(),
+  "mtfDirections": zod.array(zod.number()).optional(),
+  "filterDirection": zod.number().nullish(),
+  "peakPrice": zod.number().nullish(),
+  "mfePercent": zod.number().nullish(),
+  "givebackPercent": zod.number().nullish(),
+  "premiumAtRisk": zod.number().nullish(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
 })),
   "summary": zod.record(zod.string(), zod.unknown()),
   "updatedAt": zod.coerce.date()
@@ -2268,7 +2301,7 @@ export const StreamStockAggregatesQueryParams = zod.object({
 /**
  * @summary Get Polygon-backed top options premium distribution widgets
  */
-export const getFlowPremiumDistributionQueryLimitMax = 10;
+export const getFlowPremiumDistributionQueryLimitMax = 16;
 
 export const getFlowPremiumDistributionQueryCandidateLimitMin = 6;
 export const getFlowPremiumDistributionQueryCandidateLimitMax = 60;

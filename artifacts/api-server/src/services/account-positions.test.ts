@@ -125,3 +125,50 @@ test("account margin usage labels maintenance fallback when initial margin is mi
   assert.equal(margin.providerFields.marginUsedFallback, "MaintMarginReq");
   assert.equal(margin.marginUsedUsesMaintenanceFallback, true);
 });
+
+test("account position date balance internals aggregate per-account boundary snapshots", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const rows = [
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-08T14:00:00.000Z"),
+      currency: "USD",
+      cash: "100",
+      buyingPower: "400",
+      netLiquidation: "1000",
+      maintenanceMargin: "25",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-08T20:00:00.000Z"),
+      currency: "USD",
+      cash: "150",
+      buyingPower: "450",
+      netLiquidation: "1100",
+      maintenanceMargin: "30",
+    },
+    {
+      providerAccountId: "U2",
+      asOf: new Date("2026-05-08T19:00:00.000Z"),
+      currency: "USD",
+      cash: "25",
+      buyingPower: "75",
+      netLiquidation: "200",
+      maintenanceMargin: null,
+    },
+  ];
+
+  const latest =
+    __accountPositionInternalsForTests.selectBalanceBoundaryRows(rows, "latest");
+  const aggregate =
+    __accountPositionInternalsForTests.aggregateBalanceRows(latest, "USD");
+
+  assert.deepEqual(
+    latest.map((row) => `${row.providerAccountId}:${row.netLiquidation}`).sort(),
+    ["U1:1100", "U2:200"],
+  );
+  assert.equal(aggregate?.netLiquidation, 1300);
+  assert.equal(aggregate?.cash, 175);
+  assert.equal(aggregate?.buyingPower, 525);
+  assert.equal(aggregate?.maintenanceMargin, 30);
+});

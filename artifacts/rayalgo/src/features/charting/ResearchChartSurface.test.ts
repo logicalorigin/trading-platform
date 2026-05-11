@@ -102,6 +102,20 @@ test("ResearchChartSurface mounts the overlay layer for flow event overlays", ()
   assert.match(overlayLayerGate, /chartEventOverlays\.length/);
 });
 
+test("ResearchChartSurface mounts position bubbles and mini off-pane indicators", () => {
+  const source = readResearchChartSurfaceSource();
+  const overlayLayerGate = source.match(
+    /\{windowOverlays\.length \|\|[\s\S]*?\? \(\s*<div\s+data-testid=\{dataTestId \? `\$\{dataTestId\}-overlay-layer`/,
+  )?.[0];
+
+  assert.ok(overlayLayerGate, "overlay layer gate must be present");
+  assert.match(overlayLayerGate, /positionBubbleOverlays\.length/);
+  assert.match(overlayLayerGate, /positionOffPaneOverlays\.length/);
+  assert.match(source, /dataTestId: `chart-position-pnl-\$\{bubble\.id\}`/);
+  assert.match(source, /dataTestId: `chart-position-offpane-\$\{indicator\.id\}`/);
+  assert.match(source, /resolvedPositionOverlays\.density === "mini"/);
+});
+
 test("ResearchChartSurface applies semantic colors to flow markers", () => {
   const source = readResearchChartSurfaceSource();
   const chartEventColorResolver = source.match(
@@ -123,6 +137,16 @@ test("ResearchChartSurface applies semantic colors to flow markers", () => {
   assert.match(source, /data-chart-flow-marker-tone=\{/);
   assert.match(source, /data-chart-flow-marker-basis=\{/);
   assert.match(source, /data-chart-flow-volume-basis=\{overlay\.flowSourceBasis\}/);
+});
+
+test("ResearchChartSurface supports tap-selected crosshair state", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const \[tapSelectedBar, setTapSelectedBar\]/);
+  assert.match(source, /tapSelectedBarRef\.current/);
+  assert.match(source, /chart\.setCrosshairPosition\?\./);
+  assert.match(source, /chart\.clearCrosshairPosition\?\./);
+  assert.match(source, /tapSelectedBar \|\|\s*hoverBar/);
 });
 
 test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {

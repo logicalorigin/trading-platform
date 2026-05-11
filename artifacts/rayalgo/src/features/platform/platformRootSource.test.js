@@ -117,19 +117,104 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
 });
 
+test("mobile shell separates menu navigation from watchlist drawer", () => {
+  const shellSource = readFileSync(
+    new URL("./PlatformShell.jsx", import.meta.url),
+    "utf8",
+  );
+  const drawerSource = readFileSync(
+    new URL("./MobileNavDrawer.jsx", import.meta.url),
+    "utf8",
+  );
+  const watchlistDrawerSource = readFileSync(
+    new URL("./MobileWatchlistDrawer.jsx", import.meta.url),
+    "utf8",
+  );
+  const headerSource = readFileSync(
+    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(shellSource, /data-testid="mobile-nav-trigger"/);
+  assert.match(shellSource, /data-testid="mobile-watchlist-trigger"/);
+  assert.match(shellSource, /<MobileNavDrawer/);
+  assert.match(shellSource, /<MobileWatchlistDrawer/);
+  assert.match(shellSource, /data-viewport=/);
+  assert.match(drawerSource, /data-testid="mobile-nav-screen-list"/);
+  assert.doesNotMatch(drawerSource, /<WatchlistComponent/);
+  assert.match(watchlistDrawerSource, /testId="mobile-watchlist-drawer"/);
+  assert.match(watchlistDrawerSource, /side="right"/);
+  assert.match(watchlistDrawerSource, /<WatchlistComponent/);
+  assert.match(headerSource, /<BottomSheet/);
+  assert.match(headerSource, /compactSettings=\{isPhone\}/);
+});
+
+test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
+  const indexHtml = readFileSync(
+    new URL("../../../index.html", import.meta.url),
+    "utf8",
+  );
+  const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+  const tooltipSource = readFileSync(
+    new URL("../../components/ui/tooltip.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(indexHtml, /viewport-fit=cover/);
+  assert.doesNotMatch(indexHtml, /maximum-scale/);
+  assert.match(cssSource, /font-size:\s*max\(16px,\s*1em\)/);
+  assert.match(cssSource, /\.ra-shell\[data-viewport="phone"\] \.ra-touch-target/);
+  assert.match(tooltipSource, /event\.pointerType !== "touch"/);
+  assert.match(tooltipSource, /setOpen\(true\)/);
+});
+
+test("Account phone layout uses card lists for dense trading tables", () => {
+  const accountSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const positionsSource = readFileSync(
+    new URL("../../screens/account/PositionsPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const tradesOrdersSource = readFileSync(
+    new URL("../../screens/account/TradesOrdersPanel.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(accountSource, /data-layout=\{accountIsPhone \? "phone"/);
+  assert.match(accountSource, /<PositionsPanel[\s\S]*isPhone=\{accountIsPhone\}/);
+  assert.match(accountSource, /<ClosedTradesPanel[\s\S]*isPhone=\{accountIsPhone\}/);
+  assert.match(accountSource, /<OrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
+  assert.match(positionsSource, /data-testid="account-positions-card-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-card-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-trades-card-list"/);
+});
+
 test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {
   const source = readFileSync(
     new URL("../../screens/FlowScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const panelSource = readFileSync(
+    new URL(
+      "../../features/flow/FlowDistributionScannerPanel.jsx",
+      import.meta.url,
+    ),
     "utf8",
   );
   const settingsSource = readFileSync(
     new URL("../../screens/SettingsScreen.jsx", import.meta.url),
     "utf8",
   );
-  const scannerPanelRenders = source.match(/<FlowScannerStatusPanel\b/g) || [];
+  const combinedPanelRenders =
+    source.match(/<FlowDistributionScannerPanel\b/g) || [];
+  const railScannerRenders =
+    panelSource.match(/<FlowScannerStatusPanel\b/g) || [];
   const legacyScannerRenders = source.match(/<UnusualScannerSection\b/g) || [];
 
-  assert.equal(scannerPanelRenders.length, 1);
+  assert.equal(combinedPanelRenders.length, 1);
+  assert.equal(railScannerRenders.length, 1);
   assert.equal(legacyScannerRenders.length, 0);
   assert.doesNotMatch(source, /const UnusualScannerSection/);
   assert.doesNotMatch(source, />\s*Flow Scanner\s*</);
@@ -159,14 +244,21 @@ test("Flow page premium distribution widgets use Polygon summary endpoint", () =
     new URL("../../screens/FlowScreen.jsx", import.meta.url),
     "utf8",
   );
+  const panelSource = readFileSync(
+    new URL(
+      "../../features/flow/FlowDistributionScannerPanel.jsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
   assert.match(source, /useGetFlowPremiumDistribution/);
-  assert.match(source, /FLOW_PREMIUM_WIDGET_COUNT\s*=\s*10/);
+  assert.match(source, /FLOW_PREMIUM_WIDGET_COUNT\s*=\s*16/);
   assert.match(source, /FLOW_PREMIUM_WIDGET_REFRESH_MS\s*=\s*30_000/);
   assert.match(source, /FLOW_PREMIUM_TIMEFRAME_OPTIONS/);
-  assert.match(source, /<PremiumDistributionStrip/);
+  assert.match(source, /<FlowDistributionScannerPanel/);
   assert.match(source, /data-testid="flow-premium-distribution-widget"/);
-  assert.match(source, /data-testid="flow-premium-distribution-timeframe"/);
+  assert.match(panelSource, /flow-premium-distribution-timeframe/);
   assert.match(source, /PremiumDistributionDonut/);
   assert.match(source, /PremiumDistributionWidget/);
   assert.match(source, /formatPremiumCompactUsd/);

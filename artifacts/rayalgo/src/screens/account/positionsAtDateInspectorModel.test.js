@@ -44,3 +44,27 @@ test("positions-at-date inspector exposes unavailable response", () => {
   assert.equal(state.unavailable, true);
   assert.equal(state.message, "No snapshot");
 });
+
+test("positions-at-date inspector keeps balance snapshots visible without positions", () => {
+  const state = buildPositionsAtDateInspectorState({
+    activeDate: "2026-05-08",
+    response: {
+      status: "historical",
+      message: "No Flex positions",
+      positions: [],
+      activity: [],
+      totals: {
+        balance: {
+          netLiquidation: 5752.74,
+          cash: 1934.74,
+          buyingPower: 13205.1,
+          dayPnl: -0.6,
+        },
+      },
+    },
+  });
+
+  assert.equal(state.unavailable, false);
+  assert.equal(state.balance.netLiquidation, 5752.74);
+  assert.equal(state.message, "No Flex positions");
+});

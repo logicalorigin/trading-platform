@@ -1,9 +1,12 @@
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { List, Menu } from "lucide-react";
 import BloombergLiveDock from "./BloombergLiveDock";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
+import { MobileNavDrawer } from "./MobileNavDrawer.jsx";
+import { MobileWatchlistDrawer } from "./MobileWatchlistDrawer.jsx";
 import { SCREENS, ScreenLoadingFallback } from "./screenRegistry.jsx";
-import { responsiveFlags, useViewportSize } from "../../lib/responsive";
+import { useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -65,12 +68,19 @@ export const PlatformShell = ({
   signalScanErrored,
   onToggleSignalScan,
 }) => {
-  const viewport = useViewportSize();
-  const { isPhone, isNarrow } = responsiveFlags(viewport.width);
+  const viewport = useViewport();
+  const { isPhone, isNarrow } = viewport.flags;
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
   const mobileAutoCollapseRef = useRef(false);
+  const activeScreenMeta =
+    SCREENS.find((screen) => screen.id === activeScreen) || SCREENS[0];
+
   useEffect(() => {
     if (!isPhone) {
       mobileAutoCollapseRef.current = false;
+      setMobileNavOpen(false);
+      setMobileWatchlistOpen(false);
       return;
     }
 
@@ -101,6 +111,7 @@ export const PlatformShell = ({
   <div
     className="ra-shell"
     data-layout={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
+    data-viewport={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
     style={{
       height: isPhone ? "100dvh" : "100vh",
       display: "flex",
@@ -149,33 +160,81 @@ export const PlatformShell = ({
         }}
       >
         {isPhone ? (
-          <AppTooltip content={sidebarCollapsed ? "Open watchlist" : "Close watchlist"}><button
+          <>
+          <AppTooltip content="Open navigation"><button
             className="ra-interactive"
+            data-testid="mobile-nav-trigger"
             type="button"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            aria-label={sidebarCollapsed ? "Open watchlist" : "Close watchlist"}
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Open navigation"
             style={{
-              width: dim(32),
-              minWidth: dim(32),
-              height: dim(32),
+              width: dim(36),
+              minWidth: dim(36),
+              height: dim(36),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${sidebarCollapsed ? T.border : T.accent}`,
-              background: sidebarCollapsed ? T.bg2 : `${T.accent}18`,
-              color: sidebarCollapsed ? T.textSec : T.accent,
-              borderRadius: dim(3),
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textSec,
+              borderRadius: dim(4),
               cursor: "pointer",
               fontSize: fs(14),
               fontWeight: 400,
-              position: "relative",
-              zIndex: isPhone ? 150 : undefined,
             }}
           >
-            {sidebarCollapsed ? "☰" : "×"}
+            <Menu size={17} strokeWidth={2.2} />
           </button></AppTooltip>
-        ) : null}
-        {SCREENS.map((screen) => {
+          <div
+            data-testid="mobile-nav-active-screen"
+            style={{
+              minHeight: dim(36),
+              flex: "1 1 auto",
+              minWidth: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(7),
+              padding: sp("0 9px"),
+              border: `1px solid ${T.border}`,
+              background: T.bg1,
+              color: T.text,
+              fontFamily: T.sans,
+              fontSize: fs(11),
+              fontWeight: 400,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span aria-hidden="true" style={{ color: T.accent }}>
+              {activeScreenMeta.icon}
+            </span>
+            <span>{activeScreenMeta.label}</span>
+          </div>
+          <AppTooltip content="Open watchlist"><button
+            className="ra-interactive"
+            data-testid="mobile-watchlist-trigger"
+            type="button"
+            onClick={() => setMobileWatchlistOpen(true)}
+            aria-label="Open watchlist"
+            style={{
+              width: dim(36),
+              minWidth: dim(36),
+              height: dim(36),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textSec,
+              borderRadius: dim(4),
+              cursor: "pointer",
+              fontSize: fs(14),
+              fontWeight: 400,
+            }}
+          >
+            <List size={17} strokeWidth={2.2} />
+          </button></AppTooltip>
+          </>
+        ) : SCREENS.map((screen) => {
           const isTradeTab = screen.id === "trade";
           const totalAlerts = watchlistsBusy?.totalAlerts || 0;
           const winAlerts = watchlistsBusy?.winAlerts || 0;
@@ -314,22 +373,51 @@ export const PlatformShell = ({
       onToggleSignalScan={onToggleSignalScan}
     />
 
+    <MobileNavDrawer
+      open={isPhone && mobileNavOpen}
+      onClose={() => setMobileNavOpen(false)}
+      activeScreen={activeScreen}
+      setScreen={setScreen}
+      HeaderAccountStripComponent={HeaderAccountStripComponent}
+      HeaderStatusClusterComponent={HeaderStatusClusterComponent}
+      accounts={accounts}
+      primaryAccountId={primaryAccountId}
+      primaryAccount={primaryAccount}
+      onSelectAccount={onSelectAccount}
+      maskAccountValues={maskAccountValues}
+      session={session}
+      environment={environment}
+      bridgeTone={bridgeTone}
+      theme={theme}
+      onToggleTheme={onToggleTheme}
+    />
+
+    <MobileWatchlistDrawer
+      open={isPhone && mobileWatchlistOpen}
+      onClose={() => setMobileWatchlistOpen(false)}
+      WatchlistComponent={WatchlistComponent}
+      activeWatchlist={activeWatchlist}
+      watchlistSymbols={watchlistSymbols}
+      signalMonitorStates={signalMonitorStates}
+      signalMatrixStates={signalMatrixStates}
+      selectedSymbol={selectedSymbol}
+      onSelectSymbol={onSelectSymbol}
+      onFocusMarketChart={onFocusMarketChart}
+      onSelectWatchlist={onSelectWatchlist}
+      onCreateWatchlist={onCreateWatchlist}
+      onRenameWatchlist={onRenameWatchlist}
+      onDeleteWatchlist={onDeleteWatchlist}
+      onSetDefaultWatchlist={onSetDefaultWatchlist}
+      onAddSymbolToWatchlist={onAddSymbolToWatchlist}
+      onReorderSymbolInWatchlist={onReorderSymbolInWatchlist}
+      onRemoveSymbolFromWatchlist={onRemoveSymbolFromWatchlist}
+      onSignalAction={onSignalAction}
+      watchlists={watchlists}
+      watchlistsBusy={watchlistsBusy}
+    />
+
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
-      {isPhone && !sidebarCollapsed ? (
-        <button
-          type="button"
-          aria-label="Dismiss watchlist overlay"
-          onClick={() => setSidebarCollapsed(true)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 118,
-            border: "none",
-            background: "rgba(2, 6, 23, 0.58)",
-            cursor: "pointer",
-          }}
-        />
-      ) : null}
+      {!isPhone ? (
       <div
         style={{
           width: sidebarWidth,
@@ -418,6 +506,7 @@ export const PlatformShell = ({
           </div>
         )}
       </div>
+      ) : null}
 
       <div
         style={{

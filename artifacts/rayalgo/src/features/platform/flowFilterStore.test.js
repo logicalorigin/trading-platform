@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildFlowTapePresetPatch,
+  clearFlowTapeFilterSymbol,
   filterFlowEventsForChartDisplay,
   filterFlowTapeEvents,
   flowTapeFiltersAreActive,
@@ -10,6 +11,8 @@ import {
   parseFlowTapeTickerTokens,
   resetFlowTapeFilterStateForTests,
   setFlowTapeFilterState,
+  setFlowTapeFilterSymbol,
+  toggleFlowTapeFilterSymbol,
 } from "./flowFilterStore.js";
 
 test("normalizeFlowTapeFilterState repairs invalid persisted filter values", () => {
@@ -27,6 +30,7 @@ test("normalizeFlowTapeFilterState repairs invalid persisted filter values", () 
       minPrem: 0,
       includeQuery: "123",
       excludeQuery: "",
+      symbol: null,
     },
   );
 });
@@ -56,6 +60,7 @@ test("flow tape filter state shares linked filter updates", () => {
     minPrem: 50_000,
     includeQuery: "SPY, QQQ",
     excludeQuery: "TSLA",
+    symbol: null,
   });
 });
 
@@ -362,4 +367,91 @@ test("chart flow display presets normalize ask and bid side aliases", () => {
     }).map((event) => event.id),
     ["bid-put", "hit-bid-put"],
   );
+});
+
+test("symbol filter normalizes input to uppercase and treats blanks as null", () => {
+  assert.equal(normalizeFlowTapeFilterState({ symbol: "nvda" }).symbol, "NVDA");
+  assert.equal(normalizeFlowTapeFilterState({ symbol: "  aapl " }).symbol, "AAPL");
+  assert.equal(normalizeFlowTapeFilterState({ symbol: "" }).symbol, null);
+  assert.equal(normalizeFlowTapeFilterState({ symbol: null }).symbol, null);
+  assert.equal(normalizeFlowTapeFilterState({}).symbol, null);
+});
+
+test("symbol filter narrows tape events to a single ticker, additive with includeQuery", () => {
+  const events = [
+    { id: "nvda-call", ticker: "NVDA", cp: "C", premium: 100_000 },
+    { id: "aapl-call", ticker: "AAPL", cp: "C", premium: 100_000 },
+    { id: "tsla-put", ticker: "TSLA", cp: "P", premium: 100_000 },
+  ];
+
+  assert.deepEqual(
+    filterFlowTapeEvents(events, { symbol: "NVDA" }).map((event) => event.id),
+    ["nvda-call"],
+  );
+
+  assert.deepEqual(
+    filterFlowTapeEvents(events, {
+      symbol: "NVDA",
+      includeQuery: "AAPL",
+    }).map((event) => event.id),
+    [],
+  );
+
+  assert.deepEqual(
+    filterFlowTapeEvents(events, {
+      symbol: "AAPL",
+      includeQuery: "AAPL,TSLA",
+    }).map((event) => event.id),
+    ["aapl-call"],
+  );
+});
+
+test("flowTapeFiltersAreActive reports symbol-only filter as active", () => {
+  assert.equal(flowTapeFiltersAreActive({ symbol: "NVDA" }), true);
+  assert.equal(flowTapeFiltersAreActive({ symbol: null }), false);
+});
+
+test("setFlowTapeFilterSymbol and clearFlowTapeFilterSymbol update store", () => {
+  resetFlowTapeFilterStateForTests();
+
+  setFlowTapeFilterSymbol("nvda");
+  assert.equal(getFlowTapeFilterState().symbol, "NVDA");
+
+  setFlowTapeFilterSymbol("aapl");
+  assert.equal(getFlowTapeFilterState().symbol, "AAPL");
+
+  clearFlowTapeFilterSymbol();
+  assert.equal(getFlowTapeFilterState().symbol, null);
+});
+
+test("toggleFlowTapeFilterSymbol adds, swaps, and clears", () => {
+  resetFlowTapeFilterStateForTests();
+
+  toggleFlowTapeFilterSymbol("nvda");
+  assert.equal(getFlowTapeFilterState().symbol, "NVDA");
+
+  toggleFlowTapeFilterSymbol("nvda");
+  assert.equal(getFlowTapeFilterState().symbol, null);
+
+  toggleFlowTapeFilterSymbol("nvda");
+  toggleFlowTapeFilterSymbol("aapl");
+  assert.equal(getFlowTapeFilterState().symbol, "AAPL");
+});
+
+test("symbol filter persists alongside other filters without disturbing them", () => {
+  resetFlowTapeFilterStateForTests();
+
+  setFlowTapeFilterState({ filter: "calls", minPrem: 50_000 });
+  setFlowTapeFilterSymbol("NVDA");
+
+  const state = getFlowTapeFilterState();
+  assert.equal(state.symbol, "NVDA");
+  assert.equal(state.filter, "calls");
+  assert.equal(state.minPrem, 50_000);
+
+  clearFlowTapeFilterSymbol();
+  const cleared = getFlowTapeFilterState();
+  assert.equal(cleared.symbol, null);
+  assert.equal(cleared.filter, "calls");
+  assert.equal(cleared.minPrem, 50_000);
 });

@@ -878,6 +878,10 @@ export const TradeEquityPanel = ({
       model={chartModel}
       compact={compact}
       frameSignalState={showSignalFrameBorder ? signalFrameState : null}
+      positionOverlayContext={{
+        surfaceKind: effectiveChartHydrationRole === "mini" ? "mini" : "spot",
+        symbol: ticker,
+      }}
       chartEvents={chartEvents}
       chartFlowDiagnostics={chartEventConversion}
       latestQuotePrice={tickerInfo?.price}

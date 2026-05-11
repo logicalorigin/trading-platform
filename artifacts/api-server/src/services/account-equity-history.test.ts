@@ -302,13 +302,59 @@ test("account history filters zero-only account placeholders before compaction",
     [
       {
         account: "FUNDED",
-        timestamp: "2026-05-01T16:35:00.000Z",
+        timestamp: "2026-05-01T16:35:47.497Z",
         netLiquidation: "5734.56",
       },
       {
         account: "FUNDED",
-        timestamp: "2026-05-01T16:38:00.000Z",
+        timestamp: "2026-05-01T16:38:47.492Z",
         netLiquidation: "5730.54",
+      },
+    ],
+  );
+});
+
+test("account history compaction preserves first daily snapshot for calendar P&L boundaries", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const compact = __accountEquityHistoryInternalsForTests.compactEquitySnapshotRows;
+  const rows = [
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-08T18:26:02.932Z"),
+      currency: "USD",
+      netLiquidation: "5753.34",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-08T19:56:58.939Z"),
+      currency: "USD",
+      netLiquidation: "5778.57",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-08T20:57:22.819Z"),
+      currency: "USD",
+      netLiquidation: "5752.74",
+    },
+  ];
+
+  assert.deepEqual(
+    compact(rows, "1Y").map((row) => ({
+      timestamp: row.asOf.toISOString(),
+      netLiquidation: row.netLiquidation,
+    })),
+    [
+      {
+        timestamp: "2026-05-08T18:26:02.932Z",
+        netLiquidation: "5753.34",
+      },
+      {
+        timestamp: "2026-05-08T19:56:58.939Z",
+        netLiquidation: "5778.57",
+      },
+      {
+        timestamp: "2026-05-08T20:57:22.819Z",
+        netLiquidation: "5752.74",
       },
     ],
   );

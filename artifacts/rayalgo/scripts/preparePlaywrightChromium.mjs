@@ -26,6 +26,7 @@ in pkgs.lib.makeLibraryPath [
   pkgs.xorg.libxcb
   pkgs.libxkbcommon
   pkgs.alsa-lib
+  pkgs.libgbm
   pkgs.mesa
   pkgs.libdrm
   pkgs.gtk3

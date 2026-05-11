@@ -7,9 +7,11 @@ import {
   setAlgoDeploymentEnabled,
 } from "../services/automation";
 import {
+  ensureDefaultSignalOptionsPaperDeployment,
   getAlgoDeploymentCockpit,
   listSignalOptionsAutomationState,
   recordSignalOptionsManualDeviation,
+  runSignalOptionsShadowBackfill,
   runSignalOptionsShadowScan,
   updateSignalOptionsExecutionProfile,
 } from "../services/signal-options-automation";
@@ -65,6 +67,15 @@ router.post("/algo/deployments", async (req, res): Promise<void> => {
   res.status(201).json(deployment);
 });
 
+router.post("/algo/signal-options/default-paper-deployment", async (req, res): Promise<void> => {
+  const enabled =
+    req.body?.enabled === false || req.body?.enabled === "false" ? false : true;
+
+  res.status(201).json(
+    await ensureDefaultSignalOptionsPaperDeployment({ enabled }),
+  );
+});
+
 router.post("/algo/deployments/:deploymentId/enable", async (req, res): Promise<void> => {
   res.json(
     await setAlgoDeploymentEnabled({
@@ -105,6 +116,24 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
       deploymentId: req.params.deploymentId,
       forceEvaluate: true,
       source: "manual",
+    }),
+  );
+});
+
+router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (req, res): Promise<void> => {
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+  res.status(201).json(
+    await runSignalOptionsShadowBackfill({
+      deploymentId: req.params.deploymentId,
+      start: body.start,
+      end: body.end,
+      session: body.session,
+      commit: body.commit,
+      profilePatch: body.profilePatch,
     }),
   );
 });

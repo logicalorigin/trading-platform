@@ -864,7 +864,7 @@ export const AlgoScreen = ({
         name:
           deploymentName.trim() ||
           `${selectedDraft.name} ${environment.toUpperCase()}`,
-        providerAccountId: activeAccountId,
+        providerAccountId: "shadow",
         mode: environment,
         symbolUniverse: parseSymbolUniverseInput(symbolUniverseInput),
         config: {
@@ -872,6 +872,8 @@ export const AlgoScreen = ({
           sourceRunId: selectedDraft.runId,
           sourceStudyId: selectedDraft.studyId,
           promotedAt: selectedDraft.promotedAt,
+          marketDataAccountId: activeAccountId,
+          executionAccountId: "shadow",
           signalOptions: mergeSignalOptionsProfile(selectedDraft.config),
         },
       },

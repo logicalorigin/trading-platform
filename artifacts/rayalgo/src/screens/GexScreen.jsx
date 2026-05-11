@@ -10,6 +10,8 @@ import {
   Zap,
 } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -22,6 +24,7 @@ import {
 } from "recharts";
 import {
   aggregateMetrics,
+  buildIntradaySnapshots,
   computeSignals,
   computeSqueeze,
   contractGex,
@@ -32,8 +35,14 @@ import {
   normalizeGexResponseOptions,
   normalizeGexTicker,
   oiByStrike,
+  resolveSqueezeNarrative,
 } from "../features/gex/gexModel.js";
 import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
+import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
+import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
+import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
+import { BottomSheet } from "../components/platform/BottomSheet.jsx";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 
 const fetchGexData = async ({ ticker, signal }) => {
@@ -168,7 +177,7 @@ const SectionTitle = ({ children, right }) => (
   </div>
 );
 
-const MetricTile = ({ label, value, sub, color = T.text }) => (
+const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
   <div
     style={{
       minWidth: dim(112),
@@ -185,6 +194,9 @@ const MetricTile = ({ label, value, sub, color = T.text }) => (
   >
     <span
       style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(3),
         color: T.textDim,
         fontFamily: T.display,
         fontSize: textSize("caption"),
@@ -193,6 +205,9 @@ const MetricTile = ({ label, value, sub, color = T.text }) => (
       }}
     >
       {label}
+      {glossaryKey ? (
+        <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
+      ) : null}
     </span>
     <span
       style={{
@@ -658,7 +673,12 @@ const HeatmapCard = ({ rows, spot }) => {
 
   return (
     <ChartShell
-      title="GEX Heatmap by Expiration"
+      title={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+          GEX Heatmap by Expiration
+          <InfoTooltipIcon entry={getGexGlossaryEntry("heatmapColors")} />
+        </span>
+      }
       right={
         <button
           type="button"
@@ -731,6 +751,7 @@ const HeatmapCard = ({ rows, spot }) => {
           </tbody>
         </table>
       </div>
+      <HeatmapColorLegend />
     </ChartShell>
   );
 };
@@ -742,6 +763,12 @@ const heatmapHeaderStyle = {
   background: T.bg1,
   borderBottom: `1px solid ${T.border}`,
   whiteSpace: "nowrap",
+};
+
+const signalGlossaryKey = (kind) => {
+  if (kind === "Magnet") return "signalMagnet";
+  if (kind === "Support") return "signalSupport";
+  return "signalVolatility";
 };
 
 const SignalsCard = ({ signals }) => (
@@ -767,6 +794,9 @@ const SignalsCard = ({ signals }) => (
                 <b style={{ color: T.text, fontSize: textSize("body"), fontFamily: T.display }}>
                   {signal.kind}
                 </b>
+                <InfoTooltipIcon
+                  entry={getGexGlossaryEntry(signalGlossaryKey(signal.kind))}
+                />
                 <span style={{ marginLeft: "auto", color, fontSize: textSize("caption") }}>
                   {signal.severity}
                 </span>
@@ -830,11 +860,11 @@ const SqueezeCard = ({ squeeze, source }) => {
 
   const factors = squeeze.factors || {};
   const rows = [
-    ["Gamma", factors.gammaRegime],
-    ["Wall", factors.wallProximity],
-    ["Flow", factors.flowAlignment],
-    ["Volume", factors.volumeConfirm],
-    ["DEX", factors.dexBias],
+    ["Gamma", factors.gammaRegime, "factorGamma"],
+    ["Wall", factors.wallProximity, "factorWall"],
+    ["Flow", factors.flowAlignment, "factorFlow"],
+    ["Volume", factors.volumeConfirm, "factorVolume"],
+    ["DEX", factors.dexBias, "factorDex"],
   ];
   const color = squeeze.bias === "BULLISH" ? T.green : T.red;
   const displayedClassifiedFlowCount = Number(
@@ -843,10 +873,34 @@ const SqueezeCard = ({ squeeze, source }) => {
   const displayedRawFlowCount = Number(
     source?.flowEventCount || squeeze.flowEventCount || 0,
   );
+  const narrative = resolveSqueezeNarrative(squeeze);
+  const directionLabel = squeeze.bias === "BULLISH" ? "Bullish" : "Bearish";
+  const verdictLabel = (squeeze.verdict || "").toLowerCase();
   return (
     <Card noPad>
       <SectionTitle>Gamma Squeeze Screener</SectionTitle>
       <div style={{ padding: sp(10), display: "grid", gap: sp(10) }}>
+        <div
+          data-testid="gex-squeeze-headline"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(3),
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: sp(5) }}>
+            <span style={{ color, fontSize: fs(14), fontWeight: 700, fontFamily: T.display }}>
+              {directionLabel} Squeeze:
+            </span>
+            <span style={{ color, fontSize: fs(14), fontWeight: 700, fontFamily: T.display }}>
+              {verdictLabel || "—"}
+            </span>
+            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>
+              ({squeeze.score || 0}/100)
+            </span>
+            <InfoTooltipIcon entry={getGexGlossaryEntry("squeezeProbability")} />
+          </div>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(7) }}>
           <Zap size={15} color={T.amber} />
           <span style={{ color, fontSize: fs(18), fontWeight: 700 }}>
@@ -884,7 +938,7 @@ const SqueezeCard = ({ squeeze, source }) => {
           </div>
         )}
         <div style={{ display: "grid", gap: sp(6) }}>
-          {rows.map(([label, value]) => (
+          {rows.map(([label, value, glossaryKey]) => (
             <div key={label}>
               <div
                 style={{
@@ -894,7 +948,10 @@ const SqueezeCard = ({ squeeze, source }) => {
                   fontSize: textSize("caption"),
                 }}
               >
-                <span>{label}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: sp(3) }}>
+                  {label}
+                  <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
+                </span>
                 <span>{Math.round(value || 0)}/25</span>
               </div>
               <div style={{ height: dim(4), background: T.bg0, marginTop: sp(3) }}>
@@ -909,6 +966,62 @@ const SqueezeCard = ({ squeeze, source }) => {
             </div>
           ))}
         </div>
+        {narrative.stronger.length ? (
+          <div data-testid="gex-squeeze-stronger" style={{ display: "grid", gap: sp(4) }}>
+            <div
+              style={{
+                color: T.textDim,
+                fontSize: textSize("caption"),
+                fontFamily: T.mono,
+                letterSpacing: "0.05em",
+                textTransform: "uppercase",
+              }}
+            >
+              For Stronger Setup
+            </div>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: sp(14),
+                color: T.textSec,
+                fontSize: textSize("caption"),
+                lineHeight: 1.4,
+                display: "grid",
+                gap: sp(3),
+              }}
+            >
+              {narrative.stronger.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {narrative.implication ? (
+          <div
+            data-testid="gex-squeeze-implication"
+            style={{
+              borderTop: `1px solid ${T.border}`,
+              paddingTop: sp(7),
+              color: T.text,
+              fontSize: textSize("caption"),
+              lineHeight: 1.5,
+            }}
+          >
+            <div
+              style={{
+                color: T.textDim,
+                fontFamily: T.mono,
+                fontSize: textSize("caption"),
+                letterSpacing: "0.05em",
+                textTransform: "uppercase",
+                marginBottom: sp(3),
+              }}
+            >
+              Trading Implication
+            </div>
+            {narrative.implication}
+          </div>
+        ) : null}
       </div>
     </Card>
   );
@@ -971,6 +1084,9 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
   const [view, setView] = useState("graph");
   const [expirationFilter, setExpirationFilter] = useState("all");
   const [ivAdjustment, setIvAdjustment] = useState(0);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [gexRootRef, gexRootSize] = useElementSize();
+  const { isPhone, isNarrow } = responsiveFlags(gexRootSize.width);
   const lastCommittedTickerRef = useRef(initialTicker);
 
   useEffect(() => {
@@ -986,6 +1102,12 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
   useEffect(() => {
     setExpirationFilter("all");
   }, [ticker]);
+
+  useEffect(() => {
+    if (!isPhone) {
+      setMobileFiltersOpen(false);
+    }
+  }, [isPhone]);
 
   const commitTicker = () => {
     const nextTicker = normalizeGexTicker(tickerDraft);
@@ -1092,10 +1214,86 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
     coverage.usable,
   );
   const dataReady = Boolean(metrics && spot != null && adjustedRows.length);
+  const expirationOptions = useMemo(
+    () => [
+      { value: "all", label: "All loaded expirations" },
+      ...expirationDates.map((date) => ({ value: date, label: date })),
+    ],
+    [expirationDates],
+  );
+  const tickerSearchControl = (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(6),
+        padding: sp("0 8px"),
+        ...fieldStyle,
+      }}
+    >
+      <Search size={14} color={T.textDim} />
+      <input
+        value={tickerDraft}
+        onChange={(event) => setTickerDraft(event.target.value.toUpperCase())}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commitTicker();
+        }}
+        onBlur={commitTicker}
+        aria-label="GEX ticker"
+        style={{
+          width: dim(isPhone ? 68 : 82),
+          border: 0,
+          outline: 0,
+          background: "transparent",
+          color: T.text,
+          fontFamily: T.display,
+          fontWeight: 700,
+          fontSize: textSize("bodyStrong"),
+        }}
+      />
+    </div>
+  );
+  const filtersControl = (
+    <>
+      <select
+        value={expirationFilter}
+        onChange={(event) => setExpirationFilter(event.target.value)}
+        style={{
+          ...fieldStyle,
+          minWidth: dim(156),
+          padding: sp("0 8px"),
+        }}
+      >
+        {expirationOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <SegmentControl
+        value={series}
+        onChange={setSeries}
+        options={[
+          { value: "net", label: "Net GEX" },
+          { value: "callput", label: "Call/Put" },
+        ]}
+      />
+      <SegmentControl
+        value={view}
+        onChange={setView}
+        options={[
+          { value: "graph", label: "Graph" },
+          { value: "table", label: "Table" },
+        ]}
+      />
+    </>
+  );
 
   return (
     <div
+      ref={gexRootRef}
       data-testid="gex-screen"
+      data-layout={isPhone ? "phone" : isNarrow ? "tablet" : "desktop"}
       style={{
         flex: 1,
         minHeight: 0,
@@ -1151,75 +1349,93 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
               flexWrap: "wrap",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(6),
-                padding: sp("0 8px"),
-                ...fieldStyle,
-              }}
-            >
-              <Search size={14} color={T.textDim} />
-              <input
-                value={tickerDraft}
-                onChange={(event) => setTickerDraft(event.target.value.toUpperCase())}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitTicker();
-                }}
-                onBlur={commitTicker}
-                aria-label="GEX ticker"
+            {tickerSearchControl}
+            {isPhone ? (
+              <button
+                type="button"
+                data-testid="gex-mobile-filter-trigger"
+                onClick={() => setMobileFiltersOpen(true)}
                 style={{
-                  width: dim(82),
-                  border: 0,
-                  outline: 0,
-                  background: "transparent",
-                  color: T.text,
-                  fontFamily: T.display,
-                  fontWeight: 700,
-                  fontSize: textSize("bodyStrong"),
+                  ...fieldStyle,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(6),
+                  minHeight: dim(38),
+                  padding: sp("0 10px"),
+                  cursor: "pointer",
                 }}
-              />
-            </div>
-            <select
-              value={expirationFilter}
-              onChange={(event) => setExpirationFilter(event.target.value)}
-              style={{
-                ...fieldStyle,
-                minWidth: dim(156),
-                padding: sp("0 8px"),
-              }}
-            >
-              <option value="all">All loaded expirations</option>
-              {expirationDates.map((date) => (
-                <option key={date} value={date}>
-                  {date}
-                </option>
-              ))}
-            </select>
-            <SegmentControl
-              value={series}
-              onChange={setSeries}
-              options={[
-                { value: "net", label: "Net GEX" },
-                { value: "callput", label: "Call/Put" },
-              ]}
-            />
-            <SegmentControl
-              value={view}
-              onChange={setView}
-              options={[
-                { value: "graph", label: "Graph" },
-                { value: "table", label: "Table" },
-              ]}
-            />
+              >
+                <SlidersHorizontal size={14} />
+                Filters
+              </button>
+            ) : (
+              filtersControl
+            )}
           </div>
         </header>
+
+        {isPhone ? (
+          <>
+            <div
+              data-testid="gex-mobile-expiration-chips"
+              className="ra-hide-scrollbar"
+              style={{
+                display: "flex",
+                gap: sp(4),
+                overflowX: "auto",
+                paddingBottom: sp(1),
+              }}
+            >
+              {expirationOptions.slice(0, 9).map((option) => {
+                const active = option.value === expirationFilter;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setExpirationFilter(option.value)}
+                    style={{
+                      flex: "0 0 auto",
+                      minHeight: dim(36),
+                      padding: sp("0 10px"),
+                      border: `1px solid ${active ? T.accent : T.border}`,
+                      borderRadius: dim(4),
+                      background: active ? `${T.accent}18` : T.bg1,
+                      color: active ? T.text : T.textSec,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      cursor: "pointer",
+                    }}
+                  >
+                    {option.value === "all" ? "All" : option.label.slice(5)}
+                  </button>
+                );
+              })}
+            </div>
+            <BottomSheet
+              open={mobileFiltersOpen}
+              onClose={() => setMobileFiltersOpen(false)}
+              title="GEX Filters"
+              testId="gex-mobile-filter-sheet"
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gap: sp(10),
+                  padding: sp(10),
+                }}
+              >
+                {filtersControl}
+              </div>
+            </BottomSheet>
+          </>
+        ) : null}
 
         <Card
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+            gridTemplateColumns: isPhone
+              ? "minmax(0, 1fr)"
+              : "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
             gap: sp(10),
           }}
         >
@@ -1241,19 +1457,37 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gridTemplateColumns: isPhone ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))",
               gap: sp(6),
             }}
           >
-            <ConcentrationTile label="0DTE Exp" value={concentration.zeroDTE} color={T.amber} />
-            <ConcentrationTile label="Weekly Exp" value={concentration.weekly} color={T.cyan} />
-            <ConcentrationTile label="Monthly Exp" value={concentration.monthly} color={T.purple} />
+            <ConcentrationTile
+              label="0DTE Exp"
+              value={concentration.zeroDTE}
+              color={T.amber}
+              glossaryKey="concentration0dte"
+            />
+            <ConcentrationTile
+              label="Weekly Exp"
+              value={concentration.weekly}
+              color={T.cyan}
+              glossaryKey="concentrationWeekly"
+            />
+            <ConcentrationTile
+              label="Monthly Exp"
+              value={concentration.monthly}
+              color={T.purple}
+              glossaryKey="concentrationMonthly"
+            />
           </div>
           <TickerMetaSummary data={gexData} />
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), color: T.textSec }}>
               <SlidersHorizontal size={14} />
-              <span style={{ fontSize: textSize("caption") }}>IV simulation</span>
+              <span style={{ fontSize: textSize("caption"), display: "inline-flex", alignItems: "center", gap: sp(3) }}>
+                IV simulation
+                <InfoTooltipIcon entry={getGexGlossaryEntry("ivSimulation")} />
+              </span>
               <span style={{ marginLeft: "auto", color: T.amber, fontWeight: 700 }}>
                 {ivAdjustment >= 0 ? "+" : ""}
                 {(ivAdjustment * 100).toFixed(0)}%
@@ -1308,13 +1542,55 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
         ) : (
           <>
             <Card noPad style={{ display: "flex", flexWrap: "wrap" }}>
-              <MetricTile label="Net GEX" value={fmtCurrency(metrics.netGex)} sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "----"}`} color={metrics.netGex >= 0 ? T.green : T.red} />
-              <MetricTile label="Call GEX" value={fmtCurrency(metrics.callGex)} sub={`${fmtNumber(metrics.callOi)} OI`} color={T.green} />
-              <MetricTile label="Put GEX" value={fmtCurrency(metrics.putGex)} sub={`${fmtNumber(metrics.putOi)} OI`} color={T.red} />
-              <MetricTile label="Total GEX" value={fmtCurrency(metrics.totalGex)} sub={`${fmtNumber(metrics.callOi + metrics.putOi)} OI`} color={T.cyan} />
-              <MetricTile label="Call Wall" value={fmtPrice(metrics.callWall)} sub={fmtPercent((metrics.callWall - spot) / spot)} color={T.green} />
-              <MetricTile label="Put Wall" value={fmtPrice(metrics.putWall)} sub={fmtPercent((metrics.putWall - spot) / spot)} color={T.red} />
-              <MetricTile label="Zero Gamma" value={fmtPrice(metrics.zeroGamma)} sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "----"} color={T.cyan} />
+              <MetricTile
+                label="Net GEX"
+                value={fmtCurrency(metrics.netGex)}
+                sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "----"}`}
+                color={metrics.netGex >= 0 ? T.green : T.red}
+                glossaryKey="netGex"
+              />
+              <MetricTile
+                label="Call GEX"
+                value={fmtCurrency(metrics.callGex)}
+                sub={`${fmtNumber(metrics.callOi)} OI`}
+                color={T.green}
+                glossaryKey="callGex"
+              />
+              <MetricTile
+                label="Put GEX"
+                value={fmtCurrency(metrics.putGex)}
+                sub={`${fmtNumber(metrics.putOi)} OI`}
+                color={T.red}
+                glossaryKey="putGex"
+              />
+              <MetricTile
+                label="Total GEX"
+                value={fmtCurrency(metrics.totalGex)}
+                sub={`${fmtNumber(metrics.callOi + metrics.putOi)} OI`}
+                color={T.cyan}
+                glossaryKey="totalGex"
+              />
+              <MetricTile
+                label="Call Wall"
+                value={fmtPrice(metrics.callWall)}
+                sub={fmtPercent((metrics.callWall - spot) / spot)}
+                color={T.green}
+                glossaryKey="callWall"
+              />
+              <MetricTile
+                label="Put Wall"
+                value={fmtPrice(metrics.putWall)}
+                sub={fmtPercent((metrics.putWall - spot) / spot)}
+                color={T.red}
+                glossaryKey="putWall"
+              />
+              <MetricTile
+                label="Zero Gamma"
+                value={fmtPrice(metrics.zeroGamma)}
+                sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "----"}
+                color={T.cyan}
+                glossaryKey="zeroGamma"
+              />
             </Card>
 
             {coverageRatio < 0.5 ? (
@@ -1371,34 +1647,164 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
   );
 }
 
-const ConcentrationTile = ({ label, value, color }) => (
+const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
   <div style={{ background: T.bg0, border: `1px solid ${T.border}`, padding: sp(8) }}>
-    <div style={{ color: T.textDim, fontSize: textSize("caption") }}>{label}</div>
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(3),
+        color: T.textDim,
+        fontSize: textSize("caption"),
+      }}
+    >
+      {label}
+      {glossaryKey ? (
+        <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
+      ) : null}
+    </div>
     <div style={{ color, fontSize: fs(17), fontWeight: 700 }}>
       {(value * 100).toFixed(1)}%
     </div>
   </div>
 );
 
+const IntradayDeltaPill = ({ label, value, testId }) => {
+  const tone =
+    value == null ? T.textDim : value >= 0 ? T.green : T.red;
+  const formatted =
+    value == null
+      ? "----"
+      : `${value >= 0 ? "+" : ""}${fmtCurrency(value)}`;
+  return (
+    <div
+      data-testid={testId}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        background: T.bg0,
+        border: `1px solid ${T.border}`,
+        padding: sp(8),
+        display: "grid",
+        gap: sp(3),
+      }}
+    >
+      <div
+        style={{
+          color: T.textMuted,
+          fontFamily: T.mono,
+          fontSize: textSize("caption"),
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ color: tone, fontSize: fs(16), fontWeight: 700 }}>
+        {formatted}
+      </div>
+    </div>
+  );
+};
+
+const IntradayChartTooltip = ({ active, payload }) => {
+  if (!active || !payload || !payload.length) return null;
+  const point = payload[0].payload;
+  const ts = Number.isFinite(point?.ts) ? new Date(point.ts) : null;
+  return (
+    <div
+      style={{
+        background: T.bg0,
+        border: `1px solid ${T.border}`,
+        padding: sp(6),
+        fontSize: textSize("caption"),
+        fontFamily: T.mono,
+      }}
+    >
+      <div style={{ color: T.textDim }}>
+        {ts ? ts.toLocaleTimeString() : "--"}
+      </div>
+      <div
+        style={{
+          color: point?.netGex >= 0 ? T.green : T.red,
+          fontWeight: 700,
+        }}
+      >
+        Net GEX: {fmtCurrency(point?.netGex)}
+      </div>
+    </div>
+  );
+};
+
 const IntradayCard = ({ snapshots }) => {
-  const first = snapshots[0];
-  const last = snapshots[snapshots.length - 1];
-  const delta = snapshots.length >= 2 && first && last ? last.netGex - first.netGex : null;
+  const intraday = buildIntradaySnapshots(snapshots);
+  const hasSeries = intraday.series.length >= 2;
+  const lastTone =
+    intraday.series.length > 0 &&
+    intraday.series[intraday.series.length - 1].netGex >= 0
+      ? T.green
+      : T.red;
   return (
     <Card noPad>
       <SectionTitle>Intraday ΔGEX</SectionTitle>
-      <div style={{ padding: sp(10), display: "grid", gap: sp(6) }}>
-        <div
-          style={{
-            color: delta == null ? T.textDim : delta >= 0 ? T.green : T.red,
-            fontSize: fs(20),
-            fontWeight: 700,
-          }}
-        >
-          {delta == null ? "----" : `${delta >= 0 ? "+" : ""}${fmtCurrency(delta)}`}
+      <div style={{ padding: sp(10), display: "grid", gap: sp(8) }}>
+        <div style={{ display: "flex", gap: sp(6), minWidth: 0 }}>
+          <IntradayDeltaPill
+            label="Δ Session"
+            value={hasSeries ? intraday.deltaSession : null}
+            testId="gex-intraday-delta-session"
+          />
+          <IntradayDeltaPill
+            label="Δ Recent"
+            value={hasSeries ? intraday.deltaRecent : null}
+            testId="gex-intraday-delta-recent"
+          />
         </div>
+        {hasSeries ? (
+          <div data-testid="gex-intraday-chart" style={{ height: dim(96) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={intraday.series}
+                margin={{ top: 4, right: 6, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid
+                  stroke={T.border}
+                  strokeDasharray="2 2"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="ts"
+                  type="number"
+                  domain={["dataMin", "dataMax"]}
+                  hide
+                />
+                <YAxis hide />
+                <ReferenceLine y={0} stroke={T.textDim} strokeDasharray="2 2" />
+                <Tooltip content={<IntradayChartTooltip />} />
+                <Area
+                  type="monotone"
+                  dataKey="netGex"
+                  stroke={lastTone}
+                  fill={lastTone}
+                  fillOpacity={0.18}
+                  strokeWidth={1.4}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+            {intraday.series.length === 1
+              ? "Awaiting a second snapshot to plot intraday change."
+              : "No intraday snapshots yet for this session."}
+          </div>
+        )}
         <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
           {snapshots.length} API snapshot{snapshots.length === 1 ? "" : "s"}
+          {intraday.isSparse && hasSeries
+            ? " · sparse — Δ Recent uses last 5 points"
+            : ""}
         </div>
       </div>
     </Card>
