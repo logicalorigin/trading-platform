@@ -308,9 +308,24 @@ their PG client connections every time the API restarts.
   works for one-off manual use; do not call it from any artifact's `dev`
   script (it would re-attach Postgres to that artifact's cgroup).
 - `artifacts/api-server/package.json` `dev` no longer launches Postgres.
-  It calls `scripts/wait-for-local-postgres.sh` (10s soft wait on the
-  unix socket) and proceeds either way; if Postgres never comes up the
-  API surfaces a clear DB connection error instead.
+  It calls `scripts/wait-for-local-postgres.sh` which waits up to 10s
+  on the unix socket and **fails fast (exit 1) when local PG is the
+  selected DB source but Postgres is unreachable**, so the api-server
+  refuses to come up against a missing local DB and the operator gets
+  a single clear FATAL message instead of a confusing connect-error
+  storm later. When `DATABASE_URL` points at a hosted DB, the wait
+  script skips entirely.
+
+Known footprint in `.replit`: registering the `Local Postgres` workflow
+via the workflows tool also wrote `runButton = "Project"` and a
+`Project` workflow stub into `.replit`. The api-server, rayalgo, and
+Local Postgres services all still start automatically via the
+`PNPM_WORKSPACE` artifact stack regardless of which workflow runButton
+points at, so this is cosmetic. The platform currently rejects renaming
+or removing `Project`, and direct `.replit` edits are blocked from
+agents; if you want the original "no `[workflows]` block" state back,
+delete the `[workflows]` block manually and Replit will fall back to
+default behavior.
 
 If `Local Postgres` is missing or stopped, recreate it with the
 workflows tool:
