@@ -26,8 +26,9 @@ EOF
 fi
 
 # If a previous postmaster is still alive (e.g. started by the legacy
-# pg_ctl path), step aside and let it keep serving — exec a tail so this
-# workflow stays alive without double-binding.
+# pg_ctl path), refuse to start: a tail-only fallback would keep this
+# workflow "running" while the workflow supervisor has no signal about
+# the foreign postmaster's liveness.
 if [ -s "$PGROOT/data/postmaster.pid" ]; then
   pid="$(sed -n '1p' "$PGROOT/data/postmaster.pid" 2>/dev/null || true)"
   if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
