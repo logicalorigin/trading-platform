@@ -1547,13 +1547,18 @@ export function isHistoricalDataReconnectableError(error: unknown): boolean {
   return message.includes("historical") && hasConnectionLossMessage(error);
 }
 
+function isTickerScopedTwsError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("can't find eid") && /ticker\s*id/.test(message);
+}
+
 function isRequestScopedTwsError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   return (
     isSnapshotGenericTickError(error) ||
     isHistoricalDataReconnectableError(error) ||
     message.includes("no security definition has been found") ||
-    (message.includes("can't find eid") && message.includes("tickerid")) ||
+    isTickerScopedTwsError(error) ||
     message.includes("ibkr_bridge_lane_timeout") ||
     message.includes("lane timed out after") ||
     (message.includes("error validating request") &&
@@ -1571,6 +1576,10 @@ const TWS_SERVER_CONNECTIVITY_RESTORED_CODES = new Set([1101, 1102]);
 function resolveTwsServerConnectivityEvent(
   error: unknown,
 ): "connected" | "disconnected" | null {
+  if (isTickerScopedTwsError(error)) {
+    return null;
+  }
+
   const codes = collectTwsErrorCodes(error);
   if (codes.some((code) => TWS_SERVER_CONNECTIVITY_RESTORED_CODES.has(code))) {
     return "connected";
@@ -1977,6 +1986,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     if (connectivity) {
       if (connectivity === "connected") {
         this.markServerConnectivityConnected();
+        this.latestSession = this.buildSessionSnapshot();
+        return;
       } else {
         this.markServerConnectivityDisconnected(message || null);
       }
@@ -3701,9 +3712,13 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
 
     for (const symbol of allowedSymbols) {
-      const resolved = await this.resolveStockContract(symbol);
-      const providerContractId = await this.ensureQuoteSubscription(resolved);
-      providerContractIdsBySymbol.set(symbol, providerContractId);
+      try {
+        const resolved = await this.resolveStockContract(symbol);
+        const providerContractId = await this.ensureQuoteSubscription(resolved);
+        providerContractIdsBySymbol.set(symbol, providerContractId);
+      } catch (error) {
+        this.recordError(error);
+      }
     }
 
     this.trimUnusedQuoteSubscriptions(budgeted.symbols, budgeted.providerContractIds);

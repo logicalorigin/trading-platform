@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — runs `bash scripts/run-replit-dev.sh` from `.replit`, which starts the API on port `8080` and the RayAlgo web app on port `18747` as one repo-owned dev command.
+- Replit Run button — use Replit's default **Run Replit App** entry for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflows; `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the API and RayAlgo artifact services.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -42,40 +42,35 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Replit Run
 
-The tracked `.replit` pins the Run button to:
+The tracked `.replit` intentionally has no root `run = [...]` line and no
+repo-defined `[workflows]` block. Use Replit's default **Run Replit App** entry
+for full app bring-up; do not pin or recreate the generated **Configure Your
+App** workflow from repo config.
 
-```toml
-run = ["bash", "scripts/run-replit-dev.sh"]
-```
+Replit's `PNPM_WORKSPACE` artifact app model should start the app services from
+each artifact's `.replit-artifact/artifact.toml` `[services.development] run`
+command:
 
-`scripts/run-replit-dev.sh` is the canonical development app startup path. It
-starts both long-lived services and shuts both down when either child exits or
-when Replit sends `SIGTERM`:
+- API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
+- RayAlgo Platform — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
 
-- API — `LOG_LEVEL=warn PORT=8080 pnpm --filter @workspace/api-server run dev`.
-- RayAlgo web — `PORT=18747 BASE_PATH=/ VITE_PROXY_API_TARGET=http://127.0.0.1:8080 pnpm --filter @workspace/rayalgo run dev`.
+The IBKR connection launcher calls `/api/ibkr/bridge/launcher`, so the API must
+already be running from app bring-up before the launcher is used. If that route
+is unreachable after pressing **Run Replit App**, treat it as a Replit app
+startup issue, not a reason to add a repo workflow or root runner.
 
-In the Replit Run dropdown, use the default **Run Replit App** entry. Do not use
-the generated **Configure Your App** workflow as the app runner; it is only a
-setup placeholder and can restart/refresh the workspace without owning the real
-API/web lifecycle. The per-artifact workflows may still exist in the Workflows
-pane because Replit discovers `.replit-artifact/artifact.toml`, but they are
-secondary service-level controls, not the normal operator run path.
-
-The artifact TOML files remain the deployment/service metadata source:
-
-- `artifacts/api-server: API Server` — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
-- `artifacts/rayalgo: web` — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
+The artifact TOML files are the development and deployment service metadata
+source of truth.
 
 Both artifact dev scripts call `scripts/reap-dev-port.mjs` before binding their
-pinned port. The root runner deliberately delegates to those scripts instead of
-duplicating the port cleanup logic.
+pinned port. Do not add a third root runner that starts both services, because
+it competes with Replit's artifact service owners and can stop/reap the
+already-running API and web services.
 
 Do not add a separate Replit `IBKR Bridge` workflow for TWS mode. The bridge
 runs beside IB Gateway/TWS on the Windows machine and is exposed through the
 activation helper. A generated or stale workflow in the Replit UI is not part
-of the repo config and should be removed from the Workflows pane rather than
-linked to app startup.
+of the repo config and must not be linked to app startup.
 
 Publishing note: the API artifact production build runs
 `pnpm run build:api-deployment`, which builds the API, builds
@@ -189,7 +184,7 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
   - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
 - **Bridge surface** — endpoints `GET /news` and `GET /universe/search` live on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). `GET /news` returns empty in TWS mode by design; `GET /universe/search` is backed by TWS contract search.
 
-## Server log noise (dev workflow)
+## Server log noise (dev server)
 
 The API server and Windows-side IBKR bridge use `pino-http` with a shared
 `customLogLevel` policy in `artifacts/api-server/src/app.ts` and
@@ -213,14 +208,14 @@ prefix on the `[services.development] run` line in
 
 To temporarily restore verbose per-request logging while debugging, drop
 the `LOG_LEVEL=warn` prefix in that artifact.toml and restart the
-`artifacts/api-server: API Server` workflow. Production is unaffected: it runs
+API artifact service. Production is unaffected: it runs
 raw JSON pino without `pino-pretty` and the `[services.production.run.env]`
 block does not set `LOG_LEVEL`. Bridge verbosity is controlled by the Windows
 activation helper environment, not by a Replit workflow.
 
-## Dev servers: single instance per app run
+## Dev servers: single instance per artifact service
 
-The root Replit app run should own exactly one listener on each pinned Replit
+Each Replit artifact service should own exactly one listener on its pinned
 dev port: API on `8080` and rayalgo on `18747`. Older restarts could leave an
 orphan node process holding the port, causing the next API start to fail with
 `EADDRINUSE` or vite to bind a fallback port the preview proxy never used.
@@ -233,15 +228,14 @@ Three fixes prevent the recurrence:
 2. **`strictPort: true`** on both `server` and `preview` blocks of
    `artifacts/rayalgo/vite.config.ts` so vite exits with an error instead of
    silently falling back to the next port.
-3. **`exec` in the dev scripts** so SIGTERM from a workflow restart propagates
+3. **`exec` in the dev scripts** so SIGTERM from an artifact service restart propagates
    through the `pnpm` wrapper to the actual node process. Applied to both
    `artifacts/rayalgo/package.json` (`exec vite ...`) and
    `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
-   `dev` and `start`). The root `scripts/run-replit-dev.sh` also forwards
-   termination to both `pnpm` children so the app run stops as one unit.
+   `dev` and `start`).
 
-If a workflow restart still fails with `EADDRINUSE`, run the shared reaper for
-the conflicting pinned port and restart the affected workflow:
+If a service restart still fails with `EADDRINUSE`, run the shared reaper for
+the conflicting pinned port and restart the affected artifact service:
 
 ```bash
 PORT=8080 node scripts/reap-dev-port.mjs    # API

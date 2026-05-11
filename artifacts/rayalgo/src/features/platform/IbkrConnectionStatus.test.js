@@ -998,6 +998,29 @@ test("buildHeaderIbkrPopoverModel prioritizes ready-state stream and legacy warn
     "stream-gaps",
   );
 
+  assert.notEqual(
+    buildHeaderIbkrPopoverModel({
+      connection: {
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        liveMarketDataAvailable: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streamFresh: true,
+        strictReady: true,
+      },
+      latencyStats: {
+        stream: {
+          streamGapCount: 3,
+          recentGapCount: 0,
+        },
+      },
+    }).issue.key,
+    "stream-gaps",
+  );
+
   const legacyModel = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,

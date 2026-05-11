@@ -111,6 +111,38 @@ test("TWS health marks IBKR server connectivity loss separately from the local s
   assert.equal(restored.accountsLoaded, true);
 });
 
+test("TWS health ignores ticker-scoped EId errors when parsing connectivity codes", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    connectionState: ConnectionState;
+    managedAccounts: string[];
+    recordError(error: unknown): void;
+  };
+
+  internals.connectionState = ConnectionState.Connected;
+  internals.managedAccounts = ["U1"];
+  internals.recordError({
+    code: 1102,
+    message:
+      "Connectivity between IB and Trader Workstation has been restored - data maintained.",
+  });
+  internals.recordError(new Error("Can't find EId with tickerId:1300"));
+
+  const health = await provider.getHealth();
+  assert.equal(health.socketConnected, true);
+  assert.equal(health.brokerServerConnected, true);
+  assert.equal(health.serverConnectivity, "connected");
+  assert.equal(health.lastServerConnectivityError, null);
+  assert.equal(health.lastError, null);
+});
+
 test("maps TWS stock contract descriptions into IBKR universe tickers", () => {
   const ticker = mapTwsContractDescriptionToUniverseTicker({
     contract: {
@@ -1205,6 +1237,65 @@ test("option activity snapshots tolerate per-symbol contract failures", async ()
     quotes.map((quote) => quote.symbol),
     ["SPY", "QQQ"],
   );
+  assert.deepEqual(recordedErrors, [
+    "No security definition has been found for the request",
+  ]);
+  assert.equal(marketLane.completed, 1);
+  assert.equal(marketLane.timedOut, 0);
+  assert.equal(marketLane.failureCount, 0);
+});
+
+test("quote subscriptions tolerate per-symbol contract failures", async () => {
+  __resetBridgeSchedulerForTests();
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<void>;
+    resolveStockContract(symbol: string): Promise<{
+      contract: Record<string, unknown>;
+      resolved: { conid: number; providerContractId: string };
+    }>;
+    ensureQuoteSubscription(input: {
+      resolved: { providerContractId: string };
+    }): Promise<string>;
+    ensureQuoteSubscriptionsForSymbols(symbols: string[]): Promise<Map<string, string>>;
+    recordError(error: unknown): void;
+  };
+  const recordedErrors: string[] = [];
+
+  internals.refreshSession = async () => {};
+  internals.resolveStockContract = async (symbol) => {
+    if (symbol === "BAD") {
+      throw new Error("No security definition has been found for the request");
+    }
+    return {
+      contract: { symbol, secType: SecType.STK },
+      resolved: {
+        conid: symbol === "SPY" ? 756733 : 320227571,
+        providerContractId: symbol,
+      },
+    };
+  };
+  internals.ensureQuoteSubscription = async ({ resolved }) =>
+    resolved.providerContractId;
+  internals.recordError = (error) => {
+    recordedErrors.push(error instanceof Error ? error.message : String(error));
+  };
+
+  const ensured = await internals.ensureQuoteSubscriptionsForSymbols([
+    "SPY",
+    "BAD",
+    "QQQ",
+  ]);
+  const marketLane = getBridgeSchedulerDiagnostics()["market-subscriptions"];
+
+  assert.deepEqual([...ensured.keys()], ["SPY", "QQQ"]);
   assert.deepEqual(recordedErrors, [
     "No security definition has been found for the request",
   ]);

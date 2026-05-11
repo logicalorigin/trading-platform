@@ -74,7 +74,6 @@ const accumulators = new Map<string, MinuteAccumulator>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const AGGREGATE_FANOUT_FLUSH_MS = 100;
 const AGGREGATE_STALE_HEARTBEAT_MS = 5_000;
-const AGGREGATE_QUOTE_FRESH_MS = 10_000;
 
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
@@ -220,6 +219,32 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
   };
 }
 
+function carryForwardAccumulator(
+  symbol: string,
+  accumulator: MinuteAccumulator,
+  observedAt: number,
+): MinuteAccumulator {
+  const { startMs, endMs } = getMinuteWindow(observedAt);
+  if (accumulator.startMs === startMs) {
+    return accumulator;
+  }
+
+  const price = accumulator.close;
+  const nextAccumulator: MinuteAccumulator = {
+    startMs,
+    endMs,
+    open: price,
+    high: price,
+    low: price,
+    close: price,
+    volume: 0,
+    accumulatedVolume: accumulator.accumulatedVolume,
+    lastObservedDayVolume: accumulator.lastObservedDayVolume,
+  };
+  accumulators.set(symbol, nextAccumulator);
+  return nextAccumulator;
+}
+
 export function getCurrentStockMinuteAggregates(
   symbols: string[],
 ): StockMinuteAggregateMessage[] {
@@ -344,16 +369,13 @@ function emitAggregateHeartbeats(now = Date.now()): void {
   getDesiredSymbols().forEach((symbol) => {
     const accumulator = accumulators.get(symbol);
     const stats = aggregateStatsBySymbol.get(symbol);
-    if (!accumulator || !stats?.lastQuoteAt || !stats.lastAggregateAt) {
+    if (!accumulator || !stats?.lastAggregateAt) {
       return;
     }
-    const lastQuoteAgeMs = now - stats.lastQuoteAt.getTime();
     const lastAggregateAgeMs = now - stats.lastAggregateAt.getTime();
-    if (
-      lastQuoteAgeMs <= AGGREGATE_QUOTE_FRESH_MS &&
-      lastAggregateAgeMs >= AGGREGATE_STALE_HEARTBEAT_MS
-    ) {
-      scheduleAggregateFanout(toAggregateMessage(symbol, accumulator), now);
+    if (lastAggregateAgeMs >= AGGREGATE_STALE_HEARTBEAT_MS) {
+      const carried = carryForwardAccumulator(symbol, accumulator, now);
+      scheduleAggregateFanout(toAggregateMessage(symbol, carried), now);
     }
   });
 }

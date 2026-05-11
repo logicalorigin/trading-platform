@@ -231,6 +231,10 @@ test("bridge quote stream treats open stream signals as liveness proof", async (
   assert.equal(diagnostics.lastSignalAt, now.toISOString());
   assert.equal(diagnostics.lastSignalAgeMs, 0);
   assert.equal(diagnostics.lastEventAgeMs, null);
+  assert.equal(diagnostics.freshnessAgeMs, 0);
+  assert.equal(diagnostics.transportFreshnessAgeMs, 0);
+  assert.equal(diagnostics.dataFreshnessAgeMs, null);
+  assert.equal(diagnostics.dataGapCount, 0);
   assert.equal(diagnostics.pressure, "normal");
   assert.equal(diagnostics.lastError, null);
 });

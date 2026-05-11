@@ -855,7 +855,11 @@ export const getIbkrGatewayBadges = ({
     badges.push({ label: "COMPETE", color: T.red, background: T.redBg });
   }
 
-  const gapCount = latencyStats?.stream?.streamGapCount;
+  const gapCount =
+    latencyStats?.stream?.recentDataGapCount ??
+    latencyStats?.stream?.recentGapCount ??
+    latencyStats?.stream?.dataGapCount ??
+    latencyStats?.stream?.streamGapCount;
   if (Number.isFinite(gapCount) && gapCount > 0) {
     badges.push({
       label: `GAPS ${Math.round(gapCount)}`,
@@ -948,12 +952,14 @@ export const buildIbkrGatewayTitle = ({
   }
 
   if (stream) {
+    const dataGapCount = stream.dataGapCount ?? stream.streamGapCount;
+    const maxDataGapMs = stream.maxDataGapMs ?? stream.maxGapMs;
     details.push(`stream consumers ${formatCount(stream.activeConsumerCount)}`);
     details.push(`symbols ${formatCount(stream.unionSymbolCount)}`);
     details.push(`events ${formatCount(stream.eventCount)}`);
     details.push(`reconnects ${formatCount(stream.reconnectCount)}`);
-    details.push(`gaps ${formatCount(stream.streamGapCount)}`);
-    details.push(`max gap ${formatIbkrPingMs(stream.maxGapMs)}`);
+    details.push(`data gaps ${formatCount(dataGapCount)}`);
+    details.push(`max data gap ${formatIbkrPingMs(maxDataGapMs)}`);
     details.push(`last event ${formatIbkrPingMs(stream.lastEventAgeMs)} ago`);
   }
 

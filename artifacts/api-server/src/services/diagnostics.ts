@@ -801,15 +801,32 @@ function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): J
   const cachedQuoteCount = numeric(marketData["cachedQuoteCount"]) ?? 0;
   const eventCount = numeric(marketData["eventCount"]) ?? 0;
   const reconnectCount = numeric(marketData["reconnectCount"]) ?? 0;
-  const streamGapCount = numeric(marketData["streamGapCount"]) ?? 0;
-  const recentGapCount = numeric(marketData["recentGapCount"]) ?? 0;
-  const maxGapMs = numeric(marketData["maxGapMs"]);
-  const recentMaxGapMs = numeric(marketData["recentMaxGapMs"]);
-  const lastGapMs = numeric(marketData["lastGapMs"]);
-  const lastGapAgeMs = numeric(marketData["lastGapAgeMs"]);
+  const streamGapCount =
+    numeric(marketData["dataGapCount"]) ??
+    numeric(marketData["streamGapCount"]) ??
+    0;
+  const recentGapCount =
+    numeric(marketData["recentDataGapCount"]) ??
+    numeric(marketData["recentGapCount"]) ??
+    0;
+  const maxGapMs =
+    numeric(marketData["maxDataGapMs"]) ?? numeric(marketData["maxGapMs"]);
+  const recentMaxGapMs =
+    numeric(marketData["recentMaxDataGapMs"]) ??
+    numeric(marketData["recentMaxGapMs"]);
+  const lastGapMs =
+    numeric(marketData["lastDataGapMs"]) ?? numeric(marketData["lastGapMs"]);
+  const lastGapAgeMs =
+    numeric(marketData["lastDataGapAgeMs"]) ??
+    numeric(marketData["lastGapAgeMs"]);
   const lastEventAgeMs = numeric(marketData["lastEventAgeMs"]);
+  const transportFreshnessAgeMs = numeric(marketData["transportFreshnessAgeMs"]);
+  const dataFreshnessAgeMs =
+    numeric(marketData["dataFreshnessAgeMs"]) ?? lastEventAgeMs;
   const freshnessAgeMs =
-    numeric(marketData["freshnessAgeMs"]) ?? lastEventAgeMs;
+    transportFreshnessAgeMs ??
+    numeric(marketData["freshnessAgeMs"]) ??
+    lastEventAgeMs;
   const streamCurrentlyFresh =
     streamState === "live" &&
     freshnessAgeMs !== null &&
@@ -831,20 +848,27 @@ function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): J
     eventCount,
     reconnectCount,
     streamGapCount,
+    dataGapCount: streamGapCount,
     rawStreamGapCount: streamGapCount,
+    rawDataGapCount: streamGapCount,
     recentGapCount,
+    recentDataGapCount: recentGapCount,
     maxGapMs: thresholdMaxGapMs,
     streamGapMs: thresholdMaxGapMs,
     stream_gap_ms: thresholdMaxGapMs,
     rawMaxGapMs: maxGapMs,
+    rawDataMaxGapMs: maxGapMs,
     recentMaxGapMs,
     lastGapMs,
-    lastGapAt: marketData["lastGapAt"] ?? null,
+    lastGapAt: marketData["lastDataGapAt"] ?? marketData["lastGapAt"] ?? null,
     lastGapAgeMs,
     lastEventAgeMs,
+    lastSignalAgeMs: transportFreshnessAgeMs,
     freshnessAgeMs: thresholdFreshnessAgeMs,
     freshness_age_ms: thresholdFreshnessAgeMs,
     rawFreshnessAgeMs: freshnessAgeMs,
+    dataFreshnessAgeMs,
+    transportFreshnessAgeMs,
     streamState,
     streamStateReason,
     streamActive: booleanValue(marketData["streamActive"]),

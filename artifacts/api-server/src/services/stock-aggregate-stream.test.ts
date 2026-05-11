@@ -157,7 +157,7 @@ test("stock aggregate diagnostics track per-symbol freshness", () => {
   });
 });
 
-test("stock aggregate stream emits heartbeat aggregate when quotes are fresh", () => {
+test("stock aggregate stream emits flat carry-forward aggregates while quotes are quiet", () => {
   withAggregateRuntimeEnv({}, () => {
     setIbkrBridgeRuntimeOverride({
       baseUrl: "https://runtime-bridge.example.com",
@@ -187,24 +187,17 @@ test("stock aggregate stream emits heartbeat aggregate when quotes are fresh", (
       __stockAggregateStreamTestInternals.flushAggregateFanout();
       assert.equal(messages.length, 1);
 
-      __stockAggregateStreamTestInternals.handleQuoteSnapshot(
-        {
-          quotes: [
-            {
-              symbol: "SPY",
-              price: 0,
-              bid: 0,
-              ask: 0,
-              volume: 1_000,
-            } as any,
-          ],
-        },
-        6_000,
-      );
-      __stockAggregateStreamTestInternals.emitAggregateHeartbeats(6_000);
+      __stockAggregateStreamTestInternals.emitAggregateHeartbeats(61_000);
       __stockAggregateStreamTestInternals.flushAggregateFanout();
 
       assert.equal(messages.length, 2);
+      assert.equal((messages[1] as any).startMs, 60_000);
+      assert.equal((messages[1] as any).open, 100);
+      assert.equal((messages[1] as any).high, 100);
+      assert.equal((messages[1] as any).low, 100);
+      assert.equal((messages[1] as any).close, 100);
+      assert.equal((messages[1] as any).volume, 0);
+      assert.equal((messages[1] as any).accumulatedVolume, 1_000);
     } finally {
       unsubscribe();
       __stockAggregateStreamTestInternals.reset();

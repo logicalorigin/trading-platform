@@ -27,17 +27,26 @@ export type BridgeQuoteStreamDiagnostics = {
   eventCount: number;
   reconnectCount: number;
   streamGapCount: number;
+  dataGapCount: number;
   recentGapCount: number;
+  recentDataGapCount: number;
   maxGapMs: number | null;
+  maxDataGapMs: number | null;
   recentMaxGapMs: number | null;
+  recentMaxDataGapMs: number | null;
   lastGapMs: number | null;
+  lastDataGapMs: number | null;
   lastGapAt: string | null;
+  lastDataGapAt: string | null;
   lastGapAgeMs: number | null;
+  lastDataGapAgeMs: number | null;
   lastEventAt: string | null;
   lastEventAgeMs: number | null;
   lastSignalAt: string | null;
   lastSignalAgeMs: number | null;
   freshnessAgeMs: number | null;
+  dataFreshnessAgeMs: number | null;
+  transportFreshnessAgeMs: number | null;
   streamActive: boolean;
   streamSignature: string;
   pendingStreamSignature: string;
@@ -895,6 +904,11 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
   const capacityPressure = isCapacityPressureState(lastStreamStatus?.state)
     ? lastStreamStatus.state
     : null;
+  const streamActive = Boolean(
+    hasQuoteDemand && streamUnsubscribe && streamSignature,
+  );
+  const transportFreshnessAgeMs = streamActive ? currentStreamSignalAgeMs : null;
+  const dataMaxGapMs = eventCount > 1 ? maxGapMs : null;
 
   return {
     activeConsumerCount: subscribers.size,
@@ -903,18 +917,27 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
     eventCount,
     reconnectCount,
     streamGapCount,
+    dataGapCount: streamGapCount,
     recentGapCount: streamGapEvents.length,
-    maxGapMs: eventCount > 1 ? maxGapMs : null,
+    recentDataGapCount: streamGapEvents.length,
+    maxGapMs: dataMaxGapMs,
+    maxDataGapMs: dataMaxGapMs,
     recentMaxGapMs,
+    recentMaxDataGapMs: recentMaxGapMs,
     lastGapMs,
+    lastDataGapMs: lastGapMs,
     lastGapAt: lastGapAt?.toISOString() ?? null,
+    lastDataGapAt: lastGapAt?.toISOString() ?? null,
     lastGapAgeMs,
+    lastDataGapAgeMs: lastGapAgeMs,
     lastEventAt: lastEventAt?.toISOString() ?? null,
     lastEventAgeMs,
     lastSignalAt: lastSignalAt?.toISOString() ?? null,
     lastSignalAgeMs: currentStreamSignalAgeMs,
-    freshnessAgeMs: lastEventAgeMs,
-    streamActive: Boolean(hasQuoteDemand && streamUnsubscribe && streamSignature),
+    freshnessAgeMs: transportFreshnessAgeMs ?? lastEventAgeMs,
+    dataFreshnessAgeMs: lastEventAgeMs,
+    transportFreshnessAgeMs,
+    streamActive,
     streamSignature,
     pendingStreamSignature,
     mutableStreamActive: Boolean(streamMutableControl),

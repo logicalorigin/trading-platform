@@ -262,13 +262,19 @@ export const buildHeaderIbkrPopoverModel = ({
   const authenticatedReady = authenticated === true;
   const streamConsumerCount = stream.activeConsumerCount;
   const streamSymbolCount = stream.unionSymbolCount;
-  const streamGapCount = stream.streamGapCount;
+  const streamGapCount = stream.dataGapCount ?? stream.streamGapCount;
+  const recentStreamGapCount =
+    stream.recentDataGapCount ?? stream.recentGapCount ?? streamGapCount;
+  const streamFreshAgeMs =
+    stream.transportFreshnessAgeMs ??
+    stream.freshnessAgeMs ??
+    stream.lastEventAgeMs;
   const streamActive =
     Number.isFinite(streamConsumerCount) && streamConsumerCount > 0;
   const streamFreshByCounters =
     streamActive &&
-    Number.isFinite(stream.lastEventAgeMs) &&
-    stream.lastEventAgeMs <= 10_000;
+    Number.isFinite(streamFreshAgeMs) &&
+    streamFreshAgeMs <= 10_000;
   const streamQuoteStandby =
     streamState === "quiet" &&
     streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON &&
@@ -285,8 +291,8 @@ export const buildHeaderIbkrPopoverModel = ({
     streamCapacityLimited ||
     (!streamState && streamFresh === false) ||
     (streamActive &&
-      Number.isFinite(stream.lastEventAgeMs) &&
-      stream.lastEventAgeMs > 10_000);
+      Number.isFinite(streamFreshAgeMs) &&
+      streamFreshAgeMs > 10_000);
   const streamConfirmedFresh =
     streamState === "live" ||
     strictReady === true ||
@@ -345,12 +351,12 @@ export const buildHeaderIbkrPopoverModel = ({
       iconKey: "alert",
       autoOpenDetails: health.status === "misconfigured",
     };
-  } else if (Number.isFinite(streamGapCount) && streamGapCount > 0) {
+  } else if (Number.isFinite(recentStreamGapCount) && recentStreamGapCount > 0) {
     issue = {
       key: "stream-gaps",
-      label: `${Math.round(streamGapCount)} stream gap${
-        Math.round(streamGapCount) === 1 ? "" : "s"
-      } detected. Open Diagnostics for the full stream trace.`,
+      label: `${Math.round(recentStreamGapCount)} quote data gap${
+        Math.round(recentStreamGapCount) === 1 ? "" : "s"
+      } detected recently. Open Diagnostics for the full stream trace.`,
       tone: T.amber,
       iconKey: "alert",
       autoOpenDetails: false,
@@ -669,25 +675,28 @@ export const buildHeaderIbkrPopoverModel = ({
               : T.textDim,
         },
         {
-          label: "Last event",
+          label: "Last quote event",
           value: Number.isFinite(stream.lastEventAgeMs)
             ? `${formatIbkrPingMs(stream.lastEventAgeMs)} ago`
             : MISSING_VALUE,
         },
         { label: "Reconnects", value: formatHeaderCount(stream.reconnectCount) },
         {
-          label: "Gaps",
+          label: "Data gaps",
           value: formatHeaderCount(streamGapCount),
           tone: Number.isFinite(streamGapCount)
-            ? streamGapCount > 0
+            ? recentStreamGapCount > 0
               ? T.amber
               : T.green
             : T.textDim,
         },
         {
-          label: "Max gap",
-          value: formatIbkrPingMs(stream.maxGapMs),
-          tone: stream.maxGapMs > 5_000 ? T.amber : T.textSec,
+          label: "Max data gap",
+          value: formatIbkrPingMs(stream.maxDataGapMs ?? stream.maxGapMs),
+          tone:
+            (stream.maxDataGapMs ?? stream.maxGapMs) > 5_000
+              ? T.amber
+              : T.textSec,
         },
         {
           label: "Bridge p95",
