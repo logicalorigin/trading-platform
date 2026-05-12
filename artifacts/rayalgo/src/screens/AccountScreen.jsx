@@ -1185,6 +1185,7 @@ export const AccountScreen = ({
               tradesData={returnsCalendarTradesData}
               equityPoints={returnsCalendarEquityPoints}
               compact
+              isPhone={accountIsPhone}
             />
           </div>
           <div className="ra-account-overview-cell ra-account-overview-allocation">

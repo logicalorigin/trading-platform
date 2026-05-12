@@ -190,6 +190,19 @@ export const getBrokerStreamFreshnessSnapshot =
     };
   };
 
+export const getBrokerStreamFreshnessStatus = () => {
+  const snapshot = getBrokerStreamFreshnessSnapshot();
+  return {
+    accountFresh: snapshot.accountFresh,
+    orderFresh: snapshot.orderFresh,
+  };
+};
+
+const getBrokerStreamFreshnessStatusToken = () => {
+  const status = getBrokerStreamFreshnessStatus();
+  return `${status.accountFresh ? 1 : 0}:${status.orderFresh ? 1 : 0}`;
+};
+
 export const useBrokerStreamFreshnessSnapshot =
   (enabled = true): BrokerStreamFreshnessSnapshot => {
     useSyncExternalStore(
@@ -206,6 +219,28 @@ export const useBrokerStreamFreshnessSnapshot =
     }, [enabled]);
     return getBrokerStreamFreshnessSnapshot();
   };
+
+export const useBrokerStreamFreshnessStatus = (enabled = true) => {
+  const statusToken = useSyncExternalStore(
+    enabled ? subscribeBrokerStreamFreshness : () => () => {},
+    enabled ? getBrokerStreamFreshnessStatusToken : () => "0:0",
+    () => "0:0",
+  );
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const interval = setInterval(emitBrokerStreamFreshness, 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+  return useMemo(
+    () => ({
+      accountFresh: statusToken[0] === "1",
+      orderFresh: statusToken[2] === "1",
+    }),
+    [statusToken],
+  );
+};
 
 export const getOptionQuoteSnapshotCacheSize = (): number =>
   optionQuoteSnapshotsByProviderContractId.size;

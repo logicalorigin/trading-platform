@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { useGetBars } from "@workspace/api-client-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
@@ -48,37 +49,119 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
-const mobileCardStyle = {
-  border: `1px solid ${T.border}`,
-  borderRadius: dim(5),
-  background: T.bg1,
-  padding: sp("8px 9px"),
-  display: "grid",
-  gap: sp(7),
+const mobileFilterRailStyle = {
+  display: "flex",
+  gap: sp(4),
+  flexWrap: "nowrap",
+  overflowX: "auto",
   minWidth: 0,
+  maxWidth: "100%",
+  paddingBottom: sp(1),
+  WebkitOverflowScrolling: "touch",
 };
 
-const mobileMetricGridStyle = {
+const mobileRowListStyle = {
+  display: "grid",
+  gap: sp(2),
+};
+
+const mobileOrdersGrid = "minmax(48px, 0.9fr) minmax(54px, 0.86fr) minmax(58px, 0.92fr) minmax(56px, 0.9fr) 24px";
+const mobileTradesGrid = "minmax(48px, 0.92fr) minmax(68px, 1fr) minmax(64px, 0.92fr) minmax(42px, 0.62fr) 24px";
+
+const mobileHeaderStyle = (gridTemplateColumns) => ({
+  display: "grid",
+  gridTemplateColumns,
+  gap: sp(3),
+  padding: sp("0 5px"),
+  color: T.textDim,
+  fontFamily: T.sans,
+  fontSize: fs(7),
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+});
+
+const mobileScanShellStyle = (active = false) => ({
+  border: `1px solid ${T.border}`,
+  borderRadius: dim(4),
+  background: active ? `${T.cyan}10` : T.bg1,
+  boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
+  minWidth: 0,
+  overflow: "hidden",
+});
+
+const mobileScanRowStyle = (gridTemplateColumns) => ({
+  width: "100%",
+  minHeight: dim(44),
+  padding: sp("4px 5px"),
+  border: "none",
+  background: "transparent",
+  display: "grid",
+  gridTemplateColumns,
+  gap: sp(3),
+  alignItems: "center",
+  textAlign: "left",
+  cursor: "pointer",
+  minWidth: 0,
+});
+
+const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
+  color: tone,
+  fontFamily: T.data,
+  fontSize: fs(9),
+  fontWeight: 400,
+  textAlign: align,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  minWidth: 0,
+});
+
+const mobileDetailStyle = {
+  borderTop: `1px solid ${T.border}`,
+  padding: sp("6px 7px 7px"),
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: sp("6px 8px"),
+  gap: sp("5px 8px"),
 };
 
-const MobileMetric = ({ label, value, tone = T.text }) => (
-  <div style={{ minWidth: 0 }}>
-    <div style={mutedLabelStyle}>{label}</div>
-    <div
+const mobileIconButtonStyle = {
+  width: dim(22),
+  height: dim(22),
+  padding: 0,
+  border: `1px solid ${T.border}`,
+  borderRadius: dim(4),
+  background: T.bg2,
+  color: T.textSec,
+  display: "inline-grid",
+  placeItems: "center",
+  cursor: "pointer",
+  flexShrink: 0,
+};
+
+const MobileIconButton = ({ label, onClick, children, expanded = null, disabled = false, tone = T.textSec }) => (
+  <AppTooltip content={label}>
+    <button
+      type="button"
+      aria-label={label}
+      aria-expanded={expanded == null ? undefined : expanded}
+      disabled={disabled}
+      onClick={onClick}
       style={{
+        ...mobileIconButtonStyle,
         color: tone,
-        fontFamily: T.data,
-        fontSize: fs(10),
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
+        opacity: disabled ? 0.55 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
       }}
     >
-      {value}
-    </div>
+      {children}
+    </button>
+  </AppTooltip>
+);
+
+const MobileDetailMetric = ({ label, value, tone = T.textSec }) => (
+  <div style={{ minWidth: 0 }}>
+    <div style={mutedLabelStyle}>{label}</div>
+    <div style={mobileCellTextStyle(tone, "left")}>{value}</div>
   </div>
 );
 
@@ -178,6 +261,18 @@ export const OrdersPanel = ({
   const orders = (query.data?.orders || []).filter((order) =>
     sourceFilter === "all" ? true : order.sourceType === sourceFilter,
   );
+  const [expandedRows, setExpandedRows] = useState(() => new Set());
+  const toggleExpanded = (orderId) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  };
   return (
   <Panel
     title="Orders"
@@ -188,7 +283,7 @@ export const OrdersPanel = ({
     minHeight={168}
     noPad
     action={
-      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+      <div style={isPhone ? mobileFilterRailStyle : { display: "flex", gap: sp(4), flexWrap: "wrap" }}>
         <ToggleGroup
           options={[
             { value: "working", label: "Working" },
@@ -216,81 +311,123 @@ export const OrdersPanel = ({
       </div>
     ) : isPhone ? (
       <div
-        data-testid="account-orders-card-list"
+        data-testid="account-orders-row-list"
         style={{
-          display: "grid",
-          gap: sp(6),
-          padding: sp(6),
+          ...mobileRowListStyle,
+          padding: sp("4px 5px 5px"),
         }}
       >
-        {orders.map((order) => (
-          <article key={order.id} style={mobileCardStyle}>
+        <div aria-hidden="true" style={mobileHeaderStyle(mobileOrdersGrid)}>
+          <span>Symbol</span>
+          <span style={{ textAlign: "right" }}>Qty</span>
+          <span style={{ textAlign: "right" }}>{tab === "working" ? "Limit" : "Fill"}</span>
+          <span style={{ textAlign: "right" }}>Status</span>
+          <span />
+        </div>
+        {orders.map((order) => {
+          const expanded = expandedRows.has(order.id);
+          const priceLabel =
+            tab === "working"
+              ? order.limitPrice != null
+                ? formatAccountPrice(order.limitPrice, 2, maskValues)
+                : order.stopPrice != null
+                  ? formatAccountPrice(order.stopPrice, 2, maskValues)
+                  : "MKT"
+              : order.averageFillPrice != null
+                ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
+                : "----";
+          return (
+          <article key={order.id} style={mobileScanShellStyle(expanded)}>
             <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: sp(6),
-                alignItems: "flex-start",
+              data-testid="account-order-scan-row"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleExpanded(order.id)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                toggleExpanded(order.id);
               }}
+              style={mobileScanRowStyle(mobileOrdersGrid)}
             >
-              <MarketIdentityInline
-                item={{
-                  ticker: order.symbol,
-                  market: marketForAssetClass(order.assetClass),
+              <div style={{ minWidth: 0 }}>
+                <div style={mobileCellTextStyle(T.text, "left")}>{order.symbol}</div>
+                <div
+                  style={{
+                    color: /buy|long/i.test(order.side) ? T.green : T.red,
+                    fontFamily: T.data,
+                    fontSize: fs(7),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {order.side} · {order.type}
+                </div>
+              </div>
+              <div style={mobileCellTextStyle(T.textSec)}>
+                {formatNumber(order.filledQuantity, 1)} / {formatNumber(order.quantity, 1)}
+              </div>
+              <div style={mobileCellTextStyle(T.textSec)}>{priceLabel}</div>
+              <div style={mobileCellTextStyle(order.status === "filled" ? T.green : T.textSec)}>
+                {order.status}
+              </div>
+              <MobileIconButton
+                label={expanded ? `Collapse ${order.symbol} order details` : `Expand ${order.symbol} order details`}
+                expanded={expanded}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleExpanded(order.id);
                 }}
-                size={16}
-                showMark={false}
-                showChips
-                style={{ maxWidth: "100%" }}
-              />
-              <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
+              >
+                {expanded ? (
+                  <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                )}
+              </MobileIconButton>
             </div>
-            <div style={mobileMetricGridStyle}>
-              <MobileMetric label="Type" value={order.type} />
-              <MobileMetric label="Qty" value={`${formatNumber(order.filledQuantity, 2)} / ${formatNumber(order.quantity, 2)}`} />
-              <MobileMetric
-                label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
-                value={
-                  tab === "working"
-                    ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
-                    : order.averageFillPrice != null
-                      ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
-                      : "----"
-                }
-              />
-              <MobileMetric label="Status" value={order.status} tone={order.status === "filled" ? T.green : T.text} />
-              <MobileMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
-              <MobileMetric label={tab === "working" ? "TIF" : "Filled"} value={tab === "working" ? order.timeInForce : formatAppDateTime(order.filledAt)} />
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-              {order.sourceType ? (
-                <Pill tone={sourceTone(order.sourceType)}>
-                  {order.strategyLabel || order.sourceType}
-                </Pill>
-              ) : null}
-              {tab === "working" ? (
-                <AppTooltip content={cancelDisabled ? cancelDisabledReason : "Cancel order"}>
-                  <button
-                    type="button"
-                    className="ra-interactive"
-                    disabled={cancelPending || cancelDisabled}
-                    onClick={() => onCancelOrder(order)}
-                    style={{
-                      ...secondaryButtonStyle,
-                      color: T.red,
-                      minHeight: dim(36),
-                      marginLeft: "auto",
-                      opacity: cancelPending || cancelDisabled ? 0.55 : 1,
-                      cursor: cancelPending || cancelDisabled ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </AppTooltip>
-              ) : null}
-            </div>
+            {expanded ? (
+              <div data-testid="account-order-expanded-details" style={mobileDetailStyle}>
+                <MobileDetailMetric
+                  label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
+                  value={
+                    tab === "working"
+                      ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
+                      : priceLabel
+                  }
+                />
+                <MobileDetailMetric label={tab === "working" ? "TIF" : "Filled"} value={tab === "working" ? order.timeInForce : formatAppDateTime(order.filledAt)} />
+                <MobileDetailMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
+                <MobileDetailMetric
+                  label="Commission"
+                  value={order.commission != null ? formatAccountMoney(order.commission, currency, false, maskValues) : "----"}
+                />
+                <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
+                  {order.sourceType ? (
+                    <Pill tone={sourceTone(order.sourceType)}>
+                      {order.strategyLabel || order.sourceType}
+                    </Pill>
+                  ) : null}
+                  {tab === "working" ? (
+                    <MobileIconButton
+                      label={cancelDisabled ? cancelDisabledReason : "Cancel order"}
+                      disabled={cancelPending || cancelDisabled}
+                      tone={T.red}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCancelOrder(order);
+                      }}
+                    >
+                      <XCircle size={13} strokeWidth={1.8} aria-hidden="true" />
+                    </MobileIconButton>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </article>
-        ))}
+          );
+        })}
       </div>
     ) : (
       <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
@@ -458,7 +595,13 @@ export const ClosedTradesPanel = ({
     >
       <div style={{ display: "grid", gap: sp(6) }}>
         <div style={{ display: "grid", gap: sp(4) }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: sp(4), flexWrap: "wrap" }}>
+          <div
+            style={
+              isPhone
+                ? mobileFilterRailStyle
+                : { display: "flex", justifyContent: "space-between", gap: sp(4), flexWrap: "wrap" }
+            }
+          >
             <ToggleGroup
               options={[
                 { value: "all", label: "All" },
@@ -502,24 +645,33 @@ export const ClosedTradesPanel = ({
           </div>
           <div
             style={{
-              display: "grid",
+              display: isPhone ? "flex" : "grid",
               gridTemplateColumns: isPhone
-                ? "minmax(0, 1fr)"
+                ? undefined
                 : "minmax(92px, 0.8fr) minmax(96px, 0.85fr) minmax(108px, 0.75fr) minmax(108px, 0.75fr) minmax(0, 1.6fr)",
               gap: sp(4),
               alignItems: "center",
+              overflowX: isPhone ? "auto" : undefined,
+              paddingBottom: isPhone ? sp(1) : undefined,
+              WebkitOverflowScrolling: isPhone ? "touch" : undefined,
             }}
           >
             <input
               value={filters.symbol}
               onChange={(event) => onFiltersChange({ symbol: event.target.value.toUpperCase() })}
               placeholder="Symbol"
-              style={controlInputStyle}
+              style={{
+                ...controlInputStyle,
+                ...(isPhone ? { flex: "0 0 76px", minWidth: dim(76) } : null),
+              }}
             />
             <select
               value={filters.assetClass}
               onChange={(event) => onFiltersChange({ assetClass: event.target.value })}
-              style={controlSelectStyle}
+              style={{
+                ...controlSelectStyle,
+                ...(isPhone ? { flex: "0 0 94px", minWidth: dim(94) } : null),
+              }}
             >
               <option value="all">All assets</option>
               <option value="Stocks">Stocks</option>
@@ -530,21 +682,29 @@ export const ClosedTradesPanel = ({
               type="date"
               value={filters.from}
               onChange={(event) => onFiltersChange({ from: event.target.value })}
-              style={controlInputStyle}
+              style={{
+                ...controlInputStyle,
+                ...(isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : null),
+              }}
             />
             <input
               type="date"
               value={filters.to}
               onChange={(event) => onFiltersChange({ to: event.target.value })}
-              style={controlInputStyle}
+              style={{
+                ...controlInputStyle,
+                ...(isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : null),
+              }}
             />
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: isPhone ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                 gap: sp("3px 8px"),
                 paddingLeft: isPhone ? 0 : sp(5),
                 borderLeft: isPhone ? "none" : `1px solid ${T.border}`,
+                flex: isPhone ? "0 0 220px" : undefined,
+                minWidth: isPhone ? dim(220) : undefined,
               }}
             >
               <SummaryCard
@@ -575,79 +735,101 @@ export const ClosedTradesPanel = ({
           />
         ) : isPhone ? (
           <div
-            data-testid="account-trades-card-list"
-            style={{
-              display: "grid",
-              gap: sp(6),
-            }}
+            data-testid="account-trades-row-list"
+            style={mobileRowListStyle}
           >
+            <div aria-hidden="true" style={mobileHeaderStyle(mobileTradesGrid)}>
+              <span>Symbol</span>
+              <span style={{ textAlign: "right" }}>P&L</span>
+              <span style={{ textAlign: "right" }}>Close</span>
+              <span style={{ textAlign: "right" }}>Hold</span>
+              <span />
+            </div>
             {rows.map((trade) => {
               const tradeId = getAccountTradeId(trade);
               const rowSelected = Boolean(selectedTradeId && tradeId === selectedTradeId);
               return (
                 <article
                   key={`${trade.source}:${trade.id}`}
-                  onClick={() => onTradeSelect?.(tradeId)}
-                  style={{
-                    ...mobileCardStyle,
-                    background: rowSelected ? `${T.cyan}16` : T.bg1,
-                    boxShadow: rowSelected ? `inset 3px 0 0 ${T.cyan}` : "none",
-                    cursor: onTradeSelect ? "pointer" : "default",
-                  }}
+                  style={mobileScanShellStyle(rowSelected)}
                 >
                   <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: sp(6),
-                      alignItems: "flex-start",
+                    data-testid="account-trade-scan-row"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onTradeSelect?.(rowSelected ? "" : tradeId)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onTradeSelect?.(rowSelected ? "" : tradeId);
                     }}
+                    style={mobileScanRowStyle(mobileTradesGrid)}
                   >
-                    <MarketIdentityInline
-                      item={{
-                        ticker: trade.symbol,
-                        market: marketForAssetClass(trade.assetClass),
+                    <div style={{ minWidth: 0 }}>
+                      <div style={mobileCellTextStyle(T.text, "left")}>{trade.symbol}</div>
+                      <div
+                        style={{
+                          color: /buy|long/i.test(trade.side) ? T.green : T.red,
+                          fontFamily: T.data,
+                          fontSize: fs(7),
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {trade.side} · {formatNumber(trade.quantity, 2)}
+                      </div>
+                    </div>
+                    <div style={mobileCellTextStyle(toneForValue(trade.realizedPnl))}>
+                      {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
+                    </div>
+                    <div style={mobileCellTextStyle(T.textSec)}>{formatAppDate(trade.closeDate)}</div>
+                    <div style={mobileCellTextStyle(T.textSec)}>
+                      {trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
+                    </div>
+                    <MobileIconButton
+                      label={rowSelected ? `Collapse ${trade.symbol} trade details` : `Expand ${trade.symbol} trade details`}
+                      expanded={rowSelected}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onTradeSelect?.(rowSelected ? "" : tradeId);
                       }}
-                      size={16}
-                      showMark={false}
-                      showChips
-                      style={{ maxWidth: "100%" }}
-                    />
-                    <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
+                    >
+                      {rowSelected ? (
+                        <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                      ) : (
+                        <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                      )}
+                    </MobileIconButton>
                   </div>
-                  <div style={mobileMetricGridStyle}>
-                    <MobileMetric label="Qty" value={formatNumber(trade.quantity, 3)} />
-                    <MobileMetric
-                      label="Realized"
-                      value={`${formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}${trade.realizedPnlPercent != null ? ` / ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}` : ""}`}
-                      tone={toneForValue(trade.realizedPnl)}
-                    />
-                    <MobileMetric label="Open" value={formatAppDate(trade.openDate)} />
-                    <MobileMetric label="Close" value={formatAppDate(trade.closeDate)} />
-                    <MobileMetric
-                      label="Avg In / Out"
-                      value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
-                    />
-                    <MobileMetric
-                      label="Hold"
-                      value={trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
-                    />
-                  </div>
-                  <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-                    <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
-                      {trade.source}
-                    </Pill>
-                    {trade.sourceType ? (
-                      <Pill tone={sourceTone(trade.sourceType)}>
-                        {trade.strategyLabel || trade.sourceType}
-                      </Pill>
-                    ) : null}
-                    {trade.commissions != null ? (
-                      <Pill tone="default">
-                        Fees {formatAccountMoney(trade.commissions, currency, false, maskValues)}
-                      </Pill>
-                    ) : null}
-                  </div>
+                  {rowSelected ? (
+                    <div data-testid="account-trade-expanded-details" style={mobileDetailStyle}>
+                      <MobileDetailMetric
+                        label="Realized %"
+                        value={trade.realizedPnlPercent != null ? formatAccountPercent(trade.realizedPnlPercent, 2, maskValues) : "----"}
+                        tone={toneForValue(trade.realizedPnlPercent)}
+                      />
+                      <MobileDetailMetric label="Open" value={formatAppDate(trade.openDate)} />
+                      <MobileDetailMetric
+                        label="Avg In / Out"
+                        value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
+                      />
+                      <MobileDetailMetric
+                        label="Fees"
+                        value={trade.commissions != null ? formatAccountMoney(trade.commissions, currency, false, maskValues) : "----"}
+                      />
+                      <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+                        <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
+                          {trade.source}
+                        </Pill>
+                        {trade.sourceType ? (
+                          <Pill tone={sourceTone(trade.sourceType)}>
+                            {trade.strategyLabel || trade.sourceType}
+                          </Pill>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
               );
             })}
@@ -937,8 +1119,9 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
   const tMax = Math.max(bars[bars.length - 1].ts, closeMs);
   const span = tMax - tMin || 1;
   const closes = bars.map((b) => b.close);
-  const yMin = Math.min(...closes, Number(trade?.avgOpen) || closes[0], Number(trade?.avgClose) || closes[0]);
-  const yMax = Math.max(...closes, Number(trade?.avgOpen) || closes[0], Number(trade?.avgClose) || closes[0]);
+  const referencePrices = [Number(trade?.avgOpen), Number(trade?.avgClose)].filter(Number.isFinite);
+  const yMin = Math.min(...closes, ...referencePrices);
+  const yMax = Math.max(...closes, ...referencePrices);
   const yPad = (yMax - yMin) * 0.06 || 1;
   const yLow = yMin - yPad;
   const yHigh = yMax + yPad;
@@ -947,11 +1130,36 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
   const chartH = H - padT - padB;
   const xFor = (ts) => padL + ((ts - tMin) / span) * chartW;
   const yFor = (val) => padT + chartH - ((val - yLow) / yRange) * chartH;
-  const linePath = bars
-    .map((bar, idx) => `${idx === 0 ? "M" : "L"}${xFor(bar.ts).toFixed(1)},${yFor(bar.close).toFixed(1)}`)
+  const pathPoints = bars
+    .map((bar) => ({
+      x: xFor(bar.ts),
+      y: yFor(bar.close),
+      close: bar.close,
+    }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.close));
+  if (pathPoints.length < 2) {
+    return (
+      <div
+        style={{
+          border: `1px dashed ${T.border}`,
+          borderRadius: dim(4),
+          background: T.bg0,
+          color: T.textMuted,
+          fontFamily: T.data,
+          fontSize: fs(9),
+          padding: sp("6px 8px"),
+          textAlign: "center",
+        }}
+      >
+        Bars unavailable for {symbol} during this trade window.
+      </div>
+    );
+  }
+  const linePath = pathPoints
+    .map((point, idx) => `${idx === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`)
     .join(" ");
-  const lastClose = bars[bars.length - 1].close;
-  const firstClose = bars[0].close;
+  const lastClose = pathPoints[pathPoints.length - 1].close;
+  const firstClose = pathPoints[0].close;
   const tradeShortSide = /short|sell/i.test(trade?.side || "");
   const lineTone = tradeShortSide
     ? lastClose <= firstClose
@@ -960,7 +1168,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
     : lastClose >= firstClose
       ? T.green
       : T.red;
-  const areaPath = `${linePath} L${xFor(bars[bars.length - 1].ts).toFixed(1)},${(padT + chartH).toFixed(1)} L${padL},${(padT + chartH).toFixed(1)} Z`;
+  const areaPath = `${linePath} L${pathPoints[pathPoints.length - 1].x.toFixed(1)},${(padT + chartH).toFixed(1)} L${padL},${(padT + chartH).toFixed(1)} Z`;
 
   const entryPx = Number(trade?.avgOpen);
   const exitPx = Number(trade?.avgClose);

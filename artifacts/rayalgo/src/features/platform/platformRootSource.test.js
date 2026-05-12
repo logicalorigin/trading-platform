@@ -117,13 +117,18 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
 });
 
-test("mobile shell separates menu navigation from watchlist drawer", () => {
+test("mobile shell uses bottom navigation and separates watchlist activity surfaces", () => {
+  const retiredMobileNavDrawerPath = new URL("./MobileNavDrawer.jsx", import.meta.url);
   const shellSource = readFileSync(
     new URL("./PlatformShell.jsx", import.meta.url),
     "utf8",
   );
-  const drawerSource = readFileSync(
-    new URL("./MobileNavDrawer.jsx", import.meta.url),
+  const moreSheetSource = readFileSync(
+    new URL("./MobileMoreSheet.jsx", import.meta.url),
+    "utf8",
+  );
+  const activitySheetSource = readFileSync(
+    new URL("./MobileActivitySheet.jsx", import.meta.url),
     "utf8",
   );
   const watchlistDrawerSource = readFileSync(
@@ -135,18 +140,43 @@ test("mobile shell separates menu navigation from watchlist drawer", () => {
     "utf8",
   );
 
-  assert.match(shellSource, /data-testid="mobile-nav-trigger"/);
-  assert.match(shellSource, /data-testid="mobile-watchlist-trigger"/);
-  assert.match(shellSource, /<MobileNavDrawer/);
+  assert.match(shellSource, /data-testid="mobile-bottom-nav"/);
+  assert.match(shellSource, /data-testid="mobile-bottom-nav-more"/);
+  assert.match(shellSource, /testId="mobile-activity-trigger"/);
+  assert.match(shellSource, /testId="mobile-watchlist-trigger"/);
+  assert.match(shellSource, /<MobileMoreSheet/);
+  assert.match(shellSource, /<MobileActivitySheet/);
   assert.match(shellSource, /<MobileWatchlistDrawer/);
+  assert.doesNotMatch(shellSource, /MobileNavDrawer/);
+  assert.equal(existsSync(retiredMobileNavDrawerPath), false);
   assert.match(shellSource, /data-viewport=/);
-  assert.match(drawerSource, /data-testid="mobile-nav-screen-list"/);
-  assert.doesNotMatch(drawerSource, /<WatchlistComponent/);
+  assert.match(moreSheetSource, /testId="mobile-more-sheet"/);
+  assert.match(moreSheetSource, /mobile-more-screen-/);
+  assert.match(activitySheetSource, /testId="mobile-activity-sheet"/);
+  assert.match(activitySheetSource, /useMarketAlertsSnapshot/);
   assert.match(watchlistDrawerSource, /testId="mobile-watchlist-drawer"/);
   assert.match(watchlistDrawerSource, /side="right"/);
+  assert.match(watchlistDrawerSource, /fullBleed/);
+  assert.match(watchlistDrawerSource, /density="mobile-dense"/);
   assert.match(watchlistDrawerSource, /<WatchlistComponent/);
   assert.match(headerSource, /<BottomSheet/);
   assert.match(headerSource, /compactSettings=\{isPhone\}/);
+});
+
+test("Market phone layout uses the app-frame activity sheet instead of the old panel", () => {
+  const marketSource = readFileSync(
+    new URL("../../screens/MarketScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(marketSource, /responsiveFlags\(marketWorkspaceWidth \|\| viewportSize\.width\)/);
+  assert.match(marketSource, /const showMarketActivityPanel = !marketLayoutFlags\.isPhone/);
+  assert.match(marketSource, /data-activity-layout=\{marketActivityLayout\}/);
+  assert.match(marketSource, /showMarketActivityPanel && !stackActivityPanel \? \(/);
+  assert.match(
+    marketSource,
+    /\{showMarketActivityPanel \? \(\s*<div\s+data-testid="market-activity-panel"/,
+  );
 });
 
 test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
@@ -186,9 +216,9 @@ test("Account phone layout uses card lists for dense trading tables", () => {
   assert.match(accountSource, /<PositionsPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<ClosedTradesPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<OrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
-  assert.match(positionsSource, /data-testid="account-positions-card-list"/);
-  assert.match(tradesOrdersSource, /data-testid="account-orders-card-list"/);
-  assert.match(tradesOrdersSource, /data-testid="account-trades-card-list"/);
+  assert.match(positionsSource, /data-testid="account-positions-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-trades-row-list"/);
 });
 
 test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {

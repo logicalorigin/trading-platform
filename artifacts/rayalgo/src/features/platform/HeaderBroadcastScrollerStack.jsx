@@ -62,6 +62,7 @@ const HeaderBroadcastSegment = ({
   children,
   onClick,
   title,
+  compact = false,
 }) => {
   const interactive = !duplicate && typeof onClick === "function";
   const Component = interactive ? "button" : "div";
@@ -77,17 +78,18 @@ const HeaderBroadcastSegment = ({
         ...motionVars({ accent: tone }),
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(6),
-        height: dim(22),
-        maxWidth: dim(360),
-        padding: sp("0px 8px"),
+        gap: sp(compact ? 4 : 6),
+        height: dim(compact ? 20 : 22),
+        minHeight: dim(compact ? 20 : 22),
+        maxWidth: dim(compact ? 260 : 360),
+        padding: sp(compact ? "0px 6px" : "0px 8px"),
         border: `1px solid ${accent}`,
         borderLeft: `3px solid ${tone}`,
         borderRadius: dim(3),
         background: `${tone}10`,
         color: T.textSec,
         fontFamily: T.sans,
-        fontSize: fs(10),
+        fontSize: fs(compact ? 9 : 10),
         fontWeight: 400,
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -106,7 +108,7 @@ const HeaderBroadcastSegment = ({
   );
 };
 
-const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
+const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const isSell = item.direction === "sell";
   const tone = isSell ? T.red : T.green;
   const priceLabel =
@@ -123,6 +125,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
       accent={item.fresh ? tone : T.border}
       onClick={(selected) => onClick?.(selected.symbol, selected.raw)}
       title={title}
+      compact={compact}
     >
       <span style={{ color: tone, fontWeight: 400 }}>{item.directionLabel}</span>
       <span style={{ color: T.text }}>{item.symbol}</span>
@@ -143,7 +146,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
   );
 };
 
-const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
+const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const isPut =
     item.right === "P" ||
     String(item.sentiment || "").toLowerCase() === "bearish";
@@ -166,6 +169,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
       accent={T.border}
       onClick={(selected) => onClick?.(selected.raw)}
       title={title}
+      compact={compact}
     >
       <span style={{ color: T.text }}>{item.symbol}</span>
       {contractLabel ? (
@@ -471,10 +475,10 @@ const HeaderBroadcastLane = ({
       style={{
         display: "grid",
         gridTemplateColumns: compactSettings
-          ? `${dim(38)}px minmax(0, 1fr) auto`
+          ? `${dim(32)}px minmax(0, 1fr) auto`
           : "72px minmax(0, 1fr) auto",
         alignItems: "center",
-        minHeight: dim(25),
+        minHeight: dim(compactSettings ? 23 : 25),
         minWidth: 0,
         borderBottom: `1px solid ${T.border}`,
       }}
@@ -498,6 +502,7 @@ const HeaderBroadcastLane = ({
           style={{
             width: "100%",
             height: "100%",
+            minHeight: 0,
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
@@ -523,7 +528,7 @@ const HeaderBroadcastLane = ({
           minWidth: 0,
           overflowX: shouldScroll ? "hidden" : "auto",
           overflowY: "hidden",
-          padding: sp("1px 8px"),
+          padding: sp(compactSettings ? "1px 6px" : "1px 8px"),
         }}
       >
         {items.length ? (
@@ -552,7 +557,7 @@ const HeaderBroadcastLane = ({
                     ...(duplicate ? null : motionRowStyle(index, 10, 90)),
                   }}
                 >
-                  {children(item, duplicate)}
+                  {children(item, duplicate, compactSettings)}
                 </span>
               );
             })}
@@ -563,10 +568,10 @@ const HeaderBroadcastLane = ({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              height: dim(22),
+              height: dim(compactSettings ? 20 : 22),
               color: T.textMuted,
               fontFamily: T.code,
-              fontSize: fs(10),
+              fontSize: fs(compactSettings ? 9 : 10),
               fontWeight: 400,
               whiteSpace: "nowrap",
             }}
@@ -1210,6 +1215,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             style={{
               width: dim(24),
               height: dim(22),
+              minHeight: dim(22),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1224,10 +1230,11 @@ export const HeaderBroadcastScrollerStack = memo(({
           </button></AppTooltip>
         }
       >
-        {(item, duplicate) => (
+        {(item, duplicate, compact) => (
           <HeaderSignalTapeItem
             item={item}
             duplicate={duplicate}
+            compact={compact}
             onClick={onSignalAction}
           />
         )}
@@ -1255,6 +1262,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             style={{
               width: dim(24),
               height: dim(22),
+              minHeight: dim(22),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1269,10 +1277,11 @@ export const HeaderBroadcastScrollerStack = memo(({
           </button></AppTooltip>
         }
       >
-        {(item, duplicate) => (
+        {(item, duplicate, compact) => (
           <HeaderUnusualTapeItem
             item={item}
             duplicate={duplicate}
+            compact={compact}
             onClick={onFlowAction}
           />
         )}

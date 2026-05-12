@@ -83,6 +83,15 @@ test("broker account and order streams refresh freshness on readiness and poll s
   assert.match(source, /markBrokerStreamEvent\("order"\)/);
 });
 
+test("platform root subscribes only to coarse broker stream freshness", () => {
+  const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const liveStreamsSource = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(platformAppSource, /useBrokerStreamFreshnessStatus/);
+  assert.doesNotMatch(platformAppSource, /useBrokerStreamFreshnessSnapshot/);
+  assert.match(liveStreamsSource, /getBrokerStreamFreshnessStatusToken/);
+});
+
 test("groupOptionChainContractsByExpiration keeps stream contracts scoped to their expirations", () => {
   const grouped = groupOptionChainContractsByExpiration([
     optionQuote("SPY-20260427-C700", "2026-04-27T00:00:00.000Z"),

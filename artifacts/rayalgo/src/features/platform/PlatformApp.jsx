@@ -45,7 +45,7 @@ import {
 } from "../market/marketReferenceData";
 import {
   getOptionQuoteSnapshotCacheSize,
-  useBrokerStreamFreshnessSnapshot,
+  useBrokerStreamFreshnessStatus,
   useIbkrAccountSnapshotStream,
   useIbkrOrderSnapshotStream,
 } from "./live-streams";
@@ -899,7 +899,7 @@ export default function PlatformApp() {
   const gatewayTradingReadiness = resolveGatewayTradingReadiness(session);
   const gatewayTradingReady = gatewayTradingReadiness.ready;
   const gatewayTradingMessage = gatewayTradingReadiness.message;
-  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot();
+  const brokerStreamFreshness = useBrokerStreamFreshnessStatus();
   const accountOrderStreamsFresh = Boolean(
     brokerStreamFreshness.accountFresh && brokerStreamFreshness.orderFresh,
   );

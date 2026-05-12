@@ -1,6 +1,7 @@
 import { useSearchUniverseTickers } from "@workspace/api-client-react";
-import { ChevronDown, GripVertical, Plus, Search, Trash2, X } from "lucide-react";
+import { ChevronDown, GripVertical, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   fmtCompactNumber,
@@ -200,6 +201,7 @@ const WatchlistRow = memo(
     onSignalAction,
     signalStatesByTimeframe = {},
     busy = false,
+    density = "default",
   }) => {
     const fallback = useMemo(
       () =>
@@ -252,6 +254,127 @@ const WatchlistRow = memo(
         : selectedRow
           ? T.bg3
           : "transparent";
+    const mobileDense = density === "mobile-dense";
+
+    if (mobileDense) {
+      return (
+        <div
+          data-testid="watchlist-row"
+          data-symbol={item.sym}
+          data-source={item.source}
+          className={joinMotionClasses(
+            "ra-row-enter",
+            "ra-interactive",
+            selectedRow && "ra-focus-rail",
+          )}
+          onClick={() => onSelect?.(item.sym)}
+          style={{
+            ...motionRowStyle(itemIndex, 7, 140),
+            ...motionVars({
+              accent: selectedRow
+                ? T.accent
+                : hasSignal
+                  ? signalColor
+                  : pctPositive == null
+                    ? T.accent
+                    : pctPositive
+                      ? T.green
+                      : T.red,
+            }),
+            width: "100%",
+            minHeight: dim(44),
+            display: "grid",
+            gridTemplateColumns: "minmax(58px, 0.9fr) minmax(64px, 1fr) 54px 38px 48px",
+            alignItems: "center",
+            gap: sp(4),
+            padding: sp("4px 7px"),
+            border: "none",
+            borderLeft: selectedRow
+              ? `2px solid ${T.accent}`
+              : dragOver
+                ? `2px solid ${T.accent}`
+                : "2px solid transparent",
+            borderBottom: `1px solid ${T.border}20`,
+            background: rowBackground,
+            color: T.text,
+            cursor: "pointer",
+            textAlign: "left",
+            fontFamily: T.sans,
+            opacity: dragging ? 0.55 : 1,
+          }}
+        >
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(4),
+              minWidth: 0,
+            }}
+          >
+            <MarketIdentityMark item={identityItem} size={14} />
+            <span
+              className={priceFlashClassName}
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: T.text,
+                fontFamily: T.mono,
+                fontSize: fs(11),
+              }}
+            >
+              {item.sym}
+            </span>
+          </span>
+          <span
+            className={priceFlashClassName}
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: T.text,
+              fontFamily: T.mono,
+              fontSize: fs(11),
+              textAlign: "right",
+            }}
+          >
+            {formatQuotePrice(priceValue)}
+          </span>
+          <span
+            style={{
+              color:
+                pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
+              fontFamily: T.mono,
+              fontSize: fs(10),
+              textAlign: "right",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {formatSignedPercent(snapshot?.pct)}
+          </span>
+          <WatchlistSignalDots
+            statesByTimeframe={signalStatesByTimeframe}
+            fallbackState={signalState}
+            onSelect={(state) => onSignalAction?.(item.sym, state)}
+          />
+          <span
+            style={{
+              color: T.textMuted,
+              fontFamily: T.mono,
+              fontSize: fs(8),
+              textAlign: "right",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {fmtQuoteVolume(snapshot?.volume)}
+          </span>
+        </div>
+      );
+    }
 
     return (
       <div
@@ -595,10 +718,12 @@ export const Watchlist = ({
   onRemoveSymbol,
   onSignalAction,
   busy = false,
+  density = "default",
 }) => {
   const rootRef = useRef(null);
   const [search, setSearch] = useState("");
   const [watchlistMenuOpen, setWatchlistMenuOpen] = useState(false);
+  const [manageSheetOpen, setManageSheetOpen] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [addQuery, setAddQuery] = useState("");
   const [sortMode, setSortMode] = useState(WATCHLIST_SORT_MODE.MANUAL);
@@ -699,12 +824,22 @@ export const Watchlist = ({
     [items],
   );
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
+  const mobileDense = density === "mobile-dense";
   const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
   const closeAddMode = ({ clearQuery = false } = {}) => {
     setAddMode(false);
     if (clearQuery) {
       setAddQuery("");
     }
+  };
+  const openManageSheet = () => {
+    closeWatchlistMenu();
+    setAddMode(true);
+    setManageSheetOpen(true);
+  };
+  const closeManageSheet = () => {
+    setManageSheetOpen(false);
+    closeAddMode({ clearQuery: true });
   };
   const toggleWatchlistMenu = () => {
     const nextOpen = !watchlistMenuOpen;
@@ -725,6 +860,7 @@ export const Watchlist = ({
   useEffect(() => {
     if (
       typeof document === "undefined" ||
+      manageSheetOpen ||
       (!watchlistMenuOpen && !addMode)
     ) {
       return undefined;
@@ -945,9 +1081,10 @@ export const Watchlist = ({
               ))}
             </div>
           ) : null}
-          <AppTooltip content="New watchlist"><button
+          <AppTooltip content={mobileDense ? "Manage watchlist" : "New watchlist"}><button
             type="button"
-            onClick={handleCreateWatchlist}
+            data-testid={mobileDense ? "watchlist-manage-toggle" : undefined}
+            onClick={mobileDense ? openManageSheet : handleCreateWatchlist}
             style={{
               width: dim(26),
               height: dim(26),
@@ -960,10 +1097,11 @@ export const Watchlist = ({
               cursor: "pointer",
             }}
           >
-            <Plus size={14} />
+            {mobileDense ? <SlidersHorizontal size={14} /> : <Plus size={14} />}
           </button></AppTooltip>
         </div>
 
+        {!mobileDense ? (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: sp(3) }}>
           <button
             type="button"
@@ -1026,6 +1164,7 @@ export const Watchlist = ({
             DELETE
           </button>
         </div>
+        ) : null}
 
         <div
           style={{
@@ -1114,7 +1253,7 @@ export const Watchlist = ({
           </button></AppTooltip>
         </div>
 
-        {addMode ? (
+        {!mobileDense && addMode ? (
           <div
             data-testid="watchlist-add-panel"
             style={{
@@ -1288,6 +1427,7 @@ export const Watchlist = ({
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               busy={busy}
+              density={density}
             />
           );
         })}
@@ -1313,7 +1453,7 @@ export const Watchlist = ({
         <button
           type="button"
           data-testid="watchlist-add-toggle"
-          onClick={toggleAddMode}
+          onClick={mobileDense ? openManageSheet : toggleAddMode}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1327,10 +1467,233 @@ export const Watchlist = ({
             fontWeight: 400,
           }}
         >
-          {addMode ? <X size={12} /> : <Plus size={12} />}
-          {addMode ? "CLOSE" : "ADD"}
+          {mobileDense ? (
+            <SlidersHorizontal size={12} />
+          ) : addMode ? (
+            <X size={12} />
+          ) : (
+            <Plus size={12} />
+          )}
+          {mobileDense ? "MANAGE" : addMode ? "CLOSE" : "ADD"}
         </button>
       </div>
+      <BottomSheet
+        open={mobileDense && manageSheetOpen}
+        onClose={closeManageSheet}
+        title="Manage Watchlist"
+        testId="watchlist-manage-sheet"
+        maxHeight="82dvh"
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: sp(10),
+            padding: sp("10px 10px max(14px, env(safe-area-inset-bottom))"),
+            background: T.bg0,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: sp(5),
+            }}
+          >
+            <button
+              type="button"
+              onClick={handleCreateWatchlist}
+              disabled={busy}
+              style={{
+                minHeight: dim(38),
+                border: `1px solid ${T.border}`,
+                background: T.bg1,
+                color: T.accent,
+                fontFamily: T.mono,
+                fontSize: fs(9),
+                cursor: busy ? "default" : "pointer",
+              }}
+            >
+              NEW
+            </button>
+            <button
+              type="button"
+              onClick={handleRenameWatchlist}
+              disabled={!activeWatchlist || busy}
+              style={{
+                minHeight: dim(38),
+                border: `1px solid ${T.border}`,
+                background: T.bg1,
+                color: T.textSec,
+                fontFamily: T.mono,
+                fontSize: fs(9),
+                cursor: activeWatchlist && !busy ? "pointer" : "default",
+              }}
+            >
+              RENAME
+            </button>
+            <button
+              type="button"
+              onClick={() => activeWatchlist && onSetDefaultWatchlist?.(activeWatchlist.id)}
+              disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
+              style={{
+                minHeight: dim(38),
+                border: `1px solid ${T.border}`,
+                background: activeWatchlist?.isDefault ? `${T.green}12` : T.bg1,
+                color: activeWatchlist?.isDefault ? T.green : T.textSec,
+                fontFamily: T.mono,
+                fontSize: fs(9),
+                cursor:
+                  activeWatchlist && !activeWatchlist.isDefault && !busy
+                    ? "pointer"
+                    : "default",
+              }}
+            >
+              DEFAULT
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteWatchlist}
+              disabled={!activeWatchlist || watchlists.length <= 1 || busy}
+              style={{
+                minHeight: dim(38),
+                border: `1px solid ${T.border}`,
+                background: T.bg1,
+                color: watchlists.length <= 1 ? T.textMuted : T.red,
+                fontFamily: T.mono,
+                fontSize: fs(9),
+                cursor:
+                  activeWatchlist && watchlists.length > 1 && !busy
+                    ? "pointer"
+                    : "default",
+              }}
+            >
+              DELETE
+            </button>
+          </div>
+
+          <div
+            data-testid="watchlist-manage-add-panel"
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.bg1,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: sp(6),
+                padding: sp("7px 8px"),
+                borderBottom: `1px solid ${T.border}`,
+              }}
+            >
+              <Search size={13} style={{ color: T.textDim, flexShrink: 0 }} />
+              <input
+                value={addQuery}
+                onChange={(event) => setAddQuery(event.target.value)}
+                placeholder="Add symbol..."
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                  color: T.text,
+                  fontFamily: T.mono,
+                  fontSize: fs(11),
+                }}
+              />
+            </div>
+            <div style={{ maxHeight: dim(230), overflowY: "auto" }}>
+              {deferredAddQuery.length > 0
+                ? (addSymbolSearch.data?.results || []).map((result) => (
+                    <button
+                      key={`${result.ticker}-${result.name}`}
+                      type="button"
+                      onClick={() => {
+                        onAddSymbol?.(result.ticker, result.name || result.ticker, result);
+                        closeManageSheet();
+                      }}
+                      style={{
+                        width: "100%",
+                        minHeight: dim(38),
+                        display: "grid",
+                        gridTemplateColumns: "64px minmax(0, 1fr)",
+                        gap: sp(8),
+                        alignItems: "center",
+                        padding: sp("0 8px"),
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: `1px solid ${T.border}20`,
+                        color: T.text,
+                        textAlign: "left",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontFamily: T.mono, fontSize: fs(11) }}>
+                        {result.ticker}
+                      </span>
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: T.textDim,
+                          fontSize: fs(9),
+                        }}
+                      >
+                        {result.name || result.primaryExchange || "Equity"}
+                      </span>
+                    </button>
+                  ))
+                : quickAddSymbols.map((symbol) => (
+                    <button
+                      key={symbol}
+                      type="button"
+                      onClick={() => {
+                        handleAddQuickSymbol(symbol);
+                        closeManageSheet();
+                      }}
+                      style={{
+                        width: "100%",
+                        minHeight: dim(36),
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: sp("0 8px"),
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: `1px solid ${T.border}20`,
+                        color: T.text,
+                        cursor: "pointer",
+                        fontFamily: T.mono,
+                        fontSize: fs(10),
+                      }}
+                    >
+                      <span>{symbol}</span>
+                      <span style={{ color: T.textMuted }}>QUICK ADD</span>
+                    </button>
+                  ))}
+              {deferredAddQuery.length > 0 &&
+              !addSymbolSearch.isPending &&
+              !(addSymbolSearch.data?.results || []).length ? (
+                <div
+                  style={{
+                    padding: sp("12px 8px"),
+                    color: T.textDim,
+                    fontFamily: T.mono,
+                    fontSize: fs(9),
+                  }}
+                >
+                  No matching symbols.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
     </div>
   );
 };

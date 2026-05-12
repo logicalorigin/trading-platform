@@ -54,6 +54,7 @@ import {
   getCurrentTheme,
   sp,
 } from "../lib/uiTokens";
+import { responsiveFlags, useViewportSize } from "../lib/responsive";
 import {
   joinMotionClasses,
   motionRowStyle,
@@ -244,6 +245,7 @@ export const MarketScreen = ({
   watchlists = [],
 }) => {
   const queryClient = useQueryClient();
+  const viewportSize = useViewportSize();
   const marketWorkspaceRef = useRef(null);
   const [marketWorkspaceWidth, setMarketWorkspaceWidth] = useState(0);
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
@@ -445,9 +447,17 @@ export const MarketScreen = ({
   const putCallBullish = isFiniteNumber(putCall.total) ? putCall.total <= 1 : null;
   const upPct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : 0;
   const downPct = breadth.total ? 100 - upPct : 0;
+  const marketLayoutFlags = responsiveFlags(marketWorkspaceWidth || viewportSize.width);
+  const showMarketActivityPanel = !marketLayoutFlags.isPhone;
   const stackActivityPanel =
+    showMarketActivityPanel &&
     marketWorkspaceWidth > 0 &&
     marketWorkspaceWidth < activityPanelWidth + dim(760) + dim(24);
+  const marketActivityLayout = showMarketActivityPanel
+    ? stackActivityPanel
+      ? "stacked"
+      : "side-by-side"
+    : "hidden";
   const highlightedUnusualFlow = useMemo(
     () =>
       (Array.isArray(flowEvents) ? flowEvents : [])
@@ -641,12 +651,13 @@ export const MarketScreen = ({
         <div
           ref={marketWorkspaceRef}
           data-testid="market-workspace"
-          data-activity-layout={stackActivityPanel ? "stacked" : "side-by-side"}
+          data-activity-layout={marketActivityLayout}
           style={{
             display: "grid",
-            gridTemplateColumns: stackActivityPanel
-              ? "minmax(0, 1fr)"
-              : `minmax(0, 1fr) 6px ${activityPanelWidth}px`,
+            gridTemplateColumns:
+              showMarketActivityPanel && !stackActivityPanel
+                ? `minmax(0, 1fr) 6px ${activityPanelWidth}px`
+                : "minmax(0, 1fr)",
             gap: 6,
             alignItems: "start",
           }}
@@ -688,7 +699,7 @@ export const MarketScreen = ({
           ) : (
             <div style={{ minHeight: dim(340) }} />
           )}
-          {!stackActivityPanel ? (
+          {showMarketActivityPanel && !stackActivityPanel ? (
             <AppTooltip content="Drag to resize activity panel"><div
               role="separator"
               data-testid="market-activity-resize-separator"
@@ -706,57 +717,59 @@ export const MarketScreen = ({
               }}
             /></AppTooltip>
           ) : null}
-          <div
-            data-testid="market-activity-panel"
-            style={{
-              minWidth: 0,
-              minHeight: 0,
-              height: "fit-content",
-              maxHeight: stackActivityPanel ? undefined : "calc(100vh - 122px)",
-              position: stackActivityPanel ? "relative" : "sticky",
-              top: stackActivityPanel ? undefined : sp(8),
-            }}
-          >
-            <PlatformErrorBoundary
-              label="Market activity panel"
-              resetKeys={[marketChartResetKey]}
-              onReset={() =>
-                handleMarketPanelRetry({
-                  label: "activity-panel",
-                  automatic: false,
-                })
-              }
-              autoResetDelaysMs={MARKET_PANEL_RETRY_DELAYS_MS}
-              onAutoReset={({ attempt, error }) =>
-                handleMarketPanelRetry({
-                  label: "activity-panel",
-                  attempt,
-                  automatic: true,
-                  error,
-                })
-              }
-              minHeight={dim(340)}
+          {showMarketActivityPanel ? (
+            <div
+              data-testid="market-activity-panel"
+              style={{
+                minWidth: 0,
+                minHeight: 0,
+                height: "fit-content",
+                maxHeight: stackActivityPanel ? undefined : "calc(100vh - 122px)",
+                position: stackActivityPanel ? "relative" : "sticky",
+                top: stackActivityPanel ? undefined : sp(8),
+              }}
             >
-              <MarketActivityPanelContainer
-                isVisible={isVisible}
-                highlightedUnusualFlow={highlightedUnusualFlow}
-                newsItems={newsItems}
-                calendarItems={calendarItems}
-                onSymClick={onSymClick}
-                onSignalAction={onSignalAction}
-                onScanNow={onScanNow}
-                onToggleMonitor={onToggleMonitor}
-                onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-                onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-                watchlists={watchlists}
-                unusualThreshold={unusualThreshold}
-                onChangeUnusualThreshold={handleChangeUnusualThreshold}
-                flowStatus={flowStatus}
-                flowProviderSummary={flowProviderSummary}
-                flowSnapshotSource="broad-scanner"
-              />
-            </PlatformErrorBoundary>
-          </div>
+              <PlatformErrorBoundary
+                label="Market activity panel"
+                resetKeys={[marketChartResetKey]}
+                onReset={() =>
+                  handleMarketPanelRetry({
+                    label: "activity-panel",
+                    automatic: false,
+                  })
+                }
+                autoResetDelaysMs={MARKET_PANEL_RETRY_DELAYS_MS}
+                onAutoReset={({ attempt, error }) =>
+                  handleMarketPanelRetry({
+                    label: "activity-panel",
+                    attempt,
+                    automatic: true,
+                    error,
+                  })
+                }
+                minHeight={dim(340)}
+              >
+                <MarketActivityPanelContainer
+                  isVisible={isVisible}
+                  highlightedUnusualFlow={highlightedUnusualFlow}
+                  newsItems={newsItems}
+                  calendarItems={calendarItems}
+                  onSymClick={onSymClick}
+                  onSignalAction={onSignalAction}
+                  onScanNow={onScanNow}
+                  onToggleMonitor={onToggleMonitor}
+                  onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+                  onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+                  watchlists={watchlists}
+                  unusualThreshold={unusualThreshold}
+                  onChangeUnusualThreshold={handleChangeUnusualThreshold}
+                  flowStatus={flowStatus}
+                  flowProviderSummary={flowProviderSummary}
+                  flowSnapshotSource="broad-scanner"
+                />
+              </PlatformErrorBoundary>
+            </div>
+          ) : null}
         </div>
 
         {/* Market intelligence: TradingView heatmap, pulse, flow, leadership */}

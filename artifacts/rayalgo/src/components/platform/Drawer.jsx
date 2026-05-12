@@ -11,6 +11,7 @@ export const Drawer = ({
   children,
   width = 344,
   testId = "platform-drawer",
+  fullBleed = false,
 }) => {
   const closeButtonRef = useRef(null);
   const returnFocusRef = useRef(null);
@@ -72,7 +73,9 @@ export const Drawer = ({
           top: 0,
           bottom: 0,
           [isRight ? "right" : "left"]: 0,
-          width: `min(calc(100vw - ${dim(24)}px), ${dim(width)}px)`,
+          width: fullBleed
+            ? "100vw"
+            : `min(calc(100vw - ${dim(24)}px), ${dim(width)}px)`,
           maxWidth: "100vw",
           display: "flex",
           flexDirection: "column",
