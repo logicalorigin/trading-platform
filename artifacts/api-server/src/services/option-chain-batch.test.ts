@@ -1018,7 +1018,7 @@ test("getBarsWithDebug starts fresh after a stale in-flight bar request", async 
     await wait(0);
     assert.equal(historyCalls, 1);
 
-    now += 31_000;
+    now += 33_000;
     const second = await getBarsWithDebug(input);
 
     assert.equal(historyCalls >= 2, true);
@@ -1339,7 +1339,7 @@ test("option expiration lookup does not cache empty Gateway responses", async ()
           calls += 1;
           return calls === 1
             ? []
-            : [new Date("2026-05-08T00:00:00.000Z")];
+            : [new Date("2099-05-08T00:00:00.000Z")];
         },
       }) as unknown as IbkrBridgeClient,
   );
@@ -1349,7 +1349,7 @@ test("option expiration lookup does not cache empty Gateway responses", async ()
 
   assert.equal(calls, 2);
   assert.deepEqual(empty.expirations, []);
-  assert.equal(dateOnly(loaded.expirations[0].expirationDate), "2026-05-08");
+  assert.equal(dateOnly(loaded.expirations[0].expirationDate), "2099-05-08");
 });
 
 test("option expiration lookup forwards explicit caps without capping all-expiration discovery", async () => {
@@ -1360,8 +1360,8 @@ test("option expiration lookup forwards explicit caps without capping all-expira
         getOptionExpirations: async (input: { maxExpirations?: number }) => {
           seenMaxExpirations.push(input.maxExpirations);
           const expirations = [
-            new Date("2026-05-08T00:00:00.000Z"),
-            new Date("2026-05-15T00:00:00.000Z"),
+            new Date("2099-05-08T00:00:00.000Z"),
+            new Date("2099-05-15T00:00:00.000Z"),
           ];
           return expirations.slice(0, input.maxExpirations ?? expirations.length);
         },
