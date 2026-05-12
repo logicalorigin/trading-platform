@@ -20,6 +20,7 @@ export interface AlgoCockpitSnapshotResponse {
   readiness: AlgoCockpitReadiness;
   pipelineStages: AlgoCockpitPipelineStage[];
   attentionItems: AlgoCockpitAttentionItem[];
+  diagnostics: JsonObject;
   kpis: JsonObject;
   risk: JsonObject;
   candidates: JsonObject[];

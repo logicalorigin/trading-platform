@@ -69,6 +69,12 @@ export type FlowEventChartTimeResolution = {
   timeBasis: FlowEventChartTimeBasis;
 };
 
+export type FlowEventSourceBasis =
+  | "confirmed_trade"
+  | "snapshot_activity"
+  | "fallback_estimate"
+  | "other";
+
 const finiteNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -450,9 +456,69 @@ const intradayFlowLookbackStart = (
 const readFlowEventSymbol = (event: Record<string, unknown>): string =>
   normalizeSymbol(event.ticker || event.underlying || event.symbol);
 
+const normalizeFlowSourceBasisValue = (value: unknown): string =>
+  String(value || "").trim().toLowerCase();
+
+export const resolveFlowEventSourceBasis = (
+  event: Record<string, unknown>,
+): FlowEventSourceBasis => {
+  const sourceBasis = normalizeFlowSourceBasisValue(
+    event.sourceBasis || event.confidence,
+  );
+  if (
+    sourceBasis === "confirmed_trade" ||
+    sourceBasis === "confirmed" ||
+    sourceBasis === "reported" ||
+    sourceBasis === "trade"
+  ) {
+    return "confirmed_trade";
+  }
+  if (
+    sourceBasis === "snapshot_activity" ||
+    sourceBasis === "snapshot" ||
+    sourceBasis === "observed"
+  ) {
+    return "snapshot_activity";
+  }
+  if (
+    sourceBasis === "fallback_estimate" ||
+    sourceBasis === "fallback" ||
+    sourceBasis === "estimate" ||
+    sourceBasis === "partial"
+  ) {
+    return "fallback_estimate";
+  }
+
+  const basis = normalizeFlowSourceBasisValue(event.basis);
+  if (
+    basis === "trade" ||
+    basis === "confirmed_trade" ||
+    basis === "confirmed" ||
+    basis === "reported"
+  ) {
+    return "confirmed_trade";
+  }
+  if (
+    basis === "snapshot" ||
+    basis === "snapshot_activity" ||
+    basis === "observed"
+  ) {
+    return "snapshot_activity";
+  }
+  if (
+    basis === "fallback_estimate" ||
+    basis === "fallback" ||
+    basis === "estimate" ||
+    basis === "partial"
+  ) {
+    return "fallback_estimate";
+  }
+
+  return "other";
+};
+
 export const isSnapshotFlowEvent = (event: Record<string, unknown>): boolean => {
-  const sourceBasis = String(event.sourceBasis || event.confidence || "");
-  return event.basis === "snapshot" || sourceBasis === "snapshot_activity";
+  return resolveFlowEventSourceBasis(event) === "snapshot_activity";
 };
 
 const DATE_ONLY_CANDIDATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -820,9 +886,7 @@ const getTradeFlowPrintKey = (event: Record<string, unknown>): string => {
 };
 
 const sourceBasisRank = (event: Record<string, unknown>): number => {
-  const basis = String(event.sourceBasis || event.confidence || "")
-    .trim()
-    .toLowerCase();
+  const basis = resolveFlowEventSourceBasis(event);
   if (basis === "confirmed_trade") return 3;
   if (basis === "snapshot_activity") return 2;
   if (basis === "fallback_estimate") return 1;
@@ -830,16 +894,7 @@ const sourceBasisRank = (event: Record<string, unknown>): number => {
 };
 
 const getFlowEventBasisKey = (event: Record<string, unknown>): string => {
-  if (isSnapshotFlowEvent(event)) return "snapshot_activity";
-  const sourceBasis = String(event.sourceBasis || event.confidence || "")
-    .trim()
-    .toLowerCase();
-  const basis = String(event.basis || "").trim().toLowerCase();
-  if (sourceBasis === "confirmed_trade" || basis === "trade") {
-    return "confirmed_trade";
-  }
-  if (sourceBasis === "fallback_estimate") return "fallback_estimate";
-  return "other";
+  return resolveFlowEventSourceBasis(event);
 };
 
 const getFlowEventMergeKeys = (event: Record<string, unknown>): string[] => {
@@ -1043,9 +1098,9 @@ export const flowEventsToChartEventConversion = (
     const contractLabel =
       String(event.contract || event.optionTicker || "").trim() ||
       [eventSymbol, strike ?? "", right].filter(Boolean).join(" ");
-    const sourceBasis = String(event.sourceBasis || event.confidence || "");
-    const snapshotDerived =
-      event.basis === "snapshot" || sourceBasis === "snapshot_activity";
+    const rawSourceBasis = String(event.sourceBasis || event.confidence || "");
+    const sourceBasis = resolveFlowEventSourceBasis(event);
+    const snapshotDerived = sourceBasis === "snapshot_activity";
     const flowKind = snapshotDerived
       ? "snapshot activity"
       : event.isUnusual
@@ -1076,7 +1131,8 @@ export const flowEventsToChartEventConversion = (
         premium,
         unusualScore,
         isUnusual: Boolean(event.isUnusual),
-        sourceBasis: sourceBasis || undefined,
+        sourceBasis:
+          sourceBasis === "other" ? rawSourceBasis || undefined : sourceBasis,
         timeBasis: timeResolution.timeBasis,
         chartTimeSourceField: timeResolution.sourceField,
         chartTimeMs: timeResolution.timeMs,

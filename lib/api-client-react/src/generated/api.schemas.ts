@@ -2889,6 +2889,7 @@ export interface SignalOptionsExecutionProfile {
   optionSelection: JsonObject;
   riskCaps: JsonObject;
   liquidityGate: JsonObject;
+  entryGate: JsonObject;
   fillPolicy: JsonObject;
   exitPolicy: JsonObject;
 }
@@ -3031,6 +3032,7 @@ export interface AlgoCockpitSnapshotResponse {
   readiness: AlgoCockpitReadiness;
   pipelineStages: AlgoCockpitPipelineStage[];
   attentionItems: AlgoCockpitAttentionItem[];
+  diagnostics: JsonObject;
   kpis: JsonObject;
   risk: JsonObject;
   candidates: JsonObject[];
@@ -3038,6 +3040,17 @@ export interface AlgoCockpitSnapshotResponse {
   activePositions: JsonObject[];
   events: ExecutionEvent[];
   sourceBacktest: AlgoCockpitSourceBacktest;
+  generatedAt: string;
+}
+
+export interface SignalOptionsPerformanceResponse {
+  deploymentId: string;
+  range: string;
+  summary: JsonObject;
+  openExposure: JsonObject;
+  ruleAdherence: JsonObject[];
+  topBlockers: JsonObject[];
+  recentClosedTrades: JsonObject[];
   generatedAt: string;
 }
 
@@ -4695,3 +4708,4 @@ export type GetBacktestRunChartParams = {
 symbol?: string;
 selectedTradeId?: string;
 };
+

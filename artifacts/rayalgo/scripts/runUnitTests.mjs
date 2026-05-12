@@ -75,6 +75,7 @@ const unitTestFiles = [
   "src/screens/account/accountTradingAnalysis.test.js",
   "src/screens/account/positionsAtDateInspectorModel.test.js",
   "src/screens/diagnostics/localAlerts.test.js",
+  "src/screens/algoCockpitDiagnosticsModel.test.js",
   "src/screens/settings/ibkrLaneUiModel.test.js",
   "src/screens/TradeScreen.search-handlers.test.mjs",
 ];

@@ -103,6 +103,10 @@ import {
   subscribeShadowAccountSnapshots,
 } from "../services/shadow-account-streams";
 import {
+  fetchAccountPageSnapshotPayload,
+  subscribeAccountPageSnapshots,
+} from "../services/account-page-streams";
+import {
   getCurrentStockMinuteAggregates,
   getStockAggregateStreamDiagnostics,
   isStockAggregateStreamingAvailable,
@@ -124,6 +128,7 @@ import {
   testFlexToken,
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";
+import type { RuntimeMode } from "../lib/runtime";
 import {
   getShadowTradingPatterns,
   placeShadowOrder,
@@ -1678,7 +1683,9 @@ function readBooleanQueryFlag(value: unknown): boolean | undefined {
 }
 
 router.get("/flow/events", async (req, res) => {
-  const query = ListFlowEventsQueryParams.parse(req.query);
+  const query = ListFlowEventsQueryParams.parse(
+    coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
+  );
   const blocking = readBooleanQueryFlag(req.query.blocking) ?? false;
   const queueRefresh = readBooleanQueryFlag(req.query.queueRefresh) ?? true;
   const data = ListFlowEventsResponse.parse(
@@ -1689,7 +1696,9 @@ router.get("/flow/events", async (req, res) => {
 });
 
 router.get("/flow/events/aggregate", async (req, res) => {
-  const query = ListFlowEventsQueryParams.parse(req.query);
+  const query = ListFlowEventsQueryParams.parse(
+    coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
+  );
   const data = ListFlowEventsResponse.parse(await listAggregateFlowEvents(query));
 
   res.json(data);
@@ -2185,6 +2194,84 @@ router.get("/streams/market-depth", async (req, res) => {
   });
 });
 
+router.get("/streams/accounts/page", async (req, res) => {
+  const mode: RuntimeMode = req.query.mode === "live" ? "live" : "paper";
+  const accountId =
+    typeof req.query.accountId === "string" && req.query.accountId.trim()
+      ? req.query.accountId.trim()
+      : "combined";
+  const input = {
+    accountId,
+    mode,
+    range:
+      typeof req.query.range === "string"
+        ? (req.query.range as AccountRange)
+        : undefined,
+    orderTab: req.query.orderTab === "history" ? "history" as const : "working" as const,
+    assetClass:
+      typeof req.query.assetClass === "string" && req.query.assetClass.trim()
+        ? req.query.assetClass.trim()
+        : null,
+    from:
+      typeof req.query.from === "string" && req.query.from.trim()
+        ? new Date(req.query.from)
+        : null,
+    to:
+      typeof req.query.to === "string" && req.query.to.trim()
+        ? new Date(req.query.to)
+        : null,
+    symbol:
+      typeof req.query.symbol === "string" && req.query.symbol.trim()
+        ? req.query.symbol.trim()
+        : null,
+    pnlSign:
+      typeof req.query.pnlSign === "string" && req.query.pnlSign.trim()
+        ? req.query.pnlSign.trim()
+        : null,
+    holdDuration:
+      typeof req.query.holdDuration === "string" && req.query.holdDuration.trim()
+        ? req.query.holdDuration.trim()
+        : null,
+    performanceCalendarFrom:
+      typeof req.query.performanceCalendarFrom === "string" &&
+      req.query.performanceCalendarFrom.trim()
+        ? new Date(req.query.performanceCalendarFrom)
+        : null,
+  };
+
+  await startSse(req, res, async ({ writeEvent }) => {
+    const initialPayload = await fetchAccountPageSnapshotPayload(input);
+    await writeEvent("bootstrap", initialPayload);
+    await writeEvent("ready", {
+      accountId,
+      mode,
+      source: accountId === SHADOW_ACCOUNT_ID ? "shadow-ledger" : "account-page",
+    });
+
+    return subscribeAccountPageSnapshots(
+      input,
+      (payload) => {
+        writeEvent("live", payload);
+      },
+      (payload) => {
+        writeEvent("derived", payload);
+      },
+      {
+        initialPayload,
+        onPollSuccess: ({ changed, kind }) =>
+          writeEvent("freshness", {
+            stream: "account-page",
+            kind,
+            accountId,
+            mode,
+            changed,
+            at: new Date().toISOString(),
+          }),
+      },
+    );
+  });
+});
+
 router.get("/streams/accounts", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
@@ -2228,9 +2315,21 @@ router.get("/streams/accounts/shadow", async (req, res) => {
       source: "shadow-ledger",
     });
 
-    return subscribeShadowAccountSnapshots((payload) => {
-      writeEvent("accounts", payload);
-    });
+    return subscribeShadowAccountSnapshots(
+      (payload) => {
+        writeEvent("accounts", payload);
+      },
+      {
+        onPollSuccess: ({ changed }) =>
+          writeEvent("freshness", {
+            stream: "shadow-accounts",
+            accountId: SHADOW_ACCOUNT_ID,
+            mode: "paper",
+            changed,
+            at: new Date().toISOString(),
+          }),
+      },
+    );
   });
 });
 

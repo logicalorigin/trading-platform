@@ -389,7 +389,7 @@ function buildHistoryPeriod(
     1,
     Math.min(HISTORY_RESPONSE_MAX_POINTS, Math.ceil(barCount)),
   );
-  const marketHoursPadding = timeframe === "1d" ? 1 : outsideRth ? 1 : 5;
+  const marketHoursPadding = timeframe === "1d" ? 1 : outsideRth ? 2 : 5;
   const totalMs =
     desiredBars * resolveHistoryStepMs(timeframe) * marketHoursPadding;
   const minuteMs = 60_000;
@@ -430,7 +430,16 @@ function buildHistoryPeriod(
 
 export const __ibkrClientTestInternals = {
   buildHistoryPeriod,
+  normalizeHistoricalDataExchange,
 };
+
+function normalizeHistoricalDataExchange(value: unknown): string | null {
+  const exchange = asString(value)?.trim().toUpperCase() ?? "";
+  if (!exchange || exchange === "SMART") {
+    return null;
+  }
+  return exchange === "OVERNIGHT" || exchange === "IBEOS" ? exchange : null;
+}
 
 function resolveRequestedHistoryBars(input: {
   timeframe: HistoryBarTimeframe;
@@ -2094,6 +2103,7 @@ export class IbkrClient {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
   }): Promise<BrokerBarSnapshot[]> {
     return this.withHistoryRequestPermit(async () => {
       const timeframe = input.timeframe;
@@ -2126,6 +2136,9 @@ export class IbkrClient {
         assetClass: input.assetClass,
         providerContractId: input.providerContractId,
       });
+      const exchange =
+        normalizeHistoricalDataExchange(input.exchange) ??
+        resolvedContract.listingExchange;
       const collected = new Map<number, BrokerBarSnapshot>();
       let remainingBars = desiredBars;
       let cursor = new Date(to);
@@ -2136,7 +2149,7 @@ export class IbkrClient {
         const chunkBars = Math.min(remainingBars, HISTORY_RESPONSE_MAX_POINTS);
         const historyArgs = {
           conid: resolvedContract.conid,
-          exchange: resolvedContract.listingExchange,
+          exchange,
           period: buildHistoryPeriod(timeframe, chunkBars, outsideRth),
           bar,
           startTime: formatHistoryStartTime(cursor),

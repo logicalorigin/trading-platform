@@ -10,9 +10,11 @@ import {
 import {
   getGetAlgoDeploymentCockpitQueryKey,
   getGetSignalOptionsAutomationStateQueryKey,
+  getGetSignalOptionsPerformanceQueryKey,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
   useGetAlgoDeploymentCockpit,
+  useGetSignalOptionsPerformance,
   useGetSignalOptionsAutomationState,
   useListAlgoDeployments,
   useListBacktestDraftStrategies,
@@ -59,6 +61,7 @@ import {
   motionVars,
 } from "../lib/motion";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
+import { buildCockpitGateSummary } from "./algoCockpitDiagnosticsModel";
 
 const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
@@ -83,6 +86,13 @@ const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     requireBidAsk: true,
     requireFreshQuote: true,
   },
+  entryGate: {
+    bearishRegime: {
+      enabled: true,
+      minAdx: 25,
+      rejectFullyBullishMtf: true,
+    },
+  },
   fillPolicy: {
     chaseMode: "aggressive",
     ttlSeconds: 20,
@@ -99,7 +109,10 @@ const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   },
 };
 
-const SIGNAL_OPTIONS_TABS = ["Candidates", "Positions", "Profile", "Events"];
+const SIGNAL_OPTIONS_EXPANDED_CAPACITY = {
+  maxOpenSymbols: 10,
+  maxDailyLoss: 2000,
+};
 
 const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
   { value: 0, label: "Lower -2" },
@@ -153,6 +166,14 @@ const mergeSignalOptionsProfile = (source) => {
     liquidityGate: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.liquidityGate,
       ...asRecord(rawProfile.liquidityGate),
+    },
+    entryGate: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate,
+      ...asRecord(rawProfile.entryGate),
+      bearishRegime: {
+        ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime,
+        ...asRecord(asRecord(rawProfile.entryGate).bearishRegime),
+      },
     },
     fillPolicy: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.fillPolicy,
@@ -216,6 +237,17 @@ const mergeSignalOptionsProfile = (source) => {
   return profile;
 };
 
+const buildExpandedSignalOptionsProfile = (profile) => {
+  const currentProfile = cloneProfile(profile);
+  return {
+    ...currentProfile,
+    riskCaps: {
+      ...asRecord(currentProfile.riskCaps),
+      ...SIGNAL_OPTIONS_EXPANDED_CAPACITY,
+    },
+  };
+};
+
 const signalOptionsApi = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
@@ -251,14 +283,6 @@ const formatPlainPrice = (value, digits = 2) =>
 
 const formatPct = (value, digits = 1) =>
   Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : MISSING_VALUE;
-
-const formatDurationMs = (value) => {
-  const ms = Number(value);
-  if (!Number.isFinite(ms)) return MISSING_VALUE;
-  if (ms < 1_000) return `${Math.max(0, Math.round(ms))}ms`;
-  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
-  return `${Math.round(ms / 60_000)}m`;
-};
 
 const formatChaseSteps = (steps) =>
   Array.isArray(steps)
@@ -302,6 +326,12 @@ const cockpitAttentionColor = (severity) => {
   if (severity === "critical") return T.red;
   if (severity === "warning") return T.amber;
   return T.cyan;
+};
+
+const signalOptionsRuleColor = (status) => {
+  if (status === "fail") return T.red;
+  if (status === "warning") return T.amber;
+  return T.green;
 };
 
 const formatCockpitMetric = (metrics, key, formatter = (value) => value) =>
@@ -402,8 +432,8 @@ export const AlgoScreen = ({
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
   const [automationTab, setAutomationTab] = useState("Candidates");
+  const [secondaryPanel, setSecondaryPanel] = useState(null);
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
-  const [eventFilter, setEventFilter] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
   const [profileDraft, setProfileDraft] = useState(
     SIGNAL_OPTIONS_DEFAULT_PROFILE,
@@ -439,7 +469,7 @@ export const AlgoScreen = ({
     },
   });
   const deploymentsQuery = useListAlgoDeployments(
-    { mode: environment },
+    undefined,
     {
       query: {
         ...QUERY_DEFAULTS,
@@ -496,7 +526,19 @@ export const AlgoScreen = ({
       retry: false,
     },
   });
+  const signalOptionsPerformanceQuery = useGetSignalOptionsPerformance(
+    focusedDeployment?.id || "",
+    {
+      query: {
+        ...QUERY_DEFAULTS,
+        enabled: Boolean(isVisible && focusedDeployment?.id),
+        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        retry: false,
+      },
+    },
+  );
   const cockpit = cockpitQuery.data || null;
+  const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
   const signalOptionsProfile =
     signalOptionsState?.profile || SIGNAL_OPTIONS_DEFAULT_PROFILE;
@@ -506,14 +548,34 @@ export const AlgoScreen = ({
     cockpit?.signals || signalOptionsState?.signals || [];
   const signalOptionsPositions =
     cockpit?.activePositions || signalOptionsState?.activePositions || [];
-  const signalOptionsEvents =
-    cockpit?.events || signalOptionsState?.events || [];
   const cockpitFleet = cockpit?.fleet || null;
   const cockpitReadiness = cockpit?.readiness || null;
   const cockpitKpis = asRecord(cockpit?.kpis);
   const cockpitPipelineStages = cockpit?.pipelineStages || [];
   const cockpitAttentionItems = cockpit?.attentionItems || [];
   const cockpitSourceBacktest = cockpit?.sourceBacktest || null;
+  const cockpitGateSummary = buildCockpitGateSummary(cockpit);
+  const cockpitSignalFreshness = cockpitGateSummary.signalFreshness;
+  const cockpitTradePath = cockpitGateSummary.tradePath;
+  const cockpitSkipReasonRows = cockpitGateSummary.skipReasonRows;
+  const cockpitEntryGateRows = cockpitGateSummary.entryGateRows;
+  const cockpitOptionChainRows = cockpitGateSummary.optionChainRows;
+  const signalOptionsPerformanceSummary = asRecord(
+    signalOptionsPerformance?.summary,
+  );
+  const signalOptionsOpenExposure = asRecord(
+    signalOptionsPerformance?.openExposure,
+  );
+  const signalOptionsRuleAdherence = Array.isArray(
+    signalOptionsPerformance?.ruleAdherence,
+  )
+    ? signalOptionsPerformance.ruleAdherence
+    : [];
+  const signalOptionsTopBlockers = Array.isArray(
+    signalOptionsPerformance?.topBlockers,
+  )
+    ? signalOptionsPerformance.topBlockers
+    : [];
   const selectedCandidate =
     signalOptionsCandidates.find(
       (candidate) => candidate.id === selectedCandidateId,
@@ -556,20 +618,6 @@ export const AlgoScreen = ({
       return true;
     });
   }, [selectedPipelineStageId, signalOptionsCandidates]);
-  const filteredSignalOptionsEvents = useMemo(() => {
-    if (eventFilter === "all") return signalOptionsEvents;
-    return signalOptionsEvents.filter((event) => {
-      const type = String(event.eventType || "");
-      if (eventFilter === "blockers") {
-        return type.includes("skipped") || type.includes("blocked");
-      }
-      if (eventFilter === "fills") return type.includes("entry");
-      if (eventFilter === "exits") return type.includes("exit");
-      if (eventFilter === "profile") return type.includes("profile");
-      if (eventFilter === "gateway") return type.includes("gateway");
-      return true;
-    });
-  }, [eventFilter, signalOptionsEvents]);
   const enabledDeployments = deployments.filter(
     (deployment) => deployment.enabled,
   );
@@ -640,6 +688,9 @@ export const AlgoScreen = ({
       });
       queryClient.invalidateQueries({
         queryKey: getGetAlgoDeploymentCockpitQueryKey(focusedDeployment.id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: getGetSignalOptionsPerformanceQueryKey(focusedDeployment.id),
       });
     }
   };
@@ -930,6 +981,24 @@ export const AlgoScreen = ({
     }));
   };
 
+  const patchProfileDraftNested = (section, key, nestedKey, value) => {
+    setProfileDraft((current) => {
+      const currentProfile = cloneProfile(current);
+      const sectionValue = asRecord(currentProfile[section]);
+      const nestedValue = asRecord(sectionValue[key]);
+      return {
+        ...currentProfile,
+        [section]: {
+          ...sectionValue,
+          [key]: {
+            ...nestedValue,
+            [nestedKey]: value,
+          },
+        },
+      };
+    });
+  };
+
   const handleSaveProfile = () => {
     if (!focusedDeployment?.id) {
       return;
@@ -937,6 +1006,18 @@ export const AlgoScreen = ({
     updateProfileMutation.mutate({
       deploymentId: focusedDeployment.id,
       data: profileDraft,
+    });
+  };
+
+  const handleApplyExpandedCapacity = () => {
+    if (!focusedDeployment?.id) {
+      return;
+    }
+    const nextProfile = buildExpandedSignalOptionsProfile(profileDraft);
+    setProfileDraft(nextProfile);
+    updateProfileMutation.mutate({
+      deploymentId: focusedDeployment.id,
+      data: nextProfile,
     });
   };
 
@@ -977,6 +1058,208 @@ export const AlgoScreen = ({
     ["liquidityGate", "requireFreshQuote", "Require fresh quote"],
     ["exitPolicy", "flipOnOppositeSignal", "Exit on opposite signal"],
   ];
+
+  const compactButtonStyle = ({
+    active = false,
+    color = T.border,
+    fill = false,
+    disabled = false,
+  } = {}) => ({
+    padding: sp("6px 10px"),
+    borderRadius: dim(4),
+    border: `1px solid ${active ? color : T.border}`,
+    background: active ? `${color}18` : T.bg0,
+    color: active ? T.text : T.textSec,
+    fontSize: fs(8),
+    fontFamily: T.mono,
+    fontWeight: 400,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.62 : 1,
+    width: fill ? "100%" : "auto",
+    whiteSpace: "nowrap",
+  });
+
+  const cockpitMetricCards = [
+    {
+      label: "Drafts",
+      value: `${draftsQuery.data?.drafts?.length || 0}`,
+      detail: selectedDraft
+        ? `${selectedDraft.name} · ${selectedDraft.mode}`
+        : "awaiting promotion",
+      color: T.accent,
+    },
+    {
+      label: "Deployments",
+      value: `${cockpitFleet?.totalDeployments ?? deployments.length}`,
+      detail: deployments.length
+        ? `${cockpitFleet?.enabledDeployments ?? enabledDeployments.length} enabled · ${cockpitTradePath.blockedCandidates ?? 0} blocked`
+        : "none created",
+      color:
+        Number(cockpitTradePath.blockedCandidates) > 0
+          ? T.red
+          : deployments.length
+            ? T.green
+            : T.textDim,
+    },
+    {
+      label: "Data Bridge",
+      value: cockpitReadiness?.ready ? "READY" : bridgeTone.label.toUpperCase(),
+      detail:
+        cockpitReadiness?.message ||
+        (session?.ibkrBridge?.transport === "tws"
+          ? `IB Gateway ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
+          : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`),
+      color: cockpitReadiness?.ready ? T.green : bridgeTone.color,
+    },
+    {
+      label: "Today P&L",
+      value: formatMoney(cockpitKpis.todayPnl, 2),
+      detail: `R ${formatMoney(cockpitKpis.dailyRealizedPnl, 2)} / U ${formatMoney(cockpitKpis.openUnrealizedPnl, 2)}`,
+      color:
+        Number(cockpitKpis.todayPnl) < 0
+          ? T.red
+          : Number(cockpitKpis.todayPnl) > 0
+            ? T.green
+            : T.textDim,
+    },
+    {
+      label: "Latest Event",
+      value: latestEvent ? formatEnumLabel(latestEvent.eventType) : "NONE",
+      detail: latestEvent
+        ? formatRelativeTimeShort(latestEvent.occurredAt)
+        : "no execution events",
+      color: latestEvent ? T.cyan : T.textDim,
+    },
+  ];
+
+  const cockpitRiskCards = [
+    ["Today P&L", formatMoney(cockpitKpis.todayPnl, 2), T.text],
+    ["Loss left", formatMoney(cockpitKpis.dailyLossRemaining, 2), T.text],
+    ["Premium", formatMoney(cockpitKpis.openPremium, 2), T.amber],
+    [
+      "Open symbols",
+      `${cockpitKpis.openSymbols ?? 0}/${cockpitKpis.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
+      T.cyan,
+    ],
+    ["Candidates", cockpitKpis.candidates ?? signalOptionsCandidates.length, T.cyan],
+    ["Blocked", cockpitKpis.blockedCandidates ?? 0, T.red],
+    ["Filled", cockpitKpis.shadowFilledCandidates ?? 0, T.green],
+    ["Positions", cockpitKpis.openPositions ?? signalOptionsPositions.length, T.green],
+  ];
+
+  const signalOptionsPerformanceCards = [
+    [
+      "Closed",
+      Number(signalOptionsPerformanceSummary.closedTrades ?? 0).toLocaleString(),
+      T.text,
+    ],
+    [
+      "Realized",
+      formatMoney(signalOptionsPerformanceSummary.realizedPnl, 2),
+      Number(signalOptionsPerformanceSummary.realizedPnl) < 0
+        ? T.red
+        : Number(signalOptionsPerformanceSummary.realizedPnl) > 0
+          ? T.green
+          : T.text,
+    ],
+    [
+      "Win rate",
+      formatPct(signalOptionsPerformanceSummary.winRatePercent, 1),
+      T.cyan,
+    ],
+    [
+      "Profit factor",
+      formatPlainPrice(signalOptionsPerformanceSummary.profitFactor, 2),
+      T.amber,
+    ],
+    [
+      "Expectancy",
+      formatMoney(signalOptionsPerformanceSummary.expectancy, 2),
+      T.text,
+    ],
+    [
+      "Open premium",
+      formatMoney(signalOptionsOpenExposure.openPremium, 2),
+      T.amber,
+    ],
+    [
+      "Capacity",
+      `${signalOptionsOpenExposure.openSymbols ?? cockpitKpis.openSymbols ?? 0}/${signalOptionsOpenExposure.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
+      signalOptionsOpenExposure.atOpenSymbolCapacity ? T.amber : T.cyan,
+    ],
+    [
+      "Unmarked",
+      Number(signalOptionsOpenExposure.unmarkedPositions ?? 0).toLocaleString(),
+      Number(signalOptionsOpenExposure.unmarkedPositions) ? T.amber : T.green,
+    ],
+  ];
+
+  const cockpitBacktestCards = [
+    ["Strategy", cockpitSourceBacktest?.strategyName || MISSING_VALUE],
+    [
+      "Run",
+      cockpitSourceBacktest?.runName ||
+        cockpitSourceBacktest?.sourceRunId?.slice(0, 8) ||
+        MISSING_VALUE,
+    ],
+    [
+      "Net P&L",
+      formatCockpitMetric(cockpitSourceBacktest?.metrics, "netPnl", (value) =>
+        formatMoney(value, 2),
+      ),
+    ],
+    [
+      "Win rate",
+      formatCockpitMetric(
+        cockpitSourceBacktest?.metrics,
+        "winRatePercent",
+        (value) => formatPct(value, 1),
+      ),
+    ],
+    [
+      "Max DD",
+      formatCockpitMetric(
+        cockpitSourceBacktest?.metrics,
+        "maxDrawdownPercent",
+        (value) => formatPct(value, 1),
+      ),
+    ],
+    [
+      "Trades",
+      formatCockpitMetric(cockpitSourceBacktest?.metrics, "tradeCount", (value) =>
+        Number(value).toLocaleString(),
+      ),
+    ],
+  ];
+
+  const cockpitStageItems = cockpitPipelineStages.length
+    ? cockpitPipelineStages
+    : [
+        {
+          id: "scan_universe",
+          label: "Scan Universe",
+          status: gatewayReady ? "waiting" : "blocked",
+          count: focusedDeployment?.symbolUniverse?.length || 0,
+          latestAt: focusedDeployment?.lastEvaluatedAt || null,
+          detail: gatewayReady ? "ready to scan" : bridgeRuntimeMessage(session),
+        },
+      ];
+  const selectedStage =
+    cockpitStageItems.find((stage) => stage.id === selectedPipelineStageId) ||
+    cockpitStageItems[0] ||
+    null;
+  const visibleSignalRows = (
+    signalOptionsSignals.length
+      ? signalOptionsSignals
+      : signalOptionsCandidates.map((candidate) => ({
+          ...asRecord(candidate.signal),
+          symbol: candidate.symbol,
+          timeframe: candidate.timeframe,
+          direction: candidate.direction,
+          signalAt: candidate.signalAt,
+          signalPrice: candidate.signalPrice,
+        }))
+  ).slice(0, algoIsPhone ? 4 : 6);
 
   return (
     <div
@@ -1094,708 +1377,140 @@ export const AlgoScreen = ({
       )}
 
       <div
+        data-testid="algo-cockpit"
+        className="ra-panel-enter"
         style={{
           background: T.bg2,
           border: `1px solid ${T.border}`,
           borderRadius: dim(6),
-          padding: sp("12px 14px"),
-        }}
-      >
-        <div
-          style={{
-            fontSize: fs(12),
-            fontWeight: 400,
-            fontFamily: T.display,
-            color: T.text,
-            marginBottom: 10,
-          }}
-        >
-          Shadow Options Control Plane
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoMetricsGridTemplate,
-            gap: sp(8),
-          }}
-        >
-          {[
-            {
-              label: "Promoted Drafts",
-              value: `${draftsQuery.data?.drafts?.length || 0}`,
-              detail: selectedDraft
-                ? `${selectedDraft.name} · ${selectedDraft.mode}`
-                : "awaiting promotion",
-              color: T.accent,
-            },
-            {
-              label: "Deployments",
-              value: `${cockpitFleet?.totalDeployments ?? deployments.length}`,
-              detail: deployments.length
-                ? `${cockpitFleet?.enabledDeployments ?? enabledDeployments.length} enabled · ${cockpitFleet?.activeBlockers ?? 0} blockers`
-                : "none created",
-              color:
-                Number(cockpitFleet?.activeBlockers) > 0
-                  ? T.red
-                  : deployments.length
-                    ? T.green
-                    : T.textDim,
-            },
-            {
-              label: "Data Bridge",
-              value: cockpitReadiness?.ready
-                ? "READY"
-                : bridgeTone.label.toUpperCase(),
-              detail:
-                cockpitReadiness?.message ||
-                (session?.ibkrBridge?.transport === "tws"
-                  ? `IB Gateway ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
-                  : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`),
-              color: cockpitReadiness?.ready ? T.green : bridgeTone.color,
-            },
-            {
-              label: "Today P&L",
-              value: formatMoney(cockpitKpis.todayPnl, 2),
-              detail: `R ${formatMoney(cockpitKpis.dailyRealizedPnl, 2)} / U ${formatMoney(cockpitKpis.openUnrealizedPnl, 2)}`,
-              color:
-                Number(cockpitKpis.todayPnl) < 0
-                  ? T.red
-                  : Number(cockpitKpis.todayPnl) > 0
-                    ? T.green
-                    : T.textDim,
-            },
-            {
-              label: "Latest Event",
-              value: latestEvent
-                ? formatEnumLabel(latestEvent.eventType)
-                : "NONE",
-              detail: latestEvent
-                ? formatRelativeTimeShort(latestEvent.occurredAt)
-                : "no execution events yet",
-              color: latestEvent ? T.cyan : T.textDim,
-            },
-          ].map((metric, index) => (
-            <div
-              key={metric.label}
-              className="ra-row-enter"
-              style={{
-                ...motionRowStyle(index, 18, 90),
-                ...motionVars({ accent: metric.color }),
-                padding: sp("10px 12px"),
-                borderRadius: dim(6),
-                background: T.bg0,
-                border: `1px solid ${T.border}`,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: sp(4),
-                  marginBottom: 4,
-                }}
-              >
-                <div
-                  style={{
-                    width: dim(6),
-                    height: dim(6),
-                    borderRadius: "50%",
-                    background: metric.color,
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: fs(9),
-                    fontWeight: 400,
-                    fontFamily: T.sans,
-                    color: T.text,
-                  }}
-                >
-                  {metric.label}
-                </span>
-              </div>
-              <div
-                style={{
-                  fontSize: fs(11),
-                  fontWeight: 400,
-                  fontFamily: T.mono,
-                  color: metric.color,
-                  marginBottom: 3,
-                }}
-              >
-                {metric.value}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {metric.detail}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: algoTwoColumnTemplate,
+          padding: sp(algoIsPhone ? "9px 10px" : "12px 14px"),
+          display: "flex",
+          flexDirection: "column",
           gap: sp(10),
           minWidth: 0,
         }}
       >
         <div
+          data-testid="algo-command-bar"
           style={{
-            background: T.bg2,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
-            padding: sp("12px 14px"),
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(8),
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: sp(8),
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: fs(12),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Create Deployment
-              </div>
-              <div
-                style={{
-                  fontSize: fs(9),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                Promoted strategy -&gt; Shadow account automation
-              </div>
-            </div>
-            <Badge
-              color={
-                brokerAuthenticated
-                  ? T.green
-                  : brokerConfigured
-                    ? T.amber
-                    : T.textDim
-              }
-            >
-              {bridgeTone.label.toUpperCase()}
-            </Badge>
-          </div>
-
-          {!candidateDrafts.length ? (
-            <div
-              style={{
-                padding: sp("18px 10px"),
-                border: `1px dashed ${T.border}`,
-                borderRadius: dim(5),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-                lineHeight: 1.5,
-              }}
-            >
-              No promoted draft strategies are available yet. Promote a
-              completed backtest run first, then return here to create an
-              Shadow signal deployment.
-            </div>
-          ) : (
-            <>
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  PROMOTED STRATEGY
-                </div>
-                <select
-                  value={selectedDraft?.id || ""}
-                  onChange={(event) => setSelectedDraftId(event.target.value)}
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.mono,
-                    fontWeight: 400,
-                    outline: "none",
-                  }}
-                >
-                  {candidateDrafts.map((draft) => (
-                    <option key={draft.id} value={draft.id}>
-                      {draft.name} · {draft.mode} ·{" "}
-                      {draft.symbolUniverse.length} syms
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  DEPLOYMENT NAME
-                </div>
-                <input
-                  value={deploymentName}
-                  onChange={(event) => setDeploymentName(event.target.value)}
-                  placeholder="Deployment name"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.sans,
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  SYMBOL UNIVERSE
-                </div>
-                <input
-                  value={symbolUniverseInput}
-                  onChange={(event) =>
-                    setSymbolUniverseInput(event.target.value)
-                  }
-                  placeholder="SPY, QQQ, NVDA"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.mono,
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <div
-                style={{
-                  background: T.bg3,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  padding: sp("8px 10px"),
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: sp(4),
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                }}
-              >
-                <div>
-                  <span style={{ color: T.textMuted }}>DATA ACCOUNT</span>{" "}
-                  <span style={{ color: activeAccountId ? T.text : T.amber }}>
-                    {activeAccountId || "waiting"}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>SIGNAL MODE</span>{" "}
-                  <span
-                    style={{ color: environment === "live" ? T.red : T.green }}
-                  >
-                    {environment.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>RUN</span>{" "}
-                  <span style={{ color: T.textSec }}>
-                    {selectedDraft?.runId
-                      ? selectedDraft.runId.slice(0, 8)
-                      : MISSING_VALUE}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>PROMOTED</span>{" "}
-                  <span style={{ color: T.textSec }}>
-                    {selectedDraft
-                      ? formatRelativeTimeShort(selectedDraft.promotedAt)
-                      : MISSING_VALUE}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleCreateDeployment}
-                disabled={createDeploymentMutation.isPending}
-                style={{
-                  padding: sp("8px 0"),
-                  background: T.accent,
-                  border: "none",
-                  borderRadius: dim(4),
-                  color: "#fff",
-                  fontSize: fs(10),
-                  fontFamily: T.sans,
-                  fontWeight: 400,
-                  cursor: createDeploymentMutation.isPending
-                    ? "wait"
-                    : "pointer",
-                  opacity: createDeploymentMutation.isPending ? 0.7 : 1,
-                  letterSpacing: "0.04em",
-                }}
-              >
-                {createDeploymentMutation.isPending
-                  ? "CREATING..."
-                  : "CREATE SHADOW DEPLOYMENT"}
-              </button>
-            </>
-          )}
-        </div>
-
-        <div
-          style={{
-            background: T.bg2,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
-            padding: sp("12px 14px"),
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(8),
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: sp(8),
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: fs(12),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Deployments
-              </div>
-              <div
-                style={{
-                  fontSize: fs(9),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {environment.toUpperCase()} signal profiles · Shadow execution
-              </div>
-            </div>
-            <span
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
-            >
-              {enabledDeployments.length}/{deployments.length} enabled
-            </span>
-          </div>
-
-          {!deployments.length ? (
-            <div
-              style={{
-                padding: sp("18px 10px"),
-                border: `1px dashed ${T.border}`,
-                borderRadius: dim(5),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-                lineHeight: 1.5,
-              }}
-            >
-              No deployments exist for this environment yet.
-            </div>
-          ) : (
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: sp(6) }}
-            >
-              {deployments.map((deployment, index) => {
-                const tone = deployment.enabled
-                  ? T.green
-                  : deployment.lastError
-                    ? T.red
-                    : T.textDim;
-                return (
-                  <div
-                    key={deployment.id}
-                    className={joinMotionClasses(
-                      "ra-row-enter",
-                      "ra-interactive",
-                      focusedDeployment?.id === deployment.id && "ra-focus-rail",
-                    )}
-                    onClick={() => setFocusedDeploymentId(deployment.id)}
-                    style={{
-                      ...motionRowStyle(index, 16, 160),
-                      ...motionVars({ accent: tone }),
-                      background:
-                        focusedDeployment?.id === deployment.id ? T.bg3 : T.bg0,
-                      border: `1px solid ${focusedDeployment?.id === deployment.id ? T.accent : T.border}`,
-                      borderRadius: dim(5),
-                      padding: sp("10px 12px"),
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: sp(10),
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: sp(4),
-                        minWidth: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: sp(6),
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: fs(10),
-                            fontWeight: 400,
-                            fontFamily: T.sans,
-                            color: T.text,
-                          }}
-                        >
-                          {deployment.name}
-                        </span>
-                        <Badge color={tone}>
-                          {deployment.enabled ? "ENABLED" : "PAUSED"}
-                        </Badge>
-                        {focusedDeployment?.id === deployment.id &&
-                          cockpitAttentionItems.length > 0 && (
-                            <Badge color={cockpitAttentionColor(cockpitAttentionItems[0].severity)}>
-                              {cockpitAttentionItems.length} ATTENTION
-                            </Badge>
-                          )}
-                        <span
-                          style={{
-                            fontSize: fs(8),
-                            color: T.textDim,
-                            fontFamily: T.mono,
-                          }}
-                        >
-                          {deployment.providerAccountId}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4, minmax(0, auto))",
-                          gap: sp(8),
-                          fontSize: fs(8),
-                          fontFamily: T.mono,
-                          color: T.textSec,
-                        }}
-                      >
-                        <span>
-                          <span style={{ color: T.textMuted }}>SYMS</span>{" "}
-                          {deployment.symbolUniverse.length}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>EVAL</span>{" "}
-                          {formatRelativeTimeShort(deployment.lastEvaluatedAt)}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>SIGNAL</span>{" "}
-                          {formatRelativeTimeShort(deployment.lastSignalAt)}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>UPDATED</span>{" "}
-                          {formatRelativeTimeShort(deployment.updatedAt)}
-                        </span>
-                      </div>
-                      {deployment.lastError && (
-                        <div
-                          style={{
-                            fontSize: fs(8),
-                            color: T.red,
-                            fontFamily: T.sans,
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          {deployment.lastError}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleToggleDeployment(deployment);
-                      }}
-                      disabled={
-                        enableDeploymentMutation.isPending ||
-                        pauseDeploymentMutation.isPending ||
-                        gatewayBridgeLaunching
-                      }
-                      style={{
-                        alignSelf: "center",
-                        padding: sp("6px 10px"),
-                        background: deployment.enabled
-                          ? "transparent"
-                          : T.green,
-                        border: deployment.enabled
-                          ? `1px solid ${T.amber}50`
-                          : "none",
-                        borderRadius: dim(4),
-                        color: deployment.enabled ? T.amber : "#fff",
-                        fontSize: fs(9),
-                        fontFamily: T.sans,
-                        fontWeight: 400,
-                        cursor:
-                          enableDeploymentMutation.isPending ||
-                          pauseDeploymentMutation.isPending ||
-                          gatewayBridgeLaunching
-                            ? "wait"
-                            : "pointer",
-                        whiteSpace: "nowrap",
-                        opacity:
-                          enableDeploymentMutation.isPending ||
-                          pauseDeploymentMutation.isPending ||
-                          gatewayBridgeLaunching
-                            ? 0.7
-                            : 1,
-                      }}
-                    >
-                      {deployment.enabled
-                        ? "PAUSE"
-                        : !gatewayReady
-                          ? gatewayBridgeLaunching
-                            ? "PREPARING..."
-                            : "START DATA"
-                          : "ENABLE"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: T.bg2,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp("12px 14px"),
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(10),
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            display: "grid",
+            gridTemplateColumns: algoIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(260px, 0.95fr) minmax(240px, 0.7fr) minmax(420px, 1.35fr)",
             gap: sp(10),
-            flexWrap: "wrap",
+            alignItems: "center",
+            minWidth: 0,
           }}
         >
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: sp(8),
+                gap: sp(7),
                 flexWrap: "wrap",
               }}
             >
               <span
                 style={{
-                  fontSize: fs(12),
+                  fontSize: fs(13),
                   fontWeight: 400,
                   fontFamily: T.display,
                   color: T.text,
                 }}
               >
-                Signal Options Automation
+                Execution Control Plane
               </span>
               <Badge color={T.cyan}>SHADOW</Badge>
               <Badge color={gatewayReady ? T.green : T.amber}>
                 {gatewayReady ? "DATA READY" : "DATA BLOCKED"}
               </Badge>
               <Badge color={focusedDeployment?.enabled ? T.green : T.textDim}>
-                {focusedDeployment?.enabled ? "DEPLOYMENT ENABLED" : "PAUSED"}
+                {focusedDeployment?.enabled ? "ENABLED" : "PAUSED"}
               </Badge>
             </div>
             <div
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
+              style={{
+                color: T.textDim,
+                fontFamily: T.mono,
+                fontSize: fs(8),
+                marginTop: sp(3),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
             >
-              RayReplica indicator signals -&gt; Shadow buy-call/buy-put actions,
-              virtual fills, runner exits · no broker order submission in v1
+              {focusedDeployment
+                ? `${focusedDeployment.name} · ${String(focusedDeployment.mode || environment).toUpperCase()} · ${focusedDeployment.symbolUniverse.length} symbols`
+                : "No deployment selected"}
             </div>
           </div>
-          <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                color: T.textMuted,
+                fontFamily: T.mono,
+                fontSize: fs(7),
+                letterSpacing: "0.08em",
+                marginBottom: sp(3),
+              }}
+            >
+              ACTIVE DEPLOYMENT
+            </div>
+            {deployments.length ? (
+              <select
+                value={focusedDeployment?.id || ""}
+                onChange={(event) => setFocusedDeploymentId(event.target.value)}
+                style={{
+                  width: "100%",
+                  background: T.bg3,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(4),
+                  color: T.text,
+                  padding: sp("7px 9px"),
+                  fontFamily: T.mono,
+                  fontSize: fs(9),
+                  outline: "none",
+                }}
+              >
+                {deployments.map((deployment) => (
+                  <option key={deployment.id} value={deployment.id}>
+                    {deployment.name} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "enabled" : "paused"}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div
+                style={{
+                  border: `1px dashed ${T.border}`,
+                  borderRadius: dim(4),
+                  color: T.textDim,
+                  fontFamily: T.mono,
+                  fontSize: fs(9),
+                  padding: sp("7px 9px"),
+                }}
+              >
+                create from a promoted draft
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: sp(6),
+              flexWrap: "wrap",
+              justifyContent: algoIsNarrow ? "flex-start" : "flex-end",
+            }}
+          >
             <button
               type="button"
               onClick={() => refreshAlgoQueries()}
               disabled={deploymentsQuery.isFetching || cockpitQuery.isFetching}
-              title="Refresh deployments, cockpit snapshot, and execution events"
-              style={{
-                padding: sp("6px 10px"),
-                borderRadius: dim(4),
-                border: `1px solid ${T.border}`,
-                background: T.bg0,
-                color: T.textSec,
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                fontWeight: 400,
-                cursor:
-                  deploymentsQuery.isFetching || cockpitQuery.isFetching
-                    ? "wait"
-                    : "pointer",
-                opacity:
-                  deploymentsQuery.isFetching || cockpitQuery.isFetching ? 0.72 : 1,
-              }}
+              style={compactButtonStyle({
+                disabled: deploymentsQuery.isFetching || cockpitQuery.isFetching,
+              })}
             >
               REFRESH
             </button>
@@ -1808,87 +1523,33 @@ export const AlgoScreen = ({
                 pauseDeploymentMutation.isPending ||
                 gatewayBridgeLaunching
               }
-              title={
-                !focusedDeployment
-                  ? "Select a deployment first"
-                  : !focusedDeployment.enabled && cockpitReadiness?.enableDisabledReason
-                    ? cockpitReadiness.enableDisabledReason
-                    : focusedDeployment.enabled
-                      ? "Pause this deployment"
-                      : "Enable this deployment"
-              }
-              style={{
-                padding: sp("6px 10px"),
-                borderRadius: dim(4),
-                border: focusedDeployment?.enabled
-                  ? `1px solid ${T.amber}55`
-                  : "none",
-                background: focusedDeployment?.enabled ? "transparent" : T.green,
-                color: focusedDeployment?.enabled ? T.amber : "#fff",
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                fontWeight: 400,
-                cursor:
-                  enableDeploymentMutation.isPending ||
-                  pauseDeploymentMutation.isPending ||
-                  gatewayBridgeLaunching
-                    ? "wait"
-                    : "pointer",
-                opacity:
+              style={compactButtonStyle({
+                active: Boolean(focusedDeployment?.enabled),
+                color: focusedDeployment?.enabled ? T.amber : T.green,
+                disabled:
                   !focusedDeployment ||
                   enableDeploymentMutation.isPending ||
                   pauseDeploymentMutation.isPending ||
-                  gatewayBridgeLaunching
-                    ? 0.72
-                    : 1,
-              }}
+                  gatewayBridgeLaunching,
+              })}
             >
               {focusedDeployment?.enabled ? "PAUSE" : "ENABLE"}
             </button>
             <button
               type="button"
-              onClick={() => setAutomationTab("Profile")}
-              disabled={!focusedDeployment}
-              title={
-                cockpitReadiness?.profileDisabledReason ||
-                "Edit risk caps and signal-options profile"
-              }
-              style={{
-                padding: sp("6px 10px"),
-                borderRadius: dim(4),
-                border: `1px solid ${T.amber}55`,
-                background: `${T.amber}12`,
-                color: T.amber,
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                fontWeight: 400,
-                cursor: focusedDeployment ? "pointer" : "not-allowed",
-                opacity: focusedDeployment ? 1 : 0.6,
+              onClick={() => {
+                setAutomationTab("Profile");
+                setSecondaryPanel(null);
               }}
+              disabled={!focusedDeployment}
+              style={compactButtonStyle({
+                active: automationTab === "Profile" && !secondaryPanel,
+                color: T.amber,
+                disabled: !focusedDeployment,
+              })}
             >
               RISK/PROFILE
             </button>
-            {SIGNAL_OPTIONS_TABS.map((tab) => (
-              <button
-                key={tab}
-                data-testid={`algo-signal-options-tab-${tab.toLowerCase()}`}
-                type="button"
-                onClick={() => setAutomationTab(tab)}
-                style={{
-                  padding: sp("6px 10px"),
-                  borderRadius: dim(4),
-                  border: `1px solid ${automationTab === tab ? T.accent : T.border}`,
-                  background: automationTab === tab ? `${T.accent}18` : T.bg0,
-                  color: automationTab === tab ? T.text : T.textSec,
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  fontWeight: 400,
-                  cursor: "pointer",
-                }}
-              >
-                {tab.toUpperCase()}
-              </button>
-            ))}
             <button
               type="button"
               onClick={handleRunShadowScan}
@@ -1898,8 +1559,12 @@ export const AlgoScreen = ({
                 gatewayBridgeLaunching
               }
               style={{
-                padding: sp("6px 10px"),
-                borderRadius: dim(4),
+                ...compactButtonStyle({
+                  disabled:
+                    !focusedDeployment ||
+                    runShadowScanMutation.isPending ||
+                    gatewayBridgeLaunching,
+                }),
                 border: "none",
                 background: !focusedDeployment
                   ? T.textMuted
@@ -1907,19 +1572,6 @@ export const AlgoScreen = ({
                     ? T.cyan
                     : T.amber,
                 color: "#031216",
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                fontWeight: 400,
-                cursor:
-                  runShadowScanMutation.isPending ||
-                  gatewayBridgeLaunching
-                    ? "wait"
-                    : "pointer",
-                opacity:
-                  runShadowScanMutation.isPending ||
-                  gatewayBridgeLaunching
-                    ? 0.72
-                    : 1,
               }}
             >
               {runShadowScanMutation.isPending
@@ -1930,383 +1582,33 @@ export const AlgoScreen = ({
                     : "START DATA"
                   : "RUN SCAN"}
             </button>
+            <button
+              type="button"
+              data-testid="algo-secondary-activity"
+              onClick={() =>
+                setSecondaryPanel(secondaryPanel === "activity" ? null : "activity")
+              }
+              style={compactButtonStyle({
+                active: secondaryPanel === "activity",
+                color: T.accent,
+              })}
+            >
+              ACTIVITY {events.length}
+            </button>
+            <button
+              type="button"
+              data-testid="algo-secondary-drafts"
+              onClick={() =>
+                setSecondaryPanel(secondaryPanel === "drafts" ? null : "drafts")
+              }
+              style={compactButtonStyle({
+                active: secondaryPanel === "drafts",
+                color: T.accent,
+              })}
+            >
+              DRAFTS {candidateDrafts.length}
+            </button>
           </div>
-        </div>
-
-        <div
-          data-testid="algo-signal-action-panel"
-          style={{
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(5),
-            background: T.bg0,
-            padding: sp("10px 12px"),
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: sp(8),
-              marginBottom: sp(8),
-              flexWrap: "wrap",
-            }}
-          >
-            <div
-              style={{
-                color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(11),
-                fontWeight: 400,
-              }}
-            >
-              Universe Signals -&gt; Potential Actions
-            </div>
-            <Badge color={T.cyan}>SHADOW ONLY</Badge>
-          </div>
-          {!signalOptionsSignals.length && !signalOptionsCandidates.length ? (
-            <div
-              style={{
-                border: `1px dashed ${T.border}`,
-                borderRadius: dim(5),
-                padding: sp("14px 10px"),
-                color: T.textDim,
-                fontFamily: T.sans,
-                fontSize: fs(10),
-                lineHeight: 1.45,
-              }}
-            >
-              No RayReplica signal states are available for this deployment yet.
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: algoIsNarrow
-                  ? "minmax(0, 1fr)"
-                  : "minmax(0, 1.25fr) minmax(300px, 0.9fr)",
-                gap: sp(8),
-              }}
-            >
-              <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-                {(signalOptionsSignals.length
-                  ? signalOptionsSignals
-                  : signalOptionsCandidates.map((candidate) => ({
-                      ...asRecord(candidate.signal),
-                      symbol: candidate.symbol,
-                      timeframe: candidate.timeframe,
-                      direction: candidate.direction,
-                      signalAt: candidate.signalAt,
-                      signalPrice: candidate.signalPrice,
-                    }))
-                )
-                  .slice(0, 8)
-                  .map((signal, index) => {
-                    const signalRecord = asRecord(signal);
-                    const linkedCandidate = signalOptionsCandidates.find(
-                      (candidate) =>
-                        asRecord(candidate.signal).signalKey &&
-                        asRecord(candidate.signal).signalKey === signalRecord.signalKey,
-                    );
-                    const action = linkedCandidate?.action;
-                    const tone =
-                      signalRecord.fresh === false
-                        ? T.amber
-                        : linkedCandidate
-                          ? signalOptionsActionColor(
-                              linkedCandidate.actionStatus ||
-                                linkedCandidate.status,
-                            )
-                          : T.textDim;
-                    return (
-                      <div
-                        key={
-                          signalRecord.signalKey ||
-                          `${signalRecord.symbol}:${signalRecord.timeframe}:${index}`
-                        }
-                        className="ra-row-enter"
-                        style={{
-                          ...motionRowStyle(index, 10, 70),
-                          border: `1px solid ${tone}35`,
-                          borderRadius: dim(5),
-                          background: `${tone}10`,
-                          padding: sp("8px 9px"),
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: algoIsPhone
-                              ? "minmax(0, 1fr)"
-                              : "minmax(100px, 0.7fr) minmax(120px, 0.8fr) minmax(130px, 0.8fr) minmax(130px, 1fr)",
-                            gap: sp(8),
-                            alignItems: "center",
-                          }}
-                        >
-                          {[
-                            [
-                              "Signal",
-                              `${signalRecord.symbol || MISSING_VALUE} ${
-                                signalRecord.direction || MISSING_VALUE
-                              }`,
-                            ],
-                            [
-                              "Freshness",
-                              `${signalFreshnessLabel(signalRecord)} · ${signalBarsSinceLabel(signalRecord)}`,
-                            ],
-                            [
-                              "Action",
-                              signalActionLabel(signalRecord, action),
-                            ],
-                            [
-                              "Outcome",
-                              linkedCandidate
-                                ? signalOptionsActionLabel(
-                                    linkedCandidate.actionStatus ||
-                                      linkedCandidate.status,
-                                  )
-                                : "Awaiting scan",
-                            ],
-                          ].map(([label, value]) => (
-                            <div key={label} style={{ minWidth: 0 }}>
-                              <div
-                                style={{
-                                  color: T.textMuted,
-                                  fontFamily: T.mono,
-                                  fontSize: fs(7),
-                                  letterSpacing: "0.08em",
-                                }}
-                              >
-                                {label.toUpperCase()}
-                              </div>
-                              <div
-                                style={{
-                                  color: label === "Action" ? tone : T.text,
-                                  fontFamily: T.mono,
-                                  fontSize: fs(9),
-                                  fontWeight: 400,
-                                  marginTop: sp(3),
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {value}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-
-              <div
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg2,
-                  padding: sp("8px 9px"),
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                    marginBottom: sp(7),
-                  }}
-                >
-                  SELECTED ACTION
-                </div>
-                {selectedCandidate ? (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: sp(6),
-                    }}
-                  >
-                    {[
-                      ["Indicator", asRecord(selectedCandidate.signal).source || "rayreplica"],
-                      [
-                        "Signal",
-                        `${selectedCandidate.direction} ${formatRelativeTimeShort(
-                          selectedCandidate.signalAt,
-                        )}`,
-                      ],
-                      [
-                        "Mapped to",
-                        signalActionLabel(
-                          selectedCandidate.signal,
-                          selectedCandidate.action,
-                        ),
-                      ],
-                      ["Destination", "Shadow account"],
-                      ["Broker route", "None"],
-                      [
-                        "Action status",
-                        signalOptionsActionLabel(
-                          selectedCandidate.actionStatus ||
-                            selectedCandidate.status,
-                        ),
-                      ],
-                    ].map(([label, value]) => (
-                      <div
-                        key={label}
-                        style={{
-                          border: `1px solid ${T.border}`,
-                          borderRadius: dim(4),
-                          background: T.bg0,
-                          padding: sp("7px 8px"),
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: T.textMuted,
-                            fontFamily: T.mono,
-                            fontSize: fs(7),
-                            letterSpacing: "0.08em",
-                          }}
-                        >
-                          {String(label).toUpperCase()}
-                        </div>
-                        <div
-                          style={{
-                            color: T.text,
-                            fontFamily: T.mono,
-                            fontSize: fs(9),
-                            fontWeight: 400,
-                            marginTop: sp(3),
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {value}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      color: T.textDim,
-                      fontFamily: T.sans,
-                      fontSize: fs(10),
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    Select a candidate to inspect its Shadow action mapping.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoMetricsGridTemplate,
-            gap: sp(8),
-          }}
-        >
-          {[
-            {
-              label: "Candidates",
-              value: signalOptionsCandidates.length,
-              detail: selectedCandidate
-                ? `${selectedCandidate.symbol} ${selectedCandidate.direction}`
-                : "queue empty",
-              color: signalOptionsCandidates.length ? T.cyan : T.textDim,
-            },
-            {
-              label: "Open Shadow",
-              value: signalOptionsPositions.length,
-              detail: `${signalOptionsState?.risk?.openSymbols || 0}/${signalOptionsState?.risk?.maxOpenSymbols || signalOptionsProfile.riskCaps.maxOpenSymbols} symbols`,
-              color: signalOptionsPositions.length ? T.green : T.textDim,
-            },
-            {
-              label: "Daily P&L",
-              value: formatMoney(signalOptionsState?.risk?.dailyPnl, 2),
-              detail: `R ${formatMoney(signalOptionsState?.risk?.dailyRealizedPnl, 2)} / U ${formatMoney(signalOptionsState?.risk?.openUnrealizedPnl, 2)}`,
-              color:
-                Number(signalOptionsState?.risk?.dailyPnl) < 0
-                  ? T.red
-                  : Number(signalOptionsState?.risk?.dailyPnl) > 0
-                    ? T.green
-                    : T.textDim,
-            },
-            {
-              label: "Premium Cap",
-              value: formatMoney(signalOptionsProfile.riskCaps.maxPremiumPerEntry),
-              detail: `${signalOptionsProfile.riskCaps.maxContracts} contracts max`,
-              color: T.amber,
-            },
-            {
-              label: "Liquidity Gate",
-              value: formatPct(
-                signalOptionsProfile.liquidityGate.maxSpreadPctOfMid,
-                0,
-              ),
-              detail: `${signalOptionsProfile.optionSelection.minDte}-${signalOptionsProfile.optionSelection.maxDte}D, ${
-                signalOptionsProfile.optionSelection.allowZeroDte
-                  ? "0DTE allowed"
-                  : "no 0DTE"
-              }`,
-              color: T.purple,
-            },
-          ].map((metric, index) => (
-            <div
-              key={metric.label}
-              className="ra-row-enter"
-              style={{
-                ...motionRowStyle(index, 14, 80),
-                padding: sp("9px 10px"),
-                borderRadius: dim(5),
-                background: T.bg0,
-                border: `1px solid ${T.border}`,
-              }}
-            >
-              <div
-                style={{
-                  color: T.textMuted,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  letterSpacing: "0.08em",
-                }}
-              >
-                {metric.label.toUpperCase()}
-              </div>
-              <div
-                style={{
-                  color: metric.color,
-                  fontFamily: T.mono,
-                  fontSize: fs(12),
-                  fontWeight: 400,
-                  marginTop: 2,
-                }}
-              >
-                {metric.value}
-              </div>
-              <div
-                style={{
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                  fontSize: fs(8),
-                  marginTop: 2,
-                }}
-              >
-                {metric.detail}
-              </div>
-            </div>
-          ))}
         </div>
 
         <div
@@ -2314,8 +1616,9 @@ export const AlgoScreen = ({
             display: "grid",
             gridTemplateColumns: algoIsNarrow
               ? "minmax(0, 1fr)"
-              : "minmax(0, 1.45fr) minmax(280px, 0.75fr)",
+              : "minmax(280px, 0.85fr) minmax(0, 1.4fr)",
             gap: sp(10),
+            minWidth: 0,
           }}
         >
           <div
@@ -2323,15 +1626,15 @@ export const AlgoScreen = ({
               border: `1px solid ${T.border}`,
               borderRadius: dim(5),
               background: T.bg0,
-              padding: sp("10px 12px"),
+              padding: sp("9px 10px"),
               minWidth: 0,
             }}
           >
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
                 alignItems: "center",
+                justifyContent: "space-between",
                 gap: sp(8),
                 marginBottom: sp(8),
               }}
@@ -2345,8 +1648,413 @@ export const AlgoScreen = ({
                     fontWeight: 400,
                   }}
                 >
-                  Pipeline
+                  {deployments.length ? "Deployment Focus" : "Setup Shadow Deployment"}
                 </div>
+                <div
+                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
+                >
+                  {deployments.length
+                    ? "select, enable, scan, inspect"
+                    : "promoted draft -> shadow automation"}
+                </div>
+              </div>
+              <Badge color={bridgeTone.color}>{bridgeTone.label.toUpperCase()}</Badge>
+            </div>
+
+            {deployments.length ? (
+              <div style={{ display: "grid", gap: sp(7) }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gap: sp(6),
+                  }}
+                >
+                  {[
+                    ["Account", focusedDeployment?.providerAccountId || "shadow"],
+                    [
+                      "Last eval",
+                      formatRelativeTimeShort(focusedDeployment?.lastEvaluatedAt),
+                    ],
+                    [
+                      "Last signal",
+                      formatRelativeTimeShort(focusedDeployment?.lastSignalAt),
+                    ],
+                    [
+                      "Updated",
+                      formatRelativeTimeShort(focusedDeployment?.updatedAt),
+                    ],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{
+                        border: `1px solid ${T.border}`,
+                        borderRadius: dim(4),
+                        background: T.bg2,
+                        padding: sp("6px 7px"),
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: T.textMuted,
+                          fontFamily: T.mono,
+                          fontSize: fs(7),
+                          letterSpacing: "0.08em",
+                        }}
+                      >
+                        {String(label).toUpperCase()}
+                      </div>
+                      <div
+                        style={{
+                          color: T.text,
+                          fontFamily: T.mono,
+                          fontSize: fs(9),
+                          marginTop: sp(2),
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
+                  {deployments.slice(0, 4).map((deployment) => {
+                    const active = focusedDeployment?.id === deployment.id;
+                    const tone = deployment.enabled
+                      ? T.green
+                      : deployment.lastError
+                        ? T.red
+                        : T.textDim;
+                    return (
+                      <button
+                        key={deployment.id}
+                        type="button"
+                        className={joinMotionClasses(
+                          "ra-interactive",
+                          active && "ra-focus-rail",
+                        )}
+                        onClick={() => setFocusedDeploymentId(deployment.id)}
+                        style={compactButtonStyle({
+                          active,
+                          color: tone,
+                        })}
+                      >
+                        {deployment.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {focusedDeployment?.lastError && (
+                  <div
+                    style={{
+                      color: T.red,
+                      fontFamily: T.sans,
+                      fontSize: fs(9),
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {focusedDeployment.lastError}
+                  </div>
+                )}
+              </div>
+            ) : candidateDrafts.length ? (
+              <div style={{ display: "grid", gap: sp(7) }}>
+                <select
+                  value={selectedDraft?.id || ""}
+                  onChange={(event) => setSelectedDraftId(event.target.value)}
+                  style={{
+                    width: "100%",
+                    background: T.bg3,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    padding: sp("7px 9px"),
+                    color: T.text,
+                    fontSize: fs(9),
+                    fontFamily: T.mono,
+                    outline: "none",
+                  }}
+                >
+                  {candidateDrafts.map((draft) => (
+                    <option key={draft.id} value={draft.id}>
+                      {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={deploymentName}
+                  onChange={(event) => setDeploymentName(event.target.value)}
+                  placeholder="Deployment name"
+                  style={{
+                    width: "100%",
+                    background: T.bg3,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    padding: sp("7px 9px"),
+                    color: T.text,
+                    fontSize: fs(9),
+                    fontFamily: T.sans,
+                    outline: "none",
+                  }}
+                />
+                <input
+                  value={symbolUniverseInput}
+                  onChange={(event) => setSymbolUniverseInput(event.target.value)}
+                  placeholder="SPY, QQQ, NVDA"
+                  style={{
+                    width: "100%",
+                    background: T.bg3,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    padding: sp("7px 9px"),
+                    color: T.text,
+                    fontSize: fs(9),
+                    fontFamily: T.mono,
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateDeployment}
+                  disabled={createDeploymentMutation.isPending}
+                  style={{
+                    ...compactButtonStyle({
+                      fill: true,
+                      disabled: createDeploymentMutation.isPending,
+                    }),
+                    border: "none",
+                    background: T.accent,
+                    color: "#fff",
+                  }}
+                >
+                  {createDeploymentMutation.isPending
+                    ? "CREATING..."
+                    : "CREATE SHADOW DEPLOYMENT"}
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: `1px dashed ${T.border}`,
+                  borderRadius: dim(5),
+                  color: T.textDim,
+                  fontFamily: T.sans,
+                  fontSize: fs(10),
+                  lineHeight: 1.45,
+                  padding: sp("14px 10px"),
+                }}
+              >
+                No promoted draft strategies are available yet. Promote a completed
+                backtest run first, then return here to create a Shadow signal deployment.
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: algoMetricsGridTemplate,
+              gap: sp(7),
+              minWidth: 0,
+            }}
+          >
+            {cockpitMetricCards.map((metric, index) => (
+              <div
+                key={metric.label}
+                className="ra-row-enter"
+                style={{
+                  ...motionRowStyle(index, 12, 70),
+                  ...motionVars({ accent: metric.color }),
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(5),
+                  background: T.bg0,
+                  padding: sp("8px 9px"),
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {metric.label.toUpperCase()}
+                </div>
+                <div
+                  style={{
+                    color: metric.color,
+                    fontFamily: T.mono,
+                    fontSize: fs(11),
+                    fontWeight: 400,
+                    marginTop: sp(3),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {metric.value}
+                </div>
+                <div
+                  style={{
+                    color: T.textDim,
+                    fontFamily: T.mono,
+                    fontSize: fs(8),
+                    marginTop: sp(2),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {metric.detail}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          data-testid="algo-cockpit-diagnostics"
+          style={{
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(5),
+            background: T.bg0,
+            padding: sp("9px 10px"),
+            display: "grid",
+            gridTemplateColumns: algoIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(180px, 0.7fr) repeat(3, minmax(0, 1fr))",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                color: T.text,
+                fontFamily: T.display,
+                fontSize: fs(11),
+                fontWeight: 400,
+              }}
+            >
+              Gate Summary
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: sp(5),
+                marginTop: sp(7),
+              }}
+            >
+              {[
+                ["Fresh", cockpitSignalFreshness.fresh ?? 0, T.green],
+                ["Stale", cockpitSignalFreshness.notFresh ?? 0, T.amber],
+                ["Blocked", cockpitTradePath.blockedCandidates ?? 0, T.red],
+                ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, T.green],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    background: T.bg2,
+                    padding: sp("6px 7px"),
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: T.textMuted,
+                      fontFamily: T.mono,
+                      fontSize: fs(7),
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    {String(label).toUpperCase()}
+                  </div>
+                  <div
+                    style={{
+                      color,
+                      fontFamily: T.mono,
+                      fontSize: fs(10),
+                      marginTop: sp(2),
+                    }}
+                  >
+                    {Number(value || 0).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {[
+            ["Skip Reasons", cockpitSkipReasonRows, T.red],
+            ["Entry Gate", cockpitEntryGateRows, T.amber],
+            ["Option Chain", cockpitOptionChainRows, T.cyan],
+          ].map(([title, rows, color]) => (
+            <div
+              key={title}
+              style={{
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(4),
+                background: T.bg2,
+                padding: sp("7px 8px"),
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  color,
+                  fontFamily: T.mono,
+                  fontSize: fs(7),
+                  letterSpacing: "0.08em",
+                  marginBottom: sp(6),
+                }}
+              >
+                {String(title).toUpperCase()}
+              </div>
+              {rows.length ? (
+                <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
+                  {rows.map(([label, count]) => (
+                    <div
+                      key={label}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        gap: sp(7),
+                        alignItems: "center",
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: T.textSec,
+                          fontFamily: T.mono,
+                          fontSize: fs(8),
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {formatEnumLabel(label)}
+                      </span>
+                      <span
+                        style={{
+                          color: T.text,
+                          fontFamily: T.mono,
+                          fontSize: fs(8),
+                        }}
+                      >
+                        {count}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
                 <div
                   style={{
                     color: T.textDim,
@@ -2354,154 +2062,35 @@ export const AlgoScreen = ({
                     fontSize: fs(8),
                   }}
                 >
-                  scan -&gt; signal -&gt; action -&gt; contract -&gt; gate -&gt; shadow -&gt; manage -&gt; exit
+                  none
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedPipelineStageId("all")}
-                style={{
-                  border: `1px solid ${selectedPipelineStageId === "all" ? T.accent : T.border}`,
-                  background:
-                    selectedPipelineStageId === "all" ? `${T.accent}18` : T.bg2,
-                  color: selectedPipelineStageId === "all" ? T.text : T.textSec,
-                  borderRadius: dim(4),
-                  padding: sp("5px 8px"),
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  fontWeight: 400,
-                  cursor: "pointer",
-                }}
-              >
-                ALL
-              </button>
+              )}
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: algoIsPhone
-                  ? "minmax(0, 1fr)"
-                  : "repeat(8, minmax(88px, 1fr))",
-                gap: sp(6),
-              }}
-            >
-              {(cockpitPipelineStages.length
-                ? cockpitPipelineStages
-                : [
-                    {
-                      id: "scan_universe",
-                      label: "Scan Universe",
-                      status: gatewayReady ? "waiting" : "blocked",
-                      count: focusedDeployment?.symbolUniverse?.length || 0,
-                      latestAt: focusedDeployment?.lastEvaluatedAt || null,
-                      detail: gatewayReady ? "ready to scan" : bridgeRuntimeMessage(session),
-                    },
-                  ]
-              ).map((stage, index) => {
-                const color = cockpitStageColor(stage.status);
-                const selected = selectedPipelineStageId === stage.id;
-                return (
-                  <button
-                    key={stage.id}
-                    type="button"
-                    onClick={() => setSelectedPipelineStageId(stage.id)}
-                    className="ra-row-enter"
-                    style={{
-                      ...motionRowStyle(index, 9, 60),
-                      ...motionVars({ accent: color }),
-                      textAlign: "left",
-                      minHeight: dim(86),
-                      border: `1px solid ${selected ? color : T.border}`,
-                      borderRadius: dim(5),
-                      background: selected ? `${color}14` : T.bg2,
-                      padding: sp("8px 9px"),
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      gap: sp(5),
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: sp(5),
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: T.text,
-                          fontSize: fs(8),
-                          fontFamily: T.sans,
-                          fontWeight: 400,
-                          lineHeight: 1.2,
-                        }}
-                      >
-                        {stage.label}
-                      </span>
-                      <span
-                        style={{
-                          width: dim(7),
-                          height: dim(7),
-                          borderRadius: "50%",
-                          background: color,
-                          flex: "0 0 auto",
-                        }}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        color,
-                        fontFamily: T.mono,
-                        fontSize: fs(13),
-                        fontWeight: 400,
-                      }}
-                    >
-                      {stage.count}
-                    </div>
-                    <div
-                      style={{
-                        color: T.textDim,
-                        fontFamily: T.mono,
-                        fontSize: fs(7),
-                        lineHeight: 1.35,
-                      }}
-                    >
-                      {formatEnumLabel(stage.status)} ·{" "}
-                      {stage.latestAt
-                        ? formatRelativeTimeShort(stage.latestAt)
-                        : "no timestamp"}
-                      <br />
-                      {stage.detail}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ))}
+        </div>
 
+        <div
+          data-testid="algo-signal-options-performance"
+          style={{
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(5),
+            background: T.bg0,
+            padding: sp("9px 10px"),
+            display: "grid",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
           <div
             style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("10px 12px"),
               display: "flex",
-              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "space-between",
               gap: sp(8),
-              minWidth: 0,
+              flexWrap: "wrap",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                gap: sp(8),
-              }}
-            >
+            <div>
               <div
                 style={{
                   color: T.text,
@@ -2510,7 +2099,566 @@ export const AlgoScreen = ({
                   fontWeight: 400,
                 }}
               >
-                Attention
+                Performance vs Rules
+              </div>
+              <div
+                style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
+              >
+                {signalOptionsPerformance
+                  ? `${signalOptionsPerformance.range || "1M"} shadow automation`
+                  : signalOptionsPerformanceQuery.isError
+                    ? "performance unavailable"
+                    : "loading performance"}
+              </div>
+            </div>
+            <Badge
+              color={
+                signalOptionsRuleAdherence.some((rule) => asRecord(rule).status === "fail")
+                  ? T.red
+                  : signalOptionsRuleAdherence.some(
+                      (rule) => asRecord(rule).status === "warning",
+                    )
+                    ? T.amber
+                    : T.green
+              }
+            >
+              {signalOptionsRuleAdherence.some((rule) => asRecord(rule).status === "fail")
+                ? "RULE FAIL"
+                : signalOptionsRuleAdherence.some(
+                      (rule) => asRecord(rule).status === "warning",
+                    )
+                  ? "REVIEW"
+                  : "RULES OK"}
+            </Badge>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: algoIsPhone
+                ? "repeat(2, minmax(0, 1fr))"
+                : "repeat(4, minmax(0, 1fr))",
+              gap: sp(6),
+              minWidth: 0,
+            }}
+          >
+            {signalOptionsPerformanceCards.map(([label, value, color]) => (
+              <div
+                key={label}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(4),
+                  background: T.bg2,
+                  padding: sp("6px 7px"),
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {String(label).toUpperCase()}
+                </div>
+                <div
+                  style={{
+                    color,
+                    fontFamily: T.mono,
+                    fontSize: fs(9),
+                    marginTop: sp(2),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: algoIsNarrow
+                ? "minmax(0, 1fr)"
+                : "minmax(0, 1.25fr) minmax(240px, 0.75fr)",
+              gap: sp(8),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: sp(5),
+                minWidth: 0,
+              }}
+            >
+              {signalOptionsRuleAdherence.slice(0, 9).map((rule, index) => {
+                const ruleRecord = asRecord(rule);
+                const color = signalOptionsRuleColor(ruleRecord.status);
+                return (
+                  <div
+                    key={ruleRecord.id || index}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: algoIsPhone
+                        ? "minmax(0, 1fr)"
+                        : "minmax(130px, 0.55fr) minmax(0, 1fr) minmax(52px, 0.2fr)",
+                      gap: sp(7),
+                      alignItems: "center",
+                      border: `1px solid ${color}35`,
+                      borderRadius: dim(4),
+                      background: `${color}0d`,
+                      padding: sp("6px 7px"),
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        color,
+                        fontFamily: T.mono,
+                        fontSize: fs(8),
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {String(ruleRecord.label || ruleRecord.id || "Rule").toUpperCase()}
+                    </div>
+                    <div
+                      style={{
+                        color: T.textDim,
+                        fontFamily: T.sans,
+                        fontSize: fs(8),
+                        lineHeight: 1.35,
+                        minWidth: 0,
+                      }}
+                    >
+                      {ruleRecord.detail || MISSING_VALUE}
+                    </div>
+                    <div
+                      style={{
+                        color,
+                        fontFamily: T.mono,
+                        fontSize: fs(8),
+                        textAlign: algoIsPhone ? "left" : "right",
+                      }}
+                    >
+                      {formatEnumLabel(ruleRecord.status || "pass")}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div
+              style={{
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(4),
+                background: T.bg2,
+                padding: sp("7px 8px"),
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  color: T.amber,
+                  fontFamily: T.mono,
+                  fontSize: fs(7),
+                  letterSpacing: "0.08em",
+                  marginBottom: sp(6),
+                }}
+              >
+                TOP BLOCKERS
+              </div>
+              {signalOptionsTopBlockers.length ? (
+                <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
+                  {signalOptionsTopBlockers.slice(0, 5).map((blocker, index) => {
+                    const blockerRecord = asRecord(blocker);
+                    return (
+                      <div
+                        key={blockerRecord.reason || index}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0, 1fr) auto",
+                          gap: sp(7),
+                          alignItems: "center",
+                          minWidth: 0,
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: T.textSec,
+                            fontFamily: T.mono,
+                            fontSize: fs(8),
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {blockerRecord.label || formatEnumLabel(blockerRecord.reason)}
+                        </span>
+                        <span
+                          style={{
+                            color: T.text,
+                            fontFamily: T.mono,
+                            fontSize: fs(8),
+                          }}
+                        >
+                          {Number(blockerRecord.count || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    color: T.textDim,
+                    fontFamily: T.mono,
+                    fontSize: fs(8),
+                  }}
+                >
+                  none
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: algoIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1.25fr) minmax(320px, 0.9fr)",
+            gap: sp(10),
+            minWidth: 0,
+          }}
+        >
+          <div
+            data-testid="algo-signal-action-panel"
+            style={{
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              background: T.bg0,
+              padding: sp("9px 10px"),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                marginBottom: sp(8),
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: T.text,
+                    fontFamily: T.display,
+                    fontSize: fs(11),
+                    fontWeight: 400,
+                  }}
+                >
+                  Signal -&gt; Action
+                </div>
+                <div
+                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
+                >
+                  universe signal mapping and candidate queue
+                </div>
+              </div>
+              <Badge color={T.cyan}>SHADOW ONLY</Badge>
+            </div>
+
+            {!visibleSignalRows.length ? (
+              <div
+                style={{
+                  border: `1px dashed ${T.border}`,
+                  borderRadius: dim(5),
+                  color: T.textDim,
+                  fontFamily: T.sans,
+                  fontSize: fs(10),
+                  lineHeight: 1.45,
+                  padding: sp("14px 10px"),
+                }}
+              >
+                No RayReplica signal states are available for this deployment yet.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
+                {visibleSignalRows.map((signal, index) => {
+                  const signalRecord = asRecord(signal);
+                  const linkedCandidate = signalOptionsCandidates.find(
+                    (candidate) =>
+                      asRecord(candidate.signal).signalKey &&
+                      asRecord(candidate.signal).signalKey === signalRecord.signalKey,
+                  );
+                  const tone =
+                    signalRecord.fresh === false
+                      ? T.amber
+                      : linkedCandidate
+                        ? signalOptionsActionColor(
+                            linkedCandidate.actionStatus || linkedCandidate.status,
+                          )
+                        : T.textDim;
+                  return (
+                    <div
+                      key={
+                        signalRecord.signalKey ||
+                        `${signalRecord.symbol}:${signalRecord.timeframe}:${index}`
+                      }
+                      className="ra-row-enter"
+                      style={{
+                        ...motionRowStyle(index, 9, 60),
+                        border: `1px solid ${tone}35`,
+                        borderRadius: dim(5),
+                        background: `${tone}10`,
+                        padding: sp("8px 9px"),
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: algoIsPhone
+                            ? "minmax(0, 1fr)"
+                            : "minmax(90px, 0.7fr) minmax(110px, 0.85fr) minmax(110px, 0.85fr) minmax(130px, 1fr)",
+                          gap: sp(7),
+                          alignItems: "center",
+                        }}
+                      >
+                        {[
+                          [
+                            "Signal",
+                            `${signalRecord.symbol || MISSING_VALUE} ${signalRecord.direction || MISSING_VALUE}`,
+                          ],
+                          [
+                            "Freshness",
+                            `${signalFreshnessLabel(signalRecord)} · ${signalBarsSinceLabel(signalRecord)}`,
+                          ],
+                          [
+                            "Action",
+                            signalActionLabel(signalRecord, linkedCandidate?.action),
+                          ],
+                          [
+                            "Outcome",
+                            linkedCandidate
+                              ? signalOptionsActionLabel(
+                                  linkedCandidate.actionStatus || linkedCandidate.status,
+                                )
+                              : "Awaiting scan",
+                          ],
+                        ].map(([label, value]) => (
+                          <div key={label} style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                color: T.textMuted,
+                                fontFamily: T.mono,
+                                fontSize: fs(7),
+                                letterSpacing: "0.08em",
+                              }}
+                            >
+                              {label.toUpperCase()}
+                            </div>
+                            <div
+                              style={{
+                                color: label === "Action" ? tone : T.text,
+                                fontFamily: T.mono,
+                                fontSize: fs(9),
+                                fontWeight: 400,
+                                marginTop: sp(3),
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              background: T.bg0,
+              padding: sp("9px 10px"),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                color: T.text,
+                fontFamily: T.display,
+                fontSize: fs(11),
+                fontWeight: 400,
+                marginBottom: sp(8),
+              }}
+            >
+              Selected Action
+            </div>
+            {selectedCandidate ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: algoIsPhone
+                    ? "minmax(0, 1fr)"
+                    : "repeat(2, minmax(0, 1fr))",
+                  gap: sp(6),
+                }}
+              >
+                {[
+                  ["Signal", `${selectedCandidate.symbol} ${selectedCandidate.direction}`],
+                  [
+                    "Mapped to",
+                    signalActionLabel(selectedCandidate.signal, selectedCandidate.action),
+                  ],
+                  ["Contract", formatContractLabel(selectedCandidate.selectedContract)],
+                  [
+                    "Limit",
+                    formatMoney(asRecord(selectedCandidate.orderPlan).entryLimitPrice, 2),
+                  ],
+                  [
+                    "Spread",
+                    formatPct(asRecord(selectedCandidate.liquidity).spreadPctOfMid),
+                  ],
+                  ["Shadow", shadowLinkSummary(selectedCandidate.shadowLink)],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    style={{
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(4),
+                      background: T.bg2,
+                      padding: sp("7px 8px"),
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        color: T.textMuted,
+                        fontFamily: T.mono,
+                        fontSize: fs(7),
+                        letterSpacing: "0.08em",
+                      }}
+                    >
+                      {String(label).toUpperCase()}
+                    </div>
+                    <div
+                      style={{
+                        color: T.text,
+                        fontFamily: T.mono,
+                        fontSize: fs(9),
+                        marginTop: sp(3),
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {value}
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => handleOpenCandidateInTrade(selectedCandidate)}
+                  disabled={
+                    !onJumpToTradeCandidate ||
+                    !asRecord(selectedCandidate.selectedContract).strike
+                  }
+                  style={{
+                    ...compactButtonStyle({
+                      fill: true,
+                      disabled:
+                        !onJumpToTradeCandidate ||
+                        !asRecord(selectedCandidate.selectedContract).strike,
+                    }),
+                    gridColumn: "1 / -1",
+                    color: T.text,
+                    border: `1px solid ${T.accent}55`,
+                    background: `${T.accent}16`,
+                  }}
+                >
+                  INSPECT CONTRACT
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  color: T.textDim,
+                  fontFamily: T.sans,
+                  fontSize: fs(10),
+                  lineHeight: 1.45,
+                }}
+              >
+                Fresh RayReplica signals will appear here before scans resolve
+                shadow option contracts.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: algoIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1.35fr) minmax(320px, 0.95fr)",
+            gap: sp(10),
+            minWidth: 0,
+          }}
+        >
+          <div
+            style={{
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              background: T.bg0,
+              padding: sp("9px 10px"),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+                marginBottom: sp(8),
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: T.text,
+                    fontFamily: T.display,
+                    fontSize: fs(11),
+                    fontWeight: 400,
+                  }}
+                >
+                  Pipeline + Attention
+                </div>
+                <div
+                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
+                >
+                  scan -&gt; signal -&gt; action -&gt; contract -&gt; gate -&gt; shadow -&gt; exit
+                </div>
               </div>
               <Badge
                 color={
@@ -2526,120 +2674,194 @@ export const AlgoScreen = ({
                   : "CLEAR"}
               </Badge>
             </div>
-            {!cockpitAttentionItems.length ? (
-              <div
-                style={{
-                  border: `1px dashed ${T.border}`,
-                  borderRadius: dim(5),
-                  padding: sp("14px 10px"),
-                  color: T.textDim,
-                  fontFamily: T.sans,
-                  fontSize: fs(10),
-                  lineHeight: 1.45,
-                }}
-              >
-                No active blockers or drift detected. Last cockpit snapshot{" "}
-                {formatRelativeTimeShort(cockpit?.generatedAt)}.
-              </div>
-            ) : (
-              cockpitAttentionItems.slice(0, 6).map((item, index) => {
-                const color = cockpitAttentionColor(item.severity);
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: algoIsPhone
+                  ? "minmax(0, 1fr)"
+                  : "repeat(auto-fit, minmax(92px, 1fr))",
+                gap: sp(6),
+              }}
+            >
+              {cockpitStageItems.map((stage, index) => {
+                const color = cockpitStageColor(stage.status);
+                const selected = selectedStage?.id === stage.id;
                 return (
-                  <div
-                    key={item.id}
+                  <button
+                    key={stage.id}
+                    type="button"
                     className="ra-row-enter"
+                    onClick={() => setSelectedPipelineStageId(stage.id)}
                     style={{
-                      ...motionRowStyle(index, 10, 80),
-                      ...motionVars({ accent: color }),
-                      border: `1px solid ${color}35`,
+                      ...motionRowStyle(index, 8, 60),
+                      textAlign: "left",
+                      border: `1px solid ${selected ? color : T.border}`,
                       borderRadius: dim(5),
-                      background: `${color}10`,
-                      padding: sp("8px 9px"),
+                      background: selected ? `${color}14` : T.bg2,
+                      padding: sp("7px 8px"),
+                      cursor: "pointer",
+                      minHeight: dim(72),
                     }}
                   >
                     <div
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: sp(8),
-                        alignItems: "center",
-                      }}
-                    >
-                      <span
-                        style={{
-                          color,
-                          fontFamily: T.mono,
-                          fontSize: fs(8),
-                          fontWeight: 400,
-                        }}
-                      >
-                        {item.symbol || formatEnumLabel(item.stage)}
-                      </span>
-                      <span
-                        style={{
-                          color: T.textDim,
-                          fontFamily: T.mono,
-                          fontSize: fs(7),
-                        }}
-                      >
-                        {formatRelativeTimeShort(item.occurredAt)}
-                      </span>
-                    </div>
-                    <div
-                      style={{
                         color: T.text,
                         fontFamily: T.sans,
-                        fontSize: fs(9),
-                        fontWeight: 400,
-                        marginTop: sp(4),
-                        lineHeight: 1.3,
+                        fontSize: fs(8),
+                        lineHeight: 1.2,
+                        minHeight: dim(20),
                       }}
                     >
-                      {item.summary}
+                      {stage.label}
                     </div>
                     <div
                       style={{
-                        color: T.textSec,
-                        fontFamily: T.sans,
-                        fontSize: fs(8),
-                        lineHeight: 1.35,
-                        marginTop: sp(3),
+                        color,
+                        fontFamily: T.mono,
+                        fontSize: fs(12),
+                        marginTop: sp(5),
                       }}
                     >
-                      {item.detail}
+                      {stage.count}
                     </div>
                     <div
                       style={{
                         color: T.textDim,
                         fontFamily: T.mono,
                         fontSize: fs(7),
-                        marginTop: sp(4),
+                        marginTop: sp(2),
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      {item.action}
+                      {formatEnumLabel(stage.status)}
                     </div>
-                  </div>
+                  </button>
                 );
-              })
-            )}
+              })}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: algoIsPhone
+                  ? "minmax(0, 1fr)"
+                  : "minmax(0, 1fr) minmax(0, 1fr)",
+                gap: sp(8),
+                marginTop: sp(8),
+              }}
+            >
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(5),
+                  background: T.bg2,
+                  padding: sp("7px 8px"),
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  SELECTED STAGE
+                </div>
+                <div
+                  style={{
+                    color: selectedStage
+                      ? cockpitStageColor(selectedStage.status)
+                      : T.textDim,
+                    fontFamily: T.mono,
+                    fontSize: fs(9),
+                    marginTop: sp(3),
+                  }}
+                >
+                  {selectedStage?.label || "No stage"}
+                </div>
+                <div
+                  style={{
+                    color: T.textDim,
+                    fontFamily: T.sans,
+                    fontSize: fs(8),
+                    lineHeight: 1.35,
+                    marginTop: sp(3),
+                  }}
+                >
+                  {selectedStage?.detail || "No timestamp"}
+                </div>
+              </div>
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(5),
+                  background: T.bg2,
+                  padding: sp("7px 8px"),
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  TOP ATTENTION
+                </div>
+                {cockpitAttentionItems.length ? (
+                  <>
+                    <div
+                      style={{
+                        color: cockpitAttentionColor(cockpitAttentionItems[0].severity),
+                        fontFamily: T.mono,
+                        fontSize: fs(9),
+                        marginTop: sp(3),
+                      }}
+                    >
+                      {cockpitAttentionItems[0].symbol ||
+                        formatEnumLabel(cockpitAttentionItems[0].stage)}
+                    </div>
+                    <div
+                      style={{
+                        color: T.textDim,
+                        fontFamily: T.sans,
+                        fontSize: fs(8),
+                        lineHeight: 1.35,
+                        marginTop: sp(3),
+                      }}
+                    >
+                      {cockpitAttentionItems[0].summary}
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(8),
+                      lineHeight: 1.35,
+                      marginTop: sp(3),
+                    }}
+                  >
+                    No active blockers or drift detected.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(0, 1fr) minmax(0, 1fr)",
-            gap: sp(10),
-          }}
-        >
           <div
             style={{
               border: `1px solid ${T.border}`,
               borderRadius: dim(5),
               background: T.bg0,
-              padding: sp("10px 12px"),
+              padding: sp("9px 10px"),
+              minWidth: 0,
             }}
           >
             <div
@@ -2651,37 +2873,24 @@ export const AlgoScreen = ({
                 marginBottom: sp(8),
               }}
             >
-              Risk + P&L
+              Risk + Source Backtest
             </div>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: algoIsPhone
-                  ? "minmax(0, 1fr)"
-                  : "repeat(4, minmax(0, 1fr))",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: sp(6),
               }}
             >
-              {[
-                ["Today P&L", formatMoney(cockpitKpis.todayPnl, 2)],
-                ["Loss left", formatMoney(cockpitKpis.dailyLossRemaining, 2)],
-                ["Premium", formatMoney(cockpitKpis.openPremium, 2)],
-                [
-                  "Open symbols",
-                  `${cockpitKpis.openSymbols ?? 0}/${cockpitKpis.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
-                ],
-                ["Candidates", cockpitKpis.candidates ?? signalOptionsCandidates.length],
-                ["Blocked", cockpitKpis.blockedCandidates ?? 0],
-                ["Filled", cockpitKpis.shadowFilledCandidates ?? 0],
-                ["Positions", cockpitKpis.openPositions ?? signalOptionsPositions.length],
-              ].map(([label, value]) => (
+              {cockpitRiskCards.slice(0, 8).map(([label, value, color]) => (
                 <div
                   key={label}
                   style={{
                     border: `1px solid ${T.border}`,
                     borderRadius: dim(4),
                     background: T.bg2,
-                    padding: sp("7px 8px"),
+                    padding: sp("6px 7px"),
+                    minWidth: 0,
                   }}
                 >
                   <div
@@ -2696,11 +2905,13 @@ export const AlgoScreen = ({
                   </div>
                   <div
                     style={{
-                      color: T.text,
+                      color,
                       fontFamily: T.mono,
-                      fontSize: fs(10),
-                      fontWeight: 400,
-                      marginTop: sp(3),
+                      fontSize: fs(9),
+                      marginTop: sp(2),
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {value}
@@ -2708,82 +2919,22 @@ export const AlgoScreen = ({
                 </div>
               ))}
             </div>
-          </div>
-
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("10px 12px"),
-            }}
-          >
-            <div
-              style={{
-                color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(11),
-                fontWeight: 400,
-                marginBottom: sp(8),
-              }}
-            >
-              Source Backtest
-            </div>
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: sp(6),
+                marginTop: sp(7),
               }}
             >
-              {[
-                ["Strategy", cockpitSourceBacktest?.strategyName || MISSING_VALUE],
-                [
-                  "Run",
-                  cockpitSourceBacktest?.runName ||
-                    cockpitSourceBacktest?.sourceRunId?.slice(0, 8) ||
-                    MISSING_VALUE,
-                ],
-                [
-                  "Net P&L",
-                  formatCockpitMetric(
-                    cockpitSourceBacktest?.metrics,
-                    "netPnl",
-                    (value) => formatMoney(value, 2),
-                  ),
-                ],
-                [
-                  "Win rate",
-                  formatCockpitMetric(
-                    cockpitSourceBacktest?.metrics,
-                    "winRatePercent",
-                    (value) => formatPct(value, 1),
-                  ),
-                ],
-                [
-                  "Max DD",
-                  formatCockpitMetric(
-                    cockpitSourceBacktest?.metrics,
-                    "maxDrawdownPercent",
-                    (value) => formatPct(value, 1),
-                  ),
-                ],
-                [
-                  "Trades",
-                  formatCockpitMetric(
-                    cockpitSourceBacktest?.metrics,
-                    "tradeCount",
-                    (value) => Number(value).toLocaleString(),
-                  ),
-                ],
-              ].map(([label, value]) => (
+              {cockpitBacktestCards.slice(0, 4).map(([label, value]) => (
                 <div
                   key={label}
                   style={{
                     border: `1px solid ${T.border}`,
                     borderRadius: dim(4),
                     background: T.bg2,
-                    padding: sp("7px 8px"),
+                    padding: sp("6px 7px"),
                     minWidth: 0,
                   }}
                 >
@@ -2801,9 +2952,8 @@ export const AlgoScreen = ({
                     style={{
                       color: T.text,
                       fontFamily: T.mono,
-                      fontSize: fs(10),
-                      fontWeight: 400,
-                      marginTop: sp(3),
+                      fontSize: fs(9),
+                      marginTop: sp(2),
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -2817,632 +2967,546 @@ export const AlgoScreen = ({
           </div>
         </div>
 
-        {automationTab === "Candidates" && (
+        <div
+          style={{
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(5),
+            background: T.bg0,
+            padding: sp("9px 10px"),
+            minWidth: 0,
+          }}
+        >
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: algoCandidateGridTemplate,
-              gap: sp(10),
-              minHeight: dim(180),
-              minWidth: 0,
+              display: "flex",
+              gap: sp(6),
+              flexWrap: "wrap",
+              marginBottom: sp(8),
             }}
           >
-            <div
-              style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(5),
-                background: T.bg0,
-                padding: sp(8),
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(6),
-                minWidth: 0,
-              }}
+            {["Candidates", "Positions", "Profile"].map((tab) => (
+              <button
+                key={tab}
+                data-testid={`algo-signal-options-tab-${tab.toLowerCase()}`}
+                type="button"
+                onClick={() => {
+                  setAutomationTab(tab);
+                  setSecondaryPanel(null);
+                }}
+                style={compactButtonStyle({
+                  active: automationTab === tab && !secondaryPanel,
+                  color: T.accent,
+                })}
+              >
+                {tab.toUpperCase()}
+              </button>
+            ))}
+            <button
+              data-testid="algo-signal-options-tab-events"
+              type="button"
+              onClick={() => setSecondaryPanel("activity")}
+              style={compactButtonStyle({
+                active: secondaryPanel === "activity",
+                color: T.accent,
+              })}
             >
-              {!displayedSignalOptionsCandidates.length ? (
-                <div
-                  style={{
-                    padding: sp("26px 10px"),
-                    border: `1px dashed ${T.border}`,
-                    borderRadius: dim(5),
-                    color: T.textDim,
-                    fontSize: fs(10),
-                    fontFamily: T.sans,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {selectedPipelineStageId === "all"
-                    ? "No potential actions yet. Fresh RayReplica universe signals will appear here before scans resolve shadow option contracts."
-                    : "No candidates match the selected pipeline stage."}
-                </div>
-              ) : (
-                displayedSignalOptionsCandidates.slice(0, 12).map((candidate, index) => {
-                  const selected = selectedCandidate?.id === candidate.id;
-                  const tone = signalOptionsActionColor(
-                    candidate.actionStatus || candidate.status,
-                  );
-                  return (
-                    <button
-                      key={candidate.id}
-                      type="button"
-                      className={joinMotionClasses(
-                        "ra-row-enter",
-                        "ra-interactive",
-                        selected && "ra-focus-rail",
-                      )}
-                      onClick={() => setSelectedCandidateId(candidate.id)}
-                      style={{
-                        ...motionRowStyle(index, 12, 90),
-                        ...motionVars({ accent: tone }),
-                        textAlign: "left",
-                        border: `1px solid ${selected ? tone : T.border}`,
-                        borderRadius: dim(5),
-                        background: selected ? `${tone}12` : T.bg2,
-                        padding: sp("9px 10px"),
-                        cursor: "pointer",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: sp(8),
-                          alignItems: "center",
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: T.text,
-                            fontFamily: T.mono,
-                            fontSize: fs(10),
-                            fontWeight: 400,
-                          }}
-                        >
-                          {candidate.symbol}{" "}
-                          {signalActionLabel(candidate.signal, candidate.action)}
-                        </span>
-                        <Badge color={tone}>
-                          {signalOptionsActionLabel(
-                            candidate.actionStatus || candidate.status,
-                          ).toUpperCase()}
-                        </Badge>
-                      </div>
-                      <div
-                        style={{
-                          color: T.textDim,
-                          fontFamily: T.mono,
-                          fontSize: fs(8),
-                          marginTop: 4,
-                        }}
-                      >
-                        {candidate.timeframe} · {candidate.direction} ·{" "}
-                        {candidate.optionRight?.toUpperCase() || "OPTION"} ·{" "}
-                        {formatRelativeTimeShort(candidate.signalAt)}
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
+              EVENTS
+            </button>
+          </div>
 
+          {automationTab === "Candidates" && !secondaryPanel && (
             <div
               style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(5),
-                background: T.bg0,
-                padding: sp("10px 12px"),
+                display: "grid",
+                gridTemplateColumns: algoCandidateGridTemplate,
+                gap: sp(8),
                 minWidth: 0,
               }}
             >
-              {!selectedCandidate ? (
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.sans,
-                    fontSize: fs(10),
-                    padding: sp("24px 0"),
-                  }}
-                >
-                  Select a candidate to inspect its contract, fill simulation,
-                  liquidity gate, Shadow ledger link, and signal mapping.
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: sp(10),
-                  }}
-                >
+              <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
+                {!displayedSignalOptionsCandidates.length ? (
                   <div
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: sp(10),
-                      alignItems: "flex-start",
+                      border: `1px dashed ${T.border}`,
+                      borderRadius: dim(5),
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(10),
+                      lineHeight: 1.45,
+                      padding: sp("14px 10px"),
                     }}
                   >
-                    <div>
-                      <div
+                    {selectedPipelineStageId === "all"
+                      ? "No potential actions yet. Fresh RayReplica universe signals will appear here before scans resolve shadow option contracts."
+                      : "No candidates match the selected pipeline stage."}
+                  </div>
+                ) : (
+                  displayedSignalOptionsCandidates.slice(0, 6).map((candidate, index) => {
+                    const selected = selectedCandidate?.id === candidate.id;
+                    const tone = signalOptionsActionColor(
+                      candidate.actionStatus || candidate.status,
+                    );
+                    return (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        className={joinMotionClasses(
+                          "ra-row-enter",
+                          "ra-interactive",
+                          selected && "ra-focus-rail",
+                        )}
+                        onClick={() => setSelectedCandidateId(candidate.id)}
                         style={{
-                          color: T.text,
-                          fontFamily: T.display,
-                          fontSize: fs(14),
-                          fontWeight: 400,
+                          ...motionRowStyle(index, 10, 70),
+                          ...motionVars({ accent: tone }),
+                          textAlign: "left",
+                          border: `1px solid ${selected ? tone : T.border}`,
+                          borderRadius: dim(5),
+                          background: selected ? `${tone}12` : T.bg2,
+                          padding: sp("8px 9px"),
+                          cursor: "pointer",
                         }}
                       >
-                        {selectedCandidate.symbol}{" "}
-                        {selectedCandidate.direction?.toUpperCase()} Signal
-                      </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: sp(8),
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: T.text,
+                              fontFamily: T.mono,
+                              fontSize: fs(9),
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {candidate.symbol}{" "}
+                            {signalActionLabel(candidate.signal, candidate.action)}
+                          </span>
+                          <Badge color={tone}>
+                            {signalOptionsActionLabel(
+                              candidate.actionStatus || candidate.status,
+                            ).toUpperCase()}
+                          </Badge>
+                        </div>
                         <div
                           style={{
                             color: T.textDim,
                             fontFamily: T.mono,
                             fontSize: fs(8),
-                          marginTop: 3,
-                        }}
-                      >
-                        {selectedCandidate.timeframe} · signal{" "}
-                        {formatRelativeTimeShort(selectedCandidate.signalAt)} ·
-                            spot {formatPlainPrice(selectedCandidate.signalPrice, 2)} ·{" "}
-                            {signalFreshnessLabel(selectedCandidate.signal)}
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: sp(6),
-                            flexWrap: "wrap",
-                            marginTop: sp(6),
+                            marginTop: sp(3),
                           }}
                         >
-                          <Badge
-                            color={signalOptionsActionColor(
-                              selectedCandidate.actionStatus ||
-                                selectedCandidate.status,
-                            )}
-                          >
-                            {signalOptionsActionLabel(
-                              selectedCandidate.actionStatus ||
-                                selectedCandidate.status,
-                            ).toUpperCase()}
-                          </Badge>
-                          <Badge
-                            color={
-                              selectedCandidate.syncStatus === "synced"
-                                ? T.green
-                                : selectedCandidate.syncStatus === "mismatch"
-                                  ? T.red
-                                  : T.amber
-                            }
-                          >
-                            {formatEnumLabel(
-                              selectedCandidate.syncStatus || "synced",
-                            ).toUpperCase()}
-                          </Badge>
+                          {candidate.timeframe} · {candidate.direction} ·{" "}
+                          {candidate.optionRight?.toUpperCase() || "OPTION"} ·{" "}
+                          {formatRelativeTimeShort(candidate.signalAt)}
                         </div>
-                      </div>
-                      <button
-                        type="button"
-                      onClick={() => handleOpenCandidateInTrade(selectedCandidate)}
-                      disabled={
-                        !onJumpToTradeCandidate ||
-                        !asRecord(selectedCandidate.selectedContract).strike
-                      }
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(5),
+                  background: T.bg2,
+                  padding: sp("8px 9px"),
+                  minWidth: 0,
+                }}
+              >
+                {selectedCandidate ? (
+                  <div style={{ display: "grid", gap: sp(6) }}>
+                    <div
                       style={{
-                        padding: sp("7px 10px"),
-                        borderRadius: dim(4),
-                        border: `1px solid ${T.accent}55`,
-                        background: `${T.accent}18`,
                         color: T.text,
-                        fontFamily: T.mono,
-                        fontSize: fs(8),
+                        fontFamily: T.display,
+                        fontSize: fs(12),
                         fontWeight: 400,
-                        cursor: "pointer",
-                        opacity:
-                          !asRecord(selectedCandidate.selectedContract).strike
-                            ? 0.55
-                            : 1,
                       }}
                     >
-                      INSPECT CONTRACT
-                    </button>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: algoIsPhone
-                        ? "minmax(0, 1fr)"
-                        : algoIsNarrow
-                          ? "repeat(2, minmax(0, 1fr))"
-                          : "repeat(4, minmax(0, 1fr))",
-                      gap: sp(8),
-                    }}
-                  >
-                    {[
-                      {
-                        label: "Signal Source",
-                        value:
-                          asRecord(selectedCandidate.signal).source ||
-                          "rayreplica",
-                      },
-                      {
-                        label: "Signal Age",
-                        value: signalBarsSinceLabel(selectedCandidate.signal),
-                      },
-                      {
-                        label: "Filter State",
-                        value: signalFilterStateLabel(selectedCandidate.signal),
-                      },
-                      {
-                        label: "Action",
-                        value: signalActionLabel(
-                          selectedCandidate.signal,
-                          selectedCandidate.action,
-                        ),
-                      },
-                      {
-                        label: "Destination",
-                        value:
-                          asRecord(selectedCandidate.action)
-                            .destinationAccountId || "shadow",
-                      },
-                      {
-                        label: "Contract",
-                        value: formatContractLabel(
-                          selectedCandidate.selectedContract,
-                        ),
-                      },
-                      {
-                        label: "Limit",
-                        value: formatMoney(
-                          asRecord(selectedCandidate.orderPlan).entryLimitPrice,
-                          2,
-                        ),
-                      },
-                      {
-                        label: "Fill",
-                        value: formatMoney(
-                          asRecord(selectedCandidate.orderPlan)
-                            .simulatedFillPrice,
-                          2,
-                        ),
-                      },
-                      {
-                        label: "Quantity",
-                        value:
-                          asRecord(selectedCandidate.orderPlan).quantity ??
-                          MISSING_VALUE,
-                      },
-                      {
-                        label: "Mid",
-                        value: formatMoney(
-                          asRecord(selectedCandidate.liquidity).mid,
-                          2,
-                        ),
-                      },
-                      {
-                        label: "Spread",
-                        value: formatPct(
-                          asRecord(selectedCandidate.liquidity).spreadPctOfMid,
-                        ),
-                      },
-                      {
-                        label: "Bid / Ask",
-                        value: `${formatMoney(
-                          asRecord(selectedCandidate.liquidity).bid,
-                          2,
-                        )} / ${formatMoney(
-                          asRecord(selectedCandidate.liquidity).ask,
-                          2,
-                        )}`,
-                      },
-                      {
-                        label: "Quote",
-                        value:
-                          asRecord(selectedCandidate.liquidity)
-                            .quoteFreshness || MISSING_VALUE,
-                      },
-                      {
-                        label: "Quote Age",
-                        value: formatDurationMs(
-                          asRecord(selectedCandidate.quote).ageMs,
-                        ),
-                      },
-                      {
-                        label: "Premium",
-                        value: formatMoney(
-                          asRecord(selectedCandidate.orderPlan).premiumAtRisk,
-                        ),
-                      },
-                      {
-                        label: "Shadow",
-                        value: shadowLinkSummary(selectedCandidate.shadowLink),
-                      },
-                    ].map((item) => (
-                      <div
-                        key={item.label}
-                        style={{
-                          border: `1px solid ${T.border}`,
-                          borderRadius: dim(4),
-                          background: T.bg2,
-                          padding: sp("8px 9px"),
-                          minWidth: 0,
-                        }}
-                      >
+                      {selectedCandidate.symbol}{" "}
+                      {selectedCandidate.direction?.toUpperCase()} Signal
+                    </div>
+                    <div
+                      style={{
+                        color: T.textDim,
+                        fontFamily: T.mono,
+                        fontSize: fs(8),
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      {selectedCandidate.timeframe} · signal{" "}
+                      {formatRelativeTimeShort(selectedCandidate.signalAt)} · spot{" "}
+                      {formatPlainPrice(selectedCandidate.signalPrice, 2)} ·{" "}
+                      {signalFreshnessLabel(selectedCandidate.signal)}
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: algoIsPhone
+                          ? "minmax(0, 1fr)"
+                          : "repeat(2, minmax(0, 1fr))",
+                        gap: sp(6),
+                      }}
+                    >
+                      {[
+                        ["Filter", signalFilterStateLabel(selectedCandidate.signal)],
+                        ["Destination", "Shadow account"],
+                        ["Bid / Ask", `${formatMoney(asRecord(selectedCandidate.liquidity).bid, 2)} / ${formatMoney(asRecord(selectedCandidate.liquidity).ask, 2)}`],
+                        ["Premium", formatMoney(asRecord(selectedCandidate.orderPlan).premiumAtRisk)],
+                      ].map(([label, value]) => (
                         <div
+                          key={label}
                           style={{
-                            color: T.textMuted,
-                            fontFamily: T.mono,
-                            fontSize: fs(7),
-                            letterSpacing: "0.08em",
+                            border: `1px solid ${T.border}`,
+                            borderRadius: dim(4),
+                            background: T.bg0,
+                            padding: sp("6px 7px"),
+                            minWidth: 0,
                           }}
                         >
-                          {item.label.toUpperCase()}
+                          <div
+                            style={{
+                              color: T.textMuted,
+                              fontFamily: T.mono,
+                              fontSize: fs(7),
+                              letterSpacing: "0.08em",
+                            }}
+                          >
+                            {String(label).toUpperCase()}
+                          </div>
+                          <div
+                            style={{
+                              color: T.text,
+                              fontFamily: T.mono,
+                              fontSize: fs(9),
+                              marginTop: sp(2),
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {value}
+                          </div>
                         </div>
+                      ))}
+                    </div>
+                    {selectedCandidate.reason && (
+                      <div
+                        style={{
+                          color: T.amber,
+                          fontFamily: T.sans,
+                          fontSize: fs(9),
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {formatEnumLabel(selectedCandidate.reason)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(10),
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Select a candidate to inspect its contract, fill simulation,
+                    liquidity gate, Shadow ledger link, and signal mapping.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {automationTab === "Positions" && !secondaryPanel && (
+            <div style={{ display: "grid", gap: sp(7) }}>
+              {!signalOptionsPositions.length ? (
+                <div
+                  style={{
+                    border: `1px dashed ${T.border}`,
+                    borderRadius: dim(5),
+                    color: T.textDim,
+                    fontFamily: T.sans,
+                    fontSize: fs(10),
+                    lineHeight: 1.45,
+                    padding: sp("14px 10px"),
+                  }}
+                >
+                  No open shadow option positions. Filled signal-options entries
+                  will appear here with marks, stops, and premium exposure.
+                </div>
+              ) : (
+                signalOptionsPositions.map((position, index) => {
+                  const contract = asRecord(position.selectedContract);
+                  const multiplier = numberFrom(contract.multiplier, 100);
+                  const mark = numberFrom(position.lastMarkPrice, NaN);
+                  const entry = numberFrom(position.entryPrice, NaN);
+                  const quantity = numberFrom(position.quantity, 0);
+                  const unrealized =
+                    Number.isFinite(mark) && Number.isFinite(entry)
+                      ? (mark - entry) * quantity * multiplier
+                      : null;
+                  return (
+                    <div
+                      key={position.id || position.candidateId}
+                      className="ra-row-enter"
+                      style={{
+                        ...motionRowStyle(index, 10, 70),
+                        display: "grid",
+                        gridTemplateColumns: algoIsPhone
+                          ? "minmax(0, 1fr)"
+                          : "minmax(160px, 1fr) repeat(4, minmax(82px, 0.7fr))",
+                        gap: sp(8),
+                        alignItems: "center",
+                        border: `1px solid ${T.border}`,
+                        borderRadius: dim(5),
+                        background: T.bg2,
+                        padding: sp("8px 9px"),
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
                         <div
                           style={{
                             color: T.text,
                             fontFamily: T.mono,
-                            fontSize: fs(10),
-                            fontWeight: 400,
-                            marginTop: 3,
+                            fontSize: fs(9),
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {item.value}
+                          {position.symbol} {formatContractLabel(contract)}
+                        </div>
+                        <div
+                          style={{
+                            color: T.textDim,
+                            fontFamily: T.mono,
+                            fontSize: fs(8),
+                            marginTop: sp(2),
+                          }}
+                        >
+                          {position.timeframe} · opened{" "}
+                          {formatRelativeTimeShort(position.openedAt)}
                         </div>
                       </div>
-                    ))}
-                  </div>
-
-                  {selectedCandidate.reason && (
-                    <div
-                      style={{
-                        color: T.amber,
-                        fontFamily: T.sans,
-                        fontSize: fs(10),
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      {formatEnumLabel(selectedCandidate.reason)}
-                    </div>
-                  )}
-
-                  <div
-                    style={{
-                      borderTop: `1px solid ${T.border}`,
-                      paddingTop: sp(8),
-                      display: "grid",
-                      gap: sp(6),
-                    }}
-                  >
-                    <div
-                      style={{
-                        color: T.textMuted,
-                        fontFamily: T.mono,
-                        fontSize: fs(7),
-                        letterSpacing: "0.08em",
-                      }}
-                    >
-                      TIMELINE
-                    </div>
-                    {Array.isArray(selectedCandidate.timeline) &&
-                    selectedCandidate.timeline.length ? (
-                      selectedCandidate.timeline.slice(-8).map((item, index) => {
-                        const tone = String(item.type || "").includes("skipped")
-                          ? T.amber
-                          : String(item.type || "").includes("exit")
-                            ? T.textDim
-                            : String(item.type || "").includes("deviation")
-                              ? T.purple
-                              : T.cyan;
-                        return (
+                      {[
+                        ["Qty", quantity],
+                        ["Entry", formatPlainPrice(entry, 2)],
+                        ["Mark", formatPlainPrice(mark, 2)],
+                        ["P&L", formatMoney(unrealized, 2)],
+                      ].map(([label, value]) => (
+                        <div key={label}>
                           <div
-                            key={item.id || `${item.type}:${index}`}
                             style={{
-                              display: "grid",
-                              gridTemplateColumns: "84px 132px 1fr",
-                              gap: sp(8),
-                              alignItems: "center",
-                              fontSize: fs(8),
+                              color: T.textMuted,
                               fontFamily: T.mono,
-                              borderBottom: `1px solid ${T.border}20`,
-                              paddingBottom: sp(4),
+                              fontSize: fs(7),
+                              letterSpacing: "0.08em",
                             }}
                           >
-                            <span style={{ color: T.textDim }}>
-                              {formatAppTimeForPreferences(
-                                item.occurredAt,
-                                userPreferences,
-                              )}
-                            </span>
-                            <span style={{ color: tone, fontWeight: 400 }}>
-                              {formatEnumLabel(item.type)}
-                            </span>
-                            <span
-                              style={{
-                                color: T.textSec,
-                                fontFamily: T.sans,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {item.summary || item.reason || "Lifecycle event"}
-                            </span>
+                            {label.toUpperCase()}
                           </div>
-                        );
-                      })
-                    ) : (
-                      <div style={{ color: T.textMuted, fontSize: fs(9) }}>
-                        No lifecycle events linked yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
+                          <div
+                            style={{
+                              color:
+                                label === "P&L" && Number(unrealized) < 0
+                                  ? T.red
+                                  : label === "P&L" && Number(unrealized) > 0
+                                    ? T.green
+                                    : T.text,
+                              fontFamily: T.mono,
+                              fontSize: fs(9),
+                              marginTop: sp(2),
+                            }}
+                          >
+                            {value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {automationTab === "Positions" && (
-          <div
-            style={{
-              display: "grid",
-              gap: sp(8),
-            }}
-          >
-            {!signalOptionsPositions.length ? (
+          {automationTab === "Profile" && !secondaryPanel && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: algoProfileGridTemplate,
+                gap: sp(8),
+              }}
+            >
               <div
                 style={{
-                  padding: sp("22px 10px"),
-                  border: `1px dashed ${T.border}`,
+                  gridColumn: "1 / -1",
+                  border: `1px solid ${T.amber}35`,
                   borderRadius: dim(5),
-                  color: T.textDim,
-                  fontSize: fs(10),
-                  fontFamily: T.sans,
-                  lineHeight: 1.45,
+                  background: `${T.amber}0d`,
+                  padding: sp("8px 9px"),
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: sp(10),
+                  flexWrap: "wrap",
+                  minWidth: 0,
                 }}
               >
-                No open shadow option positions. Filled signal-options entries
-                will appear here with marks, stops, and premium exposure.
-              </div>
-            ) : (
-              signalOptionsPositions.map((position, index) => {
-                const contract = asRecord(position.selectedContract);
-                const multiplier = numberFrom(contract.multiplier, 100);
-                const mark = numberFrom(position.lastMarkPrice, NaN);
-                const entry = numberFrom(position.entryPrice, NaN);
-                const quantity = numberFrom(position.quantity, 0);
-                const unrealized =
-                  Number.isFinite(mark) && Number.isFinite(entry)
-                    ? (mark - entry) * quantity * multiplier
-                    : null;
-                const stop = numberFrom(position.stopPrice, NaN);
-                const distanceToStop =
-                  Number.isFinite(mark) && Number.isFinite(stop) && mark > 0
-                    ? ((mark - stop) / mark) * 100
-                    : null;
-                const positionTone =
-                  distanceToStop != null && distanceToStop <= 20
-                    ? T.amber
-                    : Number(unrealized) < 0
-                      ? T.red
-                      : T.green;
-                return (
+                <div style={{ minWidth: 0 }}>
                   <div
-                    key={position.id || position.candidateId}
-                    className="ra-row-enter"
                     style={{
-                      ...motionRowStyle(index, 12, 80),
-                      display: "grid",
-                      gridTemplateColumns: algoIsPhone
-                        ? "minmax(0, 1fr)"
-                        : "minmax(160px, 1fr) repeat(6, minmax(82px, 0.7fr))",
-                      gap: sp(8),
-                      alignItems: "center",
-                      border: `1px solid ${positionTone === T.amber ? `${T.amber}55` : T.border}`,
-                      borderRadius: dim(5),
-                      background:
-                        positionTone === T.amber ? `${T.amber}10` : T.bg0,
-                      padding: sp("9px 10px"),
-                      minWidth: 0,
+                      color: T.amber,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                      letterSpacing: "0.08em",
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          color: T.text,
-                          fontFamily: T.mono,
-                          fontSize: fs(10),
-                          fontWeight: 400,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {position.symbol} {formatContractLabel(contract)}
-                      </div>
-                      <div
-                        style={{
-                          color: T.textDim,
-                          fontFamily: T.mono,
-                          fontSize: fs(8),
-                          marginTop: 3,
-                        }}
-                      >
-                        {position.timeframe} · opened{" "}
-                        {formatRelativeTimeShort(position.openedAt)}
-                      </div>
-                    </div>
-	                    {[
-	                      ["Qty", quantity],
-	                      ["Entry", formatPlainPrice(entry, 2)],
-	                      ["Mark", formatPlainPrice(mark, 2)],
-	                      ["Stop", formatPlainPrice(position.stopPrice, 2)],
-	                      [
-	                        "Stop dist",
-                        distanceToStop == null
-                          ? MISSING_VALUE
-                          : formatPct(distanceToStop, 1),
-                      ],
-                      ["P&L", formatMoney(unrealized, 2)],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <div
-                          style={{
-                            color: T.textMuted,
-                            fontFamily: T.mono,
-                            fontSize: fs(7),
-                            letterSpacing: "0.08em",
-                          }}
-                        >
-                          {label.toUpperCase()}
-                        </div>
-                        <div
-                          style={{
-                            color:
-                              label === "P&L" && Number(unrealized) < 0
-                                ? T.red
-                                : label === "P&L" && Number(unrealized) > 0
-                                  ? T.green
-                                  : T.text,
-                            fontFamily: T.mono,
-                            fontSize: fs(10),
-                            fontWeight: 400,
-                            marginTop: 3,
-                          }}
-                        >
-                          {value}
-                        </div>
-                      </div>
-                    ))}
+                    EXPANDED CAPACITY
                   </div>
-                );
-              })
-            )}
-          </div>
-        )}
-
-        {automationTab === "Profile" && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: algoProfileGridTemplate,
-              gap: sp(8),
-            }}
-          >
-            {profileNumberFields.map(([section, key, label, step]) => (
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                      marginTop: sp(2),
+                    }}
+                  >
+                    {SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxOpenSymbols} symbols ·{" "}
+                    {formatMoney(SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxDailyLoss)} halt
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="signal-options-expanded-capacity"
+                  onClick={handleApplyExpandedCapacity}
+                  disabled={!focusedDeployment || updateProfileMutation.isPending}
+                  style={{
+                    ...compactButtonStyle({
+                      disabled: !focusedDeployment || updateProfileMutation.isPending,
+                    }),
+                    border: `1px solid ${T.amber}55`,
+                    background: `${T.amber}18`,
+                    color: T.amber,
+                  }}
+                >
+                  {updateProfileMutation.isPending ? "SAVING..." : "APPLY"}
+                </button>
+              </div>
+              {profileNumberFields.map(([section, key, label, step]) => (
+                <label
+                  key={`${section}.${key}`}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(5),
+                    background: T.bg2,
+                    padding: sp("8px 9px"),
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: sp(5),
+                  }}
+                >
+                  <span
+                    style={{
+                      color: T.textMuted,
+                      fontFamily: T.mono,
+                      fontSize: fs(7),
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    {label.toUpperCase()}
+                  </span>
+                  <input
+                    type="number"
+                    step={step}
+                    value={profileDraft?.[section]?.[key] ?? ""}
+                    onChange={(event) =>
+                      patchProfileDraft(
+                        section,
+                        key,
+                        numberFrom(event.target.value, 0),
+                      )
+                    }
+                    style={{
+                      background: T.bg3,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(4),
+                      color: T.text,
+                      padding: sp("6px 8px"),
+                      fontFamily: T.mono,
+                      fontSize: fs(9),
+                      outline: "none",
+                    }}
+                  />
+                </label>
+              ))}
+              {[
+                ["optionSelection", "callStrikeSlot", "Call strike slot"],
+                ["optionSelection", "putStrikeSlot", "Put strike slot"],
+              ].map(([section, key, label]) => (
+                <label
+                  key={`${section}.${key}`}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(5),
+                    background: T.bg2,
+                    padding: sp("8px 9px"),
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: sp(5),
+                  }}
+                >
+                  <span
+                    style={{
+                      color: T.textMuted,
+                      fontFamily: T.mono,
+                      fontSize: fs(7),
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    {label.toUpperCase()}
+                  </span>
+                  <select
+                    value={profileDraft?.[section]?.[key] ?? ""}
+                    onChange={(event) =>
+                      patchProfileDraft(section, key, Number(event.target.value))
+                    }
+                    style={{
+                      background: T.bg3,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(4),
+                      color: T.text,
+                      padding: sp("6px 8px"),
+                      fontFamily: T.mono,
+                      fontSize: fs(9),
+                      outline: "none",
+                    }}
+                  >
+                    {SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
               <label
-                key={`${section}.${key}`}
                 style={{
                   border: `1px solid ${T.border}`,
                   borderRadius: dim(5),
-                  background: T.bg0,
-                  padding: sp("8px 10px"),
+                  background: T.bg2,
+                  padding: sp("8px 9px"),
                   display: "flex",
                   flexDirection: "column",
                   gap: sp(5),
@@ -3456,16 +3520,20 @@ export const AlgoScreen = ({
                     letterSpacing: "0.08em",
                   }}
                 >
-                  {label.toUpperCase()}
+                  BEAR ADX MIN
                 </span>
                 <input
                   type="number"
-                  step={step}
-                  value={profileDraft?.[section]?.[key] ?? ""}
+                  step={1}
+                  value={
+                    profileDraft?.entryGate?.bearishRegime?.minAdx ??
+                    SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime.minAdx
+                  }
                   onChange={(event) =>
-                    patchProfileDraft(
-                      section,
-                      key,
+                    patchProfileDraftNested(
+                      "entryGate",
+                      "bearishRegime",
+                      "minAdx",
                       numberFrom(event.target.value, 0),
                     )
                   }
@@ -3476,23 +3544,92 @@ export const AlgoScreen = ({
                     color: T.text,
                     padding: sp("6px 8px"),
                     fontFamily: T.mono,
-                    fontSize: fs(10),
+                    fontSize: fs(9),
                     outline: "none",
                   }}
                 />
               </label>
-            ))}
-            {[
-              ["optionSelection", "callStrikeSlot", "Call strike slot"],
-              ["optionSelection", "putStrikeSlot", "Put strike slot"],
-            ].map(([section, key, label]) => (
+              {profileBooleanFields.map(([section, key, label]) => (
+                <label
+                  key={`${section}.${key}`}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(5),
+                    background: T.bg2,
+                    padding: sp("8px 9px"),
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(10),
+                  }}
+                >
+                  <span
+                    style={{
+                      color: T.textSec,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                    }}
+                  >
+                    {label.toUpperCase()}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(profileDraft?.[section]?.[key])}
+                    onChange={(event) =>
+                      patchProfileDraft(section, key, event.target.checked)
+                    }
+                  />
+                </label>
+              ))}
+              {[
+                ["enabled", "Bear gate enabled"],
+                ["rejectFullyBullishMtf", "Reject bullish MTF puts"],
+              ].map(([key, label]) => (
+                <label
+                  key={`entryGate.bearishRegime.${key}`}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(5),
+                    background: T.bg2,
+                    padding: sp("8px 9px"),
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(10),
+                  }}
+                >
+                  <span
+                    style={{
+                      color: T.textSec,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                    }}
+                  >
+                    {label.toUpperCase()}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      profileDraft?.entryGate?.bearishRegime?.[key],
+                    )}
+                    onChange={(event) =>
+                      patchProfileDraftNested(
+                        "entryGate",
+                        "bearishRegime",
+                        key,
+                        event.target.checked,
+                      )
+                    }
+                  />
+                </label>
+              ))}
               <label
-                key={`${section}.${key}`}
                 style={{
+                  gridColumn: "1 / -1",
                   border: `1px solid ${T.border}`,
                   borderRadius: dim(5),
-                  background: T.bg0,
-                  padding: sp("8px 10px"),
+                  background: T.bg2,
+                  padding: sp("8px 9px"),
                   display: "flex",
                   flexDirection: "column",
                   gap: sp(5),
@@ -3506,12 +3643,19 @@ export const AlgoScreen = ({
                     letterSpacing: "0.08em",
                   }}
                 >
-                  {label.toUpperCase()}
+                  CHASE LADDER %
                 </span>
-                <select
-                  value={profileDraft?.[section]?.[key] ?? ""}
+                <input
+                  value={formatChaseSteps(profileDraft?.fillPolicy?.chaseSteps)}
                   onChange={(event) =>
-                    patchProfileDraft(section, key, Number(event.target.value))
+                    patchProfileDraft(
+                      "fillPolicy",
+                      "chaseSteps",
+                      parseChaseSteps(
+                        event.target.value,
+                        profileDraft?.fillPolicy?.chaseSteps || [],
+                      ),
+                    )
                   }
                   style={{
                     background: T.bg3,
@@ -3520,271 +3664,54 @@ export const AlgoScreen = ({
                     color: T.text,
                     padding: sp("6px 8px"),
                     fontFamily: T.mono,
-                    fontSize: fs(10),
+                    fontSize: fs(9),
                     outline: "none",
                   }}
-                >
-                  {SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-            {profileBooleanFields.map(([section, key, label]) => (
-              <label
-                key={`${section}.${key}`}
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg0,
-                  padding: sp("8px 10px"),
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: sp(10),
-                }}
-              >
-                <span
-                  style={{
-                    color: T.textSec,
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
-                    fontWeight: 400,
-                  }}
-                >
-                  {label.toUpperCase()}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={Boolean(profileDraft?.[section]?.[key])}
-                  onChange={(event) =>
-                    patchProfileDraft(section, key, event.target.checked)
-                  }
                 />
               </label>
-            ))}
-            <label
-              style={{
-                gridColumn: "1 / -1",
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(5),
-                background: T.bg0,
-                padding: sp("8px 10px"),
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(5),
-              }}
-            >
-              <span
-                style={{
-                  color: T.textMuted,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  letterSpacing: "0.08em",
-                }}
-              >
-                CHASE LADDER %
-              </span>
-              <input
-                value={formatChaseSteps(profileDraft?.fillPolicy?.chaseSteps)}
-                onChange={(event) =>
-                  patchProfileDraft(
-                    "fillPolicy",
-                    "chaseSteps",
-                    parseChaseSteps(
-                      event.target.value,
-                      profileDraft?.fillPolicy?.chaseSteps || [],
-                    ),
-                  )
-                }
-                style={{
-                  background: T.bg3,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(4),
-                  color: T.text,
-                  padding: sp("6px 8px"),
-                  fontFamily: T.mono,
-                  fontSize: fs(10),
-                  outline: "none",
-                }}
-              />
-            </label>
-            <div
-              style={{
-                gridColumn: "1 / -1",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: sp(10),
-                paddingTop: sp(2),
-              }}
-            >
-              <div
-                style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
-              >
-                Fill ladder{" "}
-                {(profileDraft?.fillPolicy?.chaseSteps || [])
-                  .map((step) => `${Math.round(step * 100)}%`)
-                  .join(" / ")}{" "}
-                · runner trail locks{" "}
-                {formatPct(profileDraft?.exitPolicy?.minLockedGainPct, 0)}
-              </div>
-              <button
-                type="button"
-                onClick={handleSaveProfile}
-                disabled={!focusedDeployment || updateProfileMutation.isPending}
-                style={{
-                  padding: sp("7px 12px"),
-                  borderRadius: dim(4),
-                  border: "none",
-                  background: T.green,
-                  color: "#fff",
-                  fontFamily: T.mono,
-                  fontSize: fs(8),
-                  fontWeight: 400,
-                  cursor: updateProfileMutation.isPending ? "wait" : "pointer",
-                  opacity: updateProfileMutation.isPending ? 0.72 : 1,
-                }}
-              >
-                {updateProfileMutation.isPending ? "SAVING..." : "SAVE PROFILE"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {automationTab === "Events" && (
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("8px 10px"),
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                gap: sp(6),
-                flexWrap: "wrap",
-                marginBottom: sp(8),
-              }}
-            >
-              {[
-                ["all", "All"],
-                ["blockers", "Blockers"],
-                ["fills", "Fills"],
-                ["exits", "Exits"],
-                ["profile", "Profile"],
-                ["gateway", "Gateway"],
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setEventFilter(value)}
-                  style={{
-                    border: `1px solid ${eventFilter === value ? T.accent : T.border}`,
-                    background:
-                      eventFilter === value ? `${T.accent}18` : T.bg2,
-                    color: eventFilter === value ? T.text : T.textSec,
-                    borderRadius: dim(4),
-                    padding: sp("5px 8px"),
-                    fontSize: fs(8),
-                    fontFamily: T.mono,
-                    fontWeight: 400,
-                    cursor: "pointer",
-                  }}
-                >
-                  {label.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            {!filteredSignalOptionsEvents.length ? (
               <div
                 style={{
-                  color: T.textDim,
-                  fontFamily: T.sans,
-                  fontSize: fs(10),
-                  padding: sp("18px 0"),
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: sp(10),
+                  flexWrap: "wrap",
                 }}
               >
-                No signal-options automation events match this filter.
-              </div>
-            ) : (
-              filteredSignalOptionsEvents.slice(0, 12).map((event, index) => (
                 <div
-                  key={event.id}
-                  className="ra-row-enter"
                   style={{
-                    ...motionRowStyle(index, 10, 90),
-                    display: "grid",
-                    gridTemplateColumns: "72px 150px 1fr 84px",
-                    gap: sp(8),
-                    padding: sp("7px 0"),
-                    borderBottom: `1px solid ${T.border}10`,
+                    color: T.textDim,
+                    fontFamily: T.mono,
                     fontSize: fs(8),
                   }}
                 >
-                  <span style={{ color: T.textDim, fontFamily: T.mono }}>
-                    {formatAppTimeForPreferences(
-                      event.occurredAt,
-                      userPreferences,
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      color: T.cyan,
-                      fontFamily: T.mono,
-                      fontWeight: 400,
-                    }}
-                  >
-                    {formatEnumLabel(event.eventType)}
-                  </span>
-                  <span style={{ color: T.textSec, fontFamily: T.sans }}>
-                    {event.summary}
-                  </span>
-                  <span
-                    style={{
-                      color: event.symbol ? T.text : T.textDim,
-                      fontFamily: T.mono,
-                      textAlign: "right",
-                    }}
-                  >
-                    {event.symbol || "system"}
-                  </span>
-                  <details
-                    style={{
-                      gridColumn: "1 / -1",
-                      color: T.textDim,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                    }}
-                  >
-                    <summary style={{ cursor: "pointer", color: T.textMuted }}>
-                      payload
-                    </summary>
-                    <pre
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        overflowX: "auto",
-                        margin: sp("6px 0 0"),
-                        padding: sp("7px 8px"),
-                        border: `1px solid ${T.border}`,
-                        borderRadius: dim(4),
-                        background: T.bg2,
-                      }}
-                    >
-                      {JSON.stringify(event.payload || {}, null, 2)}
-                    </pre>
-                  </details>
+                  Premium {formatMoney(signalOptionsProfile.riskCaps.maxPremiumPerEntry)} ·
+                  spread {formatPct(signalOptionsProfile.liquidityGate.maxSpreadPctOfMid, 0)}
                 </div>
-              ))
-            )}
-          </div>
-        )}
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  disabled={!focusedDeployment || updateProfileMutation.isPending}
+                  style={{
+                    ...compactButtonStyle({
+                      disabled: !focusedDeployment || updateProfileMutation.isPending,
+                    }),
+                    border: "none",
+                    background: T.green,
+                    color: "#fff",
+                  }}
+                >
+                  {updateProfileMutation.isPending ? "SAVING..." : "SAVE PROFILE"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
+
+      {secondaryPanel === "activity" && (
       <div
         style={{
           background: T.bg2,
@@ -3889,12 +3816,15 @@ export const AlgoScreen = ({
           ))
         )}
       </div>
+      )}
 
-      <AlgoDraftStrategiesPanel
-        theme={T}
-        scale={{ fs, sp, dim }}
-        isVisible={isVisible}
-      />
+      {secondaryPanel === "drafts" && (
+        <AlgoDraftStrategiesPanel
+          theme={T}
+          scale={{ fs, sp, dim }}
+          isVisible={isVisible && secondaryPanel === "drafts"}
+        />
+      )}
     </div>
   );
 };

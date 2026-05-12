@@ -11,6 +11,7 @@ import {
   getChartEventLookbackWindow,
   getStableFlowEventKey,
   mergeFlowEventFeeds,
+  resolveFlowEventSourceBasis,
   resolveFlowEventChartTimeResolution,
 } from "./chartEvents";
 
@@ -316,6 +317,51 @@ test("flowEventsToChartEvents uses provider trade time before update and observe
   assert.equal(events[0].metadata.chartTimeSourceField, "t");
 });
 
+test("flowEventsToChartEvents lets confirmed source basis override stale snapshot basis", () => {
+  const resolution = resolveFlowEventChartTimeResolution({
+    id: "confirmed-with-stale-basis",
+    ticker: "SPY",
+    basis: "snapshot",
+    sourceBasis: "confirmed_trade",
+    cp: "C",
+    premium: 125_000,
+    occurredAt: "2026-05-01T14:52:00.000Z",
+    updatedAt: "2026-05-01T19:59:00.000Z",
+    side: "BUY",
+  });
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "confirmed-with-stale-basis",
+        ticker: "SPY",
+        basis: "snapshot",
+        sourceBasis: "confirmed_trade",
+        cp: "C",
+        premium: 125_000,
+        occurredAt: "2026-05-01T14:52:00.000Z",
+        updatedAt: "2026-05-01T19:59:00.000Z",
+        side: "BUY",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(
+    resolveFlowEventSourceBasis({
+      basis: "snapshot",
+      sourceBasis: "confirmed_trade",
+    }),
+    "confirmed_trade",
+  );
+  assert.equal(resolution?.timeBasis, "trade_reported");
+  assert.equal(resolution?.sourceField, "occurredAt");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
+  assert.equal(events[0].metadata.sourceBasis, "confirmed_trade");
+  assert.equal(events[0].metadata.timeBasis, "trade_reported");
+  assert.match(events[0].summary, /options flow|unusual flow/);
+});
+
 test("flowEventsToChartEvents combines separate trade date and time in New York time", () => {
   const events = flowEventsToChartEvents(
     [
@@ -589,6 +635,53 @@ test("mergeFlowEventFeeds keeps confirmed trades and snapshot activity separate 
   assert.equal(rows.length, 2);
   assert.deepEqual(
     rows.map((row) => row.sourceBasis),
+    ["confirmed_trade", "snapshot_activity"],
+  );
+});
+
+test("mergeFlowEventFeeds keeps confirmed source-basis rows separate from snapshots even with stale basis", () => {
+  const rows = mergeFlowEventFeeds(
+    [
+      {
+        id: "provider-reused-stale-id",
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "snapshot",
+        sourceBasis: "confirmed_trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+    ],
+    [
+      {
+        id: "provider-reused-stale-id",
+        ticker: "SPY",
+        provider: "ibkr",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 5000,
+        premium: 1_050_000,
+      },
+    ],
+  );
+
+  assert.equal(rows.length, 2);
+  assert.deepEqual(
+    rows.map((row) => resolveFlowEventSourceBasis(row)),
     ["confirmed_trade", "snapshot_activity"],
   );
 });

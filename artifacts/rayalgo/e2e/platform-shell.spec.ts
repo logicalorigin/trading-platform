@@ -298,6 +298,7 @@ function makeBars(
 async function mockShellApi(
   page: Page,
   {
+    accountFixture = null,
     barsRequests = [],
     bridgeLauncherRequests = [],
     diagnosticsEventRequests = [],
@@ -308,6 +309,7 @@ async function mockShellApi(
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
   }: {
+    accountFixture?: Record<string, unknown> | null;
     barsRequests?: Array<Record<string, string>>;
     bridgeLauncherRequests?: Array<Record<string, string>>;
     diagnosticsEventRequests?: Array<Record<string, string>>;
@@ -759,7 +761,7 @@ async function mockShellApi(
     } else if (url.pathname === "/api/charting/pine-scripts") {
       body = { scripts: [] };
     } else if (url.pathname === "/api/accounts") {
-      body = { accounts: [] };
+      body = { accounts: accountFixture?.accounts || [] };
     } else if (url.pathname === "/api/accounts/shadow/watchlist-backtest/runs") {
       const rawPayload = route.request().postData();
       const payload = rawPayload ? JSON.parse(rawPayload) : {};
@@ -803,7 +805,7 @@ async function mockShellApi(
         updatedAt: new Date(mockNow).toISOString(),
       };
     } else if (url.pathname.includes("/account/") || url.pathname.includes("/accounts/")) {
-      body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
+      body = accountFixture || { accounts: [], positions: [], orders: [], trades: [], points: [] };
     }
 
     await route.fulfill({
@@ -816,6 +818,230 @@ async function mockShellApi(
   await page.route("**/*tradingview.com/**", async (route) => {
     await route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
   });
+}
+
+function makeAccountDensityFixture(): Record<string, unknown> {
+  const positions = [
+    {
+      id: "pos-spy",
+      symbol: "SPY",
+      description: "SPDR S&P 500 ETF Trust",
+      assetClass: "ETF",
+      sector: "ETF",
+      quantity: 36,
+      averageCost: 503.12,
+      mark: 512.44,
+      dayChange: 121.38,
+      dayChangePercent: 0.65,
+      unrealizedPnl: 335.52,
+      unrealizedPnlPercent: 1.85,
+      marketValue: 18447.84,
+      weightPercent: 40.2,
+      betaWeightedDelta: 36,
+      accounts: ["DU1234567"],
+      sourceType: "manual",
+      lots: [
+        {
+          accountId: "DU1234567",
+          quantity: 36,
+          averageCost: 503.12,
+          marketValue: 18447.84,
+          unrealizedPnl: 335.52,
+        },
+      ],
+      openOrders: [
+        {
+          id: "order-spy-stop",
+          side: "SELL",
+          type: "STP",
+          quantity: 10,
+          stopPrice: 508,
+          status: "working",
+          accountId: "DU1234567",
+        },
+      ],
+    },
+    {
+      id: "pos-nvda",
+      symbol: "NVDA",
+      description: "NVIDIA Corp.",
+      assetClass: "Stocks",
+      sector: "Technology",
+      quantity: 18,
+      averageCost: 918.42,
+      mark: 941.16,
+      dayChange: -86.22,
+      dayChangePercent: -0.51,
+      unrealizedPnl: 409.32,
+      unrealizedPnlPercent: 2.48,
+      marketValue: 16940.88,
+      weightPercent: 36.9,
+      betaWeightedDelta: 31.4,
+      accounts: ["DU1234567"],
+      sourceType: "automation",
+      strategyLabel: "Momentum",
+      lots: [
+        {
+          accountId: "DU1234567",
+          quantity: 18,
+          averageCost: 918.42,
+          marketValue: 16940.88,
+          unrealizedPnl: 409.32,
+        },
+      ],
+      openOrders: [],
+    },
+    {
+      id: "pos-aapl",
+      symbol: "AAPL",
+      description: "Apple Inc.",
+      assetClass: "Stocks",
+      sector: "Technology",
+      quantity: 24,
+      averageCost: 184.2,
+      mark: 191.3,
+      dayChange: 32.64,
+      dayChangePercent: 0.71,
+      unrealizedPnl: 170.4,
+      unrealizedPnlPercent: 3.85,
+      marketValue: 4591.2,
+      weightPercent: 10,
+      betaWeightedDelta: 20.2,
+      accounts: ["DU1234567"],
+      sourceType: "watchlist_backtest",
+      strategyLabel: "Backtest",
+      lots: [],
+      openOrders: [],
+    },
+    {
+      id: "pos-tsla",
+      symbol: "TSLA",
+      description: "Tesla Inc.",
+      assetClass: "Stocks",
+      sector: "Consumer Cyclical",
+      quantity: -12,
+      averageCost: 241.8,
+      mark: 235.1,
+      dayChange: 18.6,
+      dayChangePercent: 0.66,
+      unrealizedPnl: 80.4,
+      unrealizedPnlPercent: 2.77,
+      marketValue: -2821.2,
+      weightPercent: -6.1,
+      betaWeightedDelta: -18.7,
+      accounts: ["DU1234567"],
+      sourceType: "manual",
+      lots: [],
+      openOrders: [],
+    },
+  ];
+  const orders = [
+    {
+      id: "ord-working-spy",
+      symbol: "SPY",
+      assetClass: "ETF",
+      side: "SELL",
+      type: "LMT",
+      quantity: 10,
+      filledQuantity: 0,
+      limitPrice: 516.5,
+      stopPrice: null,
+      averageFillPrice: null,
+      status: "working",
+      timeInForce: "DAY",
+      placedAt: "2026-05-01T14:30:00.000Z",
+      filledAt: null,
+      commission: null,
+      sourceType: "manual",
+      strategyLabel: "Trim",
+    },
+    {
+      id: "ord-working-nvda",
+      symbol: "NVDA",
+      assetClass: "Stocks",
+      side: "BUY",
+      type: "LMT",
+      quantity: 4,
+      filledQuantity: 0,
+      limitPrice: 932.25,
+      stopPrice: null,
+      averageFillPrice: null,
+      status: "working",
+      timeInForce: "DAY",
+      placedAt: "2026-05-01T15:05:00.000Z",
+      filledAt: null,
+      commission: null,
+      sourceType: "automation",
+      strategyLabel: "Momentum",
+    },
+  ];
+  const trades = [
+    {
+      source: "FLEX",
+      id: "trade-aapl",
+      symbol: "AAPL",
+      assetClass: "Stocks",
+      side: "Long",
+      quantity: 12,
+      avgOpen: 184.2,
+      avgClose: 191.3,
+      openDate: "2026-05-01T13:35:00.000Z",
+      closeDate: "2026-05-01T15:10:00.000Z",
+      realizedPnl: 85.2,
+      realizedPnlPercent: 3.85,
+      holdDurationMinutes: 95,
+      commissions: 1.28,
+      currency: "USD",
+      sourceType: "manual",
+    },
+    {
+      source: "FLEX",
+      id: "trade-msft",
+      symbol: "MSFT",
+      assetClass: "Stocks",
+      side: "Short",
+      quantity: 8,
+      avgOpen: 414.5,
+      avgClose: 409.1,
+      openDate: "2026-05-01T13:45:00.000Z",
+      closeDate: "2026-05-01T15:45:00.000Z",
+      realizedPnl: 43.2,
+      realizedPnlPercent: 1.3,
+      holdDurationMinutes: 120,
+      commissions: 0.92,
+      currency: "USD",
+      sourceType: "automation",
+      strategyLabel: "Mean Revert",
+    },
+  ];
+
+  return {
+    accounts: [{ accountId: "DU1234567", id: "DU1234567", label: "Paper DU1234567" }],
+    positions,
+    orders,
+    trades,
+    points: [
+      { date: "2026-04-29", netLiquidation: 45000, dailyPnl: 80, cumulativePnl: 80 },
+      { date: "2026-04-30", netLiquidation: 45210, dailyPnl: 210, cumulativePnl: 290 },
+      { date: "2026-05-01", netLiquidation: 45930, dailyPnl: 720, cumulativePnl: 1010 },
+    ],
+    summary: {
+      count: trades.length,
+      winners: 2,
+      losers: 0,
+      realizedPnl: 128.4,
+      commissions: 2.2,
+      netLiquidation: 45930,
+      dayPnl: 86.4,
+    },
+    totals: {
+      netExposure: 37158.72,
+      grossLong: 39979.92,
+      grossShort: -2821.2,
+      unrealizedPnl: 995.64,
+      weightPercent: 81,
+    },
+  };
 }
 
 function collectRuntimeIssues(page: Page) {
@@ -831,8 +1057,21 @@ function collectRuntimeIssues(page: Page) {
 }
 
 async function openScreen(page: Page, label: string, screenId: string) {
-  const nav = page.getByTestId("platform-screen-nav");
-  await nav.getByRole("button", { name: new RegExp(`^${label}`) }).click();
+  const layout = await page.locator(".ra-shell").getAttribute("data-layout");
+  if (layout === "phone") {
+    const primaryScreenIds = new Set(["market", "flow", "trade", "account"]);
+    if (primaryScreenIds.has(screenId)) {
+      await page.getByTestId(`mobile-bottom-nav-${screenId}`).click();
+    } else {
+      await page.getByTestId("mobile-bottom-nav-more").click();
+      await expect(page.getByTestId("mobile-more-sheet")).toBeVisible();
+      await page.getByTestId(`mobile-more-screen-${screenId}`).click();
+      await expect(page.getByTestId("mobile-more-sheet")).toBeHidden();
+    }
+  } else {
+    const nav = page.getByTestId("platform-screen-nav");
+    await nav.getByRole("button", { name: new RegExp(`^${label}`) }).click();
+  }
   await expect(page.getByTestId(`screen-host-${screenId}`)).toHaveAttribute(
     "aria-hidden",
     "false",
@@ -1068,15 +1307,25 @@ test("platform phone layout navigates all primary screens without document overf
   await page.goto("/");
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
-  const nav = page.getByTestId("platform-screen-nav");
-  await expect(nav.getByRole("button", { name: "Open navigation", exact: true })).toBeVisible();
-  await nav.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
+  await expect(page.getByTestId("mobile-top-chrome")).toBeVisible();
+  await expect(page.getByTestId("mobile-bottom-nav")).toBeVisible();
+  await page.getByTestId("mobile-bottom-nav-more").click();
+  await expect(page.getByTestId("mobile-more-sheet")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("mobile-nav-drawer")).toBeHidden();
-  await expect(nav.getByRole("button", { name: "Open watchlist", exact: true })).toBeVisible();
-  await nav.getByRole("button", { name: "Open watchlist", exact: true }).click();
+  await expect(page.getByTestId("mobile-more-sheet")).toBeHidden();
+  await page.getByTestId("mobile-activity-trigger").click();
+  await expect(page.getByTestId("mobile-activity-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("mobile-activity-sheet")).toBeHidden();
+  await page.getByTestId("mobile-watchlist-trigger").click();
   await expect(page.getByTestId("mobile-watchlist-drawer")).toBeVisible();
+  const watchlistRows = page.getByTestId("watchlist-row");
+  await expect(watchlistRows.first()).toBeVisible();
+  await expect(page.getByTestId("watchlist-manage-toggle")).toBeVisible();
+  const maxWatchlistRowHeight = await watchlistRows.evaluateAll((elements) =>
+    Math.max(...elements.map((element) => element.getBoundingClientRect().height)),
+  );
+  expect(maxWatchlistRowHeight).toBeLessThanOrEqual(48);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("mobile-watchlist-drawer")).toBeHidden();
 
@@ -1092,9 +1341,35 @@ test("platform phone layout navigates all primary screens without document overf
     ["Settings", "settings", "settings-screen"],
   ] as const;
 
+  const expectAccountCalendarToStayCompact = async () => {
+    const calendarGrid = page.getByTestId("account-pnl-calendar-month-grid");
+    await expect(calendarGrid).toBeVisible();
+    const calendarMetrics = await calendarGrid.evaluate((element) => {
+      const columns = getComputedStyle(element)
+        .gridTemplateColumns.split(" ")
+        .filter(Boolean).length;
+      return {
+        columns,
+        height: element.getBoundingClientRect().height,
+      };
+    });
+    expect(calendarMetrics.columns, "Account P&L calendar should keep 7 columns on phone").toBe(7);
+    expect(calendarMetrics.height, "Account P&L calendar should stay compact on phone").toBeLessThan(240);
+  };
+
   for (const [label, screenId, readyTestId] of screens) {
     await openScreen(page, label, screenId);
     await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
+    if (screenId === "market") {
+      await expect(page.getByTestId("market-activity-panel")).toHaveCount(0);
+      await expect(page.getByTestId("market-workspace")).toHaveAttribute(
+        "data-activity-layout",
+        "hidden",
+      );
+    }
+    if (screenId === "account") {
+      await expectAccountCalendarToStayCompact();
+    }
     const overflow = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -1103,6 +1378,70 @@ test("platform phone layout navigates all primary screens without document overf
       overflow.viewportWidth + 1,
     );
   }
+
+  await page.setViewportSize({ width: 375, height: 844 });
+  await openScreen(page, "Account", "account");
+  await expect(page.getByTestId("account-screen")).toBeVisible({ timeout: 30_000 });
+  await expectAccountCalendarToStayCompact();
+  const narrowOverflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(narrowOverflow.scrollWidth, "Account should not document-overflow at 375px").toBeLessThanOrEqual(
+    narrowOverflow.viewportWidth + 1,
+  );
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("account phone layout renders dense scan rows for positions trades and orders", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const maxCollapsedHeight = async (locator: ReturnType<Page["getByTestId"]>) =>
+    locator.evaluateAll((elements) =>
+      Math.max(...elements.map((element) => element.getBoundingClientRect().height)),
+    );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await disableStreamingSources(page);
+  await mockShellApi(page, {
+    accountFixture: makeAccountDensityFixture(),
+    ibkrReady: true,
+  });
+  await page.goto("/");
+  await openScreen(page, "Account", "account");
+
+  const positionRows = page.getByTestId("account-position-scan-row");
+  await expect(positionRows.first()).toBeVisible({ timeout: 30_000 });
+  await expect(positionRows).toHaveCount(4);
+  expect(await maxCollapsedHeight(positionRows)).toBeLessThanOrEqual(56);
+  await positionRows.first().click();
+  await expect(page.getByTestId("account-position-expanded-details").first()).toBeVisible();
+
+  await page.getByTestId("account-trades-row-list").scrollIntoViewIfNeeded();
+  const tradeRows = page.getByTestId("account-trade-scan-row");
+  await expect(tradeRows.first()).toBeVisible({ timeout: 30_000 });
+  await expect(tradeRows).toHaveCount(2);
+  expect(await maxCollapsedHeight(tradeRows)).toBeLessThanOrEqual(56);
+  await tradeRows.first().click();
+  await expect(page.getByTestId("account-trade-expanded-details").first()).toBeVisible();
+
+  await page.getByTestId("account-orders-row-list").scrollIntoViewIfNeeded();
+  const orderRows = page.getByTestId("account-order-scan-row");
+  await expect(orderRows.first()).toBeVisible({ timeout: 30_000 });
+  await expect(orderRows).toHaveCount(2);
+  expect(await maxCollapsedHeight(orderRows)).toBeLessThanOrEqual(56);
+  await orderRows.first().click();
+  await expect(page.getByTestId("account-order-expanded-details").first()).toBeVisible();
+
+  const overflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(overflow.scrollWidth, "Account should not document-overflow with dense rows").toBeLessThanOrEqual(
+    overflow.viewportWidth + 1,
+  );
 
   expect(runtimeIssues).toEqual([]);
 });

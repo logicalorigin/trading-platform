@@ -395,6 +395,7 @@ export * from './signalOptionsExecutionProfileVersion';
 export * from './signalOptionsManualDeviationRequest';
 export * from './signalOptionsManualDeviationRequestSource';
 export * from './signalOptionsManualDeviationResponse';
+export * from './signalOptionsPerformanceResponse';
 export * from './sseStream';
 export * from './streamAccountsParams';
 export * from './streamOptionChainsParams';

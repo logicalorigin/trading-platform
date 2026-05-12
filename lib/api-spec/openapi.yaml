@@ -2000,6 +2000,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlgoCockpitSnapshotResponse"
 
+  /algo/deployments/{deploymentId}/signal-options/performance:
+    get:
+      operationId: getSignalOptionsPerformance
+      tags: [automation]
+      summary: Get signal-options shadow trading performance and rule adherence
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signal-options performance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalOptionsPerformanceResponse"
+
   /algo/deployments/{deploymentId}/signal-options/shadow-scan:
     post:
       operationId: runSignalOptionsShadowScan
@@ -7179,6 +7198,8 @@ components:
           $ref: "#/components/schemas/JsonObject"
         liquidityGate:
           $ref: "#/components/schemas/JsonObject"
+        entryGate:
+          $ref: "#/components/schemas/JsonObject"
         fillPolicy:
           $ref: "#/components/schemas/JsonObject"
         exitPolicy:
@@ -7189,6 +7210,7 @@ components:
         - optionSelection
         - riskCaps
         - liquidityGate
+        - entryGate
         - fillPolicy
         - exitPolicy
 
@@ -7396,6 +7418,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AlgoCockpitAttentionItem"
+        diagnostics:
+          $ref: "#/components/schemas/JsonObject"
         kpis:
           $ref: "#/components/schemas/JsonObject"
         risk:
@@ -7427,6 +7451,7 @@ components:
         - readiness
         - pipelineStages
         - attentionItems
+        - diagnostics
         - kpis
         - risk
         - signals
@@ -7434,6 +7459,42 @@ components:
         - activePositions
         - events
         - sourceBacktest
+        - generatedAt
+
+    SignalOptionsPerformanceResponse:
+      type: object
+      properties:
+        deploymentId:
+          type: string
+        range:
+          type: string
+        summary:
+          $ref: "#/components/schemas/JsonObject"
+        openExposure:
+          $ref: "#/components/schemas/JsonObject"
+        ruleAdherence:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        topBlockers:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        recentClosedTrades:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        generatedAt:
+          type: string
+          format: date-time
+      required:
+        - deploymentId
+        - range
+        - summary
+        - openExposure
+        - ruleAdherence
+        - topBlockers
+        - recentClosedTrades
         - generatedAt
 
     SignalOptionsManualDeviationRequest:

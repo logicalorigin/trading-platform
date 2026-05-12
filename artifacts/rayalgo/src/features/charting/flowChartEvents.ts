@@ -360,28 +360,51 @@ const readContractLabel = (event: ChartEvent): string =>
       "",
   ).trim();
 
-const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
-  event.metadata?.basis === "snapshot" ||
-  event.metadata?.sourceBasis === "snapshot_activity" ||
-  event.metadata?.confidence === "snapshot_activity";
+const normalizeFlowSourceBasisValue = (value: unknown): string =>
+  String(value || "").trim().toLowerCase();
 
 export const resolveFlowChartSourceBasis = (
   event: ChartEvent,
 ): FlowChartSourceBasis => {
-  if (isSnapshotActivityEvent(event)) {
+  const sourceBasis = normalizeFlowSourceBasisValue(
+    event.metadata?.sourceBasis || event.metadata?.confidence,
+  );
+  const basis = normalizeFlowSourceBasisValue(event.metadata?.basis);
+  if (
+    sourceBasis === "confirmed_trade" ||
+    sourceBasis === "confirmed" ||
+    sourceBasis === "reported" ||
+    sourceBasis === "trade"
+  ) {
+    return "confirmed_trade";
+  }
+  if (
+    sourceBasis === "snapshot_activity" ||
+    sourceBasis === "snapshot" ||
+    sourceBasis === "observed"
+  ) {
     return "snapshot_activity";
   }
-  const sourceBasis = String(
-    event.metadata?.sourceBasis || event.metadata?.confidence || "",
-  )
-    .trim()
-    .toLowerCase();
-  const basis = String(event.metadata?.basis || "").trim().toLowerCase();
-  if (sourceBasis === "confirmed_trade" || basis === "trade") {
+  if (
+    basis === "trade" ||
+    basis === "confirmed_trade" ||
+    basis === "confirmed" ||
+    basis === "reported"
+  ) {
     return "confirmed_trade";
+  }
+  if (
+    basis === "snapshot" ||
+    basis === "snapshot_activity" ||
+    basis === "observed"
+  ) {
+    return "snapshot_activity";
   }
   return "other";
 };
+
+const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
+  resolveFlowChartSourceBasis(event) === "snapshot_activity";
 
 const isFlowChartMarkerEligibleEvent = (event: ChartEvent): boolean =>
   resolveFlowChartSourceBasis(event) === "confirmed_trade";

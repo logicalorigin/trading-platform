@@ -263,6 +263,7 @@ test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
   assert.match(source, /data-chart-flow-marker-eligible-count=\{/);
   assert.match(source, /data-chart-flow-marker-placement-count=\{/);
   assert.match(source, /data-chart-flow-marker-snapshot-skip-count=\{/);
+  assert.match(source, /data-chart-flow-marker-state=\{flowMarkerState\}/);
 });
 
 test("ResearchChartSurface exposes flow events as a display control", () => {
@@ -874,10 +875,20 @@ test("ResearchChartSurface normalizes visible range publish state", () => {
   );
 });
 
-test("ResearchChartSurface requires explicit viewport input for user-touched ranges", () => {
+test("ResearchChartSurface treats initialized unmarked range changes as user-owned", () => {
   assert.equal(
     resolveVisibleRangeChangeSource({
       initialized: true,
+      nextSignature: "10:40",
+      programmaticSignature: null,
+      hasRecentProgrammaticIntent: false,
+      hasRecentUserViewportIntent: false,
+    }),
+    "user",
+  );
+  assert.equal(
+    resolveVisibleRangeChangeSource({
+      initialized: false,
       nextSignature: "10:40",
       programmaticSignature: null,
       hasRecentProgrammaticIntent: false,
@@ -894,6 +905,16 @@ test("ResearchChartSurface requires explicit viewport input for user-touched ran
       hasRecentUserViewportIntent: true,
     }),
     "user",
+  );
+  assert.equal(
+    resolveVisibleRangeChangeSource({
+      initialized: true,
+      nextSignature: "10:40",
+      programmaticSignature: "10:40",
+      hasRecentProgrammaticIntent: false,
+      hasRecentUserViewportIntent: false,
+    }),
+    "programmatic",
   );
   assert.equal(
     resolveVisibleRangeChangeSource({
@@ -1566,6 +1587,7 @@ test("ResearchChartSurface restores viewport ranges after full resets and user-t
   const source = readResearchChartSurfaceSource();
 
   assert.match(source, /let seriesFullResetDuringSync = false;/);
+  assert.match(source, /if \(initializedRangeRef\.current\) \{\s*markProgrammaticViewportIntent\(\);\s*\}/);
   assert.match(source, /const shouldRestoreRangeAfterFullReset = Boolean/);
   assert.match(source, /userViewportTouched &&\s*!seriesFullResetDuringSync/);
   assert.match(source, /canApplyProgrammaticRangeSync && shouldRestoreRangeAfterFullReset/);

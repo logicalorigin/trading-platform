@@ -263,9 +263,9 @@ const calendarThemeStyle = (theme) => {
   };
 };
 
-const calendarButtonStyle = (style) => ({
-  width: dim(24),
-  height: dim(24),
+const calendarButtonStyle = (style, isPhone = false) => ({
+  width: dim(isPhone ? 32 : 24),
+  height: dim(isPhone ? 32 : 24),
   display: "inline-grid",
   placeItems: "center",
   border: `1px solid ${style.border}`,
@@ -330,27 +330,27 @@ const dayTooltip = (day, currency, maskValues) => {
   ].join("\n");
 };
 
-const CalendarNavButton = ({ label, onClick, children, calendarStyle }) => (
+const CalendarNavButton = ({ label, onClick, children, calendarStyle, isPhone = false }) => (
   <AppTooltip content={label}>
     <button
       type="button"
       className="ra-interactive"
       aria-label={label}
       onClick={onClick}
-      style={calendarButtonStyle(calendarStyle)}
+      style={calendarButtonStyle(calendarStyle, isPhone)}
     >
       {children}
     </button>
   </AppTooltip>
 );
 
-const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
+const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone = false }) => (
   <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
     <div
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-        gap: sp(2),
+        gap: sp(isPhone ? 1 : 2),
       }}
     >
       {PNL_CALENDAR_WEEKDAYS.map((day) => (
@@ -358,7 +358,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
           key={day}
           style={{
             color: T.textMuted,
-            fontSize: fs(7),
+            fontSize: fs(isPhone ? 6 : 7),
             fontFamily: T.sans,
             fontWeight: 400,
             lineHeight: 1,
@@ -371,6 +371,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
       ))}
     </div>
     <div
+      data-testid="account-pnl-calendar-month-grid"
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
@@ -393,12 +394,12 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
             <div
               style={{
                 minWidth: 0,
-                minHeight: dim(38),
+                minHeight: dim(isPhone ? 28 : 38),
                 display: "grid",
                 gridTemplateRows: "auto minmax(0, 1fr)",
                 alignItems: "stretch",
-                gap: sp(2),
-                padding: sp("4px 4px 3px"),
+                gap: sp(isPhone ? 1 : 2),
+                padding: sp(isPhone ? "3px 2px 2px" : "4px 4px 3px"),
                 border: `1px solid ${tone.borderColor}`,
                 borderRadius: 0,
                 background: tone.background,
@@ -409,7 +410,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
               <div
                 style={{
                   color: tone.dayColor,
-                  fontSize: fs(7),
+                  fontSize: fs(isPhone ? 6 : 7),
                   fontFamily: T.mono,
                   fontWeight: 400,
                   lineHeight: 1,
@@ -424,7 +425,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
               <div
                 style={{
                   color: tone.color,
-                  fontSize: fs(8),
+                  fontSize: fs(isPhone ? 7 : 8),
                   fontFamily: T.mono,
                   fontWeight: 400,
                   lineHeight: 1,
@@ -448,7 +449,14 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
   </div>
 );
 
-const YearCalendarGrid = ({ model, currency, maskValues, onSelectMonth, calendarStyle }) => (
+const YearCalendarGrid = ({
+  model,
+  currency,
+  maskValues,
+  onSelectMonth,
+  calendarStyle,
+  isPhone = false,
+}) => (
   <div
     style={{
       display: "grid",
@@ -495,7 +503,7 @@ const YearCalendarGrid = ({ model, currency, maskValues, onSelectMonth, calendar
             onClick={() => onSelectMonth(month.date)}
             style={{
               minWidth: 0,
-              minHeight: dim(43),
+              minHeight: dim(isPhone ? 38 : 43),
               display: "grid",
               alignContent: "center",
               gap: sp(2),
@@ -520,7 +528,7 @@ const YearCalendarGrid = ({ model, currency, maskValues, onSelectMonth, calendar
                     : month.isCurrentMonth
                       ? T.text
                       : T.textSec,
-                fontSize: fs(8),
+                fontSize: fs(isPhone ? 7 : 8),
                 fontFamily: T.mono,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
@@ -534,7 +542,7 @@ const YearCalendarGrid = ({ model, currency, maskValues, onSelectMonth, calendar
               style={{
                 minWidth: 0,
                 color: tone.color,
-                fontSize: fs(8),
+                fontSize: fs(isPhone ? 7 : 8),
                 fontFamily: T.mono,
                 fontWeight: 400,
                 lineHeight: 1,
@@ -630,6 +638,7 @@ const DailyPnlCalendar = ({
   equityPoints = [],
   currency,
   maskValues,
+  isPhone = false,
 }) => {
   const { theme } = useContext(ThemeContext);
   const calendarStyle = useMemo(() => calendarThemeStyle(theme), [theme]);
@@ -709,12 +718,12 @@ const DailyPnlCalendar = ({
   };
 
   return (
-    <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+    <div data-testid="account-pnl-calendar" style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: isPhone ? "stretch" : "center",
           gap: sp(4),
           flexWrap: "wrap",
           minWidth: 0,
@@ -744,7 +753,8 @@ const DailyPnlCalendar = ({
             alignItems: "center",
             gap: sp(3),
             flexWrap: "wrap",
-            justifyContent: "flex-end",
+            justifyContent: isPhone ? "space-between" : "flex-end",
+            flex: isPhone ? "1 1 100%" : undefined,
           }}
         >
           <ToggleGroup options={CALENDAR_VIEW_OPTIONS} value={view} onChange={handleViewChange} />
@@ -753,6 +763,7 @@ const DailyPnlCalendar = ({
               label="Previous period"
               onClick={() => shiftCalendar(-1)}
               calendarStyle={calendarStyle}
+              isPhone={isPhone}
             >
               <ChevronLeft size={dim(14)} strokeWidth={2.3} />
             </CalendarNavButton>
@@ -760,6 +771,7 @@ const DailyPnlCalendar = ({
               label="Next period"
               onClick={() => shiftCalendar(1)}
               calendarStyle={calendarStyle}
+              isPhone={isPhone}
             >
               <ChevronRight size={dim(14)} strokeWidth={2.3} />
             </CalendarNavButton>
@@ -772,6 +784,7 @@ const DailyPnlCalendar = ({
           currency={currency}
           maskValues={maskValues}
           calendarStyle={calendarStyle}
+          isPhone={isPhone}
         />
       ) : (
         <YearCalendarGrid
@@ -780,6 +793,7 @@ const DailyPnlCalendar = ({
           maskValues={maskValues}
           onSelectMonth={selectYearMonth}
           calendarStyle={calendarStyle}
+          isPhone={isPhone}
         />
       )}
       <CalendarSummary
@@ -798,6 +812,7 @@ export const AccountReturnsPanel = ({
   range,
   maskValues = false,
   compact = false,
+  isPhone = false,
   tradesData = null,
   equityPoints = null,
 }) => {
@@ -995,6 +1010,7 @@ export const AccountReturnsPanel = ({
         equityPoints={equityPoints || []}
         currency={currency}
         maskValues={maskValues}
+        isPhone={isPhone}
       />
 
       <TradeOutcomeBuckets

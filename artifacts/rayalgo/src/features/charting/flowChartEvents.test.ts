@@ -6,6 +6,7 @@ import {
   buildFlowChartEventPlacements,
   buildFlowChartVolumeBuckets,
   buildFlowTooltipModel,
+  resolveFlowChartSourceBasis,
   summarizeFlowChartBucketPlacement,
 } from "./flowChartEvents";
 import type { ChartBar, ChartBarRange } from "./types";
@@ -257,6 +258,38 @@ test("buildFlowChartEventPlacements only renders confirmed trades as price marke
   assert.equal(placements[0].eventIso, "2026-04-30T14:31:00.000Z");
   assert.equal(placements[0].timeBasis, "trade_reported");
   assert.equal(placements[0].timeSourceField, "sip_timestamp");
+});
+
+test("buildFlowChartEventPlacements treats confirmed source basis as marker eligible over stale snapshot basis", () => {
+  const event = flowEvent({
+    id: "confirmed-stale-basis",
+    time: "2026-04-30T14:31:00.000Z",
+    metadata: {
+      basis: "snapshot",
+      sourceBasis: "confirmed_trade",
+      timeBasis: "trade_reported",
+      chartTimeSourceField: "occurredAt",
+      cp: "C",
+      premium: 125_000,
+    },
+  });
+  const placements = buildFlowChartEventPlacements([event], {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+  const diagnostics = summarizeFlowChartBucketPlacement([event], {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+
+  assert.equal(resolveFlowChartSourceBasis(event), "confirmed_trade");
+  assert.equal(placements.length, 1);
+  assert.equal(placements[0].event.id, "confirmed-stale-basis");
+  assert.equal(placements[0].sourceBasis, "confirmed_trade");
+  assert.equal(diagnostics.confirmedTradeFlowEventCount, 1);
+  assert.equal(diagnostics.markerEligibleEventCount, 1);
+  assert.equal(diagnostics.markerPlacementCount, 1);
+  assert.equal(diagnostics.markerSnapshotSkippedEventCount, 0);
 });
 
 test("buildFlowChartBuckets aggregates premium, bias, top contract, and intensity", () => {

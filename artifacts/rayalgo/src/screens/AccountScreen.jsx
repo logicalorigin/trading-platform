@@ -19,8 +19,8 @@ import {
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
+  useAccountPageSnapshotStream,
   useBrokerStreamFreshnessSnapshot,
-  useShadowAccountSnapshotStream,
 } from "../features/platform/live-streams";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
@@ -397,16 +397,6 @@ export const AccountScreen = ({
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
-  const [secondaryAccountPanelsReady, setSecondaryAccountPanelsReady] =
-    useState(false);
-
-  useEffect(() => {
-    if (!isVisible || secondaryAccountPanelsReady) return undefined;
-    const timerId = window.setTimeout(() => {
-      setSecondaryAccountPanelsReady(true);
-    }, 600);
-    return () => window.clearTimeout(timerId);
-  }, [isVisible, secondaryAccountPanelsReady]);
 
   useEffect(() => {
     writeAccountWorkspaceDefault("accountRange", range);
@@ -468,16 +458,63 @@ export const AccountScreen = ({
     }),
     [],
   );
+  const closedTradeParams = useMemo(
+    () => ({
+      ...modeParams,
+      symbol: tradeFilters.symbol || undefined,
+      assetClass:
+        tradeFilters.assetClass && tradeFilters.assetClass !== "all"
+          ? tradeFilters.assetClass
+          : undefined,
+      pnlSign:
+        tradeFilters.pnlSign && tradeFilters.pnlSign !== "all"
+          ? tradeFilters.pnlSign
+          : undefined,
+      holdDuration:
+        tradeFilters.holdDuration && tradeFilters.holdDuration !== "all"
+          ? tradeFilters.holdDuration
+          : undefined,
+      from: tradeFilters.from
+        ? new Date(`${tradeFilters.from}T00:00:00.000Z`).toISOString()
+        : undefined,
+      to: tradeFilters.to
+        ? new Date(`${tradeFilters.to}T23:59:59.999Z`).toISOString()
+        : undefined,
+    }),
+    [modeParams, tradeFilters],
+  );
+  const performanceCalendarParams = useMemo(
+    () => buildPerformanceCalendarParams(modeParams),
+    [modeParams],
+  );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
+  const accountPageStreamFreshness = useAccountPageSnapshotStream({
+    accountId: accountRequestId,
+    mode: modeParams.mode,
+    range,
+    orderTab,
+    assetClass: assetFilter === "all" ? undefined : assetFilter,
+    tradeFilters: {
+      from: closedTradeParams.from,
+      to: closedTradeParams.to,
+      symbol: closedTradeParams.symbol,
+      pnlSign: closedTradeParams.pnlSign,
+      holdDuration: closedTradeParams.holdDuration,
+    },
+    performanceCalendarFrom: performanceCalendarParams.from,
+    enabled: Boolean(isVisible && accountQueriesEnabled),
+  });
   const refreshPolicy = useMemo(
     () =>
       buildAccountRefreshPolicy({
         isVisible,
+        accountPageStreamFresh: accountPageStreamFreshness.accountFresh,
         accountStreamFresh: brokerStreamFreshness.accountFresh,
         orderStreamFresh: brokerStreamFreshness.orderFresh,
         shadowMode,
       }),
     [
+      accountPageStreamFreshness.accountFresh,
       brokerStreamFreshness.accountFresh,
       brokerStreamFreshness.orderFresh,
       isVisible,
@@ -490,28 +527,25 @@ export const AccountScreen = ({
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
   const equityHistoryQueriesEnabled = Boolean(accountQueriesEnabled);
-  const secondaryAccountQueriesEnabled = Boolean(
-    accountQueriesEnabled && secondaryAccountPanelsReady,
-  );
-  const benchmarkQueriesEnabled = Boolean(
-    equityHistoryQueriesEnabled && secondaryAccountPanelsReady,
-  );
+  const secondaryAccountQueriesEnabled = Boolean(accountQueriesEnabled);
+  const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
   const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
     secondaryAccountQueriesEnabled,
   );
-  useShadowAccountSnapshotStream({
-    enabled: Boolean(isVisible && shadowMode),
-  });
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",
-    detail: refreshPolicy.streamBacked ? "stream" : "10s fallback",
+    detail: refreshPolicy.streamBacked
+      ? "1s stream"
+      : shadowMode
+        ? "30s fallback"
+        : "10s fallback",
     priority: 4,
   });
   useRuntimeWorkloadFlag("account:equity", Boolean(chartRefreshInterval), {
     kind: "poll",
     label: "Account equity",
-    detail: "60s",
+    detail: refreshPolicy.streamBacked ? "1s stream" : "60s",
     priority: 6,
   });
 
@@ -649,35 +683,6 @@ export const AccountScreen = ({
         ),
       },
     },
-  );
-  const closedTradeParams = useMemo(
-    () => ({
-      ...modeParams,
-      symbol: tradeFilters.symbol || undefined,
-      assetClass:
-        tradeFilters.assetClass && tradeFilters.assetClass !== "all"
-          ? tradeFilters.assetClass
-          : undefined,
-      pnlSign:
-        tradeFilters.pnlSign && tradeFilters.pnlSign !== "all"
-          ? tradeFilters.pnlSign
-          : undefined,
-      holdDuration:
-        tradeFilters.holdDuration && tradeFilters.holdDuration !== "all"
-          ? tradeFilters.holdDuration
-          : undefined,
-      from: tradeFilters.from
-        ? new Date(`${tradeFilters.from}T00:00:00.000Z`).toISOString()
-        : undefined,
-      to: tradeFilters.to
-        ? new Date(`${tradeFilters.to}T23:59:59.999Z`).toISOString()
-        : undefined,
-    }),
-    [modeParams, tradeFilters],
-  );
-  const performanceCalendarParams = useMemo(
-    () => buildPerformanceCalendarParams(modeParams),
-    [modeParams],
   );
   const performanceCalendarEquityQuery = useGetAccountEquityHistory(
     accountRequestId,
@@ -821,7 +826,6 @@ export const AccountScreen = ({
   useEffect(() => {
     if (
       !isVisible ||
-      !secondaryAccountPanelsReady ||
       !accountRequestId ||
       shadowMode
     ) {
@@ -863,7 +867,6 @@ export const AccountScreen = ({
     modeParams,
     queryClient,
     range,
-    secondaryAccountPanelsReady,
     shadowMode,
   ]);
 
@@ -1185,6 +1188,7 @@ export const AccountScreen = ({
               tradesData={returnsCalendarTradesData}
               equityPoints={returnsCalendarEquityPoints}
               compact
+              isPhone={accountIsPhone}
             />
           </div>
           <div className="ra-account-overview-cell ra-account-overview-allocation">

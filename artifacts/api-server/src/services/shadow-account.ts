@@ -30,6 +30,7 @@ import {
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
 import type { BrokerBarSnapshot, PlaceOrderInput } from "../providers/ibkr/client";
 import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
+import { notifyShadowAccountChanged } from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
 import {
   assertIbkrGatewayTradingAvailable,
@@ -858,6 +859,7 @@ async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) 
       asOf,
     })
     .returning();
+  notifyShadowAccountChanged();
   return snapshot;
 }
 

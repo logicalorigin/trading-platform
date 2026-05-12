@@ -16,6 +16,7 @@ import {
   selectRelevantOptionStrikes,
   toQuoteSnapshot,
   TwsIbkrBridgeProvider,
+  __twsProviderTestInternals,
 } from "./tws-provider";
 import {
   __resetBridgeSchedulerForTests,
@@ -63,6 +64,32 @@ test("option quote market data type switches live config to frozen outside regul
       new Date("2026-05-05T20:10:00.000Z"),
     ),
     MarketDataType.DELAYED,
+  );
+});
+
+test("TWS historical duration pads intraday extended-hour windows", () => {
+  assert.equal(
+    __twsProviderTestInternals.buildHistoryDuration("1m", 900, true),
+    "2 D",
+  );
+  assert.equal(
+    __twsProviderTestInternals.buildHistoryDuration("15m", 1_000, false),
+    "53 D",
+  );
+});
+
+test("TWS historical data exchange accepts IBKR overnight venues", () => {
+  assert.equal(
+    __twsProviderTestInternals.normalizeHistoricalDataExchange("OVERNIGHT"),
+    "OVERNIGHT",
+  );
+  assert.equal(
+    __twsProviderTestInternals.normalizeHistoricalDataExchange("ibeos"),
+    "IBEOS",
+  );
+  assert.equal(
+    __twsProviderTestInternals.normalizeHistoricalDataExchange("SMART"),
+    null,
   );
 });
 

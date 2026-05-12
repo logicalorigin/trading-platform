@@ -278,15 +278,18 @@ export const resolveVisibleRangeChangeSource = ({
     return "user";
   }
 
+  if (!initialized) {
+    return "programmatic";
+  }
+
   if (
-    (programmaticSignature === nextSignature &&
-      (hasRecentProgrammaticIntent || !initialized)) ||
-    hasRecentProgrammaticIntent
+    hasRecentProgrammaticIntent ||
+    (programmaticSignature != null && programmaticSignature === nextSignature)
   ) {
     return "programmatic";
   }
 
-  return "programmatic";
+  return "user";
 };
 
 export const resolvePrependedVisibleLogicalRange = ({
@@ -6618,8 +6621,12 @@ export const ResearchChartSurface = ({
           rangeIdentityKeyRef.current &&
           effectiveViewportSnapshot.userTouched),
     );
+    if (initializedRangeRef.current) {
+      markProgrammaticViewportIntent();
+    }
     if (userViewportTouched) {
       autoHydrationViewportRef.current = false;
+      realtimeFollowRef.current = false;
     }
     const shouldFollowLatestBars = shouldAutoFollowLatestBars({
       realtimeFollow: !userViewportTouched && realtimeFollowRef.current,
@@ -8794,6 +8801,21 @@ export const ResearchChartSurface = ({
         : flowChartBucketDiagnostics.bucketedEventCount < uniqueFlowEventCount
           ? "partial"
           : "hydrated";
+  const flowMarkerState = !showFlowEvents
+    ? "disabled"
+    : flowChartEventCount <= 0
+      ? chartFlowHydrationState
+      : confirmedTradeFlowEventCount <= 0
+        ? "no-confirmed-flow"
+        : flowChartBucketDiagnostics.markerEligibleEventCount <= 0
+          ? "no-marker-eligible-flow"
+          : flowChartBucketDiagnostics.markerPlacementCount <= 0
+            ? flowChartBucketDiagnostics.droppedMarkerOutsideBarCount > 0
+              ? "confirmed-outside-loaded-bars"
+              : "confirmed-unplaced"
+            : renderedFlowMarkerCount <= 0
+              ? "off-viewport"
+              : "rendered";
   const extendedSessionBarCount =
     marketSessionBarCounts.overnight +
     marketSessionBarCounts.pre +
@@ -8864,6 +8886,7 @@ export const ResearchChartSurface = ({
       data-chart-flow-marker-other-skip-count={
         flowChartBucketDiagnostics.markerOtherSkippedEventCount
       }
+      data-chart-flow-marker-state={flowMarkerState}
       data-chart-flow-marker-count={renderedFlowMarkerCount}
       data-chart-flow-volume-count={flowVolumeOverlays.length}
       data-chart-regular-volume-enabled={showVolume ? "true" : "false"}

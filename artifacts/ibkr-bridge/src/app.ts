@@ -692,6 +692,10 @@ app.get("/bars", async (req, res) => {
           : req.query.source === "trades"
             ? "trades"
             : undefined,
+      exchange:
+        typeof req.query.exchange === "string" && req.query.exchange.trim()
+          ? req.query.exchange.trim()
+          : undefined,
     }),
   });
 });
@@ -735,6 +739,10 @@ app.get("/streams/bars", async (req, res, next) => {
         : req.query.source === "trades"
           ? "trades"
           : undefined,
+    exchange:
+      typeof req.query.exchange === "string" && req.query.exchange.trim()
+        ? req.query.exchange.trim()
+        : undefined,
   } as const;
 
   res.status(200);

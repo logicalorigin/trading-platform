@@ -175,7 +175,6 @@ async function mockMarketApi(
           flowEvent("SPY", {
             id: "SPY-confirmed-call",
             provider: "polygon",
-            basis: "trade",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(44),
             premium: 350_000,
@@ -448,6 +447,7 @@ test("Market chart renders confirmed prints while keeping snapshots off price ma
   await expect(
     surface.locator('[data-chart-flow-marker-basis="confirmed_trade"]').first(),
   ).toBeVisible();
+  await expect(surface).toHaveAttribute("data-chart-flow-marker-state", "rendered");
   await expect(
     surface.locator('[data-chart-flow-marker-basis="snapshot_activity"]'),
   ).toHaveCount(0);

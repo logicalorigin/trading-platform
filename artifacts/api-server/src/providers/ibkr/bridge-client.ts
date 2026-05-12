@@ -1444,6 +1444,7 @@ export class IbkrBridgeClient {
       providerContractId?: string | null;
       outsideRth?: boolean;
       source?: HistoryDataSource;
+      exchange?: string | null;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,
@@ -1460,6 +1461,7 @@ export class IbkrBridgeClient {
           ? String(input.outsideRth)
           : undefined,
       source: input.source,
+      exchange: input.exchange,
     });
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
@@ -1684,6 +1686,7 @@ export class IbkrBridgeClient {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
     signal?: AbortSignal;
   }): Promise<BrokerBarSnapshot[]> {
     const bridgeSymbol = toBridgeStockSymbolForRequest(input);
@@ -1707,6 +1710,7 @@ export class IbkrBridgeClient {
         providerContractId: input.providerContractId,
         outsideRth: input.outsideRth,
         source: input.source,
+        exchange: input.exchange,
       },
     );
     return payload.bars.map((bar) => ({

@@ -175,6 +175,7 @@ export interface IbkrBridgeProvider {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
   }): Promise<BrokerBarSnapshot[]>;
   getOptionChain(input: {
     underlying: string;
@@ -255,6 +256,7 @@ export interface IbkrBridgeProvider {
       providerContractId?: string | null;
       outsideRth?: boolean;
       source?: HistoryDataSource;
+      exchange?: string | null;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,

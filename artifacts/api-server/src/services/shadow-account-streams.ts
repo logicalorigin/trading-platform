@@ -7,10 +7,11 @@ import {
   getShadowAccountRisk,
   getShadowAccountSummary,
 } from "./shadow-account";
+import { subscribeShadowAccountChanges } from "./shadow-account-events";
 
 type Unsubscribe = () => void;
 const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 2_000;
-export const SHADOW_ACCOUNT_STREAM_INTERVAL_MS = 5_000;
+export const SHADOW_ACCOUNT_STREAM_INTERVAL_MS = 2_000;
 
 type ShadowAccountSnapshotBase = {
   summary: Awaited<ReturnType<typeof getShadowAccountSummary>>;
@@ -30,6 +31,11 @@ let shadowAccountSnapshotBaseCache:
   | null = null;
 let shadowAccountSnapshotBaseInFlight: Promise<ShadowAccountSnapshotBase> | null =
   null;
+
+export function invalidateShadowAccountSnapshotBaseCache() {
+  shadowAccountSnapshotBaseCache = null;
+}
+
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -73,32 +79,47 @@ function createPollingStream<T>({
   intervalMs,
   fetchSnapshot,
   onSnapshot,
+  onPollSuccess,
+  subscribeImmediate,
+  beforeImmediateSnapshot,
 }: {
   intervalMs: number;
   fetchSnapshot: () => Promise<T>;
   onSnapshot: (snapshot: T) => void;
+  onPollSuccess?: (input: { snapshot: T; changed: boolean }) => void | Promise<void>;
+  subscribeImmediate?: (listener: () => void) => Unsubscribe;
+  beforeImmediateSnapshot?: () => void;
 }): Unsubscribe {
   let active = true;
   let inFlight = false;
+  let queued = false;
   let lastSignature = "";
 
   const tick = async () => {
     if (!active || inFlight) {
+      if (inFlight) {
+        queued = true;
+      }
       return;
     }
 
     inFlight = true;
     try {
-      const snapshot = await fetchSnapshot();
-      if (!active) {
-        return;
-      }
+      do {
+        queued = false;
+        const snapshot = await fetchSnapshot();
+        if (!active) {
+          return;
+        }
 
-      const signature = stableStringify(snapshot);
-      if (signature !== lastSignature) {
-        lastSignature = signature;
-        onSnapshot(snapshot);
-      }
+        const signature = stableStringify(snapshot);
+        const changed = signature !== lastSignature;
+        if (changed) {
+          lastSignature = signature;
+          onSnapshot(snapshot);
+        }
+        await onPollSuccess?.({ snapshot, changed });
+      } while (active && queued);
     } catch (error) {
       logger.warn({ err: error }, "Shadow account stream polling failed");
     } finally {
@@ -110,11 +131,17 @@ function createPollingStream<T>({
     void tick();
   }, intervalMs);
   timer.unref?.();
+  const unsubscribeImmediate =
+    subscribeImmediate?.(() => {
+      beforeImmediateSnapshot?.();
+      void tick();
+    }) ?? (() => undefined);
   void tick();
 
   return () => {
     active = false;
     clearInterval(timer);
+    unsubscribeImmediate();
   };
 }
 
@@ -189,10 +216,20 @@ export function subscribeShadowAccountSnapshots(
   onSnapshot: (
     payload: Awaited<ReturnType<typeof fetchShadowAccountSnapshotPayload>>,
   ) => void,
+  options: {
+    onPollSuccess?: (input: {
+      payload: Awaited<ReturnType<typeof fetchShadowAccountSnapshotPayload>>;
+      changed: boolean;
+    }) => void | Promise<void>;
+  } = {},
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: SHADOW_ACCOUNT_STREAM_INTERVAL_MS,
     fetchSnapshot: fetchShadowAccountSnapshotPayload,
     onSnapshot,
+    subscribeImmediate: subscribeShadowAccountChanges,
+    beforeImmediateSnapshot: invalidateShadowAccountSnapshotBaseCache,
+    onPollSuccess: ({ snapshot, changed }) =>
+      options.onPollSuccess?.({ payload: snapshot, changed }),
   });
 }

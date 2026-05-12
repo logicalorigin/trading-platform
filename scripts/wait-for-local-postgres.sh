@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Lightweight readiness check for the workspace-local Postgres unix socket.
-# Used by the api-server dev script to give the dedicated `Local Postgres`
-# workflow a brief head start during cold app bring-up. We deliberately do
-# NOT start Postgres from inside the api-server cgroup any more — Postgres
-# is its own workflow so that an api-server restart no longer SIGKILLs it.
+# Used by one-off checks that only need to verify whether workspace-local
+# Postgres is already reachable. The api-server dev command starts local
+# Postgres via scripts/start-local-postgres.sh because root .replit workflows
+# are intentionally not used for app bring-up in this workspace.
 #
 # Fail-fast in local mode: exits non-zero with a clear operator message
 # if Postgres is not reachable within 10s. Skips entirely (exits 0) when
@@ -37,6 +37,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 
 echo "[wait-for-local-postgres] FATAL: workspace-local Postgres is not reachable on $SOCK after 10s, but RAYALGO_DATABASE_SOURCE/LOCAL_DATABASE_URL says local is the selected DB source." >&2
-echo "[wait-for-local-postgres] Start the 'Local Postgres' workflow (it should autoStart with the app), or run: bash scripts/run-local-postgres.sh" >&2
+echo "[wait-for-local-postgres] Start it with: bash scripts/start-local-postgres.sh" >&2
 echo "[wait-for-local-postgres] Refusing to bring up the api-server with a missing local DB. Exiting non-zero." >&2
 exit 1

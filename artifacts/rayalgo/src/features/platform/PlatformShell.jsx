@@ -6,10 +6,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { List, Menu, Tv } from "lucide-react";
+import {
+  Activity,
+  ChartCandlestick,
+  Ellipsis,
+  LineChart,
+  List,
+  Tv,
+  WalletCards,
+} from "lucide-react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
-import { MobileNavDrawer } from "./MobileNavDrawer.jsx";
+import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
+import { MobileMoreSheet } from "./MobileMoreSheet.jsx";
 import { MobileWatchlistDrawer } from "./MobileWatchlistDrawer.jsx";
 import {
   SCREENS,
@@ -27,6 +36,14 @@ import {
 
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
+const MOBILE_PRIMARY_SCREEN_IDS = ["market", "flow", "trade", "account"];
+const MOBILE_PRIMARY_SCREEN_SET = new Set(MOBILE_PRIMARY_SCREEN_IDS);
+const MOBILE_NAV_ICONS = {
+  market: LineChart,
+  flow: Activity,
+  trade: ChartCandlestick,
+  account: WalletCards,
+};
 const BloombergLiveDock = lazyWithRetry(
   () => import("./BloombergLiveDock"),
   { label: "BloombergLiveDock" },
@@ -98,6 +115,196 @@ const BloombergLiveDockLauncher = () => {
   );
 };
 
+const fmtCompactCurrency = (value, masked = false) => {
+  if (masked) return "****";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return MISSING_VALUE;
+  if (Math.abs(numeric) >= 1e6) return `$${(numeric / 1e6).toFixed(2)}M`;
+  if (Math.abs(numeric) >= 1e3) return `$${(numeric / 1e3).toFixed(1)}K`;
+  return `$${numeric.toFixed(0)}`;
+};
+
+const MobileHeaderChip = ({ label, value, tone = T.textSec }) => (
+  <span
+    style={{
+      minWidth: 0,
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(4),
+      padding: sp("0 6px"),
+      height: dim(28),
+      border: `1px solid ${T.border}`,
+      background: T.bg1,
+      color: tone,
+      fontFamily: T.mono,
+      fontSize: fs(9),
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+    }}
+  >
+    <span style={{ color: T.textMuted, fontSize: fs(7) }}>{label}</span>
+    <span
+      style={{
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {value || MISSING_VALUE}
+    </span>
+  </span>
+);
+
+const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
+  <AppTooltip content={label}>
+    <button
+      className="ra-interactive"
+      data-testid={testId}
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      style={{
+        width: dim(32),
+        minWidth: dim(32),
+        height: dim(32),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: `1px solid ${active ? T.accent : T.border}`,
+        background: active ? `${T.accent}18` : T.bg2,
+        color: active ? T.accent : T.textSec,
+        borderRadius: dim(4),
+        cursor: "pointer",
+      }}
+    >
+      <Icon size={16} strokeWidth={2.2} />
+    </button>
+  </AppTooltip>
+);
+
+const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }) => (
+  <nav
+    data-testid="mobile-bottom-nav"
+    aria-label="Primary mobile navigation"
+    style={{
+      flexShrink: 0,
+      display: "grid",
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+      gap: sp(2),
+      padding: sp("4px 6px max(5px, env(safe-area-inset-bottom))"),
+      background: T.bg1,
+      borderTop: `1px solid ${T.border}`,
+      minHeight: `calc(${dim(54)}px + env(safe-area-inset-bottom))`,
+    }}
+  >
+    {MOBILE_PRIMARY_SCREEN_IDS.map((screenId) => {
+      const screen = SCREENS.find((item) => item.id === screenId);
+      const Icon = MOBILE_NAV_ICONS[screenId] || Activity;
+      const active = activeScreen === screenId;
+      const isTradeTab = screenId === "trade";
+      const totalAlerts = watchlistsBusy?.totalAlerts || 0;
+      const winAlerts = watchlistsBusy?.winAlerts || 0;
+      const lossAlerts = watchlistsBusy?.lossAlerts || 0;
+      const hasAlerts = isTradeTab && totalAlerts > 0;
+      const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
+      return (
+        <button
+          key={screenId}
+          type="button"
+          data-testid={`mobile-bottom-nav-${screenId}`}
+          aria-current={active ? "page" : undefined}
+          onClick={() => setScreen(screenId)}
+          className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
+          style={{
+            ...motionVars({ accent: hasAlerts ? alertColor : T.accent }),
+            minWidth: 0,
+            minHeight: dim(46),
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: sp(2),
+            border: `1px solid ${active ? T.accent : "transparent"}`,
+            background: active ? T.bg3 : "transparent",
+            color: active ? T.text : T.textDim,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: fs(9),
+            position: "relative",
+          }}
+        >
+          <Icon size={17} strokeWidth={2.1} />
+          <span
+            style={{
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {screen?.label || screenId}
+          </span>
+          {hasAlerts ? (
+            <span
+              style={{
+                position: "absolute",
+                top: 3,
+                right: "24%",
+                minWidth: dim(15),
+                height: dim(15),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: dim(999),
+                background: alertColor,
+                color: "#fff",
+                fontFamily: T.mono,
+                fontSize: fs(7),
+              }}
+            >
+              {totalAlerts}
+            </span>
+          ) : null}
+        </button>
+      );
+    })}
+    <button
+      type="button"
+      data-testid="mobile-bottom-nav-more"
+      aria-current={!MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? "page" : undefined}
+      onClick={onOpenMore}
+      className={joinMotionClasses(
+        "ra-interactive",
+        !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) && "ra-focus-rail",
+      )}
+      style={{
+        ...motionVars({ accent: T.accent }),
+        minWidth: 0,
+        minHeight: dim(46),
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(2),
+        border: `1px solid ${
+          !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : "transparent"
+        }`,
+        background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
+          ? T.bg3
+          : "transparent",
+        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.text : T.textDim,
+        cursor: "pointer",
+        fontFamily: T.sans,
+        fontSize: fs(9),
+      }}
+    >
+      <Ellipsis size={17} strokeWidth={2.1} />
+      <span>More</span>
+    </button>
+  </nav>
+);
+
 export const PlatformShell = ({
   activeScreen,
   mountedScreens,
@@ -155,12 +362,12 @@ export const PlatformShell = ({
 }) => {
   const viewport = useViewport();
   const { isPhone, isNarrow } = viewport.flags;
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [mobileActivityOpen, setMobileActivityOpen] = useState(false);
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
+  const [mobileBloombergMounted, setMobileBloombergMounted] = useState(false);
   const mobileAutoCollapseRef = useRef(false);
   const previousActiveScreenRef = useRef(activeScreen);
-  const activeScreenMeta =
-    SCREENS.find((screen) => screen.id === activeScreen) || SCREENS[0];
   const handleSetScreen = useCallback(
     (screenId) => {
       if (!screenId || screenId === activeScreen) {
@@ -183,7 +390,8 @@ export const PlatformShell = ({
   useEffect(() => {
     if (!isPhone) {
       mobileAutoCollapseRef.current = false;
-      setMobileNavOpen(false);
+      setMobileMoreOpen(false);
+      setMobileActivityOpen(false);
       setMobileWatchlistOpen(false);
       return;
     }
@@ -210,6 +418,13 @@ export const PlatformShell = ({
     : isNarrow
       ? "minmax(0, 1fr) auto"
       : "auto minmax(0, 1fr) auto";
+  const compactAccountId = primaryAccountId || accounts?.[0]?.id || MISSING_VALUE;
+  const compactNetLiq = fmtCompactCurrency(
+    primaryAccount?.netLiquidation,
+    maskAccountValues,
+  );
+  const compactWatchlist = (activeWatchlist?.name || "Core").toUpperCase();
+  const compactIbkrReady = Boolean(session?.configured?.ibkr);
 
   return (
   <div
@@ -228,7 +443,11 @@ export const PlatformShell = ({
     }}
   >
     <style>{fontCss}</style>
-    <ToastStack toasts={toasts} onDismiss={onDismissToast} />
+    <ToastStack
+      toasts={toasts}
+      onDismiss={onDismissToast}
+      bottomOffset={isPhone ? 76 : 20}
+    />
     {latencyDebugEnabled && LatencyDebugStripComponent ? (
       <LatencyDebugStripComponent
         screen={activeScreen}
@@ -250,219 +469,205 @@ export const PlatformShell = ({
         flexShrink: 0,
       }}
     >
-      <div
-        data-testid="platform-screen-nav"
-        className="ra-hide-scrollbar"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: sp(2),
-          minWidth: 0,
-          flexWrap: "nowrap",
-          overflowX: "auto",
-          gridColumn: isPhone ? "1 / -1" : undefined,
-        }}
-      >
-        {isPhone ? (
-          <>
-          <AppTooltip content="Open navigation"><button
-            className="ra-interactive"
-            data-testid="mobile-nav-trigger"
-            type="button"
-            onClick={() => setMobileNavOpen(true)}
-            aria-label="Open navigation"
-            style={{
-              width: dim(36),
-              minWidth: dim(36),
-              height: dim(36),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textSec,
-              borderRadius: dim(4),
-              cursor: "pointer",
-              fontSize: fs(14),
-              fontWeight: 400,
-            }}
-          >
-            <Menu size={17} strokeWidth={2.2} />
-          </button></AppTooltip>
+      {isPhone ? (
+        <>
           <div
-            data-testid="mobile-nav-active-screen"
+            data-testid="mobile-top-chrome"
             style={{
-              minHeight: dim(36),
-              flex: "1 1 auto",
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+              alignItems: "center",
+              gap: sp(5),
               minWidth: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(7),
-              padding: sp("0 9px"),
-              border: `1px solid ${T.border}`,
-              background: T.bg1,
-              color: T.text,
-              fontFamily: T.sans,
-              fontSize: fs(11),
-              fontWeight: 400,
-              whiteSpace: "nowrap",
             }}
           >
-            <span aria-hidden="true" style={{ color: T.accent }}>
-              {activeScreenMeta.icon}
-            </span>
-            <span>{activeScreenMeta.label}</span>
-          </div>
-          <AppTooltip content="Open watchlist"><button
-            className="ra-interactive"
-            data-testid="mobile-watchlist-trigger"
-            type="button"
-            onClick={() => setMobileWatchlistOpen(true)}
-            aria-label="Open watchlist"
-            style={{
-              width: dim(36),
-              minWidth: dim(36),
-              height: dim(36),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textSec,
-              borderRadius: dim(4),
-              cursor: "pointer",
-              fontSize: fs(14),
-              fontWeight: 400,
-            }}
-          >
-            <List size={17} strokeWidth={2.2} />
-          </button></AppTooltip>
-          </>
-        ) : SCREENS.map((screen) => {
-          const isTradeTab = screen.id === "trade";
-          const totalAlerts = watchlistsBusy?.totalAlerts || 0;
-          const winAlerts = watchlistsBusy?.winAlerts || 0;
-          const lossAlerts = watchlistsBusy?.lossAlerts || 0;
-          const hasAlerts = isTradeTab && totalAlerts > 0;
-          const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
-          const pulseAnim = hasAlerts
-            ? lossAlerts > winAlerts
-              ? "pulseAlertLoss 1.8s ease-in-out infinite"
-              : "pulseAlert 1.8s ease-in-out infinite"
-            : "none";
-          return (
-            <AppTooltip key={screen.id} content={
-                hasAlerts
-                  ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
-                  : screen.label
-              }><button
-              key={screen.id}
-              className={joinMotionClasses(
-                "ra-interactive",
-                activeScreen === screen.id && "ra-focus-rail",
-              )}
-              onClick={() => handleSetScreen(screen.id)}
+            <div
+              className="ra-hide-scrollbar"
               style={{
-                ...motionVars({
-                  accent: hasAlerts ? alertColor : T.accent,
-                }),
-                padding: sp("3px 6px"),
-                minHeight: dim(isPhone ? 32 : 28),
-                fontSize: fs(10),
-                fontWeight: 400,
-                fontFamily: T.sans,
-                background: activeScreen === screen.id ? T.bg3 : "transparent",
-                border: `1px solid ${activeScreen === screen.id ? T.accent : T.border}`,
-                borderRadius: 0,
-                cursor: "pointer",
-                color: activeScreen === screen.id ? T.text : T.textDim,
-                transition:
-                  "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
-                animation: pulseAnim,
-                position: "relative",
-                whiteSpace: "nowrap",
-              }}
-              onMouseEnter={(event) => {
-                if (activeScreen === screen.id) return;
-                event.currentTarget.style.color = T.textSec;
-                event.currentTarget.style.background = T.bg2;
-                event.currentTarget.style.borderColor = T.textMuted;
-              }}
-              onMouseLeave={(event) => {
-                if (activeScreen === screen.id) return;
-                event.currentTarget.style.color = T.textDim;
-                event.currentTarget.style.background = "transparent";
-                event.currentTarget.style.borderColor = T.border;
+                display: "flex",
+                alignItems: "center",
+                gap: sp(4),
+                minWidth: 0,
+                overflowX: "auto",
               }}
             >
-              {screen.label}
-              {hasAlerts ? (
-                <span
+              <MobileHeaderChip label="ACCT" value={compactAccountId} />
+              <MobileHeaderChip label="NLV" value={compactNetLiq} tone={T.text} />
+              <MobileHeaderChip
+                label="IBKR"
+                value={compactIbkrReady ? "ON" : "OFF"}
+                tone={compactIbkrReady ? T.green : T.red}
+              />
+              <MobileHeaderChip label="SYM" value={selectedSymbol} tone={T.text} />
+              <MobileHeaderChip label="WL" value={compactWatchlist} />
+            </div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+              <MobileIconButton
+                Icon={Activity}
+                label="Open activity and notifications"
+                testId="mobile-activity-trigger"
+                onClick={() => setMobileActivityOpen(true)}
+                active={mobileActivityOpen}
+              />
+              <MobileIconButton
+                Icon={List}
+                label="Open watchlist"
+                testId="mobile-watchlist-trigger"
+                onClick={() => setMobileWatchlistOpen(true)}
+                active={mobileWatchlistOpen}
+              />
+            </div>
+          </div>
+          <div
+            data-testid="mobile-kpi-rail"
+            className="ra-hide-scrollbar"
+            style={{
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              overflowX: "auto",
+            }}
+          >
+            <HeaderKpiStripComponent onSelect={onSelectSymbol} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div
+            data-testid="platform-screen-nav"
+            className="ra-hide-scrollbar"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(2),
+              minWidth: 0,
+              flexWrap: "nowrap",
+              overflowX: "auto",
+            }}
+          >
+            {SCREENS.map((screen) => {
+              const isTradeTab = screen.id === "trade";
+              const totalAlerts = watchlistsBusy?.totalAlerts || 0;
+              const winAlerts = watchlistsBusy?.winAlerts || 0;
+              const lossAlerts = watchlistsBusy?.lossAlerts || 0;
+              const hasAlerts = isTradeTab && totalAlerts > 0;
+              const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
+              const pulseAnim = hasAlerts
+                ? lossAlerts > winAlerts
+                  ? "pulseAlertLoss 1.8s ease-in-out infinite"
+                  : "pulseAlert 1.8s ease-in-out infinite"
+                : "none";
+              return (
+                <AppTooltip key={screen.id} content={
+                    hasAlerts
+                      ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
+                      : screen.label
+                  }><button
+                  key={screen.id}
+                  className={joinMotionClasses(
+                    "ra-interactive",
+                    activeScreen === screen.id && "ra-focus-rail",
+                  )}
+                  onClick={() => handleSetScreen(screen.id)}
                   style={{
-                    marginLeft: sp(3),
-                    padding: sp("0px 4px"),
-                    borderRadius: 0,
-                    background: alertColor,
-                    color: "#fff",
-                    fontSize: fs(8),
+                    ...motionVars({
+                      accent: hasAlerts ? alertColor : T.accent,
+                    }),
+                    padding: sp("3px 6px"),
+                    minHeight: dim(28),
+                    fontSize: fs(10),
                     fontWeight: 400,
                     fontFamily: T.sans,
-                    letterSpacing: "0.04em",
-                    verticalAlign: "middle",
+                    background: activeScreen === screen.id ? T.bg3 : "transparent",
+                    border: `1px solid ${activeScreen === screen.id ? T.accent : T.border}`,
+                    borderRadius: 0,
+                    cursor: "pointer",
+                    color: activeScreen === screen.id ? T.text : T.textDim,
+                    transition:
+                      "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
+                    animation: pulseAnim,
+                    position: "relative",
+                    whiteSpace: "nowrap",
+                  }}
+                  onMouseEnter={(event) => {
+                    if (activeScreen === screen.id) return;
+                    event.currentTarget.style.color = T.textSec;
+                    event.currentTarget.style.background = T.bg2;
+                    event.currentTarget.style.borderColor = T.textMuted;
+                  }}
+                  onMouseLeave={(event) => {
+                    if (activeScreen === screen.id) return;
+                    event.currentTarget.style.color = T.textDim;
+                    event.currentTarget.style.background = "transparent";
+                    event.currentTarget.style.borderColor = T.border;
                   }}
                 >
-                  {totalAlerts}
-                </span>
-              ) : null}
-            </button></AppTooltip>
-          );
-        })}
-      </div>
+                  {screen.label}
+                  {hasAlerts ? (
+                    <span
+                      style={{
+                        marginLeft: sp(3),
+                        padding: sp("0px 4px"),
+                        borderRadius: 0,
+                        background: alertColor,
+                        color: "#fff",
+                        fontSize: fs(8),
+                        fontWeight: 400,
+                        fontFamily: T.sans,
+                        letterSpacing: "0.04em",
+                        verticalAlign: "middle",
+                      }}
+                    >
+                      {totalAlerts}
+                    </span>
+                  ) : null}
+                </button></AppTooltip>
+              );
+            })}
+          </div>
 
-      <div
-        className="ra-hide-scrollbar"
-        style={{
-          minWidth: 0,
-          display: "flex",
-          alignItems: "center",
-          overflowX: "auto",
-          gridColumn: isPhone ? "1 / -1" : undefined,
-          order: isPhone ? 3 : undefined,
-        }}
-      >
-        <HeaderKpiStripComponent onSelect={onSelectSymbol} />
-      </div>
+          <div
+            className="ra-hide-scrollbar"
+            style={{
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              overflowX: "auto",
+            }}
+          >
+            <HeaderKpiStripComponent onSelect={onSelectSymbol} />
+          </div>
 
-      <div
-        data-testid="platform-header-controls"
-        className="ra-hide-scrollbar"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: isPhone ? "flex-start" : "flex-end",
-          gap: sp(4),
-          minWidth: 0,
-          flexWrap: "nowrap",
-          overflowX: "auto",
-          gridColumn: isPhone ? "1 / -1" : undefined,
-          order: isPhone ? 2 : undefined,
-        }}
-      >
-        <HeaderAccountStripComponent
-          accounts={accounts}
-          primaryAccountId={primaryAccountId}
-          primaryAccount={primaryAccount}
-          onSelectAccount={onSelectAccount}
-          maskValues={maskAccountValues}
-        />
-        <HeaderStatusClusterComponent
-          session={session}
-          environment={environment}
-          bridgeTone={bridgeTone}
-          theme={theme}
-          onToggleTheme={onToggleTheme}
-        />
-      </div>
+          <div
+            data-testid="platform-header-controls"
+            className="ra-hide-scrollbar"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: sp(4),
+              minWidth: 0,
+              flexWrap: "nowrap",
+              overflowX: "auto",
+            }}
+          >
+            <HeaderAccountStripComponent
+              accounts={accounts}
+              primaryAccountId={primaryAccountId}
+              primaryAccount={primaryAccount}
+              onSelectAccount={onSelectAccount}
+              maskValues={maskAccountValues}
+            />
+            <HeaderStatusClusterComponent
+              session={session}
+              environment={environment}
+              bridgeTone={bridgeTone}
+              theme={theme}
+              onToggleTheme={onToggleTheme}
+            />
+          </div>
+        </>
+      )}
     </div>
 
     <HeaderBroadcastScrollerStackComponent
@@ -477,23 +682,26 @@ export const PlatformShell = ({
       onToggleSignalScan={onToggleSignalScan}
     />
 
-    <MobileNavDrawer
-      open={isPhone && mobileNavOpen}
-      onClose={() => setMobileNavOpen(false)}
+    <MobileMoreSheet
+      open={isPhone && mobileMoreOpen}
+      onClose={() => setMobileMoreOpen(false)}
       activeScreen={activeScreen}
       setScreen={handleSetScreen}
-      HeaderAccountStripComponent={HeaderAccountStripComponent}
-      HeaderStatusClusterComponent={HeaderStatusClusterComponent}
-      accounts={accounts}
-      primaryAccountId={primaryAccountId}
-      primaryAccount={primaryAccount}
-      onSelectAccount={onSelectAccount}
-      maskAccountValues={maskAccountValues}
+      onOpenWatchlist={() => setMobileWatchlistOpen(true)}
+      onOpenActivity={() => setMobileActivityOpen(true)}
+      onOpenBloomberg={() => setMobileBloombergMounted(true)}
+      activeWatchlist={activeWatchlist}
+      selectedSymbol={selectedSymbol}
       session={session}
-      environment={environment}
-      bridgeTone={bridgeTone}
-      theme={theme}
-      onToggleTheme={onToggleTheme}
+      memoryPressureSignal={memoryPressureSignal}
+    />
+
+    <MobileActivitySheet
+      open={isPhone && mobileActivityOpen}
+      onClose={() => setMobileActivityOpen(false)}
+      onSignalAction={onSignalAction}
+      onFlowAction={onFlowAction}
+      onSelectSymbol={onSelectSymbol}
     />
 
     <MobileWatchlistDrawer
@@ -519,6 +727,11 @@ export const PlatformShell = ({
       watchlists={watchlists}
       watchlistsBusy={watchlistsBusy}
     />
+    {isPhone && mobileBloombergMounted ? (
+      <Suspense fallback={null}>
+        <BloombergLiveDock initialOpen />
+      </Suspense>
+    ) : null}
 
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
       {!isPhone ? (
@@ -655,48 +868,57 @@ export const PlatformShell = ({
       </div>
     </div>
 
-    <div
-      data-testid="platform-bottom-status"
-      className="ra-hide-scrollbar"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        height: dim(isPhone ? 28 : 24),
-        padding: sp(isPhone ? "0 8px" : "0 12px"),
-        background: T.bg1,
-        borderTop: `1px solid ${T.border}`,
-        flexShrink: 0,
-        fontSize: fs(isPhone ? 8 : 9),
-        fontFamily: T.sans,
-        gap: sp(isPhone ? 8 : 12),
-        overflowX: "auto",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ color: T.textMuted }}>
-        WL {(activeWatchlist?.name || "Core").toUpperCase()}
-      </span>
-      <span style={{ color: T.textMuted }}>SYM {selectedSymbol}</span>
-      <span style={{ color: session?.configured?.ibkr ? T.green : T.red }}>
-        HIST {(session?.marketDataProviders?.historical || MISSING_VALUE).toUpperCase()}
-      </span>
-      <span style={{ color: session?.configured?.research ? T.green : T.red }}>
-        RSCH {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
-      </span>
-      <span style={{ marginLeft: "auto", color: T.textMuted }}>v0.1.0</span>
-      <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
-    </div>
-    <BloombergLiveDockLauncher />
+    {isPhone ? (
+      <MobileBottomNav
+        activeScreen={activeScreen}
+        setScreen={handleSetScreen}
+        onOpenMore={() => setMobileMoreOpen(true)}
+        watchlistsBusy={watchlistsBusy}
+      />
+    ) : (
+      <div
+        data-testid="platform-bottom-status"
+        className="ra-hide-scrollbar"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          height: dim(24),
+          padding: sp("0 12px"),
+          background: T.bg1,
+          borderTop: `1px solid ${T.border}`,
+          flexShrink: 0,
+          fontSize: fs(9),
+          fontFamily: T.sans,
+          gap: sp(12),
+          overflowX: "auto",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ color: T.textMuted }}>
+          WL {(activeWatchlist?.name || "Core").toUpperCase()}
+        </span>
+        <span style={{ color: T.textMuted }}>SYM {selectedSymbol}</span>
+        <span style={{ color: session?.configured?.ibkr ? T.green : T.red }}>
+          HIST {(session?.marketDataProviders?.historical || MISSING_VALUE).toUpperCase()}
+        </span>
+        <span style={{ color: session?.configured?.research ? T.green : T.red }}>
+          RSCH {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
+        </span>
+        <span style={{ marginLeft: "auto", color: T.textMuted }}>v0.1.0</span>
+        <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+      </div>
+    )}
+    {!isPhone ? <BloombergLiveDockLauncher /> : null}
   </div>
   );
 };
 
-const ToastStack = ({ toasts, onDismiss }) => (
+const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
   toasts.length ? (
     <div
       style={{
         position: "fixed",
-        bottom: dim(20),
+        bottom: dim(bottomOffset),
         right: dim(20),
         zIndex: 200,
         display: "flex",

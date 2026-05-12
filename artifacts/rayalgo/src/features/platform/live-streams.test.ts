@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  applyAccountPagePayloadToCache,
   applyIbkrAccountPayloadToCache,
   applyShadowAccountPayloadToCache,
+  getAccountPageStreamUrl,
   getShadowAccountStreamUrl,
   getOptionChainContractExpirationKey,
   groupOptionChainContractsByExpiration,
@@ -56,19 +58,39 @@ test("shadow account stream URL does not require query params", () => {
   assert.equal(getShadowAccountStreamUrl(), "/api/streams/accounts/shadow");
 });
 
-test("shadow account stream is owned by the visible shadow account screen", () => {
+test("account page stream URL carries visible account page inputs", () => {
+  assert.equal(
+    getAccountPageStreamUrl({
+      accountId: "combined",
+      mode: "paper",
+      range: "1D",
+      orderTab: "working",
+      assetClass: "Options",
+      tradeFilters: {
+        symbol: "SPY",
+        from: "2026-05-01T00:00:00.000Z",
+      },
+      performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
+    }),
+    "/api/streams/accounts/page?accountId=combined&mode=paper&range=1D&orderTab=working&assetClass=Options&from=2026-05-01T00%3A00%3A00.000Z&symbol=SPY&performanceCalendarFrom=2025-04-01T00%3A00%3A00.000Z",
+  );
+});
+
+test("account page stream is owned by the visible account screen", () => {
   const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const accountScreenSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),
     "utf8",
   );
 
+  assert.match(accountScreenSource, /useAccountPageSnapshotStream/);
   assert.doesNotMatch(platformAppSource, /useShadowAccountSnapshotStream/);
-  assert.match(accountScreenSource, /useShadowAccountSnapshotStream/);
+  assert.doesNotMatch(accountScreenSource, /useShadowAccountSnapshotStream/);
   assert.match(
     accountScreenSource,
-    /enabled:\s*Boolean\(isVisible\s*&&\s*shadowMode\)/,
+    /enabled:\s*Boolean\(isVisible\s*&&\s*accountQueriesEnabled\)/,
   );
+  assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountFresh/);
 });
 
 test("broker account and order streams refresh freshness on readiness and poll success", () => {
@@ -81,6 +103,41 @@ test("broker account and order streams refresh freshness on readiness and poll s
   );
   assert.match(source, /markBrokerStreamEvent\("account"\)/);
   assert.match(source, /markBrokerStreamEvent\("order"\)/);
+});
+
+test("shadow account stream refreshes freshness on readiness and poll success", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /markShadowAccountStreamEvent\(\)/);
+  assert.match(source, /payload\.stream !== "shadow-accounts"/);
+  assert.match(source, /source\.addEventListener\("ready", handleReady as EventListener\)/);
+  assert.match(
+    source,
+    /source\.addEventListener\("freshness", handleFreshness as EventListener\)/,
+  );
+});
+
+test("account page stream refreshes freshness on page snapshots", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /source\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/);
+  assert.match(source, /source\.addEventListener\("live", handleLive as EventListener\)/);
+  assert.match(source, /source\.addEventListener\("derived", handleDerived as EventListener\)/);
+  assert.match(source, /applyAccountPagePayloadToCache\(queryClient, payload\)/);
+  assert.match(source, /applyAccountPageLivePayloadToCache\(queryClient, payload\)/);
+  assert.match(source, /applyAccountPageDerivedPayloadToCache\(queryClient, payload\)/);
+  assert.match(source, /payload\.stream !== "account-page-bootstrap"/);
+  assert.match(source, /payload\.stream !== "account-page-live"/);
+  assert.match(source, /payload\.stream !== "account-page-derived"/);
+});
+
+test("platform root subscribes only to coarse broker stream freshness", () => {
+  const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const liveStreamsSource = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(platformAppSource, /useBrokerStreamFreshnessStatus/);
+  assert.doesNotMatch(platformAppSource, /useBrokerStreamFreshnessSnapshot/);
+  assert.match(liveStreamsSource, /getBrokerStreamFreshnessStatusToken/);
 });
 
 test("groupOptionChainContractsByExpiration keeps stream contracts scoped to their expirations", () => {
@@ -354,6 +411,216 @@ test("applyShadowAccountPayloadToCache patches shadow account caches without inv
       ?.assetClass[0].label,
     "Cash",
   );
+  assert.equal(invalidated.length, 0);
+});
+
+test("applyAccountPagePayloadToCache seeds visible account page query caches", () => {
+  const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
+  const positionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const ordersKey = [
+    "/api/accounts/combined/orders",
+    { mode: "paper", tab: "working" },
+  ];
+  const tradesKey = [
+    "/api/accounts/combined/closed-trades",
+    {
+      mode: "paper",
+      symbol: "SPY",
+      pnlSign: "winner",
+      from: "2026-05-01T00:00:00.000Z",
+    },
+  ];
+  const calendarTradesKey = [
+    "/api/accounts/combined/closed-trades",
+    { mode: "paper", from: "2025-04-01T00:00:00.000Z" },
+  ];
+  const equityKey = [
+    "/api/accounts/combined/equity-history",
+    { mode: "paper", range: "1D" },
+  ];
+  const benchmarkKey = [
+    "/api/accounts/combined/equity-history",
+    { mode: "paper", range: "1D", benchmark: "SPY" },
+  ];
+  const healthKey = ["/api/accounts/flex/health"];
+  const { queryClient, writes } = createMockQueryClient([
+    summaryKey,
+    positionsKey,
+    ordersKey,
+    tradesKey,
+    calendarTradesKey,
+    equityKey,
+    benchmarkKey,
+    healthKey,
+  ]);
+
+  applyAccountPagePayloadToCache(queryClient as any, {
+    stream: "account-page-bootstrap",
+    accountId: "combined",
+    mode: "paper",
+    range: "1D",
+    orderTab: "working",
+    assetClass: "Options",
+    tradeFilters: {
+      from: "2026-05-01T00:00:00.000Z",
+      to: null,
+      symbol: "SPY",
+      pnlSign: "winner",
+      holdDuration: null,
+    },
+    performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
+    updatedAt: "2026-05-12T00:00:00.000Z",
+    summary: { accountId: "combined", metrics: { netLiquidation: { value: 1 } } },
+    positions: { accountId: "combined", positions: [{ id: "position" }] },
+    orders: { accountId: "combined", orders: [{ id: "order" }], tab: "working" },
+    allocation: { accountId: "combined", assetClass: [] },
+    risk: { accountId: "combined", margin: {} },
+    cashActivity: { accountId: "combined", activities: [{ id: "cash" }] },
+    closedTrades: { accountId: "combined", trades: [{ id: "trade" }] },
+    performanceCalendarTrades: {
+      accountId: "combined",
+      trades: [{ id: "calendar-trade" }],
+    },
+    equityHistory: { accountId: "combined", range: "1D", points: [{ timestamp: "a" }] },
+    intradayEquity: { accountId: "combined", range: "1D", points: [{ timestamp: "b" }] },
+    benchmarkEquityHistory: {
+      SPY: { accountId: "combined", range: "1D", points: [{ timestamp: "spy" }] },
+    },
+    performanceCalendarEquity: {
+      accountId: "combined",
+      range: "1Y",
+      points: [{ timestamp: "calendar" }],
+    },
+    flexHealth: { flexConfigured: true },
+    tradingPatterns: null,
+  } as any);
+
+  assert.equal(
+    (writes.get(JSON.stringify(summaryKey)) as any)?.metrics.netLiquidation.value,
+    1,
+  );
+  assert.equal((writes.get(JSON.stringify(positionsKey)) as any)?.positions[0].id, "position");
+  assert.equal((writes.get(JSON.stringify(ordersKey)) as any)?.orders[0].id, "order");
+  assert.equal((writes.get(JSON.stringify(tradesKey)) as any)?.trades[0].id, "trade");
+  assert.equal(
+    (writes.get(JSON.stringify(calendarTradesKey)) as any)?.trades[0].id,
+    "calendar-trade",
+  );
+  assert.equal((writes.get(JSON.stringify(equityKey)) as any)?.points[0].timestamp, "b");
+  assert.equal(
+    (writes.get(JSON.stringify(benchmarkKey)) as any)?.points[0].timestamp,
+    "spy",
+  );
+  assert.equal((writes.get(JSON.stringify(healthKey)) as any)?.flexConfigured, true);
+});
+
+test("applyIbkrAccountPayloadToCache patches scoped account positions from stream", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Options" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "U1",
+        currency: "USD",
+        totals: {},
+        updatedAt: "2026-04-30T14:00:00.000Z",
+        positions: [
+          {
+            id: "P1",
+            accountId: "U1",
+            accounts: ["U1"],
+            symbol: "SPY",
+            description: "SPY 2026-05-01 500 call",
+            assetClass: "Options",
+            optionContract: null,
+            sector: "ETF",
+            quantity: 1,
+            averageCost: 2,
+            mark: 2.5,
+            dayChange: 10,
+            dayChangePercent: 1,
+            unrealizedPnl: 50,
+            unrealizedPnlPercent: 25,
+            marketValue: 250,
+            weightPercent: 0.25,
+            betaWeightedDelta: null,
+            lots: [],
+            openOrders: [],
+            source: "IBKR_POSITIONS",
+          },
+        ],
+      },
+    ],
+  ]);
+  const { queryClient, writes, invalidated } = createMockQueryClient(
+    [positionsKey],
+    initialData,
+  );
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-04-30T14:00:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "P1",
+          accountId: "U1",
+          symbol: "SPY",
+          assetClass: "option",
+          quantity: 2,
+          averagePrice: 2,
+          marketPrice: 3,
+          marketValue: 600,
+          unrealizedPnl: 200,
+          unrealizedPnlPercent: 50,
+          optionContract: null,
+        },
+        {
+          id: "P2",
+          accountId: "U1",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 5,
+          averagePrice: 100,
+          marketPrice: 101,
+          marketValue: 505,
+          unrealizedPnl: 5,
+          unrealizedPnlPercent: 1,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.deepEqual(
+    patched.positions.map((position: any) => position.id),
+    ["P1"],
+  );
+  assert.equal(patched.positions[0].quantity, 2);
+  assert.equal(patched.positions[0].mark, 3);
+  assert.equal(patched.positions[0].marketValue, 600);
+  assert.equal(patched.positions[0].weightPercent, 0.6);
   assert.equal(invalidated.length, 0);
 });
 

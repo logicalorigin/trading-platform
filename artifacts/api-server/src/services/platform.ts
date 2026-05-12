@@ -1578,7 +1578,7 @@ function withTimeout<T>(
   timeoutMs: number,
   timeoutError: () => Error,
 ): Promise<T> {
-  return new Promise((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(timeoutError());
     }, timeoutMs);
@@ -5626,6 +5626,33 @@ const BROKER_HISTORY_TIMEFRAMES = new Set<HistoryBarTimeframe>([
   "1h",
   "1d",
 ]);
+const IBKR_OVERNIGHT_EXCHANGE = "OVERNIGHT";
+const IBKR_OVERNIGHT_FALLBACK_EXCHANGE = "IBEOS";
+const IBKR_HISTORY_SOURCE = "ibkr-history";
+const IBKR_OVERNIGHT_HISTORY_SOURCE = "ibkr-overnight-history";
+const IBKR_OVERNIGHT_HISTORY_TIMEFRAMES = new Set<HistoryBarTimeframe>([
+  "5s",
+  "1m",
+  "5m",
+  "15m",
+  "1h",
+]);
+const NEW_YORK_OVERNIGHT_CLOCK_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
 
 type BrokerRecentHistoryOptions = {
   historicalSynthesisAvailable?: boolean;
@@ -5763,6 +5790,107 @@ function restrictHistoricalSynthesisToBrokerBackfill(
   });
 }
 
+function shouldFetchIbkrOvernightHistory(
+  input: GetBarsInput,
+  outsideRth: boolean,
+): boolean {
+  return Boolean(
+    outsideRth &&
+      input.outsideRth === true &&
+      input.assetClass !== "option" &&
+      input.market !== "futures" &&
+      (input.source == null || input.source === "trades") &&
+      IBKR_OVERNIGHT_HISTORY_TIMEFRAMES.has(
+        input.timeframe as HistoryBarTimeframe,
+      ),
+  );
+}
+
+function markIbkrOvernightHistoryBars(
+  bars: BrokerBarSnapshot[],
+): BrokerBarSnapshot[] {
+  return bars.map((bar) => ({
+    ...bar,
+    source: IBKR_OVERNIGHT_HISTORY_SOURCE,
+    outsideRth: true,
+    transport: "tws",
+  }));
+}
+
+function readNewYorkOvernightClockParts(
+  value: Date,
+): { weekday: number; minutes: number } | null {
+  if (!Number.isFinite(value.getTime())) {
+    return null;
+  }
+  const parts = NEW_YORK_OVERNIGHT_CLOCK_FORMATTER.formatToParts(value);
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const weekday = WEEKDAY_INDEX[read("weekday")];
+  const hour = Number(read("hour"));
+  const minute = Number(read("minute"));
+  if (
+    weekday == null ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return null;
+  }
+  return { weekday, minutes: hour * 60 + minute };
+}
+
+function isUsEquityOvernightTradingTime(value: Date): boolean {
+  const parts = readNewYorkOvernightClockParts(value);
+  if (!parts) {
+    return false;
+  }
+  if (parts.minutes < 3 * 60 + 50) {
+    return parts.weekday >= 1 && parts.weekday <= 5;
+  }
+  if (parts.minutes >= 20 * 60) {
+    return parts.weekday >= 0 && parts.weekday <= 4;
+  }
+  return false;
+}
+
+function filterIbkrOvernightHistoryBars(
+  bars: BrokerBarSnapshot[],
+): BrokerBarSnapshot[] {
+  return bars.filter((bar) => isUsEquityOvernightTradingTime(bar.timestamp));
+}
+
+function decorateIbkrHistoryBar(bar: BrokerBarSnapshot): BrokerBarSnapshot {
+  const source =
+    bar.source === IBKR_OVERNIGHT_HISTORY_SOURCE
+      ? IBKR_OVERNIGHT_HISTORY_SOURCE
+      : IBKR_HISTORY_SOURCE;
+  return {
+    ...bar,
+    source,
+    transport: "tws",
+  };
+}
+
+function mergeBrokerHistoryBars(
+  primaryBars: BrokerBarSnapshot[],
+  overnightBars: BrokerBarSnapshot[],
+): BrokerBarSnapshot[] {
+  if (!overnightBars.length) {
+    return primaryBars;
+  }
+
+  const merged = new Map<number, BrokerBarSnapshot>();
+  overnightBars.forEach((bar) => {
+    merged.set(bar.timestamp.getTime(), bar);
+  });
+  primaryBars.forEach((bar) => {
+    merged.set(bar.timestamp.getTime(), bar);
+  });
+  return Array.from(merged.values()).sort(
+    (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+  );
+}
+
 // Coalesce identical /api/bars requests so multiple chart panels
 // (or refetches racing each other) share a single upstream IBKR/Polygon
 // fetch. The bridge can hold an upstream history slot for 7-15s, so even
@@ -5774,9 +5902,17 @@ const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
   "BARS_PROVIDER_BUDGET_MS",
   3_000,
 );
+const BARS_BROKER_BACKFILL_BUDGET_MS = readPositiveIntegerEnv(
+  "BARS_BROKER_BACKFILL_BUDGET_MS",
+  Math.max(BARS_PROVIDER_BUDGET_MS, 8_000),
+);
+const BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS = readPositiveIntegerEnv(
+  "BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS",
+  750,
+);
 const BARS_IN_FLIGHT_STALE_MS = readPositiveIntegerEnv(
   "BARS_IN_FLIGHT_STALE_MS",
-  Math.max(30_000, BARS_PROVIDER_BUDGET_MS * 4),
+  Math.max(30_000, BARS_BROKER_BACKFILL_BUDGET_MS * 4),
 );
 const CHART_HISTORY_CURSOR_TTL_MS = readPositiveIntegerEnv(
   "CHART_HISTORY_CURSOR_TTL_MS",
@@ -6128,6 +6264,40 @@ type ReusableCachedBarsEntry = {
   ageMs: number | null;
 };
 
+function isBrokerBackfillSensitiveBarsRequest(input: GetBarsInput): boolean {
+  return Boolean(
+      input.allowHistoricalSynthesis !== false &&
+      input.assetClass !== "option" &&
+      input.market !== "futures" &&
+      input.outsideRth !== false &&
+      (input.source == null || input.source === "trades") &&
+      BROKER_HISTORY_TIMEFRAMES.has(input.timeframe as HistoryBarTimeframe),
+  );
+}
+
+function hasBrokerHistoryBars(value: GetBarsResult): boolean {
+  return value.bars.some((bar) => {
+    const source = String(bar.source || "").trim().toLowerCase();
+    return (
+      source === IBKR_HISTORY_SOURCE ||
+      source === IBKR_OVERNIGHT_HISTORY_SOURCE
+    );
+  });
+}
+
+function shouldServeBarsCacheEntry(
+  requestInput: GetBarsInput,
+  cachedValue: GetBarsResult,
+): boolean {
+  if (!isBrokerBackfillSensitiveBarsRequest(requestInput)) {
+    return true;
+  }
+  if (!cachedValue.bars.length || hasBrokerHistoryBars(cachedValue)) {
+    return true;
+  }
+  return !cachedValue.bars.some(isHistoricalSynthesisBar);
+}
+
 function findReusableCachedBarsEntry(
   input: GetBarsInput,
   now: number,
@@ -6147,6 +6317,9 @@ function findReusableCachedBarsEntry(
 
     const fresh = entry.expiresAt > now;
     if (!fresh && !allowStale) {
+      continue;
+    }
+    if (!shouldServeBarsCacheEntry(input, entry.value)) {
       continue;
     }
 
@@ -6258,6 +6431,29 @@ function resolveWithin<T>(
   });
 }
 
+function delayBarsRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  if (signal?.aborted) {
+    throw createBarsRequestAbortedError();
+  }
+  let onAbort: (() => void) | null = null;
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+    onAbort = () => {
+      clearTimeout(timeout);
+      reject(createBarsRequestAbortedError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }).finally(() => {
+    if (onAbort) {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  });
+}
+
 export async function getBarsWithDebug(
   input: GetBarsInput,
   options: GetBarsOptions = {},
@@ -6297,7 +6493,11 @@ export async function getBarsWithDebug(
   }
 
   const cached = barsCache.get(key);
-  if (cached && cached.expiresAt > requestedAt) {
+  if (
+    cached &&
+    cached.expiresAt > requestedAt &&
+    shouldServeBarsCacheEntry(sanitizedInput, cached.value)
+  ) {
     barsHydrationCounters.cacheHit += 1;
     return withBarsDebug(cached.value, {
       cacheStatus: "hit",
@@ -6895,8 +7095,14 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
   let ibkrBars: Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>> = [];
   let attemptedBrokerHistory = false;
   let brokerHistoryError: unknown = null;
-  const fetchBrokerHistory = (brokerHistoryInput: GetBarsInput) =>
-    resolveWithin(
+  const fetchBrokerHistory = async (brokerHistoryInput: GetBarsInput) => {
+    const brokerBackfillSensitive = isBrokerBackfillSensitiveBarsRequest(
+      brokerHistoryInput,
+    );
+    const brokerHistoryBudgetMs = brokerBackfillSensitive
+      ? BARS_BROKER_BACKFILL_BUDGET_MS
+      : BARS_PROVIDER_BUDGET_MS;
+    const fetchBridgeHistory = (exchange?: string | null) =>
       bridgeClient.getHistoricalBars({
         symbol: brokerHistoryInput.symbol,
         timeframe: brokerHistoryInput.timeframe as HistoryBarTimeframe,
@@ -6907,12 +7113,70 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
         providerContractId: brokerHistoryInput.providerContractId,
         outsideRth,
         source: brokerHistoryInput.source,
+        exchange,
         signal: options.signal,
-      }),
-      BARS_PROVIDER_BUDGET_MS,
-      [],
-      { signal: options.signal, createAbortError: createBarsRequestAbortedError },
-    );
+      });
+
+    const fetchOnce = async () => {
+      const primaryBarsPromise = resolveWithin(
+        fetchBridgeHistory(),
+        brokerHistoryBudgetMs,
+        [],
+        {
+          signal: options.signal,
+          createAbortError: createBarsRequestAbortedError,
+        },
+      );
+      if (!shouldFetchIbkrOvernightHistory(brokerHistoryInput, outsideRth)) {
+        return primaryBarsPromise;
+      }
+
+      const fetchOvernightExchangeBars = (exchange: string) =>
+        resolveWithin(
+          fetchBridgeHistory(exchange)
+            .then(filterIbkrOvernightHistoryBars)
+            .catch(() => []),
+          brokerHistoryBudgetMs,
+          [],
+          {
+            signal: options.signal,
+            createAbortError: createBarsRequestAbortedError,
+          },
+        );
+      const overnightBarsPromise = fetchOvernightExchangeBars(
+        IBKR_OVERNIGHT_EXCHANGE,
+      );
+      const [primaryBars, overnightBars] = await Promise.all([
+        primaryBarsPromise,
+        overnightBarsPromise,
+      ]);
+      const fallbackOvernightBars = overnightBars.length
+        ? []
+        : await fetchOvernightExchangeBars(IBKR_OVERNIGHT_FALLBACK_EXCHANGE);
+      return mergeBrokerHistoryBars(
+        primaryBars,
+        markIbkrOvernightHistoryBars(
+          overnightBars.length ? overnightBars : fallbackOvernightBars,
+        ),
+      );
+    };
+
+    const startedAt = Date.now();
+    const bars = await fetchOnce();
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    if (
+      brokerBackfillSensitive &&
+      bars.length === 0 &&
+      elapsedMs < brokerHistoryBudgetMs - 250
+    ) {
+      await delayBarsRetry(
+        BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS,
+        options.signal,
+      );
+      return fetchOnce();
+    }
+    return bars;
+  };
 
   if (isBrokerHistoryTimeframe) {
     throwIfBarsSignalAborted(options.signal);
@@ -7106,11 +7370,7 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
       });
     });
     ibkrBars.forEach((bar) => {
-      merged.set(bar.timestamp.getTime(), {
-        ...bar,
-        source: "ibkr-history",
-        transport: "tws",
-      });
+      merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
     });
     bars = Array.from(merged.values())
       .sort(
@@ -7123,11 +7383,7 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
       merged.set(bar.timestamp.getTime(), bar);
     });
     ibkrBars.forEach((bar) => {
-      merged.set(bar.timestamp.getTime(), {
-        ...bar,
-        source: "ibkr-history",
-        transport: "tws",
-      });
+      merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
     });
     bars = Array.from(merged.values())
       .sort(
@@ -7157,11 +7413,7 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
           merged.set(bar.timestamp.getTime(), bar);
         });
         fullBrokerBars.forEach((bar) => {
-          merged.set(bar.timestamp.getTime(), {
-            ...bar,
-            source: "ibkr-history",
-            transport: "tws",
-          });
+          merged.set(bar.timestamp.getTime(), decorateIbkrHistoryBar(bar));
         });
         bars = Array.from(merged.values())
           .sort(

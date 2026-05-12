@@ -41,6 +41,7 @@ export const MobileWatchlistDrawer = ({
       title={activeWatchlist?.name ? `Watchlist · ${activeWatchlist.name}` : "Watchlist"}
       width={380}
       testId="mobile-watchlist-drawer"
+      fullBleed
     >
       <div
         style={{
@@ -69,6 +70,7 @@ export const MobileWatchlistDrawer = ({
             onRemoveSymbol={onRemoveSymbolFromWatchlist}
             onSignalAction={onSignalAction}
             busy={Boolean(watchlistsBusy?.mutating)}
+            density="mobile-dense"
           />
         </div>
       </div>

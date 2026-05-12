@@ -153,6 +153,7 @@ import type {
   SignalOptionsExecutionProfile,
   SignalOptionsManualDeviationRequest,
   SignalOptionsManualDeviationResponse,
+  SignalOptionsPerformanceResponse,
   SseStream,
   StreamAccountsParams,
   StreamOptionChainsParams,
@@ -6142,6 +6143,81 @@ export function useGetAlgoDeploymentCockpit<TData = Awaited<ReturnType<typeof ge
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAlgoDeploymentCockpitQueryOptions(deploymentId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get signal-options shadow trading performance and rule adherence
+ */
+export const getGetSignalOptionsPerformanceUrl = (deploymentId: string,) => {
+
+
+  
+
+  return `/api/algo/deployments/${deploymentId}/signal-options/performance`
+}
+
+export const getSignalOptionsPerformance = async (deploymentId: string, options?: RequestInit): Promise<SignalOptionsPerformanceResponse> => {
+  
+  return customFetch<SignalOptionsPerformanceResponse>(getGetSignalOptionsPerformanceUrl(deploymentId),
+  {      
+    ...options,
+    method: 'GET'
+    
+    
+  }
+);}
+  
+
+
+
+
+export const getGetSignalOptionsPerformanceQueryKey = (deploymentId: string,) => {
+    return [
+    `/api/algo/deployments/${deploymentId}/signal-options/performance`
+    ] as const;
+    }
+
+    
+export const getGetSignalOptionsPerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getSignalOptionsPerformance>>, TError = ErrorType<unknown>>(deploymentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSignalOptionsPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSignalOptionsPerformanceQueryKey(deploymentId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSignalOptionsPerformance>>> = ({ signal }) => getSignalOptionsPerformance(deploymentId, { signal, ...requestOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(deploymentId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSignalOptionsPerformance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSignalOptionsPerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getSignalOptionsPerformance>>>
+export type GetSignalOptionsPerformanceQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get signal-options shadow trading performance and rule adherence
+ */
+
+export function useGetSignalOptionsPerformance<TData = Awaited<ReturnType<typeof getSignalOptionsPerformance>>, TError = ErrorType<unknown>>(
+ deploymentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSignalOptionsPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSignalOptionsPerformanceQueryOptions(deploymentId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

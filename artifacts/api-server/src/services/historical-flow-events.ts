@@ -60,6 +60,7 @@ const HISTORICAL_FLOW_STORE_BATCH_SIZE = 500;
 const HISTORICAL_FLOW_WINDOW_ROW_LIMIT = 50_000;
 const HISTORICAL_FLOW_DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1_000;
 const HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS = 3_000;
+const HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS = 4_000;
 const HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS = 5 * 60_000;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT = 40;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT = 1;
@@ -68,7 +69,6 @@ const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT = 1;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT = 500;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY = 4;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE = 60;
-const HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS = 20_000;
 const HISTORICAL_FLOW_SAMPLE_BASE_BUCKET_SECONDS = 5 * 60;
 const HISTORICAL_FLOW_SAMPLE_MIN_BUCKET_SECONDS = 60;
 const HISTORICAL_FLOW_SAMPLE_MAX_BUCKET_SECONDS = 60 * 60;
@@ -89,8 +89,8 @@ let historicalFlowStoreDisabled = false;
 let historicalFlowStoreDisabledUntilMs = 0;
 let historicalFlowStoreReadTimeoutMs =
   HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
-let historicalFlowDirectFallbackTimeoutMs =
-  HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
+let historicalFlowNonblockingDirectFallbackTimeoutMs =
+  HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
 const hydrationInFlight = new Map<string, Promise<HydrationTotals>>();
 
 type HydrationTotals = {
@@ -331,6 +331,33 @@ const providerEventKeyFor = (event: ProviderFlowEvent): string =>
         event.exchange,
       ].join(":"),
   );
+
+function mergeHistoricalFlowEvents(
+  ...eventLists: ProviderFlowEvent[][]
+): ProviderFlowEvent[] {
+  const merged = new Map<string, ProviderFlowEvent>();
+  eventLists.flat().forEach((event) => {
+    merged.set(providerEventKeyFor(event), event);
+  });
+  return [...merged.values()].sort((left, right) => {
+    const leftMs = historicalFlowEventTimeMs(left) ?? 0;
+    const rightMs = historicalFlowEventTimeMs(right) ?? 0;
+    if (leftMs !== rightMs) {
+      return leftMs - rightMs;
+    }
+    return Number(right.premium ?? 0) - Number(left.premium ?? 0);
+  });
+}
+
+export function dedupeHistoricalFlowEventsForStore(
+  events: ProviderFlowEvent[],
+): ProviderFlowEvent[] {
+  const byProviderKey = new Map<string, ProviderFlowEvent>();
+  events.forEach((event) => {
+    byProviderKey.set(providerEventKeyFor(event), event);
+  });
+  return [...byProviderKey.values()];
+}
 
 const toRawPayload = (event: ProviderFlowEvent): Record<string, unknown> =>
   JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
@@ -628,12 +655,13 @@ async function persistHistoricalFlowEvents(input: {
 
   try {
     const now = new Date();
+    const events = dedupeHistoricalFlowEventsForStore(input.events);
     for (
       let offset = 0;
-      offset < input.events.length;
+      offset < events.length;
       offset += HISTORICAL_FLOW_STORE_BATCH_SIZE
     ) {
-      const batch = input.events.slice(
+      const batch = events.slice(
         offset,
         offset + HISTORICAL_FLOW_STORE_BATCH_SIZE,
       );
@@ -950,6 +978,48 @@ async function loadDirectHistoricalFlowEvents(input: {
   return Array.isArray(result) ? result : result.events;
 }
 
+async function loadNonblockingDirectHistoricalFlowFallback(input: {
+  underlying: string;
+  client: HistoricalFlowProviderClient;
+  from: Date;
+  to: Date;
+  limit: number;
+  filters: FlowEventsFilters;
+  unusualThreshold?: number;
+}): Promise<StoreReadResult<ProviderFlowEvent[]>> {
+  const controller = new AbortController();
+  const directRead = await settleHistoricalFlowStoreRead(
+    "loadDirectHistoricalFlowEvents",
+    () =>
+      loadDirectHistoricalFlowEvents({
+        underlying: input.underlying,
+        client: input.client,
+        from: input.from,
+        to: input.to,
+        limit: input.limit,
+        unusualThreshold: input.unusualThreshold,
+        maxDte: input.filters.maxDte,
+        fallbackMaxDte: HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE,
+        preferDerived: true,
+        snapshotPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT,
+        contractPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT,
+        contractLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT,
+        tradePageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT,
+        tradeLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT,
+        tradeConcurrency: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY,
+        signal: controller.signal,
+      }),
+    [],
+    {
+      timeoutMs: historicalFlowNonblockingDirectFallbackTimeoutMs,
+      onTimeout: () => {
+        controller.abort();
+      },
+    },
+  );
+  return directRead;
+}
+
 export async function listHistoricalFlowEvents(input: {
   underlying: string;
   providerName: string;
@@ -990,6 +1060,8 @@ export async function listHistoricalFlowEvents(input: {
 
   const sessions = resolveHistoricalFlowSessions({ from, to });
   let storedEvents: ProviderFlowEvent[] = [];
+  let directFallbackEvents: ProviderFlowEvent[] = [];
+  let directFallbackTimedOut = false;
   let incompleteSessions: HistoricalFlowSession[] = sessions;
 
   if (input.blocking === false) {
@@ -1051,36 +1123,15 @@ export async function listHistoricalFlowEvents(input: {
 
   if (isHistoricalFlowStoreDisabled()) {
     if (input.blocking === false) {
-      const controller = new AbortController();
-      const directRead = await settleHistoricalFlowStoreRead(
-        "loadDirectHistoricalFlowEvents",
-        () =>
-          loadDirectHistoricalFlowEvents({
-            underlying,
-            client: input.client,
-            from,
-            to,
-            limit: input.limit,
-            unusualThreshold: input.unusualThreshold,
-            maxDte: input.filters.maxDte,
-            fallbackMaxDte: HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE,
-            preferDerived: true,
-            snapshotPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT,
-            contractPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT,
-            contractLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT,
-            tradePageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT,
-            tradeLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT,
-            tradeConcurrency: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY,
-            signal: controller.signal,
-          }),
-        [],
-        {
-          timeoutMs: historicalFlowDirectFallbackTimeoutMs,
-          onTimeout: () => {
-            controller.abort();
-          },
-        },
-      );
+      const directRead = await loadNonblockingDirectHistoricalFlowFallback({
+        underlying,
+        client: input.client,
+        from,
+        to,
+        limit: input.limit,
+        filters: input.filters,
+        unusualThreshold: input.unusualThreshold,
+      });
       const filteredCandidates = filterFlowEventsForRequest(
         directRead.value,
         input.filters,
@@ -1146,6 +1197,34 @@ export async function listHistoricalFlowEvents(input: {
     });
     if (input.blocking === false) {
       hydrate.catch(() => {});
+      const directRead = await loadNonblockingDirectHistoricalFlowFallback({
+        underlying,
+        client: input.client,
+        from,
+        to,
+        limit: input.limit,
+        filters: input.filters,
+        unusualThreshold: input.unusualThreshold,
+      });
+      directFallbackTimedOut = directRead.timedOut;
+      directFallbackEvents = filterFlowEventsForRequest(
+        directRead.value,
+        input.filters,
+        input.unusualThreshold,
+        HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
+      ) as ProviderFlowEvent[];
+      if (directFallbackEvents.length) {
+        void persistHistoricalFlowEvents({
+          underlying,
+          provider,
+          events: directFallbackEvents,
+        }).catch((error) => {
+          logger.debug(
+            { err: error, underlying },
+            "historical flow direct fallback persist failed",
+          );
+        });
+      }
     } else {
       try {
         await hydrate;
@@ -1204,8 +1283,17 @@ export async function listHistoricalFlowEvents(input: {
     }
   }
 
+  const candidateEvents = directFallbackEvents.length
+    ? sampleHistoricalFlowEventsForWindow({
+        events: mergeHistoricalFlowEvents(storedEvents, directFallbackEvents),
+        from,
+        to,
+        limit: input.limit,
+        bucketSeconds: input.historicalBucketSeconds,
+      })
+    : storedEvents;
   const filteredEvents = filterFlowEventsForRequest(
-    storedEvents,
+    candidateEvents,
     input.filters,
     input.unusualThreshold,
     input.limit,
@@ -1221,10 +1309,16 @@ export async function listHistoricalFlowEvents(input: {
       unusualThreshold: input.unusualThreshold ?? 1,
       ibkrStatus: "empty",
       ibkrReason: filteredEvents.length
-        ? refreshing
+        ? directFallbackEvents.length
+          ? refreshing
+            ? "options_flow_historical_direct_refreshing"
+            : "options_flow_historical_direct"
+          : refreshing
           ? "options_flow_historical_partial_refreshing"
           : "options_flow_historical_persisted"
-        : refreshing
+        : directFallbackTimedOut
+          ? "options_flow_historical_provider_timeout"
+          : refreshing
           ? "options_flow_historical_refreshing"
           : "options_flow_historical_empty",
     }),
@@ -1236,8 +1330,8 @@ export function __resetHistoricalFlowEventsForTests(): void {
   historicalFlowStoreDisabledUntilMs = 0;
   historicalFlowStoreReadTimeoutMs =
     HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
-  historicalFlowDirectFallbackTimeoutMs =
-    HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
+  historicalFlowNonblockingDirectFallbackTimeoutMs =
+    HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
   hydrationInFlight.clear();
 }
 
@@ -1257,7 +1351,7 @@ export function __setHistoricalFlowStoreReadTimeoutMsForTests(
 export function __setHistoricalFlowDirectFallbackTimeoutMsForTests(
   timeoutMs: number,
 ): void {
-  historicalFlowDirectFallbackTimeoutMs = Number.isFinite(timeoutMs)
+  historicalFlowNonblockingDirectFallbackTimeoutMs = Number.isFinite(timeoutMs)
     ? Math.max(1, Math.floor(timeoutMs))
-    : HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
+    : HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
 }

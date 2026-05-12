@@ -482,14 +482,16 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
   const chartH = H - padT - padB;
   const zeroY = padT + chartH / 2;
   const colWidth = chartW / weeks.length;
-  const expectancyPath = rollingExpectancy
+  const expectancyPoints = rollingExpectancy
     .map((value, idx) => {
       if (value == null) return null;
       const cx = padX + colWidth * (idx + 0.5);
       const cy = zeroY - (value / expectancyExtent) * (chartH / 2 - 2);
-      return `${idx === 0 ? "M" : "L"}${cx.toFixed(1)},${cy.toFixed(1)}`;
+      return [cx, cy];
     })
-    .filter(Boolean)
+    .filter(Boolean);
+  const expectancyPath = expectancyPoints
+    .map(([cx, cy], idx) => `${idx === 0 ? "M" : "L"}${cx.toFixed(1)},${cy.toFixed(1)}`)
     .join(" ");
 
   return (

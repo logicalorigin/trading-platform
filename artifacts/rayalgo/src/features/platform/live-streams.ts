@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getOptionQuoteSnapshots } from "@workspace/api-client-react";
 import { usePageVisible } from "./usePageVisible";
@@ -8,14 +8,18 @@ import {
 } from "./optionHydrationDiagnostics";
 import type {
   AccountAllocationResponse,
+  AccountCashActivityResponse,
+  AccountClosedTradesResponse,
   AccountOrdersResponse,
   AccountPositionsResponse,
   AccountRiskResponse,
   AccountSummaryResponse,
   AccountEquityHistoryResponse,
+  AccountTradingPatternsResponse,
   AccountEquityPoint,
   AccountsResponse,
   BrokerAccount,
+  FlexHealthResponse,
   OptionChainResponse,
   OrdersResponse,
   PositionsResponse,
@@ -56,6 +60,71 @@ type ShadowAccountStreamPayload = {
   allocation: AccountAllocationResponse;
   risk: AccountRiskResponse;
   updatedAt: string;
+};
+
+type AccountPageBootstrapPayload = {
+  stream?: "account-page-bootstrap";
+  accountId: string;
+  mode: StreamMode;
+  range?: AccountHistoryRangeValue;
+  orderTab: "working" | "history";
+  assetClass: string | null;
+  tradeFilters: {
+    from: string | null;
+    to: string | null;
+    symbol: string | null;
+    pnlSign: string | null;
+    holdDuration: string | null;
+  };
+  performanceCalendarFrom: string | null;
+  updatedAt: string;
+  summary: AccountSummaryResponse;
+  equityHistory: AccountEquityHistoryResponse;
+  intradayEquity: AccountEquityHistoryResponse;
+  benchmarkEquityHistory: Partial<Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>>;
+  performanceCalendarEquity: AccountEquityHistoryResponse;
+  performanceCalendarTrades: AccountClosedTradesResponse;
+  allocation: AccountAllocationResponse;
+  positions: AccountPositionsResponse;
+  closedTrades: AccountClosedTradesResponse;
+  orders: AccountOrdersResponse;
+  risk: AccountRiskResponse;
+  cashActivity: AccountCashActivityResponse;
+  flexHealth: FlexHealthResponse | null;
+  tradingPatterns: AccountTradingPatternsResponse | null;
+};
+
+type AccountPageLivePayload = {
+  stream?: "account-page-live";
+  accountId: string;
+  mode: StreamMode;
+  orderTab: "working" | "history";
+  assetClass: string | null;
+  updatedAt: string;
+  summary: AccountSummaryResponse;
+  intradayEquity: AccountEquityHistoryResponse;
+  allocation: AccountAllocationResponse;
+  positions: AccountPositionsResponse;
+  orders: AccountOrdersResponse;
+  risk: AccountRiskResponse;
+};
+
+type AccountPageDerivedPayload = {
+  stream?: "account-page-derived";
+  accountId: string;
+  mode: StreamMode;
+  range?: AccountHistoryRangeValue;
+  tradeFilters: AccountPageBootstrapPayload["tradeFilters"];
+  performanceCalendarFrom: string | null;
+  updatedAt: string;
+  equityHistory: AccountEquityHistoryResponse;
+  benchmarkEquityHistory: Partial<Record<"SPY" | "QQQ" | "DIA", AccountEquityHistoryResponse>>;
+  performanceCalendarEquity: AccountEquityHistoryResponse;
+  performanceCalendarTrades: AccountClosedTradesResponse;
+  closedTrades: AccountClosedTradesResponse;
+  cashActivity: AccountCashActivityResponse;
+  flexHealth: FlexHealthResponse | null;
+  tradingPatterns: AccountTradingPatternsResponse | null;
 };
 
 type OrderStreamPayload = {
@@ -140,7 +209,10 @@ const OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE = 100;
 const OPTION_QUOTE_WEBSOCKET_ENABLED = true;
 const OPTION_QUOTE_WEBSOCKET_STALL_MS = 15_000;
 const ACCOUNT_STREAM_FRESH_MS = 7_000;
+const SHADOW_ACCOUNT_STREAM_FRESH_MS = 7_000;
+const ACCOUNT_PAGE_STREAM_FRESH_MS = 3_000;
 const ORDER_INVALIDATION_THROTTLE_MS = 2_000;
+const ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS = 10_000;
 
 type BrokerStreamFreshnessSnapshot = {
   accountLastEventAt: number | null;
@@ -153,7 +225,17 @@ let brokerStreamFreshnessVersion = 0;
 let accountLastEventAt: number | null = null;
 let orderLastEventAt: number | null = null;
 let lastOrderInvalidationAt = 0;
+let lastAccountDerivedInvalidationAt = 0;
 const brokerStreamFreshnessListeners = new Set<() => void>();
+
+type ShadowAccountStreamFreshnessSnapshot = {
+  accountLastEventAt: number | null;
+  accountFresh: boolean;
+};
+
+let shadowAccountStreamFreshnessVersion = 0;
+let shadowAccountLastEventAt: number | null = null;
+const shadowAccountStreamFreshnessListeners = new Set<() => void>();
 
 const emitBrokerStreamFreshness = () => {
   brokerStreamFreshnessVersion += 1;
@@ -170,12 +252,30 @@ const markBrokerStreamEvent = (kind: "account" | "order") => {
   emitBrokerStreamFreshness();
 };
 
+const emitShadowAccountStreamFreshness = () => {
+  shadowAccountStreamFreshnessVersion += 1;
+  shadowAccountStreamFreshnessListeners.forEach((listener) => listener());
+};
+
+const markShadowAccountStreamEvent = () => {
+  shadowAccountLastEventAt = Date.now();
+  emitShadowAccountStreamFreshness();
+};
+
 const subscribeBrokerStreamFreshness = (listener: () => void) => {
   brokerStreamFreshnessListeners.add(listener);
   return () => brokerStreamFreshnessListeners.delete(listener);
 };
 
 const getBrokerStreamFreshnessVersion = () => brokerStreamFreshnessVersion;
+
+const subscribeShadowAccountStreamFreshness = (listener: () => void) => {
+  shadowAccountStreamFreshnessListeners.add(listener);
+  return () => shadowAccountStreamFreshnessListeners.delete(listener);
+};
+
+const getShadowAccountStreamFreshnessVersion = () =>
+  shadowAccountStreamFreshnessVersion;
 
 export const getBrokerStreamFreshnessSnapshot =
   (): BrokerStreamFreshnessSnapshot => {
@@ -189,6 +289,19 @@ export const getBrokerStreamFreshnessSnapshot =
         orderLastEventAt != null && now - orderLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
     };
   };
+
+export const getBrokerStreamFreshnessStatus = () => {
+  const snapshot = getBrokerStreamFreshnessSnapshot();
+  return {
+    accountFresh: snapshot.accountFresh,
+    orderFresh: snapshot.orderFresh,
+  };
+};
+
+const getBrokerStreamFreshnessStatusToken = () => {
+  const status = getBrokerStreamFreshnessStatus();
+  return `${status.accountFresh ? 1 : 0}:${status.orderFresh ? 1 : 0}`;
+};
 
 export const useBrokerStreamFreshnessSnapshot =
   (enabled = true): BrokerStreamFreshnessSnapshot => {
@@ -205,6 +318,56 @@ export const useBrokerStreamFreshnessSnapshot =
       return () => clearInterval(interval);
     }, [enabled]);
     return getBrokerStreamFreshnessSnapshot();
+  };
+
+export const useBrokerStreamFreshnessStatus = (enabled = true) => {
+  const statusToken = useSyncExternalStore(
+    enabled ? subscribeBrokerStreamFreshness : () => () => {},
+    enabled ? getBrokerStreamFreshnessStatusToken : () => "0:0",
+    () => "0:0",
+  );
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const interval = setInterval(emitBrokerStreamFreshness, 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+  return useMemo(
+    () => ({
+      accountFresh: statusToken[0] === "1",
+      orderFresh: statusToken[2] === "1",
+    }),
+    [statusToken],
+  );
+};
+
+export const getShadowAccountStreamFreshnessSnapshot =
+  (): ShadowAccountStreamFreshnessSnapshot => {
+    const now = Date.now();
+    return {
+      accountLastEventAt: shadowAccountLastEventAt,
+      accountFresh:
+        shadowAccountLastEventAt != null &&
+        now - shadowAccountLastEventAt <= SHADOW_ACCOUNT_STREAM_FRESH_MS,
+    };
+  };
+
+export const useShadowAccountStreamFreshnessSnapshot =
+  (enabled = true): ShadowAccountStreamFreshnessSnapshot => {
+    useSyncExternalStore(
+      enabled ? subscribeShadowAccountStreamFreshness : () => () => {},
+      enabled ? getShadowAccountStreamFreshnessVersion : () => 0,
+      () => 0,
+    );
+    useEffect(() => {
+      if (!enabled) {
+        return undefined;
+      }
+      const interval = setInterval(emitShadowAccountStreamFreshness, 1_000);
+      return () => clearInterval(interval);
+    }, [enabled]);
+    return getShadowAccountStreamFreshnessSnapshot();
   };
 
 export const getOptionQuoteSnapshotCacheSize = (): number =>
@@ -247,6 +410,43 @@ const buildStreamUrl = (
 
 export const getShadowAccountStreamUrl = (): string =>
   "/api/streams/accounts/shadow";
+
+export const getAccountPageStreamUrl = ({
+  accountId,
+  mode,
+  range,
+  orderTab,
+  assetClass,
+  tradeFilters = {},
+  performanceCalendarFrom,
+}: {
+  accountId?: string | null;
+  mode: StreamMode;
+  range?: string | null;
+  orderTab?: string | null;
+  assetClass?: string | null;
+  tradeFilters?: {
+    from?: string | null;
+    to?: string | null;
+    symbol?: string | null;
+    pnlSign?: string | null;
+    holdDuration?: string | null;
+  };
+  performanceCalendarFrom?: string | null;
+}): string | null =>
+  buildStreamUrl("/api/streams/accounts/page", {
+    accountId: accountId ?? undefined,
+    mode,
+    range: range ?? undefined,
+    orderTab: orderTab ?? undefined,
+    assetClass: assetClass ?? undefined,
+    from: tradeFilters.from ?? undefined,
+    to: tradeFilters.to ?? undefined,
+    symbol: tradeFilters.symbol ?? undefined,
+    pnlSign: tradeFilters.pnlSign ?? undefined,
+    holdDuration: tradeFilters.holdDuration ?? undefined,
+    performanceCalendarFrom: performanceCalendarFrom ?? undefined,
+  });
 
 const buildWebSocketUrl = (path: string): string | null => {
   if (typeof window === "undefined") {
@@ -1136,6 +1336,356 @@ const filterOrdersForQuery = (
   });
 };
 
+type StreamPosition = PositionsResponse["positions"][number];
+type AccountPositionRow = AccountPositionsResponse["positions"][number];
+type StreamOrder = OrdersResponse["orders"][number];
+type AccountOrderRow = AccountOrdersResponse["orders"][number];
+
+const ETF_SYMBOLS = new Set([
+  "SPY",
+  "QQQ",
+  "IWM",
+  "DIA",
+  "TLT",
+  "IEF",
+  "GLD",
+  "USO",
+  "SOXX",
+  "VXX",
+  "VIXY",
+]);
+
+const toIsoTimestamp = (value: unknown): string => {
+  const timestamp = parseAccountTimestampMs(value);
+  return new Date(timestamp ?? Date.now()).toISOString();
+};
+
+const dateOnly = (value: unknown): string => {
+  const timestamp = parseAccountTimestampMs(value);
+  if (timestamp !== null) {
+    return new Date(timestamp).toISOString().slice(0, 10);
+  }
+  return String(value ?? "").slice(0, 10);
+};
+
+const streamPositionGroupKey = (position: StreamPosition): string => {
+  const contract = position.optionContract;
+  if (contract) {
+    return [
+      "option",
+      contract.underlying || position.symbol,
+      dateOnly(contract.expirationDate),
+      contract.strike,
+      contract.right,
+    ].join(":");
+  }
+  return `equity:${position.symbol.toUpperCase()}`;
+};
+
+const streamPositionDescription = (position: StreamPosition): string => {
+  const contract = position.optionContract;
+  return contract
+    ? `${contract.underlying || position.symbol} ${dateOnly(contract.expirationDate)} ${contract.strike} ${contract.right}`
+    : position.symbol;
+};
+
+const streamPositionAssetClassLabel = (position: StreamPosition): string => {
+  if (position.assetClass === "option") {
+    return "Options";
+  }
+  return ETF_SYMBOLS.has(position.symbol.toUpperCase()) ? "ETF" : "Stocks";
+};
+
+const weightPercentFromNav = (
+  marketValue: number,
+  payload: AccountStreamPayload,
+  accountId: string,
+): number | null => {
+  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
+  return netLiquidation && Math.abs(netLiquidation) > 1e-9
+    ? (marketValue / netLiquidation) * 100
+    : null;
+};
+
+const accountPositionMatchesAssetClass = (
+  position: Pick<AccountPositionRow, "assetClass">,
+  queryKey: unknown,
+): boolean => {
+  const params = readQueryParams(queryKey);
+  const requestedAssetClass =
+    typeof params?.assetClass === "string" ? params.assetClass : null;
+  return (
+    !requestedAssetClass ||
+    requestedAssetClass === "all" ||
+    String(position.assetClass || "").toLowerCase() ===
+      requestedAssetClass.toLowerCase()
+  );
+};
+
+const sortPatchedAccountPositions = (
+  currentRows: AccountPositionRow[],
+  nextRows: AccountPositionRow[],
+): AccountPositionRow[] => {
+  const currentOrder = new Map(
+    currentRows.map((position, index) => [position.id, index]),
+  );
+  return nextRows.sort((left, right) => {
+    const leftIndex = currentOrder.get(left.id);
+    const rightIndex = currentOrder.get(right.id);
+    if (leftIndex !== undefined || rightIndex !== undefined) {
+      return (leftIndex ?? Number.MAX_SAFE_INTEGER) -
+        (rightIndex ?? Number.MAX_SAFE_INTEGER);
+    }
+    return Math.abs(right.marketValue) - Math.abs(left.marketValue);
+  });
+};
+
+const accountPositionRowFromStream = (
+  position: StreamPosition,
+  current: AccountPositionRow | undefined,
+  payload: AccountStreamPayload,
+  accountId: string,
+): AccountPositionRow => {
+  const mark =
+    Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
+      ? position.marketPrice
+      : position.averagePrice;
+
+  return {
+    ...(current || {}),
+    id: current?.id ?? position.id,
+    accountId: current?.accountId ?? position.accountId,
+    accounts: current?.accounts ?? [position.accountId],
+    symbol: position.symbol,
+    description: current?.description ?? streamPositionDescription(position),
+    assetClass: current?.assetClass ?? streamPositionAssetClassLabel(position),
+    optionContract: position.optionContract ?? null,
+    sector: current?.sector ?? "",
+    quantity: position.quantity,
+    averageCost: position.averagePrice,
+    mark,
+    dayChange: current?.dayChange ?? null,
+    dayChangePercent: current?.dayChangePercent ?? null,
+    unrealizedPnl: position.unrealizedPnl,
+    unrealizedPnlPercent: position.unrealizedPnlPercent,
+    marketValue: position.marketValue,
+    weightPercent: weightPercentFromNav(position.marketValue, payload, accountId),
+    betaWeightedDelta: current?.betaWeightedDelta ?? null,
+    lots: current?.lots ?? [],
+    openOrders: current?.openOrders ?? [],
+    source: current?.source ?? "IBKR_POSITIONS",
+    sourceType: current?.sourceType ?? "manual",
+    strategyLabel: current?.strategyLabel ?? "Manual",
+    attributionStatus: current?.attributionStatus ?? "unknown",
+    sourceAttribution: current?.sourceAttribution ?? [],
+  };
+};
+
+const patchCombinedAccountPositions = (
+  current: AccountPositionsResponse,
+  payload: AccountStreamPayload,
+  accountId: string,
+  queryKey: unknown,
+): AccountPositionRow[] => {
+  const currentById = new Map(current.positions.map((position) => [position.id, position]));
+  const groups = new Map<
+    string,
+    {
+      first: StreamPosition;
+      current?: AccountPositionRow;
+      accounts: Set<string>;
+      quantity: number;
+      averageCostAccumulator: number;
+      markAccumulator: number;
+      averageWeight: number;
+      marketValue: number;
+      unrealizedPnl: number;
+      unrealizedPnlPercentAccumulator: number;
+      unrealizedWeight: number;
+    }
+  >();
+
+  payload.positions.forEach((position) => {
+    const key = streamPositionGroupKey(position);
+    const mark =
+      Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
+        ? position.marketPrice
+        : position.averagePrice;
+    const quantityWeight = Math.abs(position.quantity);
+    const valueWeight = Math.abs(position.marketValue);
+    const currentGroup = groups.get(key) ?? {
+      first: position,
+      current: currentById.get(key),
+      accounts: new Set<string>(),
+      quantity: 0,
+      averageCostAccumulator: 0,
+      markAccumulator: 0,
+      averageWeight: 0,
+      marketValue: 0,
+      unrealizedPnl: 0,
+      unrealizedPnlPercentAccumulator: 0,
+      unrealizedWeight: 0,
+    };
+
+    currentGroup.accounts.add(position.accountId);
+    currentGroup.quantity += position.quantity;
+    currentGroup.averageCostAccumulator += position.averagePrice * quantityWeight;
+    currentGroup.markAccumulator += mark * quantityWeight;
+    currentGroup.averageWeight += quantityWeight;
+    currentGroup.marketValue += position.marketValue;
+    currentGroup.unrealizedPnl += position.unrealizedPnl;
+    currentGroup.unrealizedPnlPercentAccumulator +=
+      (position.unrealizedPnlPercent ?? 0) * valueWeight;
+    currentGroup.unrealizedWeight += valueWeight;
+    groups.set(key, currentGroup);
+  });
+
+  return sortPatchedAccountPositions(
+    current.positions,
+    Array.from(groups.entries())
+      .map(([id, group]) => {
+        const currentRow = group.current;
+        const row: AccountPositionRow = {
+          ...(currentRow || {}),
+          id,
+          accountId,
+          accounts: Array.from(group.accounts),
+          symbol: group.first.symbol,
+          description:
+            currentRow?.description ?? streamPositionDescription(group.first),
+          assetClass:
+            currentRow?.assetClass ?? streamPositionAssetClassLabel(group.first),
+          optionContract: group.first.optionContract ?? null,
+          sector: currentRow?.sector ?? "",
+          quantity: group.quantity,
+          averageCost:
+            group.averageWeight > 0
+              ? group.averageCostAccumulator / group.averageWeight
+              : 0,
+          mark:
+            group.averageWeight > 0 ? group.markAccumulator / group.averageWeight : 0,
+          dayChange: currentRow?.dayChange ?? null,
+          dayChangePercent: currentRow?.dayChangePercent ?? null,
+          unrealizedPnl: group.unrealizedPnl,
+          unrealizedPnlPercent:
+            group.unrealizedWeight > 0
+              ? group.unrealizedPnlPercentAccumulator / group.unrealizedWeight
+              : 0,
+          marketValue: group.marketValue,
+          weightPercent: weightPercentFromNav(group.marketValue, payload, accountId),
+          betaWeightedDelta: currentRow?.betaWeightedDelta ?? null,
+          lots: currentRow?.lots ?? [],
+          openOrders: currentRow?.openOrders ?? [],
+          source: currentRow?.source ?? "IBKR_POSITIONS",
+          sourceType: currentRow?.sourceType ?? "manual",
+          strategyLabel: currentRow?.strategyLabel ?? "Manual",
+          attributionStatus: currentRow?.attributionStatus ?? "unknown",
+          sourceAttribution: currentRow?.sourceAttribution ?? [],
+        };
+        return row;
+      })
+      .filter((position) => accountPositionMatchesAssetClass(position, queryKey)),
+  );
+};
+
+const patchAccountPositionsFromStream = (
+  current: AccountPositionsResponse | undefined,
+  payload: AccountStreamPayload,
+  accountId: string,
+  queryKey: unknown,
+): AccountPositionsResponse | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  const positions =
+    accountId === "combined"
+      ? patchCombinedAccountPositions(current, payload, accountId, queryKey)
+      : sortPatchedAccountPositions(
+          current.positions,
+          payload.positions
+            .filter((position) => position.accountId === accountId)
+            .map((position) =>
+              accountPositionRowFromStream(
+                position,
+                current.positions.find((row) => row.id === position.id),
+                payload,
+                accountId,
+              ),
+            )
+            .filter((position) => accountPositionMatchesAssetClass(position, queryKey)),
+        );
+
+  return {
+    ...current,
+    positions,
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+const TERMINAL_ORDER_STATUSES = new Set(["filled", "canceled", "rejected", "expired"]);
+
+const orderMatchesAccountTab = (
+  order: StreamOrder,
+  accountId: string,
+  tab: "working" | "history",
+): boolean => {
+  if (accountId !== "combined" && order.accountId !== accountId) {
+    return false;
+  }
+  const terminal = TERMINAL_ORDER_STATUSES.has(order.status);
+  return tab === "history" ? terminal : !terminal;
+};
+
+const accountOrderFromStream = (
+  order: StreamOrder,
+  current: AccountOrderRow | undefined,
+): AccountOrderRow => ({
+  ...(current || {}),
+  id: order.id,
+  accountId: order.accountId,
+  symbol: order.symbol,
+  side: order.side,
+  type: order.type,
+  assetClass: order.assetClass,
+  quantity: order.quantity,
+  filledQuantity: order.filledQuantity,
+  limitPrice: order.limitPrice,
+  stopPrice: order.stopPrice,
+  timeInForce: order.timeInForce,
+  status: order.status,
+  placedAt: toIsoTimestamp(order.placedAt),
+  filledAt: order.status === "filled" ? toIsoTimestamp(order.updatedAt) : null,
+  updatedAt: toIsoTimestamp(order.updatedAt),
+  averageFillPrice: current?.averageFillPrice ?? null,
+  commission: current?.commission ?? null,
+  source: current?.source ?? "LIVE",
+});
+
+const patchAccountOrdersFromStream = (
+  current: AccountOrdersResponse | undefined,
+  orders: OrdersResponse["orders"],
+  accountId: string,
+  queryKey: unknown,
+): AccountOrdersResponse | undefined => {
+  if (!current) {
+    return current;
+  }
+  const params = readQueryParams(queryKey);
+  const tab = params?.tab === "history" ? "history" : "working";
+  const currentById = new Map(current.orders.map((order) => [order.id, order]));
+
+  return {
+    ...current,
+    tab,
+    orders: orders
+      .filter((order) => orderMatchesAccountTab(order, accountId, tab))
+      .map((order) => accountOrderFromStream(order, currentById.get(order.id))),
+    updatedAt: new Date().toISOString(),
+  };
+};
+
 const shadowPositionsForQuery = (
   positionsResponse: AccountPositionsResponse,
   queryKey: unknown,
@@ -1211,6 +1761,212 @@ export const applyShadowAccountPayloadToCache = (
 
 };
 
+const optionalParamMatches = (
+  params: Record<string, unknown> | null,
+  key: string,
+  expected: string | null | undefined,
+): boolean => {
+  const current = typeof params?.[key] === "string" ? params[key] : null;
+  return expected ? current === expected : current == null || current === "";
+};
+
+const assetClassParamMatches = (
+  params: Record<string, unknown> | null,
+  expected: string | null | undefined,
+): boolean => {
+  const current =
+    typeof params?.assetClass === "string" && params.assetClass
+      ? params.assetClass
+      : null;
+  return expected && expected !== "all"
+    ? current === expected
+    : current == null || current === "all";
+};
+
+const orderTabParamMatches = (
+  params: Record<string, unknown> | null,
+  expected: "working" | "history",
+): boolean => {
+  const current = params?.tab === "history" ? "history" : "working";
+  return current === expected;
+};
+
+const closedTradeParamsMatch = (
+  params: Record<string, unknown> | null,
+  filters: AccountPageBootstrapPayload["tradeFilters"],
+): boolean =>
+  optionalParamMatches(params, "from", filters.from) &&
+  optionalParamMatches(params, "to", filters.to) &&
+  optionalParamMatches(params, "symbol", filters.symbol) &&
+  optionalParamMatches(params, "pnlSign", filters.pnlSign) &&
+  optionalParamMatches(params, "holdDuration", filters.holdDuration) &&
+  optionalParamMatches(params, "assetClass", null);
+
+const performanceCalendarParamsMatch = (
+  params: Record<string, unknown> | null,
+  performanceCalendarFrom: string | null,
+): boolean =>
+  optionalParamMatches(params, "from", performanceCalendarFrom) &&
+  optionalParamMatches(params, "to", null) &&
+  optionalParamMatches(params, "symbol", null) &&
+  optionalParamMatches(params, "pnlSign", null) &&
+  optionalParamMatches(params, "holdDuration", null) &&
+  optionalParamMatches(params, "assetClass", null);
+
+export const applyAccountPageLivePayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageLivePayload,
+) => {
+  queryClient
+    .getQueryCache()
+    .findAll({
+      predicate: (query) => {
+        const path = queryKeyPath(query.queryKey);
+        return Boolean(path?.startsWith(`/api/accounts/${payload.accountId}/`));
+      },
+    })
+    .forEach((query) => {
+      const path = queryKeyPath(query.queryKey);
+      const params = readQueryParams(query.queryKey);
+
+      if (!matchesMode(params, payload.mode)) {
+        return;
+      }
+
+      if (path === `/api/accounts/${payload.accountId}/summary`) {
+        queryClient.setQueryData(query.queryKey, payload.summary);
+      } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
+        queryClient.setQueryData(query.queryKey, payload.allocation);
+      } else if (path === `/api/accounts/${payload.accountId}/risk`) {
+        queryClient.setQueryData(query.queryKey, payload.risk);
+      } else if (
+        path === `/api/accounts/${payload.accountId}/positions` &&
+        assetClassParamMatches(params, payload.assetClass)
+      ) {
+        queryClient.setQueryData(query.queryKey, payload.positions);
+      } else if (
+        path === `/api/accounts/${payload.accountId}/orders` &&
+        orderTabParamMatches(params, payload.orderTab)
+      ) {
+        queryClient.setQueryData(query.queryKey, payload.orders);
+      } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
+        const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";
+        const benchmark =
+          typeof params?.benchmark === "string" ? params.benchmark.toUpperCase() : null;
+        if (!benchmark && range === "1D") {
+          queryClient.setQueryData(query.queryKey, payload.intradayEquity);
+        }
+      }
+    });
+};
+
+export const applyAccountPageDerivedPayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageDerivedPayload,
+) => {
+  queryClient
+    .getQueryCache()
+    .findAll({
+      predicate: (query) => {
+        const path = queryKeyPath(query.queryKey);
+        return (
+          path === "/api/accounts/flex/health" ||
+          Boolean(path?.startsWith(`/api/accounts/${payload.accountId}/`))
+        );
+      },
+    })
+    .forEach((query) => {
+      const path = queryKeyPath(query.queryKey);
+      const params = readQueryParams(query.queryKey);
+
+      if (path === "/api/accounts/flex/health") {
+        if (payload.flexHealth) {
+          queryClient.setQueryData(query.queryKey, payload.flexHealth);
+        }
+        return;
+      }
+
+      if (!matchesMode(params, payload.mode)) {
+        return;
+      }
+
+      if (path === `/api/accounts/${payload.accountId}/cash-activity`) {
+        queryClient.setQueryData(query.queryKey, payload.cashActivity);
+      } else if (path === `/api/accounts/${payload.accountId}/closed-trades`) {
+        if (closedTradeParamsMatch(params, payload.tradeFilters)) {
+          queryClient.setQueryData(query.queryKey, payload.closedTrades);
+        } else if (
+          performanceCalendarParamsMatch(params, payload.performanceCalendarFrom)
+        ) {
+          queryClient.setQueryData(query.queryKey, payload.performanceCalendarTrades);
+        }
+      } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
+        const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";
+        const benchmark =
+          typeof params?.benchmark === "string" ? params.benchmark.toUpperCase() : null;
+
+        if (benchmark === "SPY" || benchmark === "QQQ" || benchmark === "DIA") {
+          if (range === payload.range && payload.benchmarkEquityHistory[benchmark]) {
+            queryClient.setQueryData(
+              query.queryKey,
+              payload.benchmarkEquityHistory[benchmark],
+            );
+          }
+        } else if (range === "1D") {
+          return;
+        } else if (range === payload.range) {
+          queryClient.setQueryData(query.queryKey, payload.equityHistory);
+        } else if (range === "1Y") {
+          queryClient.setQueryData(query.queryKey, payload.performanceCalendarEquity);
+        }
+      } else if (
+        path === `/api/accounts/${payload.accountId}/trading-patterns` &&
+        payload.tradingPatterns &&
+        (normalizeAccountHistoryRange(params?.range) ?? "ALL") === payload.range &&
+        (!params?.snapshotId || params.snapshotId === "latest")
+      ) {
+        queryClient.setQueryData(query.queryKey, payload.tradingPatterns);
+      }
+    });
+};
+
+export const applyAccountPagePayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageBootstrapPayload,
+) => {
+  applyAccountPageLivePayloadToCache(queryClient, {
+    stream: "account-page-live",
+    accountId: payload.accountId,
+    mode: payload.mode,
+    orderTab: payload.orderTab,
+    assetClass: payload.assetClass,
+    updatedAt: payload.updatedAt,
+    summary: payload.summary,
+    intradayEquity: payload.intradayEquity,
+    allocation: payload.allocation,
+    positions: payload.positions,
+    orders: payload.orders,
+    risk: payload.risk,
+  });
+  applyAccountPageDerivedPayloadToCache(queryClient, {
+    stream: "account-page-derived",
+    accountId: payload.accountId,
+    mode: payload.mode,
+    range: payload.range,
+    tradeFilters: payload.tradeFilters,
+    performanceCalendarFrom: payload.performanceCalendarFrom,
+    updatedAt: payload.updatedAt,
+    equityHistory: payload.equityHistory,
+    benchmarkEquityHistory: payload.benchmarkEquityHistory,
+    performanceCalendarEquity: payload.performanceCalendarEquity,
+    performanceCalendarTrades: payload.performanceCalendarTrades,
+    closedTrades: payload.closedTrades,
+    cashActivity: payload.cashActivity,
+    flexHealth: payload.flexHealth,
+    tradingPatterns: payload.tradingPatterns,
+  });
+};
+
 export const applyIbkrAccountPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountStreamPayload,
@@ -1269,6 +2025,21 @@ export const applyIbkrAccountPayloadToCache = (
         return;
       }
 
+      const positionsAccountId = accountIdFromScopedPath(path, "positions");
+      if (positionsAccountId) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountPositionsResponse | undefined) =>
+            patchAccountPositionsFromStream(
+              current,
+              payload,
+              positionsAccountId,
+              query.queryKey,
+            ),
+        );
+        return;
+      }
+
       const equityAccountId = accountIdFromScopedPath(path, "equity-history");
       if (!equityAccountId) {
         return;
@@ -1291,12 +2062,16 @@ export const applyIbkrAccountPayloadToCache = (
       );
     });
 
-  invalidateVisibleAccountDerivedQueries(
-    queryClient,
-    accountIdsFromAccountPayload(payload.accounts, input.accountId),
-    input.mode,
-    { includeEquityHistory: false },
-  );
+  const now = Date.now();
+  if (now - lastAccountDerivedInvalidationAt >= ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS) {
+    lastAccountDerivedInvalidationAt = now;
+    invalidateAccountScopedQueries(
+      queryClient,
+      accountIdsFromAccountPayload(payload.accounts, input.accountId),
+      input.mode,
+      new Set(["allocation", "risk", "cash-activity", "closed-trades"]),
+    );
+  }
 };
 
 export const mergeQuotesIntoCache = (
@@ -1713,6 +2488,7 @@ export const useShadowAccountSnapshotStream = ({
   enabled?: boolean;
 } = {}) => {
   const queryClient = useQueryClient();
+  const freshness = useShadowAccountStreamFreshnessSnapshot(enabled);
   const streamUrl = getShadowAccountStreamUrl();
 
   useEffect(() => {
@@ -1732,15 +2508,183 @@ export const useShadowAccountSnapshotStream = ({
         return;
       }
 
+      markShadowAccountStreamEvent();
       applyShadowAccountPayloadToCache(queryClient, payload);
+    };
+    const handleFreshness = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<{
+        stream?: string;
+        degraded?: boolean;
+        stale?: boolean;
+      }>(event.data);
+      if (
+        !payload ||
+        (payload.stream && payload.stream !== "shadow-accounts") ||
+        payload.degraded ||
+        payload.stale
+      ) {
+        return;
+      }
+      markShadowAccountStreamEvent();
+    };
+    const handleReady = () => {
+      markShadowAccountStreamEvent();
     };
 
     source.addEventListener("accounts", handleAccounts as EventListener);
+    source.addEventListener("freshness", handleFreshness as EventListener);
+    source.addEventListener("ready", handleReady as EventListener);
     return () => {
       source.removeEventListener("accounts", handleAccounts as EventListener);
+      source.removeEventListener("freshness", handleFreshness as EventListener);
+      source.removeEventListener("ready", handleReady as EventListener);
       source.close();
     };
   }, [enabled, queryClient, streamUrl]);
+
+  return freshness;
+};
+
+export const useAccountPageSnapshotStream = ({
+  accountId,
+  mode,
+  range,
+  orderTab,
+  assetClass,
+  tradeFilters,
+  performanceCalendarFrom,
+  enabled = true,
+}: {
+  accountId?: string | null;
+  mode: StreamMode;
+  range?: string | null;
+  orderTab?: "working" | "history";
+  assetClass?: string | null;
+  tradeFilters?: {
+    from?: string | null;
+    to?: string | null;
+    symbol?: string | null;
+    pnlSign?: string | null;
+    holdDuration?: string | null;
+  };
+  performanceCalendarFrom?: string | null;
+  enabled?: boolean;
+}) => {
+  const queryClient = useQueryClient();
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const streamUrl = useMemo(
+    () =>
+      getAccountPageStreamUrl({
+        accountId,
+        mode,
+        range,
+        orderTab,
+        assetClass,
+        tradeFilters,
+        performanceCalendarFrom,
+      }),
+    [
+      accountId,
+      assetClass,
+      mode,
+      orderTab,
+      performanceCalendarFrom,
+      range,
+      tradeFilters?.from,
+      tradeFilters?.holdDuration,
+      tradeFilters?.pnlSign,
+      tradeFilters?.symbol,
+      tradeFilters?.to,
+    ],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setLastEventAt(null);
+      return undefined;
+    }
+    const interval = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    const markFresh = () => {
+      const timestamp = Date.now();
+      setLastEventAt(timestamp);
+      setNow(timestamp);
+    };
+    const source = new EventSource(streamUrl);
+    const handleBootstrap = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<AccountPageBootstrapPayload>(event.data);
+      if (!payload || payload.stream !== "account-page-bootstrap") {
+        return;
+      }
+      markFresh();
+      applyAccountPagePayloadToCache(queryClient, payload);
+    };
+    const handleLive = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<AccountPageLivePayload>(event.data);
+      if (!payload || payload.stream !== "account-page-live") {
+        return;
+      }
+      markFresh();
+      applyAccountPageLivePayloadToCache(queryClient, payload);
+    };
+    const handleDerived = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<AccountPageDerivedPayload>(event.data);
+      if (!payload || payload.stream !== "account-page-derived") {
+        return;
+      }
+      markFresh();
+      applyAccountPageDerivedPayloadToCache(queryClient, payload);
+    };
+    const handleFreshness = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<{
+        stream?: string;
+        degraded?: boolean;
+        stale?: boolean;
+      }>(event.data);
+      if (
+        !payload ||
+        payload.stream !== "account-page" ||
+        payload.degraded ||
+        payload.stale
+      ) {
+        return;
+      }
+      markFresh();
+    };
+
+    source.addEventListener("bootstrap", handleBootstrap as EventListener);
+    source.addEventListener("live", handleLive as EventListener);
+    source.addEventListener("derived", handleDerived as EventListener);
+    source.addEventListener("freshness", handleFreshness as EventListener);
+    source.addEventListener("ready", markFresh as EventListener);
+    return () => {
+      source.removeEventListener("bootstrap", handleBootstrap as EventListener);
+      source.removeEventListener("live", handleLive as EventListener);
+      source.removeEventListener("derived", handleDerived as EventListener);
+      source.removeEventListener("freshness", handleFreshness as EventListener);
+      source.removeEventListener("ready", markFresh as EventListener);
+      source.close();
+    };
+  }, [enabled, queryClient, streamUrl]);
+
+  return {
+    accountLastEventAt: lastEventAt,
+    accountFresh:
+      lastEventAt != null && now - lastEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
+  };
 };
 
 export const useIbkrOrderSnapshotStream = ({
@@ -1794,6 +2738,40 @@ export const useIbkrOrderSnapshotStream = ({
           } satisfies OrdersResponse);
         });
 
+      queryClient
+        .getQueryCache()
+        .findAll({
+          predicate: (query) => {
+            const path = queryKeyPath(query.queryKey);
+            return Boolean(path?.startsWith("/api/accounts/"));
+          },
+        })
+        .forEach((query) => {
+          const params = readQueryParams(query.queryKey);
+          if (!matchesMode(params, mode)) {
+            return;
+          }
+
+          const accountOrdersAccountId = accountIdFromScopedPath(
+            queryKeyPath(query.queryKey),
+            "orders",
+          );
+          if (!accountOrdersAccountId) {
+            return;
+          }
+
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: AccountOrdersResponse | undefined) =>
+              patchAccountOrdersFromStream(
+                current,
+                payload.orders,
+                accountOrdersAccountId,
+                query.queryKey,
+              ),
+          );
+        });
+
       const now = Date.now();
       if (now - lastOrderInvalidationAt >= ORDER_INVALIDATION_THROTTLE_MS) {
         lastOrderInvalidationAt = now;
@@ -1805,7 +2783,7 @@ export const useIbkrOrderSnapshotStream = ({
             ...payload.orders.map((order) => order.accountId).filter(Boolean),
           ],
           mode,
-          new Set(["orders", "positions", "summary", "risk"]),
+          new Set(["positions", "summary", "risk"]),
         );
       }
     };
