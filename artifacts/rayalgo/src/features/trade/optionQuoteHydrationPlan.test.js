@@ -106,3 +106,16 @@ test("buildTradeOptionQuoteSubscriptionPlan caps visible contracts while pinning
     40,
   );
 });
+
+test("buildTradeOptionQuoteSubscriptionPlan keeps hidden analysis rows out of visible subscriptions", () => {
+  const plan = buildTradeOptionQuoteSubscriptionPlan({
+    chainRows: [row(95), row(100), row(105)],
+    visibleRows: [],
+    contract: { strike: 100, cp: "P" },
+    heldContracts: [{ providerContractId: "C95" }],
+  });
+
+  assert.deepEqual(plan.executionProviderContractIds, ["P100", "C95"]);
+  assert.deepEqual(plan.visibleProviderContractIds, []);
+  assert.deepEqual(plan.requestedProviderContractIds, ["P100", "C95"]);
+});

@@ -49,6 +49,20 @@ test("chart future expansion defaults to no future axis and clamps stale values"
   );
 });
 
+test("chart flow events display defaults on and normalizes cached values", () => {
+  assert.equal(DEFAULT_USER_PREFERENCES.chart.showFlowEvents, true);
+  assert.equal(
+    normalizeUserPreferences({ chart: { showFlowEvents: false } }).chart
+      .showFlowEvents,
+    false,
+  );
+  assert.equal(
+    normalizeUserPreferences({ chart: { showFlowEvents: "nope" } }).chart
+      .showFlowEvents,
+    true,
+  );
+});
+
 test("startup theme prefers cached appearance preferences over legacy top-level theme", () => {
   assert.equal(
     resolveEffectiveThemeFromState({

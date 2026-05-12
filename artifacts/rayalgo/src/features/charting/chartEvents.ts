@@ -58,6 +58,17 @@ export type FlowChartEventConversion = {
   droppedSymbolCount: number;
 };
 
+export type FlowEventChartTimeBasis =
+  | "trade_reported"
+  | "snapshot_observed";
+
+export type FlowEventChartTimeResolution = {
+  iso: string;
+  timeMs: number;
+  sourceField: string;
+  timeBasis: FlowEventChartTimeBasis;
+};
+
 const finiteNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -314,6 +325,10 @@ const NEW_YORK_EVENT_WINDOW_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 const RTH_OPEN_MINUTES = 9 * 60 + 30;
 const INTRADAY_FLOW_SESSION_COUNT = 3;
+const INTRADAY_FLOW_SESSION_COUNT_BY_TIMEFRAME: Record<string, number> = {
+  "15m": 12,
+  "1h": 30,
+};
 
 type NewYorkEventWindowParts = {
   year: number;
@@ -386,7 +401,18 @@ const newYorkEventWallTimeToUtcDate = (
   return new Date(guess.getTime() - (actualWallTime - expectedWallTime));
 };
 
-const intradayFlowLookbackStart = (now: Date): Date => {
+const getIntradayFlowSessionCount = (timeframe: string): number => {
+  const normalized = String(timeframe || "").trim().toLowerCase();
+  return (
+    INTRADAY_FLOW_SESSION_COUNT_BY_TIMEFRAME[normalized] ??
+    INTRADAY_FLOW_SESSION_COUNT
+  );
+};
+
+const intradayFlowLookbackStart = (
+  now: Date,
+  sessionCount = INTRADAY_FLOW_SESSION_COUNT,
+): Date => {
   const currentParts = readNewYorkEventWindowParts(now);
   const cursor = currentParts
     ? new Date(
@@ -406,7 +432,7 @@ const intradayFlowLookbackStart = (now: Date): Date => {
   let sessions = 0;
   let guard = 0;
 
-  while (sessions < INTRADAY_FLOW_SESSION_COUNT && guard < 14) {
+  while (sessions < sessionCount && guard < Math.max(14, sessionCount * 3)) {
     const parts = readNewYorkEventWindowParts(cursor);
     if (parts && !isWeekendEventWindowDay(parts)) {
       oldest = parts;
@@ -429,7 +455,118 @@ export const isSnapshotFlowEvent = (event: Record<string, unknown>): boolean => 
   return event.basis === "snapshot" || sourceBasis === "snapshot_activity";
 };
 
-const readDateCandidateIso = (candidate: unknown): string => {
+const DATE_ONLY_CANDIDATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const COMPACT_DATE_CANDIDATE_RE = /^(\d{4})(\d{2})(\d{2})$/;
+
+const parseDatePart = (
+  candidate: unknown,
+): Pick<NewYorkEventWindowParts, "year" | "month" | "day"> | null => {
+  if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
+    const parts = readNewYorkEventWindowParts(candidate);
+    return parts
+      ? { year: parts.year, month: parts.month, day: parts.day }
+      : null;
+  }
+  const raw = String(candidate ?? "").trim();
+  if (!raw) return null;
+  const compact = raw.match(COMPACT_DATE_CANDIDATE_RE);
+  if (compact) {
+    const year = Number(compact[1]);
+    const month = Number(compact[2]);
+    const day = Number(compact[3]);
+    return Number.isFinite(year) &&
+      Number.isFinite(month) &&
+      Number.isFinite(day)
+      ? { year, month, day }
+      : null;
+  }
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    const year = Number(dateOnly[1]);
+    const month = Number(dateOnly[2]);
+    const day = Number(dateOnly[3]);
+    return Number.isFinite(year) &&
+      Number.isFinite(month) &&
+      Number.isFinite(day)
+      ? { year, month, day }
+      : null;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return null;
+  const parts = readNewYorkEventWindowParts(new Date(parsed));
+  return parts ? { year: parts.year, month: parts.month, day: parts.day } : null;
+};
+
+const parseTimePart = (
+  candidate: unknown,
+): { minutes: number; seconds: number; milliseconds: number } | null => {
+  const raw = String(candidate ?? "").trim();
+  if (!raw) return null;
+  const colon = raw.match(
+    /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?\s*(AM|PM)?$/i,
+  );
+  if (colon) {
+    let hour = Number(colon[1]);
+    const minute = Number(colon[2]);
+    const second = Number(colon[3] || 0);
+    const millisecond = Number((colon[4] || "").padEnd(3, "0") || 0);
+    const meridiem = String(colon[5] || "").toUpperCase();
+    if (meridiem === "PM" && hour < 12) hour += 12;
+    if (meridiem === "AM" && hour === 12) hour = 0;
+    if (
+      hour >= 0 &&
+      hour <= 23 &&
+      minute >= 0 &&
+      minute <= 59 &&
+      second >= 0 &&
+      second <= 59 &&
+      millisecond >= 0 &&
+      millisecond <= 999
+    ) {
+      return { minutes: hour * 60 + minute, seconds: second, milliseconds: millisecond };
+    }
+    return null;
+  }
+  const compact = raw.match(/^(\d{1,2})(\d{2})(?:(\d{2}))?$/);
+  if (!compact) return null;
+  const hour = Number(compact[1]);
+  const minute = Number(compact[2]);
+  const second = Number(compact[3] || 0);
+  if (
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59 ||
+    second < 0 ||
+    second > 59
+  ) {
+    return null;
+  }
+  return { minutes: hour * 60 + minute, seconds: second, milliseconds: 0 };
+};
+
+const readCombinedNewYorkDateTimeIso = (
+  dateCandidate: unknown,
+  timeCandidate: unknown,
+): string => {
+  const dateParts = parseDatePart(dateCandidate);
+  const timeParts = parseTimePart(timeCandidate);
+  if (!dateParts || !timeParts) return "";
+  const date = newYorkEventWallTimeToUtcDate(dateParts, timeParts.minutes);
+  date.setUTCSeconds(timeParts.seconds, timeParts.milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
+};
+
+const isDateOnlyCandidate = (candidate: unknown): boolean => {
+  if (candidate instanceof Date || typeof candidate === "number") return false;
+  const raw = String(candidate ?? "").trim();
+  return DATE_ONLY_CANDIDATE_RE.test(raw) || COMPACT_DATE_CANDIDATE_RE.test(raw);
+};
+
+const readDateCandidateIso = (
+  candidate: unknown,
+  { allowDateOnly = true }: { allowDateOnly?: boolean } = {},
+): string => {
   if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
     return candidate.toISOString();
   }
@@ -458,47 +595,142 @@ const readDateCandidateIso = (candidate: unknown): string => {
   if (!raw) {
     return "";
   }
+  if (!allowDateOnly && isDateOnlyCandidate(raw)) {
+    return "";
+  }
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
 };
 
-const readFirstDateCandidateIso = (candidates: unknown[]): string => {
+const readFirstDateCandidateResolution = (
+  candidates: Array<{ field: string; value: unknown }>,
+  {
+    allowDateOnly = true,
+    timeBasis,
+  }: { allowDateOnly?: boolean; timeBasis: FlowEventChartTimeBasis },
+): FlowEventChartTimeResolution | null => {
   for (const candidate of candidates) {
-    const iso = readDateCandidateIso(candidate);
+    const iso = readDateCandidateIso(candidate.value, { allowDateOnly });
     if (iso) {
-      return iso;
+      const parsed = Date.parse(iso);
+      if (Number.isFinite(parsed)) {
+        return {
+          iso,
+          timeMs: parsed,
+          sourceField: candidate.field,
+          timeBasis,
+        };
+      }
     }
   }
-  return "";
+  return null;
+};
+
+const readCombinedTradeDateTimeResolution = (
+  event: Record<string, unknown>,
+): FlowEventChartTimeResolution | null => {
+  const pairs = [
+    {
+      dateField: "tradeDate",
+      dateValue: event.tradeDate,
+      timeField: "tradeTime",
+      timeValue: event.tradeTime,
+    },
+    {
+      dateField: "trade_date",
+      dateValue: event.trade_date,
+      timeField: "trade_time",
+      timeValue: event.trade_time,
+    },
+    {
+      dateField: "date",
+      dateValue: event.date,
+      timeField: "tradeTime",
+      timeValue: event.tradeTime,
+    },
+    {
+      dateField: "date",
+      dateValue: event.date,
+      timeField: "time",
+      timeValue: event.time,
+    },
+    {
+      dateField: "date",
+      dateValue: event.date,
+      timeField: "timeOfTrade",
+      timeValue: event.timeOfTrade,
+    },
+    {
+      dateField: "date",
+      dateValue: event.date,
+      timeField: "executionTime",
+      timeValue: event.executionTime,
+    },
+  ];
+
+  for (const pair of pairs) {
+    const iso = readCombinedNewYorkDateTimeIso(pair.dateValue, pair.timeValue);
+    if (!iso) continue;
+    const parsed = Date.parse(iso);
+    if (!Number.isFinite(parsed)) continue;
+    return {
+      iso,
+      timeMs: parsed,
+      sourceField: `${pair.dateField}+${pair.timeField}`,
+      timeBasis: "trade_reported",
+    };
+  }
+  return null;
+};
+
+export const resolveFlowEventChartTimeResolution = (
+  event: Record<string, unknown>,
+): FlowEventChartTimeResolution | null => {
+  const snapshotEvent = isSnapshotFlowEvent(event);
+  if (snapshotEvent) {
+    return readFirstDateCandidateResolution(
+      [
+        { field: "updatedAt", value: event.updatedAt },
+        { field: "createdAt", value: event.createdAt },
+        { field: "time", value: event.time },
+        { field: "occurredAt", value: event.occurredAt },
+      ],
+      { allowDateOnly: true, timeBasis: "snapshot_observed" },
+    );
+  }
+
+  const combinedTradeTime = readCombinedTradeDateTimeResolution(event);
+  if (combinedTradeTime) {
+    return combinedTradeTime;
+  }
+
+  const tradeTime = readFirstDateCandidateResolution(
+    [
+      { field: "sip_timestamp", value: event.sip_timestamp },
+      { field: "participant_timestamp", value: event.participant_timestamp },
+      { field: "trf_timestamp", value: event.trf_timestamp },
+      { field: "exchange_timestamp", value: event.exchange_timestamp },
+      { field: "timestamp", value: event.timestamp },
+      { field: "dateTime", value: event.dateTime },
+      { field: "t", value: event.t },
+      { field: "executedAt", value: event.executedAt },
+      { field: "executionTime", value: event.executionTime },
+      { field: "occurredAt", value: event.occurredAt },
+      { field: "time", value: event.time },
+    ],
+    { allowDateOnly: false, timeBasis: "trade_reported" },
+  );
+  return tradeTime;
 };
 
 const readFlowEventChartTime = (event: Record<string, unknown>): string => {
-  const tradeTime = readFirstDateCandidateIso([
-    event.occurredAt,
-    event.sip_timestamp,
-    event.participant_timestamp,
-    event.trf_timestamp,
-    event.exchange_timestamp,
-    event.timestamp,
-    event.dateTime,
-    event.t,
-  ]);
-  if (tradeTime || !isSnapshotFlowEvent(event)) {
-    return tradeTime;
-  }
-
-  return readFirstDateCandidateIso([
-    event.updatedAt,
-    event.createdAt,
-    event.time,
-  ]);
+  return resolveFlowEventChartTimeResolution(event)?.iso || "";
 };
 
 export const resolveFlowEventChartTimeMs = (
   event: Record<string, unknown>,
 ): number | null => {
-  const parsed = Date.parse(readFlowEventChartTime(event));
-  return Number.isFinite(parsed) ? parsed : null;
+  return resolveFlowEventChartTimeResolution(event)?.timeMs ?? null;
 };
 
 export const filterFlowEventsForChartLookbackWindow = (
@@ -793,11 +1025,12 @@ export const flowEventsToChartEventConversion = (
     )
       .trim()
       .toUpperCase();
-    const occurredAt = readFlowEventChartTime(event);
-    if (!occurredAt) {
+    const timeResolution = resolveFlowEventChartTimeResolution(event);
+    if (!timeResolution) {
       droppedInvalidTimeCount += 1;
       return;
     }
+    const occurredAt = timeResolution.iso;
     if (normalizedSymbol && eventSymbol !== normalizedSymbol) {
       droppedSymbolCount += 1;
       return;
@@ -844,7 +1077,10 @@ export const flowEventsToChartEventConversion = (
         unusualScore,
         isUnusual: Boolean(event.isUnusual),
         sourceBasis: sourceBasis || undefined,
-        timeBasis: snapshotDerived ? "snapshot_observed" : "trade_reported",
+        timeBasis: timeResolution.timeBasis,
+        chartTimeSourceField: timeResolution.sourceField,
+        chartTimeMs: timeResolution.timeMs,
+        chartEventDay: occurredAt.slice(0, 10),
         contractLabel,
       },
     } satisfies ChartEvent);
@@ -908,7 +1144,13 @@ export const getChartEventLookbackWindow = (
   const to = new Date(now);
   const intraday = !normalized.endsWith("d") && !normalized.endsWith("w");
   if (intraday) {
-    return { from: intradayFlowLookbackStart(now), to };
+    return {
+      from: intradayFlowLookbackStart(
+        now,
+        getIntradayFlowSessionCount(normalized),
+      ),
+      to,
+    };
   }
   const from = new Date(now);
   from.setUTCDate(from.getUTCDate() - 90);

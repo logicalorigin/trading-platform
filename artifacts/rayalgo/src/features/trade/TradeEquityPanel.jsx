@@ -6,12 +6,13 @@ import {
   resolveDisplayChartPrice,
 } from "../charting/displayChartSession";
 import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
-import { ResearchChartFrame } from "../charting/ResearchChartFrame";
 import {
+  ResearchChartFrame,
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-} from "../charting/ResearchChartWidgetChrome";
+  resolveResearchChartFramePlacement,
+} from "../charting/ResearchChartFrame";
 import {
   rollupMarketBars,
 } from "../charting/timeframeRollups";
@@ -23,7 +24,6 @@ import {
   normalizeChartTimeframe,
 } from "../charting/timeframes";
 import { recordChartBarScopeState } from "../charting/chartHydrationStats";
-import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
 import {
   useBrokerStreamedBars,
   usePrependableHistoricalBars,
@@ -102,7 +102,7 @@ export const TradeEquityPanel = ({
   historicalDataEnabled = true,
   stockAggregateStreamingEnabled = false,
   dataTestId = "trade-equity-chart",
-  compact = false,
+  compact,
   surfaceUiStateKey = "trade-equity-chart",
   viewportLayoutKey = null,
   onOpenSearch,
@@ -116,10 +116,16 @@ export const TradeEquityPanel = ({
   prewarmFavoriteTimeframesEnabled = true,
   flowEventsSourceMode = "merge-store",
   chartHydrationRole = "primary",
+  chartFramePlacement,
 }) => {
   const queryClient = useQueryClient();
   const effectiveChartHydrationRole =
     normalizeChartHydrationRole(chartHydrationRole);
+  const resolvedChartFramePlacement =
+    chartFramePlacement ?? (compact ? "compact-active" : "workspace");
+  const resolvedChartFrameCompact =
+    compact ??
+    resolveResearchChartFramePlacement(resolvedChartFramePlacement).compact;
   const shouldMergeTradeFlowStore = flowEventsSourceMode !== "provided";
   const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
     subscribe: shouldMergeTradeFlowStore,
@@ -196,7 +202,6 @@ export const TradeEquityPanel = ({
       return nextWorkspaceTimeframe;
     });
   }, [ticker, workspaceChart?.timeframe]);
-  const spotChartFrameLayout = resolveSpotChartFrameLayout(compact);
   const indicatorSettings = useMemo(
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
@@ -409,7 +414,7 @@ export const TradeEquityPanel = ({
       return undefined;
     }
 
-    if (!compact || intervalChangeRevision > 0) {
+    if (!resolvedChartFrameCompact || intervalChangeRevision > 0) {
       progressiveBars.hydrateFullWindow();
       return undefined;
     }
@@ -424,10 +429,10 @@ export const TradeEquityPanel = ({
     return () => clearTimeout(timer);
   }, [
     baseBarsPage.bars.length,
-    compact,
     effectiveChartHydrationRole,
     intervalChangeRevision,
     progressiveBars.hydrateFullWindow,
+    resolvedChartFrameCompact,
   ]);
   const prewarmFavoriteTimeframe = useCallback(
     (nextTimeframe) => {
@@ -869,103 +874,35 @@ export const TradeEquityPanel = ({
       minHeight="100%"
     >
       <ResearchChartFrame
-      dataTestId={dataTestId}
-      theme={T}
-      themeKey={getCurrentTheme()}
-      surfaceUiStateKey={surfaceUiStateKey}
-      rangeIdentityKey={chartHydrationScopeKey}
-      viewportLayoutKey={chartViewportLayoutKey}
-      model={chartModel}
-      compact={compact}
-      frameSignalState={showSignalFrameBorder ? signalFrameState : null}
-      positionOverlayContext={{
-        surfaceKind: effectiveChartHydrationRole === "mini" ? "mini" : "spot",
-        symbol: ticker,
-      }}
-      chartEvents={chartEvents}
-      chartFlowDiagnostics={chartEventConversion}
-      latestQuotePrice={tickerInfo?.price}
-      latestQuoteUpdatedAt={tickerInfo?.updatedAt}
-      showSurfaceToolbar={false}
-      showLegend
-      legend={{
-        symbol: ticker,
-        name: equityChartName,
-        timeframe: tf,
-        statusLabel: equityChartStatus,
-        statusTone: equityChartSourceState.tone,
-        priceLabel: "Spot",
-        price: displayPrice,
-        changePercent: displayPct,
-        meta: {
-          open: latestBar?.o,
-          high: latestBar?.h,
-          low: latestBar?.l,
-          close: latestBar?.c,
-          volume: latestBar?.v,
-          vwap: latestBar?.vwap,
-          sessionVwap: latestBar?.sessionVwap,
-          accumulatedVolume: latestBar?.accumulatedVolume,
-          averageTradeSize: latestBar?.averageTradeSize,
-          timestamp: latestBar?.ts,
-          sourceLabel: equityChartSource,
-        },
-        studies: availableStudies,
-        selectedStudies: selectedIndicators,
-      }}
-      referenceLines={referenceLines}
-      drawings={drawings}
-      drawMode={drawMode}
-      onAddDrawing={addDrawing}
-      onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
-      emptyState={{
-        eyebrow: "Spot feed",
-        title: equityChartStatus,
-        detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated for the broker feed yet.`,
-      }}
-      surfaceTopOverlay={(controls) => (
-        <ResearchChartWidgetHeader
-          theme={T}
-          controls={controls}
-          symbol={ticker}
-          name={equityChartName}
-          price={displayPrice}
-          changePercent={displayPct}
-          statusLabel={equityChartStatus}
-          statusTone={equityChartSourceState.tone}
-          timeframe={tf}
-          showInlineLegend={false}
-          timeframeOptions={TRADE_TIMEFRAMES.map((timeframe) => ({
-            value: timeframe.v,
-            label: timeframe.tag,
-          }))}
-          onChangeTimeframe={handleChangeTimeframe}
-          favoriteTimeframes={chartFavoriteTimeframes}
-          onToggleFavoriteTimeframe={toggleChartFavoriteTimeframe}
-          onPrewarmTimeframe={prewarmFavoriteTimeframe}
-          onOpenSearch={hasAnchoredTickerSearch ? undefined : onOpenSearch}
-          searchOpen={searchOpen}
-          onSearchOpenChange={onSearchOpenChange}
-          searchContent={searchContent}
-          dense={compact}
-          onUndo={undo}
-          onRedo={redo}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          showUndoRedo
-          studies={availableStudies}
-          selectedStudies={selectedIndicators}
-          studySpecs={chartModel.studySpecs}
-          onToggleStudy={toggleIndicator}
-          rightSlot={
-            <RayReplicaSettingsMenu
-              theme={T}
-              settings={rayReplicaSettings}
-              onChange={setRayReplicaSettings}
-              disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
-            />
-          }
-          meta={{
+        dataTestId={dataTestId}
+        theme={T}
+        themeKey={getCurrentTheme()}
+        surfaceUiStateKey={surfaceUiStateKey}
+        rangeIdentityKey={chartHydrationScopeKey}
+        viewportLayoutKey={chartViewportLayoutKey}
+        model={chartModel}
+        compact={resolvedChartFrameCompact}
+        placement={resolvedChartFramePlacement}
+        frameSignalState={showSignalFrameBorder ? signalFrameState : null}
+        positionOverlayContext={{
+          surfaceKind: effectiveChartHydrationRole === "mini" ? "mini" : "spot",
+          symbol: ticker,
+        }}
+        chartEvents={chartEvents}
+        chartFlowDiagnostics={chartEventConversion}
+        latestQuotePrice={tickerInfo?.price}
+        latestQuoteUpdatedAt={tickerInfo?.updatedAt}
+        showLegend
+        legend={{
+          symbol: ticker,
+          name: equityChartName,
+          timeframe: tf,
+          statusLabel: equityChartStatus,
+          statusTone: equityChartSourceState.tone,
+          priceLabel: "Spot",
+          price: displayPrice,
+          changePercent: displayPct,
+          meta: {
             open: latestBar?.o,
             high: latestBar?.h,
             low: latestBar?.l,
@@ -977,38 +914,103 @@ export const TradeEquityPanel = ({
             averageTradeSize: latestBar?.averageTradeSize,
             timestamp: latestBar?.ts,
             sourceLabel: equityChartSource,
-          }}
-        />
-      )}
-      surfaceTopOverlayHeight={spotChartFrameLayout.surfaceTopOverlayHeight}
-      surfaceLeftOverlay={(controls) => (
-        <ResearchChartWidgetSidebar
-          theme={T}
-          controls={controls}
-          drawMode={drawMode}
-          drawingCount={drawings.length}
-          onToggleDrawMode={setDrawMode}
-          onClearDrawings={() => {
-            clearDrawings();
-            setDrawMode(null);
-          }}
-          dense={compact}
-        />
-      )}
-      surfaceLeftOverlayWidth={spotChartFrameLayout.surfaceLeftOverlayWidth}
-      surfaceBottomOverlay={(controls) => (
-        <ResearchChartWidgetFooter
-          theme={T}
-          controls={controls}
-          studies={availableStudies}
-          selectedStudies={selectedIndicators}
-          studySpecs={chartModel.studySpecs}
-          onToggleStudy={toggleIndicator}
-          dense={compact}
-          statusText={`${equityChartStatus}  C ${callFlows}  P ${putFlows}  Flow amber`}
-        />
-      )}
-      surfaceBottomOverlayHeight={spotChartFrameLayout.surfaceBottomOverlayHeight}
+          },
+          studies: availableStudies,
+          selectedStudies: selectedIndicators,
+        }}
+        referenceLines={referenceLines}
+        drawings={drawings}
+        drawMode={drawMode}
+        onAddDrawing={addDrawing}
+        onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
+        emptyState={{
+          eyebrow: "Spot feed",
+          title: equityChartStatus,
+          detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated for the broker feed yet.`,
+        }}
+        surfaceTopOverlay={(controls) => (
+          <ResearchChartWidgetHeader
+            theme={T}
+            controls={controls}
+            symbol={ticker}
+            name={equityChartName}
+            price={displayPrice}
+            changePercent={displayPct}
+            statusLabel={equityChartStatus}
+            statusTone={equityChartSourceState.tone}
+            timeframe={tf}
+            showInlineLegend={false}
+            timeframeOptions={TRADE_TIMEFRAMES.map((timeframe) => ({
+              value: timeframe.v,
+              label: timeframe.tag,
+            }))}
+            onChangeTimeframe={handleChangeTimeframe}
+            favoriteTimeframes={chartFavoriteTimeframes}
+            onToggleFavoriteTimeframe={toggleChartFavoriteTimeframe}
+            onPrewarmTimeframe={prewarmFavoriteTimeframe}
+            onOpenSearch={hasAnchoredTickerSearch ? undefined : onOpenSearch}
+            searchOpen={searchOpen}
+            onSearchOpenChange={onSearchOpenChange}
+            searchContent={searchContent}
+            dense={resolvedChartFrameCompact}
+            onUndo={undo}
+            onRedo={redo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            showUndoRedo
+            studies={availableStudies}
+            selectedStudies={selectedIndicators}
+            studySpecs={chartModel.studySpecs}
+            onToggleStudy={toggleIndicator}
+            rightSlot={
+              <RayReplicaSettingsMenu
+                theme={T}
+                settings={rayReplicaSettings}
+                onChange={setRayReplicaSettings}
+                disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+              />
+            }
+            meta={{
+              open: latestBar?.o,
+              high: latestBar?.h,
+              low: latestBar?.l,
+              close: latestBar?.c,
+              volume: latestBar?.v,
+              vwap: latestBar?.vwap,
+              sessionVwap: latestBar?.sessionVwap,
+              accumulatedVolume: latestBar?.accumulatedVolume,
+              averageTradeSize: latestBar?.averageTradeSize,
+              timestamp: latestBar?.ts,
+              sourceLabel: equityChartSource,
+            }}
+          />
+        )}
+        surfaceLeftOverlay={(controls) => (
+          <ResearchChartWidgetSidebar
+            theme={T}
+            controls={controls}
+            drawMode={drawMode}
+            drawingCount={drawings.length}
+            onToggleDrawMode={setDrawMode}
+            onClearDrawings={() => {
+              clearDrawings();
+              setDrawMode(null);
+            }}
+            dense={resolvedChartFrameCompact}
+          />
+        )}
+        surfaceBottomOverlay={(controls) => (
+          <ResearchChartWidgetFooter
+            theme={T}
+            controls={controls}
+            studies={availableStudies}
+            selectedStudies={selectedIndicators}
+            studySpecs={chartModel.studySpecs}
+            onToggleStudy={toggleIndicator}
+            dense={resolvedChartFrameCompact}
+            statusText={`${equityChartStatus}  C ${callFlows}  P ${putFlows}  Flow amber`}
+          />
+        )}
       />
     </PlatformErrorBoundary>
   );

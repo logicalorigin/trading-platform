@@ -24,6 +24,7 @@ export type UserPreferences = {
     statusLineDetail: "full" | "compact" | "minimal";
     showOhlc: boolean;
     showVolume: boolean;
+    showFlowEvents: boolean;
     showIndicatorValues: boolean;
     showTimeScale: boolean;
     showGrid: boolean;
@@ -96,6 +97,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     statusLineDetail: "full",
     showOhlc: true,
     showVolume: true,
+    showFlowEvents: true,
     showIndicatorValues: true,
     showTimeScale: true,
     showGrid: true,
@@ -240,6 +242,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       statusLineDetail: enumValue(chart.statusLineDetail, ["full", "compact", "minimal"], DEFAULT_USER_PREFERENCES.chart.statusLineDetail),
       showOhlc: booleanValue(chart.showOhlc, DEFAULT_USER_PREFERENCES.chart.showOhlc),
       showVolume: booleanValue(chart.showVolume, DEFAULT_USER_PREFERENCES.chart.showVolume),
+      showFlowEvents: booleanValue(chart.showFlowEvents, DEFAULT_USER_PREFERENCES.chart.showFlowEvents),
       showIndicatorValues: booleanValue(chart.showIndicatorValues, DEFAULT_USER_PREFERENCES.chart.showIndicatorValues),
       showTimeScale: booleanValue(chart.showTimeScale, DEFAULT_USER_PREFERENCES.chart.showTimeScale),
       showGrid: booleanValue(chart.showGrid, DEFAULT_USER_PREFERENCES.chart.showGrid),

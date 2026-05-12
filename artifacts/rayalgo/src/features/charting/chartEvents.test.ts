@@ -11,6 +11,7 @@ import {
   getChartEventLookbackWindow,
   getStableFlowEventKey,
   mergeFlowEventFeeds,
+  resolveFlowEventChartTimeResolution,
 } from "./chartEvents";
 
 test("flowEventsToChartEvents normalizes unusual flow into bar events", () => {
@@ -288,6 +289,127 @@ test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () =>
   assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
   assert.equal(events[0].source, "polygon");
   assert.equal(events[0].bias, "bullish");
+  assert.equal(events[0].metadata.timeBasis, "trade_reported");
+  assert.equal(events[0].metadata.chartTimeSourceField, "sip_timestamp");
+});
+
+test("flowEventsToChartEvents uses provider trade time before update and observed times", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "raw-t-trade",
+        ticker: "SPY",
+        cp: "C",
+        premium: 125_000,
+        t: Date.parse("2026-05-01T14:52:00.000Z") * 1_000_000,
+        occurredAt: "2026-05-01T19:58:00.000Z",
+        updatedAt: "2026-05-01T19:59:00.000Z",
+        side: "BUY",
+        provider: "polygon",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
+  assert.equal(events[0].metadata.chartTimeSourceField, "t");
+});
+
+test("flowEventsToChartEvents combines separate trade date and time in New York time", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "date-time-trade",
+        ticker: "SPY",
+        cp: "C",
+        premium: 125_000,
+        tradeDate: "2026-05-01",
+        tradeTime: "09:52:15",
+        side: "BUY",
+        provider: "polygon",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T13:52:15.000Z");
+  assert.equal(events[0].metadata.chartTimeSourceField, "tradeDate+tradeTime");
+  assert.equal(events[0].metadata.chartEventDay, "2026-05-01");
+});
+
+test("flowEventsToChartEventConversion drops confirmed date-only events", () => {
+  const conversion = flowEventsToChartEventConversion(
+    [
+      {
+        id: "date-only-trade",
+        ticker: "SPY",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        cp: "C",
+        premium: 125_000,
+        occurredAt: "2026-05-01",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(conversion.convertedEventCount, 0);
+  assert.equal(conversion.droppedInvalidTimeCount, 1);
+  assert.equal(
+    resolveFlowEventChartTimeResolution({
+      ticker: "SPY",
+      basis: "trade",
+      sourceBasis: "confirmed_trade",
+      occurredAt: "2026-05-01",
+    }),
+    null,
+  );
+});
+
+test("flowEventsToChartEventConversion drops confirmed trades with only update time", () => {
+  const conversion = flowEventsToChartEventConversion(
+    [
+      {
+        id: "updated-only-trade",
+        ticker: "SPY",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        cp: "C",
+        premium: 125_000,
+        updatedAt: "2026-05-01T19:59:00.000Z",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(conversion.rawInputCount, 1);
+  assert.equal(conversion.flowRecordCount, 1);
+  assert.equal(conversion.convertedEventCount, 0);
+  assert.equal(conversion.droppedInvalidTimeCount, 1);
+});
+
+test("flowEventsToChartEvents allows snapshot flow to use observation update time", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "snapshot-updated-time",
+        ticker: "SPY",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        cp: "C",
+        contract: "SPY 500C",
+        premium: 420_000,
+        updatedAt: "2026-05-01T19:59:00.000Z",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T19:59:00.000Z");
+  assert.equal(events[0].metadata.timeBasis, "snapshot_observed");
 });
 
 test("flow event helpers merge feeds and match selected option contracts", () => {
@@ -542,9 +664,11 @@ test("earningsCalendarToChartEvents normalizes earnings into timescale events", 
 test("getChartEventLookbackWindow uses timeframe-aware extended history", () => {
   const now = new Date("2026-04-28T00:00:00.000Z");
   const intraday = getChartEventLookbackWindow("5m", now);
+  const fifteenMinute = getChartEventLookbackWindow("15m", now);
   const daily = getChartEventLookbackWindow("1d", now);
 
   assert.equal(intraday.from.toISOString(), "2026-04-23T13:30:00.000Z");
+  assert.equal(fifteenMinute.from.toISOString(), "2026-04-10T13:30:00.000Z");
   assert.equal(daily.from.toISOString(), "2026-01-28T00:00:00.000Z");
 });
 

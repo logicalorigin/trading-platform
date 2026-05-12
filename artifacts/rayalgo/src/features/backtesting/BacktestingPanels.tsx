@@ -3542,7 +3542,7 @@ export function BacktestWorkspace({
                     themeKey="backtest-workspace-spot"
                     rangeIdentityKey={`backtest-spot:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}
                     model={spotChartModel}
-                    showSurfaceToolbar
+                    placement="backtest"
                     showLegend
                     style={{ height: "100%" }}
                     onTradeMarkerSelection={handleTradeMarkerSelection}
@@ -3683,7 +3683,7 @@ export function BacktestWorkspace({
                     themeKey="backtest-workspace-options"
                     rangeIdentityKey={`backtest-options:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}
                     model={runChartModel}
-                    showSurfaceToolbar
+                    placement="backtest"
                     showLegend
                     style={{ height: "100%" }}
                     onTradeMarkerSelection={handleTradeMarkerSelection}

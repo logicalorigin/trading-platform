@@ -304,16 +304,16 @@ export const getChartTimeframeStepMs = (
 ): number => getChartTimeframeDefinition(timeframe)?.stepMs || 0;
 
 const BROKER_LIVE_EDGE_WINDOW_MINUTES_BY_TIMEFRAME: Record<string, number> = {
-  "5s": 60,
-  "15s": 60,
-  "30s": 60,
-  "1m": 240,
-  "2m": 240,
-  "5m": 240,
-  "15m": 720,
-  "30m": 720,
-  "1h": 2_880,
-  "4h": 2_880,
+  "5s": 240,
+  "15s": 240,
+  "30s": 240,
+  "1m": 1_440,
+  "2m": 1_440,
+  "5m": 1_440,
+  "15m": 2_880,
+  "30m": 2_880,
+  "1h": 4_320,
+  "4h": 4_320,
   "1d": 14_400,
 };
 

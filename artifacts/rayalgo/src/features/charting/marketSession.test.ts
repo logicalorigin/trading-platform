@@ -22,7 +22,7 @@ test("resolveUsEquityMarketSession classifies US equity sessions in New York tim
   );
   assert.equal(
     resolveUsEquityMarketSession("2026-04-30T02:00:00Z").label,
-    "CLSD",
+    "OVN",
   );
 });
 
@@ -56,6 +56,8 @@ test("resolveUsEquityMarketSession handles observed fixed-date holidays", () => 
 
 test("buildUsEquityExtendedSessionWindows groups premarket and after-hours bars", () => {
   const bars = [
+    "2026-04-30T02:00:00Z",
+    "2026-04-30T02:15:00Z",
     "2026-04-30T12:00:00Z",
     "2026-04-30T12:15:00Z",
     "2026-04-30T13:15:00Z",
@@ -76,8 +78,9 @@ test("buildUsEquityExtendedSessionWindows groups premarket and after-hours bars"
       endBarIndex: window.endBarIndex,
     })),
     [
-      { label: "Premarket", startBarIndex: 0, endBarIndex: 2 },
-      { label: "After-hours", startBarIndex: 4, endBarIndex: 5 },
+      { label: "Overnight", startBarIndex: 0, endBarIndex: 1 },
+      { label: "Premarket", startBarIndex: 2, endBarIndex: 4 },
+      { label: "After-hours", startBarIndex: 6, endBarIndex: 7 },
     ],
   );
 });
@@ -94,9 +97,10 @@ test("countUsEquityMarketSessionBars counts extended and regular bars", () => {
   }));
 
   assert.deepEqual(countUsEquityMarketSessionBars(bars), {
+    overnight: 1,
     pre: 1,
     rth: 1,
     after: 1,
-    closed: 1,
+    closed: 0,
   });
 });

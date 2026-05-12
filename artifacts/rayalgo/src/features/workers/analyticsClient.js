@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { wrap } from "comlink";
-import { flowEventsToChartEventConversion } from "../charting/chartEvents";
+import {
+  flowEventsToChartEventConversion,
+  resolveFlowEventChartTimeResolution,
+} from "../charting/chartEvents";
 
-const WORKER_MIN_FLOW_EVENT_COUNT = 40;
+const WORKER_MIN_FLOW_EVENT_COUNT = 250;
+const WORKER_FLOW_EVENT_FALLBACK_MS = 750;
 const EMPTY_FLOW_EVENTS = Object.freeze([]);
 const EMPTY_FLOW_CHART_EVENT_CONVERSION = Object.freeze({
   events: Object.freeze([]),
@@ -49,18 +53,7 @@ export const disposeAnalyticsWorkerForTests = () => {
 };
 
 const readFlowEventSignatureTime = (event = {}) =>
-  event.occurredAt ||
-  event.sip_timestamp ||
-  event.participant_timestamp ||
-  event.trf_timestamp ||
-  event.exchange_timestamp ||
-  event.timestamp ||
-  event.dateTime ||
-  event.t ||
-  event.updatedAt ||
-  event.createdAt ||
-  event.time ||
-  "";
+  resolveFlowEventChartTimeResolution(event)?.iso || "";
 
 export const buildFlowEventSignature = (events = [], symbol = "") =>
   [
@@ -136,6 +129,13 @@ export const useFlowChartEventConversion = (
     }
 
     let cancelled = false;
+    const fallbackTimer = setTimeout(() => {
+      if (cancelled || revisionRef.current !== revision) {
+        return;
+      }
+      conversionSymbolRef.current = symbol;
+      setConversion(flowEventsToChartEventConversion(inputEvents, symbol));
+    }, WORKER_FLOW_EVENT_FALLBACK_MS);
     if (conversionSymbolRef.current !== symbol) {
       setConversion(buildPendingFlowChartEventConversion(inputEvents));
     }
@@ -145,6 +145,7 @@ export const useFlowChartEventConversion = (
         if (cancelled || revisionRef.current !== revision) {
           return;
         }
+        clearTimeout(fallbackTimer);
         conversionSymbolRef.current = symbol;
         setConversion(
           nextConversion || flowEventsToChartEventConversion(inputEvents, symbol),
@@ -152,6 +153,7 @@ export const useFlowChartEventConversion = (
       })
       .catch((error) => {
         if (!cancelled) {
+          clearTimeout(fallbackTimer);
           console.warn("[rayalgo] analytics worker flow conversion failed", error);
           conversionSymbolRef.current = symbol;
           setConversion(flowEventsToChartEventConversion(inputEvents, symbol));
@@ -160,6 +162,7 @@ export const useFlowChartEventConversion = (
 
     return () => {
       cancelled = true;
+      clearTimeout(fallbackTimer);
     };
   }, [inputEvents, signature, symbol, syncConversion]);
 

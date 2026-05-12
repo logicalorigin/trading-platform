@@ -260,6 +260,15 @@ export const MiniChartCell = ({
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}
           compact={dense}
+          chartFramePlacement={
+            isActive
+              ? dense
+                ? "compact-active"
+                : "workspace"
+              : dense
+                ? "compact-passive"
+                : "workspace-passive"
+          }
           surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}
           viewportLayoutKey={chartViewportLayoutKey}
           prewarmFavoriteTimeframesEnabled={false}

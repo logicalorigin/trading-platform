@@ -1,10 +1,15 @@
 import type { ChartBar, IndicatorWindow } from "./types";
 
-export type UsEquityMarketSessionKey = "pre" | "rth" | "after" | "closed";
+export type UsEquityMarketSessionKey =
+  | "overnight"
+  | "pre"
+  | "rth"
+  | "after"
+  | "closed";
 
 export type UsEquityMarketSession = {
   key: UsEquityMarketSessionKey;
-  label: "PRE" | "RTH" | "AFT" | "CLSD";
+  label: "OVN" | "PRE" | "RTH" | "AFT" | "CLSD";
   title: string;
   open: boolean;
 };
@@ -29,6 +34,12 @@ const NEW_YORK_CLOCK_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 const MARKET_SESSIONS: Record<UsEquityMarketSessionKey, UsEquityMarketSession> = {
+  overnight: {
+    key: "overnight",
+    label: "OVN",
+    title: "Overnight",
+    open: true,
+  },
   pre: {
     key: "pre",
     label: "PRE",
@@ -57,6 +68,21 @@ const MARKET_SESSIONS: Record<UsEquityMarketSessionKey, UsEquityMarketSession> =
 
 const dateKey = (year: number, month: number, day: number): string =>
   `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+const toDateKeyParts = (date: Date) => ({
+  year: date.getUTCFullYear(),
+  month: date.getUTCMonth() + 1,
+  day: date.getUTCDate(),
+});
+
+const addDaysToDateKeyParts = (
+  parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
+  days: number,
+): Pick<NewYorkClockParts, "year" | "month" | "day"> => {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return toDateKeyParts(date);
+};
 
 const getUtcWeekday = (year: number, month: number, day: number): number =>
   new Date(Date.UTC(year, month - 1, day)).getUTCDay();
@@ -187,6 +213,28 @@ export const isNyseFullHoliday = (value: Date): boolean => {
   );
 };
 
+const isNyseTradingDate = (
+  parts: Pick<NewYorkClockParts, "year" | "month" | "day">,
+): boolean => {
+  const weekday = getUtcWeekday(parts.year, parts.month, parts.day);
+  if (weekday === 0 || weekday === 6) {
+    return false;
+  }
+  return !buildNyseFullHolidayKeys(parts.year).has(
+    dateKey(parts.year, parts.month, parts.day),
+  );
+};
+
+const isUsEquityOvernightSession = (parts: NewYorkClockParts): boolean => {
+  if (parts.minutes < 3 * 60 + 50) {
+    return isNyseTradingDate(parts);
+  }
+  if (parts.minutes >= 20 * 60) {
+    return isNyseTradingDate(addDaysToDateKeyParts(parts, 1));
+  }
+  return false;
+};
+
 export const resolveUsEquityMarketSession = (
   value: Date | number | string = new Date(),
 ): UsEquityMarketSession => {
@@ -196,15 +244,15 @@ export const resolveUsEquityMarketSession = (
   }
 
   const parts = resolveNewYorkClockParts(date);
-  if (!parts || parts.weekday === "Sat" || parts.weekday === "Sun") {
+  if (!parts) {
     return MARKET_SESSIONS.closed;
   }
 
-  if (
-    buildNyseFullHolidayKeys(parts.year).has(
-      dateKey(parts.year, parts.month, parts.day),
-    )
-  ) {
+  if (isUsEquityOvernightSession(parts)) {
+    return MARKET_SESSIONS.overnight;
+  }
+
+  if (!isNyseTradingDate(parts)) {
     return MARKET_SESSIONS.closed;
   }
 
@@ -225,6 +273,7 @@ export const US_EQUITY_EXTENDED_SESSION_WINDOW_STRATEGY =
   "us-equity-extended-session";
 
 export type UsEquityMarketSessionBarCounts = {
+  overnight: number;
   pre: number;
   rth: number;
   after: number;
@@ -240,7 +289,7 @@ export const countUsEquityMarketSessionBars = (
       counts[session.key] += 1;
       return counts;
     },
-    { pre: 0, rth: 0, after: 0, closed: 0 },
+    { overnight: 0, pre: 0, rth: 0, after: 0, closed: 0 },
   );
 
 export const buildUsEquityExtendedSessionWindows = (
@@ -251,7 +300,7 @@ export const buildUsEquityExtendedSessionWindows = (
     return windows;
   }
 
-  let activeSession: "pre" | "after" | null = null;
+  let activeSession: "overnight" | "pre" | "after" | null = null;
   let segmentStart: number | null = null;
 
   const pushSegment = (endIndex: number) => {
@@ -275,7 +324,12 @@ export const buildUsEquityExtendedSessionWindows = (
       endBarIndex: endIndex,
       meta: {
         style: "background",
-        label: activeSession === "pre" ? "Premarket" : "After-hours",
+        label:
+          activeSession === "overnight"
+            ? "Overnight"
+            : activeSession === "pre"
+              ? "Premarket"
+              : "After-hours",
         marketSessionKey: activeSession,
         dataTestId: `chart-extended-session-${activeSession}`,
       },
@@ -285,7 +339,11 @@ export const buildUsEquityExtendedSessionWindows = (
   chartBars.forEach((bar, index) => {
     const session = resolveUsEquityMarketSession(bar.ts || bar.time * 1000);
     const nextSession =
-      session.key === "pre" || session.key === "after" ? session.key : null;
+      session.key === "overnight" ||
+      session.key === "pre" ||
+      session.key === "after"
+        ? session.key
+        : null;
 
     if (nextSession === activeSession) {
       return;

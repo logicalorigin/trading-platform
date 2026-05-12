@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { ChartEvent } from "./chartEvents";
+import { flowEventsToChartEvents, type ChartEvent } from "./chartEvents";
 import {
   buildFlowChartBuckets,
+  buildFlowChartEventPlacements,
+  buildFlowChartVolumeBuckets,
   buildFlowTooltipModel,
   summarizeFlowChartBucketPlacement,
 } from "./flowChartEvents";
@@ -55,7 +57,11 @@ const flowEvent = (event: Partial<ChartEvent>): ChartEvent => ({
   confidence: 0.7,
   bias: event.bias || "bullish",
   actions: ["open_flow"],
-  metadata: event.metadata || {},
+  metadata: {
+    basis: "trade",
+    sourceBasis: "confirmed_trade",
+    ...(event.metadata || {}),
+  },
 });
 
 test("buildFlowChartBuckets assigns intrabar flow to the candle range", () => {
@@ -83,6 +89,174 @@ test("buildFlowChartBuckets assigns intrabar flow to the candle range", () => {
   assert.equal(buckets[0].totalContracts, 250);
   assert.equal(buckets[0].callPremium, 500_000);
   assert.deepEqual(buckets[0].tags, ["sweep"]);
+});
+
+test("buildFlowChartBuckets places raw historical trades on trade time, not update time", () => {
+  const chartEvents = flowEventsToChartEvents(
+    [
+      {
+        id: "raw-historical-print",
+        ticker: "AAPL",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        cp: "C",
+        contract: "AAPL 200C",
+        premium: 500_000,
+        t: Date.parse("2026-04-30T14:31:00.000Z") * 1_000_000,
+        updatedAt: "2026-04-30T14:39:00.000Z",
+      },
+    ],
+    "AAPL",
+  );
+  const buckets = buildFlowChartBuckets(chartEvents, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+
+  assert.equal(chartEvents[0]?.time, "2026-04-30T14:31:00.000Z");
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].barIndex, 0);
+  assert.equal(buckets[0].time, bars[0].time);
+});
+
+test("buildFlowChartEventPlacements keeps same-candle option prints individually addressable", () => {
+  const events = [
+    flowEvent({
+      id: "first-print",
+      time: "2026-04-30T14:36:00.000Z",
+      metadata: {
+        optionTicker: "AAPL260515C00200000",
+        cp: "C",
+        strike: 200,
+        expirationDate: "2026-05-15",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+    }),
+    flowEvent({
+      id: "second-print",
+      time: "2026-04-30T14:37:00.000Z",
+      metadata: {
+        optionTicker: "AAPL260515C00200000",
+        cp: "C",
+        strike: 200,
+        expirationDate: "2026-05-15",
+        side: "buy",
+        price: 2.2,
+        size: 35,
+        premium: 77_000,
+      },
+    }),
+  ];
+
+  const buckets = buildFlowChartBuckets(events, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+  const placements = buildFlowChartEventPlacements(events, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].count, 2);
+  assert.equal(placements.length, 2);
+  assert.deepEqual(
+    placements.map((placement) => placement.event.id),
+    ["first-print", "second-print"],
+  );
+  assert.deepEqual(
+    placements.map((placement) => placement.barIndex),
+    [1, 1],
+  );
+  assert.deepEqual(
+    placements.map((placement) => placement.eventDay),
+    ["2026-04-30", "2026-04-30"],
+  );
+});
+
+test("buildFlowChartEventPlacements does not assign gap events to a sparse previous candle", () => {
+  const sparseBars: ChartBar[] = [
+    {
+      time: Date.parse("2026-05-01T19:55:00.000Z") / 1000,
+      ts: "2026-05-01T19:55:00.000Z",
+      date: "2026-05-01",
+      o: 100,
+      h: 101,
+      l: 99,
+      c: 100.5,
+      v: 100_000,
+    },
+    {
+      time: Date.parse("2026-05-04T13:30:00.000Z") / 1000,
+      ts: "2026-05-04T13:30:00.000Z",
+      date: "2026-05-04",
+      o: 101,
+      h: 102,
+      l: 100,
+      c: 101.5,
+      v: 120_000,
+    },
+  ];
+  const sparseRanges: ChartBarRange[] = [
+    {
+      startMs: Date.parse("2026-05-01T19:55:00.000Z"),
+      endMs: Date.parse("2026-05-01T20:00:00.000Z"),
+    },
+    {
+      startMs: Date.parse("2026-05-04T13:30:00.000Z"),
+      endMs: Date.parse("2026-05-04T13:35:00.000Z"),
+    },
+  ];
+
+  const placements = buildFlowChartEventPlacements(
+    [
+      flowEvent({
+        id: "gap-print",
+        time: "2026-05-01T21:00:00.000Z",
+      }),
+    ],
+    { chartBars: sparseBars, chartBarRanges: sparseRanges },
+  );
+
+  assert.equal(placements.length, 0);
+});
+
+test("buildFlowChartEventPlacements only renders confirmed trades as price markers", () => {
+  const placements = buildFlowChartEventPlacements(
+    [
+      flowEvent({
+        id: "confirmed-print",
+        time: "2026-04-30T14:31:00.000Z",
+        metadata: {
+          basis: "trade",
+          sourceBasis: "confirmed_trade",
+          timeBasis: "trade_reported",
+          chartTimeSourceField: "sip_timestamp",
+        },
+      }),
+      flowEvent({
+        id: "snapshot-contract",
+        time: "2026-04-30T14:31:00.000Z",
+        metadata: {
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          timeBasis: "snapshot_observed",
+          chartTimeSourceField: "updatedAt",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(placements.length, 1);
+  assert.equal(placements[0].event.id, "confirmed-print");
+  assert.equal(placements[0].sourceBasis, "confirmed_trade");
+  assert.equal(placements[0].eventIso, "2026-04-30T14:31:00.000Z");
+  assert.equal(placements[0].timeBasis, "trade_reported");
+  assert.equal(placements[0].timeSourceField, "sip_timestamp");
 });
 
 test("buildFlowChartBuckets aggregates premium, bias, top contract, and intensity", () => {
@@ -474,6 +648,68 @@ test("buildFlowChartBuckets preserves multiple visible flow buckets across bars"
   );
 });
 
+test("buildFlowChartVolumeBuckets excludes snapshot activity from rendered volume bars", () => {
+  const buckets = buildFlowChartVolumeBuckets(
+    [
+      flowEvent({
+        id: "confirmed-early",
+        time: "2026-04-30T14:31:00.000Z",
+        metadata: {
+          cp: "C",
+          premium: 200_000,
+          contracts: 50,
+          contractLabel: "AAPL 200C",
+        },
+      }),
+      flowEvent({
+        id: "confirmed-later",
+        time: "2026-04-30T14:37:00.000Z",
+        bias: "bearish",
+        metadata: {
+          cp: "P",
+          premium: 350_000,
+          contracts: 80,
+          contractLabel: "AAPL 180P",
+        },
+      }),
+      flowEvent({
+        id: "snapshot-close",
+        time: "2026-04-30T14:39:00.000Z",
+        bias: "neutral",
+        metadata: {
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          cp: "C",
+          premium: 10_000_000,
+          contracts: 5000,
+          contractLabel: "AAPL 205C",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(buckets.length, 2);
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.barIndex),
+    [0, 1],
+  );
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.sourceBasis),
+    ["confirmed_trade", "confirmed_trade"],
+  );
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.totalPremium),
+    [200_000, 350_000],
+  );
+  assert.equal(
+    buckets.some((bucket) =>
+      bucket.events.some((event) => event.id === "snapshot-close"),
+    ),
+    false,
+  );
+});
+
 test("buildFlowChartBuckets does not clamp preloaded flow to the first bar", () => {
   const buckets = buildFlowChartBuckets(
     [
@@ -510,6 +746,9 @@ test("summarizeFlowChartBucketPlacement reports bucket drops", () => {
   assert.equal(diagnostics.bucketedEventCount, 1);
   assert.equal(diagnostics.droppedInvalidTimeCount, 1);
   assert.equal(diagnostics.droppedOutsideBarCount, 1);
+  assert.equal(diagnostics.markerEligibleEventCount, 3);
+  assert.equal(diagnostics.markerPlacementCount, 1);
+  assert.equal(diagnostics.droppedMarkerOutsideBarCount, 1);
 });
 
 test("summarizeFlowChartBucketPlacement reports duplicate flow drops", () => {
@@ -581,6 +820,9 @@ test("summarizeFlowChartBucketPlacement reports confirmed and snapshot basis cou
   assert.equal(diagnostics.snapshotActivityFlowEventCount, 1);
   assert.equal(diagnostics.bucketedConfirmedTradeEventCount, 1);
   assert.equal(diagnostics.bucketedSnapshotActivityEventCount, 1);
+  assert.equal(diagnostics.markerEligibleEventCount, 1);
+  assert.equal(diagnostics.markerPlacementCount, 1);
+  assert.equal(diagnostics.markerSnapshotSkippedEventCount, 1);
 });
 
 test("buildFlowChartBuckets does not pile after-hours snapshot flow onto the final bar", () => {

@@ -167,9 +167,13 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MiniChartCell.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
+  const marketFlowRuntimeSource = readLocalSource(
+    "../platform/MarketFlowRuntimeLayer.jsx",
+  );
 
   assert.match(gridSource, /isTransientEmptyFlowSource/);
   assert.match(gridSource, /historicalChartFlowRetainedRef/);
+  assert.match(gridSource, /mergeFlowEventFeeds\(retainedEvents,\s*incomingEvents\)/);
   assert.match(gridSource, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
   assert.match(gridSource, /BROAD_MARKET_FLOW_STORE_KEY/);
   assert.match(gridSource, /useMarketFlowSnapshotForStoreKey/);
@@ -182,6 +186,8 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(gridSource, /const flowEventsBySlotIndex = useMemo/);
   assert.match(gridSource, /visibleSlotEntries\.forEach\(\(\{ slot, index \}\)/);
   assert.match(gridSource, /publishTradeFlowSnapshotsByTicker/);
+  assert.match(gridSource, /preserveExistingOnEmpty: true/);
+  assert.match(marketFlowRuntimeSource, /preserveExistingOnEmpty: true/);
   assert.match(gridSource, /flowEvents=\{flowEventsBySlotIndex\[index\]/);
   assert.doesNotMatch(gridSource, /chartFlowTimeframeBySymbol/);
   assert.match(cellSource, /flowEvents=\{flowEvents\}/);
@@ -197,10 +203,17 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(tradeSpotSource, /!prewarmFavoriteTimeframesEnabled/);
   assert.match(tradeSpotSource, /COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000/);
   assert.match(tradeSpotSource, /MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 2_500/);
-  assert.match(tradeSpotSource, /if \(!compact \|\| intervalChangeRevision > 0\) \{/);
+  assert.match(
+    tradeSpotSource,
+    /if \(!resolvedChartFrameCompact \|\| intervalChangeRevision > 0\) \{/,
+  );
   assert.match(tradeSpotSource, /if \(!shouldMergeTradeFlowStore\) \{/);
   assert.match(tradeSpotSource, /\?\s*filterFlowEventsForChartDisplay\(effectiveFlowEvents,\s*flowTapeFilters\)\s*:\s*effectiveFlowEvents/);
   assert.match(tradeSpotSource, /tradeFlowSnapshot\.events \|\| \[\]/);
+  assert.match(
+    readLocalSource("../../screens/TradeScreen.jsx"),
+    /mergeFlowEventFeeds\(retainedEvents,\s*incomingHistoricalEvents\)/,
+  );
   assert.doesNotMatch(tradeSpotSource, /retainedFlowState/);
   assert.doesNotMatch(gridSource, /quote=\{/);
   assert.doesNotMatch(gridSource, /onChangeStudies=\{/);

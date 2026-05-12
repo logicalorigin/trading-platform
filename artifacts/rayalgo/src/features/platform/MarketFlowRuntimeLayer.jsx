@@ -45,6 +45,7 @@ const publishRuntimeTradeFlowSnapshots = (symbols, snapshot) => {
     source: snapshot?.providerSummary?.erroredSource || null,
     sourceBySymbol,
     includeEmpty: true,
+    preserveExistingOnEmpty: true,
   });
 };
 
