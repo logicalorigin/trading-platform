@@ -107,6 +107,7 @@ export const PlatformScreenRouter = ({
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "trade"}
+          isRetained={screen !== "trade"}
         />
       );
     case "account":

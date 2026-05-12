@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { resolveHistoricalFlowSamplePlan } from "./historical-flow-events";
+import {
+  dedupeHistoricalFlowEventsForStore,
+  resolveHistoricalFlowSamplePlan,
+} from "./historical-flow-events";
+import type { FlowEvent } from "../providers/polygon/market-data";
 
 const source = readFileSync(
   fileURLToPath(new URL("./historical-flow-events.ts", import.meta.url)),
@@ -33,7 +37,11 @@ test("historical flow nonblocking direct fallback is explicitly bounded", () => 
   assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT = 1/);
   assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT = 500/);
   assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE = 60/);
-  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS = 20_000/);
+  assert.match(
+    source,
+    /HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS = 4_000/,
+  );
+  assert.match(source, /loadNonblockingDirectHistoricalFlowFallback/);
   assert.match(source, /preferDerived: true/);
   assert.match(source, /controller\.abort\(\)/);
 });
@@ -42,6 +50,57 @@ test("historical flow upserts refresh classified payload fields", () => {
   assert.match(source, /side:\s*sql`excluded\.side`/);
   assert.match(source, /sentiment:\s*sql`excluded\.sentiment`/);
   assert.match(source, /rawProviderPayload:\s*sql`excluded\.raw_provider_payload`/);
+});
+
+test("historical flow store batches dedupe duplicate provider keys before upsert", () => {
+  const first: FlowEvent = {
+    id: "same-provider-event",
+    underlying: "SPY",
+    provider: "polygon",
+    basis: "trade",
+    optionTicker: "O:SPY260515C00500000",
+    providerContractId: null,
+    strike: 500,
+    expirationDate: new Date("2026-05-15T00:00:00.000Z"),
+    right: "call",
+    price: 1.25,
+    size: 10,
+    premium: 1250,
+    openInterest: 100,
+    impliedVolatility: null,
+    exchange: "CBOE",
+    side: "ask",
+    sentiment: "bullish",
+    tradeConditions: [],
+    occurredAt: new Date("2026-05-12T14:30:00.000Z"),
+    unusualScore: 1,
+    isUnusual: false,
+  };
+  const replacement = {
+    ...first,
+    price: 1.4,
+    premium: 1400,
+  };
+  const other = {
+    ...first,
+    id: "other-provider-event",
+    price: 2,
+    premium: 2000,
+  };
+
+  const deduped = dedupeHistoricalFlowEventsForStore([
+    first,
+    other,
+    replacement,
+  ]);
+
+  assert.equal(deduped.length, 2);
+  assert.deepEqual(
+    deduped.map((event) => event.id),
+    ["same-provider-event", "other-provider-event"],
+  );
+  assert.equal(deduped[0]?.price, replacement.price);
+  assert.match(source, /dedupeHistoricalFlowEventsForStore\(input\.events\)/);
 });
 
 test("historical flow sampling budgets markers across regular sessions", () => {

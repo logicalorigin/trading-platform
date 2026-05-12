@@ -3,7 +3,7 @@ import {
   flowEventsToChartEventConversion,
 } from "../charting/chartEvents";
 import {
-  buildFlowChartBuckets,
+  buildFlowChartVolumeBuckets,
   buildFlowTooltipModel,
   summarizeFlowChartBucketPlacement,
 } from "../charting/flowChartEvents";
@@ -24,7 +24,7 @@ export const analyticsWorkerApi = {
   },
 
   buildFlowChartOverlayModel({ events = [], model }) {
-    const buckets = buildFlowChartBuckets(events, model);
+    const buckets = buildFlowChartVolumeBuckets(events, model);
     return {
       buckets,
       diagnostics: summarizeFlowChartBucketPlacement(events, model),

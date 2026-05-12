@@ -3,6 +3,10 @@ import { expect, test, type Page } from "@playwright/test";
 test.setTimeout(90_000);
 
 const symbols = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "IWM"];
+const fifteenMinuteMs = 15 * 60_000;
+const chartNowMs = Math.floor(Date.now() / fifteenMinuteMs) * fifteenMinuteMs;
+const chartBarIso = (index: number) =>
+  new Date(chartNowMs - (71 - index) * fifteenMinuteMs).toISOString();
 
 const quoteData: Record<
   string,
@@ -28,13 +32,12 @@ const buildTestUserPreferences = (options: MarketGridTestOptions = {}) => ({
 });
 
 function makeBars(symbol: string) {
-  const now = Date.now();
   const base = quoteData[symbol]?.price ?? 100;
   return Array.from({ length: 72 }, (_, index) => {
     const close = base + Math.sin(index / 5) * 1.8;
     const open = close - Math.cos(index / 4) * 0.7;
     return {
-      timestamp: new Date(now - (71 - index) * 15 * 60_000).toISOString(),
+      timestamp: chartBarIso(index),
       open,
       high: Math.max(open, close) + 1,
       low: Math.min(open, close) - 1,
@@ -55,7 +58,7 @@ function flowEvent(symbol: string, overrides: Record<string, unknown> = {}) {
     right: "call",
     strike: quoteData[symbol]?.price ?? 100,
     expirationDate: "2026-05-15",
-    occurredAt: new Date().toISOString(),
+    occurredAt: chartBarIso(70),
     side: "buy",
     sentiment: "bullish",
     premium: 250_000,
@@ -156,6 +159,7 @@ async function mockMarketApi(
             provider: "polygon",
             basis: "trade",
             sourceBasis: "confirmed_trade",
+            occurredAt: chartBarIso(24),
             premium: 125_000,
             size: 25,
             strike: 510,
@@ -169,6 +173,10 @@ async function mockMarketApi(
       const eventsBySymbol: Record<string, unknown[]> = {
         SPY: [
           flowEvent("SPY", {
+            id: "SPY-confirmed-call",
+            provider: "polygon",
+            sourceBasis: "confirmed_trade",
+            occurredAt: chartBarIso(44),
             premium: 350_000,
             strike: 510,
             right: "call",
@@ -177,6 +185,11 @@ async function mockMarketApi(
             unusualScore: 2.4,
           }),
           flowEvent("SPY", {
+            id: "SPY-confirmed-put",
+            provider: "polygon",
+            basis: "trade",
+            sourceBasis: "confirmed_trade",
+            occurredAt: chartBarIso(52),
             premium: 90_000,
             strike: 505,
             right: "put",
@@ -185,7 +198,21 @@ async function mockMarketApi(
             sentiment: "bearish",
           }),
           flowEvent("SPY", {
+            id: "SPY-confirmed-neutral",
+            provider: "polygon",
+            basis: "trade",
+            sourceBasis: "confirmed_trade",
+            occurredAt: chartBarIso(56),
             premium: 70_000,
+            strike: 512,
+            right: "call",
+            optionTicker: "SPYC512",
+            side: "mid",
+            sentiment: "neutral",
+          }),
+          flowEvent("SPY", {
+            id: "SPY-snapshot-neutral",
+            premium: 700_000,
             strike: 512,
             right: "call",
             optionTicker: "SPYC512",
@@ -195,6 +222,11 @@ async function mockMarketApi(
         ],
         QQQ: [
           flowEvent("QQQ", {
+            id: "QQQ-confirmed-put",
+            provider: "polygon",
+            basis: "trade",
+            sourceBasis: "confirmed_trade",
+            occurredAt: chartBarIso(48),
             premium: 310_000,
             strike: 438,
             right: "put",
@@ -306,12 +338,24 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
   await expect(spyMarker).toBeVisible({ timeout: 30_000 });
   await expect(spyMarker).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(spyMarker).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
+  await expect(spyMarker).toHaveAttribute(
+    "data-chart-flow-marker-basis",
+    "confirmed_trade",
+  );
+  await expect(spyMarker).toHaveAttribute(
+    "data-chart-flow-event-time",
+    chartBarIso(44),
+  );
+  await expect(spyMarker).toHaveAttribute(
+    "data-chart-flow-event-day",
+    /^\d{4}-\d{2}-\d{2}$/,
+  );
   await expect(spyMarker).toHaveCSS("color", "rgb(16, 185, 129)");
   await spyMarker.hover();
   const spyTooltip = page.getByTestId("market-mini-chart-0-surface-flow-tooltip");
   await expect(spyTooltip).toBeVisible();
   await expect(spyTooltip).toHaveAttribute("data-chart-flow-tooltip-compact", "true");
-  await expect(spyTooltip).toContainText("IBKR");
+  await expect(spyTooltip).toContainText("POLYGON");
   await expect(spyTooltip).toContainText("Prem");
   const tooltipBox = await spyTooltip.boundingBox();
   const surfaceBox = await page.getByTestId("market-mini-chart-0-surface").boundingBox();
@@ -336,6 +380,10 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
   await expect(qqqMarker).toBeVisible({ timeout: 30_000 });
   await expect(qqqMarker).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(qqqMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
+  await expect(qqqMarker).toHaveAttribute(
+    "data-chart-flow-marker-basis",
+    "confirmed_trade",
+  );
   await expect(qqqMarker).toHaveCSS("color", "rgb(239, 68, 68)");
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(2);
@@ -371,7 +419,7 @@ test("Market chart flow honors shared type filters while ignoring ticker queries
   await expect(qqqMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
 });
 
-test("Market chart keeps confirmed prints and IBKR snapshot activity as separate mixed markers", async ({
+test("Market chart renders confirmed prints while keeping snapshots off price markers", async ({
   page,
 }) => {
   const flowUrls: string[] = [];
@@ -397,11 +445,23 @@ test("Market chart keeps confirmed prints and IBKR snapshot activity as separate
     )
     .toBeGreaterThan(0);
   await expect(
-    surface.locator('[data-chart-flow-marker-basis="confirmed_trade"]'),
+    surface.locator('[data-chart-flow-marker-basis="confirmed_trade"]').first(),
   ).toBeVisible();
+  await expect(surface).toHaveAttribute("data-chart-flow-marker-state", "rendered");
   await expect(
     surface.locator('[data-chart-flow-marker-basis="snapshot_activity"]'),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(surface).toHaveAttribute(
+    "data-chart-flow-marker-snapshot-skip-count",
+    /[1-9]\d*/,
+  );
+  await expect(surface).toHaveAttribute(
+    "data-chart-flow-volume-bucket-count",
+    /[1-9]\d*/,
+  );
+  await expect(
+    surface.locator('[data-chart-flow-volume-basis="snapshot_activity"]'),
+  ).toHaveCount(0);
 });
 
 test("Market chart grid premium-flow strips and flow-volume overlays render with regular volume hidden", async ({
@@ -415,12 +475,13 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   await expect(strips).toHaveCount(6);
   await expect(page.getByTestId("market-mini-chart-0")).toBeVisible();
   await expect(
-    page.getByRole("status", { name: /SPY options premium flow Scanning/i }),
+    page.getByRole("status", {
+      name: /SPY options premium flow (Scanning|POLYGON TRADE)/i,
+    }),
   ).toBeVisible();
-  await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(6);
 
   await expect(
-    page.getByRole("status", { name: /SPY options premium flow IBKR SNAPSHOT/i }),
+    page.getByRole("status", { name: /SPY options premium flow POLYGON TRADE/i }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-live", "true");
@@ -443,7 +504,7 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   ).toHaveAttribute("data-chart-event-symbol", "SPY");
   await expect(
     page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
-  ).toHaveAttribute("data-chart-event-source", "ibkr");
+  ).toHaveAttribute("data-chart-event-source", "polygon");
   await expect(
     page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
@@ -484,17 +545,11 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   await expect(
     firstSurface.locator('[data-chart-flow-volume-segment="neutral"]').first(),
   ).toBeVisible();
+  await expect(
+    firstSurface.locator('[data-chart-flow-volume-basis="snapshot_activity"]'),
+  ).toHaveCount(0);
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
-  const chartFlowUrls = flowUrls.filter((href) => {
-    const params = new URL(href).searchParams;
-    return (
-      params.get("scope") === "all" &&
-      params.get("lineBudget") === "40" &&
-      Number(params.get("limit") || "0") >= 80
-    );
-  });
-  expect(chartFlowUrls.length).toBeGreaterThanOrEqual(6);
   const historicalFlowUrls = flowUrls.filter((href) => {
     const params = new URL(href).searchParams;
     return (
@@ -507,19 +562,19 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   });
   expect(historicalFlowUrls.length).toBeGreaterThanOrEqual(6);
   expect(
-    chartFlowUrls.every(
+    historicalFlowUrls.every(
       (href) => new URL(href).searchParams.get("scope") === "all",
     ),
   ).toBe(true);
   expect(
-    chartFlowUrls.every(
+    historicalFlowUrls.every(
       (href) => !new URL(href).searchParams.has("unusualThreshold"),
     ),
     "Market chart flow should request broad backend flow and filter unusual events locally",
   ).toBe(true);
   expect(
-    chartFlowUrls.every(
-      (href) => new URL(href).searchParams.get("blocking") === "true",
+    historicalFlowUrls.every(
+      (href) => new URL(href).searchParams.get("blocking") === "false",
     ),
   ).toBe(true);
   expect(

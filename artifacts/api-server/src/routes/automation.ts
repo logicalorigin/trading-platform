@@ -9,6 +9,7 @@ import {
 import {
   ensureDefaultSignalOptionsPaperDeployment,
   getAlgoDeploymentCockpit,
+  getSignalOptionsPerformance,
   listSignalOptionsAutomationState,
   recordSignalOptionsManualDeviation,
   runSignalOptionsShadowBackfill,
@@ -105,6 +106,14 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
   res.json(
     await getAlgoDeploymentCockpit({
+      deploymentId: req.params.deploymentId,
+    }),
+  );
+});
+
+router.get("/algo/deployments/:deploymentId/signal-options/performance", async (req, res): Promise<void> => {
+  res.json(
+    await getSignalOptionsPerformance({
       deploymentId: req.params.deploymentId,
     }),
   );

@@ -15,6 +15,7 @@ export interface SignalOptionsExecutionProfile {
   optionSelection: JsonObject;
   riskCaps: JsonObject;
   liquidityGate: JsonObject;
+  entryGate: JsonObject;
   fillPolicy: JsonObject;
   exitPolicy: JsonObject;
 }

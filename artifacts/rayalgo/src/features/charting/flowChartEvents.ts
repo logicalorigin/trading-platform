@@ -28,6 +28,20 @@ export type FlowChartBucket = {
   volumeSegmentRatio: number;
 };
 
+export type FlowChartEventPlacement = {
+  id: string;
+  time: number;
+  eventIso: string;
+  eventDay: string;
+  eventTimeMs: number;
+  barIndex: number;
+  sourceBasis: FlowChartSourceBasis;
+  timeBasis: string;
+  timeSourceField: string;
+  event: ChartEvent;
+  bucket: FlowChartBucket;
+};
+
 export type FlowTooltipModel = {
   title: string;
   summary: string;
@@ -80,6 +94,11 @@ export type FlowChartBucketDiagnostics = {
   bucketedConfirmedTradeEventCount: number;
   bucketedSnapshotActivityEventCount: number;
   bucketedOtherEventCount: number;
+  markerEligibleEventCount: number;
+  markerPlacementCount: number;
+  markerSnapshotSkippedEventCount: number;
+  markerOtherSkippedEventCount: number;
+  droppedMarkerOutsideBarCount: number;
   droppedInvalidTimeCount: number;
   droppedOutsideBarCount: number;
 };
@@ -341,28 +360,67 @@ const readContractLabel = (event: ChartEvent): string =>
       "",
   ).trim();
 
-const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
-  event.metadata?.basis === "snapshot" ||
-  event.metadata?.sourceBasis === "snapshot_activity" ||
-  event.metadata?.confidence === "snapshot_activity";
+const normalizeFlowSourceBasisValue = (value: unknown): string =>
+  String(value || "").trim().toLowerCase();
 
 export const resolveFlowChartSourceBasis = (
   event: ChartEvent,
 ): FlowChartSourceBasis => {
-  if (isSnapshotActivityEvent(event)) {
+  const sourceBasis = normalizeFlowSourceBasisValue(
+    event.metadata?.sourceBasis || event.metadata?.confidence,
+  );
+  const basis = normalizeFlowSourceBasisValue(event.metadata?.basis);
+  if (
+    sourceBasis === "confirmed_trade" ||
+    sourceBasis === "confirmed" ||
+    sourceBasis === "reported" ||
+    sourceBasis === "trade"
+  ) {
+    return "confirmed_trade";
+  }
+  if (
+    sourceBasis === "snapshot_activity" ||
+    sourceBasis === "snapshot" ||
+    sourceBasis === "observed"
+  ) {
     return "snapshot_activity";
   }
-  const sourceBasis = String(
-    event.metadata?.sourceBasis || event.metadata?.confidence || "",
-  )
-    .trim()
-    .toLowerCase();
-  const basis = String(event.metadata?.basis || "").trim().toLowerCase();
-  if (sourceBasis === "confirmed_trade" || basis === "trade") {
+  if (
+    basis === "trade" ||
+    basis === "confirmed_trade" ||
+    basis === "confirmed" ||
+    basis === "reported"
+  ) {
     return "confirmed_trade";
+  }
+  if (
+    basis === "snapshot" ||
+    basis === "snapshot_activity" ||
+    basis === "observed"
+  ) {
+    return "snapshot_activity";
   }
   return "other";
 };
+
+const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
+  resolveFlowChartSourceBasis(event) === "snapshot_activity";
+
+const isFlowChartMarkerEligibleEvent = (event: ChartEvent): boolean =>
+  resolveFlowChartSourceBasis(event) === "confirmed_trade";
+
+const readFlowChartEventTimeBasis = (event: ChartEvent): string =>
+  String(event.metadata?.timeBasis || event.metadata?.chartTimeBasis || "")
+    .trim()
+    .toLowerCase();
+
+const readFlowChartEventTimeSourceField = (event: ChartEvent): string =>
+  String(
+    event.metadata?.chartTimeSourceField ||
+      event.metadata?.timeSourceField ||
+      event.metadata?.sourceField ||
+      "",
+  ).trim();
 
 const getChartFlowSnapshotKey = (event: ChartEvent): string => {
   if (!isSnapshotActivityEvent(event)) return "";
@@ -516,6 +574,9 @@ const resolveBucketIndex = (
   if (exactIndex >= 0) {
     return exactIndex;
   }
+  if (ranges.length > 0) {
+    return -1;
+  }
 
   const firstLoadedMs = ranges[0]?.startMs ?? bars[0].time * 1000;
   const lastRange = ranges.length
@@ -619,6 +680,101 @@ const resolveSentimentShares = ({
   };
 };
 
+const buildRawFlowChartBucket = ({
+  id,
+  barIndex,
+  sourceBasis,
+  bucketEvents,
+  model,
+}: {
+  id: string;
+  barIndex: number;
+  sourceBasis: FlowChartSourceBasis;
+  bucketEvents: ChartEvent[];
+  model: ChartBarModel;
+}): FlowChartBucket => {
+  const totals = bucketEvents.reduce(
+    (acc, event) => {
+      const premium = readPremium(event);
+      const contracts = readContracts(event);
+      const right = readRight(event);
+      acc.totalPremium += premium;
+      acc.totalContracts += contracts;
+      if (right === "C") acc.callPremium += premium;
+      if (right === "P") acc.putPremium += premium;
+      if (isCallPutFallbackEvent(event)) {
+        acc.neutralPremium += premium;
+        return acc;
+      }
+      if (event.bias === "bullish") {
+        acc.bullishPremium += premium;
+      } else if (event.bias === "bearish") {
+        acc.bearishPremium += premium;
+      } else {
+        acc.neutralPremium += premium;
+      }
+      return acc;
+    },
+    {
+      totalPremium: 0,
+      totalContracts: 0,
+      callPremium: 0,
+      putPremium: 0,
+      bullishPremium: 0,
+      bearishPremium: 0,
+      neutralPremium: 0,
+    },
+  );
+  const topEvent =
+    bucketEvents
+      .slice()
+      .sort((left, right) => readPremium(right) - readPremium(left))[0] ||
+    bucketEvents[0];
+  const tags = Array.from(new Set(bucketEvents.flatMap(readTags))).slice(0, 4);
+  const biasDecision = resolveBias({ ...totals, events: bucketEvents });
+  const shares = resolveSentimentShares(totals);
+  const topPremium = readPremium(topEvent);
+
+  return {
+    id,
+    time: model.chartBars[barIndex].time,
+    barIndex,
+    sourceBasis,
+    events: bucketEvents,
+    count: bucketEvents.length,
+    ...totals,
+    ...shares,
+    bias: biasDecision.bias,
+    biasBasis: biasDecision.basis,
+    severity: maxSeverity(bucketEvents),
+    topEvent,
+    topContractLabel: readContractLabel(topEvent),
+    topPremium,
+    tags,
+    volumeSegmentRatio: 0,
+  };
+};
+
+const applyFlowBucketIntensity = <T extends { bucket?: FlowChartBucket }>(
+  values: T[],
+): T[] => {
+  const buckets = values.flatMap((value) => (value.bucket ? [value.bucket] : []));
+  const maxPremium = Math.max(...buckets.map((bucket) => bucket.totalPremium), 0);
+  return values.map((value) => {
+    if (!value.bucket) return value;
+    return {
+      ...value,
+      bucket: {
+        ...value.bucket,
+        volumeSegmentRatio:
+          maxPremium > 0
+            ? clamp(value.bucket.totalPremium / maxPremium, 0.08, 0.55)
+            : 0.08,
+      },
+    };
+  });
+};
+
 export const summarizeFlowChartBucketPlacement = (
   events: ChartEvent[],
   model: ChartBarModel,
@@ -635,6 +791,11 @@ export const summarizeFlowChartBucketPlacement = (
     bucketedConfirmedTradeEventCount: 0,
     bucketedSnapshotActivityEventCount: 0,
     bucketedOtherEventCount: 0,
+    markerEligibleEventCount: 0,
+    markerPlacementCount: 0,
+    markerSnapshotSkippedEventCount: 0,
+    markerOtherSkippedEventCount: 0,
+    droppedMarkerOutsideBarCount: 0,
     droppedInvalidTimeCount: 0,
     droppedOutsideBarCount: 0,
   };
@@ -653,10 +814,13 @@ export const summarizeFlowChartBucketPlacement = (
     const sourceBasis = resolveFlowChartSourceBasis(event);
     if (sourceBasis === "confirmed_trade") {
       diagnostics.confirmedTradeFlowEventCount += 1;
+      diagnostics.markerEligibleEventCount += 1;
     } else if (sourceBasis === "snapshot_activity") {
       diagnostics.snapshotActivityFlowEventCount += 1;
+      diagnostics.markerSnapshotSkippedEventCount += 1;
     } else {
       diagnostics.otherFlowEventCount += 1;
+      diagnostics.markerOtherSkippedEventCount += 1;
     }
 
     const parsed = Date.parse(event.time);
@@ -667,11 +831,15 @@ export const summarizeFlowChartBucketPlacement = (
     const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
     if (barIndex < 0) {
       diagnostics.droppedOutsideBarCount += 1;
+      if (sourceBasis === "confirmed_trade") {
+        diagnostics.droppedMarkerOutsideBarCount += 1;
+      }
       return;
     }
     diagnostics.bucketedEventCount += 1;
     if (sourceBasis === "confirmed_trade") {
       diagnostics.bucketedConfirmedTradeEventCount += 1;
+      diagnostics.markerPlacementCount += 1;
     } else if (sourceBasis === "snapshot_activity") {
       diagnostics.bucketedSnapshotActivityEventCount += 1;
     } else {
@@ -711,68 +879,15 @@ export const buildFlowChartBuckets = (
         flowChartSourceBasisOrder[left.sourceBasis] -
           flowChartSourceBasisOrder[right.sourceBasis],
     )
-    .map(({ barIndex, sourceBasis, events: bucketEvents }) => {
-      const totals = bucketEvents.reduce(
-        (acc, event) => {
-          const premium = readPremium(event);
-          const contracts = readContracts(event);
-          const right = readRight(event);
-          acc.totalPremium += premium;
-          acc.totalContracts += contracts;
-          if (right === "C") acc.callPremium += premium;
-          if (right === "P") acc.putPremium += premium;
-          if (isCallPutFallbackEvent(event)) {
-            acc.neutralPremium += premium;
-            return acc;
-          }
-          if (event.bias === "bullish") {
-            acc.bullishPremium += premium;
-          } else if (event.bias === "bearish") {
-            acc.bearishPremium += premium;
-          } else {
-            acc.neutralPremium += premium;
-          }
-          return acc;
-        },
-        {
-          totalPremium: 0,
-          totalContracts: 0,
-          callPremium: 0,
-          putPremium: 0,
-          bullishPremium: 0,
-          bearishPremium: 0,
-          neutralPremium: 0,
-        },
-      );
-      const topEvent =
-        bucketEvents
-          .slice()
-          .sort((left, right) => readPremium(right) - readPremium(left))[0] ||
-        bucketEvents[0];
-      const tags = Array.from(new Set(bucketEvents.flatMap(readTags))).slice(0, 4);
-      const biasDecision = resolveBias({ ...totals, events: bucketEvents });
-      const shares = resolveSentimentShares(totals);
-      const topPremium = readPremium(topEvent);
-
-      return {
+    .map(({ barIndex, sourceBasis, events: bucketEvents }) =>
+      buildRawFlowChartBucket({
         id: `flow:${sourceBasis}:${model.chartBars[barIndex].time}:${bucketEvents.length}`,
-        time: model.chartBars[barIndex].time,
         barIndex,
         sourceBasis,
-        events: bucketEvents,
-        count: bucketEvents.length,
-        ...totals,
-        ...shares,
-        bias: biasDecision.bias,
-        biasBasis: biasDecision.basis,
-        severity: maxSeverity(bucketEvents),
-        topEvent,
-        topContractLabel: readContractLabel(topEvent),
-        topPremium,
-        tags,
-        volumeSegmentRatio: 0,
-      } satisfies FlowChartBucket;
-    });
+        bucketEvents,
+        model,
+      }),
+    );
 
   const maxPremium = Math.max(...rawBuckets.map((bucket) => bucket.totalPremium), 0);
   return rawBuckets.map((bucket) => ({
@@ -780,6 +895,69 @@ export const buildFlowChartBuckets = (
     volumeSegmentRatio:
       maxPremium > 0 ? clamp(bucket.totalPremium / maxPremium, 0.08, 0.55) : 0.08,
   }));
+};
+
+export const buildFlowChartVolumeBuckets = (
+  events: ChartEvent[],
+  model: ChartBarModel,
+): FlowChartBucket[] =>
+  buildFlowChartBuckets(
+    events.filter(
+      (event) =>
+        event.eventType === "unusual_flow" &&
+        resolveFlowChartSourceBasis(event) === "confirmed_trade",
+    ),
+    model,
+  );
+
+export const buildFlowChartEventPlacements = (
+  events: ChartEvent[],
+  model: ChartBarModel,
+): FlowChartEventPlacement[] => {
+  if (!events.length || !model.chartBars.length) {
+    return [];
+  }
+
+  const normalized = normalizeFlowChartEvents(events).events;
+  const placements = normalized.flatMap((event, index): FlowChartEventPlacement[] => {
+    const parsed = Date.parse(event.time);
+    if (!Number.isFinite(parsed)) return [];
+    const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
+    if (barIndex < 0) return [];
+    const sourceBasis = resolveFlowChartSourceBasis(event);
+    if (!isFlowChartMarkerEligibleEvent(event)) return [];
+    const idPart = normalizeKeyPart(event.id) || `${parsed}:${index}`;
+    const bucket = buildRawFlowChartBucket({
+      id: `flow-event-bucket:${sourceBasis}:${model.chartBars[barIndex].time}:${idPart}`,
+      barIndex,
+      sourceBasis,
+      bucketEvents: [event],
+      model,
+    });
+    return [
+      {
+        id: `flow-event:${sourceBasis}:${model.chartBars[barIndex].time}:${idPart}`,
+        time: model.chartBars[barIndex].time,
+        eventIso: new Date(parsed).toISOString(),
+        eventDay: new Date(parsed).toISOString().slice(0, 10),
+        eventTimeMs: parsed,
+        barIndex,
+        sourceBasis,
+        timeBasis: readFlowChartEventTimeBasis(event),
+        timeSourceField: readFlowChartEventTimeSourceField(event),
+        event,
+        bucket,
+      },
+    ];
+  });
+
+  return applyFlowBucketIntensity(placements).sort(
+    (left, right) =>
+      left.barIndex - right.barIndex ||
+      left.eventTimeMs - right.eventTimeMs ||
+      flowChartSourceBasisOrder[left.sourceBasis] -
+        flowChartSourceBasisOrder[right.sourceBasis],
+  );
 };
 
 export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel => {

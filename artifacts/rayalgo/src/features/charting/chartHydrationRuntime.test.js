@@ -36,7 +36,7 @@ test("chart hydration request policy expands rolled intervals by base timeframe"
 
   assert.equal(requestPolicy.baseTimeframe, "15m");
   assert.equal(requestPolicy.baseLimit, 3000);
-  assert.equal(requestPolicy.brokerRecentWindowMinutes, 720);
+  assert.equal(requestPolicy.brokerRecentWindowMinutes, 2880);
 });
 
 test("visible range hydration ignores ranges away from the left edge", () => {

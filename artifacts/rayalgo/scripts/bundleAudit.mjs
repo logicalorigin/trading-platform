@@ -6,6 +6,11 @@ const maxKb = Number(process.env.BUNDLE_AUDIT_MAX_KB ?? 350);
 const distDir = resolve(import.meta.dirname, "../dist/public");
 const assetsDir = resolve(distDir, "assets");
 const indexHtmlPath = resolve(distDir, "index.html");
+const forbiddenEntryImports = [
+  "feature-charting-surface",
+  "vendor-lightweight-charts",
+  "rayreplica-core",
+];
 
 if (!existsSync(assetsDir)) {
   throw new Error(`Build assets not found at ${assetsDir}. Run the Vite build first.`);
@@ -39,6 +44,7 @@ for (const asset of jsAssets.slice(0, 30)) {
 
 console.log("");
 console.log("Entry modulepreloads:");
+let entrySource = "";
 if (existsSync(indexHtmlPath)) {
   const indexHtml = readFileSync(indexHtmlPath, "utf8");
   const preloads =
@@ -48,8 +54,35 @@ if (existsSync(indexHtmlPath)) {
   } else {
     console.log("(none)");
   }
+  const entryScriptMatch = indexHtml.match(
+    /<script[^>]+type="module"[^>]+src="([^"]+)"[^>]*>/,
+  );
+  const entryScriptSrc = entryScriptMatch?.[1] || "";
+  const entryFileName = entryScriptSrc.split("/").pop();
+  if (entryFileName) {
+    const entryPath = resolve(assetsDir, entryFileName);
+    if (existsSync(entryPath)) {
+      entrySource = readFileSync(entryPath, "utf8");
+    }
+  }
 } else {
   console.log(`index.html not found at ${indexHtmlPath}`);
+}
+
+console.log("");
+console.log("Entry deferred chunk guard:");
+const forbiddenEntryImportHits = forbiddenEntryImports.filter((pattern) =>
+  entrySource.includes(pattern),
+);
+if (forbiddenEntryImportHits.length) {
+  console.error(
+    `Entry chunk statically imports deferred chunks: ${forbiddenEntryImportHits.join(", ")}.`,
+  );
+  process.exitCode = 1;
+} else if (entrySource) {
+  console.log("ok");
+} else {
+  console.log("entry chunk not found");
 }
 
 if (overBudget.length) {

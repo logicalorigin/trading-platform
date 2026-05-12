@@ -6,11 +6,10 @@ import {
 } from "react";
 import {
   ResearchChartFrame,
-} from "../charting/ResearchChartFrame";
-import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
-} from "../charting/ResearchChartWidgetChrome";
+} from "../charting/ResearchChartFrame";
+import { DISPLAY_CHART_OUTSIDE_RTH } from "../charting/displayChartSession";
 import {
   getChartBarLimit,
   getChartTimeframeOptions,
@@ -250,6 +249,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     providerContractId,
     timeframe: optionChartTimeframe,
     barsLimit: optionProgressiveBars.requestedLimit,
+    outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
     enabled: true,
     liveEnabled: true,
     hydrationLabel: `${chartSymbol || "flow"} option inspection ${optionChartTimeframe}`,
@@ -996,6 +996,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 rangeIdentityKey={optionChartScopeKey}
                 viewportLayoutKey={optionChartViewportLayoutKey}
                 model={optionChartModel}
+                placement="inspection"
                 positionOverlayContext={{
                   surfaceKind: "option",
                   symbol: chartSymbol,
@@ -1009,7 +1010,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                   },
                 }}
                 onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
-                showSurfaceToolbar={false}
                 showLegend
                 legend={{
                   symbol: chartSymbol || "OPTION",
@@ -1030,7 +1030,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     sourceLabel: optionChartStatusLabel,
                   },
                 }}
-                compact
                 style={{ minHeight: 0, width: "100%" }}
                 surfaceTopOverlay={(controls) => (
                   <ResearchChartWidgetHeader
@@ -1063,7 +1062,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     showSnapshotButton={false}
                   />
                 )}
-                surfaceTopOverlayHeight={28}
                 surfaceBottomOverlay={(controls) => (
                   <ResearchChartWidgetFooter
                     theme={T}
@@ -1072,7 +1070,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     statusText={optionChartStatusLabel}
                   />
                 )}
-                surfaceBottomOverlayHeight={20}
               />
               {!optionDisplayBars.length ? (
                 <div

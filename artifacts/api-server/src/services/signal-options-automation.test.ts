@@ -4,8 +4,11 @@ import { defaultSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 import {
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
+  SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
+  SIGNAL_OPTIONS_MARK_EVENT,
   SIGNAL_OPTIONS_SKIPPED_EVENT,
   __signalOptionsAutomationInternalsForTests,
+  buildSignalOptionsPerformanceFromInputs,
   buildSignalOptionsShadowOrderPlan,
   resolveSignalOptionsLiquidity,
   selectSignalOptionsContractFromChain,
@@ -113,6 +116,93 @@ test("historical backfill order plan sizes from option bar close", () => {
   assert.equal(orderPlan.historicalPricing, true);
 });
 
+test("position mark quote snapshots map onto signal option quotes", () => {
+  const quote =
+    __signalOptionsAutomationInternalsForTests.quoteSnapshotToSignalOptionsQuote({
+      contract: {
+        ticker: "SMCI20260515P32",
+        underlying: "SMCI",
+        expirationDate: "2026-05-15",
+        strike: 32,
+        right: "put",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "old-conid",
+      },
+      quote: {
+        symbol: "SMCI",
+        price: 1.29,
+        bid: 1.27,
+        ask: 1.34,
+        bidSize: 10,
+        askSize: 12,
+        change: 0,
+        changePercent: 0,
+        volume: 2541,
+        openInterest: 12,
+        impliedVolatility: 0.7,
+        delta: -0.42,
+        gamma: 0.03,
+        theta: -0.01,
+        vega: 0.04,
+        updatedAt: new Date("2026-05-12T16:32:18.332Z"),
+        providerContractId: "fresh-conid",
+        transport: "client_portal",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-05-12T16:32:18.332Z"),
+        ageMs: 25,
+      } as never,
+    });
+
+  assert.equal(quote.contract?.providerContractId, "fresh-conid");
+  assert.equal(quote.contract?.right, "put");
+  assert.equal(quote.bid, 1.27);
+  assert.equal(quote.ask, 1.34);
+  assert.equal(quote.last, 1.29);
+  assert.equal(quote.mark, 1.29);
+  assert.equal(quote.quoteFreshness, "live");
+  assert.equal(quote.marketDataMode, "live");
+  assert.equal(quote.ageMs, 25);
+});
+
+test("active position marks record changed downside prices", () => {
+  const position = {
+    peakPrice: 2.55,
+    stopPrice: 1.27,
+    lastMarkPrice: null,
+  };
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRecordActivePositionMark({
+      position: position as never,
+      peakPrice: 2.55,
+      stopPrice: 1.27,
+      markPrice: 2.4,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRecordActivePositionMark({
+      position: { ...position, lastMarkPrice: 2.4 } as never,
+      peakPrice: 2.55,
+      stopPrice: 1.27,
+      markPrice: 2.4,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRecordActivePositionMark({
+      position: { ...position, lastMarkPrice: 2.4 } as never,
+      peakPrice: 2.55,
+      stopPrice: 1.27,
+      markPrice: 2.39,
+    }),
+    true,
+  );
+});
+
 test("historical backfill closes expired positions after option bars are exhausted", () => {
   const position = {
     nextBarIndex: 1,
@@ -181,6 +271,195 @@ test("historical backfill falls back to deployment symbols without a watchlist u
   assert.deepEqual(universe.symbols, ["SPY", "QQQ"]);
 });
 
+test("signal-options performance filters automation trades and reports rule blockers", () => {
+  const deploymentId = "11111111-1111-1111-1111-111111111111";
+  const expandedProfile = {
+    ...profile,
+    riskCaps: {
+      ...profile.riskCaps,
+      maxOpenSymbols: 2,
+      maxDailyLoss: 2000,
+    },
+  };
+  const occurredAt = new Date("2026-05-12T15:00:00.000Z");
+  const state = {
+    activePositions: [
+      {
+        id: "pos-1",
+        symbol: "SPY",
+        lastMarkPrice: 1.4,
+        premiumAtRisk: 375,
+      },
+      {
+        id: "pos-2",
+        symbol: "QQQ",
+        lastMarkPrice: null,
+        premiumAtRisk: 450,
+      },
+    ],
+    risk: {
+      openSymbols: 2,
+      openPremium: 825,
+      openUnrealizedPnl: 50,
+      dailyRealizedPnl: 0,
+      dailyPnl: 50,
+      dailyHaltActive: false,
+    },
+  };
+  const events = [
+    {
+      id: "entry-1",
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      symbol: "SPY",
+      deploymentId,
+      occurredAt,
+      payload: {
+        action: { brokerSubmission: false },
+        candidate: {
+          id: "SIGOPT-11111111-SPY-buy-1",
+          deploymentId,
+          symbol: "SPY",
+          direction: "buy",
+          optionRight: "call",
+          timeframe: "15m",
+          signalAt: occurredAt.toISOString(),
+          signal: { filterState: { adx: 35, mtfDirections: [1, 1] } },
+        },
+        selectedExpiration: { dte: 1 },
+        selectedContract: {
+          right: "call",
+          expirationDate: "2026-05-13",
+          strike: 101,
+          multiplier: 100,
+        },
+        orderPlan: {
+          ok: true,
+          quantity: 3,
+          premiumAtRisk: 375,
+          liquidity: { ok: true },
+        },
+      },
+    },
+    {
+      id: "skip-1",
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      symbol: "MSFT",
+      deploymentId,
+      occurredAt: new Date("2026-05-12T15:01:00.000Z"),
+      payload: {
+        reason: "max_open_symbols_reached",
+      },
+    },
+    {
+      id: "mark-1",
+      eventType: SIGNAL_OPTIONS_MARK_EVENT,
+      symbol: "QQQ",
+      deploymentId,
+      occurredAt: new Date("2026-05-12T15:02:00.000Z"),
+      payload: {
+        reason: "position_mark_unavailable",
+      },
+    },
+  ];
+  const performance = buildSignalOptionsPerformanceFromInputs({
+    deploymentId,
+    profile: expandedProfile,
+    state: state as never,
+    events: events as never,
+    shadowPatterns: {
+      context: { range: "1M" },
+      tradeEvents: [
+        {
+          sourceType: "automation",
+          strategyLabel: "Signal Options",
+          candidateId: "SIGOPT-11111111-SPY-buy-1",
+          deploymentId,
+        },
+      ],
+      openLots: [
+        {
+          sourceType: "automation",
+          strategyLabel: "Signal Options",
+          candidateId: "SIGOPT-11111111-QQQ-buy-1",
+          metadata: { candidate: { deploymentId } },
+        },
+      ],
+      roundTrips: [
+        {
+          id: "trade-1",
+          symbol: "SPY",
+          assetClass: "option",
+          quantity: 3,
+          openDate: "2026-05-12T15:00:00.000Z",
+          closeDate: "2026-05-12T16:00:00.000Z",
+          avgOpen: 1.25,
+          avgClose: 1.65,
+          realizedPnl: 120,
+          realizedPnlPercent: 32,
+          fees: 2,
+          holdDurationMinutes: 60,
+          sourceType: "automation",
+          strategyLabel: "Signal Options",
+          candidateId: "SIGOPT-11111111-SPY-buy-1",
+          entryMetadata: {
+            candidate: { deploymentId, optionRight: "call" },
+            selectedExpiration: { dte: 1 },
+            selectedContract: {
+              right: "call",
+              expirationDate: "2026-05-13",
+              strike: 101,
+            },
+          },
+          metadata: { reason: "runner_trail_stop" },
+        },
+        {
+          id: "manual-trade",
+          symbol: "AAPL",
+          realizedPnl: 999,
+          sourceType: "manual",
+          strategyLabel: null,
+          entryMetadata: {},
+          metadata: {},
+        },
+        {
+          id: "other-deployment",
+          symbol: "NVDA",
+          realizedPnl: 999,
+          sourceType: "automation",
+          strategyLabel: "Signal Options",
+          candidateId: "SIGOPT-other-NVDA-buy-1",
+          entryMetadata: {
+            candidate: {
+              deploymentId: "22222222-2222-2222-2222-222222222222",
+            },
+          },
+          metadata: {},
+        },
+      ],
+    },
+  });
+
+  assert.equal(performance.summary.closedTrades, 1);
+  assert.equal(performance.summary.realizedPnl, 120);
+  assert.equal(performance.summary.openLots, 1);
+  assert.equal(performance.openExposure.maxOpenSymbols, 2);
+  assert.equal(performance.openExposure.atOpenSymbolCapacity, true);
+  assert.deepEqual(performance.topBlockers[0], {
+    reason: "max_open_symbols_reached",
+    label: "max open symbols reached",
+    count: 1,
+  });
+  assert.equal(
+    performance.ruleAdherence.find((rule) => rule.id === "max_open_symbols")?.status,
+    "warning",
+  );
+  assert.equal(
+    performance.ruleAdherence.find((rule) => rule.id === "position_marking")?.status,
+    "warning",
+  );
+  assert.equal(performance.recentClosedTrades[0]?.symbol, "SPY");
+});
+
 test("selectSignalOptionsContractFromChain maps buy to call above and sell to put below", () => {
   const contracts = [
     quote(99, "call"),
@@ -210,6 +489,110 @@ test("selectSignalOptionsContractFromChain maps buy to call above and sell to pu
   assert.equal(put?.contract?.strike, 99);
 });
 
+test("signal-options scan requests a bounded strike window for selected slots", () => {
+  const strikesAroundMoney =
+    __signalOptionsAutomationInternalsForTests.signalOptionsStrikesAroundMoney;
+
+  assert.equal(
+    strikesAroundMoney({ profile, optionRight: "put" }),
+    1,
+  );
+  assert.equal(
+    strikesAroundMoney({ profile, optionRight: "call" }),
+    1,
+  );
+  assert.equal(
+    strikesAroundMoney({
+      profile: {
+        ...profile,
+        optionSelection: {
+          ...profile.optionSelection,
+          putStrikeSlot: 0,
+          callStrikeSlot: 5,
+        },
+      },
+      optionRight: "put",
+    }),
+    3,
+  );
+  assert.equal(
+    strikesAroundMoney({
+      profile: {
+        ...profile,
+        optionSelection: {
+          ...profile.optionSelection,
+          putStrikeSlot: 0,
+          callStrikeSlot: 5,
+        },
+      },
+      optionRight: "call",
+    }),
+    3,
+  );
+});
+
+test("seen signal keys allow retries after transient option-chain skips", () => {
+  const signalKey = "profile:SPY:15m:sell:2026-05-12T15:00:00.000Z";
+  const seenSignalKeys =
+    __signalOptionsAutomationInternalsForTests.seenSignalKeys;
+
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "no_contract_for_strike_slot",
+            chainDebug: {
+              reason: "options_upstream_failure",
+            },
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "bear_regime_gate_failed",
+            entryGate: {
+              reasons: ["adx_below_minimum"],
+            },
+          },
+        },
+      ] as never),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "no_expiration_in_dte_window",
+            expirationsDebug: {
+              reason: "options_backoff",
+            },
+          },
+        },
+        {
+          eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+          payload: { signalKey },
+        },
+      ] as never),
+    ),
+    [signalKey],
+  );
+});
+
 test("signal-options candidates preserve RayReplica signal to shadow action mapping", () => {
   const signalAt = "2026-04-28T15:30:00.000Z";
   const state = {
@@ -223,14 +606,14 @@ test("signal-options candidates preserve RayReplica signal to shadow action mapp
     barsSinceSignal: 1,
     fresh: true,
     status: "ok",
-  } as never;
+  };
   const candidate =
     __signalOptionsAutomationInternalsForTests.buildCandidateFromSignal({
       deployment: {
         id: "deployment-123456789",
         name: "Shadow Options",
       } as never,
-      state,
+      state: state as never,
       signalAt,
       signalKey: "profile:SPY:15m:sell:2026-04-28T15:30:00.000Z",
       signalMetadata: {
@@ -271,12 +654,12 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
     fresh: true,
     status: "ok",
     filterState: { mtf: "aligned" },
-  } as never;
+  };
 
   const buyCandidate =
     __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
       deployment,
-      signal: baseSignal,
+      signal: baseSignal as never,
     });
   const sellCandidate =
     __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
@@ -529,6 +912,12 @@ test("daily signal-options pnl includes realized exits and open marked positions
       quantity: 1,
       selectedContract: { multiplier: 100 },
     },
+    {
+      entryPrice: 4,
+      lastMarkPrice: null,
+      quantity: 1,
+      selectedContract: { multiplier: 100 },
+    },
   ] as never;
 
   assert.equal(
@@ -672,4 +1061,92 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
   assert.ok(
     attention.some((item) => item.id === "shadow-candidate-2"),
   );
+});
+
+test("cockpit diagnostics summarize trade blockers and signal freshness", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const events = [
+    {
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T17:55:00.000Z"),
+      payload: {
+        reason: "bear_regime_gate_failed",
+        entryGate: {
+          reasons: ["adx_below_minimum", "mtf_fully_bullish"],
+        },
+      },
+    },
+    {
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T17:56:00.000Z"),
+      payload: {
+        reason: "no_contract_for_strike_slot",
+        chainDebug: {
+          reason: "options_upstream_failure",
+        },
+      },
+    },
+    {
+      eventType: SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
+      occurredAt: new Date("2026-04-28T17:57:00.000Z"),
+      payload: {
+        reason: "ibkr_not_configured",
+      },
+    },
+    {
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      occurredAt: now,
+      payload: {},
+    },
+  ] as never;
+  const signals = [
+    {
+      symbol: "SPY",
+      direction: "sell",
+      fresh: true,
+      status: "ok",
+    },
+    {
+      symbol: "QQQ",
+      direction: null,
+      fresh: false,
+      status: "stale",
+    },
+  ] as never;
+  const candidates = [
+    {
+      id: "candidate-1",
+      status: "skipped",
+      actionStatus: "blocked",
+      selectedContract: null,
+    },
+    {
+      id: "candidate-2",
+      status: "open",
+      actionStatus: "ready",
+      selectedContract: { strike: 510 },
+    },
+  ] as never;
+
+  const diagnostics =
+    __signalOptionsAutomationInternalsForTests.buildCockpitDiagnostics({
+      signals,
+      candidates,
+      activePositions: [{}] as never,
+      events,
+    });
+
+  assert.equal(diagnostics.eventWindow.total, 4);
+  assert.equal(diagnostics.tradePath.blockedCandidates, 1);
+  assert.equal(diagnostics.tradePath.contractsSelected, 1);
+  assert.equal(diagnostics.tradePath.shadowFilledCandidates, 1);
+  assert.equal(diagnostics.tradePath.entryEvents, 1);
+  assert.equal(diagnostics.tradePath.gatewayBlocks, 1);
+  assert.equal(diagnostics.signalFreshness.fresh, 1);
+  assert.equal(diagnostics.signalFreshness.notFresh, 1);
+  assert.equal(diagnostics.signalFreshness.withoutDirection, 1);
+  assert.equal(diagnostics.skipReasons.bear_regime_gate_failed, 1);
+  assert.equal(diagnostics.skipReasons.ibkr_not_configured, 1);
+  assert.equal(diagnostics.entryGateReasons.mtf_fully_bullish, 1);
+  assert.equal(diagnostics.optionChainReasons.options_upstream_failure, 1);
 });

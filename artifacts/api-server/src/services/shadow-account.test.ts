@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { ACCOUNT_PAGE_STREAM_INTERVAL_MS } from "./account-page-streams";
 import { SHADOW_ACCOUNT_STREAM_INTERVAL_MS } from "./shadow-account-streams";
+import {
+  notifyShadowAccountChanged,
+  subscribeShadowAccountChanges,
+} from "./shadow-account-events";
 import {
   __shadowWatchlistBacktestInternalsForTests,
   buildWatchlistBacktestFills,
@@ -9,7 +14,24 @@ import {
 } from "./shadow-account";
 
 test("shadow account snapshot stream uses the visible-page cadence", () => {
-  assert.equal(SHADOW_ACCOUNT_STREAM_INTERVAL_MS, 5_000);
+  assert.equal(SHADOW_ACCOUNT_STREAM_INTERVAL_MS, 2_000);
+});
+
+test("account page snapshot stream uses the one-second visible-page cadence", () => {
+  assert.equal(ACCOUNT_PAGE_STREAM_INTERVAL_MS, 1_000);
+});
+
+test("shadow account change notifier publishes successful ledger writes", () => {
+  let calls = 0;
+  const unsubscribe = subscribeShadowAccountChanges(() => {
+    calls += 1;
+  });
+
+  notifyShadowAccountChanged();
+  unsubscribe();
+  notifyShadowAccountChanged();
+
+  assert.equal(calls, 1);
 });
 
 test("computeShadowOrderFees applies IBKR Pro Fixed option fees", () => {

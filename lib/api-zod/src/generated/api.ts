@@ -3404,6 +3404,7 @@ export const GetSignalOptionsAutomationStateResponse = zod.object({
   "optionSelection": zod.record(zod.string(), zod.unknown()),
   "riskCaps": zod.record(zod.string(), zod.unknown()),
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
   "exitPolicy": zod.record(zod.string(), zod.unknown())
 }),
@@ -3486,6 +3487,7 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
   "occurredAt": zod.coerce.date().nullable(),
   "action": zod.string()
 })),
+  "diagnostics": zod.record(zod.string(), zod.unknown()),
   "kpis": zod.record(zod.string(), zod.unknown()),
   "risk": zod.record(zod.string(), zod.unknown()),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
@@ -3519,6 +3521,25 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
 
 
 /**
+ * @summary Get signal-options shadow trading performance and rule adherence
+ */
+export const GetSignalOptionsPerformanceParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const GetSignalOptionsPerformanceResponse = zod.object({
+  "deploymentId": zod.string(),
+  "range": zod.string(),
+  "summary": zod.record(zod.string(), zod.unknown()),
+  "openExposure": zod.record(zod.string(), zod.unknown()),
+  "ruleAdherence": zod.array(zod.record(zod.string(), zod.unknown())),
+  "topBlockers": zod.array(zod.record(zod.string(), zod.unknown())),
+  "recentClosedTrades": zod.array(zod.record(zod.string(), zod.unknown())),
+  "generatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Run a signal-options shadow scan
  */
 export const RunSignalOptionsShadowScanParams = zod.object({
@@ -3547,6 +3568,7 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
   "optionSelection": zod.record(zod.string(), zod.unknown()),
   "riskCaps": zod.record(zod.string(), zod.unknown()),
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
   "exitPolicy": zod.record(zod.string(), zod.unknown())
 }),
@@ -3604,6 +3626,7 @@ export const UpdateSignalOptionsExecutionProfileBody = zod.object({
   "optionSelection": zod.record(zod.string(), zod.unknown()),
   "riskCaps": zod.record(zod.string(), zod.unknown()),
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
   "exitPolicy": zod.record(zod.string(), zod.unknown())
 })
@@ -3630,6 +3653,7 @@ export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
   "optionSelection": zod.record(zod.string(), zod.unknown()),
   "riskCaps": zod.record(zod.string(), zod.unknown()),
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
   "exitPolicy": zod.record(zod.string(), zod.unknown())
 }),
@@ -4511,3 +4535,5 @@ export const ListBacktestDraftStrategiesResponse = zod.object({
   "promotedAt": zod.coerce.date()
 }))
 })
+
+

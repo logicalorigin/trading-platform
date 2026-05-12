@@ -189,7 +189,7 @@ test.afterEach(() => {
   __resetMarketDataAdmissionForTests();
   __setHistoricalFlowStoreDisabledForTests(false);
   __setHistoricalFlowStoreReadTimeoutMsForTests(3_000);
-  __setHistoricalFlowDirectFallbackTimeoutMsForTests(20_000);
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests(4_000);
   clearPolygonEnv();
 });
 

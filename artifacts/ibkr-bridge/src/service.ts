@@ -357,6 +357,7 @@ export class IbkrBridgeService {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
   }): Promise<BrokerBarSnapshot[]> {
     return this.ensureProvider().getHistoricalBars(input);
   }
@@ -497,6 +498,7 @@ export class IbkrBridgeService {
       providerContractId?: string | null;
       outsideRth?: boolean;
       source?: HistoryDataSource;
+      exchange?: string | null;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,

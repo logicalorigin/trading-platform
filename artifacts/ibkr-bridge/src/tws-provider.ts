@@ -212,6 +212,7 @@ type HistoricalRecoveryContext = {
   timeframe: HistoryBarTimeframe;
   assetClass?: "equity" | "option";
   providerContractId?: string | null;
+  exchange?: string | null;
 };
 
 type TwsPositionSnapshot = {
@@ -422,9 +423,12 @@ function formatHistoryEndDate(value: Date): string {
 function buildHistoryDuration(
   timeframe: HistoryBarTimeframe,
   barCount: number,
+  outsideRth = true,
 ): string {
   const desiredBars = Math.max(1, Math.min(1_000, Math.ceil(barCount)));
-  const totalMs = desiredBars * HISTORY_STEP_MS[timeframe];
+  const marketHoursPadding = timeframe === "1d" ? 1 : outsideRth ? 2 : 5;
+  const totalMs =
+    desiredBars * HISTORY_STEP_MS[timeframe] * marketHoursPadding;
   const secondMs = 1_000;
   const dayMs = 86_400_000;
   const weekMs = 7 * dayMs;
@@ -453,6 +457,11 @@ function buildHistoryDuration(
 
   return `${Math.max(1, Math.ceil(totalMs / yearMs))} Y`;
 }
+
+export const __twsProviderTestInternals = {
+  buildHistoryDuration,
+  normalizeHistoricalDataExchange,
+};
 
 function resolveRequestedHistoryBars(input: {
   timeframe: HistoryBarTimeframe;
@@ -585,6 +594,14 @@ function normalizeDerivativeSecTypes(value: unknown): string[] {
   return rawValues
     .map((entry) => asString(entry)?.trim().toUpperCase())
     .filter((entry): entry is string => Boolean(entry));
+}
+
+function normalizeHistoricalDataExchange(value: unknown): string | null {
+  const exchange = asString(value)?.trim().toUpperCase() ?? "";
+  if (!exchange || exchange === "SMART") {
+    return null;
+  }
+  return exchange === "OVERNIGHT" || exchange === "IBEOS" ? exchange : null;
 }
 
 function scoreStockContractDetail(
@@ -4663,6 +4680,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
   }): string {
     return JSON.stringify({
       symbol: normalizeSymbol(input.symbol),
@@ -4671,6 +4689,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       providerContractId: input.providerContractId?.trim() || null,
       outsideRth: input.outsideRth !== false,
       source: input.source ?? "trades",
+      exchange: normalizeHistoricalDataExchange(input.exchange),
     });
   }
 
@@ -4678,6 +4697,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     symbol: string;
     assetClass?: "equity" | "option";
     providerContractId?: string | null;
+    exchange?: string | null;
   }): Promise<{ contract: Contract; providerContractId: string | null }> {
     if (input.assetClass === "option") {
       if (!input.providerContractId) {
@@ -4715,11 +4735,12 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     }
 
     const resolvedStock = await this.resolveStockContract(input.symbol);
+    const exchange = normalizeHistoricalDataExchange(input.exchange) ?? "SMART";
     return {
       contract: {
         ...resolvedStock.contract,
         conId: resolvedStock.resolved.conid,
-        exchange: "SMART",
+        exchange,
       },
       providerContractId: resolvedStock.resolved.providerContractId,
     };
@@ -4733,6 +4754,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       providerContractId?: string | null;
       outsideRth?: boolean;
       source?: HistoryDataSource;
+      exchange?: string | null;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,
@@ -4889,9 +4911,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    exchange?: string | null;
   }): Promise<BrokerBarSnapshot[]> {
     return runBridgeLane("historical", async () => {
       await this.refreshSession();
+      const outsideRth = input.outsideRth !== false;
 
       const { contract, providerContractId } =
         await this.resolveHistoricalBarContract(input);
@@ -4904,15 +4928,20 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           timeframe: input.timeframe,
           assetClass: input.assetClass,
           providerContractId: input.providerContractId,
+          exchange: input.exchange,
         },
         () =>
           this.api.getHistoricalData(
             contract,
             formatHistoryEndDate(input.to ?? new Date()),
-            buildHistoryDuration(input.timeframe, requestedBars),
+            buildHistoryDuration(
+              input.timeframe,
+              requestedBars,
+              outsideRth,
+            ),
             HISTORY_BAR_SIZE[input.timeframe],
             HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
-            input.outsideRth ? 0 : 1,
+            outsideRth ? 0 : 1,
             2,
           ),
       );
@@ -4922,7 +4951,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           toBrokerBarSnapshotFromHistoricalBar({
             bar,
             providerContractId,
-            outsideRth: Boolean(input.outsideRth),
+            outsideRth,
             partial: false,
             delayed:
               this.config.marketDataType === 3 ||

@@ -26,7 +26,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
-import type { BrokerBarSnapshot } from "../providers/ibkr/client";
+import type { BrokerBarSnapshot, QuoteSnapshot } from "../providers/ibkr/client";
 import {
   evaluateSignalMonitor,
   getSignalMonitorProfileRow,
@@ -50,7 +50,11 @@ import {
   isSignalOptionsShadowConfig,
   normalizeAlgoDeploymentProviderAccountId,
 } from "./algo-deployment-account";
-import { recordShadowAutomationEvent } from "./shadow-account";
+import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
+import {
+  computeShadowTradingPatterns,
+  recordShadowAutomationEvent,
+} from "./shadow-account";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 export const SIGNAL_OPTIONS_ENTRY_EVENT = "signal_options_shadow_entry";
@@ -334,6 +338,45 @@ function quoteToPayload(quote: SignalOptionsOptionQuote) {
     quoteUpdatedAt: toIsoString(quote.quoteUpdatedAt),
     dataUpdatedAt: toIsoString(quote.dataUpdatedAt),
     updatedAt: toIsoString(quote.updatedAt),
+    ageMs: finiteNumber(quote.ageMs),
+  };
+}
+
+function quoteSnapshotToSignalOptionsQuote(input: {
+  contract: Record<string, unknown>;
+  quote: QuoteSnapshot;
+}): SignalOptionsOptionQuote {
+  const contract = input.contract;
+  const quote = input.quote;
+  return {
+    contract: {
+      ticker: compactString(contract.ticker) ?? undefined,
+      underlying: compactString(contract.underlying) ?? undefined,
+      expirationDate: contract.expirationDate as string | Date | undefined,
+      strike: finiteNumber(contract.strike) ?? undefined,
+      right: contract.right === "put" ? "put" : "call",
+      multiplier: finiteNumber(contract.multiplier) ?? 100,
+      sharesPerContract: finiteNumber(contract.sharesPerContract) ?? 100,
+      providerContractId:
+        compactString(quote.providerContractId) ??
+        compactString(contract.providerContractId),
+    },
+    bid: finiteNumber(quote.bid),
+    ask: finiteNumber(quote.ask),
+    last: finiteNumber(quote.price),
+    mark: finiteNumber(quote.price),
+    impliedVolatility: finiteNumber(quote.impliedVolatility),
+    delta: finiteNumber(quote.delta),
+    gamma: finiteNumber(quote.gamma),
+    theta: finiteNumber(quote.theta),
+    vega: finiteNumber(quote.vega),
+    openInterest: finiteNumber(quote.openInterest),
+    volume: finiteNumber(quote.volume),
+    updatedAt: quote.updatedAt,
+    quoteFreshness: quote.freshness ?? null,
+    marketDataMode: quote.marketDataMode ?? null,
+    quoteUpdatedAt: quote.updatedAt,
+    dataUpdatedAt: quote.dataUpdatedAt,
     ageMs: finiteNumber(quote.ageMs),
   };
 }
@@ -751,6 +794,28 @@ function resolveStrikeIndex(input: {
   return Math.min(strikes.length - 1, Math.max(0, targetIndex));
 }
 
+function strikesAroundMoneyForSlot(slot: number) {
+  const normalizedSlot = Math.min(5, Math.max(0, Math.floor(slot)));
+  if (normalizedSlot === 0 || normalizedSlot === 5) {
+    return 3;
+  }
+  if (normalizedSlot === 1 || normalizedSlot === 4) {
+    return 2;
+  }
+  return 1;
+}
+
+function signalOptionsStrikesAroundMoney(input: {
+  profile: SignalOptionsExecutionProfile;
+  optionRight: OptionRight;
+}) {
+  const slot =
+    input.optionRight === "call"
+      ? input.profile.optionSelection.callStrikeSlot
+      : input.profile.optionSelection.putStrikeSlot;
+  return strikesAroundMoneyForSlot(Number(slot));
+}
+
 export function selectSignalOptionsContractFromChain(input: {
   contracts: SignalOptionsOptionQuote[];
   direction: SignalDirection;
@@ -941,6 +1006,21 @@ function computePositionStop(input: {
     exitReason,
     returnPct,
   };
+}
+
+function shouldRecordActivePositionMark(input: {
+  position: SignalOptionsPosition;
+  peakPrice: number;
+  stopPrice: number;
+  markPrice: number;
+}) {
+  const lastMarkPrice = finiteNumber(input.position.lastMarkPrice);
+  return (
+    input.peakPrice !== input.position.peakPrice ||
+    input.stopPrice !== input.position.stopPrice ||
+    lastMarkPrice == null ||
+    Math.abs(input.markPrice - lastMarkPrice) >= 0.005
+  );
 }
 
 function numericArray(value: unknown) {
@@ -1292,6 +1372,9 @@ function computeSignalOptionsOpenUnrealizedPnl(
   positions: SignalOptionsPosition[],
 ) {
   return positions.reduce((sum, position) => {
+    if (position.lastMarkPrice == null) {
+      return sum;
+    }
     const markPrice = finiteNumber(position.lastMarkPrice);
     if (markPrice == null) {
       return sum;
@@ -1449,9 +1532,43 @@ async function buildSignalOptionsShadowIndex(
   return { byEventId, byCandidateId };
 }
 
+const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
+  "candidate_resolution_failed",
+  "no_contract_for_strike_slot",
+  "no_expiration_in_dte_window",
+]);
+
+const RETRYABLE_OPTION_DEBUG_REASONS = new Set([
+  "durable_option_chain_after_upstream_failure",
+  "durable_option_expirations_after_upstream_failure",
+  "option_expirations_degraded_empty",
+  "options_backoff",
+  "options_degraded_empty",
+  "options_upstream_failure",
+]);
+
+function isRetryableSignalOptionsSkip(event: ExecutionEvent) {
+  if (event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) {
+    return false;
+  }
+  const payload = asRecord(event.payload);
+  const reason = compactString(payload.reason ?? payload.skipReason);
+  if (!reason || !RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)) {
+    return false;
+  }
+
+  const chainDebug = asRecord(payload.chainDebug);
+  const expirationsDebug = asRecord(payload.expirationsDebug);
+  return [chainDebug.reason, expirationsDebug.reason].some((debugReason) => {
+    const value = compactString(debugReason);
+    return value ? RETRYABLE_OPTION_DEBUG_REASONS.has(value) : false;
+  });
+}
+
 function seenSignalKeys(events: ExecutionEvent[]) {
   return new Set(
     signalOptionsEvents(events)
+      .filter((event) => !isRetryableSignalOptionsSkip(event))
       .map((event) => asRecord(event.payload).signalKey)
       .filter((signalKey): signalKey is string => typeof signalKey === "string"),
   );
@@ -1941,6 +2058,707 @@ function buildCockpitAttention(input: {
   });
 }
 
+function incrementDiagnosticCounter(
+  counter: Record<string, number>,
+  value: unknown,
+) {
+  const key = compactString(value);
+  if (!key) {
+    return;
+  }
+  counter[key] = (counter[key] ?? 0) + 1;
+}
+
+function sortedDiagnosticCounter(counter: Record<string, number>) {
+  return Object.fromEntries(
+    Object.entries(counter).sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    ),
+  );
+}
+
+function buildCockpitDiagnostics(input: {
+  signals: SignalOptionsSignalSnapshot[];
+  candidates: Array<SignalOptionsCandidate & {
+    actionStatus?: SignalOptionsActionStatus;
+  }>;
+  activePositions: SignalOptionsPosition[];
+  events: ExecutionEvent[];
+}) {
+  const eventTypes: Record<string, number> = {};
+  const skipReasons: Record<string, number> = {};
+  const entryGateReasons: Record<string, number> = {};
+  const optionChainReasons: Record<string, number> = {};
+  const signalStatuses: Record<string, number> = {};
+  let firstEventAt: string | null = null;
+  let latestEventAt: string | null = null;
+  let entryEvents = 0;
+  let exitEvents = 0;
+  let markEvents = 0;
+  let gatewayBlocks = 0;
+
+  for (const event of input.events) {
+    incrementDiagnosticCounter(eventTypes, event.eventType);
+    const occurredAt = event.occurredAt.toISOString();
+    if (!firstEventAt || occurredAt < firstEventAt) {
+      firstEventAt = occurredAt;
+    }
+    if (!latestEventAt || occurredAt > latestEventAt) {
+      latestEventAt = occurredAt;
+    }
+
+    if (event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT) {
+      entryEvents += 1;
+    } else if (event.eventType === SIGNAL_OPTIONS_EXIT_EVENT) {
+      exitEvents += 1;
+    } else if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT) {
+      markEvents += 1;
+    } else if (event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT) {
+      gatewayBlocks += 1;
+    }
+
+    const payload = asRecord(event.payload);
+    incrementDiagnosticCounter(
+      skipReasons,
+      payload.reason ?? payload.skipReason,
+    );
+
+    const entryGate = asRecord(payload.entryGate);
+    if (Array.isArray(entryGate.reasons)) {
+      entryGate.reasons.forEach((reason) =>
+        incrementDiagnosticCounter(entryGateReasons, reason),
+      );
+    }
+
+    const chainDebug = asRecord(payload.chainDebug);
+    const expirationsDebug = asRecord(payload.expirationsDebug);
+    incrementDiagnosticCounter(optionChainReasons, chainDebug.reason);
+    incrementDiagnosticCounter(optionChainReasons, expirationsDebug.reason);
+  }
+
+  const freshSignals = input.signals.filter((signal) => signal.fresh).length;
+  const signalsWithoutDirection = input.signals.filter(
+    (signal) => !signal.direction,
+  ).length;
+  for (const signal of input.signals) {
+    incrementDiagnosticCounter(signalStatuses, signal.status ?? "unknown");
+  }
+
+  const blockedCandidates = input.candidates.filter(
+    (candidate) =>
+      candidate.actionStatus === "blocked" || candidate.status === "skipped",
+  );
+  const contractsSelected = input.candidates.filter(
+    (candidate) => Object.keys(asRecord(candidate.selectedContract)).length > 0,
+  );
+  const shadowFilledCandidates = input.candidates.filter((candidate) =>
+    ["shadow_filled", "partial_shadow", "closed"].includes(
+      String(candidate.actionStatus ?? ""),
+    ),
+  );
+  const shadowFillCount = Math.max(shadowFilledCandidates.length, entryEvents);
+
+  return {
+    eventWindow: {
+      total: input.events.length,
+      firstEventAt,
+      latestEventAt,
+    },
+    eventTypes: sortedDiagnosticCounter(eventTypes),
+    tradePath: {
+      candidates: input.candidates.length,
+      blockedCandidates: blockedCandidates.length,
+      contractsSelected: contractsSelected.length,
+      shadowFilledCandidates: shadowFillCount,
+      activePositions: input.activePositions.length,
+      entryEvents,
+      exitEvents,
+      markEvents,
+      gatewayBlocks,
+    },
+    signalFreshness: {
+      total: input.signals.length,
+      fresh: freshSignals,
+      notFresh: Math.max(0, input.signals.length - freshSignals),
+      withoutDirection: signalsWithoutDirection,
+      statuses: sortedDiagnosticCounter(signalStatuses),
+    },
+    skipReasons: sortedDiagnosticCounter(skipReasons),
+    entryGateReasons: sortedDiagnosticCounter(entryGateReasons),
+    optionChainReasons: sortedDiagnosticCounter(optionChainReasons),
+  };
+}
+
+function roundMetric(value: unknown, digits = 2) {
+  const parsed = finiteNumber(value);
+  return parsed == null ? null : Number(parsed.toFixed(digits));
+}
+
+function averageMetric(values: number[]) {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+function profitFactorMetric(values: number[]) {
+  const gains = values
+    .filter((value) => value > 0)
+    .reduce((sum, value) => sum + value, 0);
+  const losses = Math.abs(
+    values
+      .filter((value) => value < 0)
+      .reduce((sum, value) => sum + value, 0),
+  );
+  if (!losses) {
+    return gains > 0 ? null : 0;
+  }
+  return gains / losses;
+}
+
+function payloadCandidate(payload: Record<string, unknown>) {
+  return asRecord(
+    Object.keys(asRecord(payload.candidate)).length
+      ? payload.candidate
+      : payload.automationCandidate,
+  );
+}
+
+function eventCandidate(event: ExecutionEvent) {
+  return payloadCandidate(asRecord(event.payload));
+}
+
+function eventOrderPlan(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  const candidate = payloadCandidate(payload);
+  return Object.keys(asRecord(payload.orderPlan)).length
+    ? asRecord(payload.orderPlan)
+    : asRecord(candidate.orderPlan);
+}
+
+function eventAction(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  const candidate = payloadCandidate(payload);
+  return Object.keys(asRecord(payload.action)).length
+    ? asRecord(payload.action)
+    : asRecord(candidate.action);
+}
+
+function eventSelectedExpiration(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  return asRecord(payload.selectedExpiration);
+}
+
+function eventReasonValue(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  return compactString(payload.reason ?? payload.skipReason);
+}
+
+function eventBrokerSubmission(event: ExecutionEvent) {
+  return eventAction(event).brokerSubmission;
+}
+
+function eventDte(event: ExecutionEvent) {
+  const selectedExpiration = eventSelectedExpiration(event);
+  const explicitDte = finiteNumber(selectedExpiration.dte);
+  if (explicitDte != null) {
+    return explicitDte;
+  }
+
+  const payload = asRecord(event.payload);
+  const candidate = payloadCandidate(payload);
+  const selectedContract = asRecord(
+    Object.keys(asRecord(payload.selectedContract)).length
+      ? payload.selectedContract
+      : candidate.selectedContract,
+  );
+  const expirationDate = expirationDateKey(
+    selectedExpiration.expirationDate ?? selectedContract.expirationDate,
+  );
+  const openedAt =
+    toIsoString(candidate.signalAt) ??
+    toIsoString(event.occurredAt) ??
+    toIsoString(asRecord(payload.position).openedAt);
+  if (!expirationDate || !openedAt) {
+    return null;
+  }
+  return daysBetweenUtc(new Date(openedAt), new Date(`${expirationDate}T00:00:00.000Z`));
+}
+
+function eventEntryGateWouldPass(
+  event: ExecutionEvent,
+  profile: SignalOptionsExecutionProfile,
+) {
+  const candidate = candidateFromEvent(event);
+  if (!candidate) {
+    return true;
+  }
+  return evaluateSignalOptionsEntryGate({ candidate, profile }).ok;
+}
+
+function counterArray(counter: Record<string, number>) {
+  return Object.entries(sortedDiagnosticCounter(counter)).map(
+    ([reason, count]) => ({
+      reason,
+      label: formatEnumReason(reason),
+      count,
+    }),
+  );
+}
+
+function signalOptionsTradeDeploymentId(value: unknown) {
+  const record = asRecord(value);
+  const candidate = asRecord(record.candidate);
+  const position = asRecord(record.position);
+  const metadata = asRecord(record.metadata);
+  return (
+    compactString(record.deploymentId) ??
+    compactString(candidate.deploymentId) ??
+    compactString(position.deploymentId) ??
+    compactString(metadata.deploymentId)
+  );
+}
+
+function shadowRecordDeploymentId(record: Record<string, unknown>) {
+  return (
+    compactString(record.deploymentId) ??
+    signalOptionsTradeDeploymentId(record.entryMetadata) ??
+    signalOptionsTradeDeploymentId(record.metadata) ??
+    signalOptionsTradeDeploymentId(record)
+  );
+}
+
+function isSignalOptionsAutomationShadowRecord(
+  value: unknown,
+  deploymentId: string,
+) {
+  const record = asRecord(value);
+  const sourceType = compactString(record.sourceType);
+  const strategyLabel = compactString(record.strategyLabel);
+  const candidateId = compactString(record.candidateId);
+  const looksLikeSignalOptions =
+    strategyLabel === "Signal Options" ||
+    Boolean(candidateId?.startsWith("SIGOPT-"));
+  if (sourceType !== "automation" || !looksLikeSignalOptions) {
+    return false;
+  }
+
+  const recordDeploymentId = shadowRecordDeploymentId(record);
+  return !recordDeploymentId || recordDeploymentId === deploymentId;
+}
+
+function summarizeSignalOptionsRoundTrips(roundTrips: unknown[]) {
+  const pnls = roundTrips
+    .map((trade) => finiteNumber(asRecord(trade).realizedPnl))
+    .filter((value): value is number => value != null);
+  const winners = pnls.filter((value) => value > 0);
+  const losers = pnls.filter((value) => value < 0);
+  const holdMinutes = roundTrips
+    .map((trade) => finiteNumber(asRecord(trade).holdDurationMinutes))
+    .filter((value): value is number => value != null);
+  const fees = roundTrips.map(
+    (trade) => finiteNumber(asRecord(trade).fees) ?? 0,
+  );
+  return {
+    closedTrades: roundTrips.length,
+    winningTrades: winners.length,
+    losingTrades: losers.length,
+    winRatePercent: roundMetric(
+      roundTrips.length ? (winners.length / roundTrips.length) * 100 : null,
+      1,
+    ),
+    realizedPnl: roundMetric(
+      pnls.reduce((sum, value) => sum + value, 0),
+      2,
+    ),
+    fees: roundMetric(fees.reduce((sum, value) => sum + value, 0), 2),
+    averageWin: roundMetric(averageMetric(winners), 2),
+    averageLoss: roundMetric(averageMetric(losers), 2),
+    expectancy: roundMetric(averageMetric(pnls), 2),
+    profitFactor: roundMetric(profitFactorMetric(pnls), 2),
+    payoffRatio: roundMetric(
+      winners.length && losers.length
+        ? (averageMetric(winners) ?? 0) / Math.abs(averageMetric(losers) ?? 1)
+        : null,
+      2,
+    ),
+    averageHoldMinutes: roundMetric(averageMetric(holdMinutes), 1),
+  };
+}
+
+function recentSignalOptionsClosedTrades(roundTrips: unknown[]) {
+  return [...roundTrips]
+    .sort((left, right) => {
+      const leftTime = dateOrNull(asRecord(left).closeDate)?.getTime() ?? 0;
+      const rightTime = dateOrNull(asRecord(right).closeDate)?.getTime() ?? 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 10)
+    .map((trade) => {
+      const record = asRecord(trade);
+      const entryMetadata = asRecord(record.entryMetadata);
+      const exitMetadata = asRecord(record.metadata);
+      const entryCandidate = asRecord(entryMetadata.candidate);
+      const exitCandidate = asRecord(exitMetadata.candidate);
+      const selectedContract = asRecord(
+        Object.keys(asRecord(entryMetadata.selectedContract)).length
+          ? entryMetadata.selectedContract
+          : exitMetadata.selectedContract,
+      );
+      const selectedExpiration = asRecord(
+        Object.keys(asRecord(entryMetadata.selectedExpiration)).length
+          ? entryMetadata.selectedExpiration
+          : exitMetadata.selectedExpiration,
+      );
+      return {
+        id: compactString(record.id),
+        symbol: compactString(record.symbol),
+        assetClass: compactString(record.assetClass),
+        quantity: roundMetric(record.quantity, 3),
+        openDate: toIsoString(record.openDate),
+        closeDate: toIsoString(record.closeDate),
+        avgOpen: roundMetric(record.avgOpen, 2),
+        avgClose: roundMetric(record.avgClose, 2),
+        realizedPnl: roundMetric(record.realizedPnl, 2),
+        realizedPnlPercent: roundMetric(record.realizedPnlPercent, 1),
+        fees: roundMetric(record.fees, 2),
+        holdDurationMinutes: roundMetric(record.holdDurationMinutes, 1),
+        candidateId: compactString(record.candidateId),
+        exitReason: compactString(exitMetadata.reason),
+        optionRight:
+          compactString(selectedContract.right) ??
+          compactString(entryCandidate.optionRight) ??
+          compactString(exitCandidate.optionRight),
+        expirationDate: expirationDateKey(selectedContract.expirationDate),
+        dte: roundMetric(selectedExpiration.dte, 0),
+        strike: roundMetric(selectedContract.strike, 2),
+      };
+    });
+}
+
+function buildRuleAdherence(input: {
+  profile: SignalOptionsExecutionProfile;
+  events: ExecutionEvent[];
+  activePositions: SignalOptionsPosition[];
+  risk: Record<string, unknown>;
+}) {
+  const entryEvents = input.events.filter(
+    (event) => event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT,
+  );
+  const skippedEvents = input.events.filter(
+    (event) => event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT,
+  );
+  const markEvents = input.events.filter(
+    (event) => event.eventType === SIGNAL_OPTIONS_MARK_EVENT,
+  );
+  const skipReasonCounts = skippedEvents.reduce<Record<string, number>>(
+    (counter, event) => {
+      incrementDiagnosticCounter(counter, eventReasonValue(event));
+      return counter;
+    },
+    {},
+  );
+  const skipCount = (reason: string) => skipReasonCounts[reason] ?? 0;
+  const brokerLiveSubmissions = entryEvents.filter(
+    (event) => eventBrokerSubmission(event) === true,
+  ).length;
+  const brokerSubmissionMissing = entryEvents.filter(
+    (event) => eventBrokerSubmission(event) == null,
+  ).length;
+  const premiumViolations = entryEvents.filter((event) => {
+    const premium = finiteNumber(eventOrderPlan(event).premiumAtRisk);
+    return (
+      premium != null && premium > input.profile.riskCaps.maxPremiumPerEntry
+    );
+  }).length;
+  const maxPremium = entryEvents.reduce(
+    (max, event) =>
+      Math.max(max, finiteNumber(eventOrderPlan(event).premiumAtRisk) ?? 0),
+    0,
+  );
+  const contractViolations = entryEvents.filter((event) => {
+    const quantity = finiteNumber(eventOrderPlan(event).quantity);
+    return quantity != null && quantity > input.profile.riskCaps.maxContracts;
+  }).length;
+  const maxQuantity = entryEvents.reduce(
+    (max, event) =>
+      Math.max(max, finiteNumber(eventOrderPlan(event).quantity) ?? 0),
+    0,
+  );
+  const minDte = input.profile.optionSelection.allowZeroDte
+    ? input.profile.optionSelection.minDte
+    : Math.max(1, input.profile.optionSelection.minDte);
+  const maxDte = Math.max(minDte, input.profile.optionSelection.maxDte);
+  const dteViolations = entryEvents.filter((event) => {
+    const dte = eventDte(event);
+    return dte != null && (dte < minDte || dte > maxDte);
+  }).length;
+  const liquidityEntryViolations = entryEvents.filter((event) => {
+    const orderPlan = eventOrderPlan(event);
+    const liquidity = asRecord(orderPlan.liquidity);
+    return liquidity.ok === false || orderPlan.ok === false;
+  }).length;
+  const liquidityBlocks =
+    skipCount("spread_too_wide") +
+    skipCount("missing_bid_ask") +
+    skipCount("bid_below_minimum") +
+    skipCount("quote_not_fresh") +
+    skipCount("missing_mark") +
+    skipCount("liquidity_gate_failed") +
+    skipCount("premium_budget_too_small");
+  const bearishPutGateViolations = entryEvents.filter(
+    (event) => !eventEntryGateWouldPass(event, input.profile),
+  ).length;
+  const openSymbols = finiteNumber(input.risk.openSymbols) ?? input.activePositions.length;
+  const unmarkedPositions = input.activePositions.filter(
+    (position) => finiteNumber(position.lastMarkPrice) == null,
+  ).length;
+  const markProblemEvents = input.events.filter((event) => {
+    const reason = eventReasonValue(event);
+    return (
+      event.eventType === SIGNAL_OPTIONS_MARK_EVENT &&
+      ["position_mark_failed", "position_mark_unavailable"].includes(
+        reason ?? "",
+      )
+    );
+  }).length;
+
+  const rule = (inputRule: {
+    id: string;
+    label: string;
+    status: "pass" | "warning" | "fail";
+    observations?: number;
+    violations?: number;
+    detail: string;
+  }) => ({
+    observations: 0,
+    violations: 0,
+    ...inputRule,
+  });
+
+  return [
+    rule({
+      id: "shadow_only_execution",
+      label: "Shadow-only execution",
+      status: brokerLiveSubmissions
+        ? "fail"
+        : brokerSubmissionMissing
+          ? "warning"
+          : "pass",
+      observations: entryEvents.length,
+      violations: brokerLiveSubmissions,
+      detail: brokerLiveSubmissions
+        ? `${brokerLiveSubmissions} entries requested broker submission.`
+        : brokerSubmissionMissing
+          ? `${brokerSubmissionMissing} entries lacked an explicit brokerSubmission flag.`
+          : "All recorded entries stayed paper/shadow only.",
+    }),
+    rule({
+      id: "premium_cap",
+      label: "Premium per entry cap",
+      status: premiumViolations ? "fail" : "pass",
+      observations: entryEvents.length,
+      violations: premiumViolations,
+      detail: `Max observed premium ${roundMetric(maxPremium, 2) ?? 0} vs cap ${input.profile.riskCaps.maxPremiumPerEntry}.`,
+    }),
+    rule({
+      id: "contract_cap",
+      label: "Contract quantity cap",
+      status: contractViolations ? "fail" : "pass",
+      observations: entryEvents.length,
+      violations: contractViolations,
+      detail: `Max observed quantity ${roundMetric(maxQuantity, 0) ?? 0} vs cap ${input.profile.riskCaps.maxContracts}.`,
+    }),
+    rule({
+      id: "dte_window",
+      label: "DTE window",
+      status: dteViolations
+        ? "fail"
+        : skipCount("no_expiration_in_dte_window")
+          ? "warning"
+          : "pass",
+      observations: entryEvents.length,
+      violations: dteViolations,
+      detail: skipCount("no_expiration_in_dte_window")
+        ? `${skipCount("no_expiration_in_dte_window")} candidates had no expiration inside ${minDte}-${maxDte} DTE.`
+        : `Filled entries stayed inside ${minDte}-${maxDte} DTE.`,
+    }),
+    rule({
+      id: "liquidity_gate",
+      label: "Liquidity gate",
+      status: liquidityEntryViolations
+        ? "fail"
+        : liquidityBlocks
+          ? "warning"
+          : "pass",
+      observations: entryEvents.length + liquidityBlocks,
+      violations: liquidityEntryViolations,
+      detail: liquidityBlocks
+        ? `${liquidityBlocks} candidates were blocked by liquidity or quote rules.`
+        : "No liquidity-gate breaches on filled entries.",
+    }),
+    rule({
+      id: "bearish_put_gate",
+      label: "Bearish put gate",
+      status: bearishPutGateViolations
+        ? "fail"
+        : skipCount("bear_regime_gate_failed")
+          ? "warning"
+          : "pass",
+      observations: entryEvents.length + skipCount("bear_regime_gate_failed"),
+      violations: bearishPutGateViolations,
+      detail: skipCount("bear_regime_gate_failed")
+        ? `${skipCount("bear_regime_gate_failed")} put candidates were blocked by regime filters.`
+        : "Filled put entries satisfied the configured regime filter.",
+    }),
+    rule({
+      id: "max_open_symbols",
+      label: "Open-symbol cap",
+      status:
+        openSymbols > input.profile.riskCaps.maxOpenSymbols
+          ? "fail"
+          : skipCount("max_open_symbols_reached")
+            ? "warning"
+            : "pass",
+      observations: skippedEvents.length + input.activePositions.length,
+      violations:
+        openSymbols > input.profile.riskCaps.maxOpenSymbols ? 1 : 0,
+      detail: skipCount("max_open_symbols_reached")
+        ? `${skipCount("max_open_symbols_reached")} candidates were blocked by the open-symbol cap; current exposure is ${openSymbols}/${input.profile.riskCaps.maxOpenSymbols}.`
+        : `${openSymbols}/${input.profile.riskCaps.maxOpenSymbols} open symbols.`,
+    }),
+    rule({
+      id: "daily_loss_halt",
+      label: "Daily loss halt",
+      status:
+        input.risk.dailyHaltActive === true ||
+        skipCount("daily_loss_halt_active")
+          ? "warning"
+          : "pass",
+      observations: skippedEvents.length,
+      violations: 0,
+      detail: input.risk.dailyHaltActive === true
+        ? `Daily P&L ${input.risk.dailyPnl ?? 0} is at or below halt ${input.profile.riskCaps.maxDailyLoss}.`
+        : skipCount("daily_loss_halt_active")
+          ? `${skipCount("daily_loss_halt_active")} candidates were blocked by the daily halt.`
+          : "Daily loss halt is clear.",
+    }),
+    rule({
+      id: "position_marking",
+      label: "Position marking",
+      status: unmarkedPositions || markProblemEvents ? "warning" : "pass",
+      observations: markEvents.length + input.activePositions.length,
+      violations: markProblemEvents,
+      detail: unmarkedPositions || markProblemEvents
+        ? `${unmarkedPositions} open positions lack marks; ${markProblemEvents} mark events reported quote issues.`
+        : "Open positions have marks for current exposure.",
+    }),
+  ];
+}
+
+export function buildSignalOptionsPerformanceFromInputs(input: {
+  deploymentId: string;
+  profile: SignalOptionsExecutionProfile;
+  state: Awaited<ReturnType<typeof buildStatePayload>>;
+  events: ExecutionEvent[];
+  shadowPatterns: Record<string, unknown>;
+}) {
+  const roundTrips = Array.isArray(input.shadowPatterns.roundTrips)
+    ? input.shadowPatterns.roundTrips.filter((trade) =>
+        isSignalOptionsAutomationShadowRecord(trade, input.deploymentId),
+      )
+    : [];
+  const openLots = Array.isArray(input.shadowPatterns.openLots)
+    ? input.shadowPatterns.openLots.filter((lot) =>
+        isSignalOptionsAutomationShadowRecord(lot, input.deploymentId),
+      )
+    : [];
+  const blockerCounts = input.events.reduce<Record<string, number>>(
+    (counter, event) => {
+      if (
+        event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT ||
+        event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT
+      ) {
+        incrementDiagnosticCounter(
+          counter,
+          eventReasonValue(event) ??
+            (event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT
+              ? "gateway_blocked"
+              : null),
+        );
+      }
+      return counter;
+    },
+    {},
+  );
+  const unmarkedPositions = input.state.activePositions.filter(
+    (position) => finiteNumber(position.lastMarkPrice) == null,
+  ).length;
+
+  return {
+    deploymentId: input.deploymentId,
+    range: compactString(asRecord(input.shadowPatterns.context).range) ?? "1M",
+    summary: {
+      ...summarizeSignalOptionsRoundTrips(roundTrips),
+      openLots: openLots.length,
+      tradeEvents: Array.isArray(input.shadowPatterns.tradeEvents)
+        ? input.shadowPatterns.tradeEvents.filter((event) =>
+            isSignalOptionsAutomationShadowRecord(event, input.deploymentId),
+          ).length
+        : null,
+    },
+    openExposure: {
+      openPositions: input.state.activePositions.length,
+      openSymbols: input.state.risk.openSymbols ?? input.state.activePositions.length,
+      maxOpenSymbols: input.profile.riskCaps.maxOpenSymbols,
+      atOpenSymbolCapacity:
+        Number(input.state.risk.openSymbols ?? input.state.activePositions.length) >=
+        input.profile.riskCaps.maxOpenSymbols,
+      openPremium: input.state.risk.openPremium ?? 0,
+      maxPremiumPerEntry: input.profile.riskCaps.maxPremiumPerEntry,
+      openUnrealizedPnl: input.state.risk.openUnrealizedPnl ?? 0,
+      dailyRealizedPnl: input.state.risk.dailyRealizedPnl ?? 0,
+      dailyPnl: input.state.risk.dailyPnl ?? 0,
+      maxDailyLoss: input.profile.riskCaps.maxDailyLoss,
+      dailyLossRemaining:
+        Math.abs(input.profile.riskCaps.maxDailyLoss) +
+        Number(input.state.risk.dailyPnl ?? 0),
+      dailyHaltActive: input.state.risk.dailyHaltActive === true,
+      markedPositions: Math.max(
+        0,
+        input.state.activePositions.length - unmarkedPositions,
+      ),
+      unmarkedPositions,
+    },
+    ruleAdherence: buildRuleAdherence({
+      profile: input.profile,
+      events: input.events,
+      activePositions: input.state.activePositions,
+      risk: input.state.risk,
+    }),
+    topBlockers: counterArray(blockerCounts).slice(0, 10),
+    recentClosedTrades: recentSignalOptionsClosedTrades(roundTrips),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export async function getSignalOptionsPerformance(input: {
+  deploymentId: string;
+}) {
+  const deployment = await getDeploymentOrThrow(input.deploymentId);
+  const profile = resolveDeploymentProfile(deployment);
+  const events = await listDeploymentEvents(deployment.id, 1_000);
+  const state = await buildStatePayload({ deployment, profile, events });
+  const shadowPatterns = await computeShadowTradingPatterns({ range: "1M" });
+
+  return buildSignalOptionsPerformanceFromInputs({
+    deploymentId: deployment.id,
+    profile,
+    state,
+    events: signalOptionsEvents(events),
+    shadowPatterns,
+  });
+}
+
 function formatEnumReason(value: string) {
   return value.replace(/_/g, " ");
 }
@@ -2149,6 +2967,17 @@ export async function getAlgoDeploymentCockpit(input: {
     risk: state.risk,
     events,
   });
+  const diagnostics = buildCockpitDiagnostics({
+    signals: state.signals,
+    candidates: state.candidates,
+    activePositions: state.activePositions,
+    events,
+  });
+  const shadowFilledCandidateCount = state.candidates.filter((candidate) =>
+    ["shadow_filled", "partial_shadow", "closed"].includes(
+      String(candidate.actionStatus ?? ""),
+    ),
+  ).length;
   const sourceBacktest = await resolveSourceBacktest(deployment);
   const signalOptionFleet = fleetRows.filter(deploymentHasSignalOptionsProfile);
   const enabledDeployments = signalOptionFleet.filter((item) => item.enabled);
@@ -2181,6 +3010,7 @@ export async function getAlgoDeploymentCockpit(input: {
     },
     pipelineStages,
     attentionItems,
+    diagnostics,
     kpis: {
       todayPnl: state.risk.dailyPnl,
       dailyRealizedPnl: state.risk.dailyRealizedPnl,
@@ -2198,11 +3028,10 @@ export async function getAlgoDeploymentCockpit(input: {
           candidate.actionStatus === "blocked" ||
           candidate.status === "skipped",
       ).length,
-      shadowFilledCandidates: state.candidates.filter((candidate) =>
-        ["shadow_filled", "partial_shadow", "closed"].includes(
-          String(candidate.actionStatus ?? ""),
-        ),
-      ).length,
+      shadowFilledCandidates: Math.max(
+        shadowFilledCandidateCount,
+        diagnostics.tradePath.entryEvents,
+      ),
       openPositions: state.activePositions.length,
     },
     risk: state.risk,
@@ -2241,40 +3070,82 @@ async function refreshActivePosition(input: {
     return;
   }
 
-  const chain = await getOptionChainWithDebug({
-    underlying: input.position.symbol,
-    expirationDate,
-    contractType: optionRight,
-    strikesAroundMoney: 4,
-    strikeCoverage: "standard",
-    quoteHydration: "snapshot",
-  });
   const providerContractId =
     typeof contract.providerContractId === "string"
       ? contract.providerContractId
       : null;
   const strike = finiteNumber(contract.strike);
-  const quote = (chain.contracts as SignalOptionsOptionQuote[]).find((item) => {
-    const itemContract = asRecord(item.contract);
-    if (
-      providerContractId &&
-      itemContract.providerContractId === providerContractId
-    ) {
-      return true;
-    }
-    return (
-      finiteNumber(itemContract.strike) === strike &&
-      itemContract.right === optionRight
-    );
-  });
+  let quote: SignalOptionsOptionQuote | null = null;
+
+  if (providerContractId) {
+    const snapshot = await fetchBridgeOptionQuoteSnapshots({
+      underlying: input.position.symbol,
+      providerContractIds: [providerContractId],
+      owner: `signal-options-position-mark:${input.deployment.id}:${input.position.id}`,
+      intent: "flow-scanner-live",
+      ttlMs: 5_000,
+      fallbackProvider: "cache",
+      requiresGreeks: false,
+    });
+    const matchedQuote =
+      snapshot.quotes.find(
+        (item) => item.providerContractId?.trim() === providerContractId,
+      ) ?? null;
+    quote = matchedQuote
+      ? quoteSnapshotToSignalOptionsQuote({ contract, quote: matchedQuote })
+      : null;
+  } else {
+    const chain = await getOptionChainWithDebug({
+      underlying: input.position.symbol,
+      expirationDate,
+      contractType: optionRight,
+      strikesAroundMoney: 1,
+      strikeCoverage: "standard",
+      quoteHydration: "snapshot",
+    });
+    quote =
+      (chain.contracts as SignalOptionsOptionQuote[]).find((item) => {
+        const itemContract = asRecord(item.contract);
+        return (
+          finiteNumber(itemContract.strike) === strike &&
+          itemContract.right === optionRight
+        );
+      }) ?? null;
+  }
 
   if (!quote) {
+    await insertSignalOptionsEvent({
+      deployment: input.deployment,
+      symbol: input.position.symbol,
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      summary: `${input.position.symbol} shadow mark skipped: option quote unavailable`,
+      payload: {
+        reason: "position_mark_unavailable",
+        message: "No option quote was returned for the open shadow position.",
+        position: input.position,
+        selectedContract: input.position.selectedContract,
+      },
+    });
     return;
   }
 
   const liquidity = resolveSignalOptionsLiquidity(quote, input.profile);
   const markPrice = liquidity.mid ?? finiteNumber(quote.mark) ?? finiteNumber(quote.last);
   if (markPrice == null || markPrice <= 0) {
+    await insertSignalOptionsEvent({
+      deployment: input.deployment,
+      symbol: input.position.symbol,
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      summary: `${input.position.symbol} shadow mark skipped: option mark unavailable`,
+      payload: {
+        reason: "position_mark_unavailable",
+        message: "The option quote did not include a positive mark price.",
+        position: input.position,
+        selectedContract: input.position.selectedContract,
+        quote: quoteToPayload(quote),
+        liquidity,
+      },
+    });
     return;
   }
 
@@ -2323,8 +3194,12 @@ async function refreshActivePosition(input: {
   }
 
   if (
-    peakPrice !== input.position.peakPrice ||
-    stop.stopPrice !== input.position.stopPrice
+    shouldRecordActivePositionMark({
+      position: input.position,
+      peakPrice,
+      stopPrice: stop.stopPrice,
+      markPrice,
+    })
   ) {
     await insertSignalOptionsEvent({
       deployment: input.deployment,
@@ -2413,7 +3288,10 @@ async function processEntryCandidate(input: {
     underlying: input.candidate.symbol,
     expirationDate: selectedExpiration.expirationDate,
     contractType: input.candidate.optionRight,
-    strikesAroundMoney: 6,
+    strikesAroundMoney: signalOptionsStrikesAroundMoney({
+      profile: input.profile,
+      optionRight: input.candidate.optionRight,
+    }),
     strikeCoverage: "standard",
     quoteHydration: "snapshot",
   });
@@ -4528,6 +5406,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildCandidateFromSignal,
   candidateFromSignalSnapshot,
   buildCockpitAttention,
+  buildCockpitDiagnostics,
   buildCockpitPipeline,
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,
@@ -4537,6 +5416,10 @@ export const __signalOptionsAutomationInternalsForTests = {
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,
   evaluateSignalOptionsEntryGate,
+  quoteSnapshotToSignalOptionsQuote,
+  seenSignalKeys,
+  signalOptionsStrikesAroundMoney,
+  shouldRecordActivePositionMark,
   buildHistoricalPolygonOptionTicker,
   buildHistoricalOrderPlan,
   buildSignalOptionsBackfillUniverse,

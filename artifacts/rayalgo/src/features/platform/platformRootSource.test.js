@@ -117,13 +117,18 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
 });
 
-test("mobile shell separates menu navigation from watchlist drawer", () => {
+test("mobile shell uses bottom navigation and separates watchlist activity surfaces", () => {
+  const retiredMobileNavDrawerPath = new URL("./MobileNavDrawer.jsx", import.meta.url);
   const shellSource = readFileSync(
     new URL("./PlatformShell.jsx", import.meta.url),
     "utf8",
   );
-  const drawerSource = readFileSync(
-    new URL("./MobileNavDrawer.jsx", import.meta.url),
+  const moreSheetSource = readFileSync(
+    new URL("./MobileMoreSheet.jsx", import.meta.url),
+    "utf8",
+  );
+  const activitySheetSource = readFileSync(
+    new URL("./MobileActivitySheet.jsx", import.meta.url),
     "utf8",
   );
   const watchlistDrawerSource = readFileSync(
@@ -135,18 +140,43 @@ test("mobile shell separates menu navigation from watchlist drawer", () => {
     "utf8",
   );
 
-  assert.match(shellSource, /data-testid="mobile-nav-trigger"/);
-  assert.match(shellSource, /data-testid="mobile-watchlist-trigger"/);
-  assert.match(shellSource, /<MobileNavDrawer/);
+  assert.match(shellSource, /data-testid="mobile-bottom-nav"/);
+  assert.match(shellSource, /data-testid="mobile-bottom-nav-more"/);
+  assert.match(shellSource, /testId="mobile-activity-trigger"/);
+  assert.match(shellSource, /testId="mobile-watchlist-trigger"/);
+  assert.match(shellSource, /<MobileMoreSheet/);
+  assert.match(shellSource, /<MobileActivitySheet/);
   assert.match(shellSource, /<MobileWatchlistDrawer/);
+  assert.doesNotMatch(shellSource, /MobileNavDrawer/);
+  assert.equal(existsSync(retiredMobileNavDrawerPath), false);
   assert.match(shellSource, /data-viewport=/);
-  assert.match(drawerSource, /data-testid="mobile-nav-screen-list"/);
-  assert.doesNotMatch(drawerSource, /<WatchlistComponent/);
+  assert.match(moreSheetSource, /testId="mobile-more-sheet"/);
+  assert.match(moreSheetSource, /mobile-more-screen-/);
+  assert.match(activitySheetSource, /testId="mobile-activity-sheet"/);
+  assert.match(activitySheetSource, /useMarketAlertsSnapshot/);
   assert.match(watchlistDrawerSource, /testId="mobile-watchlist-drawer"/);
   assert.match(watchlistDrawerSource, /side="right"/);
+  assert.match(watchlistDrawerSource, /fullBleed/);
+  assert.match(watchlistDrawerSource, /density="mobile-dense"/);
   assert.match(watchlistDrawerSource, /<WatchlistComponent/);
   assert.match(headerSource, /<BottomSheet/);
   assert.match(headerSource, /compactSettings=\{isPhone\}/);
+});
+
+test("Market phone layout uses the app-frame activity sheet instead of the old panel", () => {
+  const marketSource = readFileSync(
+    new URL("../../screens/MarketScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(marketSource, /responsiveFlags\(marketWorkspaceWidth \|\| viewportSize\.width\)/);
+  assert.match(marketSource, /const showMarketActivityPanel = !marketLayoutFlags\.isPhone/);
+  assert.match(marketSource, /data-activity-layout=\{marketActivityLayout\}/);
+  assert.match(marketSource, /showMarketActivityPanel && !stackActivityPanel \? \(/);
+  assert.match(
+    marketSource,
+    /\{showMarketActivityPanel \? \(\s*<div\s+data-testid="market-activity-panel"/,
+  );
 });
 
 test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
@@ -186,9 +216,9 @@ test("Account phone layout uses card lists for dense trading tables", () => {
   assert.match(accountSource, /<PositionsPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<ClosedTradesPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<OrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
-  assert.match(positionsSource, /data-testid="account-positions-card-list"/);
-  assert.match(tradesOrdersSource, /data-testid="account-orders-card-list"/);
-  assert.match(tradesOrdersSource, /data-testid="account-trades-card-list"/);
+  assert.match(positionsSource, /data-testid="account-positions-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-trades-row-list"/);
 });
 
 test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {
@@ -430,10 +460,14 @@ test("algo signal-options automation uses generated API ownership path", () => {
   );
 
   assert.match(source, /useGetSignalOptionsAutomationState/);
+  assert.match(source, /useGetSignalOptionsPerformance/);
   assert.match(source, /useRunSignalOptionsShadowScan/);
   assert.match(source, /useUpdateSignalOptionsExecutionProfile/);
   assert.match(source, /getGetSignalOptionsAutomationStateQueryKey/);
+  assert.match(source, /getGetSignalOptionsPerformanceQueryKey/);
   assert.match(source, /Signal -&gt; Action/);
+  assert.match(source, /Performance vs Rules/);
+  assert.match(source, /signal-options-expanded-capacity/);
   assert.match(source, /SHADOW ONLY/);
   assert.match(source, /CREATE SHADOW DEPLOYMENT/);
   assert.doesNotMatch(source, /live_submitted/);
@@ -474,9 +508,13 @@ test("market data subscription provider does not fetch quote snapshots while hid
   assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(pageVisible && quoteSymbols\.length > 0\)/);
 });
 
-test("hidden-mounted Trade child backend work is owned by Trade visibility", () => {
+test("hidden-mounted Trade keeps execution warm and gates analysis by visibility", () => {
   const tradeScreenSource = readFileSync(
     new URL("../../screens/TradeScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const platformRouterSource = readFileSync(
+    new URL("./PlatformScreenRouter.jsx", import.meta.url),
     "utf8",
   );
   const positionsSource = readFileSync(
@@ -488,6 +526,17 @@ test("hidden-mounted Trade child backend work is owned by Trade visibility", () 
     "utf8",
   );
 
+  assert.match(platformRouterSource, /isRetained=\{screen !== "trade"\}/);
+  assert.match(tradeScreenSource, /const buildTradeRuntimeActivity =/);
+  assert.match(tradeScreenSource, /executionWarm:\s*screenWarm/);
+  assert.match(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
+  assert.match(tradeScreenSource, /const tradeExecutionWorkEnabled = tradeRuntimeActivity\.executionWarm/);
+  assert.match(tradeScreenSource, /const tradeAnalysisWorkEnabled = tradeRuntimeActivity\.analysisVisible/);
+  assert.match(tradeScreenSource, /enabled=\{tradeExecutionWorkEnabled\}/);
+  assert.match(tradeScreenSource, /analysisEnabled=\{tradeAnalysisWorkEnabled\}/);
+  assert.match(tradeScreenSource, /executionEnabled=\{tradeExecutionBrokerStreamingEnabled\}/);
+  assert.match(tradeScreenSource, /visibleEnabled=\{tradeAnalysisBrokerStreamingEnabled\}/);
+  assert.match(tradeScreenSource, /renderTradePanels \?/);
   assert.match(tradeScreenSource, /<MemoTradeL2Panel[\s\S]*isVisible=\{isVisible\}/);
   assert.match(tradeScreenSource, /<MemoTradePositionsPanel[\s\S]*isVisible=\{isVisible\}/);
   assert.match(positionsSource, /isVisible = false/);

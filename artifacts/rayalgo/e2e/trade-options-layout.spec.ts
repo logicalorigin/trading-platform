@@ -905,6 +905,7 @@ test("Trade charts render flow on spot and option charts", async ({
         underlyingPrice: basePrice,
         provider: "ibkr",
         basis: "trade",
+        sourceBasis: "confirmed_trade",
         sentiment: "bullish",
         isUnusual: true,
         unusualScore: 3,
@@ -924,6 +925,12 @@ test("Trade charts render flow on spot and option charts", async ({
   await expect(
     page.getByTestId("trade-equity-chart-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
+  await expect(
+    page.getByTestId("trade-equity-chart-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-flow-marker-basis", "confirmed_trade");
+  await expect(
+    page.getByTestId("trade-equity-chart-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-flow-event-time", occurredAt);
   await page.getByTestId("trade-equity-chart-surface-chart-event").first().hover();
   const spotTooltip = page.getByTestId("trade-equity-chart-surface-flow-tooltip");
   await expect(spotTooltip).toBeVisible();
@@ -961,6 +968,7 @@ test("Trade charts apply shared flow type filters to spot and option chart flow"
         underlyingPrice: basePrice,
         provider: "ibkr",
         basis: "trade",
+        sourceBasis: "confirmed_trade",
         sentiment: "bullish",
         isUnusual: true,
         unusualScore: 3,
@@ -985,6 +993,7 @@ test("Trade charts apply shared flow type filters to spot and option chart flow"
         underlyingPrice: basePrice,
         provider: "ibkr",
         basis: "trade",
+        sourceBasis: "confirmed_trade",
         sentiment: "bearish",
         isUnusual: true,
         unusualScore: 2.5,
@@ -996,6 +1005,10 @@ test("Trade charts apply shared flow type filters to spot and option chart flow"
   const spotMarker = page.getByTestId("trade-equity-chart-surface-chart-event").first();
   await expect(spotMarker).toBeVisible({ timeout: 15_000 });
   await expect(spotMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
+  await expect(spotMarker).toHaveAttribute(
+    "data-chart-flow-marker-basis",
+    "confirmed_trade",
+  );
   await expect(
     page.getByTestId("trade-contract-option-chart-flow-badge"),
   ).toHaveCount(0);

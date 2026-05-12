@@ -459,11 +459,16 @@ export const MultiChartGrid = ({
         isTransientEmptyFlowSource(query.data?.source);
 
       if (incomingEvents.length > 0 || (!transientEmpty && query.data)) {
+        const retainedEvents = retained.get(key)?.events || [];
+        const nextEvents =
+          transientEmpty && retainedEvents.length
+            ? mergeFlowEventFeeds(retainedEvents, incomingEvents)
+            : incomingEvents;
         retained.set(key, {
-          events: incomingEvents,
+          events: nextEvents,
           source: query.data?.source || null,
         });
-        return incomingEvents;
+        return nextEvents;
       }
 
       return retained.get(key)?.events || [];
@@ -663,6 +668,7 @@ export const MultiChartGrid = ({
       source: chartFlowProviderSummary?.erroredSource || null,
       sourceBySymbol: chartFlowSourceBySymbol,
       includeEmpty: true,
+      preserveExistingOnEmpty: true,
     });
   }, [
     chartFlowEvents,

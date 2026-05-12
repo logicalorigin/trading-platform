@@ -155,11 +155,13 @@ const buildChartBars = (
   const chartBars = normalizedBars.map(
     ({ startMs: _startMs, inputIndex: _inputIndex, ...bar }) => bar,
   );
+  const rangeEndMs = (startMs: number, nextStartMs?: number): number =>
+    Math.min(nextStartMs ?? startMs + fallbackStepMs, startMs + fallbackStepMs);
   const chartBarRanges = normalizedBars.map((bar, index) => {
     const nextBar = normalizedBars[index + 1];
     return {
       startMs: bar.startMs,
-      endMs: nextBar?.startMs ?? bar.startMs + fallbackStepMs,
+      endMs: rangeEndMs(bar.startMs, nextBar?.startMs),
     };
   });
 
@@ -485,9 +487,13 @@ const rebuildChartBarsIncrementally = ({
 
   if (prefixRanges.length) {
     const firstAppendedRange = appended.chartBarRanges[0];
+    const prefixTailRange = prefixRanges[prefixRanges.length - 1];
     prefixRanges[prefixRanges.length - 1] = {
-      ...prefixRanges[prefixRanges.length - 1],
-      endMs: firstAppendedRange.startMs,
+      ...prefixTailRange,
+      endMs: Math.min(
+        firstAppendedRange.startMs,
+        prefixTailRange.startMs + timeframeToStepMs(timeframe),
+      ),
     };
   }
 

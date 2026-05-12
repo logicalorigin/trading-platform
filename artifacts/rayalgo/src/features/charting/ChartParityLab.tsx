@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import type { PineScriptRecord } from "@workspace/api-client-react";
-import { ResearchChartFrame } from "./ResearchChartFrame";
 import {
+  ResearchChartFrame,
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-} from "./ResearchChartWidgetChrome";
+} from "./ResearchChartFrame";
 import { TradingViewWidgetReference } from "./TradingViewWidgetReference";
 import { buildChartParityModel, chartParityScenarios, getChartParityScenario } from "./chartFixtures";
 import {
@@ -536,7 +536,7 @@ export const ChartParityLab = () => {
               themeKey="chart-parity-lab"
               rangeIdentityKey={`chart-parity:${scenario.id}:primary:${appPrimary.timeframe}`}
               model={primaryModel}
-              showSurfaceToolbar={false}
+              placement="workspace"
               showLegend
               legend={{
                 symbol: "RAYA",
@@ -601,7 +601,6 @@ export const ChartParityLab = () => {
                   }}
                 />
               )}
-              surfaceTopOverlayHeight={40}
               surfaceLeftOverlay={(controls) => (
                 <ResearchChartWidgetSidebar
                   theme={THEME}
@@ -612,7 +611,6 @@ export const ChartParityLab = () => {
                   onClearDrawings={appPrimary.clearDrawings}
                 />
               )}
-              surfaceLeftOverlayWidth={40}
               surfaceBottomOverlay={(controls) => (
                 <ResearchChartWidgetFooter
                   theme={THEME}
@@ -624,7 +622,6 @@ export const ChartParityLab = () => {
                   statusText={`${primaryModel.chartBars.length || 0} bars`}
                 />
               )}
-              surfaceBottomOverlayHeight={22}
             />
           </div>
 
@@ -635,7 +632,7 @@ export const ChartParityLab = () => {
               themeKey="chart-parity-lab"
               rangeIdentityKey={`chart-parity:${scenario.id}:secondary:${appSecondary.timeframe}`}
               model={secondaryModel}
-              showSurfaceToolbar={false}
+              placement="workspace"
               showLegend
               legend={{
                 symbol: "RAYB",
@@ -700,7 +697,6 @@ export const ChartParityLab = () => {
                   }}
                 />
               )}
-              surfaceTopOverlayHeight={40}
               surfaceLeftOverlay={(controls) => (
                 <ResearchChartWidgetSidebar
                   theme={THEME}
@@ -711,7 +707,6 @@ export const ChartParityLab = () => {
                   onClearDrawings={appSecondary.clearDrawings}
                 />
               )}
-              surfaceLeftOverlayWidth={40}
               surfaceBottomOverlay={(controls) => (
                 <ResearchChartWidgetFooter
                   theme={THEME}
@@ -723,7 +718,6 @@ export const ChartParityLab = () => {
                   statusText={`${secondaryModel.chartBars.length || 0} bars`}
                 />
               )}
-              surfaceBottomOverlayHeight={22}
             />
           </div>
 

@@ -90,6 +90,12 @@ test("TradeScreen phone layout uses tabs plus ticket sheet and L2 drawer", () =>
   assert.match(source, /testId="trade-mobile-ticket-sheet"/);
   assert.match(source, /testId="trade-mobile-l2-drawer"/);
   assert.match(source, /activeTradePhonePanel === "chart"/);
+  assert.match(source, /const handleTradePhonePanelSelect = useCallback/);
+  assert.match(source, /const openPhoneTicketSheet = useCallback/);
+  assert.match(source, /const renderInlinePhoneTicket =/);
+  assert.match(source, /activeTradePhonePanel === "ticket" && !phoneTicketSheetOpen/);
+  assert.match(source, /onClick=\{openPhoneTicketSheet\}/);
+  assert.doesNotMatch(source, /activeTradePhonePanel === "ticket" \? \(/);
 });
 
 test("Platform does not passively reset Trade to the first active watchlist item", () => {

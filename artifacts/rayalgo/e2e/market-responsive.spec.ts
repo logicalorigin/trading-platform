@@ -638,7 +638,7 @@ test("Market chart frames render signal colors and extended-session shading", as
     ),
   );
   expect([...new Set(chartSurfaceVersions)]).toEqual([
-    "ResearchChartSurface@20260507-runtime-fingerprint-v1",
+    "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3",
   ]);
   await expect(firstSurface).toHaveAttribute("data-chart-extended-session-enabled", "true");
   await expect

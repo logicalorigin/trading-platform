@@ -37,9 +37,12 @@ import type {
 import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 import {
   buildFlowChartBuckets,
+  buildFlowChartEventPlacements,
+  buildFlowChartVolumeBuckets,
   buildFlowTooltipModel,
   summarizeFlowChartBucketPlacement,
   type FlowChartBucket,
+  type FlowChartEventPlacement,
   type FlowTooltipModel,
 } from "./flowChartEvents";
 import {
@@ -50,16 +53,11 @@ import {
   type ChartPositionOverlays,
   type ChartPositionPnlBubble,
 } from "./chartPositionOverlays";
-import { registerChart, unregisterChart } from "./chartLifecycle";
 import {
   buildUsEquityExtendedSessionWindows,
   countUsEquityMarketSessionBars,
   resolveUsEquityMarketSession,
 } from "./marketSession";
-import {
-  HISTOGRAM_VALUE_DISPLAY_CAP,
-  sanitizeHistogramPoint,
-} from "./histogramSafety";
 import {
   MAX_CHART_FUTURE_EXPANSION_BARS,
   formatPreferenceDateTime,
@@ -76,7 +74,57 @@ import {
 } from "./chartHydrationStats";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
-  "ResearchChartSurface@20260508-flow-normalized-v1";
+  "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3";
+
+type DisposableChart = { remove: () => void };
+
+const liveCharts = new Set<DisposableChart>();
+
+const registerChart = (chart: DisposableChart | null | undefined) => {
+  if (chart) liveCharts.add(chart);
+};
+
+const unregisterChart = (chart: DisposableChart | null | undefined) => {
+  if (!chart) return;
+  liveCharts.delete(chart);
+  try {
+    chart.remove();
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[rayalgo] research chart disposal failed", error);
+    }
+  }
+};
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    liveCharts.forEach((chart) => {
+      try {
+        chart.remove();
+      } catch (error) {
+        // best-effort dispose during hot reload
+      }
+    });
+    liveCharts.clear();
+  });
+}
+
+const HISTOGRAM_VALUE_DISPLAY_CAP = 9_000_000_000_000;
+
+const isHistogramValueSafe = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  Math.abs(value) <= HISTOGRAM_VALUE_DISPLAY_CAP;
+
+const sanitizeHistogramPoint = <T extends Record<string, unknown>>(
+  point: T,
+): Record<string, unknown> => {
+  if (isHistogramValueSafe(point["value"])) {
+    return point;
+  }
+  const { value: _value, color: _color, ...rest } = point;
+  return rest;
+};
 
 type ResearchChartTheme = {
   bg2: string;
@@ -118,6 +166,11 @@ export type VisibleLogicalRange = {
   from: number;
   to: number;
 };
+
+export type MobileChartInteractionMode =
+  | "page-first"
+  | "hybrid"
+  | "chart-first";
 
 export const normalizeVisibleLogicalRange = (
   range: unknown,
@@ -225,15 +278,18 @@ export const resolveVisibleRangeChangeSource = ({
     return "user";
   }
 
+  if (!initialized) {
+    return "programmatic";
+  }
+
   if (
-    (programmaticSignature === nextSignature &&
-      (hasRecentProgrammaticIntent || !initialized)) ||
-    hasRecentProgrammaticIntent
+    hasRecentProgrammaticIntent ||
+    (programmaticSignature != null && programmaticSignature === nextSignature)
   ) {
     return "programmatic";
   }
 
-  return "programmatic";
+  return "user";
 };
 
 export const resolvePrependedVisibleLogicalRange = ({
@@ -557,6 +613,10 @@ type ChartEventOverlay = {
   placement: "bar" | "timescale";
   count?: number;
   flowSourceBasis?: string;
+  flowEventTime?: string;
+  flowEventDay?: string;
+  flowTimeBasis?: string;
+  flowTimeSourceField?: string;
   flowBucket?: FlowChartBucket;
   tooltip?: FlowTooltipModel;
 };
@@ -927,7 +987,13 @@ const compactVolatilityValue = (value: string): string => {
 const compactSessionValue = (value: string): string => {
   const normalized = value.trim().toLowerCase();
   const upper = value.trim().toUpperCase();
-  if (upper === "PRE" || upper === "RTH" || upper === "AFT" || upper === "CLSD") {
+  if (
+    upper === "OVN" ||
+    upper === "PRE" ||
+    upper === "RTH" ||
+    upper === "AFT" ||
+    upper === "CLSD"
+  ) {
     return upper;
   }
   if (normalized === "new york") {
@@ -1130,6 +1196,8 @@ export type ChartSurfaceControls = {
   activeBar: HoverBar | null;
   showVolume: boolean;
   setShowVolume: (next: boolean | ((value: boolean) => boolean)) => void;
+  showFlowEvents: boolean;
+  setShowFlowEvents: (next: boolean | ((value: boolean) => boolean)) => void;
   scaleMode: ScaleMode;
   setScaleMode: (next: ScaleMode | ((value: ScaleMode) => ScaleMode)) => void;
   crosshairMode: "magnet" | "free";
@@ -1183,6 +1251,7 @@ type ResearchChartSurfaceProps = {
   hideTimeScale?: boolean;
   showRightPriceScale?: boolean;
   enableInteractions?: boolean;
+  mobileInteractionMode?: MobileChartInteractionMode;
   showAttributionLogo?: boolean;
   hideCrosshair?: boolean;
   topOverlay?: OverlayContent;
@@ -1240,6 +1309,93 @@ const EMPTY_REFERENCE_LINES: Array<{
 const EMPTY_CHART_EVENTS: ChartEvent[] = [];
 const EMPTY_LEGEND_STUDIES: ChartLegendStudyOption[] = [];
 const EMPTY_SELECTED_LEGEND_STUDIES: string[] = [];
+
+export const normalizeMobileChartInteractionMode = (
+  mode: unknown,
+): MobileChartInteractionMode =>
+  mode === "page-first" || mode === "chart-first" || mode === "hybrid"
+    ? mode
+    : "hybrid";
+
+export const resolveMobileChartInteractionConfig = ({
+  mode,
+  enableInteractions = true,
+  isFullscreen = false,
+  drawMode = null,
+}: {
+  mode?: MobileChartInteractionMode | null;
+  enableInteractions?: boolean;
+  isFullscreen?: boolean;
+  drawMode?: DrawMode | null;
+}) => {
+  const resolvedMode = isFullscreen
+    ? "chart-first"
+    : normalizeMobileChartInteractionMode(mode);
+  const touchAction = drawMode
+    ? "none"
+    : resolvedMode === "chart-first"
+      ? "none"
+      : resolvedMode === "hybrid"
+        ? "pan-y pinch-zoom"
+        : "pan-y";
+
+  if (!enableInteractions) {
+    return {
+      mode: resolvedMode,
+      touchAction,
+      handleScroll: false as const,
+      handleScale: false as const,
+    };
+  }
+
+  if (resolvedMode === "page-first") {
+    return {
+      mode: resolvedMode,
+      touchAction,
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
+      },
+    };
+  }
+
+  return {
+    mode: resolvedMode,
+    touchAction,
+    handleScroll: {
+      mouseWheel: true,
+      pressedMouseMove: false,
+      horzTouchDrag: true,
+      vertTouchDrag: resolvedMode === "chart-first",
+    },
+    handleScale: {
+      mouseWheel: true,
+      pinch: true,
+      axisPressedMouseMove: {
+        time: true,
+        price: true,
+      },
+      axisDoubleClickReset: {
+        time: true,
+        price: true,
+      },
+    },
+  };
+};
 
 export const resolveVisibleChartEvents = ({
   chartEvents = EMPTY_CHART_EVENTS,
@@ -2287,6 +2443,9 @@ const buildChartOptions = (
     autoScale = true,
     invertScale = false,
     enableInteractions = true,
+    mobileInteractionMode = "hybrid",
+    isFullscreen = false,
+    drawMode = null,
     showAttributionLogo = false,
     showGrid = true,
     secondsVisible = false,
@@ -2301,103 +2460,95 @@ const buildChartOptions = (
     autoScale?: boolean;
     invertScale?: boolean;
     enableInteractions?: boolean;
+    mobileInteractionMode?: MobileChartInteractionMode;
+    isFullscreen?: boolean;
+    drawMode?: DrawMode | null;
     showAttributionLogo?: boolean;
     showGrid?: boolean;
     secondsVisible?: boolean;
     rightOffset?: number;
     preferences: UserPreferences;
   },
-) => ({
-  autoSize: false,
-  layout: {
-    background: { type: ColorType.Solid, color: theme.bg2 },
-    textColor: theme.textMuted,
-    fontFamily: theme.mono,
-    fontSize: compact ? TYPE_PX.label : TYPE_PX.bodyStrong,
-    attributionLogo: showAttributionLogo,
-  },
-  localization: {
-    timeFormatter: (value: unknown) =>
-      formatChartAxisTimestamp(value, preferences, ""),
-  },
-  grid: {
-    vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
-    horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
-  },
-  crosshair: {
-    mode: CrosshairMode.MagnetOHLC,
-    vertLine: {
-      color: withAlpha(theme.textMuted, "90"),
-      width: 1,
-      style: LineStyle.Dashed,
-      visible: true,
-      labelVisible: true,
-      labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+) => {
+  const interactionConfig = resolveMobileChartInteractionConfig({
+    mode: mobileInteractionMode,
+    enableInteractions,
+    isFullscreen,
+    drawMode,
+  });
+
+  return {
+    autoSize: false,
+    layout: {
+      background: { type: ColorType.Solid, color: theme.bg2 },
+      textColor: theme.textMuted,
+      fontFamily: theme.mono,
+      fontSize: compact ? TYPE_PX.label : TYPE_PX.bodyStrong,
+      attributionLogo: showAttributionLogo,
     },
-    horzLine: {
-      color: withAlpha(theme.textMuted, "90"),
-      width: 1,
-      style: LineStyle.Dashed,
-      visible: true,
-      labelVisible: true,
-      labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+    localization: {
+      timeFormatter: (value: unknown) =>
+        formatChartAxisTimestamp(value, preferences, ""),
     },
-  },
-  rightPriceScale: {
-    borderColor: theme.border,
-    textColor: theme.textMuted,
-    visible: showRightPriceScale,
-    borderVisible: showRightPriceScale,
-    ticksVisible: showRightPriceScale,
-    minimumWidth: compact ? 34 : 50,
-    autoScale,
-    invertScale,
-    mode: resolvePriceScaleModeOption(scaleMode),
-  },
-  leftPriceScale: {
-    visible: false,
-    borderColor: theme.border,
-  },
-  timeScale: {
-    borderColor: theme.border,
-    borderVisible: !hideTimeScale && showTimeScale,
-    visible: !hideTimeScale && showTimeScale,
-    timeVisible: !hideTimeScale && showTimeScale,
-    secondsVisible,
-    ticksVisible: !hideTimeScale && showTimeScale,
-    rightOffset: rightOffset ?? (compact ? 1 : 6),
-    rightBarStaysOnScroll: false,
-    lockVisibleTimeRangeOnResize: true,
-    minBarSpacing: resolveMinBarSpacing(compact),
-    tickMarkFormatter: (
-      value: unknown,
-      tickMarkType: unknown,
-      locale: string | undefined,
-    ) => formatChartTickMark(value, tickMarkType, locale, preferences),
-  },
-  handleScroll: enableInteractions
-    ? {
-        mouseWheel: true,
-        pressedMouseMove: false,
-        horzTouchDrag: true,
-        vertTouchDrag: true,
-      }
-    : false,
-  handleScale: enableInteractions
-    ? {
-        mouseWheel: true,
-        pinch: true,
-        axisPressedMouseMove: {
-          time: true,
-          price: true,
-        },
-        axisDoubleClickReset: {
-          time: true,
-          price: true,
-        },
-      }
-    : false,
-});
+    grid: {
+      vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
+      horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
+    },
+    crosshair: {
+      mode: CrosshairMode.MagnetOHLC,
+      vertLine: {
+        color: withAlpha(theme.textMuted, "90"),
+        width: 1,
+        style: LineStyle.Dashed,
+        visible: true,
+        labelVisible: true,
+        labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+      },
+      horzLine: {
+        color: withAlpha(theme.textMuted, "90"),
+        width: 1,
+        style: LineStyle.Dashed,
+        visible: true,
+        labelVisible: true,
+        labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+      },
+    },
+    rightPriceScale: {
+      borderColor: theme.border,
+      textColor: theme.textMuted,
+      visible: showRightPriceScale,
+      borderVisible: showRightPriceScale,
+      ticksVisible: showRightPriceScale,
+      minimumWidth: compact ? 34 : 50,
+      autoScale,
+      invertScale,
+      mode: resolvePriceScaleModeOption(scaleMode),
+    },
+    leftPriceScale: {
+      visible: false,
+      borderColor: theme.border,
+    },
+    timeScale: {
+      borderColor: theme.border,
+      borderVisible: !hideTimeScale && showTimeScale,
+      visible: !hideTimeScale && showTimeScale,
+      timeVisible: !hideTimeScale && showTimeScale,
+      secondsVisible,
+      ticksVisible: !hideTimeScale && showTimeScale,
+      rightOffset: rightOffset ?? (compact ? 1 : 6),
+      rightBarStaysOnScroll: false,
+      lockVisibleTimeRangeOnResize: true,
+      minBarSpacing: resolveMinBarSpacing(compact),
+      tickMarkFormatter: (
+        value: unknown,
+        tickMarkType: unknown,
+        locale: string | undefined,
+      ) => formatChartTickMark(value, tickMarkType, locale, preferences),
+    },
+    handleScroll: interactionConfig.handleScroll,
+    handleScale: interactionConfig.handleScale,
+  };
+};
 
 const SERIES_TYPE_MAP = {
   line: LineSeries,
@@ -3963,31 +4114,66 @@ const buildFlowBucketSlotOffsetMap = (
   return offsets;
 };
 
+const buildFlowEventSlotOffsetMap = (
+  placements: FlowChartEventPlacement[],
+): Map<string, { x: number; y: number }> => {
+  const byBarIndex = new Map<number, FlowChartEventPlacement[]>();
+  placements.forEach((placement) => {
+    const current = byBarIndex.get(placement.barIndex) || [];
+    current.push(placement);
+    byBarIndex.set(placement.barIndex, current);
+  });
+
+  const offsets = new Map<string, { x: number; y: number }>();
+  const maxColumns = 9;
+  byBarIndex.forEach((barPlacements) => {
+    const sorted = [...barPlacements].sort(
+      (left, right) =>
+        left.eventTimeMs - right.eventTimeMs ||
+        left.sourceBasis.localeCompare(right.sourceBasis) ||
+        left.id.localeCompare(right.id),
+    );
+    sorted.forEach((placement, index) => {
+      const row = Math.floor(index / maxColumns);
+      const rowStart = row * maxColumns;
+      const rowSize = Math.min(maxColumns, sorted.length - rowStart);
+      const column = index - rowStart;
+      const center = (rowSize - 1) / 2;
+      offsets.set(placement.id, {
+        x: (column - center) * 14,
+        y: row * 16,
+      });
+    });
+  });
+  return offsets;
+};
+
 const buildFlowChartEventOverlays = (
   chart: any,
   series: any,
   model: ChartModel,
-  buckets: FlowChartBucket[],
+  placements: FlowChartEventPlacement[],
   viewportWidth: number,
   viewportHeight: number,
 ): ChartEventOverlay[] => {
-  if (!chart || !series || !buckets.length || !viewportWidth || !viewportHeight) {
+  if (!chart || !series || !placements.length || !viewportWidth || !viewportHeight) {
     return [];
   }
 
-  const slotOffsetByBucketId = buildFlowBucketSlotOffsetMap(buckets);
-  return buckets.reduce<ChartEventOverlay[]>((result, bucket) => {
-    const rawX = chart.timeScale().timeToCoordinate(bucket.time);
+  const slotOffsetByPlacementId = buildFlowEventSlotOffsetMap(placements);
+  return placements.reduce<ChartEventOverlay[]>((result, placement) => {
+    const bucket = placement.bucket;
+    const rawX = chart.timeScale().timeToCoordinate(placement.time);
     const size = 24;
-    const x =
-      Number(rawX) + (slotOffsetByBucketId.get(bucket.id) ?? 0) * 18;
+    const slotOffset = slotOffsetByPlacementId.get(placement.id) || { x: 0, y: 0 };
+    const x = Number(rawX) + slotOffset.x;
     if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
       return result;
     }
 
-    const bar = model.chartBars[bucket.barIndex];
+    const bar = model.chartBars[placement.barIndex];
     const anchorTop = Number.isFinite(bar?.h)
-      ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size
+      ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size - slotOffset.y
       : size / 2;
     const left = clampVisualAnchor(x, size / 2, viewportWidth);
     const top = clampVisualAnchor(anchorTop, size / 2, viewportHeight);
@@ -4006,21 +4192,17 @@ const buildFlowChartEventOverlays = (
     }
 
     const tooltip = buildFlowTooltipModel(bucket);
-    const right = String(
-      bucket.topEvent.metadata?.cp || bucket.topEvent.metadata?.right || "",
-    )
+    const right = String(bucket.topEvent.metadata?.cp || bucket.topEvent.metadata?.right || "")
       .trim()
       .toUpperCase()
       .slice(0, 1);
     const label =
       bucket.sourceBasis === "snapshot_activity"
         ? "S"
-        : bucket.count > 1
-          ? String(Math.min(bucket.count, 9))
-          : right || "F";
+        : right || "F";
 
     result.push({
-      id: bucket.id,
+      id: placement.id,
       left,
       top,
       label,
@@ -4031,8 +4213,12 @@ const buildFlowChartEventOverlays = (
       symbol: bucket.topEvent.symbol,
       tone: bucket.bias,
       placement: "bar",
-      count: bucket.count,
+      count: 1,
       flowSourceBasis: bucket.sourceBasis,
+      flowEventTime: placement.eventIso,
+      flowEventDay: placement.eventDay,
+      flowTimeBasis: placement.timeBasis,
+      flowTimeSourceField: placement.timeSourceField,
       flowBucket: bucket,
       tooltip,
     });
@@ -4655,6 +4841,7 @@ export const ResearchChartSurface = ({
   hideTimeScale = false,
   showRightPriceScale = true,
   enableInteractions = true,
+  mobileInteractionMode = "hybrid",
   showAttributionLogo = false,
   hideCrosshair = false,
   topOverlay = null,
@@ -4873,12 +5060,16 @@ export const ResearchChartSurface = ({
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [tapSelectedBar, setTapSelectedBar] = useState<HoverBar | null>(null);
   const tapSelectedBarRef = useRef<HoverBar | null>(null);
+  const mobileTrackingModeRef = useRef(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
   );
   const [showVolume, setShowVolume] = useState(
     defaultShowVolume && initialChartPreferences.showVolume,
+  );
+  const [showFlowEvents, setShowFlowEvents] = useState(
+    initialChartPreferences.showFlowEvents,
   );
   const [scaleMode, setScaleMode] = useState<ScaleMode>(
     () =>
@@ -4920,6 +5111,7 @@ export const ResearchChartSurface = ({
   useEffect(() => {
     const chartPreferences = userPreferences.chart;
     setShowVolume(defaultShowVolume && chartPreferences.showVolume);
+    setShowFlowEvents(chartPreferences.showFlowEvents);
     setShowGrid(chartPreferences.showGrid);
     setShowTimeScaleState(!hideTimeScale && chartPreferences.showTimeScale);
     setCrosshairMode(chartPreferences.crosshairMode);
@@ -4930,6 +5122,7 @@ export const ResearchChartSurface = ({
     hideTimeScale,
     userPreferences.chart.crosshairMode,
     userPreferences.chart.priceScaleMode,
+    userPreferences.chart.showFlowEvents,
     userPreferences.chart.showGrid,
     userPreferences.chart.showTimeScale,
     userPreferences.chart.showVolume,
@@ -4957,6 +5150,14 @@ export const ResearchChartSurface = ({
   const flowChartModel = model.chartBars.length ? model : deferredModel;
   const flowChartBuckets = useMemo(
     () => buildFlowChartBuckets(visibleChartEvents, flowChartModel),
+    [visibleChartEvents, flowChartModel],
+  );
+  const flowChartVolumeBuckets = useMemo(
+    () => buildFlowChartVolumeBuckets(visibleChartEvents, flowChartModel),
+    [visibleChartEvents, flowChartModel],
+  );
+  const flowChartEventPlacements = useMemo(
+    () => buildFlowChartEventPlacements(visibleChartEvents, flowChartModel),
     [visibleChartEvents, flowChartModel],
   );
   const flowChartBucketDiagnostics = useMemo(
@@ -5046,6 +5247,24 @@ export const ResearchChartSurface = ({
     price: number;
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mobileTrackingMode, setMobileTrackingMode] = useState(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressStartRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const longPressActivatedRef = useRef(false);
+  const chartInteractionConfig = useMemo(
+    () =>
+      resolveMobileChartInteractionConfig({
+        mode: mobileInteractionMode,
+        enableInteractions,
+        isFullscreen,
+        drawMode,
+      }),
+    [drawMode, enableInteractions, isFullscreen, mobileInteractionMode],
+  );
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const drawModeHintRef = useRef<HTMLDivElement | null>(null);
@@ -5146,6 +5365,10 @@ export const ResearchChartSurface = ({
 
   useEffect(
     () => () => {
+      if (longPressTimerRef.current != null) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
       plotPanWindowCleanupRef.current?.();
       plotPanWindowCleanupRef.current = null;
       plotMousePanWindowCleanupRef.current?.();
@@ -5927,6 +6150,10 @@ export const ResearchChartSurface = ({
     tapSelectedBarRef.current = tapSelectedBar;
   }, [tapSelectedBar]);
 
+  useEffect(() => {
+    mobileTrackingModeRef.current = mobileTrackingMode;
+  }, [mobileTrackingMode]);
+
   useLayoutEffect(() => {
     if (!containerRef.current || !hasChartBars) {
       return undefined;
@@ -5950,6 +6177,9 @@ export const ResearchChartSurface = ({
           autoScale,
           invertScale,
           enableInteractions,
+          mobileInteractionMode: chartInteractionConfig.mode,
+          isFullscreen,
+          drawMode,
           showAttributionLogo,
           showGrid: effectiveShowGrid,
           secondsVisible: userPreferences.time.showSeconds,
@@ -6111,6 +6341,16 @@ export const ResearchChartSurface = ({
       };
       handleClick = (param: any) => {
         if (!interactionRef.current.drawMode) {
+          if (longPressActivatedRef.current) {
+            longPressActivatedRef.current = false;
+            return;
+          }
+          if (mobileTrackingModeRef.current) {
+            chart.clearCrosshairPosition?.();
+            setTapSelectedBar((current) => (current === null ? current : null));
+            setMobileTrackingMode(false);
+            return;
+          }
           const rawTime =
             typeof param?.time === "number"
               ? param.time
@@ -6292,10 +6532,13 @@ export const ResearchChartSurface = ({
     };
   }, [
     compact,
+    chartInteractionConfig.mode,
     enableInteractions,
+    drawMode,
     hasChartBars,
     hideTimeScale,
     hideCrosshair,
+    isFullscreen,
     showAttributionLogo,
     showRightPriceScale,
     themeKey,
@@ -6378,8 +6621,12 @@ export const ResearchChartSurface = ({
           rangeIdentityKeyRef.current &&
           effectiveViewportSnapshot.userTouched),
     );
+    if (initializedRangeRef.current) {
+      markProgrammaticViewportIntent();
+    }
     if (userViewportTouched) {
       autoHydrationViewportRef.current = false;
+      realtimeFollowRef.current = false;
     }
     const shouldFollowLatestBars = shouldAutoFollowLatestBars({
       realtimeFollow: !userViewportTouched && realtimeFollowRef.current,
@@ -6655,28 +6902,8 @@ export const ResearchChartSurface = ({
           labelBackgroundColor: withAlpha(theme.bg3, "f0"),
         },
       },
-      handleScroll: enableInteractions
-        ? {
-            mouseWheel: true,
-            pressedMouseMove: false,
-            horzTouchDrag: true,
-            vertTouchDrag: true,
-          }
-        : false,
-      handleScale: enableInteractions
-        ? {
-            mouseWheel: true,
-            pinch: true,
-            axisPressedMouseMove: {
-              time: true,
-              price: true,
-            },
-            axisDoubleClickReset: {
-              time: true,
-              price: true,
-            },
-          }
-        : false,
+      handleScroll: chartInteractionConfig.handleScroll,
+      handleScale: chartInteractionConfig.handleScale,
       timeScale: {
         borderColor: theme.border,
         borderVisible: !hideTimeScale && showTimeScaleState,
@@ -6712,6 +6939,8 @@ export const ResearchChartSurface = ({
     );
   }, [
     baseSeriesType,
+    chartInteractionConfig.handleScale,
+    chartInteractionConfig.handleScroll,
     crosshairMode,
     model.chartBars,
     scaleMode,
@@ -7180,19 +7409,21 @@ export const ResearchChartSurface = ({
         chartRef.current,
         activePriceSeriesRef.current,
         flowChartModel,
-        flowChartBuckets,
+        showFlowEvents ? flowChartEventPlacements : [],
         viewportWidth,
         viewportHeight,
       ),
     ]);
     syncFlowVolumeOverlaysState(
-      buildFlowVolumeOverlays(
-        chartRef.current,
-        flowChartModel,
-        flowChartBuckets,
-        viewportWidth,
-        viewportHeight,
-      ),
+      showFlowEvents
+        ? buildFlowVolumeOverlays(
+            chartRef.current,
+            flowChartModel,
+            flowChartVolumeBuckets,
+            viewportWidth,
+            viewportHeight,
+          )
+        : [],
     );
     syncIndicatorDashboardOverlayState(indicatorEventOverlays.dashboard);
     const selectedTradeOverlays = showTradePositionOverlays
@@ -7222,7 +7453,8 @@ export const ResearchChartSurface = ({
   }, [
     baseSeriesType,
     drawings,
-    flowChartBuckets,
+    flowChartVolumeBuckets,
+    flowChartEventPlacements,
     flowChartModel,
     deferredModel.chartBars,
     deferredModel.activeTradeSelectionId,
@@ -7243,6 +7475,7 @@ export const ResearchChartSurface = ({
     positionOverlaysEnabled,
     rootWidth,
     scaleMode,
+    showFlowEvents,
     showTradePositionOverlays,
     visibleChartEvents,
     theme.accent,
@@ -7833,6 +8066,55 @@ export const ResearchChartSurface = ({
     plotMousePanWindowCleanupRef.current?.();
     plotMousePanWindowCleanupRef.current = null;
   };
+  const clearLongPressInspectionTimer = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  };
+  const scheduleLongPressInspection = (
+    event: PointerEvent<HTMLDivElement>,
+    rect: DOMRect,
+  ) => {
+    if (
+      typeof window === "undefined" ||
+      event.pointerType !== "touch" ||
+      chartInteractionConfig.mode === "page-first" ||
+      !enableInteractions ||
+      drawMode ||
+      isChartControlEventTarget(event.target)
+    ) {
+      return;
+    }
+
+    clearLongPressInspectionTimer();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    longPressStartRef.current = { pointerId, x: startX, y: startY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      const chart = chartRef.current;
+      const series = activePriceSeriesRef.current;
+      if (!chart || !series || longPressStartRef.current?.pointerId !== pointerId) {
+        return;
+      }
+      const x = startX - rect.left;
+      const rawTime = chart.timeScale?.().coordinateToTime?.(x);
+      const time = typeof rawTime === "number" ? rawTime : null;
+      const bar = time == null ? null : barLookupRef.current.get(time) || null;
+      if (!bar) {
+        return;
+      }
+      chart.setCrosshairPosition?.(bar.close, bar.time, series);
+      setTapSelectedBar((current) =>
+        hoverBarsEqual(current, bar) ? current : bar,
+      );
+      setMobileTrackingMode(true);
+      longPressActivatedRef.current = true;
+    }, 450);
+  };
   const handleRootPointerDownCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
@@ -7879,6 +8161,7 @@ export const ResearchChartSurface = ({
       !isInsidePriceScale
     ) {
       lastPlotViewportIntentAtRef.current = Date.now();
+      scheduleLongPressInspection(event, rect);
     }
     const currentRange =
       visibleLogicalRangeRef.current ||
@@ -7943,6 +8226,16 @@ export const ResearchChartSurface = ({
   const handleRootPointerMoveCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
+    const longPressStart = longPressStartRef.current;
+    if (longPressStart?.pointerId === event.pointerId) {
+      const distance = Math.hypot(
+        event.clientX - longPressStart.x,
+        event.clientY - longPressStart.y,
+      );
+      if (distance > 10) {
+        clearLongPressInspectionTimer();
+      }
+    }
     markPlotViewportDragIntent(event);
     const pan = plotPanRef.current;
     if (!pan || pan.pointerId !== event.pointerId) {
@@ -7954,6 +8247,14 @@ export const ResearchChartSurface = ({
   const handleRootPointerUpCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
+    if (longPressStartRef.current?.pointerId === event.pointerId) {
+      clearLongPressInspectionTimer();
+      if (longPressActivatedRef.current && typeof window !== "undefined") {
+        window.setTimeout(() => {
+          longPressActivatedRef.current = false;
+        }, 250);
+      }
+    }
     if (plotPanRef.current?.pointerId === event.pointerId) {
       if (plotPanRef.current.active) {
         event.preventDefault();
@@ -7972,6 +8273,10 @@ export const ResearchChartSurface = ({
   const handleRootPointerCancelCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
+    if (longPressStartRef.current?.pointerId === event.pointerId) {
+      clearLongPressInspectionTimer();
+      longPressActivatedRef.current = false;
+    }
     if (plotPanRef.current?.pointerId === event.pointerId) {
       if (event.currentTarget.releasePointerCapture) {
         try {
@@ -8127,6 +8432,8 @@ export const ResearchChartSurface = ({
       activeBar: displayBar,
       showVolume,
       setShowVolume,
+      showFlowEvents,
+      setShowFlowEvents,
       scaleMode,
       setScaleMode,
       crosshairMode,
@@ -8170,6 +8477,7 @@ export const ResearchChartSurface = ({
       positionOverlaysEnabled,
       scaleMode,
       showGrid,
+      showFlowEvents,
       showPriceLine,
       showTimeScaleState,
       showVolume,
@@ -8325,6 +8633,12 @@ export const ResearchChartSurface = ({
           label: "Volume",
           active: showVolume,
           onClick: () => setShowVolume((value) => !value),
+        },
+        {
+          key: "flow-events",
+          label: "Flow",
+          active: showFlowEvents,
+          onClick: () => setShowFlowEvents((value) => !value),
         },
         {
           key: "grid",
@@ -8487,8 +8801,25 @@ export const ResearchChartSurface = ({
         : flowChartBucketDiagnostics.bucketedEventCount < uniqueFlowEventCount
           ? "partial"
           : "hydrated";
+  const flowMarkerState = !showFlowEvents
+    ? "disabled"
+    : flowChartEventCount <= 0
+      ? chartFlowHydrationState
+      : confirmedTradeFlowEventCount <= 0
+        ? "no-confirmed-flow"
+        : flowChartBucketDiagnostics.markerEligibleEventCount <= 0
+          ? "no-marker-eligible-flow"
+          : flowChartBucketDiagnostics.markerPlacementCount <= 0
+            ? flowChartBucketDiagnostics.droppedMarkerOutsideBarCount > 0
+              ? "confirmed-outside-loaded-bars"
+              : "confirmed-unplaced"
+            : renderedFlowMarkerCount <= 0
+              ? "off-viewport"
+              : "rendered";
   const extendedSessionBarCount =
-    marketSessionBarCounts.pre + marketSessionBarCounts.after;
+    marketSessionBarCounts.overnight +
+    marketSessionBarCounts.pre +
+    marketSessionBarCounts.after;
   const surfaceDiagnostics = surfaceDiagnosticsRef.current;
 
   return (
@@ -8514,6 +8845,8 @@ export const ResearchChartSurface = ({
       data-chart-latest-market-data-mode={latestRenderedBar?.marketDataMode || ""}
       data-chart-latest-delayed={latestRenderedBar?.delayed ? "true" : "false"}
       data-chart-latest-quote-age-ms={latestQuoteAgeMs ?? ""}
+      data-chart-mobile-interaction-mode={chartInteractionConfig.mode}
+      data-chart-mobile-tracking-mode={mobileTrackingMode ? "true" : "false"}
       data-chart-watchlist-price-delta={watchlistChartPriceDelta ?? ""}
       data-chart-events-count={visibleChartEvents.length}
       data-chart-flow-raw-input-count={rawFlowInputCount}
@@ -8526,6 +8859,9 @@ export const ResearchChartSurface = ({
       data-chart-flow-duplicate-drop-count={duplicateFlowEventDropCount}
       data-chart-flow-hydration-state={chartFlowHydrationState}
       data-chart-flow-bucket-count={flowChartBuckets.length}
+      data-chart-flow-volume-bucket-count={flowChartVolumeBuckets.length}
+      data-chart-flow-placement-count={flowChartEventPlacements.length}
+      data-chart-flow-events-enabled={showFlowEvents ? "true" : "false"}
       data-chart-flow-bucketed-event-count={
         flowChartBucketDiagnostics.bucketedEventCount
       }
@@ -8538,6 +8874,19 @@ export const ResearchChartSurface = ({
       data-chart-flow-bucketed-other-event-count={
         flowChartBucketDiagnostics.bucketedOtherEventCount
       }
+      data-chart-flow-marker-eligible-count={
+        flowChartBucketDiagnostics.markerEligibleEventCount
+      }
+      data-chart-flow-marker-placement-count={
+        flowChartBucketDiagnostics.markerPlacementCount
+      }
+      data-chart-flow-marker-snapshot-skip-count={
+        flowChartBucketDiagnostics.markerSnapshotSkippedEventCount
+      }
+      data-chart-flow-marker-other-skip-count={
+        flowChartBucketDiagnostics.markerOtherSkippedEventCount
+      }
+      data-chart-flow-marker-state={flowMarkerState}
       data-chart-flow-marker-count={renderedFlowMarkerCount}
       data-chart-flow-volume-count={flowVolumeOverlays.length}
       data-chart-regular-volume-enabled={showVolume ? "true" : "false"}
@@ -8549,11 +8898,15 @@ export const ResearchChartSurface = ({
       data-chart-flow-outside-bar-drop-count={
         flowChartBucketDiagnostics.droppedOutsideBarCount
       }
+      data-chart-flow-marker-outside-bar-drop-count={
+        flowChartBucketDiagnostics.droppedMarkerOutsideBarCount
+      }
       data-chart-extended-session-enabled={
         userPreferences.chart.extendedHours ? "true" : "false"
       }
       data-chart-extended-session-window-count={extendedSessionWindows.length}
       data-chart-extended-session-bar-count={extendedSessionBarCount}
+      data-chart-overnight-bar-count={marketSessionBarCounts.overnight}
       data-chart-pre-bar-count={marketSessionBarCounts.pre}
       data-chart-rth-bar-count={marketSessionBarCounts.rth}
       data-chart-after-bar-count={marketSessionBarCounts.after}
@@ -8602,7 +8955,7 @@ export const ResearchChartSurface = ({
         zIndex: isFullscreen ? 160 : undefined,
         overflow: "hidden",
         background: theme.bg2,
-        touchAction: drawMode ? "none" : "pan-y",
+        touchAction: chartInteractionConfig.touchAction,
       }}
     >
       {resolvedTopOverlay ? (
@@ -9210,6 +9563,26 @@ export const ResearchChartSurface = ({
                     data-chart-flow-marker-basis={
                       overlay.eventType === "unusual_flow"
                         ? overlay.flowSourceBasis
+                        : undefined
+                    }
+                    data-chart-flow-event-time={
+                      overlay.eventType === "unusual_flow"
+                        ? overlay.flowEventTime
+                        : undefined
+                    }
+                    data-chart-flow-event-day={
+                      overlay.eventType === "unusual_flow"
+                        ? overlay.flowEventDay
+                        : undefined
+                    }
+                    data-chart-flow-time-basis={
+                      overlay.eventType === "unusual_flow"
+                        ? overlay.flowTimeBasis
+                        : undefined
+                    }
+                    data-chart-flow-source-field={
+                      overlay.eventType === "unusual_flow"
+                        ? overlay.flowTimeSourceField
                         : undefined
                     }
                     onPointerEnter={

@@ -19,7 +19,6 @@ import {
   resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "./timeframeRollups";
-import { resolveSpotChartFrameLayout } from "./spotChartFrameLayout";
 import {
   DISPLAY_CHART_PRICE_TIMEFRAME,
   resolveDisplayChartOutsideRth,
@@ -75,6 +74,35 @@ test("buildResearchChartModel sorts bars and collapses duplicate chart times", (
   );
   assert.equal(model.chartBars[0].c, 101);
   assert.equal(model.chartBars[1].c, 102);
+});
+
+test("buildResearchChartModel bounds sparse bar ranges to the selected timeframe", () => {
+  const model = buildResearchChartModel({
+    timeframe: "5m",
+    bars: [
+      {
+        timestamp: "2026-05-01T19:55:00.000Z",
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+        volume: 1000,
+      },
+      {
+        timestamp: "2026-05-04T13:30:00.000Z",
+        open: 101,
+        high: 102,
+        low: 100,
+        close: 101.5,
+        volume: 1200,
+      },
+    ],
+  });
+
+  assert.equal(
+    new Date(model.chartBarRanges[0].endMs).toISOString(),
+    "2026-05-01T20:00:00.000Z",
+  );
 });
 
 test("buildResearchChartModel uses explicit target visible range counts", () => {
@@ -193,6 +221,58 @@ test("buildResearchChartModelIncremental reuses chart bars for tail patches and 
   assert.equal(appended.model.chartBars[2].c, 110);
 });
 
+test("buildResearchChartModelIncremental bounds previous tail range before sparse appends", () => {
+  const baseInput = {
+    timeframe: "5m",
+    selectedIndicators: [],
+    indicatorSettings: {},
+    indicatorMarkers: [],
+  };
+  const first = buildResearchChartModelIncremental({
+    ...baseInput,
+    bars: [
+      {
+        timestamp: "2026-05-01T19:50:00.000Z",
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+        volume: 1000,
+      },
+      {
+        timestamp: "2026-05-01T19:55:00.000Z",
+        open: 101,
+        high: 102,
+        low: 100,
+        close: 101.5,
+        volume: 1200,
+      },
+    ],
+  });
+  const appended = buildResearchChartModelIncremental(
+    {
+      ...baseInput,
+      bars: [
+        ...first.state.input.bars,
+        {
+          timestamp: "2026-05-04T13:30:00.000Z",
+          open: 102,
+          high: 103,
+          low: 101,
+          close: 102.5,
+          volume: 1300,
+        },
+      ],
+    },
+    first.state,
+  );
+
+  assert.equal(
+    new Date(appended.model.chartBarRanges[1].endMs).toISOString(),
+    "2026-05-01T20:00:00.000Z",
+  );
+});
+
 test("chart timeframe registry exposes 5s as the seconds floor", () => {
   assert.deepEqual(
     getChartTimeframeOptions("primary").map((option) => option.value),
@@ -225,19 +305,6 @@ test("chart timeframe favorites sanitize by role and keep TradingView-style defa
     toggleChartTimeframeFavorite(["1m", "15m"], "1m", "primary"),
     ["15m"],
   );
-});
-
-test("spot chart frame layout keeps market and trade chart spacing aligned", () => {
-  assert.deepEqual(resolveSpotChartFrameLayout(false), {
-    surfaceTopOverlayHeight: 40,
-    surfaceLeftOverlayWidth: 40,
-    surfaceBottomOverlayHeight: 22,
-  });
-  assert.deepEqual(resolveSpotChartFrameLayout(true), {
-    surfaceTopOverlayHeight: 28,
-    surfaceLeftOverlayWidth: 28,
-    surfaceBottomOverlayHeight: 16,
-  });
 });
 
 test("derived chart intervals resolve to provider-safe base timeframes", () => {
@@ -367,7 +434,7 @@ test("chart broker recent windows stay bounded to the live edge", () => {
         windowMinutes <= horizonMinutes,
         `${role} ${timeframe} charts should not request more broker history than the visible horizon`,
       );
-      if (horizonMinutes > 240) {
+      if (horizonMinutes > 1_440) {
         assert.ok(
           windowMinutes < horizonMinutes,
           `${role} ${timeframe} charts should keep older hydration on the historical provider/cache path`,
@@ -376,8 +443,8 @@ test("chart broker recent windows stay bounded to the live edge", () => {
     }
   }
 
-  assert.equal(getChartBrokerRecentWindowMinutes("5s", 900), 60);
-  assert.equal(getChartBrokerRecentWindowMinutes("5m", 900), 240);
+  assert.equal(getChartBrokerRecentWindowMinutes("5s", 900), 76);
+  assert.equal(getChartBrokerRecentWindowMinutes("5m", 900), 1_440);
   assert.equal(getChartBrokerRecentWindowMinutes("5m", 2), 20);
 });
 

@@ -109,6 +109,7 @@ export const publishTradeFlowSnapshotsByTicker = ({
   source = null,
   sourceBySymbol = null,
   includeEmpty = false,
+  preserveExistingOnEmpty = false,
 } = {}) => {
   const grouped = groupTradeFlowEventsByTicker(events, symbols);
   const tickers = Array.from(
@@ -123,15 +124,23 @@ export const publishTradeFlowSnapshotsByTicker = ({
     if (!includeEmpty && tickerEvents.length === 0) {
       return;
     }
-    publishTradeFlowSnapshot(ticker, {
-      events: tickerEvents,
-      status: tickerEvents.length ? "live" : status,
-      source: sourceBySymbol?.[ticker] || source,
-    });
+    publishTradeFlowSnapshot(
+      ticker,
+      {
+        events: tickerEvents,
+        status: tickerEvents.length ? "live" : status,
+        source: sourceBySymbol?.[ticker] || source,
+      },
+      { preserveExistingOnEmpty },
+    );
   });
 };
 
-export const publishTradeFlowSnapshot = (ticker, nextSnapshot) => {
+export const publishTradeFlowSnapshot = (
+  ticker,
+  nextSnapshot,
+  { preserveExistingOnEmpty = false } = {},
+) => {
   const entry = ensureEntry(ticker);
   const normalizedSnapshot = nextSnapshot
     ? {
@@ -140,10 +149,14 @@ export const publishTradeFlowSnapshot = (ticker, nextSnapshot) => {
         source: nextSnapshot.source || null,
       }
     : EMPTY_TRADE_FLOW_SNAPSHOT;
-  const nextSnapshotForStore = shouldPreserveFlowEvents(
-    entry.snapshot,
-    normalizedSnapshot,
-  )
+  const shouldRetainExistingEvents =
+    shouldPreserveFlowEvents(entry.snapshot, normalizedSnapshot) ||
+    Boolean(
+      preserveExistingOnEmpty &&
+        entry.snapshot?.events?.length &&
+        !normalizedSnapshot.events?.length,
+    );
+  const nextSnapshotForStore = shouldRetainExistingEvents
     ? {
         ...entry.snapshot,
         status: "stale",

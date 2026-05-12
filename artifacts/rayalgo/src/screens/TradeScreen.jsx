@@ -30,12 +30,14 @@ import {
   normalizeChartTimeframe,
 } from "../features/charting/timeframes";
 import { RayReplicaSettingsMenu } from "../features/charting/RayReplicaSettingsMenu";
-import { ResearchChartFrame } from "../features/charting/ResearchChartFrame";
+import { DISPLAY_CHART_OUTSIDE_RTH } from "../features/charting/displayChartSession";
 import {
+  ResearchChartFrame,
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-} from "../features/charting/ResearchChartWidgetChrome";
+  resolveResearchChartFramePlacement,
+} from "../features/charting/ResearchChartFrame";
 import {
   filterFlowEventsForChartLookbackWindow,
   filterFlowEventsForOptionContract,
@@ -44,7 +46,6 @@ import {
   mergeFlowEventFeeds,
 } from "../features/charting/chartEvents";
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
-import { resolveSpotChartFrameLayout } from "../features/charting/spotChartFrameLayout";
 import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
 import {
@@ -202,7 +203,8 @@ const OPTION_EXPIRATION_QUERY_DEFAULTS = {
 const TRADE_OPTION_CHART_TIMEFRAME = "1m";
 const TRADE_OPTION_CHART_TIMEFRAME_OPTIONS = getChartTimeframeOptions("option");
 const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
-const TRADE_OPTION_CHART_FRAME_LAYOUT = resolveSpotChartFrameLayout(false);
+const TRADE_OPTION_CHART_FRAME_LAYOUT =
+  resolveResearchChartFramePlacement("workspace");
 const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 export const TRADE_RECENT_TICKER_LIMIT = 16;
 
@@ -798,6 +800,7 @@ const TradeContractDetailPanel = ({
     providerContractId,
     timeframe: optionChartTimeframe,
     barsLimit: optionProgressiveBars.requestedLimit,
+    outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
     enabled: Boolean(historicalDataEnabled && optionIdentityReady),
     liveEnabled: liveDataEnabled,
     queryDefaults: OPTION_CHART_BARS_QUERY_DEFAULTS,
@@ -1250,78 +1253,43 @@ const TradeContractDetailPanel = ({
             minHeight="100%"
           >
             <ResearchChartFrame
-            dataTestId="trade-contract-option-chart"
-            theme={T}
-            themeKey={`${getCurrentTheme()}-trade-contract`}
-            surfaceUiStateKey={`trade-contract-${chartProviderContractId || optionContractScopeKey}`}
-            rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
-            viewportLayoutKey={optionChartViewportLayoutKey}
-            model={chartModel}
-            positionOverlayContext={{
-              surfaceKind: "option",
-              symbol: ticker,
-              optionContract: {
-                ticker: optionTicker,
-                underlying: ticker,
-                expirationDate: optionExpirationIso,
-                strike: contract.strike,
-                right: optionRight,
-                providerContractId,
-              },
-            }}
-            chartEvents={chartEvents}
-            chartFlowDiagnostics={chartEventConversion}
-            emptyState={optionChartEmptyState}
-            drawings={drawings}
-            drawMode={drawMode}
-            onAddDrawing={addDrawing}
-            showSurfaceToolbar={false}
-            showLegend
-            legend={{
-              symbol: ticker || "OPTION",
-              name: contractLabel,
-              timeframe: optionChartTimeframe,
-              statusLabel,
-              statusTone: optionChartSourceState.tone,
-              priceLabel: "Option",
-              price: lastPrice,
-              changePercent,
-              meta: {
-                open: latestBar?.o,
-                high: latestBar?.h,
-                low: latestBar?.l,
-                close: latestBar?.c,
-                volume: latestBar?.v,
-                timestamp: latestBar?.ts,
-                sourceLabel: statusLabel,
-              },
-              studies: availableStudies,
-              selectedStudies: selectedIndicators,
-            }}
-            style={{ minHeight: 0, width: "100%" }}
-            surfaceTopOverlay={(controls) => (
-              <ResearchChartWidgetHeader
-                theme={T}
-                controls={controls}
-                symbol={ticker || "OPTION"}
-                name={contractLabel}
-                priceLabel="Option"
-                price={lastPrice}
-                changePercent={changePercent}
-                statusLabel={statusLabel}
-                statusTone={optionChartSourceState.tone}
-                timeframe={optionChartTimeframe}
-                showInlineLegend={false}
-                timeframeOptions={TRADE_OPTION_CHART_TIMEFRAME_OPTIONS}
-                favoriteTimeframes={optionFavoriteTimeframes}
-                onChangeTimeframe={handleOptionChartTimeframeChange}
-                onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
-                onPrewarmTimeframe={prewarmFavoriteTimeframe}
-                studies={availableStudies}
-                selectedStudies={selectedIndicators}
-                studySpecs={chartModel.studySpecs}
-                onToggleStudy={toggleIndicator}
-                meta={{
+              dataTestId="trade-contract-option-chart"
+              theme={T}
+              themeKey={`${getCurrentTheme()}-trade-contract`}
+              surfaceUiStateKey={`trade-contract-${chartProviderContractId || optionContractScopeKey}`}
+              rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
+              viewportLayoutKey={optionChartViewportLayoutKey}
+              model={chartModel}
+              placement="workspace"
+              positionOverlayContext={{
+                surfaceKind: "option",
+                symbol: ticker,
+                optionContract: {
+                  ticker: optionTicker,
+                  underlying: ticker,
+                  expirationDate: optionExpirationIso,
+                  strike: contract.strike,
+                  right: optionRight,
+                  providerContractId,
+                },
+              }}
+              chartEvents={chartEvents}
+              chartFlowDiagnostics={chartEventConversion}
+              emptyState={optionChartEmptyState}
+              drawings={drawings}
+              drawMode={drawMode}
+              onAddDrawing={addDrawing}
+              showLegend
+              legend={{
+                symbol: ticker || "OPTION",
+                name: contractLabel,
+                timeframe: optionChartTimeframe,
+                statusLabel,
+                statusTone: optionChartSourceState.tone,
+                priceLabel: "Option",
+                price: lastPrice,
+                changePercent,
+                meta: {
                   open: latestBar?.o,
                   high: latestBar?.h,
                   low: latestBar?.l,
@@ -1329,52 +1297,78 @@ const TradeContractDetailPanel = ({
                   volume: latestBar?.v,
                   timestamp: latestBar?.ts,
                   sourceLabel: statusLabel,
-                }}
-                showSnapshotButton={false}
-                rightSlot={
-                  <RayReplicaSettingsMenu
-                    theme={T}
-                    settings={rayReplicaSettings}
-                    onChange={setRayReplicaSettings}
-                    disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
-                  />
-                }
-              />
-            )}
-            surfaceTopOverlayHeight={
-              TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceTopOverlayHeight
-            }
-            surfaceLeftOverlay={(controls) => (
-              <ResearchChartWidgetSidebar
-                theme={T}
-                controls={controls}
-                drawMode={drawMode}
-                drawingCount={drawings.length}
-                onToggleDrawMode={setDrawMode}
-                onClearDrawings={() => {
-                  clearDrawings();
-                  setDrawMode(null);
-                }}
-              />
-            )}
-            surfaceLeftOverlayWidth={
-              TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceLeftOverlayWidth
-            }
-            surfaceBottomOverlay={(controls) => (
-              <ResearchChartWidgetFooter
-                theme={T}
-                controls={controls}
-                studies={availableStudies}
-                selectedStudies={selectedIndicators}
-                studySpecs={chartModel.studySpecs}
-                onToggleStudy={toggleIndicator}
-                statusText={statusLabel}
-              />
-            )}
-            surfaceBottomOverlayHeight={
-              TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceBottomOverlayHeight
-            }
-            onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
+                },
+                studies: availableStudies,
+                selectedStudies: selectedIndicators,
+              }}
+              style={{ minHeight: 0, width: "100%" }}
+              surfaceTopOverlay={(controls) => (
+                <ResearchChartWidgetHeader
+                  theme={T}
+                  controls={controls}
+                  symbol={ticker || "OPTION"}
+                  name={contractLabel}
+                  priceLabel="Option"
+                  price={lastPrice}
+                  changePercent={changePercent}
+                  statusLabel={statusLabel}
+                  statusTone={optionChartSourceState.tone}
+                  timeframe={optionChartTimeframe}
+                  showInlineLegend={false}
+                  timeframeOptions={TRADE_OPTION_CHART_TIMEFRAME_OPTIONS}
+                  favoriteTimeframes={optionFavoriteTimeframes}
+                  onChangeTimeframe={handleOptionChartTimeframeChange}
+                  onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
+                  onPrewarmTimeframe={prewarmFavoriteTimeframe}
+                  studies={availableStudies}
+                  selectedStudies={selectedIndicators}
+                  studySpecs={chartModel.studySpecs}
+                  onToggleStudy={toggleIndicator}
+                  meta={{
+                    open: latestBar?.o,
+                    high: latestBar?.h,
+                    low: latestBar?.l,
+                    close: latestBar?.c,
+                    volume: latestBar?.v,
+                    timestamp: latestBar?.ts,
+                    sourceLabel: statusLabel,
+                  }}
+                  showSnapshotButton={false}
+                  rightSlot={
+                    <RayReplicaSettingsMenu
+                      theme={T}
+                      settings={rayReplicaSettings}
+                      onChange={setRayReplicaSettings}
+                      disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+                    />
+                  }
+                />
+              )}
+              surfaceLeftOverlay={(controls) => (
+                <ResearchChartWidgetSidebar
+                  theme={T}
+                  controls={controls}
+                  drawMode={drawMode}
+                  drawingCount={drawings.length}
+                  onToggleDrawMode={setDrawMode}
+                  onClearDrawings={() => {
+                    clearDrawings();
+                    setDrawMode(null);
+                  }}
+                />
+              )}
+              surfaceBottomOverlay={(controls) => (
+                <ResearchChartWidgetFooter
+                  theme={T}
+                  controls={controls}
+                  studies={availableStudies}
+                  selectedStudies={selectedIndicators}
+                  studySpecs={chartModel.studySpecs}
+                  onToggleStudy={toggleIndicator}
+                  statusText={statusLabel}
+                />
+              )}
+              onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
             />
           </PlatformErrorBoundary>
           {displayBars.length && chartFlowBadge ? (
@@ -1686,6 +1680,7 @@ const TRADE_FLOW_REFRESH_MS = 5_000;
 const TRADE_FLOW_HISTORY_REFRESH_MS = 15_000;
 const TRADE_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const TRADE_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3600;
+const EMPTY_VISIBLE_OPTION_CHAIN_ROWS = Object.freeze([]);
 const TRADE_FLOW_PENDING_SOURCE = {
   provider: "polygon",
   status: "empty",
@@ -1825,13 +1820,20 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
       historicalReason.includes("error") ||
       historicalReason.includes("failed");
     if (incomingHistoricalEvents.length > 0 || !historicalRefreshTransient) {
+      const retainedEvents = historicalFlowEventsRef.current.events || [];
+      const nextHistoricalEvents =
+        historicalRefreshTransient && retainedEvents.length
+          ? mergeFlowEventFeeds(retainedEvents, incomingHistoricalEvents)
+          : incomingHistoricalEvents;
       historicalFlowEventsRef.current = {
         key: historicalKey,
-        events: incomingHistoricalEvents,
+        events: nextHistoricalEvents,
       };
     }
     const historicalEvents = incomingHistoricalEvents.length
-      ? incomingHistoricalEvents
+      ? historicalRefreshTransient && historicalFlowEventsRef.current.events.length
+        ? historicalFlowEventsRef.current.events
+        : incomingHistoricalEvents
       : historicalFlowEventsRef.current.events;
     const events = mergeFlowEventFeeds(liveEvents, historicalEvents).sort(
       (left, right) => (right.premium || 0) - (left.premium || 0),
@@ -1884,8 +1886,10 @@ const TradeOptionChainRuntime = ({
   expirationValue,
   chainCoverage = DEFAULT_OPTION_CHAIN_COVERAGE,
   enabled = true,
+  analysisEnabled = enabled,
   background = false,
 }) => {
+  const chainAnalysisEnabled = Boolean(enabled && analysisEnabled);
   const normalizedChainCoverage =
     normalizeTradeOptionChainCoverage(chainCoverage);
   const expirationsQuery = useGetOptionExpirations(
@@ -2013,6 +2017,7 @@ const TradeOptionChainRuntime = ({
     setEnabledBatchChunkCount(0);
   }, [
     activeChainKey,
+    chainAnalysisEnabled,
     batchExpirationChunkSignature,
     batchExpirationChunks.length,
     normalizedChainCoverage,
@@ -2031,9 +2036,12 @@ const TradeOptionChainRuntime = ({
     return entries;
   }, [batchExpirationChunks]);
   const trackedChainKeySet = useMemo(() => {
+    const trackedExpirationCount = background || !chainAnalysisEnabled
+      ? 1
+      : orderedExpirationOptions.length;
     const keys = new Set(
       orderedExpirationOptions
-        .slice(0, background ? 1 : orderedExpirationOptions.length)
+        .slice(0, trackedExpirationCount)
         .map(getExpirationChainKey)
         .filter(Boolean),
     );
@@ -2041,7 +2049,7 @@ const TradeOptionChainRuntime = ({
       keys.add(activeChainKey);
     }
     return keys;
-  }, [activeChainKey, background, orderedExpirationOptions]);
+  }, [activeChainKey, background, chainAnalysisEnabled, orderedExpirationOptions]);
   const activeOptionChainQuery = useQuery({
     queryKey: getTradeOptionChainQueryKey(
       ticker,
@@ -2106,6 +2114,7 @@ const TradeOptionChainRuntime = ({
   useEffect(() => {
     if (
       !enabled ||
+      !chainAnalysisEnabled ||
       background ||
       batchExpirationChunks.length === 0 ||
       enabledBatchChunkCount > 0
@@ -2132,6 +2141,7 @@ const TradeOptionChainRuntime = ({
     activeOptionChainQuery.isSuccess,
     background,
     batchExpirationChunks.length,
+    chainAnalysisEnabled,
     enabled,
     enabledBatchChunkCount,
   ]);
@@ -2167,6 +2177,7 @@ const TradeOptionChainRuntime = ({
         },
         enabled: Boolean(
           enabled &&
+            chainAnalysisEnabled &&
             ticker &&
             expirationDates.length > 0 &&
             index < enabledBatchChunkCount,
@@ -2195,6 +2206,7 @@ const TradeOptionChainRuntime = ({
   useEffect(() => {
     if (
       !enabled ||
+      !chainAnalysisEnabled ||
       background ||
       batchExpirationChunks.length === 0 ||
       enabledBatchChunkCount >= batchExpirationChunks.length
@@ -2213,6 +2225,7 @@ const TradeOptionChainRuntime = ({
   }, [
     background,
     batchExpirationChunks.length,
+    chainAnalysisEnabled,
     completedEnabledBatchChunkCount,
     enabled,
     enabledBatchChunkCount,
@@ -2248,7 +2261,9 @@ const TradeOptionChainRuntime = ({
       expirationReason: expirationsQuery.data?.debug?.reason ?? null,
       metadataQueueDepth: Math.max(
         0,
-        batchExpirationChunks.length - enabledBatchChunkCount,
+        chainAnalysisEnabled
+          ? batchExpirationChunks.length - enabledBatchChunkCount
+          : 0,
       ),
       fullQueueDepth:
         activeRequest.coverage === "full" &&
@@ -2257,7 +2272,9 @@ const TradeOptionChainRuntime = ({
           : 0,
       pauseReason: !enabled
         ? "disabled"
-        : background
+        : !chainAnalysisEnabled
+          ? "execution-warm"
+          : background
           ? "background"
           : !ticker
             ? "missing-ticker"
@@ -2269,6 +2286,7 @@ const TradeOptionChainRuntime = ({
     activeRequest.coverage,
     background,
     batchExpirationChunks.length,
+    chainAnalysisEnabled,
     enabled,
     enabledBatchChunkCount,
     expirationsQuery.data?.debug?.cacheStatus,
@@ -2622,7 +2640,8 @@ const TradeOptionQuoteRuntime = ({
   ticker,
   contract,
   heldContracts,
-  enabled,
+  executionEnabled,
+  visibleEnabled,
   visibleRows = [],
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
@@ -2630,6 +2649,9 @@ const TradeOptionQuoteRuntime = ({
     chainSnapshot,
     contract.exp,
   );
+  const effectiveVisibleRows = visibleEnabled
+    ? visibleRows
+    : EMPTY_VISIBLE_OPTION_CHAIN_ROWS;
 
   const quoteSubscriptionPlan = useMemo(
     () =>
@@ -2637,9 +2659,9 @@ const TradeOptionQuoteRuntime = ({
         chainRows,
         contract,
         heldContracts,
-        visibleRows,
+        visibleRows: effectiveVisibleRows,
       }),
-    [chainRows, contract, heldContracts, visibleRows],
+    [chainRows, contract, effectiveVisibleRows, heldContracts],
   );
   const executionProviderContractIds =
     quoteSubscriptionPlan.executionProviderContractIds;
@@ -2657,13 +2679,17 @@ const TradeOptionQuoteRuntime = ({
       activeQuoteSubscriptions:
         requestedProviderContractIds.length,
       pinnedQuoteSubscriptions: executionProviderContractIds.length,
-      rotatingQuoteSubscriptions: 0,
-      quoteMode: "websocket-backend-admission-visible-window",
+      rotatingQuoteSubscriptions: visibleProviderContractIds.length,
+      quoteMode: visibleEnabled
+        ? "websocket-backend-admission-visible-window"
+        : "websocket-backend-admission-execution-warm",
     });
   }, [
     contract.exp,
     executionProviderContractIds.length,
     requestedProviderContractIds.length,
+    visibleEnabled,
+    visibleProviderContractIds.length,
     ticker,
   ]);
 
@@ -2671,7 +2697,7 @@ const TradeOptionQuoteRuntime = ({
     underlying: ticker,
     providerContractIds: executionProviderContractIds,
     enabled: Boolean(
-      enabled &&
+      executionEnabled &&
         ticker &&
         executionProviderContractIds.length > 0,
     ),
@@ -2684,7 +2710,7 @@ const TradeOptionQuoteRuntime = ({
     underlying: ticker,
     providerContractIds: visibleProviderContractIds,
     enabled: Boolean(
-      enabled &&
+      visibleEnabled &&
         ticker &&
         visibleProviderContractIds.length > 0,
     ),
@@ -2694,6 +2720,21 @@ const TradeOptionQuoteRuntime = ({
   });
 
   return null;
+};
+
+const buildTradeRuntimeActivity = ({
+  isVisible,
+  isRetained,
+  secondaryReady,
+  searchOpen,
+} = {}) => {
+  const screenWarm = Boolean(isVisible || isRetained);
+  const visibleInteractive = Boolean(isVisible && !searchOpen);
+  return {
+    executionWarm: screenWarm,
+    visibleInteractive,
+    analysisVisible: Boolean(visibleInteractive && secondaryReady),
+  };
 };
 
 export const TradeScreen = ({
@@ -2707,6 +2748,7 @@ export const TradeScreen = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
+  isRetained = false,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -2821,15 +2863,25 @@ export const TradeScreen = ({
         exp: "",
       };
     })();
-  const tradeLiveStreamsEnabled = Boolean(isVisible && !tradeTickerSearchAnchor);
-  const tradeSecondaryWorkEnabled = Boolean(
-    tradeLiveStreamsEnabled && secondaryTradePanelsReady,
-  );
+  const tradeRuntimeActivity = buildTradeRuntimeActivity({
+    isVisible,
+    isRetained,
+    secondaryReady: secondaryTradePanelsReady,
+    searchOpen: Boolean(tradeTickerSearchAnchor),
+  });
+  const tradeLiveStreamsEnabled = tradeRuntimeActivity.visibleInteractive;
+  const tradeExecutionWorkEnabled = tradeRuntimeActivity.executionWarm;
+  const tradeAnalysisWorkEnabled = tradeRuntimeActivity.analysisVisible;
+  const renderPrimaryTradePanel = tradeRuntimeActivity.visibleInteractive;
+  const renderTradePanels = tradeRuntimeActivity.analysisVisible;
   const tradeBrokerStreamingEnabled = Boolean(
     tradeLiveStreamsEnabled && stockAggregateStreamingEnabled,
   );
-  const tradeSecondaryBrokerStreamingEnabled = Boolean(
-    tradeSecondaryWorkEnabled && stockAggregateStreamingEnabled,
+  const tradeExecutionBrokerStreamingEnabled = Boolean(
+    tradeExecutionWorkEnabled && stockAggregateStreamingEnabled,
+  );
+  const tradeAnalysisBrokerStreamingEnabled = Boolean(
+    tradeAnalysisWorkEnabled && stockAggregateStreamingEnabled,
   );
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
@@ -2850,7 +2902,7 @@ export const TradeScreen = ({
       ),
     [activeTickerBroadFlowEvents, activeTickerTradeFlowSnapshot.events],
   );
-  useRuntimeWorkloadFlag("trade:streams", tradeBrokerStreamingEnabled, {
+  useRuntimeWorkloadFlag("trade:streams", tradeExecutionBrokerStreamingEnabled, {
     kind: "stream",
     label: "Trade live streams",
     detail: activeTicker,
@@ -2893,7 +2945,9 @@ export const TradeScreen = ({
     { accountId, mode: environment },
     {
       query: {
-        enabled: Boolean(isVisible && brokerAuthenticated && accountId),
+        enabled: Boolean(
+          tradeExecutionWorkEnabled && brokerAuthenticated && accountId,
+        ),
         ...QUERY_DEFAULTS,
         refetchInterval: false,
       },
@@ -2903,7 +2957,9 @@ export const TradeScreen = ({
     { accountId, mode: environment },
     {
       query: {
-        enabled: Boolean(isVisible && brokerAuthenticated && accountId),
+        enabled: Boolean(
+          tradeExecutionWorkEnabled && brokerAuthenticated && accountId,
+        ),
         ...QUERY_DEFAULTS,
         refetchInterval: false,
       },
@@ -3000,6 +3056,20 @@ export const TradeScreen = ({
       setPhoneL2DrawerOpen(false);
     }
   }, [tradeIsPhone]);
+  const handleTradePhonePanelSelect = useCallback((panelId) => {
+    setActiveTradePhonePanel(panelId);
+    if (panelId === "ticket") {
+      setPhoneTicketSheetOpen(false);
+    }
+  }, []);
+  const openPhoneTicketSheet = useCallback(() => {
+    setActiveTradePhonePanel((current) =>
+      current === "ticket" ? "chart" : current,
+    );
+    setPhoneTicketSheetOpen(true);
+  }, []);
+  const renderInlinePhoneTicket =
+    activeTradePhonePanel === "ticket" && !phoneTicketSheetOpen;
   useEffect(() => {
     if (typeof activeWorkspace.chainHeatmapEnabled === "boolean") {
       setTradeChainHeatmapEnabled(activeWorkspace.chainHeatmapEnabled);
@@ -3357,7 +3427,7 @@ export const TradeScreen = ({
     <MemoTradeEquityPanel
       ticker={activeTicker}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
+      historicalDataEnabled={tradeRuntimeActivity.visibleInteractive}
       stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
       onOpenSearch={openEquitySearch}
       searchOpen={tradeTickerSearchAnchor === "equity"}
@@ -3383,8 +3453,8 @@ export const TradeScreen = ({
       contract={contract}
       heldContracts={heldContracts}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={tradeSecondaryWorkEnabled}
-      liveDataEnabled={tradeSecondaryWorkEnabled}
+      historicalDataEnabled={tradeAnalysisWorkEnabled}
+      liveDataEnabled={tradeAnalysisWorkEnabled}
     />
   );
   const orderTicketPanel = (
@@ -3447,7 +3517,7 @@ export const TradeScreen = ({
       brokerConfigured={brokerConfigured}
       brokerAuthenticated={brokerAuthenticated}
       isVisible={isVisible}
-      streamingPaused={!tradeSecondaryBrokerStreamingEnabled}
+      streamingPaused={!tradeAnalysisBrokerStreamingEnabled}
     />
   );
   const positionsPanel = (
@@ -3459,7 +3529,7 @@ export const TradeScreen = ({
       gatewayTradingReady={gatewayTradingReady}
       gatewayTradingMessage={gatewayTradingMessage}
       isVisible={isVisible}
-      streamingPaused={!tradeSecondaryBrokerStreamingEnabled}
+      streamingPaused={!tradeAnalysisBrokerStreamingEnabled}
       onLoadPosition={handleLoadPosition}
     />
   );
@@ -3492,18 +3562,19 @@ export const TradeScreen = ({
       </div>
       <TradeQuoteRuntime
         ticker={activeTicker}
-        enabled={tradeLiveStreamsEnabled}
+        enabled={tradeExecutionWorkEnabled}
         stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
       />
       <TradeOptionChainRuntime
         ticker={activeTicker}
         expirationValue={contract.exp}
         chainCoverage={tradeOptionChainCoverage}
-        enabled={tradeSecondaryWorkEnabled}
+        enabled={tradeExecutionWorkEnabled}
+        analysisEnabled={tradeAnalysisWorkEnabled}
       />
       <TradeFlowRuntime
         ticker={activeTicker}
-        enabled={tradeSecondaryWorkEnabled}
+        enabled={tradeAnalysisWorkEnabled}
         timeframe={activeWorkspace.equityChart?.timeframe || "5m"}
       />
       <TradeContractSelectionRuntime
@@ -3515,7 +3586,8 @@ export const TradeScreen = ({
         ticker={activeTicker}
         contract={contract}
         heldContracts={heldContracts}
-        enabled={tradeSecondaryBrokerStreamingEnabled}
+        executionEnabled={tradeExecutionBrokerStreamingEnabled}
+        visibleEnabled={tradeAnalysisBrokerStreamingEnabled}
         visibleRows={visibleOptionChainRows}
       />
       {/* Main workspace */}
@@ -3653,7 +3725,7 @@ export const TradeScreen = ({
                   key={panel.id}
                   type="button"
                   aria-pressed={activeTradePhonePanel === panel.id}
-                  onClick={() => setActiveTradePhonePanel(panel.id)}
+                  onClick={() => handleTradePhonePanelSelect(panel.id)}
                   style={tradeMobileTabButtonStyle(activeTradePhonePanel === panel.id)}
                 >
                   {panel.label}
@@ -3667,11 +3739,15 @@ export const TradeScreen = ({
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {equityPanel}
+                {renderPrimaryTradePanel ? (
+                  equityPanel
+                ) : (
+                  <TradeDeferredPanel title="Chart" minHeight={260} />
+                )}
                 <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
                   <button
                     type="button"
-                    onClick={() => setPhoneTicketSheetOpen(true)}
+                    onClick={openPhoneTicketSheet}
                     style={tradeMobileActionButtonStyle}
                   >
                     Ticket
@@ -3684,7 +3760,7 @@ export const TradeScreen = ({
                     L2
                   </button>
                 </div>
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   contractDetailPanel
                 ) : (
                   <TradeDeferredPanel title="Contract" minHeight={260} />
@@ -3698,7 +3774,7 @@ export const TradeScreen = ({
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   <>
                     {chainPanel}
                     {spotFlowPanel}
@@ -3710,13 +3786,13 @@ export const TradeScreen = ({
               </div>
             ) : null}
 
-            {activeTradePhonePanel === "ticket" ? (
+            {renderInlinePhoneTicket ? (
               <div
                 data-testid="trade-order-ticket-zone"
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   orderTicketPanel
                 ) : (
                   <TradeDeferredPanel title="Ticket" minHeight={240} />
@@ -3733,7 +3809,7 @@ export const TradeScreen = ({
                 <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
                   <button
                     type="button"
-                    onClick={() => setPhoneTicketSheetOpen(true)}
+                    onClick={openPhoneTicketSheet}
                     style={tradeMobileActionButtonStyle}
                   >
                     Ticket
@@ -3746,7 +3822,7 @@ export const TradeScreen = ({
                     L2
                   </button>
                 </div>
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   <>
                     {positionsPanel}
                     {strategyGreeksPanel}
@@ -3765,7 +3841,7 @@ export const TradeScreen = ({
               testId="trade-mobile-ticket-sheet"
             >
               <div data-trade-layout="phone" style={{ padding: sp(6) }}>
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   orderTicketPanel
                 ) : (
                   <TradeDeferredPanel title="Ticket" minHeight={240} />
@@ -3781,7 +3857,7 @@ export const TradeScreen = ({
               testId="trade-mobile-l2-drawer"
             >
               <div style={{ minHeight: dim(540), padding: sp(6) }}>
-                {secondaryTradePanelsReady ? (
+                {renderTradePanels ? (
                   l2Panel
                 ) : (
                   <TradeDeferredPanel title="L2" minHeight={360} />
@@ -3805,13 +3881,17 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          {equityPanel}
-          {secondaryTradePanelsReady ? (
+          {renderPrimaryTradePanel ? (
+            equityPanel
+          ) : (
+            <TradeDeferredPanel title="Chart" minHeight={340} />
+          )}
+          {renderTradePanels ? (
             contractDetailPanel
           ) : (
             <TradeDeferredPanel title="Contract" minHeight={340} />
           )}
-          {secondaryTradePanelsReady ? (
+          {renderTradePanels ? (
             orderTicketPanel
           ) : (
             <TradeDeferredPanel title="Ticket" minHeight={340} />
@@ -3831,7 +3911,7 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          {secondaryTradePanelsReady ? (
+          {renderTradePanels ? (
             <>
               {chainPanel}
               {spotFlowPanel}
@@ -3859,7 +3939,7 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          {secondaryTradePanelsReady ? (
+          {renderTradePanels ? (
             <>
               {strategyGreeksPanel}
               {l2Panel}

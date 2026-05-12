@@ -1552,6 +1552,7 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
         />
         <CheckboxField label="OHLC" checked={chart.showOhlc} onChange={(value) => patchChart({ showOhlc: value })} />
         <CheckboxField label="Volume" checked={chart.showVolume} onChange={(value) => patchChart({ showVolume: value })} />
+        <CheckboxField label="Flow events" checked={chart.showFlowEvents} onChange={(value) => patchChart({ showFlowEvents: value })} />
         <CheckboxField label="Indicator values" checked={chart.showIndicatorValues} onChange={(value) => patchChart({ showIndicatorValues: value })} />
         <CheckboxField label="Time axis" checked={chart.showTimeScale} onChange={(value) => patchChart({ showTimeScale: value })} />
         <CheckboxField label="Grid" checked={chart.showGrid} onChange={(value) => patchChart({ showGrid: value })} />

@@ -24,6 +24,7 @@ import {
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
+  resolveMobileChartInteractionConfig,
   resolveSeriesTailUpdateResetReason,
   resolveVisibleRangeChangeSource,
   resolveVisibleRangePublishDecision,
@@ -44,6 +45,10 @@ import {
 
 const readResearchChartSurfaceSource = () =>
   readFileSync(new URL("./ResearchChartSurface.tsx", import.meta.url), "utf8");
+const readResearchChartFrameSource = () =>
+  readFileSync(new URL("./ResearchChartFrame.tsx", import.meta.url), "utf8");
+const readSource = (relativePath: string) =>
+  readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 const dashboardFixture = {
   id: "dashboard-1",
@@ -136,6 +141,10 @@ test("ResearchChartSurface applies semantic colors to flow markers", () => {
   assert.match(source, /const color = resolveChartEventToneColor\(overlay, theme\);/);
   assert.match(source, /data-chart-flow-marker-tone=\{/);
   assert.match(source, /data-chart-flow-marker-basis=\{/);
+  assert.match(source, /data-chart-flow-event-time=\{/);
+  assert.match(source, /data-chart-flow-event-day=\{/);
+  assert.match(source, /data-chart-flow-time-basis=\{/);
+  assert.match(source, /data-chart-flow-source-field=\{/);
   assert.match(source, /data-chart-flow-volume-basis=\{overlay\.flowSourceBasis\}/);
 });
 
@@ -149,6 +158,101 @@ test("ResearchChartSurface supports tap-selected crosshair state", () => {
   assert.match(source, /tapSelectedBar \|\|\s*hoverBar/);
 });
 
+test("ResearchChartSurface resolves mobile chart interaction modes", () => {
+  const pageFirst = resolveMobileChartInteractionConfig({
+    mode: "page-first",
+  });
+  assert.equal(pageFirst.mode, "page-first");
+  assert.equal(pageFirst.touchAction, "pan-y");
+  assert.equal(pageFirst.handleScroll && pageFirst.handleScroll.horzTouchDrag, false);
+  assert.equal(pageFirst.handleScroll && pageFirst.handleScroll.vertTouchDrag, false);
+  assert.equal(pageFirst.handleScale && pageFirst.handleScale.pinch, false);
+
+  const hybrid = resolveMobileChartInteractionConfig({ mode: "hybrid" });
+  assert.equal(hybrid.mode, "hybrid");
+  assert.equal(hybrid.touchAction, "pan-y pinch-zoom");
+  assert.equal(hybrid.handleScroll && hybrid.handleScroll.horzTouchDrag, true);
+  assert.equal(hybrid.handleScroll && hybrid.handleScroll.vertTouchDrag, false);
+  assert.equal(hybrid.handleScale && hybrid.handleScale.pinch, true);
+
+  const chartFirst = resolveMobileChartInteractionConfig({
+    mode: "page-first",
+    isFullscreen: true,
+  });
+  assert.equal(chartFirst.mode, "chart-first");
+  assert.equal(chartFirst.touchAction, "none");
+  assert.equal(chartFirst.handleScroll && chartFirst.handleScroll.horzTouchDrag, true);
+  assert.equal(chartFirst.handleScroll && chartFirst.handleScroll.vertTouchDrag, true);
+  assert.equal(chartFirst.handleScale && chartFirst.handleScale.pinch, true);
+
+  const drawing = resolveMobileChartInteractionConfig({
+    mode: "hybrid",
+    drawMode: "horizontal",
+  });
+  assert.equal(drawing.touchAction, "none");
+
+  const disabled = resolveMobileChartInteractionConfig({
+    mode: "chart-first",
+    enableInteractions: false,
+  });
+  assert.equal(disabled.handleScroll, false);
+  assert.equal(disabled.handleScale, false);
+});
+
+test("ResearchChartSurface wires mobile inspection and touch configuration", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /mobileInteractionMode = "hybrid"/);
+  assert.match(source, /resolveMobileChartInteractionConfig/);
+  assert.match(source, /handleScroll: chartInteractionConfig\.handleScroll/);
+  assert.match(source, /handleScale: chartInteractionConfig\.handleScale/);
+  assert.match(source, /touchAction: chartInteractionConfig\.touchAction/);
+  assert.match(source, /data-chart-mobile-interaction-mode=\{chartInteractionConfig\.mode\}/);
+  assert.match(source, /data-chart-mobile-tracking-mode=\{mobileTrackingMode \? "true" : "false"\}/);
+  assert.match(source, /scheduleLongPressInspection/);
+  assert.match(source, /setMobileTrackingMode\(true\)/);
+  assert.match(source, /mobileTrackingModeRef\.current/);
+});
+
+test("ResearchChartFrame exposes shared placement policies and touch controls", () => {
+  const frameSource = readResearchChartFrameSource();
+
+  assert.match(frameSource, /export type ResearchChartFramePlacement/);
+  assert.match(frameSource, /resolveResearchChartFramePlacement/);
+  assert.match(frameSource, /"workspace-passive"[\s\S]*mobileInteractionMode: "page-first"/);
+  assert.match(frameSource, /"compact-passive"[\s\S]*mobileInteractionMode: "page-first"/);
+  assert.match(frameSource, /placementPolicy\.mobileInteractionMode/);
+  assert.match(frameSource, /placementPolicy\.surfaceTopOverlayHeight/);
+  assert.match(frameSource, /mobileInteractionMode\?: MobileChartInteractionMode/);
+  assert.match(frameSource, /data-chart-footer-touch-controls/);
+  assert.match(frameSource, /controls\.zoomIn/);
+  assert.match(frameSource, /controls\.zoomOut/);
+  assert.match(frameSource, /controls\.panLeft/);
+  assert.match(frameSource, /controls\.panRight/);
+  assert.match(frameSource, /controls\.realtime/);
+});
+
+test("Chart wrappers use frame placement instead of chart-specific renderers", () => {
+  const miniChartSource = readSource("../market/MiniChartCell.jsx");
+  const tradeSpotSource = readSource("../trade/TradeEquityPanel.jsx");
+  const tradeScreenSource = readSource("../../screens/TradeScreen.jsx");
+  const flowInlineSource = readSource("../flow/ContractDetailInline.jsx");
+
+  assert.match(miniChartSource, /chartFramePlacement=\{/);
+  assert.match(miniChartSource, /"compact-active"/);
+  assert.match(miniChartSource, /"compact-passive"/);
+  assert.match(miniChartSource, /"workspace-passive"/);
+  assert.match(tradeSpotSource, /resolvedChartFramePlacement =/);
+  assert.match(tradeSpotSource, /chartFramePlacement \?\? \(compact \? "compact-active" : "workspace"\)/);
+  assert.match(tradeSpotSource, /compact \?\?\s*resolveResearchChartFramePlacement\(resolvedChartFramePlacement\)\.compact/);
+  assert.match(tradeSpotSource, /placement=\{resolvedChartFramePlacement\}/);
+  assert.match(tradeSpotSource, /dense=\{resolvedChartFrameCompact\}/);
+  assert.match(tradeScreenSource, /placement="workspace"/);
+  assert.match(flowInlineSource, /placement="inspection"/);
+  assert.doesNotMatch(miniChartSource, /mobileInteractionMode=/);
+  assert.doesNotMatch(tradeSpotSource, /mobileInteractionMode=/);
+});
+
 test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
   const source = readResearchChartSurfaceSource();
 
@@ -156,6 +260,22 @@ test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
   assert.match(source, /data-chart-flow-snapshot-event-count=\{/);
   assert.match(source, /data-chart-flow-bucketed-confirmed-event-count=\{/);
   assert.match(source, /data-chart-flow-bucketed-snapshot-event-count=\{/);
+  assert.match(source, /data-chart-flow-marker-eligible-count=\{/);
+  assert.match(source, /data-chart-flow-marker-placement-count=\{/);
+  assert.match(source, /data-chart-flow-marker-snapshot-skip-count=\{/);
+  assert.match(source, /data-chart-flow-marker-state=\{flowMarkerState\}/);
+});
+
+test("ResearchChartSurface exposes flow events as a display control", () => {
+  const source = readResearchChartSurfaceSource();
+  const chromeSource = readResearchChartFrameSource();
+
+  assert.match(source, /const \[showFlowEvents, setShowFlowEvents\]/);
+  assert.match(source, /data-chart-flow-events-enabled=\{showFlowEvents \? "true" : "false"\}/);
+  assert.match(source, /showFlowEvents \? flowChartEventPlacements : \[\]/);
+  assert.match(chromeSource, /checked=\{controls\.showFlowEvents\}/);
+  assert.match(chromeSource, /controls\.setShowFlowEvents\(\(value\) => !value\)/);
+  assert.match(chromeSource, />\s*Flow events\s*<\/DropdownMenuCheckboxItem>/);
 });
 
 test("ResearchChartSurface colors flat candles and volume neutral", () => {
@@ -755,10 +875,20 @@ test("ResearchChartSurface normalizes visible range publish state", () => {
   );
 });
 
-test("ResearchChartSurface requires explicit viewport input for user-touched ranges", () => {
+test("ResearchChartSurface treats initialized unmarked range changes as user-owned", () => {
   assert.equal(
     resolveVisibleRangeChangeSource({
       initialized: true,
+      nextSignature: "10:40",
+      programmaticSignature: null,
+      hasRecentProgrammaticIntent: false,
+      hasRecentUserViewportIntent: false,
+    }),
+    "user",
+  );
+  assert.equal(
+    resolveVisibleRangeChangeSource({
+      initialized: false,
       nextSignature: "10:40",
       programmaticSignature: null,
       hasRecentProgrammaticIntent: false,
@@ -775,6 +905,16 @@ test("ResearchChartSurface requires explicit viewport input for user-touched ran
       hasRecentUserViewportIntent: true,
     }),
     "user",
+  );
+  assert.equal(
+    resolveVisibleRangeChangeSource({
+      initialized: true,
+      nextSignature: "10:40",
+      programmaticSignature: "10:40",
+      hasRecentProgrammaticIntent: false,
+      hasRecentUserViewportIntent: false,
+    }),
+    "programmatic",
   );
   assert.equal(
     resolveVisibleRangeChangeSource({
@@ -1447,6 +1587,7 @@ test("ResearchChartSurface restores viewport ranges after full resets and user-t
   const source = readResearchChartSurfaceSource();
 
   assert.match(source, /let seriesFullResetDuringSync = false;/);
+  assert.match(source, /if \(initializedRangeRef\.current\) \{\s*markProgrammaticViewportIntent\(\);\s*\}/);
   assert.match(source, /const shouldRestoreRangeAfterFullReset = Boolean/);
   assert.match(source, /userViewportTouched &&\s*!seriesFullResetDuringSync/);
   assert.match(source, /canApplyProgrammaticRangeSync && shouldRestoreRangeAfterFullReset/);
@@ -1461,7 +1602,7 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
 
   assert.equal(
     RESEARCH_CHART_SURFACE_MODULE_VERSION,
-    "ResearchChartSurface@20260508-flow-normalized-v1",
+    "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3",
   );
   assert.match(source, /data-chart-surface-module-version=\{RESEARCH_CHART_SURFACE_MODULE_VERSION\}/);
   assert.match(source, /data-chart-surface-module-source="ResearchChartSurface\.tsx"/);
@@ -1469,11 +1610,14 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
   assert.match(source, /data-chart-flow-raw-input-count=\{rawFlowInputCount\}/);
   assert.match(source, /data-chart-flow-converted-count=\{convertedFlowEventCount\}/);
   assert.match(source, /data-chart-flow-bucket-count=\{flowChartBuckets\.length\}/);
+  assert.match(source, /data-chart-flow-volume-bucket-count=\{flowChartVolumeBuckets\.length\}/);
+  assert.match(source, /data-chart-flow-placement-count=\{flowChartEventPlacements\.length\}/);
   assert.match(source, /data-chart-flow-unique-event-count=\{uniqueFlowEventCount\}/);
   assert.match(source, /data-chart-flow-duplicate-drop-count=\{duplicateFlowEventDropCount\}/);
   assert.match(source, /data-chart-flow-hydration-state=\{chartFlowHydrationState\}/);
   assert.match(source, /data-chart-flow-bucketed-event-count=/);
   assert.match(source, /data-chart-flow-marker-count=\{renderedFlowMarkerCount\}/);
+  assert.match(source, /data-chart-flow-marker-outside-bar-drop-count=/);
   assert.match(source, /data-chart-flow-invalid-time-drop-count=/);
   assert.match(source, /data-chart-flow-symbol-drop-count=\{conversionSymbolDropCount\}/);
   assert.match(source, /data-chart-flow-outside-bar-drop-count=/);

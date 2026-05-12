@@ -39,6 +39,7 @@ test("Trade option chart wires pan and zoom history hydration through the shared
   assert.match(source, /hasExhaustedOlderHistory/);
   assert.match(source, /prependOlderBars/);
   assert.match(source, /recheckKey:\s*\[/);
+  assert.match(source, /outsideRth:\s*DISPLAY_CHART_OUTSIDE_RTH/);
   assert.match(source, /onVisibleLogicalRangeChange=\{scheduleOptionVisibleRangeExpansion\}/);
 });
 
@@ -56,5 +57,6 @@ test("Flow option inspection chart wires pan and zoom history hydration through 
   assert.match(source, /hasExhaustedOlderHistory/);
   assert.match(source, /prependOlderBars/);
   assert.match(source, /recheckKey:\s*\[/);
+  assert.match(source, /outsideRth:\s*DISPLAY_CHART_OUTSIDE_RTH/);
   assert.match(source, /onVisibleLogicalRangeChange=\{scheduleOptionVisibleRangeExpansion\}/);
 });

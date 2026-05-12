@@ -119,6 +119,24 @@ test("tradeFlowStore publishes per-ticker snapshots without letting hydrating em
   );
 });
 
+test("tradeFlowStore lets shared publishers keep existing events through empty refreshes", () => {
+  resetTradeFlowStoreForTests();
+
+  publishTradeFlowSnapshot("SPY", buildFlowSnapshot("SPY"));
+  publishTradeFlowSnapshotsByTicker({
+    symbols: ["SPY"],
+    events: [],
+    status: "empty",
+    source: null,
+    includeEmpty: true,
+    preserveExistingOnEmpty: true,
+  });
+
+  const preserved = getTradeFlowSnapshotForTests("SPY");
+  assert.equal(preserved.status, "stale");
+  assert.deepEqual(preserved.events, buildFlowSnapshot("SPY").events);
+});
+
 test("tradeFlowStore accepts confirmed empty loaded snapshots", () => {
   resetTradeFlowStoreForTests();
 

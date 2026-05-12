@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
-import { TooltipProvider } from "../components/ui/tooltip";
+import { TooltipProvider } from "../components/ui/TooltipProvider";
 import { useRayalgoPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 
 const queryClient = new QueryClient({

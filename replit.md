@@ -291,15 +291,14 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
    Change/change% prefer IBKR-supplied fields 82/83 before computing from
    prevClose.
 
-## Workspace-local Postgres lives in its own workflow (cgroup decoupling)
+## Workspace-local Postgres cgroup decoupling
 
-Workspace-local Postgres is started by a dedicated **`Local Postgres`**
-workflow that runs `bash scripts/run-local-postgres.sh` (foreground
-`postgres`). Each Replit workflow gets its own `shellexec-*.scope` cgroup,
-so Postgres is now in a different cgroup from the api-server. Restarting
-the api-server workflow no longer SIGKILLs the postmaster, which means
-the IDE shells, terminals, and the rayalgo preview iframe stop dropping
-their PG client connections every time the API restarts.
+Workspace-local Postgres must run outside the api-server process tree.
+When it runs as foreground `postgres` from `bash scripts/run-local-postgres.sh`,
+it gets its own `shellexec-*.scope` cgroup, so restarting the api-server
+workflow no longer SIGKILLs the postmaster. That prevents the IDE shells,
+terminals, and the rayalgo preview iframe from dropping their PG client
+connections every time the API restarts.
 
 - `scripts/run-local-postgres.sh` — foreground entry. Idempotent: initdb
   if needed, evict a stale `postmaster.pid`, ensure the `dev` database
@@ -316,28 +315,12 @@ their PG client connections every time the API restarts.
   storm later. When `DATABASE_URL` points at a hosted DB, the wait
   script skips entirely.
 
-Known footprint in `.replit`: registering the `Local Postgres` workflow
-via the workflows tool also wrote `runButton = "Project"` and a
-`Project` workflow stub into `.replit`. The api-server, rayalgo, and
-Local Postgres services all still start automatically via the
-`PNPM_WORKSPACE` artifact stack regardless of which workflow runButton
-points at, so this is cosmetic. The platform currently rejects renaming
-or removing `Project`, and direct `.replit` edits are blocked from
-agents; if you want the original "no `[workflows]` block" state back,
-delete the `[workflows]` block manually and Replit will fall back to
-default behavior.
-
-If `Local Postgres` is missing or stopped, recreate it with the
-workflows tool:
-
-```js
-await configureWorkflow({
-  name: "Local Postgres",
-  command: "bash scripts/run-local-postgres.sh",
-  outputType: "console",
-  autoStart: true,
-});
-```
+Repo rule: `.replit` intentionally has no repo-defined `[workflows]`
+block and no root `run = [...]` command. Use Replit's default
+**Run Replit App** entry for API/web bring-up. If local Postgres is
+missing or stopped, start only the database sidecar from a shell with
+`bash scripts/run-local-postgres.sh`; do not press the generated
+**Configure Your App** workflow or add a root workflow coordinator.
 
 ## `reap-dev-port.mjs` is cgroup-aware
 
