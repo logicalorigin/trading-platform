@@ -352,14 +352,14 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
           <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
@@ -368,7 +368,7 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
             x={Math.round(spot)}
             stroke={T.cyan}
             strokeDasharray="4 4"
-            label={{ value: "Spot", fill: T.cyan, fontSize: 10, position: "top" }}
+            label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
           />
           {series === "net" ? (
             <Bar dataKey="netGex" isAnimationActive={false}>
@@ -409,13 +409,13 @@ const ExpiryChart = ({ rows, spot }) => {
           <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
@@ -484,13 +484,13 @@ const GammaPriceChart = ({ rows, spot }) => {
             type="number"
             domain={["dataMin", "dataMax"]}
             tickFormatter={(value) => `$${value.toFixed(0)}`}
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
@@ -513,14 +513,14 @@ const GammaPriceChart = ({ rows, spot }) => {
             x={spot}
             stroke={T.cyan}
             strokeDasharray="4 4"
-            label={{ value: "Spot", fill: T.cyan, fontSize: 10, position: "top" }}
+            label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
           />
           {zeroPrice != null ? (
             <ReferenceLine
               x={zeroPrice}
               stroke={T.amber}
               strokeDasharray="2 4"
-              label={{ value: "Zero", fill: T.amber, fontSize: 10, position: "top" }}
+              label={{ value: "Zero", fill: T.amber, fontSize: fs(10), position: "top" }}
             />
           ) : null}
           <Bar dataKey="netGex" isAnimationActive={false}>
@@ -565,14 +565,14 @@ const OiChart = ({ rows, spot }) => {
           <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
-            tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
+            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
