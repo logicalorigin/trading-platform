@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { useGetBars } from "@workspace/api-client-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
@@ -9,6 +9,7 @@ import {
   Panel,
   Pill,
   ToggleGroup,
+  cellSubTextStyle,
   controlInputStyle,
   controlSelectStyle,
   formatAccountMoney,
@@ -40,14 +41,18 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 400 }}>
+    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.sans, fontWeight: 400 }}>
       {value}
     </div>
   </div>
 );
 
-const marketForAssetClass = (assetClass) =>
-  String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
+const marketForAssetClass = (assetClass) => {
+  const normalized = String(assetClass || "").toLowerCase();
+  if (normalized === "etf") return "etf";
+  if (normalized === "options") return "options";
+  return "stocks";
+};
 
 const mobileFilterRailStyle = {
   display: "flex",
@@ -80,8 +85,28 @@ const mobileHeaderStyle = (gridTemplateColumns) => ({
   textTransform: "uppercase",
 });
 
+const mobileHeaderEndStyle = { textAlign: "right" };
+const mobileMinWidthStyle = { minWidth: 0 };
+const mobileOrderListPaddingStyle = {
+  ...mobileRowListStyle,
+  padding: sp("4px 5px 5px"),
+};
+const mobileDetailWideFlexStyle = {
+  gridColumn: "1 / -1",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: sp(4),
+  alignItems: "center",
+};
+const mobileDetailPillWrapStyle = {
+  gridColumn: "1 / -1",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: sp(4),
+};
+
 const mobileScanShellStyle = (active = false) => ({
-  border: `1px solid ${T.border}`,
+  border: "none",
   borderRadius: dim(4),
   background: active ? `${T.cyan}10` : T.bg1,
   boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
@@ -128,7 +153,7 @@ const mobileIconButtonStyle = {
   width: dim(22),
   height: dim(22),
   padding: 0,
-  border: `1px solid ${T.border}`,
+  border: "none",
   borderRadius: dim(4),
   background: T.bg2,
   color: T.textSec,
@@ -138,7 +163,7 @@ const mobileIconButtonStyle = {
   flexShrink: 0,
 };
 
-const MobileIconButton = ({ label, onClick, children, expanded = null, disabled = false, tone = T.textSec }) => (
+const MobileIconButton = ({ label, onClick, children, expanded = null, disabled = false, tone = T.textSec, ...buttonProps }) => (
   <AppTooltip content={label}>
     <button
       type="button"
@@ -152,6 +177,7 @@ const MobileIconButton = ({ label, onClick, children, expanded = null, disabled 
         opacity: disabled ? 0.55 : 1,
         cursor: disabled ? "not-allowed" : "pointer",
       }}
+      {...buttonProps}
     >
       {children}
     </button>
@@ -169,21 +195,290 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
-  { value: "watchlist_backtest", label: "Backtest" },
+  { value: "signal_options_replay", label: "Options BT" },
+  { value: "watchlist_backtest", label: "Watchlist BT" },
 ];
 
 const sourceTone = (sourceType) =>
   sourceType === "automation"
-    ? "pink"
+    ? "category-automation"
+    : sourceType === "signal_options_replay"
+      ? "category-replay"
     : sourceType === "watchlist_backtest"
-      ? "purple"
+      ? "category-backtest"
       : sourceType === "mixed"
-        ? "amber"
+        ? "category-mixed"
       : "default";
+
+const orderMobileRowSignature = (order) =>
+  JSON.stringify([
+    order?.id,
+    order?.symbol,
+    order?.side,
+    order?.type,
+    order?.filledQuantity,
+    order?.quantity,
+    order?.limitPrice,
+    order?.stopPrice,
+    order?.averageFillPrice,
+    order?.status,
+    order?.timeInForce,
+    order?.placedAt,
+    order?.filledAt,
+    order?.commission,
+    order?.sourceType,
+    order?.strategyLabel,
+  ]);
+
+const tradeMobileRowSignature = (trade) =>
+  JSON.stringify([
+    trade?.source,
+    trade?.id,
+    trade?.symbol,
+    trade?.side,
+    trade?.quantity,
+    trade?.realizedPnl,
+    trade?.realizedPnlPercent,
+    trade?.currency,
+    trade?.closeDate,
+    trade?.openDate,
+    trade?.holdDurationMinutes,
+    trade?.avgOpen,
+    trade?.avgClose,
+    trade?.commissions,
+    trade?.sourceType,
+    trade?.strategyLabel,
+  ]);
+
+const MobileOrderRow = memo(({
+  order,
+  orderId = order?.id,
+  expanded,
+  tab,
+  currency,
+  maskValues,
+  cancelPending,
+  cancelDisabled,
+  cancelDisabledReason,
+  onRowAction,
+  onRowKeyDown,
+}) => {
+  const priceLabel =
+    tab === "working"
+      ? order.limitPrice != null
+        ? formatAccountPrice(order.limitPrice, 2, maskValues)
+        : order.stopPrice != null
+          ? formatAccountPrice(order.stopPrice, 2, maskValues)
+          : "MKT"
+      : order.averageFillPrice != null
+        ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
+        : "----";
+
+  return (
+    <article style={mobileScanShellStyle(expanded)}>
+      <div
+        data-testid="account-order-scan-row"
+        data-action="toggle"
+        data-row-id={orderId}
+        role="button"
+        tabIndex={0}
+        onClick={onRowAction}
+        onKeyDown={onRowKeyDown}
+        style={mobileScanRowStyle(mobileOrdersGrid)}
+      >
+        <div style={mobileMinWidthStyle}>
+          <div style={mobileCellTextStyle(T.text, "left")}>{order.symbol}</div>
+          <div style={cellSubTextStyle(/buy|long/i.test(order.side) ? "var(--ra-side-buy)" : "var(--ra-side-sell)")}>
+            {order.side} · {order.type}
+          </div>
+        </div>
+        <div style={mobileCellTextStyle(T.textSec)}>
+          {formatNumber(order.filledQuantity, 1)} / {formatNumber(order.quantity, 1)}
+        </div>
+        <div style={mobileCellTextStyle(T.textSec)}>{priceLabel}</div>
+        <div style={mobileCellTextStyle(order.status === "filled" ? "var(--ra-status-filled)" : T.textSec)}>
+          {order.status}
+        </div>
+        <MobileIconButton
+          label={expanded ? `Collapse ${order.symbol} order details` : `Expand ${order.symbol} order details`}
+          data-action="expand"
+          data-row-id={orderId}
+          expanded={expanded}
+          onClick={onRowAction}
+        >
+          {expanded ? (
+            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+          )}
+        </MobileIconButton>
+      </div>
+      {expanded ? (
+        <div data-testid="account-order-expanded-details" style={mobileDetailStyle}>
+          <MobileDetailMetric
+            label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
+            value={
+              tab === "working"
+                ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
+                : priceLabel
+            }
+          />
+          <MobileDetailMetric label={tab === "working" ? "TIF" : "Filled"} value={tab === "working" ? order.timeInForce : formatAppDateTime(order.filledAt)} />
+          <MobileDetailMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
+          <MobileDetailMetric
+            label="Commission"
+            value={order.commission != null ? formatAccountMoney(order.commission, currency, false, maskValues) : "----"}
+          />
+          <div style={mobileDetailWideFlexStyle}>
+            {order.sourceType ? (
+              <Pill tone={sourceTone(order.sourceType)}>
+                {order.strategyLabel || order.sourceType}
+              </Pill>
+            ) : null}
+            {tab === "working" ? (
+              <MobileIconButton
+                label={cancelDisabled ? cancelDisabledReason : "Cancel order"}
+                data-action="cancel"
+                data-row-id={orderId}
+                disabled={cancelPending || cancelDisabled}
+                tone={T.red}
+                onClick={onRowAction}
+              >
+                <XCircle size={13} strokeWidth={1.8} aria-hidden="true" />
+              </MobileIconButton>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}, (previous, next) => (
+  previous.orderId === next.orderId &&
+  previous.expanded === next.expanded &&
+  previous.tab === next.tab &&
+  previous.currency === next.currency &&
+  previous.maskValues === next.maskValues &&
+  previous.cancelPending === next.cancelPending &&
+  previous.cancelDisabled === next.cancelDisabled &&
+  previous.cancelDisabledReason === next.cancelDisabledReason &&
+  previous.onRowAction === next.onRowAction &&
+  previous.onRowKeyDown === next.onRowKeyDown &&
+  (
+  previous.order === next.order ||
+  orderMobileRowSignature(previous.order) === orderMobileRowSignature(next.order)
+  )
+));
+
+const MobileTradeRow = memo(({
+  trade,
+  tradeId,
+  rowSelected,
+  currency,
+  maskValues,
+  onRowAction,
+  onRowKeyDown,
+}) => (
+  <article style={mobileScanShellStyle(rowSelected)}>
+    <div
+      data-testid="account-trade-scan-row"
+      data-action="select"
+      data-trade-id={tradeId}
+      role="button"
+      tabIndex={0}
+      onClick={onRowAction}
+      onKeyDown={onRowKeyDown}
+      style={mobileScanRowStyle(mobileTradesGrid)}
+    >
+      <div style={mobileMinWidthStyle}>
+        <div style={mobileCellTextStyle(T.text, "left")}>{trade.symbol}</div>
+        <div style={cellSubTextStyle(/buy|long/i.test(trade.side) ? "var(--ra-side-buy)" : "var(--ra-side-sell)")}>
+          {trade.side} · {formatNumber(trade.quantity, 2)}
+        </div>
+      </div>
+      <div style={mobileCellTextStyle(toneForValue(trade.realizedPnl))}>
+        {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
+      </div>
+      <div style={mobileCellTextStyle(T.textSec)}>{formatAppDate(trade.closeDate)}</div>
+      <div style={mobileCellTextStyle(T.textSec)}>
+        {trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
+      </div>
+      <MobileIconButton
+        label={rowSelected ? `Collapse ${trade.symbol} trade details` : `Expand ${trade.symbol} trade details`}
+        data-action="select"
+        data-trade-id={tradeId}
+        expanded={rowSelected}
+        onClick={onRowAction}
+      >
+        {rowSelected ? (
+          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+        )}
+      </MobileIconButton>
+    </div>
+    {rowSelected ? (
+      <div data-testid="account-trade-expanded-details" style={mobileDetailStyle}>
+        <MobileDetailMetric
+          label="Realized %"
+          value={trade.realizedPnlPercent != null ? formatAccountPercent(trade.realizedPnlPercent, 2, maskValues) : "----"}
+          tone={toneForValue(trade.realizedPnlPercent)}
+        />
+        <MobileDetailMetric label="Open" value={formatAppDate(trade.openDate)} />
+        <MobileDetailMetric
+          label="Avg In / Out"
+          value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
+        />
+        <MobileDetailMetric
+          label="Fees"
+          value={trade.commissions != null ? formatAccountMoney(trade.commissions, currency, false, maskValues) : "----"}
+        />
+        <div style={mobileDetailPillWrapStyle}>
+          <Pill tone={trade.source === "FLEX" ? "accent" : "stream-healthy"}>
+            {trade.source}
+          </Pill>
+          {trade.sourceType ? (
+            <Pill tone={sourceTone(trade.sourceType)}>
+              {trade.strategyLabel || trade.sourceType}
+            </Pill>
+          ) : null}
+        </div>
+      </div>
+    ) : null}
+  </article>
+), (previous, next) => (
+  previous.tradeId === next.tradeId &&
+  previous.rowSelected === next.rowSelected &&
+  previous.currency === next.currency &&
+  previous.maskValues === next.maskValues &&
+  previous.onRowAction === next.onRowAction &&
+  previous.onRowKeyDown === next.onRowKeyDown &&
+  (
+    previous.trade === next.trade ||
+    tradeMobileRowSignature(previous.trade) === tradeMobileRowSignature(next.trade)
+  )
+));
 
 const normalizeText = (value, fallback = "") => {
   const text = String(value ?? "").trim();
   return text || fallback;
+};
+
+export const getAccountOrderId = (order) => {
+  if (!order) return "";
+  const fallbackId = [
+    order.accountId,
+    order.symbol,
+    order.side,
+    order.type,
+    order.placedAt,
+    order.filledAt,
+    order.quantity,
+    order.status,
+  ]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(":");
+  return normalizeText(order.id, fallbackId || "order");
 };
 
 const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
@@ -258,11 +553,23 @@ export const OrdersPanel = ({
   maskValues = false,
   isPhone = false,
 }) => {
-  const orders = (query.data?.orders || []).filter((order) =>
-    sourceFilter === "all" ? true : order.sourceType === sourceFilter,
+  const orders = useMemo(
+    () =>
+      (query.data?.orders || []).filter((order) =>
+        sourceFilter === "all" ? true : order.sourceType === sourceFilter,
+      ),
+    [query.data?.orders, sourceFilter],
   );
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const toggleExpanded = (orderId) => {
+  const ordersById = useMemo(
+    () => new Map(orders.map((order) => [getAccountOrderId(order), order])),
+    [orders],
+  );
+  const ordersByIdRef = useRef(ordersById);
+  const onCancelOrderRef = useRef(onCancelOrder);
+  ordersByIdRef.current = ordersById;
+  onCancelOrderRef.current = onCancelOrder;
+  const toggleExpanded = useCallback((orderId) => {
     setExpandedRows((current) => {
       const next = new Set(current);
       if (next.has(orderId)) {
@@ -272,7 +579,38 @@ export const OrdersPanel = ({
       }
       return next;
     });
-  };
+  }, []);
+  const handleOrderRowAction = useCallback(
+    (event) => {
+      const { action, rowId } = event.currentTarget.dataset;
+      if (!rowId) {
+        return;
+      }
+      if (action === "cancel") {
+        event.stopPropagation();
+        const order = ordersByIdRef.current.get(rowId);
+        if (order) {
+          onCancelOrderRef.current?.(order);
+        }
+        return;
+      }
+      if (action === "expand") {
+        event.stopPropagation();
+      }
+      toggleExpanded(rowId);
+    },
+    [toggleExpanded],
+  );
+  const handleOrderRowKeyDown = useCallback(
+    (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      handleOrderRowAction(event);
+    },
+    [handleOrderRowAction],
+  );
   return (
   <Panel
     title="Orders"
@@ -312,120 +650,32 @@ export const OrdersPanel = ({
     ) : isPhone ? (
       <div
         data-testid="account-orders-row-list"
-        style={{
-          ...mobileRowListStyle,
-          padding: sp("4px 5px 5px"),
-        }}
+        style={mobileOrderListPaddingStyle}
       >
         <div aria-hidden="true" style={mobileHeaderStyle(mobileOrdersGrid)}>
           <span>Symbol</span>
-          <span style={{ textAlign: "right" }}>Qty</span>
-          <span style={{ textAlign: "right" }}>{tab === "working" ? "Limit" : "Fill"}</span>
-          <span style={{ textAlign: "right" }}>Status</span>
+          <span style={mobileHeaderEndStyle}>Qty</span>
+          <span style={mobileHeaderEndStyle}>{tab === "working" ? "Limit" : "Fill"}</span>
+          <span style={mobileHeaderEndStyle}>Status</span>
           <span />
         </div>
         {orders.map((order) => {
-          const expanded = expandedRows.has(order.id);
-          const priceLabel =
-            tab === "working"
-              ? order.limitPrice != null
-                ? formatAccountPrice(order.limitPrice, 2, maskValues)
-                : order.stopPrice != null
-                  ? formatAccountPrice(order.stopPrice, 2, maskValues)
-                  : "MKT"
-              : order.averageFillPrice != null
-                ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
-                : "----";
+          const orderId = getAccountOrderId(order);
           return (
-          <article key={order.id} style={mobileScanShellStyle(expanded)}>
-            <div
-              data-testid="account-order-scan-row"
-              role="button"
-              tabIndex={0}
-              onClick={() => toggleExpanded(order.id)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                toggleExpanded(order.id);
-              }}
-              style={mobileScanRowStyle(mobileOrdersGrid)}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={mobileCellTextStyle(T.text, "left")}>{order.symbol}</div>
-                <div
-                  style={{
-                    color: /buy|long/i.test(order.side) ? T.green : T.red,
-                    fontFamily: T.data,
-                    fontSize: fs(7),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {order.side} · {order.type}
-                </div>
-              </div>
-              <div style={mobileCellTextStyle(T.textSec)}>
-                {formatNumber(order.filledQuantity, 1)} / {formatNumber(order.quantity, 1)}
-              </div>
-              <div style={mobileCellTextStyle(T.textSec)}>{priceLabel}</div>
-              <div style={mobileCellTextStyle(order.status === "filled" ? T.green : T.textSec)}>
-                {order.status}
-              </div>
-              <MobileIconButton
-                label={expanded ? `Collapse ${order.symbol} order details` : `Expand ${order.symbol} order details`}
-                expanded={expanded}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleExpanded(order.id);
-                }}
-              >
-                {expanded ? (
-                  <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                ) : (
-                  <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                )}
-              </MobileIconButton>
-            </div>
-            {expanded ? (
-              <div data-testid="account-order-expanded-details" style={mobileDetailStyle}>
-                <MobileDetailMetric
-                  label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
-                  value={
-                    tab === "working"
-                      ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
-                      : priceLabel
-                  }
-                />
-                <MobileDetailMetric label={tab === "working" ? "TIF" : "Filled"} value={tab === "working" ? order.timeInForce : formatAppDateTime(order.filledAt)} />
-                <MobileDetailMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
-                <MobileDetailMetric
-                  label="Commission"
-                  value={order.commission != null ? formatAccountMoney(order.commission, currency, false, maskValues) : "----"}
-                />
-                <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-                  {order.sourceType ? (
-                    <Pill tone={sourceTone(order.sourceType)}>
-                      {order.strategyLabel || order.sourceType}
-                    </Pill>
-                  ) : null}
-                  {tab === "working" ? (
-                    <MobileIconButton
-                      label={cancelDisabled ? cancelDisabledReason : "Cancel order"}
-                      disabled={cancelPending || cancelDisabled}
-                      tone={T.red}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onCancelOrder(order);
-                      }}
-                    >
-                      <XCircle size={13} strokeWidth={1.8} aria-hidden="true" />
-                    </MobileIconButton>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </article>
+            <MobileOrderRow
+              key={orderId}
+              order={order}
+              orderId={orderId}
+              expanded={expandedRows.has(orderId)}
+              tab={tab}
+              currency={currency}
+              maskValues={maskValues}
+              cancelPending={cancelPending}
+              cancelDisabled={cancelDisabled}
+              cancelDisabledReason={cancelDisabledReason}
+              onRowAction={handleOrderRowAction}
+              onRowKeyDown={handleOrderRowKeyDown}
+            />
           );
         })}
       </div>
@@ -444,9 +694,11 @@ export const OrdersPanel = ({
             </tr>
           </thead>
           <tbody>
-            {orders.map((order) => (
-              <tr
-                key={order.id}
+            {orders.map((order) => {
+              const orderId = getAccountOrderId(order);
+              return (
+                <tr
+                key={orderId}
                 className="ra-table-row"
                 tabIndex={0}
                 onKeyDown={moveTableFocus}
@@ -464,7 +716,7 @@ export const OrdersPanel = ({
                   />
                 </td>
                 <td style={tableCellStyle}>
-                  <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
+                  <Pill tone={/buy|long/i.test(order.side) ? "side-buy" : "side-sell"}>{order.side}</Pill>
                 </td>
                 <td style={tableCellStyle}>{order.type}</td>
                 <td style={tableCellStyle}>
@@ -483,7 +735,7 @@ export const OrdersPanel = ({
                     </td>
                     <td style={tableCellStyle}>{order.timeInForce}</td>
                     <td style={tableCellStyle}>
-                      <Pill tone={order.status === "working" ? "amber" : "accent"}>
+                      <Pill tone={order.status === "working" ? "status-working" : "status-filled"}>
                         {order.status}
                       </Pill>
                     </td>
@@ -537,7 +789,7 @@ export const OrdersPanel = ({
                     </td>
                     <td style={tableCellStyle}>
                       <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-                        <Pill tone={order.status === "filled" ? "green" : "default"}>{order.status}</Pill>
+                        <Pill tone={order.status === "filled" ? "status-filled" : "default"}>{order.status}</Pill>
                         {order.sourceType ? (
                           <Pill tone={sourceTone(order.sourceType)}>
                             {order.strategyLabel || order.sourceType}
@@ -548,15 +800,16 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.strategyLabel || order.source}
                       {order.candidateId ? (
-                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
+                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: sp(2) }}>
                           {order.deploymentName || order.candidateId}
                         </div>
                       ) : null}
                     </td>
                   </>
                 )}
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -578,11 +831,41 @@ export const ClosedTradesPanel = ({
   onTradeSelect,
   isPhone = false,
 }) => {
-  const rows = (query.data?.trades || []).filter((trade) =>
-    (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
-      ? true
-      : trade.sourceType === filters.sourceType) &&
-    tradeMatchesExtendedFilters(trade, filters),
+  const rows = useMemo(
+    () =>
+      (query.data?.trades || []).filter((trade) =>
+        (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
+          ? true
+          : trade.sourceType === filters.sourceType) &&
+        tradeMatchesExtendedFilters(trade, filters),
+      ),
+    [filters, query.data?.trades, sourceFiltersEnabled],
+  );
+  const onTradeSelectRef = useRef(onTradeSelect);
+  const selectedTradeIdRef = useRef(selectedTradeId);
+  onTradeSelectRef.current = onTradeSelect;
+  selectedTradeIdRef.current = selectedTradeId;
+  const handleTradeRowAction = useCallback((event) => {
+    const { tradeId } = event.currentTarget.dataset;
+    if (!tradeId) {
+      return;
+    }
+    event.stopPropagation();
+    onTradeSelectRef.current?.(
+      selectedTradeIdRef.current && selectedTradeIdRef.current === tradeId
+        ? ""
+        : tradeId,
+    );
+  }, []);
+  const handleTradeRowKeyDown = useCallback(
+    (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      handleTradeRowAction(event);
+    },
+    [handleTradeRowAction],
   );
   return (
     <Panel
@@ -740,97 +1023,25 @@ export const ClosedTradesPanel = ({
           >
             <div aria-hidden="true" style={mobileHeaderStyle(mobileTradesGrid)}>
               <span>Symbol</span>
-              <span style={{ textAlign: "right" }}>P&L</span>
-              <span style={{ textAlign: "right" }}>Close</span>
-              <span style={{ textAlign: "right" }}>Hold</span>
+              <span style={mobileHeaderEndStyle}>P&L</span>
+              <span style={mobileHeaderEndStyle}>Close</span>
+              <span style={mobileHeaderEndStyle}>Hold</span>
               <span />
             </div>
             {rows.map((trade) => {
               const tradeId = getAccountTradeId(trade);
               const rowSelected = Boolean(selectedTradeId && tradeId === selectedTradeId);
               return (
-                <article
-                  key={`${trade.source}:${trade.id}`}
-                  style={mobileScanShellStyle(rowSelected)}
-                >
-                  <div
-                    data-testid="account-trade-scan-row"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onTradeSelect?.(rowSelected ? "" : tradeId)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      onTradeSelect?.(rowSelected ? "" : tradeId);
-                    }}
-                    style={mobileScanRowStyle(mobileTradesGrid)}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={mobileCellTextStyle(T.text, "left")}>{trade.symbol}</div>
-                      <div
-                        style={{
-                          color: /buy|long/i.test(trade.side) ? T.green : T.red,
-                          fontFamily: T.data,
-                          fontSize: fs(7),
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {trade.side} · {formatNumber(trade.quantity, 2)}
-                      </div>
-                    </div>
-                    <div style={mobileCellTextStyle(toneForValue(trade.realizedPnl))}>
-                      {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
-                    </div>
-                    <div style={mobileCellTextStyle(T.textSec)}>{formatAppDate(trade.closeDate)}</div>
-                    <div style={mobileCellTextStyle(T.textSec)}>
-                      {trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
-                    </div>
-                    <MobileIconButton
-                      label={rowSelected ? `Collapse ${trade.symbol} trade details` : `Expand ${trade.symbol} trade details`}
-                      expanded={rowSelected}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onTradeSelect?.(rowSelected ? "" : tradeId);
-                      }}
-                    >
-                      {rowSelected ? (
-                        <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                      ) : (
-                        <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                      )}
-                    </MobileIconButton>
-                  </div>
-                  {rowSelected ? (
-                    <div data-testid="account-trade-expanded-details" style={mobileDetailStyle}>
-                      <MobileDetailMetric
-                        label="Realized %"
-                        value={trade.realizedPnlPercent != null ? formatAccountPercent(trade.realizedPnlPercent, 2, maskValues) : "----"}
-                        tone={toneForValue(trade.realizedPnlPercent)}
-                      />
-                      <MobileDetailMetric label="Open" value={formatAppDate(trade.openDate)} />
-                      <MobileDetailMetric
-                        label="Avg In / Out"
-                        value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
-                      />
-                      <MobileDetailMetric
-                        label="Fees"
-                        value={trade.commissions != null ? formatAccountMoney(trade.commissions, currency, false, maskValues) : "----"}
-                      />
-                      <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: sp(4) }}>
-                        <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
-                          {trade.source}
-                        </Pill>
-                        {trade.sourceType ? (
-                          <Pill tone={sourceTone(trade.sourceType)}>
-                            {trade.strategyLabel || trade.sourceType}
-                          </Pill>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </article>
+                <MobileTradeRow
+                  key={tradeId}
+                  trade={trade}
+                  tradeId={tradeId}
+                  rowSelected={rowSelected}
+                  currency={currency}
+                  maskValues={maskValues}
+                  onRowAction={handleTradeRowAction}
+                  onRowKeyDown={handleTradeRowKeyDown}
+                />
               );
             })}
           </div>
@@ -867,8 +1078,7 @@ export const ClosedTradesPanel = ({
                       }
                     : {};
                   return (
-                    <AppTooltip key={`${trade.source}:${trade.id}`} content={onTradeSelect ? "Inspect trade" : undefined}><tr
-                      key={`${trade.source}:${trade.id}`}
+                    <AppTooltip key={tradeId} content={onTradeSelect ? "Inspect trade" : undefined}><tr
                       className="ra-table-row"
                       tabIndex={0}
                       onClick={() => onTradeSelect?.(tradeId)}
@@ -899,7 +1109,7 @@ export const ClosedTradesPanel = ({
                         />
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
-                        <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
+                        <Pill tone={/buy|long/i.test(trade.side) ? "side-buy" : "side-sell"}>{trade.side}</Pill>
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>{formatNumber(trade.quantity, 3)}</td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
@@ -936,7 +1146,7 @@ export const ClosedTradesPanel = ({
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-                          <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
+                          <Pill tone={trade.source === "FLEX" ? "accent" : "stream-healthy"}>
                             {trade.source}
                           </Pill>
                           {trade.sourceType ? (
@@ -946,7 +1156,7 @@ export const ClosedTradesPanel = ({
                           ) : null}
                         </div>
                         {trade.candidateId ? (
-                          <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
+                          <div style={{ color: T.textDim, fontSize: fs(8), marginTop: sp(2) }}>
                             {trade.deploymentName || trade.candidateId}
                           </div>
                         ) : null}
@@ -967,7 +1177,7 @@ const DetailRow = ({ label, value, tone = T.textSec }) => (
   <div
     style={{
       display: "grid",
-      gridTemplateColumns: "minmax(92px, 0.55fr) minmax(0, 1fr)",
+      gridTemplateColumns: `minmax(${dim(92)}px, 0.55fr) minmax(0, 1fr)`,
       gap: sp(5),
       alignItems: "baseline",
       minWidth: 0,
@@ -1101,7 +1311,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
       <div
         style={{
           height: dim(H),
-          border: `1px solid ${T.border}`,
+          border: "none",
           borderRadius: dim(4),
           background: T.bg0,
           color: T.textMuted,
@@ -1339,7 +1549,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               display: "grid",
               gridTemplateColumns: "auto minmax(0, 1fr) auto",
               gap: sp(5),
-              border: `1px solid ${T.border}`,
+              border: "none",
               borderRadius: dim(4),
               background: T.bg0,
               padding: sp("4px 5px"),
@@ -1492,7 +1702,7 @@ export const SelectedTradeAnalysisPanel = ({
         <div style={{ display: "grid", gap: sp(7) }}>
           <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
             <Pill tone="cyan">{trade.symbol || "----"}</Pill>
-            <Pill tone={/sell|short/i.test(trade.side) ? "red" : "green"}>
+            <Pill tone={/sell|short/i.test(trade.side) ? "side-sell" : "side-buy"}>
               {trade.side || "side"}
             </Pill>
             <Pill tone={sourceTone(trade.sourceType)}>
@@ -1506,7 +1716,7 @@ export const SelectedTradeAnalysisPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`,
               gap: sp(5),
             }}
           >

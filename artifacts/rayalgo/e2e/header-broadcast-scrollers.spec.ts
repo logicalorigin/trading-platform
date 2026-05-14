@@ -85,13 +85,13 @@ function flowEvent(symbol: string, overrides: Record<string, unknown> = {}) {
 async function mockHeaderApi(
   page: Page,
   {
-    flowPromotedSymbols,
+    flowCurrentBatchSymbols,
     flowUniverseSymbols,
     onFlowEventsRequest,
     signalMonitorEnabled = true,
     watchlistSymbols = symbols,
   }: {
-    flowPromotedSymbols?: string[];
+    flowCurrentBatchSymbols?: string[];
     flowUniverseSymbols?: string[];
     onFlowEventsRequest?: (url: URL) => void;
     signalMonitorEnabled?: boolean;
@@ -160,9 +160,8 @@ async function mockHeaderApi(
           cooldownCount: 0,
           scannedSymbols: 0,
           cycleScannedSymbols: 0,
-          currentBatch: [],
+          currentBatch: flowCurrentBatchSymbols || [],
           degradedReason: flowUniverseSymbols ? "mock partial universe" : null,
-          promotedSymbols: flowPromotedSymbols || [],
         },
       };
     } else if (url.pathname === "/api/quotes/snapshot") {
@@ -186,23 +185,33 @@ async function mockHeaderApi(
       body = {
         bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()),
       };
-    } else if (url.pathname === "/api/flow/events") {
+    } else if (url.pathname === "/api/flow/events/aggregate") {
       onFlowEventsRequest?.(url);
+      body = {
+        events: [
+          flowEvent("QQQ", {
+            right: "put",
+            strike: 438,
+            side: "buy",
+            sentiment: "bearish",
+            premium: 310_000,
+            unusualScore: 3.1,
+          }),
+        ],
+        source: {
+          provider: "ibkr",
+          status: "live",
+          fallbackUsed: false,
+          scannerCoverage: {
+            mode: "all_watchlists_plus_universe",
+            currentBatch: flowCurrentBatchSymbols || ["QQQ"],
+          },
+        },
+      };
+    } else if (url.pathname === "/api/flow/events") {
       const symbol = (url.searchParams.get("underlying") || "SPY").toUpperCase();
       body = {
-        events:
-          symbol === "QQQ"
-            ? [
-                flowEvent("QQQ", {
-                  right: "put",
-                  strike: 438,
-                  side: "buy",
-                  sentiment: "bearish",
-                  premium: 310_000,
-                  unusualScore: 3.1,
-                }),
-              ]
-            : [],
+        events: symbol === "QQQ" ? [flowEvent("QQQ")] : [],
         source: {
           provider: "ibkr",
           status: "live",
@@ -306,7 +315,7 @@ test("header broadcast scrollers render and open Trade from tape items", async (
   });
 
   await page.getByTitle(/QQQ unusual/).click();
-  await expect(page.getByText(/QQQ 05\/15 438 P/)).toBeVisible({
+  await expect(page.getByText(/QQQ 05\/15 438P/).first()).toBeVisible({
     timeout: 15_000,
   });
 });
@@ -314,15 +323,13 @@ test("header broadcast scrollers render and open Trade from tape items", async (
 test("header flow lane fills a partial backend universe beyond the active watchlist", async ({
   page,
 }) => {
-  const requestedUnderlyings: string[] = [];
+  const aggregateRequests: string[] = [];
   await mockHeaderApi(page, {
     watchlistSymbols: ["AMD"],
     flowUniverseSymbols: ["AMD", "SPY", "QQQ"],
-    flowPromotedSymbols: ["SPY", "QQQ"],
+    flowCurrentBatchSymbols: ["SPY", "QQQ"],
     onFlowEventsRequest: (url) => {
-      requestedUnderlyings.push(
-        (url.searchParams.get("underlying") || "").toUpperCase(),
-      );
+      aggregateRequests.push(url.pathname);
     },
   });
   await openPlatform(page);
@@ -331,8 +338,8 @@ test("header flow lane fills a partial backend universe beyond the active watchl
     timeout: 30_000,
   });
   await expect
-    .poll(() => Array.from(new Set(requestedUnderlyings)), { timeout: 15_000 })
-    .toEqual(expect.arrayContaining(["AMD", "SPY", "QQQ"]));
+    .poll(() => aggregateRequests.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
   await expect(page.getByTestId("header-unusual-tape")).toContainText("QQQ", {
     timeout: 15_000,
   });

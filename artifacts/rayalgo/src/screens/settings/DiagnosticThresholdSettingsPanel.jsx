@@ -14,7 +14,7 @@ function smallButton({ active = false } = {}) {
     color: active ? T.green : T.textSec,
     borderRadius: dim(4),
     padding: sp("5px 8px"),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(9),
     fontWeight: 400,
     cursor: "pointer",
@@ -27,7 +27,7 @@ function inputLabel() {
     flexDirection: "column",
     gap: sp(4),
     color: T.textDim,
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(9),
     fontWeight: 400,
   };
@@ -35,12 +35,12 @@ function inputLabel() {
 
 function inputStyle() {
   return {
-    border: `1px solid ${T.border}`,
+    border: "none",
     background: T.bg0,
     color: T.text,
     borderRadius: dim(4),
     padding: sp("6px 7px"),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(10),
     minWidth: 0,
   };
@@ -172,7 +172,7 @@ export function DiagnosticThresholdSettingsPanel({
     <section
       className="ra-panel-enter"
       style={{
-        border: `1px solid ${T.border}`,
+        border: "none",
         background: T.bg1,
         borderRadius: dim(6),
         padding: sp(12),
@@ -191,7 +191,7 @@ export function DiagnosticThresholdSettingsPanel({
         <div>
           <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
           {description && (
-            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginTop: sp(4) }}>
+            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginTop: sp(4) }}>
               {description}
             </div>
           )}
@@ -217,12 +217,12 @@ export function DiagnosticThresholdSettingsPanel({
         </div>
       </div>
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
       {loading && drafts.length === 0 ? (
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           Loading diagnostic thresholds.
         </div>
       ) : (
@@ -239,7 +239,7 @@ export function DiagnosticThresholdSettingsPanel({
             <div
               key={threshold.metricKey}
               style={{
-                border: `1px solid ${T.border}`,
+                border: "none",
                 borderRadius: dim(5),
                 padding: sp(9),
                 background: T.bg2,
@@ -248,7 +248,7 @@ export function DiagnosticThresholdSettingsPanel({
               <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11), marginBottom: sp(6) }}>
                 {threshold.label || threshold.metricKey}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(8) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(8) }}>
                 {threshold.metricKey} / {threshold.unit || MISSING_VALUE}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>

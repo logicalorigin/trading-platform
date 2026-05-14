@@ -5,7 +5,6 @@ import {
   buildMarketFlowStoreKey,
   clearMarketFlowSnapshot,
   publishMarketFlowSnapshot,
-  setFlowScannerControlState,
   useFlowScannerControlState,
 } from "./marketFlowStore";
 import { publishTradeFlowSnapshotsByTicker } from "./tradeFlowStore";
@@ -108,22 +107,6 @@ export const BroadFlowScannerRuntime = memo(({
     scannerConfig: broadScannerConfig,
     blocking: false,
   });
-
-  useEffect(() => {
-    if (
-      flowScannerControl.config.mode ===
-      FLOW_SCANNER_MODE.allWatchlistsPlusUniverse
-    ) {
-      return undefined;
-    }
-    setFlowScannerControlState({
-      config: {
-        ...flowScannerControl.config,
-        mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
-      },
-    });
-    return undefined;
-  }, [flowScannerControl.config]);
 
   useEffect(() => {
     if (!runtimeActive) {

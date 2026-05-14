@@ -1,3 +1,5 @@
+import { parseExpirationValue } from "../../lib/formatters";
+
 const WORKING_ORDER_STATUSES = new Set([
   "pending_submit",
   "submitted",
@@ -45,8 +47,8 @@ const normalizeRight = (value) => {
 
 const dateKey = (value) => {
   if (!value) return "";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseExpirationValue(value);
+  if (!date || Number.isNaN(date.getTime())) {
     return String(value).slice(0, 10);
   }
   return date.toISOString().slice(0, 10);

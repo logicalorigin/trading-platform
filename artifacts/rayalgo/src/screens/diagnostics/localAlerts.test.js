@@ -60,6 +60,18 @@ test("snapshot sync seeds alerts without notification", () => {
   assert.equal(result.alerts["event:orders:visibility:read_probe_failed"].lastNotifiedAt, null);
 });
 
+test("success diagnostics remain non-alert informational events", () => {
+  const result = applyDiagnosticAlert({}, {
+    ...warningEvent,
+    severity: "success",
+    message: "Orders probe recovered",
+  });
+
+  assert.equal(result.alert, null);
+  assert.equal(result.shouldNotify, false);
+  assert.deepEqual(result.alerts, {});
+});
+
 test("snapshot sync removes resolved alerts from the active alert list", () => {
   const first = applyDiagnosticAlert({}, {
     ...warningEvent,

@@ -156,7 +156,7 @@ body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans'
 .ra-scrollbar-hidden{scrollbar-width:none;-ms-overflow-style:none}
 .ra-scrollbar-hidden::-webkit-scrollbar{display:none}
 ::-webkit-scrollbar-track{background:transparent}
-input[type=range]{accent-color:#3b82f6}
+input[type=range]{accent-color:#E08F76}
 @keyframes toastSlideIn{from{opacity:0;transform:translateX(20px) scale(0.96)}to{opacity:1;transform:translateX(0) scale(1)}}
 @keyframes toastSlideOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(20px)}}
 @keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0.6)}50%{box-shadow:0 0 0 4px rgba(245,158,11,0)}}
@@ -910,6 +910,8 @@ export default function PlatformApp() {
     gatewayTradingReady && !accountOrderStreamsFresh
       ? "Broker account and order streams are stale; live trading is paused until realtime account state refreshes."
       : gatewayTradingMessage;
+  const effectiveGatewayTradingBlockReason =
+    gatewayTradingReady && !accountOrderStreamsFresh ? "streams_stale" : "gateway";
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -1853,6 +1855,7 @@ export default function PlatformApp() {
       brokerAuthenticated={brokerAuthenticated}
       gatewayTradingReady={effectiveGatewayTradingReady}
       gatewayTradingMessage={effectiveGatewayTradingMessage}
+      gatewayTradingBlockReason={effectiveGatewayTradingBlockReason}
       watchlistSymbols={watchlistSymbols}
       runtimeWatchlistSymbols={runtimeWatchlistSymbols}
       signalMonitorSymbols={signalMonitorSymbols}

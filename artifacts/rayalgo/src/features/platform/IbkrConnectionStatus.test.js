@@ -17,6 +17,7 @@ import {
 import { bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel.js";
 import { T } from "../../lib/uiTokens.jsx";
+import { streamStateTokenVar } from "./streamSemantics";
 
 const findPopoverDetailRow = (model, label) =>
   model.detailGroups
@@ -251,7 +252,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       accountsLoaded: true,
       strictReady: false,
     }).color,
-    T.amber,
+    streamStateTokenVar("stale"),
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -266,7 +267,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       accountsLoaded: true,
       strictReady: false,
     }).color,
-    T.amber,
+    streamStateTokenVar("capacity-limited"),
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -280,7 +281,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       accountsLoaded: true,
       strictReady: false,
     }).color,
-    T.amber,
+    streamStateTokenVar("reconnecting"),
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -335,6 +336,22 @@ test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
   );
 });
 
+test("bridgeRuntimeTone keeps reconnect-needed streams out of generic offline tone", () => {
+  const tone = bridgeRuntimeTone({
+    configured: { ibkr: true },
+    ibkrBridge: {
+      bridgeReachable: true,
+      connected: false,
+      streamState: "reconnect_needed",
+      streamStateReason: "gateway_socket_disconnected",
+    },
+  });
+
+  assert.equal(tone.label, "reconnect");
+  assert.equal(tone.color, streamStateTokenVar("reconnecting"));
+  assert.equal(tone.pulse, true);
+});
+
 test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
   assert.deepEqual(
     [
@@ -363,7 +380,7 @@ test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
       getIbkrStreamStateMeta("quiet", null).badge,
       getIbkrStreamStateMeta("capacity_limited", "backpressure").badge,
     ],
-    ["NO SUBS", "CLOSED", "QUIET STREAM", "CAPACITY"],
+    ["STANDBY", "CLOSED", "QUIET", "CAPACITY"],
   );
 });
 
@@ -467,7 +484,7 @@ test("IbkrPingWavelength renders connected wire as an animated green sine wave",
   assert.equal(html.includes("stroke-dasharray"), false);
   assert.equal(html.includes("translateX"), false);
   assert.equal(
-    (html.match(new RegExp(`stroke="${T.green}"`, "g")) || []).length,
+    (html.match(new RegExp(`stroke="${streamStateTokenVar("healthy").replace(/[()]/g, "\\$&")}"`, "g")) || []).length,
     2,
   );
   assert.equal((html.match(/<polyline /g) || []).length, 2);
@@ -499,7 +516,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
     resolveIbkrGatewayHealth({
       connection: { configured: true, reachable: true, authenticated: false },
     }).status,
-    "login_required",
+    "login-required",
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -521,7 +538,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         accountsLoaded: false,
       },
     }).color,
-    T.accent,
+    streamStateTokenVar("checking"),
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -550,7 +567,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         strictReady: true,
       },
     }).status,
-    "ready",
+    "healthy",
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -567,7 +584,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         strictReady: false,
       },
     }).status,
-    "stale_stream",
+    "stale",
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -585,7 +602,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         strictReady: false,
       },
     }).status,
-    "capacity_limited",
+    "capacity-limited",
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -603,7 +620,7 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         strictReady: true,
       },
     }).status,
-    "quote_standby",
+    "no-subscribers",
   );
 });
 
@@ -710,7 +727,7 @@ test("getIbkrGatewayBadges surfaces live data and stream gaps", () => {
         strictReady: true,
       },
     }).map((badge) => badge.label),
-    ["NO SUBS"],
+    ["STANDBY"],
   );
   assert.deepEqual(
     getIbkrGatewayBadges({
@@ -864,7 +881,7 @@ test("buildHeaderIbkrPopoverModel separates reachable bridge tunnels from discon
     },
   });
 
-  assert.equal(model.issue.key, "reconnect_needed");
+  assert.equal(model.issue.key, "reconnecting");
   assert.match(model.issue.label, /IB Gateway\/TWS is disconnected/);
   assert.doesNotMatch(model.issue.label, /not reachable/);
   assert.equal(findPopoverDetailRow(model, "Bridge HTTP").value, "reachable");
@@ -914,7 +931,7 @@ test("buildHeaderIbkrPopoverModel separates local Gateway sockets from IBKR serv
     },
   });
 
-  assert.equal(model.issue.key, "reconnect_needed");
+  assert.equal(model.issue.key, "reconnecting");
   assert.match(model.issue.label, /disconnected from IBKR servers/);
   assert.equal(findPopoverDetailRow(model, "Gateway").value, "connected");
   assert.equal(findPopoverDetailRow(model, "IBKR server").value, "disconnected");
@@ -956,7 +973,7 @@ test("buildHeaderIbkrPopoverModel keeps token state in details unless it causes 
     },
   });
 
-  assert.equal(model.issue.key, "ready");
+  assert.equal(model.issue.key, "healthy");
   assert.equal(findPopoverDetailRow(model, "Bridge token").value, "missing");
 });
 
@@ -1084,7 +1101,7 @@ test("buildHeaderIbkrPopoverModel keeps ready-state last errors in details", () 
     },
   });
 
-  assert.equal(model.issue.key, "ready");
+  assert.equal(model.issue.key, "healthy");
   assert.doesNotMatch(model.issue.label, /historical pacing warning/);
   assert.equal(findPopoverDetailRow(model, "Last error").wrap, true);
 });
@@ -1105,7 +1122,7 @@ test("buildHeaderIbkrPopoverModel keeps diagnostics timeouts out of Gateway erro
     runtimeError: "Request timed out after 8000ms",
   });
 
-  assert.equal(model.issue.key, "ready");
+  assert.equal(model.issue.key, "healthy");
   assert.equal(findPopoverDetailRow(model, "Last error"), undefined);
   assert.equal(findPopoverDetailRow(model, "Diagnostics").value, "unavailable");
 });
@@ -1152,7 +1169,7 @@ test("buildHeaderIbkrPopoverModel separates connected Gateway from stale data st
     },
   });
 
-  assert.equal(model.health.status, "stale_stream");
+  assert.equal(model.health.status, "stale");
   assert.deepEqual(
     model.tiles.map((tile) => [tile.label, tile.value]),
     [
@@ -1262,7 +1279,7 @@ test("buildHeaderIbkrPopoverModel gives market-closed stream a unique connected 
     },
   });
 
-  assert.equal(model.health.status, "market_closed");
+  assert.equal(model.health.status, "market-closed");
   assert.deepEqual(
     model.tiles.map((tile) => [tile.label, tile.value]),
     [
@@ -1272,7 +1289,7 @@ test("buildHeaderIbkrPopoverModel gives market-closed stream a unique connected 
       ["Stream", "Market closed"],
     ],
   );
-  assert.equal(model.issue.key, "market_closed");
+  assert.equal(model.issue.key, "market-closed");
   assert.match(model.issue.label, /market session is closed/i);
   assert.equal(findPopoverDetailRow(model, "Stream state").value, "market closed");
   assert.equal(findPopoverDetailRow(model, "State reason").value, "market_session_quiet");
@@ -1545,7 +1562,7 @@ test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote 
     },
   });
 
-  assert.equal(model.health.status, "quote_standby");
+  assert.equal(model.health.status, "no-subscribers");
   assert.deepEqual(
     model.tiles.map((tile) => [tile.label, tile.value]),
     [
@@ -1555,7 +1572,7 @@ test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote 
       ["Stream", "No quote subscribers"],
     ],
   );
-  assert.equal(model.issue.key, "quote_standby");
+  assert.equal(model.issue.key, "no-subscribers");
   assert.match(model.issue.label, /no UI panel is subscribed/i);
   assert.equal(
     findPopoverDetailRow(model, "Stream state").value,
@@ -1610,7 +1627,7 @@ test("buildHeaderIbkrPopoverModel does not show missing quote subscribers when s
     },
   });
 
-  assert.equal(model.health.status, "ready");
+  assert.equal(model.health.status, "healthy");
   assert.deepEqual(
     model.tiles.map((tile) => [tile.label, tile.value]),
     [

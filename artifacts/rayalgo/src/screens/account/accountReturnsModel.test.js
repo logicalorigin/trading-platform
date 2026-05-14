@@ -145,7 +145,29 @@ test("buildAccountReturnsModel prefers provider transfer-adjusted return when pr
   });
 
   assert.equal(model.equity.returnPercent, 0);
+  assert.equal(model.equity.returnPercentSource, "provider");
+  assert.equal(model.equity.returnPercentDiscrepancy, false);
   assert.equal(model.equity.navReturnPercent, 10);
+});
+
+test("buildAccountReturnsModel uses recomputed return when provider value drifts from transfer-adjusted math", () => {
+  const model = buildAccountReturnsModel({
+    equityHistory: {
+      points: [
+        point("2026-04-01T00:00:00.000Z", 100_000, 0),
+        {
+          ...point("2026-04-02T00:00:00.000Z", 110_000, 10),
+          deposits: 10_000,
+        },
+      ],
+    },
+  });
+
+  assert.equal(model.equity.providerReturnPercent, 10);
+  assert.equal(model.equity.transferAdjustedReturnPercent, 0);
+  assert.equal(model.equity.returnPercent, 0);
+  assert.equal(model.equity.returnPercentSource, "recomputed");
+  assert.equal(model.equity.returnPercentDiscrepancy, true);
 });
 
 test("buildAccountReturnsModel backs first-point external transfers out of YTD baseline", () => {

@@ -6,19 +6,21 @@ import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
-const TONE_BY_LEVEL = {
-  normal: T.green,
-  watch: T.amber,
-  high: "#fb923c",
-  critical: T.red,
+const PRESSURE_TOKEN_BY_LEVEL = {
+  normal: "--ra-pressure-normal",
+  watch: "--ra-pressure-watch",
+  high: "--ra-pressure-high",
+  critical: "--ra-pressure-critical",
 };
 
-const BACKGROUND_BY_LEVEL = {
-  normal: T.greenBg,
-  watch: T.amberBg || `${T.amber}14`,
-  high: "rgba(251,146,60,0.14)",
-  critical: `${T.red}14`,
-};
+const pressureTone = (level) =>
+  `var(${PRESSURE_TOKEN_BY_LEVEL[level] || "--ra-text-secondary"})`;
+
+const pressureBorder = (level) =>
+  `color-mix(in srgb, ${pressureTone(level)} 40%, transparent)`;
+
+const pressureBackground = (level) =>
+  `color-mix(in srgb, ${pressureTone(level)} 14%, transparent)`;
 
 const formatMetric = (value, suffix = "") =>
   Number.isFinite(value) ? `${Math.round(value)}${suffix}` : "--";
@@ -50,6 +52,13 @@ const topDriverLabel = (signal) => {
   return driver.detail ? `${driver.label} ${driver.detail}` : driver.label;
 };
 
+const topDriverLevel = (signal) => {
+  const driver = Array.isArray(signal?.dominantDrivers)
+    ? signal.dominantDrivers[0]
+    : null;
+  return driver?.level || signal?.level || "normal";
+};
+
 const buildTitle = (signal) => {
   const drivers = Array.isArray(signal?.dominantDrivers)
     ? signal.dominantDrivers
@@ -72,9 +81,10 @@ const buildTitle = (signal) => {
 export const FooterMemoryPressureIndicator = ({ signal }) => {
   const { preferences } = useMemoryPressurePreferences();
   const level = signal?.level || "normal";
-  const tone = TONE_BY_LEVEL[level] || T.textSec;
+  const tone = pressureTone(level);
   const fillPercent = memoryPressureFillPercent(signal);
   const driverLabel = topDriverLabel(signal);
+  const driverTone = pressureTone(topDriverLevel(signal));
   const shouldAnimate =
     preferences.animationEnabled &&
     !signal?.reducedMotionEnabled &&
@@ -90,10 +100,10 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
         gap: sp(5),
         minWidth: 0,
         padding: sp("2px 6px"),
-        border: `1px solid ${tone}66`,
-        background: BACKGROUND_BY_LEVEL[level] || `${tone}14`,
+        border: `1px solid ${pressureBorder(level)}`,
+        background: pressureBackground(level),
         color: tone,
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(8),
         fontWeight: 400,
         flexShrink: 0,
@@ -108,7 +118,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
           width: dim(54),
           height: dim(8),
           borderRadius: dim(3),
-          border: `1px solid ${tone}66`,
+          border: `1px solid ${pressureBorder(level)}`,
           background: T.bg0,
           overflow: "hidden",
           flexShrink: 0,
@@ -133,7 +143,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
       {preferences.showCompactLabel ? (
         <span
           style={{
-            color: T.textSec,
+            color: driverTone,
             minWidth: 0,
             overflow: "hidden",
             textOverflow: "ellipsis",

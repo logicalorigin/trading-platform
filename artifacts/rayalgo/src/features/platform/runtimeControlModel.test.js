@@ -78,7 +78,6 @@ test("adds flow scanner runtime detail when active leases are zero", () => {
     optionsFlowScanner: {
       enabled: true,
       started: true,
-      radarEnabled: true,
       lastSkippedReason: "market-data-not-live",
     },
   });
@@ -95,7 +94,6 @@ test("recognizes backend flow scanner diagnostics as active", () => {
       optionsFlowScanner: {
         enabled: true,
         started: true,
-        radarEnabled: true,
         deepScanner: { draining: true, queuedCount: 12 },
       },
     }),
@@ -106,7 +104,6 @@ test("recognizes backend flow scanner diagnostics as active", () => {
       optionsFlowScanner: {
         enabled: true,
         started: false,
-        radarEnabled: true,
       },
     }),
     false,
@@ -233,7 +230,6 @@ test("exposes active flow scanner when backend scanner is running", () => {
         optionsFlowScanner: {
           enabled: true,
           started: true,
-          radarEnabled: true,
           scannerAlwaysOn: true,
         },
       },

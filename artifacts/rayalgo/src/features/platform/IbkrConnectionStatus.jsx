@@ -8,6 +8,12 @@ import {
   RadioTower,
 } from "lucide-react";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import {
+  STREAM_STATE_LABEL,
+  canonicalizeStreamState,
+  streamStateBackgroundVar,
+  streamStateTokenVar,
+} from "./streamSemantics";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -224,21 +230,34 @@ export const getIbkrConnection = (session, key) =>
   session?.ibkrBridge?.connections?.[key] || fallbackConnection(session, key);
 
 export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
+  if (!streamState) {
+    return null;
+  }
+
+  const state =
+    streamState === "quiet" && streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON
+      ? "no-subscribers"
+      : streamState === "quiet" && streamStateReason === MARKET_SESSION_QUIET_REASON
+        ? "market-closed"
+        : canonicalizeStreamState(streamState, "offline");
+  const tokenColor = streamStateTokenVar(state);
+  const tokenBackground = streamStateBackgroundVar(state);
+
   if (
     streamState === "quiet" &&
     streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON
   ) {
     return {
       label: "no quote subscribers",
-      status: "quote_standby",
+      status: state,
       healthLabel: "No Quote Subscribers",
       detail:
         "Gateway is connected; no UI panel is subscribed to the stock quote stream",
-      color: T.green,
-      background: T.greenBg,
+      color: tokenColor,
+      background: tokenBackground,
       Icon: RadioTower,
       wave: "slow",
-      badge: "NO SUBS",
+      badge: STREAM_STATE_LABEL[state],
     };
   }
 
@@ -248,89 +267,163 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
   ) {
     return {
       label: "market closed",
-      status: "market_closed",
+      status: state,
       healthLabel: "Market Closed",
       detail: "Gateway is ready; the equity market session is closed",
-      color: T.green,
-      background: T.greenBg,
+      color: tokenColor,
+      background: tokenBackground,
       Icon: RadioTower,
       wave: "slow",
-      badge: "CLOSED",
+      badge: STREAM_STATE_LABEL[state],
     };
   }
 
-  switch (streamState) {
-    case "live":
+  if (streamState === "reconnect_needed") {
+    return {
+      label:
+        streamStateReason === "gateway_server_disconnected"
+          ? "server disconnected"
+          : "reconnect",
+      status: state,
+      healthLabel:
+        streamStateReason === "gateway_server_disconnected"
+          ? "Server Disconnected"
+          : "Reconnect Needed",
+      detail:
+        streamStateReason === "gateway_server_disconnected"
+          ? "Gateway API socket is open, but Gateway is disconnected from IBKR servers"
+          : streamStateReason === "gateway_socket_disconnected"
+            ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
+            : "Reconnect IBKR to attach the current Gateway tunnel",
+      color: tokenColor,
+      background: tokenBackground,
+      Icon: PlugZap,
+      wave: "flat",
+      badge: STREAM_STATE_LABEL[state],
+      pulse: true,
+    };
+  }
+
+  switch (state) {
+    case "healthy":
       return {
         label: "online",
-        status: "ready",
+        status: state,
         healthLabel: "Ready",
         detail: "Gateway is authenticated and live stream events are current",
-        color: T.green,
-        background: T.greenBg,
+        color: tokenColor,
+        background: tokenBackground,
         Icon: CircleCheck,
         wave: "fast",
-        badge: "LIVE",
+        badge: STREAM_STATE_LABEL[state],
       };
     case "quiet":
       return {
         label: "quiet stream",
-        status: "quiet",
+        status: state,
         healthLabel: "Quiet Stream",
         detail: "Gateway is authenticated; stream is quiet for an unspecified reason",
-        color: T.green,
-        background: T.greenBg,
+        color: tokenColor,
+        background: tokenBackground,
         Icon: RadioTower,
         wave: "slow",
-        badge: "QUIET STREAM",
+        badge: STREAM_STATE_LABEL[state],
       };
     case "stale":
       return {
         label: "stale",
-        status: "stale_stream",
+        status: state,
         healthLabel: "Stale Stream",
         detail: "Gateway is authenticated but stream events are stale",
-        color: T.amber,
-        background: T.amberBg,
+        color: tokenColor,
+        background: tokenBackground,
         Icon: Activity,
         wave: "flat",
-        badge: "STALE",
+        badge: STREAM_STATE_LABEL[state],
         pulse: true,
       };
-    case "capacity_limited":
+    case "capacity-limited":
       return {
         label: "capacity limited",
-        status: "capacity_limited",
+        status: state,
         healthLabel: "Capacity Limited",
         detail:
           "Gateway is connected; live market data requests are waiting for available IBKR lines",
-        color: T.amber,
-        background: T.amberBg,
+        color: tokenColor,
+        background: tokenBackground,
         Icon: CircleAlert,
         wave: "slow",
-        badge: "CAPACITY",
+        badge: STREAM_STATE_LABEL[state],
         pulse: true,
       };
     case "reconnecting":
       return {
         label: "reconnecting",
-        status: "reconnecting",
+        status: state,
         healthLabel: "Reconnecting",
         detail: "Gateway is authenticated and the quote stream is reconnecting",
-        color: T.amber,
-        background: T.amberBg,
+        color: tokenColor,
+        background: tokenBackground,
         Icon: PlugZap,
         wave: "slow",
-        badge: "RETRY",
+        badge: STREAM_STATE_LABEL[state],
         pulse: true,
       };
-    case "reconnect_needed":
+    case "delayed":
+      return {
+        label: "delayed",
+        status: state,
+        healthLabel: "Delayed",
+        detail: "Gateway is authenticated but live market data is not available",
+        color: tokenColor,
+        background: tokenBackground,
+        Icon: Activity,
+        wave: "flat",
+        badge: STREAM_STATE_LABEL[state],
+      };
+    case "login-required":
+      return {
+        label: "login",
+        status: state,
+        healthLabel: "Login Required",
+        detail: "Bridge is reachable but Gateway is not authenticated",
+        color: tokenColor,
+        background: tokenBackground,
+        Icon: PlugZap,
+        wave: "medium",
+        badge: STREAM_STATE_LABEL[state],
+      };
+    case "checking":
+      return {
+        label: "checking",
+        status: state,
+        healthLabel: "Checking",
+        detail: "Gateway is authenticated; waiting for account and stream proof",
+        color: tokenColor,
+        background: tokenBackground,
+        Icon: Activity,
+        wave: "flat",
+        badge: STREAM_STATE_LABEL[state],
+      };
+    case "offline":
+      return {
+        label: "offline",
+        status: state,
+        healthLabel: "Offline",
+        detail: "Gateway bridge is not reachable",
+        color: tokenColor,
+        background: tokenBackground,
+        Icon: CircleOff,
+        wave: "flat",
+        badge: STREAM_STATE_LABEL[state],
+      };
+    default:
       return {
         label:
           streamStateReason === "gateway_server_disconnected"
             ? "server disconnected"
             : "reconnect",
-        status: "reconnect_needed",
+        status: "reconnecting",
         healthLabel:
           streamStateReason === "gateway_server_disconnected"
             ? "Server Disconnected"
@@ -341,63 +434,13 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
             : streamStateReason === "gateway_socket_disconnected"
               ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
               : "Reconnect IBKR to attach the current Gateway tunnel",
-        color: T.amber,
-        background: T.amberBg,
+        color: streamStateTokenVar("reconnecting"),
+        background: streamStateBackgroundVar("reconnecting"),
         Icon: PlugZap,
         wave: "flat",
-        badge: "RECONNECT",
+        badge: STREAM_STATE_LABEL.reconnecting,
         pulse: true,
       };
-    case "delayed":
-      return {
-        label: "delayed",
-        status: "delayed",
-        healthLabel: "Delayed",
-        detail: "Gateway is authenticated but live market data is not available",
-        color: T.amber,
-        background: T.amberBg,
-        Icon: Activity,
-        wave: "flat",
-        badge: "DELAYED",
-      };
-    case "login_required":
-      return {
-        label: "login",
-        status: "login_required",
-        healthLabel: "Login Required",
-        detail: "Bridge is reachable but Gateway is not authenticated",
-        color: T.amber,
-        background: T.amberBg,
-        Icon: PlugZap,
-        wave: "medium",
-        badge: "LOGIN",
-      };
-    case "checking":
-      return {
-        label: "checking",
-        status: "checking",
-        healthLabel: "Checking",
-        detail: "Gateway is authenticated; waiting for account and stream proof",
-        color: T.accent,
-        background: `${T.accent}14`,
-        Icon: Activity,
-        wave: "flat",
-        badge: "CHECKING",
-      };
-    case "offline":
-      return {
-        label: "offline",
-        status: "offline",
-        healthLabel: "Offline",
-        detail: "Gateway bridge is not reachable",
-        color: T.red,
-        background: T.redBg,
-        Icon: CircleOff,
-        wave: "flat",
-        badge: "OFFLINE",
-      };
-    default:
-      return null;
   }
 };
 
@@ -426,7 +469,7 @@ export const getIbkrConnectionTone = (connection) => {
     proof.streamState,
     proof.streamStateReason,
   );
-  if (streamMeta?.status === "reconnect_needed") {
+  if (streamMeta?.status === "reconnecting") {
     return {
       label: streamMeta.label,
       color: streamMeta.color,
@@ -438,9 +481,9 @@ export const getIbkrConnectionTone = (connection) => {
 
   const streamHasCurrentEvidence =
     proof.streamFresh === true ||
-    proof.streamState === "live" ||
-    proof.streamState === "quiet" ||
-    proof.streamState === "capacity_limited";
+    ["healthy", "quiet", "capacity-limited"].includes(
+      canonicalizeStreamState(proof.streamState, "offline"),
+    );
 
   if (
     proof.healthFresh === false &&
@@ -554,6 +597,7 @@ export const isIbkrWaveActive = (connection) => {
   }
 
   const proof = resolveConnectionProof(connection);
+  const streamState = canonicalizeStreamState(proof.streamState, "offline");
   const connected = Boolean(
     proof.healthFresh === true &&
       proof.authenticated === true &&
@@ -567,8 +611,8 @@ export const isIbkrWaveActive = (connection) => {
   return Boolean(
     proof.strictReady === true ||
       (connected &&
-        (proof.streamState === "live" ||
-          proof.streamState === "quiet" ||
+        (streamState === "healthy" ||
+          streamState === "quiet" ||
           isQuoteStandbyState(proof))),
   );
 };
@@ -609,11 +653,12 @@ export const resolveIbkrGatewayHealth = ({
     runtime?.liveMarketDataAvailable,
   );
   const proof = resolveConnectionProof(connection, runtime);
+  const streamState = canonicalizeStreamState(proof.streamState, "offline");
   const streamHasCurrentEvidence =
     proof.streamFresh === true ||
-    proof.streamState === "live" ||
-    proof.streamState === "quiet" ||
-    proof.streamState === "capacity_limited";
+    streamState === "healthy" ||
+    streamState === "quiet" ||
+    streamState === "capacity-limited";
 
   if (!configured || bridgeUrlConfigured === false) {
     return {
@@ -664,7 +709,7 @@ export const resolveIbkrGatewayHealth = ({
       proof.streamStateReason,
     );
     return {
-      status: streamMeta?.status || "reconnect_needed",
+      status: streamMeta?.status || "reconnecting",
       label: streamMeta?.healthLabel || "Reconnect Needed",
       color: streamMeta?.color || T.amber,
       detail:
@@ -681,7 +726,7 @@ export const resolveIbkrGatewayHealth = ({
       proof.streamStateReason,
     );
     return {
-      status: "reconnect_needed",
+      status: "reconnecting",
       label: streamMeta?.healthLabel || "Server Disconnected",
       color: streamMeta?.color || T.amber,
       detail:
@@ -692,9 +737,9 @@ export const resolveIbkrGatewayHealth = ({
 
   if (!authenticated) {
     return {
-      status: "login_required",
+      status: "login-required",
       label: "Login Required",
-      color: T.amber,
+      color: streamStateTokenVar("login-required"),
       detail: "Bridge is reachable but Gateway is not authenticated",
     };
   }
@@ -703,7 +748,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "checking",
       label: "Checking",
-      color: T.accent,
+      color: streamStateTokenVar("checking"),
       detail: "Gateway is authenticated; waiting for account and stream proof",
     };
   }
@@ -715,7 +760,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "delayed",
       label: "Delayed",
-      color: T.amber,
+      color: streamStateTokenVar("delayed"),
       detail: "Gateway is authenticated but live market data is not available",
     };
   }
@@ -724,7 +769,7 @@ export const resolveIbkrGatewayHealth = ({
     proof.streamState,
     proof.streamStateReason,
   );
-  if (streamMeta && streamMeta.status !== "login_required" && streamMeta.status !== "offline") {
+  if (streamMeta && streamMeta.status !== "login-required" && streamMeta.status !== "offline") {
     return {
       status: streamMeta.status,
       label: streamMeta.healthLabel,
@@ -735,17 +780,17 @@ export const resolveIbkrGatewayHealth = ({
 
   if (proof.strictReady !== true) {
     return {
-      status: "stale_stream",
+      status: "stale",
       label: "Stale Stream",
-      color: T.amber,
+      color: streamStateTokenVar("stale"),
       detail: "Gateway is authenticated but fresh stream events are not confirmed",
     };
   }
 
   return {
-    status: "ready",
+    status: "healthy",
     label: "Ready",
-    color: T.green,
+    color: streamStateTokenVar("healthy"),
     detail: "Gateway is authenticated and live data is available",
   };
 };
@@ -824,33 +869,39 @@ export const getIbkrGatewayBadges = ({
 } = {}) => {
   const status = health || resolveIbkrGatewayHealth({ connection, runtime });
   const badges = [];
-
-  if (status.status === "ready") {
-    badges.push({ label: "LIVE", color: T.green, background: T.greenBg });
-  } else if (status.status === "quote_standby" || status.status === "idle") {
-    badges.push({ label: "NO SUBS", color: T.green, background: T.greenBg });
-  } else if (status.status === "market_closed") {
-    badges.push({ label: "CLOSED", color: T.textSec, background: T.bg2 });
-  } else if (status.status === "quiet") {
-    badges.push({ label: "QUIET STREAM", color: T.textSec, background: T.bg2 });
-  } else if (status.status === "checking") {
+  const pushStreamBadge = (state) => {
+    const canonicalState = canonicalizeStreamState(state, "offline");
     badges.push({
-      label: "CHECKING",
-      color: T.accent,
-      background: `${T.accent}14`,
+      label: STREAM_STATE_LABEL[canonicalState],
+      color: streamStateTokenVar(canonicalState),
+      background: streamStateBackgroundVar(canonicalState),
     });
-  } else if (status.status === "delayed") {
-    badges.push({ label: "DELAYED", color: T.amber, background: T.amberBg });
-  } else if (status.status === "stale" || status.status === "stale_stream") {
-    badges.push({ label: "STALE", color: T.amber, background: T.amberBg });
-  } else if (status.status === "capacity_limited") {
-    badges.push({ label: "CAPACITY", color: T.amber, background: T.amberBg });
-  } else if (status.status === "reconnecting") {
-    badges.push({ label: "RETRY", color: T.amber, background: T.amberBg });
-  } else if (status.status === "reconnect_needed") {
-    badges.push({ label: "RECONNECT", color: T.amber, background: T.amberBg });
-  } else if (status.status === "login_required") {
-    badges.push({ label: "LOGIN", color: T.amber, background: T.amberBg });
+  };
+
+  if (
+    [
+      "healthy",
+      "ready",
+      "no-subscribers",
+      "quote_standby",
+      "idle",
+      "market-closed",
+      "market_closed",
+      "quiet",
+      "checking",
+      "delayed",
+      "stale",
+      "stale_stream",
+      "capacity-limited",
+      "capacity_limited",
+      "reconnecting",
+      "reconnect_needed",
+      "login-required",
+      "login_required",
+      "offline",
+    ].includes(status.status)
+  ) {
+    pushStreamBadge(status.status);
   } else if (status.status === "competing") {
     badges.push({ label: "COMPETE", color: T.red, background: T.redBg });
   }
@@ -861,10 +912,11 @@ export const getIbkrGatewayBadges = ({
     latencyStats?.stream?.dataGapCount ??
     latencyStats?.stream?.streamGapCount;
   if (Number.isFinite(gapCount) && gapCount > 0) {
+    const gapState = gapCount > 3 ? "offline" : "stale";
     badges.push({
       label: `GAPS ${Math.round(gapCount)}`,
-      color: gapCount > 3 ? T.red : T.amber,
-      background: gapCount > 3 ? T.redBg : T.amberBg,
+      color: streamStateTokenVar(gapState),
+      background: streamStateBackgroundVar(gapState),
     });
   }
 
@@ -977,7 +1029,7 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
   const duration = resolveWaveDuration(connection, tone);
   const prefersReducedMotion = usePrefersReducedMotion();
   const active = Boolean(duration) && !prefersReducedMotion;
-  const color = active ? T.green : tone.color || T.textMuted;
+  const color = active ? streamStateTokenVar("healthy") : tone.color || T.textMuted;
   const staticPoints = active ? SINE_WAVE_PHASES[0] : buildSineWavePoints(0);
 
   return (
@@ -1064,11 +1116,14 @@ export const IbkrConnectionLane = ({
   return (
     <AppTooltip content={buildIbkrGatewayTitle({ label, connection, tone })}><div
       style={{
-        display: "grid",
-        gridTemplateColumns: compact ? "auto 1fr auto" : "auto 1fr auto auto",
+        display: "inline-flex",
         alignItems: "center",
-        gap: sp(6),
+        gap: sp(7),
+        padding: sp("4px 10px"),
         minWidth: compact ? dim(112) : dim(150),
+        background: `${tone.color}10`,
+        borderRadius: dim(999),
+        whiteSpace: "nowrap",
       }}
     >
       <Icon size={dim(13)} strokeWidth={2.2} color={tone.color} />
@@ -1079,22 +1134,25 @@ export const IbkrConnectionLane = ({
           gap: sp(5),
           minWidth: 0,
           color: T.text,
-          fontSize: fs(9),
-          fontWeight: 400,
+          fontSize: fs(10),
+          fontWeight: 500,
           fontFamily: T.sans,
-          letterSpacing: "0.04em",
+          letterSpacing: "0.02em",
           whiteSpace: "nowrap",
+          flex: 1,
         }}
       >
         {label}
         <span
           style={{
             color: tone.color,
-            fontSize: fs(8),
-            fontWeight: 400,
+            fontSize: fs(9),
+            fontWeight: 500,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
           }}
         >
-          {tone.label.toUpperCase()}
+          {tone.label}
         </span>
       </span>
       <IbkrPingWavelength connection={connection} tone={tone} />
@@ -1102,11 +1160,13 @@ export const IbkrConnectionLane = ({
         <span
           style={{
             color: T.textDim,
-            fontSize: fs(8),
-            fontFamily: T.mono,
+            fontSize: fs(9),
+            fontFamily: T.sans,
+            fontWeight: 500,
             textAlign: "right",
             minWidth: dim(34),
             whiteSpace: "nowrap",
+            fontVariantNumeric: "tabular-nums",
           }}
         >
           {formatIbkrPingMs(connection?.lastPingMs)}

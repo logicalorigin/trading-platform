@@ -193,7 +193,7 @@ export const MiniChartPremiumFlowIndicator = ({
         gap: dense ? 2 : 3,
         alignItems: "center",
         padding: dense ? "3px 6px" : "4px 8px",
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         overflow: "hidden",
       }}
     >

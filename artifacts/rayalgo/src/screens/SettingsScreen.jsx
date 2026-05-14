@@ -54,6 +54,8 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import { MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
+import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
+import { Button } from "../components/ui/Button.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 
@@ -223,29 +225,31 @@ function writeWorkspaceState(patch) {
 
 function smallButton({ active = false, danger = false } = {}) {
   return {
-    border: `1px solid ${danger ? T.red : active ? T.green : T.border}`,
+    border: "none",
     background: danger ? `${T.red}18` : active ? T.greenBg : T.bg2,
-    color: danger ? T.red : active ? T.green : T.textSec,
-    borderRadius: dim(4),
-    padding: sp("6px 9px"),
-    fontFamily: T.mono,
-    fontSize: fs(9),
-    fontWeight: 400,
+    color: danger ? T.red : active ? T.green : T.text,
+    borderRadius: 999,
+    padding: sp("6px 12px"),
+    fontFamily: T.sans,
+    fontSize: fs(10),
+    fontWeight: active || danger ? 600 : 500,
+    letterSpacing: "0.02em",
     cursor: "pointer",
   };
 }
 
 function inputStyle() {
   return {
-    border: `1px solid ${T.border}`,
-    background: T.bg0,
+    border: "none",
+    background: T.bg2,
     color: T.text,
-    borderRadius: dim(4),
-    padding: sp("7px 8px"),
-    fontFamily: T.mono,
-    fontSize: fs(10),
+    borderRadius: dim(8),
+    padding: sp("8px 10px"),
+    fontFamily: T.sans,
+    fontSize: fs(11),
     minWidth: 0,
     width: "100%",
+    outline: "none",
   };
 }
 
@@ -255,7 +259,7 @@ function labelStyle() {
     flexDirection: "column",
     gap: sp(4),
     color: T.textDim,
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(9),
     fontWeight: 400,
     minWidth: 0,
@@ -267,12 +271,13 @@ function Panel({ title, action, children }) {
     <section
       className="ra-panel-enter"
       style={{
-        border: `1px solid ${T.border}`,
+        border: "none",
         background: T.bg1,
-        borderRadius: dim(6),
-        padding: sp("8px 10px"),
+        borderRadius: dim(12),
+        padding: sp("14px 16px"),
         minWidth: 0,
         alignSelf: "start",
+        boxShadow: "0 1px 2px rgba(17, 17, 17, 0.04)",
       }}
     >
       <div
@@ -284,7 +289,7 @@ function Panel({ title, action, children }) {
           marginBottom: sp(10),
         }}
       >
-        <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
+        <div style={{ fontSize: fs(14), fontWeight: 600, letterSpacing: "-0.01em" }}>{title}</div>
         {action}
       </div>
       {children}
@@ -302,7 +307,7 @@ function StateRow({ label, value, tone = T.textSec }) {
         gap: sp(10),
         borderBottom: `1px solid ${T.border}55`,
         padding: sp("7px 0"),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(10),
       }}
     >
@@ -389,7 +394,7 @@ function JsonBlock({ value }) {
         margin: 0,
         maxHeight: dim(300),
         overflow: "auto",
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(9),
         color: T.textSec,
         whiteSpace: "pre-wrap",
@@ -419,7 +424,7 @@ function SourceBadge({ setting }) {
         background: T.bg2,
         borderRadius: dim(4),
         padding: sp("2px 5px"),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(8),
         fontWeight: 400,
         textTransform: "uppercase",
@@ -437,10 +442,10 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
   return (
     <div
       style={{
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(5),
+        border: "none",
+        borderRadius: dim(10),
         background: T.bg2,
-        padding: sp("7px 8px"),
+        padding: sp("8px 10px"),
         display: "grid",
         gap: sp(5),
         alignSelf: "start",
@@ -452,7 +457,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
         </div>
         <SourceBadge setting={setting} />
       </div>
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), lineHeight: 1.45 }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), lineHeight: 1.45 }}>
         {setting.description}
       </div>
       {editable ? (
@@ -468,17 +473,17 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
           ))}
         </select>
       ) : (
-        <div style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(10), overflowWrap: "anywhere" }}>
+        <div style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(10), overflowWrap: "anywhere" }}>
           {displayValue ?? MISSING_VALUE}
         </div>
       )}
       {setting.pendingValue !== undefined && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9) }}>
           Pending restart: {String(setting.pendingValue)}
         </div>
       )}
       {setting.requiresRestart && (
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), textTransform: "uppercase" }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), textTransform: "uppercase" }}>
           restart required
         </div>
       )}
@@ -1095,11 +1100,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       }
     >
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: sp(14) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(14) }}>
         <div>
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
@@ -1137,14 +1142,14 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
       </div>
       {lineUsage.rows.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {lineUsage.rows.map((pool) => (
-            <div key={pool.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
+            <div key={pool.id} style={{ border: "none", borderRadius: dim(10), padding: sp(10), background: T.bg2 }}>
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{pool.label}</div>
-              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(11), fontWeight: 400, marginTop: sp(4) }}>
+              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(pool.used)} / {formatCount(pool.cap)}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(3) }}>
                 {pool.strict ? "hard cap" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
@@ -1153,14 +1158,14 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
       )}
       {governorRows.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {governorRows.map(([id, lane]) => (
-            <div key={id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
+            <div key={id} style={{ border: "none", borderRadius: dim(10), padding: sp(10), background: T.bg2 }}>
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{id}</div>
-              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(10), fontWeight: 400, marginTop: sp(4) }}>
+              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(3) }}>
                 {lane.circuitOpen ? `backoff ${formatCount(lane.backoffRemainingMs)}ms` : lane.lastFailure || "ready"}
               </div>
             </div>
@@ -1216,8 +1221,8 @@ function StoragePrunePanel() {
         </button>
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 220px) 1fr", gap: sp(10), alignItems: "end" }}>
-        <label style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(160)}px, ${dim(220)}px) 1fr`, gap: sp(10), alignItems: "end" }}>
+        <label style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
           Older Than Days
           <input
             type="number"
@@ -1227,7 +1232,7 @@ function StoragePrunePanel() {
             style={{ ...inputStyle(), marginTop: sp(4) }}
           />
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: sp(7), color: T.textSec, fontFamily: T.mono, fontSize: fs(10) }}>
+        <label style={{ display: "flex", alignItems: "center", gap: sp(7), color: T.textSec, fontFamily: T.sans, fontSize: fs(10) }}>
           <input
             type="checkbox"
             checked={dryRun}
@@ -1236,7 +1241,7 @@ function StoragePrunePanel() {
           Dry-run only
         </label>
       </div>
-      {error && <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginTop: sp(10) }}>{error}</div>}
+      {error && <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginTop: sp(10) }}>{error}</div>}
       {result && (
         <div style={{ marginTop: sp(12) }}>
           <JsonBlock value={result} />
@@ -1260,7 +1265,7 @@ function BrowserStorageFootprintPanel() {
         </button>
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: sp(10), marginBottom: sp(12) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10), marginBottom: sp(12) }}>
         <StateRow
           label="Local storage"
           value={`${formatBytes(storage.snapshot.local.totalBytes)} / ${storage.snapshot.local.count} keys`}
@@ -1272,9 +1277,9 @@ function BrowserStorageFootprintPanel() {
           tone={T.textSec}
         />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: sp(12) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(12) }}>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
             Largest Local Keys
           </div>
           {localEntries.map((entry) => (
@@ -1283,7 +1288,7 @@ function BrowserStorageFootprintPanel() {
           {!localEntries.length && <StateRow label="No local storage keys" value="empty" />}
         </div>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
             Largest Session Keys
           </div>
           {sessionEntries.map((entry) => (
@@ -1327,14 +1332,14 @@ function AppPreferencesPanel({
 }) {
   return (
     <Panel title="App Preferences">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: sp(10) }}>
-        <div style={{ border: `1px solid ${T.border}`, background: T.bg2, borderRadius: dim(5), padding: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ border: "none", background: T.bg2, borderRadius: dim(10), padding: sp(10) }}>
           <StateRow label="Theme" value={theme} />
           <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
             Switch to {theme === "dark" ? "light" : "dark"}
           </button>
         </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.bg2, borderRadius: dim(5), padding: sp(10) }}>
+        <div style={{ border: "none", background: T.bg2, borderRadius: dim(10), padding: sp(10) }}>
           <StateRow label="Sidebar" value={sidebarCollapsed ? "collapsed" : "expanded"} />
           <button type="button" onClick={onToggleSidebar} style={smallButton()}>
             {sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -1371,11 +1376,11 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         }
       >
         {userPreferences.error && (
-          <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
             {userPreferences.error}
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(10) }}>
           <StateRow label="Source" value={userPreferences.snapshot?.source || "local"} tone={userPreferences.snapshot?.source === "database" ? T.green : T.amber} />
           <StateRow label="Status" value={userPreferences.saving ? "saving" : userPreferences.loading ? "loading" : "synced"} tone={userPreferences.saving || userPreferences.loading ? T.amber : T.green} />
           <StateRow label="App time" value={formatPreferenceTimeZoneLabel(prefs, "app")} />
@@ -1384,7 +1389,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Appearance">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
           <SelectField
             label="Theme"
             value={prefs.appearance.theme}
@@ -1418,7 +1423,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Time Display">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
           <SelectField
             label="App Time Zone"
             value={prefs.time.appTimeZoneMode}
@@ -1472,7 +1477,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Privacy">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
           <CheckboxField
             label="Hide account values"
             checked={prefs.privacy.hideAccountValues}
@@ -1501,7 +1506,7 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
 
   return (
     <Panel title="Chart Display">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
         <SelectField
           label="Status Line"
           value={chart.statusLineDetail}
@@ -1571,7 +1576,7 @@ function WorkspaceProfilePreferencesPanel({ userPreferences }) {
 
   return (
     <Panel title="Synced Workspace Profile">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
         <SelectField
           label="Default Screen"
           value={workspace.defaultScreen}
@@ -1642,7 +1647,7 @@ function NotificationPreferencePanel({ userPreferences }) {
   return (
     <div style={{ display: "grid", gap: sp(14) }}>
       <Panel title="Notifications">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
           <SelectField
             label="Desktop"
             value={notifications.desktopNotifications}
@@ -1677,7 +1682,7 @@ function NotificationPreferencePanel({ userPreferences }) {
         </div>
       </Panel>
       <Panel title="Trading Display">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
           <CheckboxField label="Confirm orders" checked={trading.confirmOrders} onChange={(value) => patchTrading({ confirmOrders: value })} />
           <CheckboxField label="Execution markers" checked={trading.showExecutionMarkers} onChange={(value) => patchTrading({ showExecutionMarkers: value })} />
           <CheckboxField label="Position lines" checked={trading.showPositionLines} onChange={(value) => patchTrading({ showPositionLines: value })} />
@@ -1713,7 +1718,7 @@ function ChartTimeframeFavoritesPanel() {
 
   return (
     <Panel title="Chart Timeframe Favorites">
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
         Controls the quick-pick timeframe buttons used by the primary chart, market grid charts, and option charts.
       </div>
       <div style={{ display: "grid", gap: sp(12) }}>
@@ -1724,9 +1729,9 @@ function ChartTimeframeFavoritesPanel() {
             <div
               key={role.value}
               style={{
-                border: `1px solid ${T.border}`,
+                border: "none",
                 background: T.bg2,
-                borderRadius: dim(5),
+                borderRadius: dim(10),
                 padding: sp(10),
                 display: "grid",
                 gap: sp(8),
@@ -1781,10 +1786,10 @@ function DiagnosticAlertPreferencesPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
         Controls the local browser alert state used by Diagnostics for crash-risk, cache, and memory warnings.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
         <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
           <input
             type="checkbox"
@@ -1880,10 +1885,10 @@ function WorkspaceDefaultsPanel() {
           </button>
         }
       >
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           These settings update the same workspace state read by the app. Mounted screens may need a revisit or reload to pick up default-only values.
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
           <SelectField
             label="Header Tape Speed"
             value={headerPreset}
@@ -2099,10 +2104,10 @@ function FlowScannerSettingsPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
         Shared with the header flow scan controls and persisted in the app workspace state.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(10) }}>
         <SelectField
           label="Universe"
           value={config.mode}
@@ -2162,16 +2167,16 @@ function SignalMonitorSettingsPanel({ watchlists }) {
         }
       >
         {monitor.error && (
-          <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
             {monitor.error}
           </div>
         )}
         {!draft ? (
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
             Loading signal monitor profile.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: sp(10) }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(10) }}>
             <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
               <input
                 type="checkbox"
@@ -2234,7 +2239,7 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(135)}px, 1fr))`,
         gap: sp(8),
         marginBottom: sp(14),
       }}
@@ -2243,19 +2248,19 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
         <div
           key={item.label}
           style={{
-            border: `1px solid ${T.border}`,
+            border: "none",
             background: T.bg1,
-            borderRadius: dim(5),
-            padding: sp("8px 10px"),
+            borderRadius: dim(10),
+            padding: sp("10px 12px"),
             display: "grid",
             gap: sp(3),
             minWidth: 0,
           }}
         >
-          <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
+          <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
             {item.label}
           </span>
-          <span style={{ color: item.tone, fontFamily: T.mono, fontSize: fs(11), fontWeight: 400 }}>
+          <span style={{ color: item.tone, fontFamily: T.sans, fontSize: fs(11), fontWeight: 400 }}>
             {item.value}
           </span>
         </div>
@@ -2270,7 +2275,7 @@ function ResearchProviderPanel({ backendSnapshot }) {
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           {research.error}
         </div>
       )}
@@ -2329,7 +2334,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
         </button>
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: sp(8) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
         <StateRow label="Override" value={active ? "active" : "inactive"} tone={active ? T.amber : T.green} />
         <StateRow
           label="Last clear"
@@ -2344,7 +2349,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
         />
       </div>
       {error ? (
-        <div style={{ marginTop: sp(8), color: T.red, fontFamily: T.mono, fontSize: fs(9) }}>
+        <div style={{ marginTop: sp(8), color: T.red, fontFamily: T.sans, fontSize: fs(9) }}>
           {error}
         </div>
       ) : null}
@@ -2375,11 +2380,11 @@ function SettingsInventoryPanel() {
             key={area}
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`,
               gap: sp(10),
               borderBottom: `1px solid ${T.border}55`,
               padding: sp("8px 0"),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(9),
             }}
           >
@@ -2406,7 +2411,7 @@ function FooterMemorySignalSettingsPanel() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`,
             gap: sp(8),
           }}
         >
@@ -2504,6 +2509,11 @@ export default function SettingsScreen({
   const [settingsRootRef, settingsRootSize] = useElementSize();
   const { isPhone: settingsIsPhone, isNarrow: settingsIsNarrow } =
     responsiveFlags(settingsRootSize.width);
+  const settingsShellGridTemplate = settingsIsPhone
+    ? "minmax(0, 1fr)"
+    : settingsIsNarrow
+      ? "minmax(160px, 210px) minmax(0, 1fr)"
+      : "minmax(190px, 230px) minmax(0, 1fr)";
   const [activeTab, setActiveTab] = useState(SETTINGS_TABS[0].id);
   const [settingsSearch, setSettingsSearch] = useState("");
   const backend = useBackendSettings();
@@ -2537,7 +2547,7 @@ export default function SettingsScreen({
   }, [settingsSearch]);
 
   const renderSettingGrid = (group) => (
-    <div style={{ display: "grid", gridTemplateColumns: settingsIsPhone ? "minmax(0, 1fr)" : "repeat(auto-fit, minmax(min(100%, 270px), 1fr))", gap: sp(8), alignItems: "start" }}>
+    <div style={{ display: "grid", gridTemplateColumns: settingsIsPhone ? "minmax(0, 1fr)" : `repeat(auto-fit, minmax(min(100%, ${dim(270)}px), 1fr))`, gap: sp(8), alignItems: "start" }}>
       {(settingsByGroup.get(group) || []).map((setting) => (
         <SettingCard
           key={setting.key}
@@ -2560,53 +2570,51 @@ export default function SettingsScreen({
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(settingsIsPhone ? 6 : 10),
+        padding: sp(settingsIsPhone ? "12px 12px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: sp(12),
-          marginBottom: sp(14),
-          flexDirection: settingsIsPhone ? "column" : "row",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: fs(18), fontWeight: 400 }}>Settings</div>
-          <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
-            Backend operational controls, guarded applies, restart-required runtime state
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: settingsIsPhone ? "flex-start" : "flex-end", width: settingsIsPhone ? "100%" : undefined }}>
-          <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.mono, fontSize: fs(10), fontWeight: 400 }}>
-            {summary.pendingRestartCount || 0} pending restart
-          </span>
-          <button type="button" onClick={backend.reload} disabled={backend.loading} style={smallButton()}>
-            Refresh
-          </button>
-          <button type="button" onClick={backend.discard} disabled={backend.dirtyCount === 0 || backend.saving} style={smallButton()}>
-            Discard
-          </button>
-          <button
-            type="button"
-            onClick={backend.apply}
-            disabled={backend.dirtyCount === 0 || backend.saving}
-            style={{
-              ...smallButton({ active: backend.dirtyCount > 0 }),
-              opacity: backend.dirtyCount > 0 ? 1 : 0.55,
-            }}
-          >
-            {backend.saving ? "Applying" : `Apply ${backend.dirtyCount || ""}`.trim()}
-          </button>
-        </div>
-      </div>
+      <CockpitHeader
+        eyebrow="System"
+        title="Settings"
+        subtitle="Backend operational controls, guarded applies, restart-required runtime state"
+        actions={
+          <>
+            <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400 }}>
+              {summary.pendingRestartCount || 0} pending restart
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={backend.reload}
+              disabled={backend.loading}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={backend.discard}
+              disabled={backend.dirtyCount === 0 || backend.saving}
+            >
+              Discard
+            </Button>
+            <Button
+              variant={backend.dirtyCount > 0 ? "primary" : "secondary"}
+              size="sm"
+              onClick={backend.apply}
+              disabled={backend.dirtyCount === 0 || backend.saving}
+              loading={backend.saving}
+            >
+              {backend.saving ? "Applying" : `Apply ${backend.dirtyCount || ""}`.trim()}
+            </Button>
+          </>
+        }
+      />
 
       {backend.error && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           {backend.error}
         </div>
       )}
@@ -2616,9 +2624,7 @@ export default function SettingsScreen({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: settingsIsNarrow
-            ? "minmax(0, 1fr)"
-            : "minmax(190px, 230px) minmax(0, 1fr)",
+          gridTemplateColumns: settingsShellGridTemplate,
           gap: sp(14),
           alignItems: "start",
           minWidth: 0,
@@ -2626,14 +2632,15 @@ export default function SettingsScreen({
       >
         <aside
           style={{
-            border: `1px solid ${T.border}`,
+            border: "none",
             background: T.bg1,
-            borderRadius: dim(6),
-            padding: sp(10),
+            borderRadius: dim(12),
+            padding: sp(12),
             display: "grid",
             gap: sp(8),
-            position: settingsIsNarrow ? "relative" : "sticky",
-            top: settingsIsNarrow ? undefined : sp(10),
+            boxShadow: "0 1px 2px rgba(17, 17, 17, 0.04)",
+            position: settingsIsPhone ? "relative" : "sticky",
+            top: settingsIsPhone ? undefined : sp(10),
             minWidth: 0,
           }}
         >
@@ -2652,25 +2659,27 @@ export default function SettingsScreen({
               type="button"
               onClick={() => setActiveTab(tab.id)}
               style={{
-                border: `1px solid ${activeTab === tab.id ? T.green : T.border}`,
-                background: activeTab === tab.id ? T.greenBg : T.bg2,
-                color: activeTab === tab.id ? T.green : T.textSec,
-                borderRadius: dim(4),
-                padding: sp("8px 9px"),
+                border: "none",
+                background: activeTab === tab.id ? T.bg2 : "transparent",
+                color: activeTab === tab.id ? T.text : T.textSec,
+                fontWeight: activeTab === tab.id ? 600 : 500,
+                borderRadius: 999,
+                padding: sp("8px 12px"),
                 textAlign: "left",
                 cursor: "pointer",
+                fontFamily: T.sans,
               }}
             >
-              <div style={{ fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+              <div style={{ fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
                 {tab.label}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(2) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(2) }}>
                 {tab.description}
               </div>
             </button>
           ))}
           {!visibleTabs.length && (
-            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), padding: sp(8) }}>
+            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), padding: sp(8) }}>
               No matching sections
             </div>
           )}
@@ -2748,7 +2757,7 @@ export default function SettingsScreen({
 
           {activeTab === "System" && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: sp(10) }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(10) }}>
                 <Panel title="Runtime">
                   <StateRow label="Trading mode" value={summary.tradingMode} tone={summary.tradingMode === "live" ? T.red : T.green} />
                   <StateRow label="Diagnostics" value={summary.diagnosticsStatus} />
@@ -2793,7 +2802,7 @@ export default function SettingsScreen({
                     style={{
                       color: T.textSec,
                       cursor: "pointer",
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       fontSize: fs(10),
                       fontWeight: 400,
                     }}

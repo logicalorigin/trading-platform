@@ -1,4 +1,5 @@
-import { MISSING_VALUE, T } from "../../lib/uiTokens.jsx";
+import { MISSING_VALUE } from "../../lib/uiTokens.jsx";
+import { streamStateTokenVar } from "./streamSemantics";
 
 export const RUNTIME_CONTROL_SCHEMA_VERSION = 1;
 export const DEFAULT_ACCOUNT_MONITOR_LINE_CAP = 20;
@@ -35,18 +36,12 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   if (skipReason) {
     return `skipped: ${skipReason}`;
   }
-  const promotedCount = Array.isArray(scanner.promotedSymbols)
-    ? scanner.promotedSymbols.length
-    : 0;
   if (Number.isFinite(used) && used === 0) {
     if (scanner.deepScanner?.draining) {
       return "deep scan queued";
     }
-    if (promotedCount > 0) {
-      return `${promotedCount} promoted; waiting for quotes`;
-    }
-    if (scanner.radarEnabled) {
-      return "radar scanning; no active quote leases";
+    if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
+      return "last scan complete; no active quote leases";
     }
     return "no active quote leases";
   }
@@ -64,13 +59,10 @@ export const isOptionsFlowScannerRuntimeActive = (admission) => {
 
   return Boolean(
     scanner.started ||
-      scanner.radarEnabled ||
       scanner.scannerAlwaysOn ||
-      scanner.radar?.enabled ||
       scanner.deepScanner?.draining ||
       scanner.deepScanner?.queuedCount > 0 ||
       scanner.deepScanner?.lastRunAt ||
-      scanner.radar?.lastScanAt ||
       scanner.lastBatch?.length,
   );
 };
@@ -80,16 +72,18 @@ export const formatRuntimeCount = (value) =>
     ? Math.max(0, Math.round(value)).toLocaleString()
     : MISSING_VALUE;
 
-export const lineUsageTone = (used, cap, degraded = false) => {
-  if (degraded) return T.red;
+export const lineUsageState = (used, cap, degraded = false) => {
+  if (degraded) return "capacity-limited";
   if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
-    return T.textDim;
+    return "no-subscribers";
   }
   const ratio = used / cap;
-  if (ratio >= 0.95) return T.red;
-  if (ratio >= 0.75) return T.amber;
-  return T.textSec;
+  if (ratio >= 0.75) return "capacity-limited";
+  return "healthy";
 };
+
+export const lineUsageTone = (used, cap, degraded = false) =>
+  streamStateTokenVar(lineUsageState(used, cap, degraded));
 
 export const hasAccountMonitorAdmission = (admission) =>
   Boolean(
@@ -171,6 +165,7 @@ export const normalizeAdmissionDiagnostics = (admission) => {
           ? Math.max(0, cap - rawUsed)
           : null
         : Number(pool.remainingLineCount);
+    const streamState = lineUsageState(rawUsed, cap, warnings > 0 && id === "flow-scanner");
     const row = {
       id,
       label: pool.label || fallbackLabel,
@@ -184,7 +179,8 @@ export const normalizeAdmissionDiagnostics = (admission) => {
       strict: id === "account-monitor" ? true : Boolean(pool.strict),
       source: pool.id ? "diagnostics" : id === "account-monitor" && legacyAdmission ? "legacy-default" : "missing",
       legacyNormalized: legacyVisibleAdjusted || (id === "account-monitor" && legacyAdmission),
-      tone: lineUsageTone(rawUsed, cap, warnings > 0 && id === "flow-scanner"),
+      streamState,
+      tone: streamStateTokenVar(streamState),
     };
     pools[id] = row;
     return row;
@@ -203,6 +199,7 @@ export const normalizeAdmissionDiagnostics = (admission) => {
     strict: false,
     source: "diagnostics",
     legacyNormalized: false,
+    streamState: lineUsageState(admission.activeLineCount, budget.maxLines, warnings > 0),
     tone: lineUsageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
   };
   rows.push(total);

@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
@@ -8,6 +8,7 @@ import {
   Panel,
   Pill,
   ToggleGroup,
+  cellSubTextStyle,
   formatAccountMoney,
   formatAccountPercent,
   formatAccountPrice,
@@ -35,18 +36,51 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
-  { value: "watchlist_backtest", label: "Backtest" },
+  { value: "signal_options_replay", label: "Options BT" },
+  { value: "watchlist_backtest", label: "Watchlist BT" },
   { value: "mixed", label: "Mixed" },
 ];
 
 const sourceTone = (sourceType) =>
   sourceType === "automation"
-    ? "pink"
+    ? "category-automation"
+    : sourceType === "signal_options_replay"
+      ? "category-replay"
     : sourceType === "watchlist_backtest"
-      ? "purple"
+      ? "category-backtest"
       : sourceType === "mixed"
-        ? "amber"
+        ? "category-mixed"
         : "default";
+
+const compactKeyPart = (value) => String(value ?? "").trim();
+
+const positionOpenOrderKey = (rowId, order, index) =>
+  [
+    rowId,
+    order?.id,
+    order?.accountId,
+    order?.symbol,
+    order?.side,
+    order?.type,
+    order?.placedAt,
+    index,
+  ]
+    .map(compactKeyPart)
+    .filter(Boolean)
+    .join(":");
+
+const positionSourceAttributionKey = (rowId, source, index) =>
+  [
+    rowId,
+    source?.candidateId,
+    source?.sourceEventId,
+    source?.sourceType,
+    source?.quantity,
+    index,
+  ]
+    .map(compactKeyPart)
+    .filter(Boolean)
+    .join(":");
 
 const headerCellStyle = (active) => ({
   ...tableCellStyle,
@@ -82,8 +116,12 @@ const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
 
 const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
-const marketForAssetClass = (assetClass) =>
-  String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
+const marketForAssetClass = (assetClass) => {
+  const normalized = String(assetClass || "").toLowerCase();
+  if (normalized === "etf") return "etf";
+  if (normalized === "options") return "options";
+  return "stocks";
+};
 
 const mobileFilterRailStyle = {
   display: "flex",
@@ -116,8 +154,29 @@ const mobileHeaderStyle = {
   textTransform: "uppercase",
 };
 
+const mobileHeaderEndStyle = { textAlign: "right" };
+const mobileMinWidthStyle = { minWidth: 0 };
+const mobileActionRailStyle = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: sp(2),
+};
+const mobilePillWrapStyle = {
+  display: "flex",
+  gap: sp(3),
+  flexWrap: "wrap",
+};
+const mobileTaxLotRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: sp(5),
+  color: T.textSec,
+  fontFamily: T.data,
+  fontSize: fs(8),
+};
+
 const mobileScanShellStyle = (active = false) => ({
-  border: `1px solid ${T.border}`,
+  border: "none",
   borderRadius: dim(4),
   background: active ? `${T.cyan}10` : T.bg1,
   boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
@@ -164,7 +223,7 @@ const mobileIconButtonStyle = {
   width: dim(22),
   height: dim(22),
   padding: 0,
-  border: `1px solid ${T.border}`,
+  border: "none",
   borderRadius: dim(4),
   background: T.bg2,
   color: T.textSec,
@@ -174,7 +233,7 @@ const mobileIconButtonStyle = {
   flexShrink: 0,
 };
 
-const MobileIconButton = ({ label, onClick, children, expanded = null }) => (
+const MobileIconButton = ({ label, onClick, children, expanded = null, ...buttonProps }) => (
   <AppTooltip content={label}>
     <button
       type="button"
@@ -182,6 +241,7 @@ const MobileIconButton = ({ label, onClick, children, expanded = null }) => (
       aria-expanded={expanded == null ? undefined : expanded}
       onClick={onClick}
       style={mobileIconButtonStyle}
+      {...buttonProps}
     >
       {children}
     </button>
@@ -213,6 +273,178 @@ const MobileDetailMetric = ({ label, value, tone = T.textSec }) => (
   </div>
 );
 
+const positionMobileRowSignature = (row) =>
+  JSON.stringify([
+    row?.id,
+    row?.symbol,
+    row?.quantity,
+    row?.assetClass,
+    row?.mark,
+    row?.dayChange,
+    row?.dayChangePercent,
+    row?.unrealizedPnl,
+    row?.unrealizedPnlPercent,
+    row?.marketValue,
+    row?.averageCost,
+    row?.weightPercent,
+    row?.sourceType,
+    row?.strategyLabel,
+    row?.accounts,
+    row?.openOrders,
+    row?.lots,
+  ]);
+
+const MobilePositionRow = memo(({
+  row,
+  expanded,
+  currency,
+  maskValues,
+  onRowAction,
+  onRowKeyDown,
+}) => (
+  <article style={mobileScanShellStyle(expanded)}>
+    <div
+      data-testid="account-position-scan-row"
+      data-action="toggle"
+      data-row-id={row.id}
+      role="button"
+      tabIndex={0}
+      onClick={onRowAction}
+      onKeyDown={onRowKeyDown}
+      style={mobileScanRowStyle}
+    >
+      <div style={mobileMinWidthStyle}>
+        <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
+        <div style={cellSubTextStyle(T.textDim)}>
+          {row.quantity < 0 ? "Short" : "Long"} · {row.assetClass || "Position"}
+        </div>
+      </div>
+      <div
+        title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
+        style={mobileCellTextStyle(row.quantity < 0 ? T.red : T.textSec)}
+      >
+        {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
+      </div>
+      <div style={mobileCellTextStyle(toneForValue(row.dayChange))}>
+        {formatAccountMoney(row.dayChange, currency, true, maskValues)}
+      </div>
+      <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
+        {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
+      </div>
+      <div style={mobileCellTextStyle(T.textSec)}>
+        {formatAccountMoney(row.marketValue, currency, true, maskValues)}
+      </div>
+      <div style={mobileActionRailStyle}>
+        <MobileIconButton
+          label={`Open ${row.symbol} chart`}
+          data-action="chart"
+          data-row-id={row.id}
+          data-symbol={row.symbol}
+          onClick={onRowAction}
+        >
+          <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
+        </MobileIconButton>
+        <MobileIconButton
+          label={expanded ? `Collapse ${row.symbol} details` : `Expand ${row.symbol} details`}
+          data-action="expand"
+          data-row-id={row.id}
+          expanded={expanded}
+          onClick={onRowAction}
+        >
+          {expanded ? (
+            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+          )}
+        </MobileIconButton>
+      </div>
+    </div>
+    {expanded ? (
+      <div
+        data-testid="account-position-expanded-details"
+        style={mobileDetailStyle}
+      >
+        <MobileDetailMetric label="Avg Cost" value={formatAccountPrice(row.averageCost, 2, maskValues)} />
+        <MobileDetailMetric
+          label="Unreal %"
+          value={formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}
+          tone={toneForValue(row.unrealizedPnlPercent)}
+        />
+        <MobileDetailMetric
+          label="Day %"
+          value={formatAccountPercent(row.dayChangePercent, 2, maskValues)}
+          tone={toneForValue(row.dayChangePercent)}
+        />
+        <MobileDetailMetric label="Weight" value={formatAccountPercent(row.weightPercent, 2, maskValues)} />
+        <div style={mobileMinWidthStyle}>
+          <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Accounts</div>
+          <div style={mobilePillWrapStyle}>
+            {(row.accounts || []).slice(0, 3).map((accountId) => (
+              <Pill key={`${row.id}:${accountId}`} tone="cyan">
+                {accountId}
+              </Pill>
+            ))}
+            {row.sourceType ? (
+              <Pill tone={sourceTone(row.sourceType)}>
+                {row.strategyLabel || row.sourceType}
+              </Pill>
+            ) : null}
+          </div>
+        </div>
+        <div style={mobileMinWidthStyle}>
+          <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Orders</div>
+          {row.openOrders?.length ? (
+            <div style={mobilePillWrapStyle}>
+              {row.openOrders.slice(0, 3).map((order, index) => (
+                <Pill
+                  key={positionOpenOrderKey(row.id, order, index)}
+                  tone={/buy/i.test(order.side) ? "side-buy" : "side-sell"}
+                >
+                  {order.side} {formatNumber(order.quantity, 2)}
+                </Pill>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: T.textMuted, fontSize: fs(9) }}>No working orders.</div>
+          )}
+        </div>
+        <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
+          <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Tax Lots</div>
+          {row.lots?.length ? (
+            <div style={{ display: "grid", gap: sp(2) }}>
+              {row.lots.slice(0, 4).map((lot, index) => (
+                <div
+                  key={`${row.id}:mobile-lot:${index}`}
+                  style={mobileTaxLotRowStyle}
+                >
+                  <span>{lot.accountId} · {formatNumber(lot.quantity, 4)} @ {formatAccountPrice(lot.averageCost, 2, maskValues)}</span>
+                  <span style={{ color: toneForValue(lot.unrealizedPnl) }}>
+                    {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: T.textMuted, fontSize: fs(10) }}>
+              No tax-lot detail recorded yet.
+            </div>
+          )}
+        </div>
+      </div>
+    ) : null}
+  </article>
+), (previous, next) => (
+  previous.expanded === next.expanded &&
+  previous.currency === next.currency &&
+  previous.maskValues === next.maskValues &&
+  previous.onRowAction === next.onRowAction &&
+  previous.onRowKeyDown === next.onRowKeyDown &&
+  (
+    previous.row === next.row ||
+    positionMobileRowSignature(previous.row) === positionMobileRowSignature(next.row)
+  )
+));
+
 const dateLabel = (date) => {
   if (!date) return "Live";
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -227,14 +459,15 @@ const dateLabel = (date) => {
 };
 
 const ActivityTone = ({ activity }) => {
-  const tone =
-    activity?.type === "trade_buy"
-      ? T.cyan
-      : activity?.type === "trade_sell"
-        ? toneForValue(activity.realizedPnl ?? activity.amount)
-        : toneForValue(activity.amount);
+  const tone = activity?.type === "trade_buy"
+    ? "side-buy"
+    : activity?.type === "trade_sell"
+      ? "side-sell"
+      : Number(activity?.amount) >= 0
+        ? "pnl-positive"
+        : "pnl-negative";
   return (
-    <Pill tone={tone === T.red ? "red" : tone === T.green ? "green" : "cyan"}>
+    <Pill tone={tone}>
       {String(activity?.type || "event").replace(/_/g, " ")}
     </Pill>
   );
@@ -308,7 +541,7 @@ export const PositionsAtDateInspector = ({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))",
+                gridTemplateColumns: `repeat(auto-fit, minmax(${dim(118)}px, 1fr))`,
                 gap: sp(5),
               }}
             >
@@ -321,7 +554,7 @@ export const PositionsAtDateInspector = ({
                 <div
                   key={label}
                   style={{
-                    border: `1px solid ${T.border}`,
+                    border: "none",
                     borderRadius: dim(4),
                     background: T.bg0,
                     padding: sp("5px 6px"),
@@ -355,7 +588,7 @@ export const PositionsAtDateInspector = ({
               {activity.length} activity rows
             </Pill>
             {balance?.dayPnlPercent != null ? (
-              <Pill tone={Number(balance.dayPnlPercent) >= 0 ? "green" : "red"}>
+              <Pill tone={Number(balance.dayPnlPercent) >= 0 ? "pnl-positive" : "pnl-negative"}>
                 {formatAccountPercent(balance.dayPnlPercent, 2, maskValues)}
               </Pill>
             ) : null}
@@ -374,7 +607,7 @@ export const PositionsAtDateInspector = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 0.8fr)",
+              gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(280)}px, 0.8fr)`,
               gap: sp(7),
               alignItems: "start",
             }}
@@ -448,7 +681,7 @@ export const PositionsAtDateInspector = ({
                   <div
                     key={row.id}
                     style={{
-                      border: `1px solid ${T.border}`,
+                      border: "none",
                       borderRadius: dim(4),
                       background: T.bg0,
                       padding: sp("4px 5px"),
@@ -514,11 +747,15 @@ export const PositionsPanel = ({
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const rows = (query.data?.positions || [])
-    .filter(isOpenPositionRow)
-    .filter((row) =>
-      sourceFilter === "all" ? true : row.sourceType === sourceFilter,
-    );
+  const rows = useMemo(
+    () =>
+      (query.data?.positions || [])
+        .filter(isOpenPositionRow)
+        .filter((row) =>
+          sourceFilter === "all" ? true : row.sourceType === sourceFilter,
+        ),
+    [query.data?.positions, sourceFilter],
+  );
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
@@ -534,12 +771,17 @@ export const PositionsPanel = ({
     });
     return copy;
   }, [rows, sort]);
-  const totalDayChange = rows.reduce(
-    (sum, row) => sum + (Number.isFinite(Number(row.dayChange)) ? Number(row.dayChange) : 0),
-    0,
+  const totalDayChange = useMemo(
+    () =>
+      rows.reduce(
+        (sum, row) =>
+          sum + (Number.isFinite(Number(row.dayChange)) ? Number(row.dayChange) : 0),
+        0,
+      ),
+    [rows],
   );
 
-  const toggleExpanded = (rowId) => {
+  const toggleExpanded = useCallback((rowId) => {
     setExpandedRows((current) => {
       const next = new Set(current);
       if (next.has(rowId)) {
@@ -549,7 +791,37 @@ export const PositionsPanel = ({
       }
       return next;
     });
-  };
+  }, []);
+
+  const handleMobileRowAction = useCallback(
+    (event) => {
+      const { action, rowId, symbol } = event.currentTarget.dataset;
+      if (!rowId) {
+        return;
+      }
+      if (action === "chart") {
+        event.stopPropagation();
+        onJumpToChart?.(symbol);
+        return;
+      }
+      if (action === "expand") {
+        event.stopPropagation();
+      }
+      toggleExpanded(rowId);
+    },
+    [onJumpToChart, toggleExpanded],
+  );
+
+  const handleMobileRowKeyDown = useCallback(
+    (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      handleMobileRowAction(event);
+    },
+    [handleMobileRowAction],
+  );
 
   const inspectingDate = Boolean(activeEquityDate || pinnedEquityDate);
   const showInspector = inspectingDate && positionsAtDateQuery;
@@ -590,164 +862,23 @@ export const PositionsPanel = ({
         >
           <div aria-hidden="true" style={mobileHeaderStyle}>
             <span>Symbol</span>
-            <span style={{ textAlign: "right" }}>Qty/Mark</span>
-            <span style={{ textAlign: "right" }}>Day</span>
-            <span style={{ textAlign: "right" }}>P&L</span>
-            <span style={{ textAlign: "right" }}>Value</span>
+            <span style={mobileHeaderEndStyle}>Qty/Mark</span>
+            <span style={mobileHeaderEndStyle}>Day</span>
+            <span style={mobileHeaderEndStyle}>P&L</span>
+            <span style={mobileHeaderEndStyle}>Value</span>
             <span />
           </div>
-          {sortedRows.map((row) => {
-            const expanded = expandedRows.has(row.id);
-            return (
-              <article key={row.id} style={mobileScanShellStyle(expanded)}>
-                <div
-                  data-testid="account-position-scan-row"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => toggleExpanded(row.id)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    toggleExpanded(row.id);
-                  }}
-                  style={mobileScanRowStyle}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
-                    <div
-                      style={{
-                        color: T.textDim,
-                        fontFamily: T.data,
-                        fontSize: fs(7),
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {row.quantity < 0 ? "Short" : "Long"} · {row.assetClass || "Position"}
-                    </div>
-                  </div>
-                  <div
-                    title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
-                    style={mobileCellTextStyle(row.quantity < 0 ? T.red : T.textSec)}
-                  >
-                    {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
-                  </div>
-                  <div style={mobileCellTextStyle(toneForValue(row.dayChange))}>
-                    {formatAccountMoney(row.dayChange, currency, true, maskValues)}
-                  </div>
-                  <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
-                    {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
-                  </div>
-                  <div style={mobileCellTextStyle(T.textSec)}>
-                    {formatAccountMoney(row.marketValue, currency, true, maskValues)}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: sp(2) }}>
-                    <MobileIconButton
-                      label={`Open ${row.symbol} chart`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onJumpToChart?.(row.symbol);
-                      }}
-                    >
-                      <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
-                    </MobileIconButton>
-                    <MobileIconButton
-                      label={expanded ? `Collapse ${row.symbol} details` : `Expand ${row.symbol} details`}
-                      expanded={expanded}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleExpanded(row.id);
-                      }}
-                    >
-                      {expanded ? (
-                        <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                      ) : (
-                        <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                      )}
-                    </MobileIconButton>
-                  </div>
-                </div>
-                {expanded ? (
-                  <div
-                    data-testid="account-position-expanded-details"
-                    style={mobileDetailStyle}
-                  >
-                    <MobileDetailMetric label="Avg Cost" value={formatAccountPrice(row.averageCost, 2, maskValues)} />
-                    <MobileDetailMetric
-                      label="Unreal %"
-                      value={formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}
-                      tone={toneForValue(row.unrealizedPnlPercent)}
-                    />
-                    <MobileDetailMetric
-                      label="Day %"
-                      value={formatAccountPercent(row.dayChangePercent, 2, maskValues)}
-                      tone={toneForValue(row.dayChangePercent)}
-                    />
-                    <MobileDetailMetric label="Weight" value={formatAccountPercent(row.weightPercent, 2, maskValues)} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Accounts</div>
-                      <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap" }}>
-                        {(row.accounts || []).slice(0, 3).map((accountId) => (
-                          <Pill key={`${row.id}:${accountId}`} tone="cyan">
-                            {accountId}
-                          </Pill>
-                        ))}
-                        {row.sourceType ? (
-                          <Pill tone={sourceTone(row.sourceType)}>
-                            {row.strategyLabel || row.sourceType}
-                          </Pill>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Orders</div>
-                      {row.openOrders?.length ? (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
-                          {row.openOrders.slice(0, 3).map((order) => (
-                            <Pill key={order.id} tone={/buy/i.test(order.side) ? "green" : "red"}>
-                              {order.side} {formatNumber(order.quantity, 2)}
-                            </Pill>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ color: T.textMuted, fontSize: fs(9) }}>No working orders.</div>
-                      )}
-                    </div>
-                    <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
-                      <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Tax Lots</div>
-                      {row.lots?.length ? (
-                        <div style={{ display: "grid", gap: sp(2) }}>
-                          {row.lots.slice(0, 4).map((lot, index) => (
-                            <div
-                              key={`${row.id}:mobile-lot:${index}`}
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "minmax(0, 1fr) auto",
-                                gap: sp(5),
-                                color: T.textSec,
-                                fontFamily: T.data,
-                                fontSize: fs(8),
-                              }}
-                            >
-                              <span>{lot.accountId} · {formatNumber(lot.quantity, 4)} @ {formatAccountPrice(lot.averageCost, 2, maskValues)}</span>
-                              <span style={{ color: toneForValue(lot.unrealizedPnl) }}>
-                                {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ color: T.textMuted, fontSize: fs(10) }}>
-                          No tax-lot detail recorded yet.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
+          {sortedRows.map((row) => (
+            <MobilePositionRow
+              key={row.id}
+              row={row}
+              expanded={expandedRows.has(row.id)}
+              currency={currency}
+              maskValues={maskValues}
+              onRowAction={handleMobileRowAction}
+              onRowKeyDown={handleMobileRowKeyDown}
+            />
+          ))}
           <div
             data-testid="account-positions-summary-row"
             style={{
@@ -824,7 +955,7 @@ export const PositionsPanel = ({
                           style={{
                             width: 16,
                             height: 16,
-                            border: `1px solid ${T.border}`,
+                            border: "none",
                             borderRadius: dim(4),
                             background: T.bg0,
                             color: T.textSec,
@@ -1016,7 +1147,7 @@ export const PositionsPanel = ({
                                 <div style={{ display: "grid", gap: sp(3), marginBottom: sp(6) }}>
                                   {row.sourceAttribution.slice(0, 6).map((source, index) => (
                                     <div
-                                      key={`${row.id}:source:${source.candidateId || index}`}
+                                      key={positionSourceAttributionKey(row.id, source, index)}
                                       style={{
                                         borderBottom: `1px solid ${T.border}`,
                                         padding: sp("3px 0"),
@@ -1036,7 +1167,7 @@ export const PositionsPanel = ({
                                         style={{
                                           color: T.textDim,
                                           fontSize: fs(9),
-                                          fontFamily: T.mono,
+                                          fontFamily: T.sans,
                                         }}
                                       >
                                         {source.deploymentName || source.candidateId || source.sourceEventId || "Manual ledger fill"}
@@ -1052,9 +1183,9 @@ export const PositionsPanel = ({
                               <div style={{ ...mutedLabelStyle, marginBottom: sp(4) }}>Open Orders</div>
                               {row.openOrders?.length ? (
                                 <div style={{ display: "grid", gap: sp(3) }}>
-                                  {row.openOrders.slice(0, 6).map((order) => (
+                                  {row.openOrders.slice(0, 6).map((order, index) => (
                                     <div
-                                      key={order.id}
+                                      key={positionOpenOrderKey(row.id, order, index)}
                                       style={{
                                         borderBottom: `1px solid ${T.border}`,
                                         padding: sp("3px 0"),
@@ -1063,7 +1194,7 @@ export const PositionsPanel = ({
                                       }}
                                     >
                                       <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
-                                        <Pill tone={/buy/i.test(order.side) ? "green" : "red"}>
+                                        <Pill tone={/buy/i.test(order.side) ? "side-buy" : "side-sell"}>
                                           {order.side}
                                         </Pill>
                                         <Pill tone="default">{order.type}</Pill>
@@ -1088,7 +1219,7 @@ export const PositionsPanel = ({
                                         style={{
                                           color: T.textDim,
                                           fontSize: fs(9),
-                                          fontFamily: T.mono,
+                                          fontFamily: T.sans,
                                         }}
                                       >
                                         {order.accountId}

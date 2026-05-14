@@ -38,7 +38,7 @@ const SegmentButton = ({ active, children, onClick, testId }) => (
       background: active ? `${T.accent}18` : T.bg1,
       color: active ? T.text : T.textDim,
       cursor: "pointer",
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: fs(9),
     }}
   >
@@ -65,11 +65,10 @@ const ActivityRow = ({
       gridTemplateColumns: "minmax(0, 1fr) auto",
       alignItems: "center",
       gap: sp(8),
-      padding: sp("6px 8px"),
+      padding: sp("8px 12px"),
       border: "none",
-      borderLeft: `3px solid ${tone}`,
-      borderBottom: `1px solid ${T.border}22`,
-      background: `${tone}0d`,
+      borderBottom: `1px solid ${T.borderLight}`,
+      background: "transparent",
       color: T.text,
       textAlign: "left",
       cursor: onClick ? "pointer" : "default",
@@ -83,7 +82,7 @@ const ActivityRow = ({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(11),
           lineHeight: 1.1,
         }}
@@ -93,7 +92,7 @@ const ActivityRow = ({
       <span
         style={{
           display: "block",
-          marginTop: 3,
+          marginTop: sp(3),
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -108,7 +107,7 @@ const ActivityRow = ({
     <span
       style={{
         color: T.textMuted,
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(8),
         whiteSpace: "nowrap",
       }}

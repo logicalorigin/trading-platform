@@ -247,6 +247,9 @@ export const MultiChartGrid = ({
   const [syncTimeframes, setSyncTimeframes] = useState(
     Boolean(_initialState.marketGridSyncTimeframes),
   );
+  const [syncCrosshair, setSyncCrosshair] = useState(
+    Boolean(_initialState.marketGridSyncCrosshair),
+  );
   const [slots, setSlots] = useState(() =>
     buildInitialMiniChartSlots(activeSym),
   );
@@ -718,11 +721,12 @@ export const MultiChartGrid = ({
       marketGridLayout: layout,
       marketGridSoloSlotIndex: soloSlotIndex,
       marketGridSyncTimeframes: syncTimeframes,
+      marketGridSyncCrosshair: syncCrosshair,
       marketGridSlots: slots,
       marketGridRecentTickers: recentTickers,
       marketGridRecentTickerRows: recentTickerRows,
     });
-  }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncTimeframes, slots]);
+  }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncCrosshair, syncTimeframes, slots]);
 
   useEffect(() => {
     writeMarketGridTrackSession(marketGridTrackState);
@@ -1130,7 +1134,7 @@ export const MultiChartGrid = ({
             style={{
               fontSize: fs(10),
               fontWeight: 400,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               color: T.textSec,
               letterSpacing: "0.04em",
             }}
@@ -1141,13 +1145,14 @@ export const MultiChartGrid = ({
             style={{
               fontSize: fs(9),
               color: T.textMuted,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
           >
-            {syncTimeframes ? "sync tf" : "independent"} · broker-backed bars ·{" "}
+            {syncTimeframes ? "sync tf" : "independent"}
+            {syncCrosshair ? " · sync x" : ""} · broker-backed bars ·{" "}
             {focusedLabel}
           </span>
         </div>
@@ -1168,7 +1173,7 @@ export const MultiChartGrid = ({
             style={{
               padding: sp("3px 8px"),
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
               color: gridScaleResetDisabled ? T.textMuted : T.text,
@@ -1188,7 +1193,7 @@ export const MultiChartGrid = ({
             style={{
               padding: sp("3px 8px"),
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               background: "rgba(255,255,255,0.08)",
               color: T.text,
@@ -1225,7 +1230,7 @@ export const MultiChartGrid = ({
             style={{
               padding: sp("3px 8px"),
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               background: syncTimeframes ? T.accent : T.bg3,
               color: syncTimeframes ? "#fff" : T.textDim,
@@ -1237,10 +1242,29 @@ export const MultiChartGrid = ({
           >
             SYNC TF
           </button>
+          <button
+            type="button"
+            onClick={() => setSyncCrosshair((current) => !current)}
+            data-testid="market-chart-sync-crosshair"
+            style={{
+              padding: sp("3px 8px"),
+              fontSize: fs(9),
+              fontFamily: T.sans,
+              fontWeight: 400,
+              background: syncCrosshair ? T.accent : T.bg3,
+              color: syncCrosshair ? "#fff" : T.textDim,
+              border: "none",
+              borderRadius: 0,
+              cursor: "pointer",
+              letterSpacing: "0.04em",
+            }}
+          >
+            SYNC X
+          </button>
           <div
             style={{
               display: "flex",
-              gap: 2,
+              gap: sp(2),
               padding: sp(denseGrid ? 1 : 2),
               background: T.bg3,
               borderRadius: 0,
@@ -1253,7 +1277,7 @@ export const MultiChartGrid = ({
                 style={{
                   padding: sp("3px 8px"),
                   fontSize: fs(9),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                   background: layout === key ? T.accent : "transparent",
                   color: layout === key ? "#fff" : T.textDim,
@@ -1307,6 +1331,8 @@ export const MultiChartGrid = ({
                 slotId={`slot-${index}`}
                 slot={slot}
                 chartViewportLayoutKey={chartViewportLayoutKey}
+                crosshairSyncGroupId={syncCrosshair ? "markets-grid" : null}
+                crosshairSyncInstanceId={syncCrosshair ? `markets-grid-slot-${index}` : null}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
                 flowEvents={flowEventsBySlotIndex[index] || []}
                 premiumFlowStatus={effectiveChartFlowStatus}

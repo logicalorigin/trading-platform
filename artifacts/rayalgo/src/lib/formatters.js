@@ -47,10 +47,59 @@ export const toDateValue = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export const formatExpirationLabel = (value) => {
-  if (typeof value === "string" && /^\d{2}\/\d{2}$/.test(value)) return value;
+const parseValidatedUtcDateParts = (year, month, day) => {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? date
+    : null;
+};
 
-  const date = toDateValue(value);
+export const parseExpirationValue = (value) => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/);
+    if (isoMatch) {
+      return parseValidatedUtcDateParts(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]),
+        Number(isoMatch[3]),
+      );
+    }
+
+    const monthDayMatch = trimmed.match(/^(\d{2})\/(\d{2})$/);
+    if (monthDayMatch) {
+      const now = new Date();
+      const month = Number(monthDayMatch[1]);
+      const day = Number(monthDayMatch[2]);
+      let candidate = parseValidatedUtcDateParts(
+        now.getUTCFullYear(),
+        month,
+        day,
+      );
+      if (!candidate) {
+        return null;
+      }
+
+      if (candidate.getTime() < now.getTime() - 7 * 24 * 60 * 60 * 1000) {
+        candidate = parseValidatedUtcDateParts(
+          now.getUTCFullYear() + 1,
+          month,
+          day,
+        );
+      }
+
+      return candidate;
+    }
+  }
+
+  const parsed = toDateValue(value);
+  return parsed || null;
+};
+
+export const formatExpirationLabel = (value) => {
+  const date = parseExpirationValue(value);
   if (!date) return value || MISSING_VALUE;
 
   return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
@@ -128,27 +177,21 @@ export const formatOptionContractLabel = (
   return compactDescription || fallback;
 };
 
-export const parseExpirationValue = (value) => {
-  const parsed = toDateValue(value);
-  if (parsed) return parsed;
-  if (typeof value !== "string") return null;
-
-  const match = value.match(/^(\d{2})\/(\d{2})$/);
-  if (!match) return null;
-
-  const now = new Date();
-  const month = Number(match[1]);
-  const day = Number(match[2]);
-  let candidate = new Date(Date.UTC(now.getUTCFullYear(), month - 1, day));
-
-  if (candidate.getTime() < now.getTime() - 7 * 24 * 60 * 60 * 1000) {
-    candidate = new Date(Date.UTC(now.getUTCFullYear() + 1, month - 1, day));
+export const formatIsoDate = (value) => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      return parseValidatedUtcDateParts(
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3]),
+      )
+        ? trimmed
+        : null;
+    }
   }
 
-  return candidate;
-};
-
-export const formatIsoDate = (value) => {
   const date = toDateValue(value);
   if (!date) return null;
 

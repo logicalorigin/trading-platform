@@ -300,12 +300,34 @@ const normalizeNumericKeyPart = (value: unknown): string => {
   return Number.isFinite(numeric) ? String(Number(numeric.toFixed(4))) : "";
 };
 
+const normalizeDateParts = (year: number, month: number, day: number): string => {
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    : "";
+};
+
 const normalizeExpirationIso = (value: unknown): string => {
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
-    if (/^\d{8}$/.test(trimmed)) {
-      return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return normalizeDateParts(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]),
+        Number(isoMatch[3]),
+      );
+    }
+    const compactMatch = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compactMatch) {
+      return normalizeDateParts(
+        Number(compactMatch[1]),
+        Number(compactMatch[2]),
+        Number(compactMatch[3]),
+      );
     }
   }
   const date = value instanceof Date ? value : value ? new Date(String(value)) : null;

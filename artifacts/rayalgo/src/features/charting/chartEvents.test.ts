@@ -511,6 +511,29 @@ test("flow event helpers merge feeds and match selected option contracts", () =>
   );
 });
 
+test("filterFlowEventsForOptionContract rejects impossible expiration tuple matches", () => {
+  const matches = filterFlowEventsForOptionContract(
+    [
+      {
+        id: "invalid-expiration",
+        ticker: "SPY",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-02-31",
+        premium: 100_000,
+      },
+    ],
+    {
+      symbol: "SPY",
+      expirationDate: "2026-03-03",
+      right: "call",
+      strike: 500,
+    },
+  );
+
+  assert.equal(matches.length, 0);
+});
+
 test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
   const rows = mergeFlowEventFeeds(
     [

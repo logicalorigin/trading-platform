@@ -14,6 +14,13 @@ const SCOPE_LABELS = {
 const safeCount = (value) =>
   Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 
+const formatCycleEstimate = (value) => {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  if (ms >= 60_000) return `~${Math.round(ms / 60_000)}m cycle`;
+  return `~${Math.round(ms / 1_000)}s cycle`;
+};
+
 export const resolveFlowScannerSourceLabel = ({ coverageMode } = {}) =>
   SOURCE_LABELS[String(coverageMode || "").trim()] || "Watchlist";
 
@@ -53,10 +60,12 @@ export const resolveFlowScannerProgress = ({
   const totalCount = safeCount(totalCoverageSymbols || scannedCount);
   const queuedCount = Math.max(0, totalCount - scannedCount);
   const maxSymbols = safeCount(scannerConfig.maxSymbols);
-  const batchSize = safeCount(scannerConfig.batchSize);
-  const concurrency = safeCount(scannerConfig.concurrency || 1) || 1;
+  const batchSize = safeCount(coverage.batchSize ?? scannerConfig.batchSize);
+  const concurrency =
+    safeCount(coverage.concurrency ?? scannerConfig.concurrency ?? 1) || 1;
   const intendedCount = safeCount(intendedCoverageSymbols || totalCount);
   const selectedCount = safeCount(selectedCoverageSymbols || totalCount);
+  const cycleEstimateLabel = formatCycleEstimate(coverage.estimatedCycleMs);
 
   const cycleLabel = `${scannedCount}/${totalCount}`;
   const queueLabel = queuedCount > 0 ? `${queuedCount} queued` : "queue clear";
@@ -67,7 +76,7 @@ export const resolveFlowScannerProgress = ({
       ? `selected ${selectedCount}/${intendedCount}`
       : coverage.isFetching
         ? batchLabel
-        : sourceModeLabel;
+        : cycleEstimateLabel || sourceModeLabel;
 
   return {
     sourceModeLabel,
@@ -76,6 +85,7 @@ export const resolveFlowScannerProgress = ({
     queueLabel,
     capLabel,
     batchLabel,
+    cycleEstimateLabel,
     selectedDetail,
     progressText: `${sourceModeLabel} · ${scopeLabel} · ${cycleLabel} scanned · ${queueLabel} · ${capLabel}`,
   };

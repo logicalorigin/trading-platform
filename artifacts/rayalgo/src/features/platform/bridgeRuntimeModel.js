@@ -12,7 +12,7 @@ export const bridgeRuntimeTone = (session) => {
     bridge?.streamState,
     bridge?.streamStateReason,
   );
-  if (streamMeta?.status === "reconnect_needed") {
+  if (streamMeta?.status === "reconnecting") {
     return {
       label: streamMeta.label,
       color: streamMeta.color,

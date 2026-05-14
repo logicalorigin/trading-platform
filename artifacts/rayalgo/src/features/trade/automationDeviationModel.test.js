@@ -60,3 +60,27 @@ test("buildSignalOptionsDeviation records changed trade preview fields", () => {
   assert.equal(deviation.payload.candidateId, candidate.id);
   assert.equal(deviation.payload.symbol, "SPY");
 });
+
+test("buildSignalOptionsDeviation does not roll impossible expirations into matching dates", () => {
+  const deviation = buildSignalOptionsDeviation(
+    {
+      ...candidate,
+      selectedContract: {
+        ...candidate.selectedContract,
+        expirationDate: "2026-02-31",
+        providerContractId: null,
+      },
+    },
+    {
+      ...orderRequest,
+      optionContract: {
+        ...orderRequest.optionContract,
+        expirationDate: "2026-03-03",
+        providerContractId: null,
+      },
+    },
+  );
+
+  assert.ok(deviation);
+  assert.deepEqual(deviation.payload.changedFields, ["contract"]);
+});

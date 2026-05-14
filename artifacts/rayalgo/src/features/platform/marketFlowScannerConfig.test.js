@@ -19,7 +19,7 @@ test("default flow scanner covers 500 symbols inside five minutes", () => {
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.scope, FLOW_SCANNER_SCOPE.all);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
-  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 1);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 10);
   assert.ok(
     Math.ceil(
       DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols / DEFAULT_FLOW_SCANNER_CONFIG.batchSize,
@@ -130,7 +130,7 @@ test("buildFlowScannerMarketUniverseSymbols keeps runtime signals from replacing
   assert.deepEqual(
     buildFlowScannerMarketUniverseSymbols({
       backendSymbols: ["AMD", "NVDA", "SPY"],
-      promotedSymbols: ["AMD"],
+      prioritySymbols: ["AMD"],
       currentBatchSymbols: ["QQQ", "NVDA"],
       fallbackSymbols: ["SPY", "AAPL"],
       prioritizeRuntimeSignals: true,

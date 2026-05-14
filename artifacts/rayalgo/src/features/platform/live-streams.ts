@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getOptionQuoteSnapshots } from "@workspace/api-client-react";
+import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import { usePageVisible } from "./usePageVisible";
 import {
   recordOptionHydrationMetric,
@@ -43,12 +44,7 @@ type LiveAccountEquityHistoryResponse = AccountEquityHistoryResponse & {
   latestSnapshotAt?: string | null;
   isStale?: boolean;
   staleReason?: string | null;
-  terminalPointSource?:
-    | "live_account_summary"
-    | "persisted_snapshot"
-    | "flex"
-    | "shadow_ledger"
-    | null;
+  terminalPointSource?: AccountEquityHistoryResponse["terminalPointSource"];
   liveTerminalIncluded?: boolean;
 };
 
@@ -73,6 +69,7 @@ type AccountPageBootstrapPayload = {
     from: string | null;
     to: string | null;
     symbol: string | null;
+    assetClass: string | null;
     pnlSign: string | null;
     holdDuration: string | null;
   };
@@ -429,6 +426,7 @@ export const getAccountPageStreamUrl = ({
     from?: string | null;
     to?: string | null;
     symbol?: string | null;
+    assetClass?: string | null;
     pnlSign?: string | null;
     holdDuration?: string | null;
   };
@@ -443,6 +441,7 @@ export const getAccountPageStreamUrl = ({
     from: tradeFilters.from ?? undefined,
     to: tradeFilters.to ?? undefined,
     symbol: tradeFilters.symbol ?? undefined,
+    tradeAssetClass: tradeFilters.assetClass ?? undefined,
     pnlSign: tradeFilters.pnlSign ?? undefined,
     holdDuration: tradeFilters.holdDuration ?? undefined,
     performanceCalendarFrom: performanceCalendarFrom ?? undefined,
@@ -1095,45 +1094,11 @@ const pointTimestampMs = (point: Pick<AccountEquityPoint, "timestamp">): number 
 const recomputeEquityReturns = (
   points: AccountEquityPoint[],
 ): AccountEquityPoint[] => {
-  const externalTransferAmount = (point: AccountEquityPoint): number =>
-    (isFiniteNumber(point.deposits) ? point.deposits : 0) -
-    (isFiniteNumber(point.withdrawals) ? point.withdrawals : 0);
-  const firstPoint = points[0] ?? null;
-  const firstPointTransfer = firstPoint ? externalTransferAmount(firstPoint) : 0;
-  const initialPreviousNav = firstPoint
-    ? firstPointTransfer > 0
-      ? Math.max(0, firstPoint.netLiquidation - firstPointTransfer)
-      : firstPoint.netLiquidation - firstPointTransfer
-    : null;
-  const baseline =
-    initialPreviousNav !== null && Math.abs(initialPreviousNav) > 0
-      ? initialPreviousNav
-      : (points.find((point) => Math.abs(Number(point.netLiquidation)) > 0)
-          ?.netLiquidation ??
-        firstPoint?.netLiquidation ??
-        0);
-  let previousNav: number | null = initialPreviousNav;
-  let cumulativePnl = 0;
-  let capitalBase = Math.max(
-    Math.abs(baseline),
-    Math.abs(firstPoint?.netLiquidation ?? 0),
-  );
-
-  return points.map((point, index) => {
-    const transfer = externalTransferAmount(point);
-    if (index > 0 && transfer > 0) {
-      capitalBase += transfer;
-    }
-    const pnlDelta =
-      previousNav === null ? 0 : point.netLiquidation - previousNav - transfer;
-    cumulativePnl += pnlDelta;
-    previousNav = point.netLiquidation;
-
-    return {
-      ...point,
-      returnPercent: capitalBase ? (cumulativePnl / capitalBase) * 100 : 0,
-    };
-  });
+  const adjusted = calculateTransferAdjustedReturnSeries(points);
+  return points.map((point, index) => ({
+    ...point,
+    returnPercent: adjusted[index]?.returnPercent ?? 0,
+  }));
 };
 
 const upsertLiveEquityTerminalPoint = (
@@ -1226,6 +1191,127 @@ const upsertLiveEquityTerminalPoint = (
     isStale: false,
     staleReason: null,
     terminalPointSource: "live_account_summary",
+    liveTerminalIncluded: true,
+    points: nextPoints,
+  };
+};
+
+const accountPageEquityPointSource = (
+  source: unknown,
+): AccountEquityPoint["source"] => {
+  if (source === "SHADOW_LEDGER") {
+    return "SHADOW_LEDGER";
+  }
+  if (source === "LOCAL_LEDGER") {
+    return "LOCAL_LEDGER";
+  }
+  if (source === "FLEX") {
+    return "FLEX";
+  }
+  return "IBKR_ACCOUNT_SUMMARY";
+};
+
+const accountPageTerminalPointSource = (
+  source: AccountEquityPoint["source"],
+): AccountEquityHistoryResponse["terminalPointSource"] =>
+  source === "SHADOW_LEDGER" ? "shadow_ledger" : "live_account_summary";
+
+const upsertAccountPageLiveEquityTerminalPoint = (
+  current: LiveAccountEquityHistoryResponse | undefined,
+  payload: AccountPageLivePayload,
+  requestedRange: AccountHistoryRangeValue,
+): LiveAccountEquityHistoryResponse | undefined => {
+  if (!current || current.range !== requestedRange) {
+    return current;
+  }
+
+  const netLiquidationMetric = payload.summary?.metrics?.netLiquidation;
+  const netLiquidation = isFiniteNumber(netLiquidationMetric?.value)
+    ? Number(netLiquidationMetric?.value)
+    : null;
+  const timestampMs =
+    parseAccountTimestampMs(netLiquidationMetric?.updatedAt) ??
+    parseAccountTimestampMs(payload.summary?.updatedAt) ??
+    parseAccountTimestampMs(payload.updatedAt);
+  if (netLiquidation === null || timestampMs === null) {
+    return current;
+  }
+
+  const rangeStartMs = accountHistoryRangeStartMs(requestedRange, timestampMs);
+  if (rangeStartMs !== null && timestampMs < rangeStartMs) {
+    return current;
+  }
+
+  const timestamp = new Date(timestampMs).toISOString();
+  const existingPoints = current.points || [];
+  const exactMatchIndex = existingPoints.findIndex(
+    (point) => pointTimestampMs(point) === timestampMs,
+  );
+  const lastPoint = existingPoints[existingPoints.length - 1] ?? null;
+  const lastPointTimestampMs = lastPoint ? pointTimestampMs(lastPoint) : null;
+  if (
+    exactMatchIndex < 0 &&
+    lastPointTimestampMs !== null &&
+    timestampMs < lastPointTimestampMs
+  ) {
+    return current;
+  }
+
+  const currentAsOfMs = parseAccountTimestampMs(current.asOf);
+  const previousTerminal =
+    exactMatchIndex >= 0
+      ? existingPoints[exactMatchIndex]
+      : current.liveTerminalIncluded === true &&
+          lastPointTimestampMs !== null &&
+          currentAsOfMs === lastPointTimestampMs
+        ? lastPoint
+        : null;
+  const source = accountPageEquityPointSource(netLiquidationMetric?.source);
+  const terminalPointSource = accountPageTerminalPointSource(source);
+  const currency =
+    netLiquidationMetric?.currency || payload.summary?.currency || current.currency || "USD";
+  const livePoint: AccountEquityPoint = {
+    timestamp,
+    netLiquidation,
+    currency,
+    source,
+    deposits: previousTerminal?.deposits ?? 0,
+    withdrawals: previousTerminal?.withdrawals ?? 0,
+    dividends: previousTerminal?.dividends ?? 0,
+    fees: previousTerminal?.fees ?? 0,
+    returnPercent: previousTerminal?.returnPercent ?? 0,
+    benchmarkPercent: previousTerminal?.benchmarkPercent ?? null,
+  };
+
+  const withoutPreviousTerminal = existingPoints.filter((point, index) => {
+    if (exactMatchIndex >= 0) {
+      return index !== exactMatchIndex;
+    }
+    return point !== previousTerminal;
+  });
+  const nextPoints = recomputeEquityReturns(
+    [...withoutPreviousTerminal, livePoint]
+      .filter((point) => {
+        const pointMs = pointTimestampMs(point);
+        return (
+          pointMs !== null &&
+          (rangeStartMs === null || pointMs >= rangeStartMs)
+        );
+      })
+      .sort((left, right) => {
+        const leftMs = pointTimestampMs(left) ?? 0;
+        const rightMs = pointTimestampMs(right) ?? 0;
+        return leftMs - rightMs;
+      }),
+  );
+
+  return {
+    ...current,
+    currency,
+    asOf: timestamp,
+    isStale: false,
+    staleReason: null,
+    terminalPointSource,
     liveTerminalIncluded: true,
     points: nextPoints,
   };
@@ -1340,6 +1426,389 @@ type StreamPosition = PositionsResponse["positions"][number];
 type AccountPositionRow = AccountPositionsResponse["positions"][number];
 type StreamOrder = OrdersResponse["orders"][number];
 type AccountOrderRow = AccountOrdersResponse["orders"][number];
+
+type AccountLiveSlice = {
+  summary: AccountSummaryResponse | null;
+  positions: AccountPositionsResponse | null;
+  orders: AccountOrdersResponse | null;
+  positionRowsById: Map<string, AccountPositionRow>;
+  positionRowsBySymbol: Map<string, AccountPositionRow>;
+  orderRowsById: Map<string, AccountOrderRow>;
+  updatedAt: string | null;
+};
+
+type AccountLiveScope = {
+  accountId?: string | null;
+  mode?: StreamMode | null;
+};
+
+type AccountPositionRowSelectorInput = AccountLiveScope & {
+  rowId?: string | null;
+  symbol?: string | null;
+  enabled?: boolean;
+};
+
+type AccountOrderRowSelectorInput = AccountLiveScope & {
+  rowId?: string | null;
+  enabled?: boolean;
+};
+
+type AccountSummaryFieldSelectorInput = AccountLiveScope & {
+  fieldName?: string | null;
+  enabled?: boolean;
+};
+
+type BrokerFreshnessForSnapshot = {
+  lastEventAt: number | null;
+  fresh: boolean;
+};
+
+const accountLiveSlices = new Map<string, AccountLiveSlice>();
+const accountLiveSliceListeners = new Set<() => void>();
+const brokerFreshnessForCache = new Map<string, BrokerFreshnessForSnapshot>();
+
+const noopSubscribe = (_listener: () => void) => () => {};
+
+const accountLiveScopeKey = (scope: AccountLiveScope): string | null => {
+  if (!scope.accountId || !scope.mode) {
+    return null;
+  }
+  return `${scope.mode}:${scope.accountId}`;
+};
+
+const valuesEqualJson = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+};
+
+const reuseEqualJson = <T>(current: T | undefined, next: T): T => {
+  if (current !== undefined && valuesEqualJson(current, next)) {
+    return current;
+  }
+  return next;
+};
+
+const rowIdOf = (row: { id?: unknown }): string | null => {
+  const id = row?.id;
+  return id == null ? null : String(id);
+};
+
+const mergeStableRowsById = <T extends { id?: unknown }>(
+  currentRows: T[] | undefined,
+  nextRows: T[] | undefined,
+): T[] => {
+  const current = currentRows || [];
+  const next = nextRows || [];
+  if (!current.length) {
+    return next;
+  }
+
+  const currentById = new Map<string, T>();
+  current.forEach((row) => {
+    const id = rowIdOf(row);
+    if (id) {
+      currentById.set(id, row);
+    }
+  });
+
+  let allRowsUnchangedInPlace = current.length === next.length;
+  const merged = next.map((row, index) => {
+    const id = rowIdOf(row);
+    const previous = id ? currentById.get(id) : undefined;
+    const resolved = previous && valuesEqualJson(previous, row) ? previous : row;
+    if (resolved !== current[index]) {
+      allRowsUnchangedInPlace = false;
+    }
+    return resolved;
+  });
+
+  return allRowsUnchangedInPlace ? current : merged;
+};
+
+const maybeReuseAccountPositionsResponse = (
+  current: AccountPositionsResponse | undefined,
+  next: AccountPositionsResponse,
+): AccountPositionsResponse => {
+  if (!current) {
+    return next;
+  }
+  const positions = mergeStableRowsById(current.positions, next.positions);
+  const merged =
+    positions === next.positions
+      ? next
+      : {
+          ...next,
+          positions,
+        };
+  return reuseEqualJson(current, merged);
+};
+
+const maybeReuseAccountOrdersResponse = (
+  current: AccountOrdersResponse | undefined,
+  next: AccountOrdersResponse,
+): AccountOrdersResponse => {
+  if (!current) {
+    return next;
+  }
+  const orders = mergeStableRowsById(current.orders, next.orders);
+  const merged =
+    orders === next.orders
+      ? next
+      : {
+          ...next,
+          orders,
+        };
+  return reuseEqualJson(current, merged);
+};
+
+const indexPositionRowsById = (
+  rows: AccountPositionRow[] | undefined,
+): Map<string, AccountPositionRow> => {
+  const indexed = new Map<string, AccountPositionRow>();
+  (rows || []).forEach((row) => {
+    const id = rowIdOf(row);
+    if (id) {
+      indexed.set(id, row);
+    }
+  });
+  return indexed;
+};
+
+const indexPositionRowsBySymbol = (
+  rows: AccountPositionRow[] | undefined,
+): Map<string, AccountPositionRow> => {
+  const indexed = new Map<string, AccountPositionRow>();
+  (rows || []).forEach((row) => {
+    const symbol = String(row?.symbol || "").trim().toUpperCase();
+    if (symbol && !indexed.has(symbol)) {
+      indexed.set(symbol, row);
+    }
+  });
+  return indexed;
+};
+
+const indexOrderRowsById = (
+  rows: AccountOrderRow[] | undefined,
+): Map<string, AccountOrderRow> => {
+  const indexed = new Map<string, AccountOrderRow>();
+  (rows || []).forEach((row) => {
+    const id = rowIdOf(row);
+    if (id) {
+      indexed.set(id, row);
+    }
+  });
+  return indexed;
+};
+
+const subscribeAccountLiveSlices = (listener: () => void) => {
+  accountLiveSliceListeners.add(listener);
+  return () => accountLiveSliceListeners.delete(listener);
+};
+
+const emitAccountLiveSlices = () => {
+  accountLiveSliceListeners.forEach((listener) => listener());
+};
+
+const applyAccountLivePayloadToSelectorStore = (
+  payload: AccountPageLivePayload,
+) => {
+  const key = accountLiveScopeKey(payload);
+  if (!key) {
+    return;
+  }
+
+  const current = accountLiveSlices.get(key);
+  const summary = reuseEqualJson(current?.summary ?? undefined, payload.summary);
+  const positions = maybeReuseAccountPositionsResponse(
+    current?.positions ?? undefined,
+    payload.positions,
+  );
+  const orders = maybeReuseAccountOrdersResponse(
+    current?.orders ?? undefined,
+    payload.orders,
+  );
+
+  if (
+    current &&
+    current.summary === summary &&
+    current.positions === positions &&
+    current.orders === orders &&
+    current.updatedAt === payload.updatedAt
+  ) {
+    return;
+  }
+
+  accountLiveSlices.set(key, {
+    summary,
+    positions,
+    orders,
+    positionRowsById: indexPositionRowsById(positions.positions),
+    positionRowsBySymbol: indexPositionRowsBySymbol(positions.positions),
+    orderRowsById: indexOrderRowsById(orders.orders),
+    updatedAt: payload.updatedAt,
+  });
+  emitAccountLiveSlices();
+};
+
+export const getAccountPositionRowSnapshot = ({
+  accountId,
+  mode,
+  rowId,
+  symbol,
+}: AccountPositionRowSelectorInput): AccountPositionRow | null => {
+  const key = accountLiveScopeKey({ accountId, mode });
+  if (!key) {
+    return null;
+  }
+
+  const slice = accountLiveSlices.get(key);
+  if (!slice) {
+    return null;
+  }
+
+  if (rowId) {
+    return slice.positionRowsById.get(String(rowId)) ?? null;
+  }
+
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  return normalizedSymbol
+    ? slice.positionRowsBySymbol.get(normalizedSymbol) ?? null
+    : null;
+};
+
+export const getAccountOrderRowSnapshot = ({
+  accountId,
+  mode,
+  rowId,
+}: AccountOrderRowSelectorInput): AccountOrderRow | null => {
+  const key = accountLiveScopeKey({ accountId, mode });
+  if (!key || !rowId) {
+    return null;
+  }
+  return accountLiveSlices.get(key)?.orderRowsById.get(String(rowId)) ?? null;
+};
+
+export const getAccountSummaryFieldSnapshot = ({
+  accountId,
+  mode,
+  fieldName,
+}: AccountSummaryFieldSelectorInput): unknown => {
+  const key = accountLiveScopeKey({ accountId, mode });
+  if (!key || !fieldName) {
+    return null;
+  }
+  const summary = accountLiveSlices.get(key)?.summary;
+  if (!summary) {
+    return null;
+  }
+  return (
+    (summary.metrics as Record<string, unknown> | undefined)?.[fieldName] ??
+    (summary as unknown as Record<string, unknown>)[fieldName] ??
+    null
+  );
+};
+
+export const useAccountPositionRow = ({
+  accountId,
+  mode,
+  rowId,
+  symbol,
+  enabled = true,
+}: AccountPositionRowSelectorInput): AccountPositionRow | null => {
+  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && (rowId || symbol));
+  const getSnapshot = useCallback(
+    () => getAccountPositionRowSnapshot({ accountId, mode, rowId, symbol }),
+    [accountId, mode, rowId, symbol],
+  );
+  return useSyncExternalStore(
+    subscribed ? subscribeAccountLiveSlices : noopSubscribe,
+    getSnapshot,
+    getSnapshot,
+  );
+};
+
+export const useAccountOrderRow = ({
+  accountId,
+  mode,
+  rowId,
+  enabled = true,
+}: AccountOrderRowSelectorInput): AccountOrderRow | null => {
+  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && rowId);
+  const getSnapshot = useCallback(
+    () => getAccountOrderRowSnapshot({ accountId, mode, rowId }),
+    [accountId, mode, rowId],
+  );
+  return useSyncExternalStore(
+    subscribed ? subscribeAccountLiveSlices : noopSubscribe,
+    getSnapshot,
+    getSnapshot,
+  );
+};
+
+export const useAccountSummaryField = ({
+  accountId,
+  mode,
+  fieldName,
+  enabled = true,
+}: AccountSummaryFieldSelectorInput): unknown => {
+  const subscribed = Boolean(enabled && accountLiveScopeKey({ accountId, mode }) && fieldName);
+  const getSnapshot = useCallback(
+    () => getAccountSummaryFieldSnapshot({ accountId, mode, fieldName }),
+    [accountId, mode, fieldName],
+  );
+  return useSyncExternalStore(
+    subscribed ? subscribeAccountLiveSlices : noopSubscribe,
+    getSnapshot,
+    getSnapshot,
+  );
+};
+
+const getBrokerFreshnessForSnapshot = (
+  streamId: string,
+): BrokerFreshnessForSnapshot => {
+  const snapshot = getBrokerStreamFreshnessSnapshot();
+  const normalizedStreamId = String(streamId || "").toLowerCase();
+  const lastEventAt =
+    normalizedStreamId === "order" || normalizedStreamId === "orders"
+      ? snapshot.orderLastEventAt
+      : snapshot.accountLastEventAt;
+  const fresh =
+    normalizedStreamId === "order" || normalizedStreamId === "orders"
+      ? snapshot.orderFresh
+      : snapshot.accountFresh;
+  const cached = brokerFreshnessForCache.get(normalizedStreamId);
+  if (
+    cached &&
+    cached.lastEventAt === lastEventAt &&
+    cached.fresh === fresh
+  ) {
+    return cached;
+  }
+  const next = { lastEventAt, fresh };
+  brokerFreshnessForCache.set(normalizedStreamId, next);
+  return next;
+};
+
+export const useBrokerFreshnessFor = (
+  streamId: string,
+  enabled = true,
+): BrokerFreshnessForSnapshot => {
+  const getSnapshot = useCallback(
+    () => getBrokerFreshnessForSnapshot(streamId),
+    [streamId],
+  );
+  return useSyncExternalStore(
+    enabled ? subscribeBrokerStreamFreshness : noopSubscribe,
+    getSnapshot,
+    getSnapshot,
+  );
+};
 
 const ETF_SYMBOLS = new Set([
   "SPY",
@@ -1735,7 +2204,8 @@ export const applyShadowAccountPayloadToCache = (
       },
     })
     .forEach((query) => {
-      if (!matchesMode(readQueryParams(query.queryKey), "paper")) {
+      const params = readQueryParams(query.queryKey);
+      if (!matchesMode(params, "paper") || typeof params?.source === "string") {
         return;
       }
 
@@ -1800,7 +2270,7 @@ const closedTradeParamsMatch = (
   optionalParamMatches(params, "symbol", filters.symbol) &&
   optionalParamMatches(params, "pnlSign", filters.pnlSign) &&
   optionalParamMatches(params, "holdDuration", filters.holdDuration) &&
-  optionalParamMatches(params, "assetClass", null);
+  optionalParamMatches(params, "assetClass", filters.assetClass);
 
 const performanceCalendarParamsMatch = (
   params: Record<string, unknown> | null,
@@ -1832,32 +2302,64 @@ export const applyAccountPageLivePayloadToCache = (
       if (!matchesMode(params, payload.mode)) {
         return;
       }
+      if (typeof params?.source === "string") {
+        return;
+      }
 
       if (path === `/api/accounts/${payload.accountId}/summary`) {
-        queryClient.setQueryData(query.queryKey, payload.summary);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountSummaryResponse | undefined) =>
+            reuseEqualJson(current, payload.summary),
+        );
       } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
-        queryClient.setQueryData(query.queryKey, payload.allocation);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountAllocationResponse | undefined) =>
+            reuseEqualJson(current, payload.allocation),
+        );
       } else if (path === `/api/accounts/${payload.accountId}/risk`) {
-        queryClient.setQueryData(query.queryKey, payload.risk);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountRiskResponse | undefined) =>
+            reuseEqualJson(current, payload.risk),
+        );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
         assetClassParamMatches(params, payload.assetClass)
       ) {
-        queryClient.setQueryData(query.queryKey, payload.positions);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountPositionsResponse | undefined) =>
+            maybeReuseAccountPositionsResponse(current, payload.positions),
+        );
       } else if (
         path === `/api/accounts/${payload.accountId}/orders` &&
         orderTabParamMatches(params, payload.orderTab)
       ) {
-        queryClient.setQueryData(query.queryKey, payload.orders);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountOrdersResponse | undefined) =>
+            maybeReuseAccountOrdersResponse(current, payload.orders),
+        );
       } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
         const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";
-        const benchmark =
-          typeof params?.benchmark === "string" ? params.benchmark.toUpperCase() : null;
-        if (!benchmark && range === "1D") {
-          queryClient.setQueryData(query.queryKey, payload.intradayEquity);
+        if (range === "1D") {
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: AccountEquityHistoryResponse | undefined) =>
+              reuseEqualJson(current, payload.intradayEquity),
+          );
+        } else {
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: LiveAccountEquityHistoryResponse | undefined) =>
+              upsertAccountPageLiveEquityTerminalPoint(current, payload, range),
+          );
         }
       }
     });
+  applyAccountLivePayloadToSelectorStore(payload);
 };
 
 export const applyAccountPageDerivedPayloadToCache = (
@@ -1887,6 +2389,9 @@ export const applyAccountPageDerivedPayloadToCache = (
       }
 
       if (!matchesMode(params, payload.mode)) {
+        return;
+      }
+      if (typeof params?.source === "string") {
         return;
       }
 
@@ -1966,6 +2471,162 @@ export const applyAccountPagePayloadToCache = (
     tradingPatterns: payload.tradingPatterns,
   });
 };
+
+type QueuedAccountPagePayload =
+  | {
+      kind: "bootstrap";
+      queryClient: ReturnType<typeof useQueryClient>;
+      payload: AccountPageBootstrapPayload;
+      queueKey: string;
+    }
+  | {
+      kind: "live";
+      queryClient: ReturnType<typeof useQueryClient>;
+      payload: AccountPageLivePayload;
+      queueKey: string;
+    }
+  | {
+      kind: "derived";
+      queryClient: ReturnType<typeof useQueryClient>;
+      payload: AccountPageDerivedPayload;
+      queueKey: string;
+    };
+
+const pendingAccountPagePayloads: QueuedAccountPagePayload[] = [];
+let accountPagePayloadFlushScheduled = false;
+let accountPagePayloadFlushRaf: number | null = null;
+let accountPagePayloadFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const accountPagePayloadQueueKey = (
+  kind: QueuedAccountPagePayload["kind"],
+  payload:
+    | AccountPageBootstrapPayload
+    | AccountPageLivePayload
+    | AccountPageDerivedPayload,
+): string => {
+  if (kind === "live") {
+    const livePayload = payload as AccountPageLivePayload;
+    return [
+      kind,
+      livePayload.accountId,
+      livePayload.mode,
+      livePayload.assetClass || "all",
+      livePayload.orderTab,
+    ].join(":");
+  }
+  if (kind === "derived") {
+    const derivedPayload = payload as AccountPageDerivedPayload;
+    return [
+      kind,
+      derivedPayload.accountId,
+      derivedPayload.mode,
+      derivedPayload.range || "ALL",
+      JSON.stringify(derivedPayload.tradeFilters || {}),
+      derivedPayload.performanceCalendarFrom || "",
+    ].join(":");
+  }
+  const bootstrapPayload = payload as AccountPageBootstrapPayload;
+  return [
+    kind,
+    bootstrapPayload.accountId,
+    bootstrapPayload.mode,
+    bootstrapPayload.range || "ALL",
+    bootstrapPayload.assetClass || "all",
+    bootstrapPayload.orderTab,
+    JSON.stringify(bootstrapPayload.tradeFilters || {}),
+    bootstrapPayload.performanceCalendarFrom || "",
+  ].join(":");
+};
+
+const clearScheduledAccountPagePayloadFlush = () => {
+  if (
+    accountPagePayloadFlushRaf !== null &&
+    typeof window !== "undefined" &&
+    typeof window.cancelAnimationFrame === "function"
+  ) {
+    window.cancelAnimationFrame(accountPagePayloadFlushRaf);
+  }
+  if (accountPagePayloadFlushTimer !== null) {
+    clearTimeout(accountPagePayloadFlushTimer);
+  }
+  accountPagePayloadFlushRaf = null;
+  accountPagePayloadFlushTimer = null;
+  accountPagePayloadFlushScheduled = false;
+};
+
+export const flushAccountPagePayloadQueue = () => {
+  clearScheduledAccountPagePayloadFlush();
+  const queued = pendingAccountPagePayloads.splice(0);
+  queued.forEach((item) => {
+    if (item.kind === "bootstrap") {
+      applyAccountPagePayloadToCache(item.queryClient, item.payload);
+    } else if (item.kind === "live") {
+      applyAccountPageLivePayloadToCache(item.queryClient, item.payload);
+    } else {
+      applyAccountPageDerivedPayloadToCache(item.queryClient, item.payload);
+    }
+  });
+};
+
+const scheduleAccountPagePayloadFlush = () => {
+  if (accountPagePayloadFlushScheduled) {
+    return;
+  }
+  accountPagePayloadFlushScheduled = true;
+
+  if (
+    typeof window !== "undefined" &&
+    typeof window.requestAnimationFrame === "function"
+  ) {
+    accountPagePayloadFlushRaf = window.requestAnimationFrame(() => {
+      accountPagePayloadFlushRaf = null;
+      flushAccountPagePayloadQueue();
+    });
+    return;
+  }
+
+  accountPagePayloadFlushTimer = setTimeout(() => {
+    accountPagePayloadFlushTimer = null;
+    flushAccountPagePayloadQueue();
+  }, 16);
+};
+
+export function queueAccountPagePayloadToCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  kind: "bootstrap",
+  payload: AccountPageBootstrapPayload,
+): void;
+export function queueAccountPagePayloadToCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  kind: "live",
+  payload: AccountPageLivePayload,
+): void;
+export function queueAccountPagePayloadToCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  kind: "derived",
+  payload: AccountPageDerivedPayload,
+): void;
+export function queueAccountPagePayloadToCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  kind: QueuedAccountPagePayload["kind"],
+  payload:
+    | AccountPageBootstrapPayload
+    | AccountPageLivePayload
+    | AccountPageDerivedPayload,
+) {
+  const queueKey = accountPagePayloadQueueKey(kind, payload);
+  const item = { kind, queryClient, payload, queueKey } as QueuedAccountPagePayload;
+  const existingIndex = pendingAccountPagePayloads.findIndex(
+    (pending) =>
+      pending.queryClient === queryClient && pending.queueKey === queueKey,
+  );
+  if (existingIndex >= 0) {
+    pendingAccountPagePayloads[existingIndex] = item;
+  } else {
+    pendingAccountPagePayloads.push(item);
+  }
+  scheduleAccountPagePayloadFlush();
+}
 
 export const applyIbkrAccountPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
@@ -2125,6 +2786,26 @@ export const mergeQuotesIntoCache = (
   };
 };
 
+const getOptionExpirationSortTime = (
+  expirationDate: string | null | undefined,
+): number => {
+  const match = String(expirationDate || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const timestamp = Date.UTC(year, monthIndex, day);
+  const parsed = new Date(timestamp);
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === monthIndex &&
+    parsed.getUTCDate() === day
+    ? timestamp
+    : Number.POSITIVE_INFINITY;
+};
+
 export const mergeOptionChainContracts = (
   currentContracts: OptionChainResponse["contracts"] | undefined,
   nextContracts: OptionChainResponse["contracts"],
@@ -2187,8 +2868,8 @@ export const mergeOptionChainContracts = (
 
   return mergedContracts.sort(
     (left, right) =>
-      new Date(left.contract.expirationDate).getTime() -
-        new Date(right.contract.expirationDate).getTime() ||
+      getOptionExpirationSortTime(left.contract.expirationDate) -
+        getOptionExpirationSortTime(right.contract.expirationDate) ||
       left.contract.strike - right.contract.strike ||
       left.contract.right.localeCompare(right.contract.right),
   );
@@ -2564,6 +3245,7 @@ export const useAccountPageSnapshotStream = ({
     from?: string | null;
     to?: string | null;
     symbol?: string | null;
+    assetClass?: string | null;
     pnlSign?: string | null;
     holdDuration?: string | null;
   };
@@ -2630,7 +3312,7 @@ export const useAccountPageSnapshotStream = ({
         return;
       }
       markFresh();
-      applyAccountPagePayloadToCache(queryClient, payload);
+      queueAccountPagePayloadToCache(queryClient, "bootstrap", payload);
     };
     const handleLive = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<AccountPageLivePayload>(event.data);
@@ -2638,7 +3320,7 @@ export const useAccountPageSnapshotStream = ({
         return;
       }
       markFresh();
-      applyAccountPageLivePayloadToCache(queryClient, payload);
+      queueAccountPagePayloadToCache(queryClient, "live", payload);
     };
     const handleDerived = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<AccountPageDerivedPayload>(event.data);
@@ -2646,7 +3328,7 @@ export const useAccountPageSnapshotStream = ({
         return;
       }
       markFresh();
-      applyAccountPageDerivedPayloadToCache(queryClient, payload);
+      queueAccountPagePayloadToCache(queryClient, "derived", payload);
     };
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{

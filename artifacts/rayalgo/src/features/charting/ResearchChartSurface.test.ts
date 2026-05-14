@@ -291,8 +291,8 @@ test("ResearchChartSurface colors flat candles and volume neutral", () => {
 test("ResearchChartSurface renders compact enriched flow tooltips", () => {
   const source = readResearchChartSurfaceSource();
 
-  assert.match(source, /const FLOW_TOOLTIP_WIDTH = 248;/);
-  assert.match(source, /const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 232;/);
+  assert.match(source, /const FLOW_TOOLTIP_WIDTH = 220;/);
+  assert.match(source, /const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 180;/);
   assert.match(source, /const FLOW_TOOLTIP_HIDE_DELAY_MS = 120;/);
   assert.match(source, /const buildFlowTooltipStatCells = \(/);
   assert.match(source, /const FLOW_TOOLTIP_SCALAR_KEYS:/);
@@ -301,13 +301,16 @@ test("ResearchChartSurface renders compact enriched flow tooltips", () => {
   assert.match(source, /data-chart-flow-tooltip-compact="true"/);
   assert.match(source, /onPointerEnter=\{clearFlowTooltipHideTimer\}/);
   assert.match(source, /onPointerLeave=\{\(\) => scheduleHideFlowTooltip\(flowTooltip\.id\)\}/);
-  assert.match(source, /data-chart-flow-tooltip-contract="true"/);
-  assert.match(source, /data-chart-flow-tooltip-mix-strip="true"/);
+  assert.match(source, /data-chart-flow-tooltip-top-contract="true"/);
+  assert.match(source, /data-chart-flow-tooltip-bias-bar="true"/);
   assert.match(source, /data-chart-flow-tooltip-stat-grid="true"/);
+  assert.match(source, /gridTemplateColumns: "repeat\(3, minmax\(0, 1fr\)\)"/);
   assert.match(source, /maxHeight:\s*"calc\(100% - 16px\)"/);
-  assert.match(source, /<Copy size=\{11\} strokeWidth=\{1\.8\} \/>/);
+  assert.match(source, /\{ label: "Call \$", value: model\.callPremiumLabel \}/);
+  assert.match(source, /\{ label: "Put \$", value: model\.putPremiumLabel \}/);
   assert.doesNotMatch(source, /width:\s*280/);
   assert.doesNotMatch(source, /plotSize\.width - 292/);
+  assert.doesNotMatch(source, /data-chart-flow-tooltip-contract="true"/);
 });
 
 test("ResearchChartSurface removes stale diagonal closed-market visuals", () => {

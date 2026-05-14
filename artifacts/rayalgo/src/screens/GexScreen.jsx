@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getGexDashboard as getGexDashboardRequest } from "@workspace/api-client-react";
 import {
   AlertTriangle,
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Snowflake,
   Target,
   Zap,
 } from "lucide-react";
@@ -44,24 +44,10 @@ import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 
 const fetchGexData = async ({ ticker, signal }) => {
-  const response = await fetch(`/api/gex/${encodeURIComponent(ticker)}`, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    let message = `GEX request failed (${response.status})`;
-    try {
-      const payload = await response.json();
-      message = payload?.message || payload?.error || message;
-    } catch {
-      // Leave the status-based message when the server did not return JSON.
-    }
-    throw new Error(message);
-  }
-  return response.json();
+  return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
 };
 
 const fmtCurrency = (value) => {
@@ -92,7 +78,7 @@ const pct = (numerator, denominator) =>
 
 const fieldStyle = {
   background: T.bg0,
-  border: `1px solid ${T.border}`,
+  border: "none",
   color: T.text,
   fontFamily: T.sans,
   fontSize: textSize("bodyStrong"),
@@ -105,7 +91,7 @@ const SegmentControl = ({ value, options, onChange }) => (
     style={{
       display: "inline-flex",
       background: T.bg0,
-      border: `1px solid ${T.border}`,
+      border: "none",
     }}
   >
     {options.map((option) => {
@@ -140,8 +126,8 @@ const SectionTitle = ({ children, right }) => (
       alignItems: "center",
       justifyContent: "space-between",
       gap: sp(8),
-      padding: sp("8px 10px"),
-      borderBottom: `1px solid ${T.border}`,
+      padding: sp("10px 14px"),
+      borderBottom: `1px solid ${T.borderLight || T.border}`,
     }}
   >
     <div
@@ -154,20 +140,11 @@ const SectionTitle = ({ children, right }) => (
     >
       <span
         style={{
-          width: dim(3),
-          height: dim(13),
-          background: T.accent,
-          flexShrink: 0,
-        }}
-      />
-      <span
-        style={{
           color: T.text,
-          fontFamily: T.display,
-          fontSize: textSize("body"),
-          fontWeight: 700,
-          letterSpacing: "0.03em",
-          textTransform: "uppercase",
+          fontFamily: T.sans,
+          fontSize: textSize("displaySmall"),
+          fontWeight: 600,
+          letterSpacing: "-0.01em",
         }}
       >
         {children}
@@ -198,7 +175,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
         alignItems: "center",
         gap: sp(3),
         color: T.textDim,
-        fontFamily: T.display,
+        fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: "0.05em",
         textTransform: "uppercase",
@@ -212,7 +189,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
     <span
       style={{
         color,
-        fontFamily: T.display,
+        fontFamily: T.sans,
         fontSize: fs(16),
         fontWeight: 700,
         lineHeight: 1,
@@ -238,7 +215,7 @@ const MetaLine = ({ label, value }) => (
     <span
       style={{
         color: T.text,
-        fontFamily: T.display,
+        fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: 700,
         textAlign: "right",
@@ -257,7 +234,7 @@ const TickerMetaSummary = ({ data }) => {
       <div
         style={{
           color: T.text,
-          fontFamily: T.display,
+          fontFamily: T.sans,
           fontSize: textSize("bodyStrong"),
           fontWeight: 700,
           overflow: "hidden",
@@ -304,7 +281,7 @@ const SectionHeading = ({ title }) => (
     <h2
       style={{
         color: T.text,
-        fontFamily: T.display,
+        fontFamily: T.sans,
         fontSize: fs(15),
         fontWeight: 700,
         margin: 0,
@@ -372,19 +349,19 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
     >
       <ResponsiveContainer width="100%" height={286}>
         <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <Tooltip cursor={{ fill: "rgba(148,163,184,0.08)" }} content={<GexTooltip spot={spot} />} />
           <ReferenceLine
@@ -429,18 +406,18 @@ const ExpiryChart = ({ rows, spot }) => {
     >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="label"
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <Tooltip
             cursor={{ fill: "rgba(148,163,184,0.08)" }}
@@ -501,21 +478,21 @@ const GammaPriceChart = ({ rows, spot }) => {
     >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="price"
             type="number"
             domain={["dataMin", "dataMax"]}
             tickFormatter={(value) => `$${value.toFixed(0)}`}
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <Tooltip
             cursor={{ fill: "rgba(148,163,184,0.08)" }}
@@ -585,19 +562,19 @@ const OiChart = ({ rows, spot }) => {
     >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
             tick={{ fill: T.textDim, fontSize: 10, fontFamily: T.sans }}
-            axisLine={{ stroke: T.border }}
-            tickLine={{ stroke: T.border }}
+            axisLine={false}
+            tickLine={false}
           />
           <ReferenceLine x={Math.round(spot)} stroke={T.cyan} strokeDasharray="4 4" />
           <Tooltip
@@ -972,7 +949,7 @@ const SqueezeCard = ({ squeeze, source }) => {
               style={{
                 color: T.textDim,
                 fontSize: textSize("caption"),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 letterSpacing: "0.05em",
                 textTransform: "uppercase",
               }}
@@ -1010,7 +987,7 @@ const SqueezeCard = ({ squeeze, source }) => {
             <div
               style={{
                 color: T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 letterSpacing: "0.05em",
                 textTransform: "uppercase",
@@ -1064,7 +1041,7 @@ const tableHeaderStyle = {
   color: T.textDim,
   borderBottom: `1px solid ${T.border}`,
   textAlign: "right",
-  fontFamily: T.display,
+  fontFamily: T.sans,
   fontWeight: 700,
 };
 
@@ -1246,7 +1223,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
           outline: 0,
           background: "transparent",
           color: T.text,
-          fontFamily: T.display,
+          fontFamily: T.sans,
           fontWeight: 700,
           fontSize: textSize("bodyStrong"),
         }}
@@ -1306,73 +1283,48 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
       <div
         style={{
           display: "grid",
-          gap: sp(10),
-          padding: sp(10),
-          maxWidth: dim(1680),
-          margin: "0 auto",
+          gap: sp(isPhone ? 12 : 18),
+          padding: sp(isPhone ? "12px 12px 20px" : "20px 28px 28px"),
+          width: "100%",
         }}
       >
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(10),
-            flexWrap: "wrap",
+        <CockpitHeader
+          eyebrow="Live"
+          title="GEX"
+          subtitle={`${ticker} · ${selectedExpirationCount || 0} expiration${
+            selectedExpirationCount === 1 ? "" : "s"
+          } · ${backgroundLoading ? "refreshing" : "Massive API"}`}
+          pulse={{
+            state: backgroundLoading ? "slow" : "live",
+            label: backgroundLoading ? "Refreshing GEX data" : "GEX live",
           }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: sp(9) }}>
-            <Snowflake size={19} color={T.cyan} />
-            <div>
-              <div
-                style={{
-                  fontFamily: T.display,
-                  color: T.text,
-                  fontSize: fs(18),
-                  fontWeight: 700,
-                }}
-              >
-                Gamma Exposure (GEX)
-              </div>
-              <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
-                {ticker} · {selectedExpirationCount || 0} expiration
-                {selectedExpirationCount === 1 ? "" : "s"} ·{" "}
-                {backgroundLoading ? "refreshing" : "Massive API"}
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: sp(8),
-              flexWrap: "wrap",
-            }}
-          >
-            {tickerSearchControl}
-            {isPhone ? (
-              <button
-                type="button"
-                data-testid="gex-mobile-filter-trigger"
-                onClick={() => setMobileFiltersOpen(true)}
-                style={{
-                  ...fieldStyle,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(6),
-                  minHeight: dim(38),
-                  padding: sp("0 10px"),
-                  cursor: "pointer",
-                }}
-              >
-                <SlidersHorizontal size={14} />
-                Filters
-              </button>
-            ) : (
-              filtersControl
-            )}
-          </div>
-        </header>
+          actions={
+            <>
+              {tickerSearchControl}
+              {isPhone ? (
+                <button
+                  type="button"
+                  data-testid="gex-mobile-filter-trigger"
+                  onClick={() => setMobileFiltersOpen(true)}
+                  style={{
+                    ...fieldStyle,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: sp(6),
+                    minHeight: dim(38),
+                    padding: sp("0 10px"),
+                    cursor: "pointer",
+                  }}
+                >
+                  <SlidersHorizontal size={14} />
+                  Filters
+                </button>
+              ) : (
+                filtersControl
+              )}
+            </>
+          }
+        />
 
         {isPhone ? (
           <>
@@ -1603,7 +1555,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
+                gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
                 gap: sp(10),
                 alignItems: "start",
               }}
@@ -1624,7 +1576,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+                    gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(320)}px), 1fr))`,
                     gap: sp(10),
                   }}
                 >
@@ -1648,7 +1600,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
 }
 
 const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
-  <div style={{ background: T.bg0, border: `1px solid ${T.border}`, padding: sp(8) }}>
+  <div style={{ background: T.bg0, border: "none", padding: sp(8) }}>
     <div
       style={{
         display: "inline-flex",
@@ -1683,7 +1635,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
         flex: 1,
         minWidth: 0,
         background: T.bg0,
-        border: `1px solid ${T.border}`,
+        border: "none",
         padding: sp(8),
         display: "grid",
         gap: sp(3),
@@ -1692,7 +1644,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
       <div
         style={{
           color: T.textMuted,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.05em",
           textTransform: "uppercase",
@@ -1715,10 +1667,10 @@ const IntradayChartTooltip = ({ active, payload }) => {
     <div
       style={{
         background: T.bg0,
-        border: `1px solid ${T.border}`,
+        border: "none",
         padding: sp(6),
         fontSize: textSize("caption"),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
       }}
     >
       <div style={{ color: T.textDim }}>
@@ -1768,8 +1720,8 @@ const IntradayCard = ({ snapshots }) => {
                 margin={{ top: 4, right: 6, left: 0, bottom: 0 }}
               >
                 <CartesianGrid
-                  stroke={T.border}
-                  strokeDasharray="2 2"
+                  stroke={T.borderLight || T.border}
+                  strokeDasharray="0"
                   vertical={false}
                 />
                 <XAxis

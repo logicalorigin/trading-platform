@@ -1,9 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test.setTimeout(180_000);
 
-const screenshotDir = "/tmp/account-visual-review";
+const screenshotDir = join(tmpdir(), "account-visual-review");
 
 async function openAccountScreen(page: Page) {
   await page.goto("/");
@@ -26,7 +28,7 @@ async function shotByText(page: Page, label: string, file: string) {
     .locator("xpath=ancestor::*[contains(@class,'ra-panel')][1]");
   if (await heading.count()) {
     await heading.scrollIntoViewIfNeeded();
-    await heading.screenshot({ path: `${screenshotDir}/${file}` }).catch(() => undefined);
+    await heading.screenshot({ path: join(screenshotDir, file) }).catch(() => undefined);
     return true;
   }
   return false;
@@ -63,7 +65,7 @@ test("capture account screen for visual review", async ({ page }) => {
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(300);
   await page.screenshot({
-    path: `${screenshotDir}/full-dark.png`,
+    path: join(screenshotDir, "full-dark.png"),
     fullPage: true,
   });
 
@@ -76,7 +78,7 @@ test("capture account screen for visual review", async ({ page }) => {
     await themeToggle.click().catch(() => undefined);
     await page.waitForTimeout(2000);
     await page.screenshot({
-      path: `${screenshotDir}/full-light.png`,
+      path: join(screenshotDir, "full-light.png"),
       fullPage: true,
     });
   }

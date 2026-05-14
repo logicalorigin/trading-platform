@@ -18,10 +18,10 @@ import { ExpiryCalendarHeatmap } from "./ExpiryCalendarHeatmap.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
-const ratioPercent = (value, maskValues = false) =>
+const marginCushionPercent = (value, maskValues = false) =>
   value == null || Number.isNaN(Number(value))
     ? "----"
-    : formatAccountPercent(Number(value) * 100, 1, maskValues);
+    : formatAccountPercent(Number(value), 1, maskValues);
 
 const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
   <AppTooltip content={title}><div
@@ -32,18 +32,18 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 400 }}>
+    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.sans, fontWeight: 400 }}>
       {value}
     </div>
     {subvalue ? (
-      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>{subvalue}</div>
+      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>{subvalue}</div>
     ) : null}
   </div></AppTooltip>
 );
 
 const MarginGauge = ({ value, maskValues = false }) => {
-  const ratio = Number(value);
-  const pct = Number.isFinite(ratio) ? Math.max(0, Math.min(100, ratio * 100)) : 0;
+  const pctValue = Number(value);
+  const pct = Number.isFinite(pctValue) ? Math.max(0, Math.min(100, pctValue)) : 0;
   const tone = pct > 50 ? T.green : pct > 25 ? T.amber : T.red;
   return (
     <div
@@ -58,12 +58,12 @@ const MarginGauge = ({ value, maskValues = false }) => {
         style={{
           color: tone,
           fontSize: fs(14),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontWeight: 400,
           letterSpacing: 0,
         }}
       >
-        {ratioPercent(value, maskValues)}
+        {marginCushionPercent(value, maskValues)}
       </div>
       <div
         style={{
@@ -71,7 +71,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
           borderRadius: dim(5),
           overflow: "hidden",
           background: T.bg3,
-          border: `1px solid ${T.border}`,
+          border: "none",
         }}
       >
         <div
@@ -82,7 +82,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
           }}
         />
       </div>
-      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>
+      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>
         IBKR Cushion
       </div>
     </div>
@@ -251,7 +251,7 @@ export const RiskDashboardPanel = ({
             </div>
           ) : greeks.coverage ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
-              <Pill tone="green">
+              <Pill tone="status-filled">
                 Matched {greeks.coverage.matchedOptionPositions || 0} /{" "}
                 {greeks.coverage.optionPositions || 0} options
               </Pill>
@@ -278,7 +278,7 @@ export const RiskDashboardPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(230px, 0.7fr) minmax(0, 1.3fr)",
+              gridTemplateColumns: `minmax(${dim(230)}px, 0.7fr) minmax(0, 1.3fr)`,
               gap: sp(8),
               alignItems: "start",
             }}
@@ -369,7 +369,7 @@ export const RiskDashboardPanel = ({
                 </div>
               ) : greeks.coverage ? (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
-                  <Pill tone="green">
+                  <Pill tone="status-filled">
                     Matched {greeks.coverage.matchedOptionPositions || 0} /{" "}
                     {greeks.coverage.optionPositions || 0} option positions
                   </Pill>
@@ -382,7 +382,7 @@ export const RiskDashboardPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1.15fr) minmax(230px, 0.85fr)",
+              gridTemplateColumns: `minmax(0, 1.15fr) minmax(${dim(230)}px, 0.85fr)`,
               gap: sp(8),
               paddingTop: sp(4),
               borderTop: `1px solid ${T.border}`,

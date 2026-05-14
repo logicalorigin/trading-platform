@@ -75,6 +75,15 @@ export type FlowTooltipModel = {
   sideConfidence: string;
   intensity: string;
   eventCount: number;
+  callPremiumLabel: string;
+  putPremiumLabel: string;
+  bullishPremiumLabel: string;
+  bearishPremiumLabel: string;
+  neutralPremiumLabel: string;
+  markerPremiumLabel: string;
+  topStrike: string;
+  topExpiry: string;
+  topRight: "C" | "P" | "";
 };
 
 type ChartBarModel = {
@@ -133,12 +142,59 @@ const finiteNumber = (value: unknown): number | null => {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const compactCurrency = (value: number): string => {
+export const compactCurrency = (value: number): string => {
   const abs = Math.abs(value);
   if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
   if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `$${Math.round(value / 1_000)}K`;
   return `$${Math.round(value)}`;
+};
+
+const formatStrike = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  if (numeric === null) return "n/a";
+  return numeric % 1 === 0 ? numeric.toFixed(0) : numeric.toFixed(2);
+};
+
+const normalizeDateParts = (year: number, month: number, day: number): string => {
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    : "";
+};
+
+const normalizeExpirationDateKey = (value: unknown): string => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return normalizeDateParts(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]),
+        Number(isoMatch[3]),
+      );
+    }
+    const compactMatch = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compactMatch) {
+      return normalizeDateParts(
+        Number(compactMatch[1]),
+        Number(compactMatch[2]),
+        Number(compactMatch[3]),
+      );
+    }
+  }
+  const date = value instanceof Date ? value : value ? new Date(String(value)) : null;
+  return date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+};
+
+const formatExpiryShort = (value: unknown): string => {
+  const dateKey = normalizeExpirationDateKey(value);
+  if (!dateKey) return "n/a";
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
 };
 
 const compactNumber = (value: number): string => {
@@ -258,9 +314,9 @@ const formatDte = (event: ChartEvent): string => {
   const explicitDte = finiteNumber(event.metadata?.dte);
   if (explicitDte !== null) return `${Math.max(0, Math.round(explicitDte))}d`;
 
-  const expiration = String(event.metadata?.expirationDate || "").trim();
+  const expiration = normalizeExpirationDateKey(event.metadata?.expirationDate);
   const eventMs = Date.parse(event.time);
-  const expirationMs = Date.parse(expiration);
+  const expirationMs = Date.parse(`${expiration}T00:00:00Z`);
   if (!expiration || !Number.isFinite(eventMs) || !Number.isFinite(expirationMs)) {
     return "n/a";
   }
@@ -312,15 +368,7 @@ const normalizeNumericKeyPart = (value: unknown): string => {
 };
 
 const normalizeExpirationKey = (value: unknown): string => {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
-    if (/^\d{8}$/.test(trimmed)) {
-      return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
-    }
-  }
-  const date = value instanceof Date ? value : value ? new Date(String(value)) : null;
-  return date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+  return normalizeExpirationDateKey(value);
 };
 
 const normalizeTag = (value: unknown): string | null => {
@@ -1025,5 +1073,19 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
     sideConfidence: formatSideConfidence(topEvent, bucket.biasBasis),
     intensity: `${Math.round(bucket.volumeSegmentRatio * 100)}% flow intensity`,
     eventCount: bucket.count,
+    callPremiumLabel: bucket.callPremium > 0 ? compactCurrency(bucket.callPremium) : "n/a",
+    putPremiumLabel: bucket.putPremium > 0 ? compactCurrency(bucket.putPremium) : "n/a",
+    bullishPremiumLabel:
+      bucket.bullishPremium > 0 ? compactCurrency(bucket.bullishPremium) : "n/a",
+    bearishPremiumLabel:
+      bucket.bearishPremium > 0 ? compactCurrency(bucket.bearishPremium) : "n/a",
+    neutralPremiumLabel:
+      bucket.neutralPremium > 0 ? compactCurrency(bucket.neutralPremium) : "n/a",
+    markerPremiumLabel: compactCurrency(bucket.totalPremium),
+    topStrike: formatStrike(topMetadata.strike),
+    topExpiry: formatExpiryShort(topMetadata.expirationDate ?? topMetadata.exp),
+    topRight: normalizeRight(
+      topMetadata.cp ?? topMetadata.right ?? topMetadata.optionType,
+    ),
   };
 };

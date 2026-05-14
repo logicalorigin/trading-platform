@@ -1,6 +1,6 @@
 import {
-  formatIsoDate,
   formatOptionContractLabel,
+  parseExpirationValue,
 } from "../../lib/formatters";
 import { MISSING_VALUE, T } from "../../lib/uiTokens";
 
@@ -52,10 +52,17 @@ export const formatExecutionContractLabel = (execution) => {
 export const sameOptionContract = (left, right) => {
   if (!left || !right) return false;
 
+  const leftExpiration = parseExpirationValue(left.expirationDate);
+  const rightExpiration = parseExpirationValue(right.expirationDate);
+  if (!leftExpiration || !rightExpiration) {
+    return false;
+  }
+
   return (
     Number(left.strike) === Number(right.strike) &&
     String(left.right).toLowerCase() === String(right.right).toLowerCase() &&
-    formatIsoDate(left.expirationDate) === formatIsoDate(right.expirationDate)
+    leftExpiration.toISOString().slice(0, 10) ===
+      rightExpiration.toISOString().slice(0, 10)
   );
 };
 

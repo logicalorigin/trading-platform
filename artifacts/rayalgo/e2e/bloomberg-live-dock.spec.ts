@@ -111,7 +111,7 @@ async function openBloombergDock(page: Page) {
   });
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: /STANDBY\s+Bloomberg/i }).click();
+  await page.getByRole("button", { name: "Open Bloomberg Live" }).click();
   await expect(page.locator("video")).toBeAttached();
   await expect(page.getByRole("button", { name: "More Bloomberg controls" })).toBeVisible();
 }

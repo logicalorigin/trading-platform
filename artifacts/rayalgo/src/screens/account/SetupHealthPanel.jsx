@@ -43,7 +43,7 @@ const StatusRow = ({ label, ok, detail }) => (
           marginTop: sp(2),
           color: T.textDim,
           fontSize: fs(8),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           lineHeight: 1.4,
           whiteSpace: "normal",
         }}
@@ -254,12 +254,12 @@ export const SetupHealthPanel = ({
                 <Pill tone="default">
                   Attempt {formatAppDateTime(health.lastAttemptAt)}
                 </Pill>
-                <Pill tone={health.lastStatus === "completed" ? "green" : "amber"}>
+                <Pill tone={health.lastStatus === "completed" ? "status-filled" : "status-working"}>
                   Status {health.lastStatus || "----"}
                 </Pill>
-                {health.lastError ? <Pill tone="red">{health.lastError}</Pill> : null}
+                {health.lastError ? <Pill tone="status-rejected">{health.lastError}</Pill> : null}
                 {testResult ? (
-                  <Pill tone="green">
+                  <Pill tone="status-filled">
                     {testResult.message} · {testResult.referenceCode}
                   </Pill>
                 ) : null}

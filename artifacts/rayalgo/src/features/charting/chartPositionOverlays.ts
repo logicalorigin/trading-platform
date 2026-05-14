@@ -127,16 +127,33 @@ const finiteNumber = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeDateParts = (year: number, month: number, day: number): string => {
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    : "";
+};
+
 const normalizeDateKey = (value: unknown): string => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
   }
   if (typeof value === "string" && value.trim()) {
+    const dateOnlyMatch = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (dateOnlyMatch) {
+      return normalizeDateParts(
+        Number(dateOnlyMatch[1]),
+        Number(dateOnlyMatch[2]),
+        Number(dateOnlyMatch[3]),
+      );
+    }
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) {
       return parsed.toISOString().slice(0, 10);
     }
-    return value.trim().slice(0, 10);
   }
   return "";
 };

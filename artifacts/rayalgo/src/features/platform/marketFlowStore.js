@@ -19,11 +19,18 @@ const EMPTY_PROVIDER_SUMMARY = Object.freeze({
   coverage: Object.freeze({
     totalSymbols: 0,
     scannedSymbols: 0,
+    cycleScannedSymbols: 0,
     batchSize: 0,
+    concurrency: 0,
+    intervalMs: 0,
+    lineBudget: null,
+    estimatedCycleMs: null,
     currentBatch: Object.freeze([]),
     cycle: 0,
     isFetching: false,
     lastScannedAt: Object.freeze({}),
+    oldestScanAt: null,
+    newestScanAt: null,
     isRotating: false,
   }),
 });

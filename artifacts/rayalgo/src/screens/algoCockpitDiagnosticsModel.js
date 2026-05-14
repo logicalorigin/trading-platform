@@ -65,10 +65,28 @@ const countFilledCandidates = (candidates) =>
     ),
   ).length;
 
-const countEntryEvents = (events) =>
+const countEventsOfType = (events, eventType) =>
   events.filter(
-    (event) => asRecord(event).eventType === "signal_options_shadow_entry",
+    (event) => asRecord(event).eventType === eventType,
   ).length;
+
+const orderedMetricRows = (metrics, keys, limit = 4) =>
+  keys
+    .map((key) => [key, finiteNumber(asRecord(metrics)[key])])
+    .filter(([, count]) => count > 0)
+    .slice(0, limit);
+
+const readinessIncidentRows = (incidents, limit = 4) =>
+  (Array.isArray(incidents) ? incidents : [])
+    .map((incident) => {
+      const record = asRecord(incident);
+      const source = String(record.source || "unknown");
+      const reason = String(record.reason || "unknown");
+      return [`${source} / ${reason}`, finiteNumber(record.count)];
+    })
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit);
 
 export const buildCockpitGateSummary = (cockpit) => {
   const record = asRecord(cockpit);
@@ -83,7 +101,10 @@ export const buildCockpitGateSummary = (cockpit) => {
     (signal) => asRecord(signal).fresh === true,
   ).length;
   const fallbackNotFresh = Math.max(0, signals.length - fallbackFresh);
-  const fallbackEntryEvents = countEntryEvents(events);
+  const fallbackEntryEvents = countEventsOfType(
+    events,
+    "signal_options_shadow_entry",
+  );
   const reasonCounters = deriveReasonCounters(events);
   const diagnosticsHasFreshness =
     hasOwn(signalFreshness, "fresh") || hasOwn(signalFreshness, "notFresh");
@@ -97,6 +118,11 @@ export const buildCockpitGateSummary = (cockpit) => {
   const diagnosticOptionRows = topCockpitCounterEntries(
     diagnostics.optionChainReasons,
   );
+  const diagnosticSkipCategoryRows = topCockpitCounterEntries(
+    diagnostics.skipCategories,
+  );
+  const lifecycle = asRecord(diagnostics.lifecycle);
+  const markHealth = asRecord(diagnostics.markHealth);
 
   return {
     signalFreshness: {
@@ -118,15 +144,111 @@ export const buildCockpitGateSummary = (cockpit) => {
             countFilledCandidates(candidates),
             fallbackEntryEvents,
           ),
+      markEvents: diagnosticsHasTradePath
+        ? finiteNumber(tradePath.markEvents)
+        : countEventsOfType(events, "signal_options_shadow_mark"),
+      gatewayBlocks: diagnosticsHasTradePath
+        ? finiteNumber(tradePath.gatewayBlocks)
+        : countEventsOfType(events, "signal_options_gateway_blocked"),
+      activePositions: diagnosticsHasTradePath
+        ? finiteNumber(tradePath.activePositions)
+        : finiteNumber(kpis.activePositions),
     },
     skipReasonRows: diagnosticSkipRows.length
       ? diagnosticSkipRows
       : topCockpitCounterEntries(reasonCounters.skipReasons),
+    skipCategoryRows: diagnosticSkipCategoryRows,
     entryGateRows: diagnosticEntryRows.length
       ? diagnosticEntryRows
       : topCockpitCounterEntries(reasonCounters.entryGateReasons),
     optionChainRows: diagnosticOptionRows.length
       ? diagnosticOptionRows
       : topCockpitCounterEntries(reasonCounters.optionChainReasons),
+    readinessRows: readinessIncidentRows(diagnostics.readinessIncidents),
+    lifecycleRows: orderedMetricRows(lifecycle, [
+      "candidates",
+      "contractsSelected",
+      "liquidityAccepted",
+      "shadowEntries",
+      "shadowMarks",
+      "shadowExits",
+    ]),
+    markHealthRows: orderedMetricRows(markHealth, [
+      "activePositions",
+      "fresh",
+      "stale",
+      "unmarked",
+      "markFailures",
+    ]),
   };
+};
+
+export const buildAttentionStream = ({
+  attentionItems = [],
+  ruleAdherence = [],
+  gatewayReady = true,
+  gatewayBlocks = 0,
+} = {}) => {
+  const stream = [];
+  (Array.isArray(attentionItems) ? attentionItems : []).forEach((item, index) => {
+    const record = asRecord(item);
+    stream.push({
+      id: record.id || `attention-${index}`,
+      kind: "attention",
+      kindLabel: record.stage ? String(record.stage).toUpperCase() : "ATTENTION",
+      severity: record.severity || "info",
+      title: record.symbol || record.title || record.stage || "Attention",
+      summary: record.summary || record.detail || "",
+    });
+  });
+  (Array.isArray(ruleAdherence) ? ruleAdherence : []).forEach((rule, index) => {
+    const record = asRecord(rule);
+    const status = record.status;
+    if (status !== "fail" && status !== "warning") return;
+    stream.push({
+      id: `rule-${record.id || index}`,
+      kind: "rule",
+      kindLabel: "RULE",
+      severity: status === "fail" ? "critical" : "warning",
+      title: record.label || record.id || "Rule",
+      summary: record.detail || "",
+    });
+  });
+  if (!gatewayReady) {
+    stream.push({
+      id: "gateway-not-ready",
+      kind: "gateway",
+      kindLabel: "GATEWAY",
+      severity: "warning",
+      title: "Data bridge not ready",
+      summary: "Start the broker bridge to resume signal evaluation.",
+    });
+  }
+  if (finiteNumber(gatewayBlocks) > 0) {
+    stream.push({
+      id: "gateway-blocks",
+      kind: "gateway",
+      kindLabel: "GATEWAY",
+      severity: "warning",
+      title: `${finiteNumber(gatewayBlocks)} gateway blocks`,
+      summary: "Recent candidates were rejected at the gateway. Inspect events.",
+    });
+  }
+  return stream;
+};
+
+export const isDiagRowsHealthy = (rows) => {
+  if (!Array.isArray(rows) || rows.length === 0) return true;
+  return rows.every((row) => {
+    const count = Array.isArray(row) ? row[1] : null;
+    return finiteNumber(count) === 0;
+  });
+};
+
+export const isGateSummaryHealthy = (tradePath) => {
+  const record = asRecord(tradePath);
+  return (
+    finiteNumber(record.blockedCandidates) === 0 &&
+    finiteNumber(record.gatewayBlocks) === 0
+  );
 };

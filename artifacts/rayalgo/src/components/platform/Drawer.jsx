@@ -60,7 +60,7 @@ export const Drawer = ({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: "rgba(2, 6, 23, 0.62)",
+          background: "rgba(25, 23, 26, 0.42)",
           cursor: "pointer",
         }}
       />
@@ -82,25 +82,25 @@ export const Drawer = ({
           minWidth: 0,
           background: T.bg0,
           color: T.text,
-          borderRight: isRight ? undefined : `1px solid ${T.border}`,
-          borderLeft: isRight ? `1px solid ${T.border}` : undefined,
+          borderRight: "none",
+          borderLeft: "none",
           boxShadow: isRight
-            ? `-18px 0 48px ${T.bg0}cc`
-            : `18px 0 48px ${T.bg0}cc`,
+            ? `-12px 0 36px rgba(25, 23, 26, 0.12)`
+            : `12px 0 36px rgba(25, 23, 26, 0.12)`,
           fontFamily: T.sans,
         }}
       >
         <div
           style={{
-            height: dim(44),
+            height: dim(52),
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             gap: sp(8),
-            padding: sp("0 10px"),
-            borderBottom: `1px solid ${T.border}`,
-            background: T.bg1,
+            padding: sp("0 16px"),
+            borderBottom: "none",
+            background: T.bg0,
           }}
         >
           <span
@@ -110,9 +110,10 @@ export const Drawer = ({
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               color: T.text,
-              fontFamily: T.display,
-              fontSize: fs(12),
-              fontWeight: 400,
+              fontFamily: T.sans,
+              fontSize: fs(15),
+              fontWeight: 600,
+              letterSpacing: "-0.01em",
             }}
           >
             {title}
@@ -123,13 +124,13 @@ export const Drawer = ({
             aria-label={`Close ${title}`}
             onClick={onClose}
             style={{
-              width: dim(36),
-              height: dim(36),
+              width: dim(32),
+              height: dim(32),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(4),
+              border: "none",
+              borderRadius: "50%",
               background: T.bg2,
               color: T.textSec,
               cursor: "pointer",

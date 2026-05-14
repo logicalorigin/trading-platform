@@ -59,7 +59,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         textAnchor="middle"
         fontSize={fs(7)}
         fill={T.textMuted}
-        fontFamily={T.mono}
+        fontFamily={T.sans}
         letterSpacing="0.08em"
       >
         NET
@@ -71,7 +71,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         fontSize={fs(11)}
         fontWeight={400}
         fill={net >= 0 ? T.green : T.red}
-        fontFamily={T.mono}
+        fontFamily={T.sans}
       >
         {`${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(0)}M`}
       </text>
@@ -87,11 +87,11 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "44px 1fr 22px 1fr 44px",
+        gridTemplateColumns: `${dim(44)}px 1fr ${dim(22)}px 1fr ${dim(44)}px`,
         gap: sp(4),
         alignItems: "center",
         padding: sp("2px 0"),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(9),
       }}
     >

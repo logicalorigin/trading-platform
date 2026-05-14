@@ -63,6 +63,7 @@ test("TradeOrderTicket passes computed shadow quantity into sell-call intent", (
     /shadowMatchingQuantity:\s*matchingShadowQuantity/,
   );
   assert.doesNotMatch(tradeOrderTicketSource, /\n\s*shadowMatchingQuantity,\n/);
+  assert.match(tradeOrderTicketSource, /const date = parseExpirationValue\(value\)/);
 });
 
 test("resolves real sell calls against matching long option positions first", () => {
@@ -225,6 +226,30 @@ test("pending sell-to-close orders consume matching long-call availability", () 
   assert.equal(intent.coverage.pendingMatchingSellCallContracts, 1);
   assert.equal(intent.coverage.availableMatchingLongCallContracts, 0);
   assert.equal(intent.coverage.pendingShortOpeningSellCallContracts, 0);
+});
+
+test("invalid option expirations do not roll into matching sell-call coverage", () => {
+  const coverage = buildSellCallTicketCoverage({
+    selectedContract: {
+      ...selectedContract,
+      expirationDate: "2026-02-31",
+      providerContractId: null,
+    },
+    symbol: "SPY",
+    positions: [
+      position({
+        optionContract: {
+          ...selectedContract,
+          expirationDate: "2026-03-03",
+          providerContractId: null,
+        },
+      }),
+    ],
+    orders: [],
+  });
+
+  assert.equal(coverage.matchingLongCallContracts, 0);
+  assert.equal(coverage.availableMatchingLongCallContracts, 0);
 });
 
 test("pending underlying share sales reduce covered-call capacity", () => {

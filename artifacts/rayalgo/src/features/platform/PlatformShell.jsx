@@ -124,30 +124,43 @@ const fmtCompactCurrency = (value, masked = false) => {
   return `$${numeric.toFixed(0)}`;
 };
 
-const MobileHeaderChip = ({ label, value, tone = T.textSec }) => (
+const MobileHeaderChip = ({ label, value, tone = T.text }) => (
   <span
+    className="ra-header-chip"
     style={{
       minWidth: 0,
       display: "inline-flex",
-      alignItems: "center",
-      gap: sp(4),
-      padding: sp("0 6px"),
-      height: dim(28),
-      border: `1px solid ${T.border}`,
-      background: T.bg1,
+      alignItems: "baseline",
+      gap: sp(5),
+      paddingRight: sp(12),
+      marginRight: sp(2),
+      borderRight: `1px solid ${T.borderLight}`,
       color: tone,
-      fontFamily: T.mono,
-      fontSize: fs(9),
+      fontFamily: T.sans,
+      fontSize: fs(11),
+      fontWeight: 600,
       whiteSpace: "nowrap",
       overflow: "hidden",
+      letterSpacing: "-0.01em",
     }}
   >
-    <span style={{ color: T.textMuted, fontSize: fs(7) }}>{label}</span>
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: fs(9),
+        fontWeight: 500,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
     <span
       style={{
         minWidth: 0,
         overflow: "hidden",
         textOverflow: "ellipsis",
+        fontVariantNumeric: "tabular-nums",
       }}
     >
       {value || MISSING_VALUE}
@@ -171,10 +184,10 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        border: `1px solid ${active ? T.accent : T.border}`,
+        border: "none",
         background: active ? `${T.accent}18` : T.bg2,
         color: active ? T.accent : T.textSec,
-        borderRadius: dim(4),
+        borderRadius: "50%",
         cursor: "pointer",
       }}
     >
@@ -259,7 +272,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
                 borderRadius: dim(999),
                 background: alertColor,
                 color: "#fff",
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(7),
               }}
             >
@@ -462,10 +475,11 @@ export const PlatformShell = ({
         gridTemplateColumns: headerGridTemplate,
         alignItems: "center",
         gap: sp(isPhone ? 4 : 6),
-        padding: sp(isPhone ? "4px 6px" : "3px 8px"),
+        padding: sp(isPhone ? "5px 8px" : "6px 14px"),
         minWidth: 0,
         background: T.bg1,
-        borderBottom: `1px solid ${T.border}`,
+        borderBottom: "none",
+        boxShadow: `0 1px 0 ${T.border}`,
         flexShrink: 0,
       }}
     >
@@ -502,6 +516,14 @@ export const PlatformShell = ({
               <MobileHeaderChip label="WL" value={compactWatchlist} />
             </div>
             <div style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+              <HeaderStatusClusterComponent
+                session={session}
+                environment={environment}
+                bridgeTone={bridgeTone}
+                theme={theme}
+                onToggleTheme={onToggleTheme}
+                compact
+              />
               <MobileIconButton
                 Icon={Activity}
                 label="Open activity and notifications"
@@ -573,33 +595,31 @@ export const PlatformShell = ({
                     ...motionVars({
                       accent: hasAlerts ? alertColor : T.accent,
                     }),
-                    padding: sp("3px 6px"),
-                    minHeight: dim(28),
+                    padding: sp("5px 12px"),
+                    minHeight: dim(30),
                     fontSize: fs(10),
-                    fontWeight: 400,
+                    fontWeight: 500,
                     fontFamily: T.sans,
-                    background: activeScreen === screen.id ? T.bg3 : "transparent",
-                    border: `1px solid ${activeScreen === screen.id ? T.accent : T.border}`,
-                    borderRadius: 0,
+                    background:
+                      activeScreen === screen.id ? `${T.accent}14` : "transparent",
+                    border: "none",
+                    borderRadius: dim(999),
                     cursor: "pointer",
-                    color: activeScreen === screen.id ? T.text : T.textDim,
-                    transition:
-                      "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
+                    color: activeScreen === screen.id ? T.accent : T.textSec,
+                    transition: "background 0.18s ease, color 0.18s ease",
                     animation: pulseAnim,
                     position: "relative",
                     whiteSpace: "nowrap",
                   }}
                   onMouseEnter={(event) => {
                     if (activeScreen === screen.id) return;
-                    event.currentTarget.style.color = T.textSec;
+                    event.currentTarget.style.color = T.text;
                     event.currentTarget.style.background = T.bg2;
-                    event.currentTarget.style.borderColor = T.textMuted;
                   }}
                   onMouseLeave={(event) => {
                     if (activeScreen === screen.id) return;
-                    event.currentTarget.style.color = T.textDim;
+                    event.currentTarget.style.color = T.textSec;
                     event.currentTarget.style.background = "transparent";
-                    event.currentTarget.style.borderColor = T.border;
                   }}
                 >
                   {screen.label}
@@ -755,7 +775,8 @@ export const PlatformShell = ({
             style={{
               height: "100%",
               background: T.bg1,
-              borderRight: `1px solid ${T.border}`,
+              borderRight: "none",
+              boxShadow: `1px 0 0 ${T.border}`,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -882,10 +903,11 @@ export const PlatformShell = ({
         style={{
           display: "flex",
           alignItems: "center",
-          height: dim(24),
-          padding: sp("0 12px"),
+          height: dim(26),
+          padding: sp("0 14px"),
           background: T.bg1,
-          borderTop: `1px solid ${T.border}`,
+          borderTop: "none",
+          boxShadow: `0 -1px 0 ${T.border}`,
           flexShrink: 0,
           fontSize: fs(9),
           fontFamily: T.sans,
@@ -949,14 +971,13 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
           key={toast.id}
           onClick={() => onDismiss?.(toast.id)}
           style={{
-            background: T.bg2,
-            border: `1px solid ${color}`,
-            borderLeft: `3px solid ${color}`,
-            borderRadius: dim(4),
-            padding: sp("8px 12px"),
+            background: T.bg1,
+            border: "none",
+            borderRadius: dim(10),
+            padding: sp("10px 14px"),
             minWidth: dim(260),
             maxWidth: dim(340),
-            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+            boxShadow: "0 8px 24px rgba(25, 23, 26, 0.14), 0 2px 6px rgba(25, 23, 26, 0.06)",
             animation: toast.leaving
               ? "toastSlideOut 0.2s ease-in forwards"
               : "toastSlideIn 0.22s ease-out",
@@ -986,7 +1007,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                 color,
                 fontWeight: 400,
                 lineHeight: 1,
-                marginTop: 1,
+                marginTop: sp(1),
               }}
             >
               {icon}
@@ -1007,7 +1028,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                   style={{
                     fontSize: fs(10),
                     color: T.textSec,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     lineHeight: 1.4,
                   }}
                 >
@@ -1022,7 +1043,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                 fontWeight: 400,
                 opacity: 0.6,
                 marginLeft: sp(4),
-                marginTop: 1,
+                marginTop: sp(1),
               }}
             >
               ✕

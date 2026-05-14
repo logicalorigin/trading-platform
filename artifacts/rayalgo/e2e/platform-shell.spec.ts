@@ -238,16 +238,16 @@ function timeframeStepMs(timeframe: string | null) {
 }
 
 const brokerLiveEdgeWindowMinutesByTimeframe: Record<string, number> = {
-  "5s": 60,
-  "15s": 60,
-  "30s": 60,
-  "1m": 240,
-  "2m": 240,
-  "5m": 240,
-  "15m": 720,
-  "30m": 720,
-  "1h": 2_880,
-  "4h": 2_880,
+  "5s": 240,
+  "15s": 240,
+  "30s": 240,
+  "1m": 1_440,
+  "2m": 1_440,
+  "5m": 1_440,
+  "15m": 2_880,
+  "30m": 2_880,
+  "1h": 4_320,
+  "4h": 4_320,
   "1d": 14_400,
 };
 
@@ -1231,9 +1231,15 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await openScreen(page, "Account", "account");
   await expect(page.getByTestId("account-screen")).toBeVisible();
   await page.getByTestId("account-section-shadow").click();
-  await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await page.getByTestId("account-section-real").click();
-  await expect(page.getByText("Aggregated real accounts")).toBeVisible();
+  await expect(page.getByTestId("account-section-real")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 
   await openScreen(page, "Research", "research");
   await expect(page.getByTestId("research-screen")).toBeVisible();
@@ -1412,6 +1418,12 @@ test("account phone layout renders dense scan rows for positions trades and orde
   await page.goto("/");
   await openScreen(page, "Account", "account");
 
+  const positionsPanel = page.getByTestId("account-deferred-positions");
+  await positionsPanel.scrollIntoViewIfNeeded();
+  await expect(positionsPanel).toHaveAttribute(
+    "data-deferred-render",
+    "mounted",
+  );
   const positionRows = page.getByTestId("account-position-scan-row");
   await expect(positionRows.first()).toBeVisible({ timeout: 30_000 });
   await expect(positionRows).toHaveCount(4);
@@ -1419,6 +1431,12 @@ test("account phone layout renders dense scan rows for positions trades and orde
   await positionRows.first().click();
   await expect(page.getByTestId("account-position-expanded-details").first()).toBeVisible();
 
+  const tradesOrdersPanel = page.getByTestId("account-deferred-trades-orders");
+  await tradesOrdersPanel.scrollIntoViewIfNeeded();
+  await expect(tradesOrdersPanel).toHaveAttribute(
+    "data-deferred-render",
+    "mounted",
+  );
   await page.getByTestId("account-trades-row-list").scrollIntoViewIfNeeded();
   const tradeRows = page.getByTestId("account-trade-scan-row");
   await expect(tradeRows.first()).toBeVisible({ timeout: 30_000 });
@@ -1455,7 +1473,10 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await page.getByTestId("account-section-shadow").click();
-  await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 
   await openScreen(page, "Market", "market");
   await expect(page.getByTestId("screen-host-account")).toHaveAttribute(
@@ -1464,7 +1485,10 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
   );
 
   await openScreen(page, "Account", "account");
-  await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   expect(runtimeIssues).toEqual([]);
 });
 
@@ -1535,7 +1559,13 @@ test("account shadow watchlist backtest posts today and week ranges", async ({
   await page.goto("/");
   await openScreen(page, "Account", "account");
   await page.getByTestId("account-section-shadow").click();
-  await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const supportPanel = page.getByTestId("account-deferred-support");
+  await supportPanel.scrollIntoViewIfNeeded();
+  await expect(supportPanel).toHaveAttribute("data-deferred-render", "mounted");
 
   const todayButton = page.getByTestId("shadow-watchlist-backtest-run-today");
   const weekButton = page.getByTestId("shadow-watchlist-backtest-run-week");
@@ -2215,8 +2245,7 @@ test("market chart frame changes timeframe from the dropdown and zooms", async (
   await page.mouse.move(8, 8);
 
   const initialRange = await surface.getAttribute("data-chart-visible-logical-range");
-  await page.mouse.move(box!.x + box!.width * 0.5, box!.y + box!.height * 0.5);
-  await page.mouse.wheel(0, -500);
+  await surface.getByTitle("Zoom in").first().click();
   await expect
     .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
     .not.toBe(initialRange);

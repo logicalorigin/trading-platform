@@ -153,6 +153,40 @@ test("buildChartPositionOverlays falls back to option tuple matching", () => {
   assert.equal(overlays.entryLines[0].id, "tuple");
 });
 
+test("buildChartPositionOverlays rejects impossible expiration tuple matches", () => {
+  const overlays = buildChartPositionOverlays({
+    chartContext: {
+      surfaceKind: "option",
+      symbol: "SPY",
+      optionContract: {
+        underlying: "SPY",
+        expirationDate: "2026-03-03",
+        strike: 500,
+        right: "call",
+      },
+    },
+    positions: [
+      {
+        id: "invalid-expiration",
+        symbol: "SPY",
+        assetClass: "option",
+        quantity: 2,
+        averagePrice: 1.25,
+        marketPrice: 1.5,
+        optionContract: {
+          underlying: "SPY",
+          expirationDate: "2026-02-31",
+          strike: 500,
+          right: "call",
+        },
+      },
+    ],
+  });
+
+  assert.equal(overlays.entryLines.length, 0);
+  assert.equal(overlays.pnlBubbles.length, 0);
+});
+
 test("buildChartPositionOverlays returns no overlays for unrelated symbols", () => {
   const overlays = buildChartPositionOverlays({
     chartContext: { surfaceKind: "spot", symbol: "MSFT" },

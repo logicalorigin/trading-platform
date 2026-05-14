@@ -36,6 +36,11 @@ import {
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus";
 import {
+  streamStateBackgroundVar,
+  streamStateBorderVar,
+  streamStateTokenVar,
+} from "./streamSemantics";
+import {
   IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
   IBKR_BRIDGE_SESSION_KEYS,
   clearIbkrBridgeSessionValues,
@@ -256,7 +261,7 @@ const HeaderIbkrStatusChip = ({
             color: badge.color,
             fontSize: fs(7),
             fontWeight: 400,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             lineHeight: 1,
             padding: sp("2px 4px"),
             whiteSpace: "nowrap",
@@ -271,7 +276,7 @@ const HeaderIbkrStatusChip = ({
           color: T.textDim,
           fontSize: fs(7),
           fontWeight: 400,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           minWidth: dim(30),
           textAlign: "right",
           whiteSpace: "nowrap",
@@ -292,13 +297,13 @@ const HeaderIbkrDetailRow = ({
   <div
     style={{
       display: "grid",
-      gridTemplateColumns: "minmax(72px, 0.78fr) minmax(0, 1.22fr)",
+      gridTemplateColumns: `minmax(${dim(72)}px, 0.78fr) minmax(0, 1.22fr)`,
       gap: sp(8),
       alignItems: "baseline",
       minWidth: 0,
       padding: sp("2px 0"),
       borderBottom: `1px solid ${T.border}55`,
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: fs(8),
     }}
   >
@@ -344,7 +349,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
         minWidth: 0,
         padding: sp("6px 7px"),
         background: T.bg1,
-        border: `1px solid ${T.border}`,
+        border: "none",
       }}
     >
       <Icon size={dim(13)} strokeWidth={2.2} color={tile.tone} />
@@ -352,7 +357,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
         <div
           style={{
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(7),
             fontWeight: 400,
             letterSpacing: "0.04em",
@@ -380,7 +385,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
           <div
             style={{
               color: T.textDim,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(7),
               lineHeight: 1.1,
               overflow: "hidden",
@@ -404,13 +409,13 @@ const HeaderProviderRows = ({ rows = [] }) => (
       marginBottom: sp(8),
       padding: sp("6px 7px"),
       background: T.bg1,
-      border: `1px solid ${T.border}`,
+      border: "none",
     }}
   >
     <div
       style={{
         color: T.textMuted,
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(8),
         fontWeight: 400,
         letterSpacing: "0.05em",
@@ -424,11 +429,11 @@ const HeaderProviderRows = ({ rows = [] }) => (
         key={row.label}
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(56px, 0.5fr) minmax(0, 0.9fr) minmax(0, 1.3fr)",
+          gridTemplateColumns: `minmax(${dim(56)}px, 0.5fr) minmax(0, 0.9fr) minmax(0, 1.3fr)`,
           gap: sp(6),
           alignItems: "baseline",
           minWidth: 0,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(8),
         }}
       >
@@ -465,8 +470,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
         marginBottom: sp(8),
         padding: sp("6px 7px"),
         background: T.bg1,
-        border: `1px solid ${T.border}`,
-        fontFamily: T.mono,
+        border: "none",
+        fontFamily: T.sans,
       }}
     >
       <div
@@ -495,7 +500,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(96px, 1fr) repeat(3, minmax(34px, auto))",
+          gridTemplateColumns: `minmax(${dim(96)}px, 1fr) repeat(3, minmax(${dim(34)}px, auto))`,
           gap: sp(5),
           color: T.textMuted,
           fontSize: fs(7),
@@ -516,7 +521,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
           data-testid={`header-market-data-line-row-${row.id}`}
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(96px, 1fr) repeat(3, minmax(34px, auto))",
+            gridTemplateColumns: `minmax(${dim(96)}px, 1fr) repeat(3, minmax(${dim(34)}px, auto))`,
             gap: sp(5),
             alignItems: "baseline",
             color: row.tone,
@@ -568,7 +573,8 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
   }
 
   const totalRow = lineUsage.rows?.find((row) => row.id === "total");
-  const tone = totalRow?.tone || T.textSec;
+  const state = totalRow?.streamState || "no-subscribers";
+  const tone = streamStateTokenVar(state);
 
   return (
     <AppTooltip content={`Market data lines ${lineUsage.summary}`}><span
@@ -578,10 +584,10 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
         alignItems: "center",
         gap: sp(3),
         minWidth: 0,
-        border: `1px solid ${tone}66`,
-        background: `${tone}14`,
+        border: `1px solid ${streamStateBorderVar(state)}`,
+        background: streamStateBackgroundVar(state),
         color: tone,
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(7),
         fontWeight: 400,
         lineHeight: 1,
@@ -622,7 +628,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
             gap: sp(6),
             minWidth: 0,
             color: model.health.color,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(10),
             fontWeight: 400,
           }}
@@ -653,7 +659,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
                 border: `1px solid ${badge.color}66`,
                 background: badge.background,
                 color: badge.color,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(7),
                 fontWeight: 400,
                 padding: sp("2px 4px"),
@@ -676,7 +682,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
           background: T.bg1,
           border: `1px solid ${model.issue.tone}55`,
           color: model.issue.tone,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(8),
           lineHeight: 1.3,
         }}
@@ -750,11 +756,11 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
           justifyContent: "space-between",
           gap: sp(8),
           padding: sp("4px 7px"),
-          border: `1px solid ${T.border}`,
+          border: "none",
           background: T.bg1,
           color: T.textDim,
           cursor: "pointer",
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(8),
           fontWeight: 400,
           letterSpacing: "0.04em",
@@ -779,7 +785,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
             gap: sp(8),
             padding: sp("7px 8px"),
             background: T.bg1,
-            border: `1px solid ${T.border}`,
+            border: "none",
           }}
         >
           {model.detailGroups.map((group) => (
@@ -787,7 +793,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
               <div
                 style={{
                   color: T.textMuted,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: fs(8),
                   fontWeight: 400,
                   letterSpacing: "0.05em",
@@ -819,6 +825,7 @@ export const HeaderStatusCluster = ({
   bridgeTone,
   theme,
   onToggleTheme,
+  compact = false,
 }) => {
   const queryClient = useQueryClient();
   const { preferences } = useUserPreferences();
@@ -974,11 +981,11 @@ export const HeaderStatusCluster = ({
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
-    gap: 2,
+    gap: sp(2),
     minHeight: dim(32),
     padding: sp("3px 7px"),
     background: T.bg1,
-    border: `1px solid ${T.border}`,
+    border: "none",
     borderRadius: 0,
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
@@ -1171,7 +1178,7 @@ export const HeaderStatusCluster = ({
         display: "flex",
         alignItems: "stretch",
         justifyContent: "flex-end",
-        gap: sp(4),
+        gap: sp(compact ? 2 : 4),
         flexWrap: "nowrap",
         minWidth: 0,
       }}
@@ -1188,8 +1195,8 @@ export const HeaderStatusCluster = ({
             alignItems: "center",
             flexDirection: "row",
             justifyContent: "center",
-            minWidth: dim(220),
-            gap: sp(5),
+            minWidth: compact ? dim(104) : dim(220),
+            gap: sp(compact ? 3 : 5),
             color: T.text,
             appearance: "none",
             font: "inherit",
@@ -1211,10 +1218,14 @@ export const HeaderStatusCluster = ({
             tone={gatewayTone}
             latencyStats={gatewayLatencyStats}
           />
-          <HeaderMarketDataLineBadge lineUsage={gatewayPopoverModel.lineUsage} />
-          <span style={{ ...microLabelStyle, color: T.textDim }}>
-            {environment.toUpperCase()} | {headerDataModeLabel}
-          </span>
+          {compact ? null : (
+            <HeaderMarketDataLineBadge lineUsage={gatewayPopoverModel.lineUsage} />
+          )}
+          {compact ? null : (
+            <span style={{ ...microLabelStyle, color: T.textDim }}>
+              {environment.toUpperCase()} | {headerDataModeLabel}
+            </span>
+          )}
           <ChevronDown size={dim(12)} color={T.textMuted} strokeWidth={2.3} />
         </button>
 
@@ -1235,7 +1246,7 @@ export const HeaderStatusCluster = ({
               boxSizing: "border-box",
               padding: sp(10),
               background: T.bg0,
-              border: `1px solid ${T.border}`,
+              border: "none",
               boxShadow: "0 12px 32px rgba(0,0,0,0.34)",
               color: T.text,
               fontFamily: T.sans,
@@ -1279,7 +1290,7 @@ export const HeaderStatusCluster = ({
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  border: `1px solid ${T.border}`,
+                  border: "none",
                   background: T.bg1,
                   color: T.textDim,
                   cursor: "pointer",
@@ -1295,7 +1306,7 @@ export const HeaderStatusCluster = ({
                 marginBottom: sp(8),
                 padding: sp("6px 8px"),
                 background: T.bg1,
-                border: `1px solid ${T.border}`,
+                border: "none",
                 color: bridgeLauncherError
                   ? T.red
                   : gatewayBlockingIssueMessage
@@ -1303,7 +1314,7 @@ export const HeaderStatusCluster = ({
                     : T.textSec,
                 fontSize: fs(9),
                 lineHeight: 1.25,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 whiteSpace: "normal",
                 overflowWrap: "anywhere",
               }}
@@ -1373,7 +1384,7 @@ export const HeaderStatusCluster = ({
                     alignItems: "center",
                     justifyContent: "center",
                     gap: sp(6),
-                    border: `1px solid ${T.border}`,
+                    border: "none",
                     background: T.bg1,
                     color: T.textSec,
                     cursor: bridgeLauncherBusy ? "default" : "pointer",
@@ -1394,6 +1405,7 @@ export const HeaderStatusCluster = ({
         ) : null}
       </div>
 
+      {compact ? null : (
       <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.label}`}><div
         style={{
           ...surfaceStyle,
@@ -1447,7 +1459,9 @@ export const HeaderStatusCluster = ({
           {marketClock.label.toUpperCase()} {marketClock.timerLabel}
         </div>
       </div></AppTooltip>
+      )}
 
+      {compact ? null : (
       <AppTooltip content={
           theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
         }><button
@@ -1458,7 +1472,7 @@ export const HeaderStatusCluster = ({
           minHeight: dim(32),
           padding: 0,
           background: T.bg1,
-          border: `1px solid ${T.border}`,
+          border: "none",
           borderRadius: 0,
           color: T.textSec,
           cursor: "pointer",
@@ -1479,6 +1493,7 @@ export const HeaderStatusCluster = ({
       >
         {theme === "dark" ? "☼" : "☾"}
       </button></AppTooltip>
+      )}
     </div>
   );
 };

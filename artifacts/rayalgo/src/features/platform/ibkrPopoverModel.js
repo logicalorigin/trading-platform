@@ -9,6 +9,7 @@ import {
   normalizeAdmissionDiagnostics,
   selectRuntimeAdmissionDiagnostics,
 } from "./runtimeControlModel.js";
+import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 
 const headerDetailValue = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== "");
@@ -65,9 +66,12 @@ const NO_ACTIVE_QUOTE_CONSUMERS_REASON = "no_active_quote_consumers";
 const MARKET_SESSION_QUIET_REASON = "market_session_quiet";
 const HEALTHY_STATUS_KEYS = new Set([
   "ready",
+  "healthy",
   "quote_standby",
+  "no-subscribers",
   "idle",
   "market_closed",
+  "market-closed",
   "quiet",
 ]);
 
@@ -275,38 +279,38 @@ export const buildHeaderIbkrPopoverModel = ({
     streamActive &&
     Number.isFinite(streamFreshAgeMs) &&
     streamFreshAgeMs <= 10_000;
+  const canonicalStreamState = canonicalizeStreamState(streamState, "offline");
   const streamQuoteStandby =
-    streamState === "quiet" &&
+    canonicalStreamState === "quiet" &&
     streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON &&
     !streamActive;
   const streamMarketClosed =
-    streamState === "quiet" && streamStateReason === MARKET_SESSION_QUIET_REASON;
+    canonicalStreamState === "quiet" && streamStateReason === MARKET_SESSION_QUIET_REASON;
   const streamQuiet =
-    streamState === "quiet" && !streamQuoteStandby && !streamMarketClosed;
-  const streamCapacityLimited = streamState === "capacity_limited";
-  const streamReconnecting = streamState === "reconnecting";
-  const streamReconnectNeeded = streamState === "reconnect_needed";
+    canonicalStreamState === "quiet" && !streamQuoteStandby && !streamMarketClosed;
+  const streamCapacityLimited = canonicalStreamState === "capacity-limited";
+  const streamReconnecting = canonicalStreamState === "reconnecting";
   const streamStale =
-    streamState === "stale" ||
+    canonicalStreamState === "stale" ||
     streamCapacityLimited ||
     (!streamState && streamFresh === false) ||
     (streamActive &&
       Number.isFinite(streamFreshAgeMs) &&
       streamFreshAgeMs > 10_000);
   const streamConfirmedFresh =
-    streamState === "live" ||
+    canonicalStreamState === "healthy" ||
     strictReady === true ||
     streamFresh === true ||
     streamFreshByCounters;
   const streamLiveActive =
-    streamState === "live" ||
+    canonicalStreamState === "healthy" ||
     streamFreshByCounters ||
     (streamActive && streamFresh === true);
-  if (health.status === "quote_standby" && streamLiveActive) {
+  if (canonicalizeStreamState(health.status, "offline") === "no-subscribers" && streamLiveActive) {
     health = {
-      status: "ready",
+      status: "healthy",
       label: "Ready",
-      color: T.green,
+      color: streamStateTokenVar("healthy"),
       detail: "Gateway is authenticated and live stream events are current",
     };
   }
@@ -336,8 +340,10 @@ export const buildHeaderIbkrPopoverModel = ({
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {
-    key: healthyStatus ? health.status : "ready",
-    label: health.status === "ready" ? "Gateway ready for live data." : health.detail,
+    key: healthyStatus ? health.status : "healthy",
+    label: canonicalizeStreamState(health.status, "offline") === "healthy"
+      ? "Gateway ready for live data."
+      : health.detail,
     tone: healthyStatus ? T.textSec : health.color,
     iconKey: healthyStatus ? "activity" : "alert",
     autoOpenDetails: false,
@@ -414,20 +420,17 @@ export const buildHeaderIbkrPopoverModel = ({
               ? "Quiet stream"
               : streamReconnecting
                 ? "Reconnecting"
-                : streamReconnectNeeded
-                  ? "Reconnect"
-                  : streamStale
-                    ? "Stale stream"
-                    : liveDataLabel,
+                : streamStale
+                  ? "Stale stream"
+                  : liveDataLabel,
       tone:
-        liveMarketDataAvailable === false ||
-        streamStale ||
-        streamReconnecting ||
-        streamReconnectNeeded
-          ? T.amber
-          : streamState === "live" || strictReady === true
-            ? T.green
-            : T.textDim,
+        liveMarketDataAvailable === false
+          ? streamStateTokenVar("delayed")
+          : streamStale || streamReconnecting
+            ? streamStateTokenVar("stale")
+            : canonicalStreamState === "healthy" || strictReady === true
+              ? streamStateTokenVar("healthy")
+              : T.textDim,
       iconKey: "activity",
     },
     {
@@ -447,8 +450,6 @@ export const buildHeaderIbkrPopoverModel = ({
             ? "Quiet stream"
           : streamReconnecting
             ? "Reconnecting"
-          : streamReconnectNeeded
-            ? "Reconnect"
           : streamStale && Number.isFinite(stream.lastEventAgeMs)
             ? "Silent"
           : "No live stream",
@@ -460,11 +461,11 @@ export const buildHeaderIbkrPopoverModel = ({
             : null,
       tone:
         Number.isFinite(streamGapCount) && streamGapCount > 0
-          ? T.amber
-          : streamStale || streamReconnecting || streamReconnectNeeded
-            ? T.amber
+          ? streamStateTokenVar("stale")
+          : streamStale || streamReconnecting
+            ? streamStateTokenVar("stale")
           : streamConfirmedFresh
-            ? T.green
+            ? streamStateTokenVar("healthy")
             : T.textDim,
       iconKey: "gauge",
     },
@@ -638,16 +639,8 @@ export const buildHeaderIbkrPopoverModel = ({
               ? "market closed"
               : streamLiveActive
                 ? "live"
-                : streamState || MISSING_VALUE,
-          tone:
-            streamState === "live"
-              ? T.green
-              : streamState === "stale" ||
-                  streamState === "capacity_limited" ||
-                  streamState === "reconnecting" ||
-                  streamState === "reconnect_needed"
-                ? T.amber
-                : T.textDim,
+                : canonicalStreamState || MISSING_VALUE,
+          tone: streamStateTokenVar(canonicalStreamState),
         },
         ...(streamStateReason
           ? [

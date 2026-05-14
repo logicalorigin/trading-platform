@@ -56,7 +56,7 @@ export const BottomSheet = ({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: "rgba(2, 6, 23, 0.62)",
+          background: "rgba(25, 23, 26, 0.42)",
           cursor: "pointer",
         }}
       />
@@ -75,10 +75,10 @@ export const BottomSheet = ({
           flexDirection: "column",
           background: T.bg0,
           color: T.text,
-          borderTop: `1px solid ${T.border}`,
-          borderTopLeftRadius: dim(8),
-          borderTopRightRadius: dim(8),
-          boxShadow: `0 -18px 48px ${T.bg0}cc`,
+          borderTop: "none",
+          borderTopLeftRadius: dim(16),
+          borderTopRightRadius: dim(16),
+          boxShadow: "0 -12px 36px rgba(25, 23, 26, 0.14)",
           fontFamily: T.sans,
         }}
       >
@@ -88,12 +88,12 @@ export const BottomSheet = ({
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: sp(6),
-            padding: sp("8px 10px 7px"),
-            borderBottom: `1px solid ${T.border}`,
-            background: T.bg1,
-            borderTopLeftRadius: dim(8),
-            borderTopRightRadius: dim(8),
+            gap: sp(8),
+            padding: sp("10px 16px 12px"),
+            borderBottom: "none",
+            background: T.bg0,
+            borderTopLeftRadius: dim(16),
+            borderTopRightRadius: dim(16),
           }}
         >
           <span
@@ -102,7 +102,7 @@ export const BottomSheet = ({
               width: dim(38),
               height: dim(4),
               borderRadius: dim(999),
-              background: T.borderLight,
+              background: T.bg3,
             }}
           />
           <div
@@ -121,9 +121,10 @@ export const BottomSheet = ({
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(12),
-                fontWeight: 400,
+                fontFamily: T.sans,
+                fontSize: fs(15),
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
               }}
             >
               {title}
@@ -134,13 +135,13 @@ export const BottomSheet = ({
               aria-label={`Close ${title}`}
               onClick={onClose}
               style={{
-                width: dim(36),
-                height: dim(36),
+                width: dim(32),
+                height: dim(32),
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
+                border: "none",
+                borderRadius: "50%",
                 background: T.bg2,
                 color: T.textSec,
                 cursor: "pointer",

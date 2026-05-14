@@ -8,7 +8,8 @@ const screenSource = () =>
 test("GEX screen hydrates from the dedicated Massive-backed app API", () => {
   const source = screenSource();
 
-  assert.match(source, /fetch\(`\/api\/gex\/\$\{encodeURIComponent\(ticker\)\}`/);
+  assert.match(source, /getGexDashboard as getGexDashboardRequest/);
+  assert.match(source, /return getGexDashboardRequest\(encodeURIComponent\(ticker\),\s*\{ signal \}\)/);
   assert.match(source, /queryKey:\s*\["gex-dashboard",\s*ticker\]/);
   assert.match(source, /normalizeGexResponseOptions\(gexData\?\.options \|\| \[\]\)/);
 });

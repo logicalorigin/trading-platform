@@ -1,10 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  accountExpirationConcentrationMs,
   buildAccountRiskDisplayModel,
   getOpenPositionRows,
   isOpenPositionRow,
 } from "../../features/account/accountPositionRows.js";
+
+const withTimeZone = (timeZone, assertion) => {
+  const previous = process.env.TZ;
+  process.env.TZ = timeZone;
+  try {
+    assertion();
+  } finally {
+    if (previous == null) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previous;
+    }
+  }
+};
 
 test("open position rows exclude explicit zero quantities", () => {
   assert.equal(isOpenPositionRow({ quantity: 10 }), true);
@@ -12,6 +27,16 @@ test("open position rows exclude explicit zero quantities", () => {
   assert.equal(isOpenPositionRow({ quantity: 0 }), false);
   assert.equal(isOpenPositionRow({ quantity: "0" }), false);
   assert.equal(isOpenPositionRow({ symbol: "LEGACY" }), true);
+});
+
+test("expiry concentration treats date-only expirations as local expiration day", () => {
+  withTimeZone("America/New_York", () => {
+    assert.equal(
+      new Date(accountExpirationConcentrationMs("2026-05-13")).toISOString(),
+      "2026-05-14T03:59:59.999Z",
+    );
+  });
+  assert.equal(accountExpirationConcentrationMs("2026-02-31"), null);
 });
 
 test("risk display model rebuilds current-position lanes from open positions", () => {

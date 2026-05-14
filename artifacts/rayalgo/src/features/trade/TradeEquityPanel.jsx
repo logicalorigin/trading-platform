@@ -117,6 +117,8 @@ export const TradeEquityPanel = ({
   flowEventsSourceMode = "merge-store",
   chartHydrationRole = "primary",
   chartFramePlacement,
+  crosshairSyncGroupId = null,
+  crosshairSyncInstanceId = null,
 }) => {
   const queryClient = useQueryClient();
   const effectiveChartHydrationRole =
@@ -883,6 +885,8 @@ export const TradeEquityPanel = ({
         model={chartModel}
         compact={resolvedChartFrameCompact}
         placement={resolvedChartFramePlacement}
+        crosshairSyncGroupId={crosshairSyncGroupId}
+        crosshairSyncInstanceId={crosshairSyncInstanceId}
         frameSignalState={showSignalFrameBorder ? signalFrameState : null}
         positionOverlayContext={{
           surfaceKind: effectiveChartHydrationRole === "mini" ? "mini" : "spot",

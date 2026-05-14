@@ -19,6 +19,9 @@
       "path": "../../lib/api-client-react"
     },
     {
+      "path": "../../lib/account-math"
+    },
+    {
       "path": "../../lib/rayreplica-core"
     }
   ]

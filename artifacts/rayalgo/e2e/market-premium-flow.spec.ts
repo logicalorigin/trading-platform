@@ -143,6 +143,46 @@ async function mockMarketApi(
       body = {
         bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()),
       };
+    } else if (url.pathname === "/api/flow/events/aggregate") {
+      body = {
+        events: symbols.flatMap((symbol) => [
+          flowEvent(symbol, {
+            id: `${symbol}-snapshot-primary`,
+            provider: "ibkr",
+            basis: "snapshot",
+            sourceBasis: "snapshot_activity",
+            premium: symbol === "SPY" ? 1_000_000 : 250_000,
+            strike: quoteData[symbol]?.price ?? 100,
+            right: ["QQQ", "TSLA", "IWM"].includes(symbol) ? "put" : "call",
+            sentiment: ["QQQ", "TSLA", "IWM"].includes(symbol)
+              ? "bearish"
+              : "bullish",
+            isUnusual: true,
+            unusualScore: 2.4,
+          }),
+        ]),
+        source: {
+          provider: "ibkr",
+          status: "live",
+          fallbackUsed: false,
+          attemptedProviders: ["ibkr"],
+          unusualThreshold: 1,
+          scannerCoverage: {
+            mode: "all_watchlists_plus_universe",
+            targetSize: symbols.length,
+            activeTargetSize: symbols.length,
+            selectedSymbols: symbols.length,
+            selectedShortfall: 0,
+            fallbackUsed: false,
+            stale: false,
+            cooldownCount: 0,
+            scannedSymbols: symbols.length,
+            cycleScannedSymbols: symbols.length,
+            currentBatch: symbols,
+            degradedReason: null,
+          },
+        },
+      };
     } else if (url.pathname === "/api/flow/events") {
       flowUrls.push(url.toString());
       const symbol = (url.searchParams.get("underlying") || "SPY").toUpperCase();
@@ -476,12 +516,14 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   await expect(page.getByTestId("market-mini-chart-0")).toBeVisible();
   await expect(
     page.getByRole("status", {
-      name: /SPY options premium flow (Scanning|POLYGON TRADE)/i,
+      name: /SPY options premium flow (Scanning|IBKR snapshot live|POLYGON SNAPSHOT)/i,
     }),
   ).toBeVisible();
 
   await expect(
-    page.getByRole("status", { name: /SPY options premium flow POLYGON TRADE/i }),
+    page.getByRole("status", {
+      name: /SPY options premium flow (IBKR snapshot live|POLYGON SNAPSHOT)/i,
+    }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-live", "true");

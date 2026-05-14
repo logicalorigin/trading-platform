@@ -96,9 +96,25 @@ export const summarizeFlowSentiment = (events = []) => {
 const numberValue = (value, fallback = 0) =>
   Number.isFinite(value) ? value : fallback;
 
+const parseExpirationSortTime = (value) => {
+  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? timestamp
+    : Number.POSITIVE_INFINITY;
+};
+
 const expirationValue = (event) => {
-  const parsed = Date.parse(event?.expirationDate || "");
-  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+  return parseExpirationSortTime(event?.expirationDate);
 };
 
 const getFlowSortValue = (event, sortBy) => {

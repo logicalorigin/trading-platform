@@ -41,10 +41,10 @@ function Panel({ title, action, children }) {
     <section
       className="ra-panel-enter"
       style={{
-        border: `1px solid ${T.border}`,
+        border: "none",
         background: T.bg1,
-        borderRadius: dim(6),
-        padding: sp(12),
+        borderRadius: dim(10),
+        padding: sp(16),
         minWidth: 0,
       }}
     >
@@ -54,10 +54,20 @@ function Panel({ title, action, children }) {
           alignItems: "flex-start",
           justifyContent: "space-between",
           gap: sp(10),
-          marginBottom: sp(10),
+          marginBottom: sp(12),
         }}
       >
-        <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
+        <div
+          style={{
+            fontSize: fs(14),
+            fontFamily: T.sans,
+            fontWeight: 600,
+            letterSpacing: "-0.01em",
+            color: T.text,
+          }}
+        >
+          {title}
+        </div>
         {action}
       </div>
       {children}
@@ -67,14 +77,14 @@ function Panel({ title, action, children }) {
 
 function smallButton() {
   return {
-    border: `1px solid ${T.border}`,
+    border: "none",
     background: T.bg2,
     color: T.textSec,
-    borderRadius: dim(4),
-    padding: sp("5px 8px"),
-    fontFamily: T.mono,
+    borderRadius: dim(999),
+    padding: sp("5px 12px"),
+    fontFamily: T.sans,
     fontSize: fs(9),
-    fontWeight: 400,
+    fontWeight: 500,
     cursor: "pointer",
   };
 }
@@ -85,7 +95,7 @@ function chipRemoveButton() {
     background: "transparent",
     color: T.textDim,
     padding: 0,
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(8),
     fontWeight: 400,
     cursor: "pointer",
@@ -95,14 +105,15 @@ function chipRemoveButton() {
 
 function inputStyle() {
   return {
-    border: `1px solid ${T.border}`,
-    background: T.bg0,
+    border: "none",
+    background: T.bg2,
     color: T.text,
-    borderRadius: dim(4),
-    padding: sp("6px 7px"),
-    fontFamily: T.mono,
+    borderRadius: dim(6),
+    padding: sp("7px 9px"),
+    fontFamily: T.sans,
     fontSize: fs(10),
     minWidth: 0,
+    outline: "none",
   };
 }
 
@@ -113,7 +124,7 @@ function laneChip(color) {
     color,
     borderRadius: dim(4),
     padding: sp("3px 5px"),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(8),
     fontWeight: 400,
     maxWidth: "100%",
@@ -155,7 +166,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
           alignItems: "center",
           gap: sp(7),
           color: T.textSec,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(10),
           fontWeight: 400,
         }}
@@ -209,7 +220,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(150px, 1fr) minmax(150px, 0.9fr) 76px",
+        gridTemplateColumns: `minmax(${dim(150)}px, 1fr) minmax(${dim(150)}px, 0.9fr) ${dim(76)}px`,
         gap: sp(9),
         alignItems: "center",
         borderTop: `1px solid ${T.border}55`,
@@ -220,7 +231,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
         <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>
           {control.label}
         </div>
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {control.source} / default {formatLaneValue(control.defaultValue, control.unit)}
         </div>
       </div>
@@ -259,7 +270,7 @@ function sourceBadge(sourceId) {
     color: tone,
     borderRadius: dim(3),
     padding: sp("1px 3px"),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(7),
     fontWeight: 400,
     lineHeight: 1.1,
@@ -270,17 +281,17 @@ function LaneMiniMetric({ label, value, tone = T.textSec }) {
   return (
     <div
       style={{
-        border: `1px solid ${T.border}88`,
-        borderRadius: dim(5),
-        background: T.bg1,
-        padding: sp("6px 7px"),
+        border: "none",
+        borderRadius: dim(8),
+        background: T.bg2,
+        padding: sp("8px 10px"),
         minWidth: 0,
       }}
     >
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(7), fontWeight: 400 }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(7), fontWeight: 400 }}>
         {label}
       </div>
-      <div style={{ color: tone, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
+      <div style={{ color: tone, fontFamily: T.sans, fontSize: fs(12), fontWeight: 400 }}>
         {value}
       </div>
     </div>
@@ -309,7 +320,7 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
 
   return (
     <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
         {label}
       </div>
       <div
@@ -318,10 +329,10 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
           flexWrap: "wrap",
           gap: sp(5),
           minHeight: dim(64),
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(5),
-          background: T.bg0,
-          padding: sp(6),
+          border: "none",
+          borderRadius: dim(8),
+          background: T.bg2,
+          padding: sp(10),
         }}
       >
         {symbols.map((symbol) => (
@@ -366,14 +377,14 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
               outline: "none",
               background: "transparent",
               color: T.text,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(10),
             }}
           />
         )}
       </div>
       {invalidText && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(8) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(8) }}>
           Ignored invalid: {invalidText}
         </div>
       )}
@@ -397,7 +408,7 @@ function LaneSymbolPreview({ title, preview, kind }) {
 
   return (
     <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-      <div style={{ color: kind === "dropped" ? T.amber : T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
+      <div style={{ color: kind === "dropped" ? T.amber : T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
         {title}
       </div>
       <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
@@ -466,7 +477,7 @@ function LaneMembershipCard({
             {changed && <span style={laneChip(T.green)}>staged</span>}
             {isSystemLane(lane.laneId) && <span style={laneChip(T.textDim)}>protected</span>}
           </div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
             {preview.admittedSymbols.length}/{preview.desiredSymbols.length} admitted
             {preview.droppedSymbols.length ? ` / ${preview.droppedSymbols.length} dropped` : ""}
             {queued ? ` / ${queued} queued` : ""}
@@ -482,7 +493,7 @@ function LaneMembershipCard({
               Reset Lane
             </button>
           )}
-          <label style={{ display: "inline-flex", alignItems: "center", gap: sp(6), color: editable ? T.textSec : T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: sp(6), color: editable ? T.textSec : T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
             <input
               type="checkbox"
               disabled={!editable}
@@ -507,8 +518,8 @@ function LaneMembershipCard({
 
       {editable ? (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "84px minmax(0, 1fr)", gap: sp(8), alignItems: "center" }}>
-            <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>Max Symbols</span>
+          <div style={{ display: "grid", gridTemplateColumns: `${dim(84)}px minmax(0, 1fr)`, gap: sp(8), alignItems: "center" }}>
+            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>Max Symbols</span>
             <input
               type="number"
               min={1}
@@ -532,7 +543,7 @@ function LaneMembershipCard({
                   background: mergedPolicy.sources?.[source] ? T.greenBg : T.bg1,
                   borderRadius: dim(4),
                   padding: sp("4px 6px"),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: fs(8),
                   fontWeight: 400,
                 }}
@@ -565,7 +576,7 @@ function LaneMembershipCard({
           </div>
         </>
       ) : (
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), background: T.bg1, padding: sp(8), color: T.textDim, fontFamily: T.mono, fontSize: fs(9) }}>
+        <div style={{ border: "none", borderRadius: dim(8), background: T.bg2, padding: sp(12), color: T.textDim, fontFamily: T.sans, fontSize: fs(10), lineHeight: 1.4 }}>
           System lane membership is read-only.
         </div>
       )}
@@ -577,7 +588,7 @@ function LaneMembershipCard({
               key={`${warning.code}-${warning.message}`}
               style={{
                 color: warning.severity === "warning" ? T.amber : T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(8),
               }}
             >
@@ -612,7 +623,7 @@ function LaneDashboardSummary({ snapshot, laneStates, changedCount }) {
   const bridgeTone = bridgeError ? T.amber : bridge ? T.green : T.textDim;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: sp(8) }}>
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`, gap: sp(8) }}>
       <LaneMiniMetric label="BRIDGE" value={bridgeError ? "CHECK" : bridge ? "READY" : "WAIT"} tone={bridgeTone} />
       <LaneMiniMetric label="ADMITTED" value={`${formatCount(totalAdmitted)}/${formatCount(totalDesired)}`} tone={totalDropped ? T.amber : T.green} />
       <LaneMiniMetric label="DROPPED" value={formatCount(totalDropped)} tone={totalDropped ? T.amber : T.green} />
@@ -629,7 +640,7 @@ function LanePresetBar({ onApplyPreset }) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`,
         gap: sp(8),
       }}
     >
@@ -639,10 +650,10 @@ function LanePresetBar({ onApplyPreset }) {
           type="button"
           onClick={() => onApplyPreset(preset.id)}
           style={{
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
+            border: "none",
+            borderRadius: dim(10),
             background: T.bg2,
-            padding: sp(9),
+            padding: sp(12),
             textAlign: "left",
             cursor: "pointer",
           }}
@@ -650,7 +661,7 @@ function LanePresetBar({ onApplyPreset }) {
           <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400 }}>
             {preset.label}
           </div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(3) }}>
             {preset.description}
           </div>
         </button>
@@ -676,7 +687,7 @@ function LaneSaveSummary({ changedCount, warnings, bridgeReady, onDiscard }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8), flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ color: changedCount ? T.green : T.amber, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+        <div style={{ color: changedCount ? T.green : T.amber, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
           {changedCount ? `${changedCount} staged change${changedCount === 1 ? "" : "s"}` : "Bridge launcher required to save lane edits"}
         </div>
         {changedCount > 0 && (
@@ -688,12 +699,12 @@ function LaneSaveSummary({ changedCount, warnings, bridgeReady, onDiscard }) {
       {warnings.length > 0 && (
         <div style={{ display: "grid", gap: sp(4) }}>
           {warnings.slice(0, 6).map((warning) => (
-            <div key={`${warning.laneId}-${warning.code}-${warning.message}`} style={{ color: warning.severity === "warning" ? T.amber : T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+            <div key={`${warning.laneId}-${warning.code}-${warning.message}`} style={{ color: warning.severity === "warning" ? T.amber : T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
               {warning.message}
             </div>
           ))}
           {warnings.length > 6 && (
-            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
               +{warnings.length - 6} more warning{warnings.length - 6 === 1 ? "" : "s"}
             </div>
           )}
@@ -712,7 +723,7 @@ function LaneGroupSection({ group, laneStateById, onPolicyChange, onResetPolicy 
   return (
     <section style={{ display: "grid", gap: sp(8) }}>
       <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>{group.label}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: sp(12) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(360)}px, 1fr))`, gap: sp(12) }}>
         {states.map((laneState) => (
           <LaneMembershipCard
             key={laneState.lane.laneId}
@@ -730,10 +741,10 @@ function LaneArchitectureSection({ snapshot }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
       <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>How Data Moves</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(10) }}>
         {(snapshot.layers || []).map((layer) => (
-          <div key={layer.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp(10), background: T.bg2 }}>
-            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(8) }}>
+          <div key={layer.id} style={{ border: "none", borderRadius: dim(10), padding: sp(12), background: T.bg2 }}>
+            <div style={{ color: T.textMuted, fontFamily: T.sans, fontSize: fs(9), fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: sp(10) }}>
               {layer.label}
             </div>
             <div style={{ display: "grid", gap: sp(8) }}>
@@ -750,11 +761,11 @@ function LaneArchitectureSection({ snapshot }) {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8), alignItems: "center" }}>
                     <span style={{ color: T.text, fontSize: fs(11), fontWeight: 400 }}>{node.label}</span>
-                    <span style={{ color: laneStatusTone(node.status), fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
+                    <span style={{ color: laneStatusTone(node.status), fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
                       {String(node.status || "unknown").toUpperCase()}
                     </span>
                   </div>
-                  <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(4) }}>
+                  <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(4) }}>
                     {node.summary}
                   </div>
                 </div>
@@ -768,13 +779,13 @@ function LaneArchitectureSection({ snapshot }) {
           <span
             key={`${edge.from}-${edge.to}`}
             style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(4),
-              padding: sp("5px 7px"),
-              color: T.textSec,
-              fontFamily: T.mono,
-              fontSize: fs(8),
+              border: "none",
+              borderRadius: dim(999),
+              padding: sp("4px 10px"),
               background: T.bg2,
+              color: T.textSec,
+              fontFamily: T.sans,
+              fontSize: fs(8),
             }}
           >
             {edge.from} {"->"} {edge.to}: {edge.label}
@@ -789,7 +800,7 @@ function AdvancedLaneControls({ controlGroups, drafts, onChange, onReset }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
       <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>Advanced Controls</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: sp(14) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(320)}px, 1fr))`, gap: sp(14) }}>
         {Array.from(controlGroups.entries()).map(([group, groupControls]) => (
           <div key={group} style={{ minWidth: 0 }}>
             <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400, marginBottom: sp(6) }}>
@@ -894,12 +905,12 @@ export function IbkrLaneArchitecturePanel({
       }
     >
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
       {!snapshot ? (
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           Loading lane architecture.
         </div>
       ) : (

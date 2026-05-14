@@ -77,7 +77,7 @@ export const buildPlatformWorkSchedule = ({
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
   const firstScreenReady = screenWarmupPhase !== "initial";
-  const broadFlowAllowed = Boolean(visible && sessionReady);
+  const broadFlowAllowed = Boolean(sessionReady);
   const market = screen === "market";
   const flow = screen === "flow";
   const trade = screen === "trade";

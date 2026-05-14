@@ -102,26 +102,29 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
     <AppTooltip content={`${label} proxy · ${symbol}`}><button
       type="button"
       onClick={() => onSelect?.(symbol)}
+      className="ra-header-kpi"
       style={{
-        flex: "1 1 68px",
-        minWidth: dim(64),
-        minHeight: dim(32),
-        padding: sp("3px 6px"),
+        flex: "1 1 96px",
+        minWidth: dim(92),
+        minHeight: dim(34),
+        padding: sp("4px 14px 4px 0"),
+        marginRight: sp(2),
         display: "flex",
         alignItems: "center",
         gap: sp(5),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: "transparent",
+        border: "none",
+        borderRight: `1px solid ${T.borderLight}`,
         borderRadius: 0,
         color: T.text,
         cursor: "pointer",
-        transition: "background 0.12s ease, color 0.12s ease",
+        transition: "color 0.18s ease",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = `${T.bg3}80`;
+        event.currentTarget.style.color = T.accent;
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = "transparent";
+        event.currentTarget.style.color = T.text;
       }}
     >
       <span
@@ -131,7 +134,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           textAlign: "left",
           display: "flex",
           flexDirection: "column",
-          gap: 0,
+          gap: sp(1),
         }}
       >
         <span
@@ -146,11 +149,11 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(7),
+              fontSize: fs(9),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 400,
-              letterSpacing: "0.05em",
+              fontWeight: 500,
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -162,12 +165,12 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(7),
-              fontWeight: 400,
-              color: T.textMuted,
+              fontSize: fs(8),
+              fontWeight: 500,
+              color: T.textDim,
               fontFamily: T.sans,
               lineHeight: 1.1,
-              letterSpacing: "0.05em",
+              letterSpacing: "0.02em",
               flexShrink: 0,
             }}
           >
@@ -185,12 +188,14 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(10),
-              fontWeight: 400,
+              fontSize: fs(12),
+              fontWeight: 600,
               fontFamily: T.sans,
               color: T.text,
               lineHeight: 1.1,
               whiteSpace: "nowrap",
+              fontVariantNumeric: "tabular-nums",
+              letterSpacing: "-0.01em",
             }}
           >
             {formatQuotePrice(snapshot?.price)}
@@ -198,13 +203,14 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: fs(9),
+              fontWeight: 500,
               fontFamily: T.sans,
               color:
                 positive == null ? T.textDim : positive ? T.green : T.red,
               lineHeight: 1.1,
               whiteSpace: "nowrap",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {formatSignedPercent(snapshot?.pct)}

@@ -1,7 +1,7 @@
 export const chartTooltipContentStyle = {
   background: "var(--ra-tooltip-bg)",
-  border: "1px solid var(--ra-tooltip-border)",
-  borderRadius: "6px",
+  border: "none",
+  borderRadius: "8px",
   color: "var(--ra-tooltip-text)",
   fontFamily: "var(--ra-font-sans)",
   fontSize: "var(--ra-type-body)",

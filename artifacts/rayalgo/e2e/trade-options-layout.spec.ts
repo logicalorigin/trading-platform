@@ -77,6 +77,18 @@ function makeOptionContracts(
   );
 }
 
+function sseBody(events: Array<{ event: string; data: Record<string, unknown> }>) {
+  return [
+    "retry: 1000",
+    "",
+    ...events.flatMap(({ event, data }) => [
+      `event: ${event}`,
+      `data: ${JSON.stringify(data)}`,
+      "",
+    ]),
+  ].join("\n");
+}
+
 async function mockTradeApi(
   page: Page,
   {
@@ -348,6 +360,50 @@ async function mockTradeApi(
       };
     } else if (url.pathname === "/api/flow/events") {
       body = { events: flowEvents };
+    } else if (url.pathname === "/api/streams/accounts") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: sseBody([
+          {
+            event: "ready",
+            data: { accountId: "DU1234567", mode: "paper", source: "mock" },
+          },
+          {
+            event: "freshness",
+            data: {
+              stream: "accounts",
+              accountId: "DU1234567",
+              mode: "paper",
+              changed: false,
+              at: new Date().toISOString(),
+            },
+          },
+        ]),
+      });
+      return;
+    } else if (url.pathname === "/api/streams/orders") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: sseBody([
+          {
+            event: "ready",
+            data: { accountId: "DU1234567", mode: "paper", source: "mock" },
+          },
+          {
+            event: "freshness",
+            data: {
+              stream: "orders",
+              accountId: "DU1234567",
+              mode: "paper",
+              changed: false,
+              at: new Date().toISOString(),
+            },
+          },
+        ]),
+      });
+      return;
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
@@ -398,7 +454,9 @@ async function openTrade(page: Page, workspaceState: Record<string, unknown> = {
   await expect(page.getByTestId("trade-top-zone")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
+  if ((await page.locator('[data-trade-layout="phone"]').count()) === 0) {
+    await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
+  }
 }
 
 async function dragPanChart(page: Page, chartTestId: string) {
@@ -648,7 +706,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
     page.getByRole("button", { name: "PREVIEW SHADOW" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /BUY SHADOW/ }),
+    page.getByRole("button", { name: /BUY TO OPEN SHADOW/ }),
   ).toBeVisible();
   await expect(
     page.getByTestId("trade-ticket-stop-loss-toggle"),
@@ -675,7 +733,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await page.getByTestId("trade-ticket-stop-loss-toggle").click();
   await page.getByTestId("trade-ticket-take-profit-toggle").click();
   await expect(
-    page.getByRole("button", { name: /BUY 2 EXITS/ }),
+    page.getByRole("button", { name: /BUY TO OPEN 2 EXITS/ }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -709,9 +767,9 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect(
     page.getByTestId("trade-ticket-take-profit-toggle"),
   ).toBeDisabled();
-		  await expect(
-		    page.getByRole("button", { name: /BUY SHADOW/ }),
-		  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /BUY TO OPEN SHADOW/ }),
+  ).toBeVisible();
 });
 
 test("Trade ticket surfaces IBKR order rejection without sticking submitting state", async ({
@@ -737,18 +795,19 @@ test("Trade ticket surfaces IBKR order rejection without sticking submitting sta
   await expect(page.getByRole("button", { name: "PREVIEW IBKR" })).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByRole("button", { name: /BUY \d+ ct/ }).click();
+  await page.getByRole("button", { name: /BUY TO OPEN \d+ ct/ }).click();
   await expect(page.getByTestId("broker-action-confirm-dialog")).toBeVisible();
-  await page.getByRole("button", { name: "BUY IBKR ORDER" }).click();
+  await page.getByRole("button", { name: "BUY TO OPEN IBKR ORDER" }).click();
 
   await expect
     .poll(() => orderSubmitRequests.length, { timeout: 10_000 })
     .toBe(1);
+  expect(orderSubmitRequests[0]).toMatchObject({ confirm: true });
   await expect(page.getByTestId("broker-action-confirm-error")).toContainText(
     "IBKR rejected FCEL test order.",
   );
   await expect(
-    page.getByRole("button", { name: "BUY IBKR ORDER" }),
+    page.getByRole("button", { name: "BUY TO OPEN IBKR ORDER" }),
   ).toBeEnabled();
   await expect(page.getByRole("button", { name: "SUBMITTING..." })).toHaveCount(
     0,

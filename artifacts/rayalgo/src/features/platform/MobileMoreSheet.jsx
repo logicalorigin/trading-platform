@@ -45,7 +45,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
       alignItems: "center",
       gap: sp(8),
       padding: sp("7px 9px"),
-      border: `1px solid ${T.border}`,
+      border: "none",
       background: T.bg1,
       color: T.text,
       textAlign: "left",
@@ -71,12 +71,12 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
         <span
           style={{
             display: "block",
-            marginTop: 2,
+            marginTop: sp(2),
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(8),
             lineHeight: 1.1,
           }}
@@ -93,9 +93,9 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
     style={{
       minWidth: 0,
       padding: sp("5px 7px"),
-      border: `1px solid ${T.border}`,
+      border: "none",
       background: T.bg1,
-      fontFamily: T.mono,
+      fontFamily: T.sans,
     }}
   >
     <div
@@ -110,7 +110,7 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
     </div>
     <div
       style={{
-        marginTop: 2,
+        marginTop: sp(2),
         color: tone,
         fontSize: fs(9),
         lineHeight: 1.1,

@@ -21,6 +21,35 @@ const normalizeKey = (value) => String(value || "").trim().toUpperCase();
 const positionReferenceSymbol = (position) =>
   position?.optionContract?.underlying || position?.symbol || "";
 
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export const accountExpirationConcentrationMs = (value) => {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const match = DATE_ONLY_RE.exec(value.trim());
+    if (match) {
+      const year = Number(match[1]);
+      const monthIndex = Number(match[2]) - 1;
+      const day = Number(match[3]);
+      const date = new Date(year, monthIndex, day, 23, 59, 59, 999);
+      if (
+        date.getFullYear() !== year ||
+        date.getMonth() !== monthIndex ||
+        date.getDate() !== day
+      ) {
+        return null;
+      }
+      return date.getTime();
+    }
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
 const buildSectorRows = (positions) => {
   const sectors = new Map();
   positions.forEach((position) => {
@@ -75,8 +104,10 @@ const buildExpiryConcentrationFromPositions = (positions) => {
   };
 
   optionRows.forEach((position) => {
-    const expiry = new Date(position.optionContract.expirationDate).getTime();
-    if (!Number.isFinite(expiry)) {
+    const expiry = accountExpirationConcentrationMs(
+      position.optionContract.expirationDate,
+    );
+    if (expiry == null) {
       return;
     }
     const notional = Math.abs(finiteNumber(position.marketValue) ?? 0);

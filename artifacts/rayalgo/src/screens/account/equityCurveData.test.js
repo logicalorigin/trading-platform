@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAnchoredValueDomain,
+  buildEquityCurvePointSummary,
   buildPaddedValueDomain,
   buildTransferAdjustedPnlSeries,
+  equityRangeResponseMatches,
   joinBenchmarkPercentSeries,
   mapEquityEventsToPoints,
   normalizeEquityPointSeries,
+  resolveStableEquityRangeResponse,
 } from "./equityCurveData.js";
 
 test("normalizeEquityPointSeries filters invalid values and sorts by time", () => {
@@ -24,6 +27,62 @@ test("normalizeEquityPointSeries filters invalid values and sorts by time", () =
   assert.deepEqual(
     points.map((point) => point.netLiquidation),
     [100, 102],
+  );
+});
+
+test("resolveStableEquityRangeResponse keeps the last completed range during transitions", () => {
+  const fallback = {
+    range: "1M",
+    points: [{ timestamp: "2026-04-01T00:00:00.000Z", netLiquidation: 100 }],
+  };
+  const current = {
+    range: "1W",
+    points: [{ timestamp: "2026-04-30T00:00:00.000Z", netLiquidation: 110 }],
+  };
+
+  assert.equal(equityRangeResponseMatches(current, "1W"), true);
+  assert.equal(equityRangeResponseMatches(current, "1M"), false);
+  assert.equal(
+    resolveStableEquityRangeResponse({ response: undefined, fallback, range: "1W" }),
+    fallback,
+  );
+  assert.equal(
+    resolveStableEquityRangeResponse({ response: current, fallback, range: "1W" }),
+    current,
+  );
+  assert.equal(
+    resolveStableEquityRangeResponse({ response: current, fallback, range: "1M" }),
+    fallback,
+  );
+});
+
+test("resolveStableEquityRangeResponse can hold the prior range until overlays are ready", () => {
+  const fallback = {
+    range: "1M",
+    points: [{ timestamp: "2026-04-01T00:00:00.000Z", netLiquidation: 100 }],
+  };
+  const current = {
+    range: "1W",
+    points: [{ timestamp: "2026-04-30T00:00:00.000Z", netLiquidation: 110 }],
+  };
+
+  assert.equal(
+    resolveStableEquityRangeResponse({
+      response: current,
+      fallback,
+      range: "1W",
+      acceptResponse: false,
+    }),
+    fallback,
+  );
+  assert.equal(
+    resolveStableEquityRangeResponse({
+      response: current,
+      fallback: null,
+      range: "1W",
+      acceptResponse: false,
+    }),
+    current,
   );
 });
 
@@ -97,6 +156,22 @@ test("buildTransferAdjustedPnlSeries excludes deposits and withdrawals", () => {
   ]);
 
   assert.deepEqual(buildTransferAdjustedPnlSeries(points), [0, 150, 250]);
+});
+
+test("buildEquityCurvePointSummary computes extrema and final transfer-adjusted P&L in one pass", () => {
+  const summary = buildEquityCurvePointSummary([
+    { timestamp: "2026-04-30T12:00:00.000Z", netLiquidation: 100, cumulativePnl: null },
+    { timestamp: "2026-04-30T12:05:00.000Z", netLiquidation: 106, cumulativePnl: 6 },
+    { timestamp: "2026-04-30T12:10:00.000Z", netLiquidation: 98, cumulativePnl: -2 },
+  ]);
+
+  assert.equal(summary.firstPoint.timestamp, "2026-04-30T12:00:00.000Z");
+  assert.equal(summary.lastPoint.timestamp, "2026-04-30T12:10:00.000Z");
+  assert.equal(summary.minNav, 98);
+  assert.equal(summary.maxNav, 106);
+  assert.equal(summary.minPnl, -2);
+  assert.equal(summary.maxPnl, 6);
+  assert.equal(summary.transferAdjustedPnl, -2);
 });
 
 test("buildPaddedValueDomain scales around plotted values without forcing zero", () => {

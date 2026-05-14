@@ -44,6 +44,32 @@ function expectBoxInsidePlot(
 
 test.beforeEach(async ({ page }) => {
   const pageErrors: string[] = [];
+  await page.route("https://s3.tradingview.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: "",
+    }),
+  );
+  await page.route("https://www.tradingview-widget.com/**", (route) =>
+    route.fulfill({
+      status: 204,
+      body: "",
+    }),
+  );
+  await page.route("**/api/settings/preferences", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        profileKey: "chart-parity",
+        version: 1,
+        preferences: {},
+        source: "mock",
+        updatedAt: new Date(0).toISOString(),
+      }),
+    }),
+  );
   page.on("pageerror", (error) => {
     pageErrors.push(error.message);
   });

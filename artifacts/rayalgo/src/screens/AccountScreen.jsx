@@ -22,12 +22,14 @@ import {
   useAccountPageSnapshotStream,
   useBrokerStreamFreshnessSnapshot,
 } from "../features/platform/live-streams";
+import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
+import AccountHeroBlock from "./account/AccountHeroBlock";
 import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
 import AllocationPanel from "./account/AllocationPanel";
@@ -66,6 +68,7 @@ import {
 import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
 import {
+  accountDateFilterBoundaryIso,
   buildPerformanceCalendarParams,
   performanceCalendarQueriesEnabled as resolvePerformanceCalendarQueriesEnabled,
   resolveReturnsCalendarData,
@@ -77,6 +80,12 @@ const QUERY_OPTIONS = {
     refetchInterval: 5_000,
     retry: false,
   },
+};
+
+const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
+  SPY: true,
+  QQQ: false,
+  DJIA: false,
 };
 
 const SHADOW_ACCOUNT_ID = "shadow";
@@ -129,7 +138,7 @@ const ShadowWatchlistBacktestPanel = ({
     background: running ? T.bg2 : `${T.pink}22`,
     color: running ? T.textMuted : T.pink,
     fontSize: fs(8),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontWeight: 400,
     cursor: running ? "wait" : "pointer",
     textTransform: "uppercase",
@@ -226,16 +235,16 @@ const ShadowWatchlistBacktestPanel = ({
                 <div
                   key={label}
                   style={{
-                    border: `1px solid ${T.border}`,
+                    border: "none",
                     borderRadius: dim(4),
                     background: T.bg0,
                     padding: sp("4px 5px"),
                   }}
                 >
-                  <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.mono }}>
+                  <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.sans }}>
                     {label.toUpperCase()}
                   </div>
-                  <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 400 }}>
+                  <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: 400 }}>
                     {formatNumber(value || 0, 0)}
                   </div>
                 </div>
@@ -248,7 +257,7 @@ const ShadowWatchlistBacktestPanel = ({
                 gap: sp(4),
                 color: T.textSec,
                 fontSize: fs(9),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
               }}
             >
               <div>
@@ -290,7 +299,7 @@ const ShadowWatchlistBacktestPanel = ({
             {run.sweep ? (
               <div
                 style={{
-                  border: `1px solid ${T.border}`,
+                  border: "none",
                   borderRadius: dim(4),
                   background: T.bg0,
                   padding: sp(6),
@@ -298,7 +307,7 @@ const ShadowWatchlistBacktestPanel = ({
                   gap: sp(4),
                 }}
               >
-                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.mono, fontWeight: 400 }}>
+                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.sans, fontWeight: 400 }}>
                   Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
                 </div>
                 {(run.sweep.variants || []).slice(0, 3).map((variant) => (
@@ -310,7 +319,7 @@ const ShadowWatchlistBacktestPanel = ({
                       gap: sp(4),
                       color: variant.rank === 1 ? T.green : T.textSec,
                       fontSize: fs(8),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -324,7 +333,7 @@ const ShadowWatchlistBacktestPanel = ({
                 ))}
               </div>
             ) : null}
-            <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>
+            <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>
               {formatAppDateTime(run.window?.start)}
               {" -> "}
               {formatAppDateTime(run.window?.end)}
@@ -334,7 +343,7 @@ const ShadowWatchlistBacktestPanel = ({
             </div>
           </>
         ) : (
-          <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
+          <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.sans }}>
             No run has been executed in this browser session.
           </div>
         )}
@@ -385,15 +394,22 @@ export const AccountScreen = ({
     to: "",
     closeHour: null,
   });
-  const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedPatternLens, setSelectedPatternLens] = useState(emptyAccountPatternLens);
   const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
   const [hoveredEquityDate, setHoveredEquityDate] = useState(null);
   const [pinnedEquityDate, setPinnedEquityDate] = useState(null);
+  const [visibleEquityBenchmarks, setVisibleEquityBenchmarks] = useState(
+    DEFAULT_EQUITY_BENCHMARK_VISIBILITY,
+  );
   const [accountLayoutRef, accountLayoutSize] = useElementSize();
   const accountLayoutFlags = responsiveFlags(accountLayoutSize.width);
   const accountIsPhone = accountLayoutFlags.isPhone;
   const accountIsNarrow = accountLayoutFlags.isNarrow;
+  const accountTreemapGridTemplate = accountIsPhone
+    ? "minmax(0, 1fr)"
+    : accountIsNarrow
+      ? "minmax(0, 1.35fr) minmax(240px, 0.85fr)"
+      : "minmax(0, 2fr) minmax(0, 1fr)";
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
@@ -451,6 +467,11 @@ export const AccountScreen = ({
     }),
     [environment, shadowMode],
   );
+  const shadowSourceLabel = shadowMode ? "Shadow Ledger" : "Flex";
+  const accountDataParams = useMemo(
+    () => ({ ...modeParams }),
+    [modeParams],
+  );
   const equityHistoryQuerySettings = useMemo(
     () => ({
       staleTime: 60_000,
@@ -460,7 +481,7 @@ export const AccountScreen = ({
   );
   const closedTradeParams = useMemo(
     () => ({
-      ...modeParams,
+      ...accountDataParams,
       symbol: tradeFilters.symbol || undefined,
       assetClass:
         tradeFilters.assetClass && tradeFilters.assetClass !== "all"
@@ -474,20 +495,19 @@ export const AccountScreen = ({
         tradeFilters.holdDuration && tradeFilters.holdDuration !== "all"
           ? tradeFilters.holdDuration
           : undefined,
-      from: tradeFilters.from
-        ? new Date(`${tradeFilters.from}T00:00:00.000Z`).toISOString()
-        : undefined,
-      to: tradeFilters.to
-        ? new Date(`${tradeFilters.to}T23:59:59.999Z`).toISOString()
-        : undefined,
+      from: accountDateFilterBoundaryIso(tradeFilters.from),
+      to: accountDateFilterBoundaryIso(tradeFilters.to, { endOfDay: true }),
     }),
-    [modeParams, tradeFilters],
+    [accountDataParams, tradeFilters],
   );
   const performanceCalendarParams = useMemo(
-    () => buildPerformanceCalendarParams(modeParams),
-    [modeParams],
+    () => buildPerformanceCalendarParams(accountDataParams),
+    [accountDataParams],
   );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
+  const accountPageStreamEnabled = Boolean(
+    isVisible && accountQueriesEnabled,
+  );
   const accountPageStreamFreshness = useAccountPageSnapshotStream({
     accountId: accountRequestId,
     mode: modeParams.mode,
@@ -498,11 +518,12 @@ export const AccountScreen = ({
       from: closedTradeParams.from,
       to: closedTradeParams.to,
       symbol: closedTradeParams.symbol,
+      assetClass: closedTradeParams.assetClass,
       pnlSign: closedTradeParams.pnlSign,
       holdDuration: closedTradeParams.holdDuration,
     },
     performanceCalendarFrom: performanceCalendarParams.from,
-    enabled: Boolean(isVisible && accountQueriesEnabled),
+    enabled: accountPageStreamEnabled,
   });
   const refreshPolicy = useMemo(
     () =>
@@ -557,7 +578,7 @@ export const AccountScreen = ({
       retry: false,
     },
   });
-  const summaryQuery = useGetAccountSummary(accountRequestId, modeParams, {
+  const summaryQuery = useGetAccountSummary(accountRequestId, accountDataParams, {
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: liveRefreshInterval,
@@ -567,7 +588,7 @@ export const AccountScreen = ({
   const equityQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range,
     },
     {
@@ -583,7 +604,7 @@ export const AccountScreen = ({
   const intradayPnlQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range: "1D",
     },
     {
@@ -597,7 +618,7 @@ export const AccountScreen = ({
   const spyBenchmarkQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range,
       benchmark: "SPY",
     },
@@ -605,7 +626,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: benchmarkQueriesEnabled,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.SPY),
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -614,7 +635,7 @@ export const AccountScreen = ({
   const qqqBenchmarkQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range,
       benchmark: "QQQ",
     },
@@ -622,7 +643,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: benchmarkQueriesEnabled,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.QQQ),
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -631,7 +652,7 @@ export const AccountScreen = ({
   const djiaBenchmarkQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range,
       benchmark: "DIA",
     },
@@ -639,7 +660,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: benchmarkQueriesEnabled,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.DJIA),
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -655,7 +676,7 @@ export const AccountScreen = ({
   const positionsQuery = useGetAccountPositions(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       assetClass: assetFilter === "all" ? undefined : assetFilter,
     },
     {
@@ -670,7 +691,7 @@ export const AccountScreen = ({
   const positionsAtDateQuery = useGetAccountPositionsAtDate(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       date: activeEquityInspectionDate || "1970-01-01",
       assetClass: assetFilter === "all" ? undefined : assetFilter,
     },
@@ -687,7 +708,7 @@ export const AccountScreen = ({
   const performanceCalendarEquityQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       range: "1Y",
     },
     {
@@ -719,7 +740,7 @@ export const AccountScreen = ({
   const ordersQuery = useGetAccountOrders(
     accountRequestId,
     {
-      ...modeParams,
+      ...accountDataParams,
       tab: orderTab,
     },
     {
@@ -737,7 +758,7 @@ export const AccountScreen = ({
       enabled: secondaryAccountQueriesEnabled,
     },
   });
-  const cashQuery = useGetAccountCashActivity(accountRequestId, modeParams, {
+  const cashQuery = useGetAccountCashActivity(accountRequestId, accountDataParams, {
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
@@ -788,7 +809,6 @@ export const AccountScreen = ({
       });
     },
   });
-
   const cancelOrderMutation = useCancelAccountOrder({
     mutation: {
       onSuccess: () => {
@@ -805,16 +825,22 @@ export const AccountScreen = ({
   useEffect(() => {
     setHoveredEquityDate(null);
     setPinnedEquityDate(null);
-  }, [accountRequestId]);
+  }, [accountRequestId, range]);
   const testFlexMutation = useTestFlexToken({
     mutation: {
       onSuccess: () => {
         healthQuery.refetch();
         summaryQuery.refetch();
         equityQuery.refetch();
-        spyBenchmarkQuery.refetch();
-        qqqBenchmarkQuery.refetch();
-        djiaBenchmarkQuery.refetch();
+        if (visibleEquityBenchmarks.SPY) {
+          spyBenchmarkQuery.refetch();
+        }
+        if (visibleEquityBenchmarks.QQQ) {
+          qqqBenchmarkQuery.refetch();
+        }
+        if (visibleEquityBenchmarks.DJIA) {
+          djiaBenchmarkQuery.refetch();
+        }
         allocationQuery.refetch();
         tradesQuery.refetch();
         riskQuery.refetch();
@@ -832,13 +858,12 @@ export const AccountScreen = ({
       return;
     }
 
-    const rangesToWarm = ACCOUNT_RANGES.filter((candidate) => candidate !== range);
-    rangesToWarm.forEach((prefetchRange) => {
+    ACCOUNT_RANGES.forEach((prefetchRange) => {
       queryClient.prefetchQuery(
         getGetAccountEquityHistoryQueryOptions(
           accountRequestId,
           {
-            ...modeParams,
+            ...accountDataParams,
             range: prefetchRange,
           },
           {
@@ -846,28 +871,37 @@ export const AccountScreen = ({
           },
         ),
       );
-      queryClient.prefetchQuery(
-        getGetAccountEquityHistoryQueryOptions(
-          accountRequestId,
-          {
-            ...modeParams,
-            range: prefetchRange,
-            benchmark: "SPY",
-          },
-          {
-            query: equityHistoryQuerySettings,
-          },
-        ),
-      );
+      [
+        ["SPY", "SPY"],
+        ["QQQ", "QQQ"],
+        ["DJIA", "DIA"],
+      ].forEach(([key, benchmark]) => {
+        if (!visibleEquityBenchmarks[key]) {
+          return;
+        }
+        queryClient.prefetchQuery(
+          getGetAccountEquityHistoryQueryOptions(
+            accountRequestId,
+            {
+              ...accountDataParams,
+              range: prefetchRange,
+              benchmark,
+            },
+            {
+              query: equityHistoryQuerySettings,
+            },
+          ),
+        );
+      });
     });
   }, [
     accountRequestId,
     equityHistoryQuerySettings,
     isVisible,
-    modeParams,
+    accountDataParams,
     queryClient,
-    range,
     shadowMode,
+    visibleEquityBenchmarks,
   ]);
 
   const currency =
@@ -876,6 +910,7 @@ export const AccountScreen = ({
     cashQuery.data?.currency ||
     accounts[0]?.currency ||
     "USD";
+  const displaySummaryData = summaryQuery.data;
   const headerAccounts = shadowMode
     ? [
         {
@@ -977,11 +1012,15 @@ export const AccountScreen = ({
       backtestPositions: openAccountPositions.filter(
         (position) => position.sourceType === "watchlist_backtest",
       ).length,
+      replayPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "signal_options_replay",
+      ).length,
       mixedPositions: openAccountPositions.filter(
         (position) => position.sourceType === "mixed",
       ).length,
       automationOrders: orders.filter((order) => order.sourceType === "automation").length,
       backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
+      replayOrders: orders.filter((order) => order.sourceType === "signal_options_replay").length,
       manualOrders: orders.filter((order) => order.sourceType === "manual").length,
     };
   }, [openAccountPositions, ordersQuery.data]);
@@ -997,7 +1036,7 @@ export const AccountScreen = ({
   const returnsModel = useMemo(
     () =>
       buildAccountReturnsModel({
-        summary: summaryQuery.data,
+        summary: displaySummaryData,
         equityHistory: equityQuery.data,
         benchmarkHistories: {
           SPY: spyBenchmarkQuery.data,
@@ -1017,7 +1056,7 @@ export const AccountScreen = ({
       qqqBenchmarkQuery.data,
       range,
       spyBenchmarkQuery.data,
-      summaryQuery.data,
+      displaySummaryData,
       tradesQuery.data,
     ],
   );
@@ -1028,7 +1067,6 @@ export const AccountScreen = ({
       onSelectTradingAccount?.(nextId);
     }
   };
-
   const handleCancelOrder = async (order) => {
     if (!gatewayTradingReady) {
       window.alert(gatewayTradingMessage);
@@ -1045,11 +1083,10 @@ export const AccountScreen = ({
     });
   };
   const handleTradeFilterChange = (patch) => {
-    setTradeFilters((current) => ({ ...current, ...patch }));
+    setTradeFilters((current) => ({ ...current, ...patch, sourceType: "all" }));
   };
   const handleTradeFilterReset = () => {
     setSelectedPatternLens(emptyAccountPatternLens());
-    setSourceFilter("all");
     setTradeFilters({
       symbol: "",
       assetClass: "all",
@@ -1067,24 +1104,35 @@ export const AccountScreen = ({
   };
   const handlePatternLensChange = (kind, input) => {
     const lens = buildAccountPatternLens(kind, input);
+    if (lens.kind === "source") {
+      return;
+    }
     setSelectedPatternLens(lens);
-    setTradeFilters((current) => applyPatternLensToTradeFilters(current, lens));
-    setSourceFilter(lens.sourceType || "all");
+    setTradeFilters((current) => ({
+      ...applyPatternLensToTradeFilters(current, lens),
+      sourceType: "all",
+    }));
+    setHoveredEquityDate(null);
+    setPinnedEquityDate(null);
   };
   const handlePatternLensClear = () => {
     setSelectedPatternLens(emptyAccountPatternLens());
-    setSourceFilter("all");
+    setHoveredEquityDate(null);
+    setPinnedEquityDate(null);
     setTradeFilters((current) =>
-      clearPatternLensFromTradeFilters(current, selectedPatternLens),
+      ({
+        ...clearPatternLensFromTradeFilters(current, selectedPatternLens),
+        sourceType: "all",
+      }),
     );
   };
   const accountSectionControl = (
     <div
       style={{
         display: "inline-flex",
-        gap: 1,
+        gap: sp(1),
         padding: 2,
-        border: `1px solid ${T.border}`,
+        border: "none",
         borderRadius: dim(4),
         background: T.bg2,
       }}
@@ -1097,6 +1145,7 @@ export const AccountScreen = ({
             key={section.value}
             data-testid={`account-section-${section.value}`}
             type="button"
+            aria-pressed={active}
             className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
             onClick={() => setAccountSection(section.value)}
             style={{
@@ -1107,7 +1156,7 @@ export const AccountScreen = ({
               background: active ? `${accent}22` : "transparent",
               color: active ? accent : T.textSec,
               fontSize: fs(7),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
@@ -1120,6 +1169,7 @@ export const AccountScreen = ({
       })}
     </div>
   );
+  const headerSectionControl = accountSectionControl;
 
   if (!isVisible) {
     return (
@@ -1140,39 +1190,46 @@ export const AccountScreen = ({
         flex: 1,
         width: "100%",
         overflow: "auto",
-        background: T.bg1,
+        background: T.bg0,
         minWidth: 0,
       }}
     >
       <div
         style={{
-          maxWidth: dim(1800),
-          margin: "0 auto",
-          padding: sp(4),
+          width: "100%",
+          padding: sp(accountIsPhone ? "12px 12px" : "20px 28px"),
           display: "grid",
-          gap: sp(4),
+          gap: sp(accountIsPhone ? 12 : 18),
         }}
       >
+        <AccountHeroBlock
+          summary={displaySummaryData}
+          currency={currency}
+          maskValues={maskAccountValues}
+          shadowMode={shadowMode}
+          isPhone={accountIsPhone}
+        />
+
         <div
           className="ra-panel-enter"
           style={{
             position: "sticky",
             top: 0,
             zIndex: 3,
-            backdropFilter: "blur(10px)",
-            background: `${T.bg1}f2`,
-            paddingBottom: sp(1),
+            backdropFilter: "blur(8px)",
+            background: `${T.bg0}e6`,
+            paddingBottom: sp(4),
           }}
         >
           <AccountHeaderStrip
             accounts={headerAccounts}
             accountId={accountRequestId}
             onAccountIdChange={shadowMode ? () => undefined : handleAccountViewChange}
-            summary={summaryQuery.data}
+            summary={displaySummaryData}
             brokerAuthenticated={shadowMode || brokerAuthenticated}
             showCombined={!shadowMode}
             maskValues={maskAccountValues}
-            sectionControl={accountSectionControl}
+            sectionControl={headerSectionControl}
           />
         </div>
 
@@ -1207,10 +1264,10 @@ export const AccountScreen = ({
               currency={currency}
               subtitle={
                 shadowMode
-                  ? "Cash-account exposure, concentration, and realized Shadow ledger performance"
+                  ? `${shadowSourceLabel} exposure, concentration, and realized Shadow performance`
                   : undefined
               }
-              rightRail={shadowMode ? "Internal ledger" : undefined}
+              rightRail={shadowMode ? shadowSourceLabel : undefined}
               maskValues={maskAccountValues}
               compact
             />
@@ -1223,93 +1280,112 @@ export const AccountScreen = ({
                 QQQ: qqqBenchmarkQuery,
                 DJIA: djiaBenchmarkQuery,
               }}
+              visibleBenchmarks={visibleEquityBenchmarks}
+              onVisibleBenchmarksChange={setVisibleEquityBenchmarks}
               range={range}
               onRangeChange={setRange}
               currency={currency}
               accentColor={shadowMode ? T.pink : T.green}
-              rightRail={shadowMode ? "Shadow ledger" : undefined}
-              sourceLabel={shadowMode ? "Shadow" : "Flex"}
+              rightRail={shadowMode ? shadowSourceLabel : undefined}
+              sourceLabel={shadowSourceLabel}
               maskValues={maskAccountValues}
-              currentNetLiquidation={summaryQuery.data?.metrics?.netLiquidation?.value}
+              currentNetLiquidation={
+                displaySummaryData?.metrics?.netLiquidation?.value
+              }
               activeInspectionDate={activeEquityInspectionDate}
               pinnedInspectionDate={pinnedEquityDate}
               onHoverInspectionDate={setHoveredEquityDate}
               onPinInspectionDate={setPinnedEquityDate}
+              dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountSection}`}
               compact
             />
           </div>
         </div>
 
-        <div
-          className="ra-panel-enter"
-          style={{
-            display: "grid",
-            gridTemplateColumns: accountIsNarrow ? "minmax(0, 1fr)" : "minmax(0, 2fr) minmax(0, 1fr)",
-            gap: sp(8),
-          }}
+        <DeferredRender
+          minHeight={accountIsPhone ? 340 : 230}
+          testId="account-deferred-treemap-intraday"
         >
-          <PositionTreemapPanel
-            positions={positionsQuery.data?.positions || []}
+          <div
+            className="ra-panel-enter"
+            style={{
+              display: "grid",
+              gridTemplateColumns: accountTreemapGridTemplate,
+              gap: sp(8),
+            }}
+          >
+            <PositionTreemapPanel
+              positions={positionsQuery.data?.positions || []}
+              currency={currency}
+              maskValues={maskAccountValues}
+              loading={positionsQuery.isLoading}
+              error={positionsQuery.error}
+              onRetry={positionsQuery.refetch}
+              emptyBody={
+                shadowMode
+                  ? "Treemap renders once Shadow ledger positions are opened or marked."
+                  : undefined
+              }
+            />
+            <IntradayPnlPanel
+              query={intradayPnlQuery}
+              currency={currency}
+              maskValues={maskAccountValues}
+            />
+          </div>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 430 : 300}
+          testId="account-deferred-positions"
+        >
+          <PositionsPanel
+            query={positionsQuery}
             currency={currency}
-            maskValues={maskAccountValues}
-            loading={positionsQuery.isLoading}
-            error={positionsQuery.error}
-            onRetry={positionsQuery.refetch}
+            assetFilter={assetFilter}
+            onAssetFilterChange={setAssetFilter}
+            sourceFilter="all"
+            onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+            rightRail={shadowMode ? "Shadow positions + marks" : undefined}
             emptyBody={
               shadowMode
-                ? "Treemap renders once Shadow ledger positions are opened or marked."
+                ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
                 : undefined
             }
+            maskValues={maskAccountValues}
+            positionsAtDateQuery={positionsAtDateQuery}
+            activeEquityDate={activeEquityInspectionDate}
+            pinnedEquityDate={pinnedEquityDate}
+            currentPositionsCount={positionsQuery.data?.positions?.length || 0}
+            onClearEquityPin={() => setPinnedEquityDate(null)}
+            isPhone={accountIsPhone}
           />
-          <IntradayPnlPanel
-            query={intradayPnlQuery}
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 410 : 280}
+          testId="account-deferred-trading-patterns"
+        >
+          <TradingPatternsPanel
+            query={accountTradingPatternsQuery}
+            snapshotMutation={shadowMode ? tradingPatternsSnapshotMutation : null}
+            accountId={accountRequestId}
+            range={range}
             currency={currency}
             maskValues={maskAccountValues}
+            onSymbolSelect={(symbol) =>
+              setTradeFilters((current) => ({
+                ...current,
+                symbol,
+              }))
+            }
+            selectedLens={selectedPatternLens}
+            onLensChange={handlePatternLensChange}
+            analysis={accountTradingAnalysis}
+            onTradeSelect={setSelectedAccountTradeId}
+            lensFilteredTrades={tradesQuery.data?.trades || []}
           />
-        </div>
-
-        <PositionsPanel
-          query={positionsQuery}
-          currency={currency}
-          assetFilter={assetFilter}
-          onAssetFilterChange={setAssetFilter}
-          sourceFilter={shadowMode ? sourceFilter : "all"}
-          onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
-          onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
-          rightRail={shadowMode ? "Shadow positions + marks" : undefined}
-          emptyBody={
-            shadowMode
-              ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
-              : undefined
-          }
-          maskValues={maskAccountValues}
-          positionsAtDateQuery={positionsAtDateQuery}
-          activeEquityDate={activeEquityInspectionDate}
-          pinnedEquityDate={pinnedEquityDate}
-          currentPositionsCount={positionsQuery.data?.positions?.length || 0}
-          onClearEquityPin={() => setPinnedEquityDate(null)}
-          isPhone={accountIsPhone}
-        />
-
-        <TradingPatternsPanel
-          query={accountTradingPatternsQuery}
-          snapshotMutation={shadowMode ? tradingPatternsSnapshotMutation : null}
-          accountId={accountRequestId}
-          range={range}
-          currency={currency}
-          maskValues={maskAccountValues}
-          onSymbolSelect={(symbol) =>
-            setTradeFilters((current) => ({
-              ...current,
-              symbol,
-            }))
-          }
-          selectedLens={selectedPatternLens}
-          onLensChange={handlePatternLensChange}
-          analysis={accountTradingAnalysis}
-          onTradeSelect={setSelectedAccountTradeId}
-          lensFilteredTrades={tradesQuery.data?.trades || []}
-        />
+        </DeferredRender>
 
         {selectedPatternLens.kind !== "none" ? (
           <div
@@ -1320,7 +1396,7 @@ export const AccountScreen = ({
               justifyContent: "space-between",
               gap: sp(6),
               flexWrap: "wrap",
-              border: `1px solid ${T.border}`,
+              border: "none",
               borderRadius: dim(5),
               background: T.bg2,
               padding: sp("5px 7px"),
@@ -1345,15 +1421,16 @@ export const AccountScreen = ({
               className="ra-interactive"
               onClick={handlePatternLensClear}
               style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
-                background: "transparent",
-                color: T.textSec,
-                height: dim(20),
-                padding: sp("0 7px"),
-                fontFamily: T.data,
-                fontSize: fs(8),
-                fontWeight: 400,
+                border: "none",
+                borderRadius: 999,
+                background: T.bg2,
+                color: T.text,
+                height: dim(22),
+                padding: sp("0 12px"),
+                fontFamily: T.sans,
+                fontSize: fs(9),
+                fontWeight: 500,
+                letterSpacing: "0.04em",
                 cursor: "pointer",
                 textTransform: "uppercase",
               }}
@@ -1363,73 +1440,81 @@ export const AccountScreen = ({
           </div>
         ) : null}
 
-        <div
-          className="ra-panel-enter ra-account-detail-grid"
+        <DeferredRender
+          minHeight={accountIsPhone ? 680 : 360}
+          testId="account-deferred-trades-orders"
         >
-          <ClosedTradesPanel
-            query={tradesQuery}
-            currency={currency}
-            filters={tradeFilters}
-            onFiltersChange={handleTradeFilterChange}
-            onResetFilters={handleTradeFilterReset}
-            sourceFiltersEnabled={shadowMode}
-            selectedTradeId={
-              accountTradingAnalysis.selectedTradeDetail?.tradeId ||
-              selectedAccountTradeId
-            }
-            onTradeSelect={setSelectedAccountTradeId}
-            emptyBody={
-              shadowMode
-                ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
-                : undefined
-            }
-            maskValues={maskAccountValues}
-            isPhone={accountIsPhone}
-          />
-          <SelectedTradeAnalysisPanel
-            analysis={accountTradingAnalysis}
-            currency={currency}
-            maskValues={maskAccountValues}
-            onJumpToChart={onJumpToTrade}
-          />
-          <OrdersPanel
-            query={ordersQuery}
-            tab={orderTab}
-            onTabChange={setOrderTab}
-            currency={currency}
-            onCancelOrder={handleCancelOrder}
-            cancelPending={cancelOrderMutation.isPending}
-            cancelDisabled={!gatewayTradingReady}
-            cancelDisabledReason={gatewayTradingMessage}
-            sourceFilter={shadowMode ? sourceFilter : "all"}
-            onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
-            emptyBody={
-              shadowMode
-                ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."
-                : undefined
-            }
-            maskValues={maskAccountValues}
-            isPhone={accountIsPhone}
-          />
-        </div>
+          <div
+            className="ra-panel-enter ra-account-detail-grid"
+          >
+            <ClosedTradesPanel
+              query={tradesQuery}
+              currency={currency}
+              filters={tradeFilters}
+              onFiltersChange={handleTradeFilterChange}
+              onResetFilters={handleTradeFilterReset}
+              sourceFiltersEnabled={false}
+              selectedTradeId={
+                accountTradingAnalysis.selectedTradeDetail?.tradeId ||
+                selectedAccountTradeId
+              }
+              onTradeSelect={setSelectedAccountTradeId}
+              emptyBody={
+                shadowMode
+                  ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+            />
+            <SelectedTradeAnalysisPanel
+              analysis={accountTradingAnalysis}
+              currency={currency}
+              maskValues={maskAccountValues}
+              onJumpToChart={onJumpToTrade}
+            />
+            <OrdersPanel
+              query={ordersQuery}
+              tab={orderTab}
+              onTabChange={setOrderTab}
+              currency={currency}
+              onCancelOrder={handleCancelOrder}
+              cancelPending={cancelOrderMutation.isPending}
+              cancelDisabled={!gatewayTradingReady}
+              cancelDisabledReason={gatewayTradingMessage}
+              sourceFilter="all"
+              emptyBody={
+                shadowMode
+                  ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+            />
+          </div>
+        </DeferredRender>
 
-        <div
-          className="ra-panel-enter ra-account-support-grid"
+        <DeferredRender
+          minHeight={accountIsPhone ? 390 : 190}
+          testId="account-deferred-support"
         >
-          <CashFundingPanel
-            query={cashQuery}
-            currency={currency}
-            maskValues={maskAccountValues}
-          />
-          {shadowMode ? (
-            <ShadowWatchlistBacktestPanel
-              mutation={shadowWatchlistBacktestMutation}
+          <div
+            className="ra-panel-enter ra-account-support-grid"
+          >
+            <CashFundingPanel
+              query={cashQuery}
               currency={currency}
               maskValues={maskAccountValues}
             />
-          ) : null}
-          {shadowMode ? (
-            <Panel title="Shadow Account" rightRail="Internal paper" minHeight={130}>
+            {shadowMode ? (
+              <ShadowWatchlistBacktestPanel
+                mutation={shadowWatchlistBacktestMutation}
+                currency={currency}
+                maskValues={maskAccountValues}
+              />
+            ) : null}
+            {shadowMode ? (
+              <Panel title="Shadow Account" rightRail="Internal paper" minHeight={130}>
               <div style={{ display: "grid", gap: sp(5) }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
                   <Pill tone="pink">Shadow</Pill>
@@ -1458,22 +1543,24 @@ export const AccountScreen = ({
                   {[
                     ["Auto Pos", shadowAutomationAudit.automationPositions, T.pink],
                     ["Backtest Pos", shadowAutomationAudit.backtestPositions, T.purple],
+                    ["Options BT Pos", shadowAutomationAudit.replayPositions, T.cyan],
                     ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
                     ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
+                    ["Options BT Orders", shadowAutomationAudit.replayOrders, T.green],
                   ].map(([label, value, color]) => (
                     <div
                       key={label}
                       style={{
-                        border: `1px solid ${T.border}`,
+                        border: "none",
                         borderRadius: dim(4),
                         background: T.bg0,
                         padding: sp("4px 5px"),
                       }}
                     >
-                      <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.mono }}>
+                      <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.sans }}>
                         {label.toUpperCase()}
                       </div>
-                      <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 400 }}>
+                      <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: 400 }}>
                         {value}
                       </div>
                     </div>
@@ -1491,6 +1578,7 @@ export const AccountScreen = ({
             />
           )}
         </div>
+        </DeferredRender>
 
       </div>
     </div>

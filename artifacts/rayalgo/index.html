@@ -10,11 +10,11 @@
         const storageKey = "rayalgo:state:v1";
         const resolveSystemTheme = () => {
           try {
-            return window.matchMedia?.("(prefers-color-scheme: light)")?.matches
-              ? "light"
-              : "dark";
+            return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches
+              ? "dark"
+              : "light";
           } catch {
-            return "dark";
+            return "light";
           }
         };
         const resolveTheme = () => {
@@ -36,7 +36,29 @@
           }
         };
 
-        document.documentElement.dataset.rayalgoTheme = resolveTheme();
+        const theme = resolveTheme();
+        document.documentElement.dataset.rayalgoTheme = theme;
+        // Paint the page bg + text color before any stylesheet loads to avoid
+        // a flash of unstyled (dark default) content during boot.
+        const root = document.documentElement;
+        const body = document.body;
+        const bg = theme === "dark" ? "#16151A" : "#FAFAF7";
+        const fg = theme === "dark" ? "#F2EFE9" : "#19171A";
+        root.style.background = bg;
+        if (body) {
+          body.style.background = bg;
+          body.style.color = fg;
+        } else {
+          // Apply on first DOMContentLoaded if body is not yet available.
+          document.addEventListener(
+            "DOMContentLoaded",
+            () => {
+              document.body.style.background = bg;
+              document.body.style.color = fg;
+            },
+            { once: true },
+          );
+        }
       })();
     </script>
     <script>

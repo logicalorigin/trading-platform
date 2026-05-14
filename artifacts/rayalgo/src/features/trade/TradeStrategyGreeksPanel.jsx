@@ -106,7 +106,7 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(9),
             fontWeight: 400,
             color: T.textSec,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             letterSpacing: "0.08em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
@@ -149,7 +149,7 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(9),
             fontWeight: 400,
             color: T.textSec,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             letterSpacing: "0.08em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
@@ -173,7 +173,7 @@ export const TradeStrategyGreeksPanel = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "32px 1fr 64px",
+          gridTemplateColumns: `${dim(32)}px 1fr ${dim(64)}px`,
           alignItems: "center",
           gap: sp(4),
           padding: "2px 0",
@@ -183,7 +183,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: fs(9),
             color: T.textSec,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
           }}
         >
@@ -230,7 +230,7 @@ export const TradeStrategyGreeksPanel = ({
                   : `${Math.min(95, 50 + pct * 50 + 1)}%`,
               transform: value < 0 ? "translateX(-100%)" : "none",
               fontSize: fs(8),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               color: T.text,
               display: "flex",
@@ -276,11 +276,11 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(9),
             fontWeight: 400,
             color: T.textSec,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             letterSpacing: "0.08em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
-            marginBottom: 5,
+            marginBottom: sp(5),
           }}
         >
           STRATEGY
@@ -289,7 +289,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr",
-            gap: 3,
+            gap: sp(3),
           }}
         >
           {TRADE_STRATEGIES.map((strategy) => (
@@ -300,15 +300,14 @@ export const TradeStrategyGreeksPanel = ({
                 onApplyStrategy(strategy);
               }}
               style={{
-                padding: sp("4px 6px"),
-                background: "transparent",
-                border: `1px solid ${strategy.color}40`,
-                borderLeft: `3px solid ${strategy.color}`,
-                borderRadius: dim(3),
+                padding: sp("6px 10px"),
+                background: `${strategy.color}10`,
+                border: "none",
+                borderRadius: dim(8),
                 color: T.text,
                 fontSize: fs(9),
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: 500,
                 textAlign: "left",
                 cursor: "pointer",
                 lineHeight: 1.2,
@@ -337,7 +336,7 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(9),
             fontWeight: 400,
             color: T.textSec,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             letterSpacing: "0.08em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
@@ -390,7 +389,7 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(6),
             color: T.textMuted,
             letterSpacing: "0.08em",
-            marginBottom: 2,
+            marginBottom: sp(2),
           }}
         >
           POSITION × {qty}
@@ -401,7 +400,7 @@ export const TradeStrategyGreeksPanel = ({
             gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: sp(4),
             fontSize: fs(9),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           <div>

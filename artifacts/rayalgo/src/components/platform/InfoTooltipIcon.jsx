@@ -51,7 +51,7 @@ export const InfoTooltipIcon = ({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: 2,
+          padding: sp(2),
           margin: 0,
           border: 0,
           background: "transparent",

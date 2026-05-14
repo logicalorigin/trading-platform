@@ -121,7 +121,7 @@ const TickerTabStripItem = ({
         style={{
           fontSize: fs(11),
           fontWeight: 400,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           color: isActive ? T.text : T.textSec,
         }}
       >
@@ -130,8 +130,26 @@ const TickerTabStripItem = ({
       <span
         style={{
           fontSize: fs(9),
-          fontFamily: T.mono,
-          color: pos == null ? T.textDim : pos ? T.green : T.red,
+          fontFamily: T.sans,
+          color: isActive ? "var(--ra-text-primary)" : "var(--ra-text-secondary)",
+          fontVariantNumeric: "tabular-nums",
+          fontWeight: 400,
+        }}
+      >
+        {formatQuotePrice(info?.price)}
+      </span>
+      <span
+        className="ra-trade-tab-pct"
+        style={{
+          fontSize: fs(9),
+          fontFamily: T.sans,
+          color:
+            pos == null
+              ? T.textDim
+              : pos
+                ? "var(--ra-pnl-positive)"
+                : "var(--ra-pnl-negative)",
+          fontVariantNumeric: "tabular-nums",
           fontWeight: 400,
         }}
       >
@@ -150,7 +168,7 @@ const TickerTabStripItem = ({
                   : badge === "FLOW"
                     ? T.cyan
                     : T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(7),
             fontWeight: 400,
             lineHeight: 1,
@@ -396,7 +414,7 @@ export const TradeTickerHeader = ({
           style={{
             fontSize: fs(20),
             fontWeight: 400,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             color: T.text,
             letterSpacing: 0,
           }}
@@ -428,7 +446,7 @@ export const TradeTickerHeader = ({
           style={{
             fontSize: fs(22),
             fontWeight: 400,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             color: T.text,
           }}
         >
@@ -438,7 +456,7 @@ export const TradeTickerHeader = ({
           style={{
             fontSize: fs(12),
             fontWeight: 400,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
         >
@@ -450,7 +468,7 @@ export const TradeTickerHeader = ({
           style={{
             fontSize: fs(12),
             fontWeight: 400,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
         >
@@ -465,7 +483,7 @@ export const TradeTickerHeader = ({
           display: "flex",
           gap: sp(14),
           fontSize: fs(10),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
         }}
       >
         <div>

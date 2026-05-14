@@ -868,19 +868,29 @@ test("Market chart grid resets stale viewports and keeps plots framed across lay
     .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
     .not.toBe("none");
   await expectPlotInsideChartFrame(chart, plot);
+  const initialRange = await surface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
 
   const initialPlotBox = await plot.boundingBox();
   expect(initialPlotBox, "initial plot should have a geometry box").not.toBeNull();
-  await page.mouse.move(
-    initialPlotBox!.x + initialPlotBox!.width * 0.5,
-    initialPlotBox!.y + initialPlotBox!.height * 0.5,
-  );
-  await page.mouse.wheel(0, -500);
+  await surface.getByTitle("Zoom in").first().click();
   await expect(surface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "true",
     { timeout: 10_000 },
   );
+  await expect
+    .poll(
+      async () => {
+        const currentRange = await surface.getAttribute(
+          "data-chart-visible-logical-range",
+        );
+        return !logicalRangesClose(currentRange, initialRange, 2);
+      },
+      { timeout: 10_000, intervals: [100, 160, 250, 400] },
+    )
+    .toBe(true);
   const touchedRange = await surface.getAttribute(
     "data-chart-visible-logical-range",
   );
@@ -901,6 +911,17 @@ test("Market chart grid resets stale viewports and keeps plots framed across lay
   await expect
     .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
     .not.toBe("none");
+  await expect
+    .poll(
+      async () => {
+        const currentRange = await surface.getAttribute(
+          "data-chart-visible-logical-range",
+        );
+        return !logicalRangesClose(currentRange, touchedRange, 2);
+      },
+      { timeout: 10_000, intervals: [100, 160, 250, 400] },
+    )
+    .toBe(true);
   await expectPlotInsideChartFrame(chart, plot);
 
   const resetRange = await surface.getAttribute(

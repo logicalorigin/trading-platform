@@ -7,7 +7,7 @@ const Swatch = ({ color, label }) => (
       alignItems: "center",
       gap: sp(3),
       color: T.textDim,
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: textSize("caption"),
     }}
   >
@@ -60,7 +60,7 @@ export const HeatmapColorLegend = () => (
         alignItems: "center",
         gap: sp(3),
         color: T.textDim,
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: textSize("caption"),
       }}
     >

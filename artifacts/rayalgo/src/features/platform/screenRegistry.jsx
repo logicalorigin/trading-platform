@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { T, sp } from "../../lib/uiTokens.jsx";
+import { T, dim, sp } from "../../lib/uiTokens.jsx";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 
 const MarketScreen = lazyWithRetry(() => import("../../screens/MarketScreen.jsx"), {
@@ -54,7 +54,7 @@ export const SCREEN_RENDER_POLICIES = {
   trade: { retainInactive: true },
   flow: { retainInactive: false },
   gex: { retainInactive: false },
-  account: { retainInactive: false },
+  account: { retainInactive: true },
   research: { retainInactive: false },
   algo: { retainInactive: false },
   backtest: { retainInactive: false },
@@ -84,8 +84,8 @@ export const ScreenLoadingFallback = ({ label = "Loading" }) => (
       minHeight: 0,
       display: "grid",
       gridTemplateRows: "minmax(180px, 44%) 1fr",
-      gap: sp(10),
-      padding: sp(12),
+      gap: sp(14),
+      padding: sp(20),
       background: T.bg0,
       color: T.textDim,
       fontFamily: T.sans,
@@ -94,14 +94,15 @@ export const ScreenLoadingFallback = ({ label = "Loading" }) => (
     <style>
       {`
         @keyframes rayalgoScreenFallbackPulse {
-          0%, 100% { opacity: 0.42; }
-          50% { opacity: 0.86; }
+          0%, 100% { opacity: 0.55; }
+          50% { opacity: 0.85; }
         }
       `}
     </style>
     <div
       style={{
-        border: `1px solid ${T.border}`,
+        border: "none",
+        borderRadius: dim(12),
         background: T.bg1,
         animation: "rayalgoScreenFallbackPulse 1.45s ease-in-out infinite",
       }}
@@ -110,14 +111,15 @@ export const ScreenLoadingFallback = ({ label = "Loading" }) => (
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        gap: sp(10),
+        gap: sp(14),
       }}
     >
       {[0, 1, 2].map((index) => (
         <div
           key={index}
           style={{
-            border: `1px solid ${T.border}`,
+            border: "none",
+            borderRadius: dim(12),
             background: T.bg1,
             animation: `rayalgoScreenFallbackPulse ${1.55 + index * 0.12}s ease-in-out infinite`,
           }}

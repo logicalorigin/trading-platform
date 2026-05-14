@@ -118,7 +118,7 @@ export const PayoffDiagram = ({
           alignItems: "center",
           padding: sp("0 4px 2px"),
           fontSize: fs(7),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           color: T.textMuted,
           letterSpacing: "0.06em",
         }}
@@ -204,7 +204,7 @@ export const PayoffDiagram = ({
               x={xOf(breakeven)}
               y={padT - 4}
               fontSize={fs(8)}
-              fontFamily={T.mono}
+              fontFamily={T.sans}
               fill={T.textDim}
               textAnchor="middle"
               fontWeight={400}
@@ -253,7 +253,7 @@ export const PayoffDiagram = ({
           x={W - padR - 2}
           y={padT - 2}
           fontSize={fs(8)}
-          fontFamily={T.mono}
+          fontFamily={T.sans}
           fill={T.green}
           textAnchor="end"
           fontWeight={400}
@@ -265,7 +265,7 @@ export const PayoffDiagram = ({
           x={W - padR - 2}
           y={H - 4}
           fontSize={fs(8)}
-          fontFamily={T.mono}
+          fontFamily={T.sans}
           fill={T.red}
           textAnchor="end"
           fontWeight={400}
@@ -287,7 +287,7 @@ export const PayoffDiagram = ({
           x={padL}
           y={H - 4}
           fontSize={fs(7)}
-          fontFamily={T.mono}
+          fontFamily={T.sans}
           fill={T.textMuted}
         >
           {xMin.toFixed(0)}
@@ -296,7 +296,7 @@ export const PayoffDiagram = ({
           x={padL + innerW}
           y={H - 4}
           fontSize={fs(7)}
-          fontFamily={T.mono}
+          fontFamily={T.sans}
           fill={T.textMuted}
           textAnchor="end"
         >

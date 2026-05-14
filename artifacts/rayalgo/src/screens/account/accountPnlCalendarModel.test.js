@@ -78,6 +78,27 @@ test("buildDailyPnlSeries groups closed trades by close date using realized P&L"
   );
 });
 
+test("buildDailyPnlSeries keeps date-only ledger rows on their stated calendar day", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 13),
+    endDate: new Date(2026, 4, 13),
+    trades: [trade("2026-05-13", 42)],
+  });
+
+  assert.equal(series[0].iso, "2026-05-13");
+  assert.equal(series[0].realized, 42);
+});
+
+test("buildDailyPnlSeries rejects impossible date-only ledger rows", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 2, 3),
+    endDate: new Date(2026, 2, 3),
+    trades: [trade("2026-02-31", 42)],
+  });
+
+  assert.equal(series[0].realized, 0);
+});
+
 test("buildDailyPnlSeries includes FLEX, SHADOW, and LIVE source rows", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 4, 4),
@@ -282,6 +303,23 @@ test("buildDailyPnlSeries does not let one unanchored NAV point mask realized P&
   assert.equal(series[0].unrealized, null);
   assert.equal(series[0].pnl, 12);
   assert.equal(series[0].pnlSource, "realized");
+});
+
+test("buildDailyPnlSeries uses current terminal NAV for same-day unrealized P&L", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 12),
+    endDate: new Date(2026, 4, 13),
+    equityPoints: [
+      equityPoint("2026-05-12T20:00:00.000Z", 36_321.61),
+      equityPoint("2026-05-13T15:03:12.357Z", 36_433.75),
+    ],
+  });
+
+  const today = series.find((day) => day.iso === "2026-05-13");
+  assert.equal(Number(today.total.toFixed(2)), 112.14);
+  assert.equal(Number(today.unrealized.toFixed(2)), 112.14);
+  assert.equal(Number(today.pnl.toFixed(2)), 112.14);
+  assert.equal(today.pnlSource, "total");
 });
 
 test("buildDailyPnlSeries falls back to realized P&L when NAV total is unavailable", () => {

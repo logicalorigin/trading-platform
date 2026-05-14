@@ -1,14 +1,33 @@
 const EXACT_STRIKE_TOLERANCE = 0.000001;
 export const FLOW_OPTION_STRIKE_MATCH_TOLERANCE = 0.01;
 
+const normalizeDateParts = (year, month, day) => {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    : null;
+};
+
 export function normalizeFlowOptionExpirationIso(value) {
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-      return trimmed.slice(0, 10);
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return normalizeDateParts(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]),
+        Number(isoMatch[3]),
+      );
     }
-    if (/^\d{8}$/.test(trimmed)) {
-      return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
+    const compactMatch = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compactMatch) {
+      return normalizeDateParts(
+        Number(compactMatch[1]),
+        Number(compactMatch[2]),
+        Number(compactMatch[3]),
+      );
     }
   }
 

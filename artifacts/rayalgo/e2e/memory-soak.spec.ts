@@ -531,11 +531,6 @@ async function mockPlatformApi(page: Page) {
           currentBatch: symbols.slice(0, 4),
           lastScanAt: nowIso,
           degradedReason: null,
-          radarSelectedSymbols: 0,
-          radarEstimatedCycleMs: 0,
-          radarBatchSize: 0,
-          radarIntervalMs: 0,
-          promotedSymbols: [],
         },
         symbols,
         sources: {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   getFlowUniverse as getFlowUniverseRequest,
+  listAggregateFlowEvents as listAggregateFlowEventsRequest,
   listFlowEvents as listFlowEventsRequest,
 } from "@workspace/api-client-react";
 import { T } from "../../lib/uiTokens";
@@ -34,7 +35,6 @@ import {
   isVisibleFlowDegradationSource,
   shouldPreserveFlowEvents,
 } from "./flowSourceState";
-import { platformJsonRequest } from "./platformJsonRequest";
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
 const FLOW_SCANNER_AGGREGATE_QUERY_KEY = ["/api/flow/events/aggregate"];
@@ -47,18 +47,39 @@ const normalizeFlowUniverseSymbols = (symbols = []) => [
   ),
 ];
 
+const normalizeTimestampMs = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return null;
+};
+
+const normalizeScannedAtMap = (value = {}) => {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([symbol, scannedAt]) => [
+        String(symbol || "").trim().toUpperCase(),
+        normalizeTimestampMs(scannedAt),
+      ])
+      .filter(([symbol, scannedAt]) => symbol && Number.isFinite(scannedAt)),
+  );
+};
+
 const fetchFlowScannerUniverse = async () => {
   const payload = await getFlowUniverseRequest();
   return {
     symbols: normalizeFlowUniverseSymbols(payload?.symbols),
     coverage: payload?.coverage || null,
   };
-};
-
-const appendOptionalFlowParam = (params, name, value) => {
-  if (value !== undefined && value !== null && value !== "") {
-    params.set(name, String(value));
-  }
 };
 
 const fetchAggregateFlowEvents = async ({
@@ -69,16 +90,15 @@ const fetchAggregateFlowEvents = async ({
   minPremium,
   maxDte,
 }) => {
-  const params = new URLSearchParams();
-  appendOptionalFlowParam(params, "limit", limit);
-  appendOptionalFlowParam(params, "scope", scope);
-  appendOptionalFlowParam(params, "unusualThreshold", unusualThreshold);
-  appendOptionalFlowParam(params, "lineBudget", lineBudget);
-  appendOptionalFlowParam(params, "minPremium", minPremium);
-  appendOptionalFlowParam(params, "maxDte", maxDte);
-  const query = params.toString();
-  return platformJsonRequest(
-    `/api/flow/events/aggregate${query ? `?${query}` : ""}`,
+  return listAggregateFlowEventsRequest(
+    {
+      limit,
+      scope,
+      unusualThreshold,
+      lineBudget,
+      minPremium,
+      maxDte,
+    },
     { timeoutMs: 4_000 },
   );
 };
@@ -142,10 +162,13 @@ export const useLiveMarketFlow = (
       unusualThreshold,
     ],
   );
+  const usesBackendBroadScanner = flowScannerModeUsesMarketUniverse(
+    effectiveScannerConfig.mode,
+  );
+  const shouldUseClientSymbolScanner = !usesBackendBroadScanner;
   const shouldPrioritizeRuntimeSignals =
-    blocking === false && flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode);
-  const shouldLoadMarketUniverse =
-    enabled && flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode);
+    blocking === false && usesBackendBroadScanner;
+  const shouldLoadMarketUniverse = enabled && usesBackendBroadScanner;
   const marketUniverseQuery = useQuery({
     queryKey: FLOW_SCANNER_UNIVERSE_QUERY_KEY,
     queryFn: fetchFlowScannerUniverse,
@@ -156,11 +179,7 @@ export const useLiveMarketFlow = (
   });
   const backendMarketSymbols = marketUniverseQuery.data?.symbols || [];
   const marketUniverseCoverage = marketUniverseQuery.data?.coverage || null;
-  const promotedBackendSymbols = useMemo(
-    () => normalizeFlowUniverseSymbols(marketUniverseCoverage?.promotedSymbols),
-    [marketUniverseCoverage],
-  );
-  const backendRadarBatchSymbols = useMemo(
+  const backendCurrentBatchSymbols = useMemo(
     () => normalizeFlowUniverseSymbols(marketUniverseCoverage?.currentBatch),
     [marketUniverseCoverage],
   );
@@ -170,16 +189,14 @@ export const useLiveMarketFlow = (
     }
     return buildFlowScannerMarketUniverseSymbols({
       backendSymbols: backendMarketSymbols,
-      promotedSymbols: promotedBackendSymbols,
-      currentBatchSymbols: backendRadarBatchSymbols,
+      currentBatchSymbols: backendCurrentBatchSymbols,
       fallbackSymbols: FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
       prioritizeRuntimeSignals: shouldPrioritizeRuntimeSignals,
     });
   }, [
-    backendRadarBatchSymbols,
+    backendCurrentBatchSymbols,
     backendMarketSymbols,
     effectiveScannerConfig.mode,
-    promotedBackendSymbols,
     shouldPrioritizeRuntimeSignals,
   ]);
   const liveSymbols = useMemo(
@@ -305,22 +322,26 @@ export const useLiveMarketFlow = (
     setScanState((prev) => {
       const allowed = new Set(liveSymbols);
       const bySymbol = {};
-      for (const [symbol, value] of Object.entries(prev.bySymbol)) {
-        if (allowed.has(symbol)) bySymbol[symbol] = value;
+      if (shouldUseClientSymbolScanner) {
+        for (const [symbol, value] of Object.entries(prev.bySymbol)) {
+          if (allowed.has(symbol)) bySymbol[symbol] = value;
+        }
       }
       return {
         bySymbol,
         isFetching: false,
-        isPending: liveSymbols.length > 0,
+        isPending: shouldUseClientSymbolScanner && liveSymbols.length > 0,
         cycle: 0,
         lastBatch: [],
         lastError: null,
       };
     });
-  }, [liveSymbolsKey]);
+  }, [liveSymbolsKey, shouldUseClientSymbolScanner]);
 
   useEffect(() => {
-    if (!enabled || !liveSymbols.length) return undefined;
+    if (!enabled || !liveSymbols.length || !shouldUseClientSymbolScanner) {
+      return undefined;
+    }
     let cancelled = false;
     let timer = null;
 
@@ -468,6 +489,7 @@ export const useLiveMarketFlow = (
     enabled,
     liveSymbolsKey,
     normalizedThreshold,
+    shouldUseClientSymbolScanner,
   ]);
 
   const responses = useMemo(() => {
@@ -592,6 +614,7 @@ export const useLiveMarketFlow = (
     const scannerCoverage =
       responses.find((response) => response.source?.scannerCoverage)?.source
         ?.scannerCoverage || null;
+    const coverageSource = scannerCoverage || marketUniverseCoverage;
     const appliedThresholdCounts = new Map();
     appliedThresholds.forEach((value) => {
       appliedThresholdCounts.set(
@@ -636,19 +659,23 @@ export const useLiveMarketFlow = (
       color = T.textMuted;
     }
 
-    const lastScannedAt = {};
+    const lastScannedAt = normalizeScannedAtMap(coverageSource?.lastScannedAt);
     for (const [symbol, value] of Object.entries(scanState.bySymbol)) {
       if (value.scannedAt) lastScannedAt[symbol] = value.scannedAt;
     }
     const scannedSymbols = Object.keys(lastScannedAt);
     const scannedAtValues = Object.values(lastScannedAt);
-    const oldestScanAt = scannedAtValues.length
+    const computedOldestScanAt = scannedAtValues.length
       ? Math.min(...scannedAtValues)
       : null;
-    const newestScanAt = scannedAtValues.length
+    const computedNewestScanAt = scannedAtValues.length
       ? Math.max(...scannedAtValues)
       : null;
-    const coverageSource = scannerCoverage || marketUniverseCoverage;
+    const sourceOldestScanAt = normalizeTimestampMs(coverageSource?.oldestScanAt);
+    const sourceNewestScanAt = normalizeTimestampMs(coverageSource?.newestScanAt);
+    const coverageBatchSize = coverageSource?.batchSize ?? effectiveBatchSize;
+    const coverageConcurrency =
+      coverageSource?.concurrency ?? effectiveConcurrency;
     const selectedCoverageSymbols =
       coverageSource?.selectedSymbols || liveSymbols.length;
     const activeCoverageTarget =
@@ -669,14 +696,14 @@ export const useLiveMarketFlow = (
         cycleScannedSymbols,
       ),
       cycleScannedSymbols: Math.max(scannedSymbols.length, cycleScannedSymbols),
-      batchSize: effectiveBatchSize,
+      batchSize: coverageBatchSize,
       currentBatch: coverageSource?.currentBatch?.length
         ? coverageSource.currentBatch
         : scanState.lastBatch,
       cycle: scanState.cycle,
       isFetching: scanState.isFetching,
       lastScannedAt,
-      isRotating: activeCoverageTarget > effectiveBatchSize,
+      isRotating: activeCoverageTarget > coverageBatchSize,
       mode: coverageSource?.mode || effectiveScannerConfig.mode,
       selectedSymbols: selectedCoverageSymbols,
       activeTargetSize: activeCoverageTarget,
@@ -688,21 +715,19 @@ export const useLiveMarketFlow = (
       stale: Boolean(coverageSource?.stale),
       fallbackUsed: Boolean(coverageSource?.fallbackUsed),
       degradedReason: coverageSource?.degradedReason || null,
-      radarSelectedSymbols: coverageSource?.radarSelectedSymbols || null,
-      radarEstimatedCycleMs: coverageSource?.radarEstimatedCycleMs || null,
-      radarBatchSize: coverageSource?.radarBatchSize || null,
-      radarIntervalMs: coverageSource?.radarIntervalMs || null,
-      promotedSymbols: coverageSource?.promotedSymbols || [],
       rankedAt: coverageSource?.rankedAt || null,
       lastRefreshAt: coverageSource?.lastRefreshAt || null,
       lastGoodAt: coverageSource?.lastGoodAt || null,
       lastScanAt: coverageSource?.lastScanAt || null,
-      oldestScanAt: coverageSource?.oldestScanAt || oldestScanAt,
-      newestScanAt: coverageSource?.newestScanAt || newestScanAt,
+      oldestScanAt: sourceOldestScanAt ?? computedOldestScanAt,
+      newestScanAt: sourceNewestScanAt ?? computedNewestScanAt,
       scope: effectiveScannerConfig.scope,
       minPremium: effectiveScannerConfig.minPremium,
       maxDte: effectiveScannerConfig.maxDte,
-      concurrency: effectiveConcurrency,
+      concurrency: coverageConcurrency,
+      lineBudget: coverageSource?.lineBudget ?? effectiveLineBudget ?? null,
+      intervalMs: coverageSource?.intervalMs ?? effectiveIntervalMs,
+      estimatedCycleMs: coverageSource?.estimatedCycleMs ?? null,
     };
 
     return {
@@ -726,6 +751,8 @@ export const useLiveMarketFlow = (
     marketUniverseCoverage,
     effectiveBatchSize,
     effectiveConcurrency,
+    effectiveIntervalMs,
+    effectiveLineBudget,
     effectiveScannerConfig,
   ]);
 

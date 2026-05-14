@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  accountDateFilterBoundaryIso,
   buildPerformanceCalendarParams,
   performanceCalendarQueriesEnabled,
   resolveReturnsCalendarData,
 } from "./accountCalendarData.js";
+
+test("accountDateFilterBoundaryIso builds local-day date filter boundaries", () => {
+  const from = accountDateFilterBoundaryIso("2026-05-13");
+  const to = accountDateFilterBoundaryIso("2026-05-13", { endOfDay: true });
+
+  assert.equal(from, new Date(2026, 4, 13, 0, 0, 0, 0).toISOString());
+  assert.equal(to, new Date(2026, 4, 13, 23, 59, 59, 999).toISOString());
+  assert.equal(accountDateFilterBoundaryIso("bad-date"), undefined);
+  assert.equal(accountDateFilterBoundaryIso("2026-02-31"), undefined);
+});
 
 test("buildPerformanceCalendarParams uses an unfiltered 400-day calendar lookback", () => {
   const now = Date.UTC(2026, 4, 6, 12, 0, 0);
@@ -41,8 +52,27 @@ test("account screen wires shadow account queries through the paper ledger path"
   const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
 
   assert.match(source, /mode:\s*shadowMode\s*\?\s*"paper"\s*:\s*environment\s*\|\|\s*"paper"/);
+  assert.match(source, /const accountDataParams = useMemo/);
+  assert.match(source, /sourceType: "all"/);
+  assert.match(source, /const shadowSourceLabel = shadowMode \? "Shadow Ledger" : "Flex"/);
+  assert.doesNotMatch(source, /accountShadowSourceFilter/);
+  assert.doesNotMatch(source, /SHADOW_SOURCE_FILTERS/);
+  assert.doesNotMatch(source, /source:\s*shadowDataSource/);
+  assert.match(source, /const accountPageStreamEnabled = Boolean\(/);
+  assert.match(source, /isVisible && accountQueriesEnabled/);
+  assert.match(source, /useGetAccountSummary\(accountRequestId,\s*accountDataParams/);
+  assert.match(source, /summary: displaySummaryData/);
+  assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.from\)/);
+  assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.to, \{ endOfDay: true \}\)/);
+  assert.match(source, /buildPerformanceCalendarParams\(accountDataParams\)/);
   assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(accountQueriesEnabled\)/);
   assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
+  assert.match(source, /visibleEquityBenchmarks/);
+  assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.SPY\)/);
+  assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.QQQ\)/);
+  assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.DJIA\)/);
+  assert.match(source, /visibleEquityBenchmarks\.SPY[\s\S]*spyBenchmarkQuery\.refetch/);
+  assert.match(source, /if \(!visibleEquityBenchmarks\[key\]\)/);
   assert.match(source, /setHoveredEquityDate\(null\);[\s\S]*setPinnedEquityDate\(null\);/);
 });
 

@@ -31,6 +31,13 @@ const formatRelative = (value) => {
   return formatRelativeTimeShort(new Date(timestamp).toISOString());
 };
 
+const formatCycleEstimate = (value) => {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  if (ms >= 60_000) return `~${Math.round(ms / 60_000)}m`;
+  return `~${Math.round(ms / 1_000)}s`;
+};
+
 const Sparkline = ({ values, color, width = 56, height = 14 }) => {
   if (!Array.isArray(values) || values.length < 2) return null;
   const min = Math.min(...values);
@@ -74,8 +81,9 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
       style={{
         height,
         width: "100%",
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: T.bg3,
+        borderRadius: dim(999),
+        border: "none",
         overflow: "hidden",
       }}
     >
@@ -83,7 +91,8 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
         style={{
           height: "100%",
           width: `${clamped * 100}%`,
-          background: `${color}40`,
+          background: color,
+          borderRadius: dim(999),
           transition: "width 0.4s ease",
         }}
       />
@@ -95,20 +104,21 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
   <div
     style={{
       minWidth: 0,
-      padding: sp("4px 6px"),
+      padding: sp("8px 10px"),
       background: T.bg2,
-      border: `1px solid ${T.border}`,
+      border: "none",
+      borderRadius: dim(8),
       transition:
-        "border-color var(--ra-motion-fast) var(--ra-motion-ease), background-color var(--ra-motion-fast) var(--ra-motion-ease)",
+        "background-color var(--ra-motion-fast) var(--ra-motion-ease)",
     }}
   >
     <div
       style={{
         color: T.textMuted,
-        fontFamily: T.mono,
-        fontSize: fs(7),
-        fontWeight: 400,
-        letterSpacing: "0.05em",
+        fontFamily: T.sans,
+        fontSize: fs(9),
+        fontWeight: 500,
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
         lineHeight: 1,
       }}
@@ -117,14 +127,15 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
     </div>
     <div
       style={{
-        marginTop: sp(3),
+        marginTop: sp(4),
         display: "flex",
         alignItems: "center",
-        gap: sp(4),
+        gap: sp(5),
         color: tone,
         fontFamily: T.sans,
-        fontSize: fs(11),
-        fontWeight: 400,
+        fontSize: fs(13),
+        fontWeight: 600,
+        letterSpacing: "-0.01em",
         lineHeight: 1.1,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -152,7 +163,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
         style={{
           marginTop: sp(3),
           color: T.textDim,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(7),
           lineHeight: 1.1,
           overflow: "hidden",
@@ -178,18 +189,18 @@ const TickerChip = ({ symbol, label, tone, title }) => (
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(3),
-        padding: sp("1px 6px"),
-        borderRadius: dim(3),
-        border: `1px solid ${tone}30`,
-        background: `${tone}12`,
+        gap: sp(4),
+        padding: sp("2px 8px"),
+        borderRadius: dim(999),
+        border: "none",
+        background: `${tone}14`,
         color: tone,
-        fontFamily: T.data,
-        fontSize: fs(9),
-        fontWeight: 400,
-        letterSpacing: "0.04em",
+        fontFamily: T.sans,
+        fontSize: fs(10),
+        fontWeight: 500,
+        letterSpacing: "0.02em",
         whiteSpace: "nowrap",
-        transition: "background-color 0.12s ease",
+        transition: "background-color 0.18s ease",
       }}
     >
       <span>{symbol}</span>
@@ -261,12 +272,17 @@ export const FlowScannerStatusPanel = ({
     oldestScanAt && oldestScanAt !== newestScanAt
       ? `oldest ${formatRelative(oldestScanAt)}`
       : null;
+  const displayBatchSize = coverage.batchSize ?? scannerConfig.batchSize;
+  const displayConcurrency = coverage.concurrency ?? scannerConfig.concurrency;
+  const cycleEstimateLabel = formatCycleEstimate(coverage.estimatedCycleMs);
   const selectedDetail =
     intendedCoverageSymbols > selectedCoverageSymbols
       ? `selected ${formatCount(selectedCoverageSymbols)}/${formatCount(intendedCoverageSymbols)}`
       : coverage.isRotating
-        ? `rotating ${formatCount(coverage.batchSize || scannerConfig.batchSize)}/cycle`
-        : coverageModeLabel;
+        ? `rotating ${formatCount(displayBatchSize)}/cycle${cycleEstimateLabel ? ` · ${cycleEstimateLabel}` : ""}`
+        : cycleEstimateLabel
+          ? `${coverageModeLabel} · ${cycleEstimateLabel}`
+          : coverageModeLabel;
   const sourceTone = flowDisplayColor || T.textSec;
   const scanDegraded = enabled && flowQuality?.label === "Degraded";
   const scannerRuntimeActive = Boolean(
@@ -331,7 +347,7 @@ export const FlowScannerStatusPanel = ({
           <span
             style={{
               color: T.textSec,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               fontSize: fs(11),
               fontWeight: 400,
               letterSpacing: "0.03em",
@@ -344,7 +360,7 @@ export const FlowScannerStatusPanel = ({
           <span
             style={{
               color: sourceTone,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               fontWeight: 400,
               letterSpacing: "0.04em",
@@ -363,7 +379,7 @@ export const FlowScannerStatusPanel = ({
             alignItems: "center",
             gap: sp(6),
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(8),
             minWidth: 0,
           }}
@@ -377,7 +393,12 @@ export const FlowScannerStatusPanel = ({
           <span>{latestLabel}</span>
           {oldestLabel ? <span>{oldestLabel}</span> : null}
           {showToggle ? (
-            <Pill active={enabled} color={toggleTone} onClick={onToggle}>
+            <Pill
+              active={enabled}
+              color={toggleTone}
+              onClick={onToggle}
+              aria-label={enabled ? "Stop Flow scan" : "Start Flow scan"}
+            >
               {enabled ? "Stop scan" : "Start scan"}
             </Pill>
           ) : null}
@@ -412,7 +433,7 @@ export const FlowScannerStatusPanel = ({
           detail={
             currentBatch.length > 3
               ? `+${currentBatch.length - 3} active`
-              : `${formatCount(scannerConfig.batchSize || coverage.batchSize)} batch / ${formatCount(scannerConfig.concurrency || coverage.concurrency)} conc`
+              : `${formatCount(displayBatchSize)} batch / ${formatCount(displayConcurrency)} conc`
           }
           tone={currentBatch.length ? T.accent : T.textDim}
         />

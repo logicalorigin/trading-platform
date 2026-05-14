@@ -458,7 +458,7 @@ const AudioControlButton = ({
         <span
           style={{
             fontSize: fs(7),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
             color: muted ? T.amber : "#f8fafc",
             minWidth: dim(24),
@@ -530,7 +530,7 @@ const MenuSectionLabel = ({ children }) => (
   <div
     style={{
       fontSize: fs(6.5),
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       color: T.textDim,
       letterSpacing: "0.12em",
       textTransform: "uppercase",
@@ -699,7 +699,7 @@ const MenuSpeedButton = ({
             : "rgba(255, 255, 255, 0.03)",
         color: disabled ? T.textMuted : active ? T.green : T.textSec,
         fontSize: fs(8),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontWeight: 400,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
@@ -726,7 +726,7 @@ const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
       gap: sp(10),
       padding: sp("2px 10px"),
       minHeight: dim(20),
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: fs(7),
     }}
   >
@@ -2460,7 +2460,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
               background: topStatusBackground,
               color: topStatusColor,
               fontSize: fs(7),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
             }}
           >
@@ -2469,7 +2469,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
           <span
             style={{
               fontSize: fs(8),
-              fontFamily: T.display,
+              fontFamily: T.sans,
               fontWeight: 400,
             }}
           >
@@ -2602,7 +2602,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     <span
                       style={{
                         fontSize: fs(8),
-                        fontFamily: T.display,
+                        fontFamily: T.sans,
                         fontWeight: 400,
                         color: "#f8fafc",
                       }}
@@ -2617,7 +2617,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       background: topStatusBackground,
                       color: topStatusColor,
                       fontSize: fs(7),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       fontWeight: 400,
                       letterSpacing: "0.06em",
                     }}
@@ -2632,7 +2632,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         background: "rgba(8, 11, 18, 0.62)",
                         color: T.green,
                         fontSize: fs(7),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         backdropFilter: "blur(10px)",
                       }}
                     >
@@ -2745,7 +2745,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                           background: "rgba(8, 11, 18, 0.72)",
                           color: audioBlocked ? T.amber : T.red,
                           fontSize: fs(8),
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           fontWeight: 400,
                           letterSpacing: "0.04em",
                           backdropFilter: "blur(16px)",
@@ -2833,7 +2833,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                           fontSize: fs(7),
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           color: T.textDim,
                         }}
                       >
@@ -2863,7 +2863,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                           : "rgba(8, 11, 18, 0.62)",
                         color: atLiveEdge ? T.green : "#f8fafc",
                         fontSize: fs(7),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontWeight: 400,
                         letterSpacing: "0.06em",
                         cursor: hasBufferedWindow ? "pointer" : "default",
@@ -3070,7 +3070,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   background: `${T.bg1}ee`,
                   color: T.textSec,
                   fontSize: fs(9),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   textAlign: "center",
                   maxWidth: dim(460),
                   pointerEvents: "auto",
@@ -3112,7 +3112,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
               gap: sp(8),
               flexWrap: "wrap",
               fontSize: fs(8),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               color: T.textDim,
               minWidth: 0,
             }}

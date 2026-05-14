@@ -78,19 +78,18 @@ const HeaderBroadcastSegment = ({
         ...motionVars({ accent: tone }),
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(compact ? 4 : 6),
-        height: dim(compact ? 20 : 22),
-        minHeight: dim(compact ? 20 : 22),
+        gap: sp(compact ? 5 : 7),
+        height: dim(compact ? 22 : 24),
+        minHeight: dim(compact ? 22 : 24),
         maxWidth: dim(compact ? 260 : 360),
-        padding: sp(compact ? "0px 6px" : "0px 8px"),
-        border: `1px solid ${accent}`,
-        borderLeft: `3px solid ${tone}`,
-        borderRadius: dim(3),
-        background: `${tone}10`,
+        padding: sp(compact ? "0px 10px" : "0px 12px"),
+        border: "none",
+        borderRadius: dim(999),
+        background: `${tone}14`,
         color: T.textSec,
         fontFamily: T.sans,
-        fontSize: fs(compact ? 9 : 10),
-        fontWeight: 400,
+        fontSize: fs(compact ? 10 : 11),
+        fontWeight: 500,
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -203,15 +202,16 @@ const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
       : {
           position: "absolute",
           top: 0,
-          left: `calc(100% + ${dim(4)}px)`,
+          left: `calc(100% + ${dim(6)}px)`,
           zIndex: 80,
-          width: dim(238),
-          padding: sp(8),
+          width: dim(252),
+          padding: sp(10),
           maxHeight: `calc(100vh - ${dim(18)}px)`,
           overflowY: "auto",
-          background: T.bg0,
-          border: `1px solid ${T.border}`,
-          boxShadow: "0 12px 28px rgba(0,0,0,0.32)",
+          background: T.bg1,
+          border: "none",
+          borderRadius: dim(10),
+          boxShadow: "0 8px 24px rgba(25, 23, 26, 0.14), 0 2px 6px rgba(25, 23, 26, 0.06)",
           color: T.text,
           fontFamily: T.sans,
         }}
@@ -453,6 +453,11 @@ const HeaderLaneNumberControl = ({
   </HeaderLaneControlRow>
 );
 
+const buildHeaderFlowTapeFilters = (filters) => ({
+  ...filters,
+  symbol: null,
+});
+
 const HeaderBroadcastLane = ({
   label,
   items,
@@ -627,6 +632,10 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowTapeFilters = useFlowTapeFilterState({
     subscribe: enabled,
   });
+  const headerFlowTapeFilters = useMemo(
+    () => buildHeaderFlowTapeFilters(flowTapeFilters),
+    [flowTapeFilters],
+  );
   const broadScanSnapshotActive = broadScanEnabled && broadScanOwnerActive;
   const [openSettingsLane, setOpenSettingsLane] = useState(null);
   const [speedPreset, setSpeedPreset] = useState(() =>
@@ -689,10 +698,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       }
     };
 
-    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [openSettingsLane]);
@@ -714,14 +723,14 @@ export const HeaderBroadcastScrollerStack = memo(({
   const unusualEvents = useMemo(
     () =>
       rawUnusualEvents.length
-        ? filterFlowTapeEvents(rawUnusualEvents, flowTapeFilters)
+        ? filterFlowTapeEvents(rawUnusualEvents, headerFlowTapeFilters)
         : [],
-    [flowTapeFilters, rawUnusualEvents],
+    [headerFlowTapeFilters, rawUnusualEvents],
   );
   const flowEventsFilteredOut = Boolean(
     rawUnusualEvents.length &&
       !unusualEvents.length &&
-      flowTapeFiltersAreActive(flowTapeFilters),
+      flowTapeFiltersAreActive(headerFlowTapeFilters),
   );
   const unusualItems = useMemo(
     () => buildHeaderUnusualTapeItems(unusualEvents),
@@ -997,6 +1006,10 @@ export const HeaderBroadcastScrollerStack = memo(({
     unusualCoverage && Number.isFinite(unusualCoverage.cycleScannedSymbols)
       ? `${unusualCoverage.cycleScannedSymbols}/${unusualCoverage.totalSymbols || unusualCoverage.activeTargetSize || unusualCoverage.cycleScannedSymbols}`
       : MISSING_VALUE;
+  const unusualBatchSize =
+    unusualCoverage?.batchSize ?? flowScannerConfig.batchSize;
+  const unusualConcurrency =
+    unusualCoverage?.concurrency ?? flowScannerConfig.concurrency;
   const unusualSettings = (
     <HeaderLaneSettingsPopover
       testId="header-unusual-settings-popover"
@@ -1151,7 +1164,7 @@ export const HeaderBroadcastScrollerStack = memo(({
       <HeaderLaneInfoRow label="Visible" value={unusualItems.length} />
       <HeaderLaneInfoRow
         label="Batch"
-        value={`${flowScannerConfig.batchSize}/${flowScannerConfig.concurrency}`}
+        value={`${unusualBatchSize}/${unusualConcurrency}`}
       />
       <HeaderLaneInfoRow
         label="Scanning"

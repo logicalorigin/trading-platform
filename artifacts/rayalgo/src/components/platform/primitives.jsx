@@ -1,23 +1,25 @@
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
-export const Pill = ({ children, active, onClick, color }) => {
+export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
+  const accent = color || T.accent;
   return (
     <button
+      {...buttonProps}
       onClick={onClick}
       className={onClick ? "ra-interactive ra-touch-target" : undefined}
       style={{
-        ...motionVars({ accent: color || T.accent }),
-        padding: sp("3px 7px"),
+        ...motionVars({ accent }),
+        padding: sp("4px 10px"),
         fontSize: textSize("bodyStrong"),
         fontFamily: T.sans,
-        fontWeight: 400,
-        border: `1px solid ${active ? color || T.accent : T.border}`,
-        borderRadius: dim(4),
+        fontWeight: 500,
+        border: "none",
+        borderRadius: dim(RADII.pill),
         cursor: onClick ? "pointer" : "default",
-        transition: "all 0.15s",
-        background: active ? `${color || T.accent}18` : "transparent",
-        color: active ? color || T.accent : T.textDim,
+        transition: "all 0.18s ease",
+        background: active ? `${accent}1f` : "transparent",
+        color: active ? accent : T.textSec,
       }}
     >
       {children}
@@ -29,15 +31,15 @@ export const Badge = ({ children, color = T.textDim }) => (
   <span
     style={{
       display: "inline-block",
-      padding: sp("1px 6px"),
-      borderRadius: dim(3),
+      padding: sp("2px 8px"),
+      borderRadius: dim(RADII.pill),
       fontSize: textSize("caption"),
-      fontWeight: 400,
-      fontFamily: T.data,
-      letterSpacing: "0.04em",
-      background: `${color}18`,
+      fontWeight: 500,
+      fontFamily: T.sans,
+      letterSpacing: "0.02em",
+      background: `${color}14`,
       color,
-      border: `1px solid ${color}30`,
+      border: "none",
     }}
   >
     {children}
@@ -123,15 +125,23 @@ export const DataUnavailableState = ({
   </div>
 );
 
-export const Card = ({ children, style = {}, noPad, ...props }) => (
+export const Card = ({
+  children,
+  style = {},
+  noPad,
+  dataZone = false,
+  elevated = false,
+  ...props
+}) => (
   <div
     {...props}
     style={{
-      background: T.bg1,
-      border: `1px solid ${T.border}`,
-      borderRadius: 0,
-      padding: noPad ? 0 : "8px 10px",
+      background: dataZone ? T.bg2 : T.bg1,
+      border: dataZone ? `1px solid ${T.border}` : "none",
+      borderRadius: dim(dataZone ? RADII.sm : RADII.md),
+      padding: noPad ? 0 : sp(dataZone ? "10px 12px" : "14px 16px"),
       overflow: "hidden",
+      boxShadow: elevated ? ELEVATION.sm : ELEVATION.none,
       transition:
         "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease), box-shadow var(--ra-motion-fast) var(--ra-motion-ease)",
       ...style,
@@ -147,16 +157,16 @@ export const CardTitle = ({ children, right }) => (
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: 4,
+      marginBottom: sp(6),
     }}
   >
     <span
       style={{
-        fontSize: textSize("body"),
-        fontWeight: 400,
-        fontFamily: T.display,
-        color: T.textSec,
-        letterSpacing: "0.03em",
+        fontSize: textSize("displaySmall"),
+        fontWeight: 500,
+        fontFamily: T.sans,
+        color: T.text,
+        letterSpacing: "-0.01em",
       }}
     >
       {children}

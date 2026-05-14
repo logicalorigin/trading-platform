@@ -2,62 +2,62 @@ export const RAYALGO_STORAGE_KEY = "rayalgo:state:v1";
 
 export const THEMES = {
   dark: {
-    bg0: "#080b12",
-    bg1: "#0d1117",
-    bg2: "#141b27",
-    bg3: "#1a2235",
-    bg4: "#212d42",
-    border: "#1e293b",
-    borderLight: "#253349",
-    borderFocus: "#3b82f6",
-    text: "#e2e8f0",
-    textSec: "#94a3b8",
-    textDim: "#64748b",
-    textMuted: "#475569",
-    accent: "#3b82f6",
-    accentDim: "#1e3a5f",
-    green: "#10b981",
-    greenDim: "#064e3b",
-    greenBg: "rgba(16,185,129,0.08)",
-    red: "#ef4444",
-    redDim: "#7f1d1d",
-    redBg: "rgba(239,68,68,0.08)",
-    amber: "#f59e0b",
-    amberDim: "#78350f",
-    amberBg: "rgba(245,158,11,0.08)",
-    blue: "#3b82f6",
-    purple: "#8b5cf6",
-    cyan: "#06b6d4",
-    pink: "#ec4899",
+    bg0: "#16151A",
+    bg1: "#1E1D22",
+    bg2: "#26252B",
+    bg3: "#2F2E35",
+    bg4: "#3A3940",
+    border: "#2F2E35",
+    borderLight: "#3A3940",
+    borderFocus: "#E08F76",
+    text: "#F2EFE9",
+    textSec: "#B8B4AC",
+    textDim: "#86837D",
+    textMuted: "#605C57",
+    accent: "#E08F76",
+    accentDim: "#3F2A22",
+    green: "#4FB286",
+    greenDim: "#1F3A2C",
+    greenBg: "rgba(79,178,134,0.10)",
+    red: "#D77470",
+    redDim: "#3F2222",
+    redBg: "rgba(215,116,112,0.10)",
+    amber: "#D9A864",
+    amberDim: "#3F3122",
+    amberBg: "rgba(217,168,100,0.10)",
+    blue: "#7CA7D9",
+    purple: "#A189CF",
+    cyan: "#6FB5C2",
+    pink: "#D9849B",
   },
   light: {
-    bg0: "#f5f5f4",
-    bg1: "#ffffff",
-    bg2: "#ffffff",
-    bg3: "#f8fafc",
-    bg4: "#ffffff",
-    border: "#e2e8f0",
-    borderLight: "#cbd5e1",
-    borderFocus: "#2563eb",
-    text: "#0f172a",
-    textSec: "#475569",
-    textDim: "#64748b",
-    textMuted: "#94a3b8",
-    accent: "#2563eb",
-    accentDim: "#dbeafe",
-    green: "#059669",
-    greenDim: "#a7f3d0",
-    greenBg: "rgba(5,150,105,0.10)",
-    red: "#dc2626",
-    redDim: "#fecaca",
-    redBg: "rgba(220,38,38,0.10)",
-    amber: "#d97706",
-    amberDim: "#fde68a",
-    amberBg: "rgba(217,119,6,0.10)",
-    blue: "#2563eb",
-    purple: "#7c3aed",
-    cyan: "#0891b2",
-    pink: "#db2777",
+    bg0: "#FAFAF7",
+    bg1: "#FFFFFF",
+    bg2: "#F1EFEA",
+    bg3: "#E8E5DE",
+    bg4: "#D9D5CD",
+    border: "#E8E5DE",
+    borderLight: "#F0EDE6",
+    borderFocus: "#D97757",
+    text: "#19171A",
+    textSec: "#4E4B4F",
+    textDim: "#86837D",
+    textMuted: "#ACA8A0",
+    accent: "#D97757",
+    accentDim: "#F2DDD2",
+    green: "#0F6E51",
+    greenDim: "#CFE3D9",
+    greenBg: "rgba(15,110,81,0.08)",
+    red: "#B5403B",
+    redDim: "#F2D4D2",
+    redBg: "rgba(181,64,59,0.08)",
+    amber: "#C28526",
+    amberDim: "#F2E2C6",
+    amberBg: "rgba(194,133,38,0.08)",
+    blue: "#2E5A8E",
+    purple: "#6B4E8E",
+    cyan: "#2D7A8B",
+    pink: "#B8567A",
   },
 };
 
@@ -93,6 +93,38 @@ export const TYPOGRAPHY_SIZES = {
   panelTitle: 9,
   sectionTitle: 10,
   screenTitle: 17,
+  // Public-style display sizes for the new aesthetic.
+  // Existing roles above are preserved so legacy screens render unchanged.
+  displayHero: 36,
+  displayLarge: 26,
+  displayMedium: 20,
+  displaySmall: 16,
+  paragraph: 14,
+  paragraphMuted: 13,
+};
+
+export const RADII = {
+  none: 0,
+  xs: 4,
+  sm: 6,
+  md: 10,
+  lg: 14,
+  xl: 20,
+  pill: 999,
+};
+
+export const ELEVATION = {
+  none: "none",
+  sm: "0 1px 2px rgba(25, 23, 26, 0.04), 0 1px 3px rgba(25, 23, 26, 0.06)",
+  md: "0 4px 8px rgba(25, 23, 26, 0.06), 0 2px 4px rgba(25, 23, 26, 0.04)",
+  lg: "0 10px 24px rgba(25, 23, 26, 0.10), 0 4px 8px rgba(25, 23, 26, 0.06)",
+};
+
+export const MAX_WIDTHS = {
+  reading: 720,
+  content: 1280,
+  cockpit: 1600,
+  full: null,
 };
 
 export const SCALE_LEVELS = {
@@ -126,13 +158,13 @@ export const resolveSystemTheme = () => {
     if (
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-color-scheme: light)").matches
+      window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
-      return "light";
+      return "dark";
     }
   } catch {}
 
-  return "dark";
+  return "light";
 };
 
 export const resolveEffectiveThemePreference = (preferenceTheme, fallbackTheme) => {
@@ -194,7 +226,7 @@ export const setCurrentTheme = (nextTheme) => {
     typeof nextTheme === "string" &&
     Object.prototype.hasOwnProperty.call(THEMES, nextTheme)
       ? nextTheme
-      : "dark";
+      : "light";
 
   return CURRENT_THEME;
 };
@@ -269,5 +301,37 @@ export const T = new Proxy(
     },
   },
 );
+
+const resolveCssVarValue = (styles, value, depth = 0) => {
+  if (!value || depth > 4) {
+    return value;
+  }
+  const match = String(value).trim().match(/^var\((--[^,\s)]+)(?:,\s*([^)]+))?\)$/);
+  if (!match) {
+    return String(value).trim();
+  }
+
+  const nested = styles.getPropertyValue(match[1]).trim() || match[2] || "";
+  return resolveCssVarValue(styles, nested, depth + 1);
+};
+
+export const getToken = (name, fallback = "") => {
+  if (
+    typeof document === "undefined" ||
+    typeof window === "undefined" ||
+    typeof window.getComputedStyle !== "function" ||
+    typeof name !== "string" ||
+    !name.trim()
+  ) {
+    return fallback;
+  }
+
+  const styles = window.getComputedStyle(document.documentElement);
+  const raw = styles.getPropertyValue(name.trim()).trim();
+  return resolveCssVarValue(styles, raw) || fallback;
+};
+
+export const resolveTokenColor = (name, fallback = "") =>
+  getToken(name, fallback);
 
 export const MISSING_VALUE = "----";

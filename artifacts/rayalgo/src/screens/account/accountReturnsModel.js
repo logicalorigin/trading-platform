@@ -2,6 +2,10 @@ import {
   joinBenchmarkPercentSeries,
   normalizeEquityPointSeries,
 } from "./equityCurveData.js";
+import {
+  calculateTransferAdjustedReturnSummary,
+  transferAdjustedPnlDelta,
+} from "@workspace/account-math";
 import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
 
 const DEFAULT_BENCHMARK_LABELS = {
@@ -173,79 +177,7 @@ const buildRiskStats = (points) => {
 };
 
 const PNL_BAR_LIMIT = 28;
-
-const externalTransferAmount = (point) =>
-  (finiteNumber(point?.deposits) ?? 0) - (finiteNumber(point?.withdrawals) ?? 0);
-
-const transferAdjustedPnlDelta = (currentPoint, previousPoint) => {
-  const previous = finiteNumber(previousPoint?.netLiquidation);
-  const current = finiteNumber(currentPoint?.netLiquidation);
-  if (previous == null || current == null) {
-    return null;
-  }
-  return current - previous - externalTransferAmount(currentPoint);
-};
-
-const transferAdjustedStartingNav = (points) => {
-  const firstPoint = points[0] || null;
-  const firstNav = finiteNumber(firstPoint?.netLiquidation);
-  if (firstNav == null) {
-    return null;
-  }
-  const firstTransfer = externalTransferAmount(firstPoint);
-  const adjustedStartNav =
-    firstTransfer > 0 ? Math.max(0, firstNav - firstTransfer) : firstNav - firstTransfer;
-  return adjustedStartNav !== 0 ? adjustedStartNav : firstNav;
-};
-
-const transferAdjustedPreviousNav = (points) => {
-  const firstPoint = points[0] || null;
-  const firstNav = finiteNumber(firstPoint?.netLiquidation);
-  if (firstNav == null) {
-    return null;
-  }
-  const firstTransfer = externalTransferAmount(firstPoint);
-  return firstTransfer > 0
-    ? Math.max(0, firstNav - firstTransfer)
-    : firstNav - firstTransfer;
-};
-
-const transferAdjustedCapitalBase = (points) => {
-  const firstPoint = points[0] || null;
-  const previousNav = transferAdjustedPreviousNav(points);
-  if (previousNav == null) {
-    return null;
-  }
-  let capitalBase = Math.max(
-    Math.abs(previousNav),
-    Math.abs(finiteNumber(firstPoint?.netLiquidation) ?? 0),
-  );
-  for (let index = 1; index < points.length; index += 1) {
-    const transfer = externalTransferAmount(points[index]);
-    if (transfer > 0) {
-      capitalBase += transfer;
-    }
-  }
-  return capitalBase;
-};
-
-const cumulativeTransferAdjustedPnl = (points) => {
-  const startingNav = transferAdjustedPreviousNav(points);
-  if (startingNav == null) {
-    return null;
-  }
-  let previousNav = startingNav;
-  let total = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const currentNav = finiteNumber(points[index]?.netLiquidation);
-    if (currentNav == null) {
-      continue;
-    }
-    total += currentNav - previousNav - externalTransferAmount(points[index]);
-    previousNav = currentNav;
-  }
-  return total;
-};
+const RETURN_PERCENT_TOLERANCE = 0.01;
 
 const buildPnlBars = (points, limit = PNL_BAR_LIMIT) => {
   if (!Array.isArray(points) || points.length < 2 || limit <= 0) {
@@ -392,15 +324,26 @@ export const buildAccountReturnsModel = ({
       ? percentChange(lastPoint.netLiquidation, firstPoint.netLiquidation)
       : null;
   const providerReturnPercent = finiteNumber(lastPoint?.returnPercent);
-  const adjustedStartNav = firstPoint ? transferAdjustedStartingNav(points) : null;
-  const adjustedCapitalBase = firstPoint ? transferAdjustedCapitalBase(points) : null;
-  const adjustedPnl =
-    firstPoint && lastPoint ? cumulativeTransferAdjustedPnl(points) : null;
-  const transferAdjustedReturnPercent =
-    adjustedCapitalBase != null && adjustedCapitalBase !== 0 && adjustedPnl != null
-      ? (adjustedPnl / adjustedCapitalBase) * 100
-      : null;
-  const returnPercent = providerReturnPercent ?? transferAdjustedReturnPercent;
+  const adjustedSummary = firstPoint
+    ? calculateTransferAdjustedReturnSummary(points)
+    : null;
+  const adjustedStartNav = adjustedSummary?.transferAdjustedStartNav ?? null;
+  const adjustedCapitalBase = adjustedSummary?.capitalBase ?? null;
+  const adjustedPnl = adjustedSummary?.cumulativePnl ?? null;
+  const transferAdjustedReturnPercent = adjustedSummary?.returnPercent ?? null;
+  const returnPercentDiscrepancy =
+    providerReturnPercent != null &&
+    transferAdjustedReturnPercent != null &&
+    Math.abs(providerReturnPercent - transferAdjustedReturnPercent) >
+      RETURN_PERCENT_TOLERANCE;
+  const returnPercent = returnPercentDiscrepancy
+    ? transferAdjustedReturnPercent
+    : (providerReturnPercent ?? transferAdjustedReturnPercent);
+  const returnPercentSource = returnPercentDiscrepancy
+    ? "recomputed"
+    : providerReturnPercent != null
+      ? "provider"
+      : "recomputed";
   const drawdown = buildDrawdown(points);
   const riskStats = buildRiskStats(points);
   const trades = tradesResponse?.trades || [];
@@ -434,6 +377,8 @@ export const buildAccountReturnsModel = ({
       transferAdjustedPnl: adjustedPnl,
       transferAdjustedReturnPercent,
       providerReturnPercent,
+      returnPercentDiscrepancy,
+      returnPercentSource,
       returnPercent,
       ...drawdown,
       pnlBars: buildPnlBars(points),

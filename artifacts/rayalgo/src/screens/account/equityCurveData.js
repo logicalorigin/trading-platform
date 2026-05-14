@@ -1,3 +1,7 @@
+import {
+  buildTransferAdjustedPnlSeries as buildSharedTransferAdjustedPnlSeries,
+} from "@workspace/account-math";
+
 const EQUITY_JOIN_TOLERANCE_BY_RANGE_MS = {
   "1D": 5 * 60_000,
   "1W": 10 * 60_000,
@@ -24,6 +28,21 @@ export const parseEquityTimestampMs = (value) => {
 export const equityJoinToleranceMs = (range) =>
   EQUITY_JOIN_TOLERANCE_BY_RANGE_MS[range] ?? DEFAULT_JOIN_TOLERANCE_MS;
 
+export const equityRangeResponseMatches = (response, range) =>
+  Boolean(response) && (!response.range || !range || response.range === range);
+
+export const resolveStableEquityRangeResponse = ({
+  response,
+  fallback = null,
+  range,
+  acceptResponse = true,
+} = {}) =>
+  equityRangeResponseMatches(response, range)
+    ? acceptResponse
+      ? response
+      : fallback ?? response
+    : fallback;
+
 export const normalizeEquityPointSeries = (points = []) =>
   points
     .map((point) => {
@@ -41,34 +60,52 @@ export const normalizeEquityPointSeries = (points = []) =>
     .filter(Boolean)
     .sort((left, right) => left.timestampMs - right.timestampMs);
 
-const externalTransferAmount = (point) =>
-  (finiteNumber(point?.deposits) ?? 0) - (finiteNumber(point?.withdrawals) ?? 0);
+export const buildTransferAdjustedPnlSeries = (points = []) =>
+  buildSharedTransferAdjustedPnlSeries(points);
 
-export const buildTransferAdjustedPnlSeries = (points = []) => {
-  if (!points.length) {
-    return [];
-  }
-
+export const buildEquityCurvePointSummary = (points = []) => {
   const firstPoint = points[0] || null;
-  const firstNav = finiteNumber(firstPoint?.netLiquidation);
-  if (firstNav === null) {
-    return points.map(() => null);
+  const lastPoint = points[points.length - 1] || null;
+  if (!points.length) {
+    return {
+      firstPoint,
+      lastPoint,
+      minNav: null,
+      maxNav: null,
+      minPnl: null,
+      maxPnl: null,
+      transferAdjustedPnl: null,
+    };
   }
 
-  const firstTransfer = externalTransferAmount(firstPoint);
-  let previousNav =
-    firstTransfer > 0 ? Math.max(0, firstNav - firstTransfer) : firstNav - firstTransfer;
-  let cumulativePnl = 0;
+  let minNav = null;
+  let maxNav = null;
+  let minPnl = null;
+  let maxPnl = null;
 
-  return points.map((point) => {
-    const currentNav = finiteNumber(point?.netLiquidation);
-    if (currentNav === null) {
-      return null;
+  points.forEach((point) => {
+    const nav = finiteNumber(point?.netLiquidation);
+    if (nav !== null) {
+      minNav = minNav === null ? nav : Math.min(minNav, nav);
+      maxNav = maxNav === null ? nav : Math.max(maxNav, nav);
     }
-    cumulativePnl += currentNav - previousNav - externalTransferAmount(point);
-    previousNav = currentNav;
-    return cumulativePnl;
+
+    const pnl = finiteNumber(point?.cumulativePnl ?? 0);
+    if (pnl !== null) {
+      minPnl = minPnl === null ? pnl : Math.min(minPnl, pnl);
+      maxPnl = maxPnl === null ? pnl : Math.max(maxPnl, pnl);
+    }
   });
+
+  return {
+    firstPoint,
+    lastPoint,
+    minNav,
+    maxNav,
+    minPnl,
+    maxPnl,
+    transferAdjustedPnl: finiteNumber(lastPoint?.cumulativePnl),
+  };
 };
 
 const normalizeBenchmarkSeries = (points = []) =>

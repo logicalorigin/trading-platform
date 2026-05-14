@@ -70,13 +70,15 @@ const TREEMAP_MODES = [
   { value: "UNREAL", label: "Unreal %" },
 ];
 
-const buildTreemapItems = (positions) =>
+export const buildTreemapItems = (positions) =>
   (positions || [])
-    .map((row) => {
+    .map((row, index) => {
       const mv = Number(row?.marketValue);
       if (!Number.isFinite(mv) || mv === 0) return null;
+      const symbol = String(row.symbol || "");
       return {
-        symbol: String(row.symbol || ""),
+        id: String(row.id || `${symbol}:${row?.assetClass || "position"}:${index}`),
+        symbol,
         value: Math.abs(mv),
         marketValue: mv,
         dayChangePercent: Number(row?.dayChangePercent) || 0,
@@ -122,7 +124,7 @@ export const PositionTreemapPanel = ({
     <Panel
       title="Position Heatmap"
       subtitle={`Sized by |market value| · colored by ${mode === "DAY" ? "day %" : "unrealized %"}`}
-      actions={
+      action={
         <ToggleGroup options={TREEMAP_MODES} value={mode} onChange={setMode} />
       }
       loading={loading}
@@ -150,7 +152,7 @@ export const PositionTreemapPanel = ({
               const showPct = area > 18000;
               const labelSize = Math.min(22, Math.sqrt(area) * 0.18);
               return (
-                <g key={rect.symbol}>
+                <g key={rect.id}>
                   <rect
                     x={rect.x + 0.5}
                     y={rect.y + 0.5}
@@ -208,7 +210,7 @@ export const PositionTreemapPanel = ({
               justifyContent: "center",
               gap: sp(4),
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               color: T.textDim,
             }}
           >

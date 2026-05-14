@@ -73,9 +73,18 @@ export const formatAccountPercent = (
 ) => (maskValues ? ACCOUNT_VALUE_MASK : formatPercent(value, digits));
 
 export const toneForValue = (value) => {
-  if (value == null || Number.isNaN(Number(value))) return T.textDim;
-  return Number(value) >= 0 ? T.green : T.red;
+  if (value == null || Number.isNaN(Number(value))) return "var(--ra-pnl-neutral)";
+  return Number(value) >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
 };
+
+export const cellSubTextStyle = (tone = T.textDim) => ({
+  color: tone,
+  fontFamily: T.data,
+  fontSize: textSize("tableHeader"),
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});
 
 export const metricTitle = (metric) => {
   if (!metric) return "Provider field unavailable";
@@ -91,16 +100,14 @@ export const panelStyle = {
   get background() {
     return T.bg1;
   },
-  get border() {
-    return `1px solid ${T.border}`;
-  },
+  border: "none",
   get borderRadius() {
-    return dim(6);
+    return dim(12);
   },
   get boxShadow() {
     return T.bg0 === "#f5f5f4"
-      ? "0 8px 20px rgba(15,23,42,0.05)"
-      : "0 8px 20px rgba(0,0,0,0.12)";
+      ? "0 1px 2px rgba(15,23,42,0.05)"
+      : "0 1px 2px rgba(0,0,0,0.12)";
   },
 };
 
@@ -133,6 +140,29 @@ export const mutedLabelStyle = {
   letterSpacing: "0.12em",
   textTransform: "uppercase",
 };
+
+const tokenTone = (tokenName) => {
+  const color = `var(${tokenName})`;
+  return {
+    color,
+    border: `color-mix(in srgb, ${color} 28%, transparent)`,
+    bg: T.bg1 === "#ffffff"
+      ? T.bg1
+      : `color-mix(in srgb, ${color} 13%, transparent)`,
+  };
+};
+
+const colorTone = (color) => ({
+  color,
+  border: color.startsWith("var(")
+    ? `color-mix(in srgb, ${color} 28%, transparent)`
+    : `${color}44`,
+  bg: T.bg1 === "#ffffff"
+    ? T.bg1
+    : color.startsWith("var(")
+      ? `color-mix(in srgb, ${color} 13%, transparent)`
+      : `${color}18`,
+});
 
 const toneValueMap = () => ({
   default: { color: T.textDim, border: T.border, bg: T.bg2 },
@@ -171,33 +201,48 @@ const toneValueMap = () => ({
     border: `${T.pink}44`,
     bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.pink}18`,
   },
+  "pnl-positive": tokenTone("--ra-pnl-positive"),
+  "pnl-negative": tokenTone("--ra-pnl-negative"),
+  "side-buy": tokenTone("--ra-side-buy"),
+  "side-sell": tokenTone("--ra-side-sell"),
+  "position-long": tokenTone("--ra-position-long"),
+  "position-short": tokenTone("--ra-position-short"),
+  "status-filled": tokenTone("--ra-status-filled"),
+  "status-working": tokenTone("--ra-status-working"),
+  "status-rejected": tokenTone("--ra-status-rejected"),
+  "stream-healthy": tokenTone("--ra-stream-healthy"),
+  "stream-offline": tokenTone("--ra-stream-offline"),
+  "category-automation": tokenTone("--ra-category-automation"),
+  "category-replay": tokenTone("--ra-category-replay"),
+  "category-backtest": tokenTone("--ra-category-backtest"),
+  "category-mixed": tokenTone("--ra-category-mixed"),
 });
 
 export const denseButtonStyle = (active = false) => ({
-  height: dim(21),
-  padding: sp("0 6px"),
-  borderRadius: dim(4),
-  border: `1px solid ${active ? T.accent : T.border}`,
-  background: active ? (T.bg1 === "#ffffff" ? T.bg1 : T.accent) : T.bg2,
-  color: active ? (T.bg1 === "#ffffff" ? T.accent : "#ffffff") : T.textSec,
+  height: dim(22),
+  padding: sp("0 10px"),
+  borderRadius: 999,
+  border: "none",
+  background: active ? T.bg1 : "transparent",
+  color: active ? T.text : T.textDim,
+  boxShadow: active ? "0 1px 2px rgba(17, 17, 17, 0.06)" : "none",
   fontSize: textSize("control"),
-  fontFamily: T.data,
-  fontWeight: 400,
+  fontFamily: T.sans,
+  fontWeight: active ? 600 : 500,
   cursor: "pointer",
-  letterSpacing: "0.06em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
+  transition: "background 120ms ease, color 120ms ease",
 });
 
 export const primaryButtonStyle = {
   get height() {
-    return dim(22);
+    return dim(24);
   },
   get padding() {
-    return sp("0 8px");
+    return sp("0 12px");
   },
-  get borderRadius() {
-    return dim(4);
-  },
+  borderRadius: 999,
   border: "none",
   get background() {
     return T.accent;
@@ -207,30 +252,51 @@ export const primaryButtonStyle = {
     return textSize("control");
   },
   get fontFamily() {
-    return T.data;
+    return T.sans;
   },
-  fontWeight: 400,
+  fontWeight: 600,
   cursor: "pointer",
-  letterSpacing: "0.06em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
 export const secondaryButtonStyle = {
   get height() {
-    return dim(22);
+    return dim(24);
   },
   get padding() {
-    return sp("0 8px");
+    return sp("0 12px");
   },
-  get borderRadius() {
-    return dim(4);
-  },
-  get border() {
-    return `1px solid ${T.border}`;
-  },
+  borderRadius: 999,
+  border: "none",
   get background() {
     return T.bg2;
   },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: 500,
+  cursor: "pointer",
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+};
+
+export const ghostButtonStyle = {
+  get height() {
+    return dim(24);
+  },
+  get padding() {
+    return sp("0 12px");
+  },
+  borderRadius: 999,
+  border: "none",
+  background: "transparent",
   get color() {
     return T.textSec;
   },
@@ -238,38 +304,9 @@ export const secondaryButtonStyle = {
     return textSize("control");
   },
   get fontFamily() {
-    return T.data;
+    return T.sans;
   },
-  fontWeight: 400,
-  cursor: "pointer",
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-};
-
-export const ghostButtonStyle = {
-  get height() {
-    return dim(22);
-  },
-  get padding() {
-    return sp("0 8px");
-  },
-  get borderRadius() {
-    return dim(4);
-  },
-  get border() {
-    return `1px solid ${T.border}`;
-  },
-  background: "transparent",
-  get color() {
-    return T.textDim;
-  },
-  get fontSize() {
-    return textSize("control");
-  },
-  get fontFamily() {
-    return T.mono;
-  },
-  fontWeight: 400,
+  fontWeight: 500,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -277,19 +314,17 @@ export const ghostButtonStyle = {
 
 export const controlInputStyle = {
   get height() {
-    return dim(22);
+    return dim(24);
   },
   get padding() {
-    return sp("0 7px");
+    return sp("0 10px");
   },
   get borderRadius() {
-    return dim(4);
+    return dim(8);
   },
-  get border() {
-    return `1px solid ${T.border}`;
-  },
+  border: "none",
   get background() {
-    return T.bg0;
+    return T.bg2;
   },
   get color() {
     return T.text;
@@ -393,23 +428,28 @@ export const moveTableFocus = (event) => {
 
 export const Pill = ({ children, tone = "default", title, style }) => {
   const paletteMap = toneValueMap();
-  const palette = paletteMap[tone] || paletteMap.default;
+  const palette =
+    paletteMap[tone] ||
+    (typeof tone === "string" &&
+    (tone.startsWith("var(") || tone.startsWith("#") || tone.startsWith("rgb"))
+      ? colorTone(tone)
+      : paletteMap.default);
   return (
     <AppTooltip content={title}><span
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: sp(4),
-        minHeight: dim(15),
-        padding: sp("0 4px"),
-        borderRadius: dim(4),
-        border: `1px solid ${palette.border}`,
+        minHeight: dim(16),
+        padding: sp("1px 6px"),
+        borderRadius: 999,
+        border: "none",
         background: palette.bg,
         color: palette.color,
         fontSize: textSize("label"),
-        fontFamily: T.data,
-        fontWeight: 400,
-        letterSpacing: "0.08em",
+        fontFamily: T.sans,
+        fontWeight: 500,
+        letterSpacing: "0.06em",
         textTransform: "uppercase",
         ...style,
       }}
@@ -423,10 +463,10 @@ export const ToggleGroup = ({ options, value, onChange }) => (
   <div
     style={{
       display: "inline-flex",
-      gap: 1,
-      padding: 2,
-      border: `1px solid ${T.border}`,
-      borderRadius: dim(4),
+      gap: sp(2),
+      padding: sp(2),
+      border: "none",
+      borderRadius: 999,
       background: T.bg2,
       flexWrap: "wrap",
     }}
@@ -468,10 +508,10 @@ export const StatTile = ({
       className={className || (flat ? undefined : "ra-panel-enter")}
       style={{
         minWidth: dim(flat ? 0 : compact ? 86 : 108),
-        padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "5px 7px" : "7px 9px"),
-        borderRadius: flat ? 0 : dim(5),
-        border: flat ? "none" : `1px solid ${T.border}`,
-        background: flat ? "transparent" : T.bg2,
+        padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "4px 6px" : "6px 8px"),
+        borderRadius: flat ? 0 : dim(8),
+        border: "none",
+        background: "transparent",
         textAlign: align,
         ...style,
       }}
@@ -614,7 +654,7 @@ export const SkeletonRows = ({ rows = 4 }) => (
           height: dim(index === 0 ? 34 : 24),
           borderRadius: dim(4),
           background: `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
-          border: `1px solid ${T.border}`,
+          border: "none",
         }}
       />
     ))}

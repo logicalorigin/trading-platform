@@ -15,9 +15,24 @@ const isThirdFriday = (date) => {
   return dom >= 15 && dom <= 21;
 };
 
-const startOfDayUtc = (input) => {
-  const d = input instanceof Date ? new Date(input.getTime()) : new Date(input);
-  if (Number.isNaN(d.getTime())) return null;
+export const startOfExpiryCalendarDay = (input) => {
+  const dateOnly = typeof input === "string"
+    ? /^(\d{4})-(\d{2})-(\d{2})/.exec(input.trim())
+    : null;
+  const d = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : input instanceof Date
+      ? new Date(input.getTime())
+      : new Date(input);
+  if (
+    Number.isNaN(d.getTime()) ||
+    (dateOnly &&
+      (d.getFullYear() !== Number(dateOnly[1]) ||
+        d.getMonth() !== Number(dateOnly[2]) - 1 ||
+        d.getDate() !== Number(dateOnly[3])))
+  ) {
+    return null;
+  }
   d.setHours(0, 0, 0, 0);
   return d;
 };
@@ -29,15 +44,15 @@ const isoDay = (date) => {
   return `${y}-${m}-${d}`;
 };
 
-const buildForwardCalendar = (positions) => {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+export const buildForwardCalendar = (positions, today = new Date()) => {
+  const start = startOfExpiryCalendarDay(today);
+  if (!start) return [];
 
   const notionalByDay = new Map();
   (positions || []).forEach((position) => {
     const contract = position?.optionContract;
     if (!contract?.expirationDate) return;
-    const expiry = startOfDayUtc(contract.expirationDate);
+    const expiry = startOfExpiryCalendarDay(contract.expirationDate);
     if (!expiry) return;
     if (expiry.getTime() < start.getTime()) return;
     const mv = Number(position.marketValue);
@@ -106,7 +121,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
       style={{
         padding: sp(8),
         background: T.bg2,
-        border: `1px solid ${T.border}`,
+        border: "none",
         borderRadius: dim(4),
         display: "grid",
         gap: sp(4),
@@ -114,7 +129,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: sp(8) }}>
         <span style={mutedLabelStyle}>Options Expiry · Next 45 Trading Days</span>
-        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>
+        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}>
           {activeCount} expiry day{activeCount === 1 ? "" : "s"} ·{" "}
           <span style={{ color: T.text, fontWeight: 400 }}>
             {formatAccountMoney(total, currency, true, maskValues)}
@@ -127,14 +142,14 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
           No option positions in book.
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 3 }}>
+        <div style={{ display: "flex", gap: sp(3) }}>
           <div
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: 2,
-              paddingRight: 4,
-              paddingTop: 14,
+              gap: sp(2),
+              paddingRight: sp(4),
+              paddingTop: sp(14),
             }}
           >
             {["M", "T", "W", "T", "F"].map((label, idx) => (
@@ -143,7 +158,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 style={{
                   fontSize: fs(8),
                   color: T.textMuted,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                   height: dim(14),
                   lineHeight: `${dim(14)}px`,
@@ -153,7 +168,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 2, flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: sp(2), flex: 1, minWidth: 0 }}>
             {weeks.map((week, wi) => (
               <div
                 key={week.key}
@@ -161,7 +176,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                   flex: 1,
                   display: "flex",
                   flexDirection: "column",
-                  gap: 2,
+                  gap: sp(2),
                   minWidth: 0,
                 }}
               >
@@ -169,7 +184,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                   style={{
                     fontSize: fs(7),
                     color: T.textDim,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     height: dim(10),
                     lineHeight: `${dim(10)}px`,
                     letterSpacing: "0.04em",
@@ -235,13 +250,13 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
           display: "flex",
           justifyContent: "space-between",
           fontSize: fs(9),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           color: T.textDim,
           gap: sp(8),
           flexWrap: "wrap",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: sp(10) }}>
           <span>
             <span
               style={{
@@ -250,7 +265,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 height: 8,
                 background: T.accent,
                 borderRadius: 1,
-                marginRight: 4,
+                marginRight: sp(4),
                 verticalAlign: "middle",
                 opacity: 0.7,
               }}
@@ -265,7 +280,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 height: 8,
                 background: T.amber,
                 borderRadius: 1,
-                marginRight: 4,
+                marginRight: sp(4),
                 verticalAlign: "middle",
                 opacity: 0.9,
               }}
@@ -280,7 +295,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 height: 8,
                 background: T.red,
                 borderRadius: 1,
-                marginRight: 4,
+                marginRight: sp(4),
                 verticalAlign: "middle",
                 border: `1px solid ${T.red}`,
               }}

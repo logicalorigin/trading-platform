@@ -85,6 +85,11 @@ import {
   formatComparisonBadgeValue,
   mergeStudyPreviewSeries,
 } from "./charting";
+import {
+  formatDateInputValue,
+  toEndOfDayIso,
+  toStartOfDayIso,
+} from "./backtestingDateRanges";
 import { deriveSweepDimensions } from "./sweepDimensions";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useUserPreferences } from "../preferences/useUserPreferences";
@@ -412,12 +417,6 @@ function formatHour(value: string | null | undefined, preferences: UserPreferenc
   return formatAppTimeForPreferences(parsed, preferences, { hour: "numeric" }, "—");
 }
 
-function formatDateInputValue(offsetDays: number): string {
-  const value = new Date();
-  value.setUTCDate(value.getUTCDate() + offsetDays);
-  return value.toISOString().slice(0, 10);
-}
-
 function buildLookbackWindowIsoRange(years: number): {
   fromIso: string;
   toIso: string;
@@ -735,14 +734,6 @@ function isAbortError(error: unknown): boolean {
     (error instanceof DOMException && error.name === "AbortError") ||
     (error instanceof Error && error.name === "AbortError")
   );
-}
-
-function toStartOfDayIso(dateValue: string): string {
-  return new Date(`${dateValue}T00:00:00.000Z`).toISOString();
-}
-
-function toEndOfDayIso(dateValue: string): string {
-  return new Date(`${dateValue}T23:59:59.999Z`).toISOString();
 }
 
 function parseSymbolList(value: string): string[] {
@@ -2619,6 +2610,17 @@ export function BacktestWorkspace({
     }
 
     try {
+      const startsAt = toStartOfDayIso(startsOn);
+      const endsAt = toEndOfDayIso(endsOn);
+      if (!startsAt || !endsAt) {
+        setBanner({
+          kind: "error",
+          title: "Invalid date range",
+          detail: "Choose valid start and end dates before saving the study.",
+        });
+        return;
+      }
+
       const createdStudy = await createStudyMutation.mutateAsync({
         data: {
           name: studyName.trim(),
@@ -2628,8 +2630,8 @@ export function BacktestWorkspace({
           watchlistId: universeMode === "watchlist" ? watchlistId : null,
           symbols: universeMode === "symbols" ? parsedSymbols : [],
           timeframe,
-          startsAt: toStartOfDayIso(startsOn),
-          endsAt: toEndOfDayIso(endsOn),
+          startsAt,
+          endsAt,
           parameters,
           portfolioRules,
           executionProfile,
@@ -2816,8 +2818,8 @@ export function BacktestWorkspace({
           onClick={() => setBanner(null)}
           style={{
             ...cardStyle(theme, scale),
-            borderColor: getBannerColor(banner.kind, theme),
-            borderLeft: `4px solid ${getBannerColor(banner.kind, theme)}`,
+            border: "none",
+            background: `${getBannerColor(banner.kind, theme)}12`,
             cursor: "pointer",
           }}
         >
@@ -4521,10 +4523,13 @@ export function BacktestWorkspace({
                           margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                         >
                           <CartesianGrid
-                            stroke={theme.border}
-                            strokeDasharray="3 3"
+                            stroke={theme.borderLight || theme.border}
+                            strokeDasharray="0"
+                            vertical={false}
                           />
                           <XAxis
+                            axisLine={false}
+                            tickLine={false}
                             dataKey="hour"
                             tick={{
                               fill: theme.textMuted,
@@ -4532,6 +4537,8 @@ export function BacktestWorkspace({
                             }}
                           />
                           <YAxis
+                            axisLine={false}
+                            tickLine={false}
                             tick={{
                               fill: theme.textMuted,
                               fontSize: scale.fs(8),
@@ -5163,10 +5170,13 @@ export function BacktestWorkspace({
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
                         <CartesianGrid
-                          stroke={theme.border}
-                          strokeDasharray="3 3"
+                          stroke={theme.borderLight || theme.border}
+                          strokeDasharray="0"
+                          vertical={false}
                         />
                         <XAxis
+                          axisLine={false}
+                          tickLine={false}
                           dataKey="label"
                           tick={{
                             fill: theme.textMuted,
@@ -5174,6 +5184,8 @@ export function BacktestWorkspace({
                           }}
                         />
                         <YAxis
+                          axisLine={false}
+                          tickLine={false}
                           tick={{
                             fill: theme.textMuted,
                             fontSize: scale.fs(8),
@@ -5224,10 +5236,13 @@ export function BacktestWorkspace({
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
                         <CartesianGrid
-                          stroke={theme.border}
-                          strokeDasharray="3 3"
+                          stroke={theme.borderLight || theme.border}
+                          strokeDasharray="0"
+                          vertical={false}
                         />
                         <XAxis
+                          axisLine={false}
+                          tickLine={false}
                           dataKey="bucket"
                           tick={{
                             fill: theme.textMuted,
@@ -5235,6 +5250,8 @@ export function BacktestWorkspace({
                           }}
                         />
                         <YAxis
+                          axisLine={false}
+                          tickLine={false}
                           tick={{
                             fill: theme.textMuted,
                             fontSize: scale.fs(8),
@@ -5287,10 +5304,13 @@ export function BacktestWorkspace({
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
                         <CartesianGrid
-                          stroke={theme.border}
-                          strokeDasharray="3 3"
+                          stroke={theme.borderLight || theme.border}
+                          strokeDasharray="0"
+                          vertical={false}
                         />
                         <XAxis
+                          axisLine={false}
+                          tickLine={false}
                           dataKey="reason"
                           tick={{
                             fill: theme.textMuted,
@@ -5302,6 +5322,8 @@ export function BacktestWorkspace({
                           height={56}
                         />
                         <YAxis
+                          axisLine={false}
+                          tickLine={false}
                           tick={{
                             fill: theme.textMuted,
                             fontSize: scale.fs(8),
@@ -5348,10 +5370,13 @@ export function BacktestWorkspace({
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                       >
                         <CartesianGrid
-                          stroke={theme.border}
-                          strokeDasharray="3 3"
+                          stroke={theme.borderLight || theme.border}
+                          strokeDasharray="0"
+                          vertical={false}
                         />
                         <XAxis
+                          axisLine={false}
+                          tickLine={false}
                           dataKey="label"
                           tick={{
                             fill: theme.textMuted,
@@ -5359,6 +5384,8 @@ export function BacktestWorkspace({
                           }}
                         />
                         <YAxis
+                          axisLine={false}
+                          tickLine={false}
                           tick={{
                             fill: theme.textMuted,
                             fontSize: scale.fs(8),

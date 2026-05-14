@@ -26,7 +26,7 @@ const SegmentedToggle = ({
       display: "inline-flex",
       alignItems: "center",
       gap: sp(2),
-      padding: 2,
+      padding: sp(2),
       border: `1px solid ${T.border}`,
       borderRadius: dim(4),
       background: T.bg2,
@@ -46,7 +46,7 @@ const SegmentedToggle = ({
             background: active ? T.bg3 : "transparent",
             color: active ? T.text : T.textMuted,
             cursor: "pointer",
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(8),
             fontWeight: 400,
             padding: "3px 7px",
@@ -72,7 +72,7 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
       <span
         style={{
           color: sourceTone,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(7),
           fontWeight: 400,
           overflow: "hidden",
@@ -88,7 +88,7 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
         title={sourceWarning}
         style={{
           color: warningTone || T.amber,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontSize: fs(7),
           fontWeight: 400,
           overflow: "hidden",
@@ -164,7 +164,7 @@ export const FlowDistributionScannerPanel = ({
         display: "grid",
         gridTemplateColumns:
           "repeat(auto-fit, minmax(min(100%, 116px), 1fr))",
-        gap: 5,
+        gap: sp(5),
         minWidth: 0,
       }}
     >
@@ -260,7 +260,7 @@ export const FlowDistributionScannerPanel = ({
         display: "grid",
         gridTemplateColumns: narrow ? "minmax(0, 1fr)" : `minmax(0, 1fr) ${RAIL_WIDTH_PX}px`,
         gridTemplateRows: narrow ? "auto auto" : "auto",
-        gap: 6,
+        gap: sp(6),
         minWidth: 0,
         alignItems: "stretch",
       }}

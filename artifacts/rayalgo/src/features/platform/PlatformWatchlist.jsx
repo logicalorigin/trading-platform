@@ -284,18 +284,14 @@ const WatchlistRow = memo(
             width: "100%",
             minHeight: dim(44),
             display: "grid",
-            gridTemplateColumns: "minmax(58px, 0.9fr) minmax(64px, 1fr) 54px 38px 48px",
+            gridTemplateColumns: `minmax(${dim(58)}px, 0.9fr) minmax(${dim(64)}px, 1fr) ${dim(54)}px ${dim(38)}px ${dim(48)}px`,
             alignItems: "center",
             gap: sp(4),
-            padding: sp("4px 7px"),
+            padding: sp("6px 10px"),
             border: "none",
-            borderLeft: selectedRow
-              ? `2px solid ${T.accent}`
-              : dragOver
-                ? `2px solid ${T.accent}`
-                : "2px solid transparent",
-            borderBottom: `1px solid ${T.border}20`,
-            background: rowBackground,
+            borderBottom: `1px solid ${T.borderLight}`,
+            background:
+              selectedRow || dragOver ? `${T.accent}12` : rowBackground,
             color: T.text,
             cursor: "pointer",
             textAlign: "left",
@@ -320,7 +316,7 @@ const WatchlistRow = memo(
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 color: T.text,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(11),
               }}
             >
@@ -335,7 +331,7 @@ const WatchlistRow = memo(
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               color: T.text,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(11),
               textAlign: "right",
             }}
@@ -346,7 +342,7 @@ const WatchlistRow = memo(
             style={{
               color:
                 pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(10),
               textAlign: "right",
               whiteSpace: "nowrap",
@@ -362,7 +358,7 @@ const WatchlistRow = memo(
           <span
             style={{
               color: T.textMuted,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               textAlign: "right",
               whiteSpace: "nowrap",
@@ -421,21 +417,16 @@ const WatchlistRow = memo(
                     : T.red,
           }),
           display: "grid",
-          gridTemplateColumns: "minmax(0,1fr) 54px",
+          gridTemplateColumns: `minmax(0,1fr) ${dim(54)}px`,
           gap: sp(6),
-          padding: sp("7px 8px"),
+          padding: sp("8px 12px"),
           cursor: "pointer",
           alignItems: "center",
-          background: rowBackground,
-          borderLeft: selectedRow
-            ? `2px solid ${T.accent}`
-            : dragOver
-              ? `2px solid ${T.accent}`
-              : "2px solid transparent",
-          borderBottom: `1px solid ${T.border}20`,
+          background:
+            selectedRow || dragOver ? `${T.accent}12` : rowBackground,
+          borderBottom: `1px solid ${T.borderLight}`,
           opacity: dragging ? 0.55 : 1,
-          transition:
-            "background 0.1s ease, border-color 0.1s ease, opacity 0.1s ease",
+          transition: "background 0.18s ease, opacity 0.12s ease",
         }}
         onMouseEnter={(event) => {
           if (!selectedRow && !dragOver) event.currentTarget.style.background = T.bg2;
@@ -472,7 +463,7 @@ const WatchlistRow = memo(
 	                alignItems: "center",
 	                fontSize: fs(12),
 	                fontWeight: 400,
-	                fontFamily: T.mono,
+	                fontFamily: T.sans,
 	                color: T.text,
 	                overflow: "hidden",
 	                textOverflow: "ellipsis",
@@ -486,9 +477,9 @@ const WatchlistRow = memo(
             {item.monitoredOnly ? (
               <AppTooltip content="Signal-monitor symbol"><span
                 style={{
-                  border: `1px solid ${T.border}`,
+                  border: "none",
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: fs(7),
                   fontWeight: 400,
                   lineHeight: 1,
@@ -521,7 +512,7 @@ const WatchlistRow = memo(
                     background: signalFresh ? `${signalColor}1f` : `${signalColor}0f`,
                     color: signalFresh ? signalColor : `${signalColor}bb`,
                     cursor: "pointer",
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     fontSize: fs(7),
                     fontWeight: 400,
                     letterSpacing: "0.06em",
@@ -541,7 +532,7 @@ const WatchlistRow = memo(
 	                alignItems: "center",
 	                justifyContent: "flex-end",
 	                color: T.text,
-	                fontFamily: T.mono,
+	                fontFamily: T.sans,
 	                fontSize: fs(11),
 	                fontWeight: 400,
 	                textAlign: "right",
@@ -589,7 +580,7 @@ const WatchlistRow = memo(
                 fontSize: fs(9),
                 color:
                   pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
@@ -601,7 +592,7 @@ const WatchlistRow = memo(
                 fontSize: fs(9),
                 color:
                   pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
@@ -612,7 +603,7 @@ const WatchlistRow = memo(
               style={{
                 fontSize: fs(8),
                 color: T.textMuted,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 whiteSpace: "nowrap",
               }}
             >
@@ -631,7 +622,7 @@ const WatchlistRow = memo(
             <AppTooltip content="Volume"><span
               style={{
                 color: T.textMuted,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(8),
                 whiteSpace: "nowrap",
               }}
@@ -679,7 +670,7 @@ const WatchlistRow = memo(
             justifySelf: "end",
             display: "grid",
             placeItems: "center",
-            border: `1px solid ${T.border}`,
+            border: "none",
             borderRadius: 0,
             background: item.monitoredOnly ? `${T.accent}10` : "transparent",
             color: item.monitoredOnly
@@ -981,10 +972,10 @@ export const Watchlist = ({
               padding: sp("4px 7px"),
               borderRadius: 0,
               background: T.bg2,
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: T.text,
               cursor: "pointer",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(10),
               fontWeight: 400,
             }}
@@ -1011,7 +1002,7 @@ export const Watchlist = ({
                 right: 0,
                 zIndex: 20,
                 background: T.bg2,
-                border: `1px solid ${T.border}`,
+                border: "none",
                 borderRadius: 0,
                 boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
                 overflow: "hidden",
@@ -1047,7 +1038,7 @@ export const Watchlist = ({
                         display: "block",
                         fontSize: fs(10),
                         fontWeight: 400,
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         color: T.text,
                       }}
                     >
@@ -1058,8 +1049,8 @@ export const Watchlist = ({
                         display: "block",
                         fontSize: fs(8),
                         color: T.textDim,
-                        fontFamily: T.mono,
-                        marginTop: 1,
+                        fontFamily: T.sans,
+                        marginTop: sp(1),
                       }}
                     >
                       {countWatchlistSymbols(watchlist)} symbols
@@ -1070,7 +1061,7 @@ export const Watchlist = ({
                       style={{
                         color: T.green,
                         fontSize: fs(8),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontWeight: 400,
                       }}
                     >
@@ -1092,7 +1083,7 @@ export const Watchlist = ({
               placeItems: "center",
               borderRadius: 0,
               background: T.bg2,
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: T.accent,
               cursor: "pointer",
             }}
@@ -1111,10 +1102,10 @@ export const Watchlist = ({
               padding: sp("3px 4px"),
               borderRadius: 0,
               background: "transparent",
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: T.textDim,
               cursor: activeWatchlist && !busy ? "pointer" : "default",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               fontWeight: 400,
             }}
@@ -1129,13 +1120,13 @@ export const Watchlist = ({
               padding: sp("3px 4px"),
               borderRadius: 0,
               background: activeWatchlist?.isDefault ? `${T.green}12` : "transparent",
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: activeWatchlist?.isDefault ? T.green : T.textDim,
               cursor:
                 activeWatchlist && !activeWatchlist.isDefault && !busy
                   ? "pointer"
                   : "default",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               fontWeight: 400,
             }}
@@ -1150,13 +1141,13 @@ export const Watchlist = ({
               padding: sp("3px 4px"),
               borderRadius: 0,
               background: "transparent",
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: watchlists.length <= 1 ? T.textMuted : T.red,
               cursor:
                 activeWatchlist && watchlists.length > 1 && !busy
                   ? "pointer"
                   : "default",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               fontWeight: 400,
             }}
@@ -1188,7 +1179,7 @@ export const Watchlist = ({
                   border: `1px solid ${active ? T.accent : T.border}`,
                   color: active ? T.text : T.textMuted,
                   cursor: "pointer",
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: fs(7),
                   fontWeight: 400,
                   whiteSpace: "nowrap",
@@ -1209,7 +1200,7 @@ export const Watchlist = ({
               padding: sp("4px 7px"),
               borderRadius: 0,
               background: T.bg2,
-              border: `1px solid ${T.border}`,
+              border: "none",
               minWidth: 0,
             }}
           >
@@ -1241,10 +1232,10 @@ export const Watchlist = ({
               width: dim(44),
               borderRadius: 0,
               background: directionEnabled ? T.bg2 : "transparent",
-              border: `1px solid ${T.border}`,
+              border: "none",
               color: directionEnabled ? T.textDim : T.textMuted,
               cursor: directionEnabled ? "pointer" : "default",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(8),
               fontWeight: 400,
             }}
@@ -1257,7 +1248,7 @@ export const Watchlist = ({
           <div
             data-testid="watchlist-add-panel"
             style={{
-              border: `1px solid ${T.border}`,
+              border: "none",
               borderRadius: 0,
               background: T.bg2,
               overflow: "hidden",
@@ -1282,7 +1273,7 @@ export const Watchlist = ({
                   border: "none",
                   outline: "none",
                   fontSize: fs(10),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   color: T.text,
                 }}
               />
@@ -1319,7 +1310,7 @@ export const Watchlist = ({
                       style={{
                         width: "100%",
                         display: "grid",
-                        gridTemplateColumns: "56px 1fr",
+                        gridTemplateColumns: `${dim(56)}px 1fr`,
                         gap: sp(8),
                         alignItems: "center",
                         padding: sp("7px 8px"),
@@ -1334,7 +1325,7 @@ export const Watchlist = ({
                         style={{
                           fontSize: fs(10),
                           fontWeight: 400,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           color: T.text,
                         }}
                       >
@@ -1368,7 +1359,7 @@ export const Watchlist = ({
                         border: "none",
                         borderBottom: `1px solid ${T.border}20`,
                         cursor: "pointer",
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontSize: fs(10),
                         color: T.text,
                       }}
@@ -1386,7 +1377,7 @@ export const Watchlist = ({
                     padding: sp("10px 8px"),
                     color: T.textDim,
                     fontSize: fs(9),
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                   }}
                 >
                   No matching symbols.
@@ -1439,7 +1430,7 @@ export const Watchlist = ({
           borderTop: `1px solid ${T.border}`,
           fontSize: fs(9),
           color: T.textMuted,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
@@ -1462,7 +1453,7 @@ export const Watchlist = ({
             background: "transparent",
             color: T.accent,
             cursor: "pointer",
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(9),
             fontWeight: 400,
           }}
@@ -1505,10 +1496,10 @@ export const Watchlist = ({
               disabled={busy}
               style={{
                 minHeight: dim(38),
-                border: `1px solid ${T.border}`,
+                border: "none",
                 background: T.bg1,
                 color: T.accent,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(9),
                 cursor: busy ? "default" : "pointer",
               }}
@@ -1521,10 +1512,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || busy}
               style={{
                 minHeight: dim(38),
-                border: `1px solid ${T.border}`,
+                border: "none",
                 background: T.bg1,
                 color: T.textSec,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(9),
                 cursor: activeWatchlist && !busy ? "pointer" : "default",
               }}
@@ -1537,10 +1528,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
               style={{
                 minHeight: dim(38),
-                border: `1px solid ${T.border}`,
+                border: "none",
                 background: activeWatchlist?.isDefault ? `${T.green}12` : T.bg1,
                 color: activeWatchlist?.isDefault ? T.green : T.textSec,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(9),
                 cursor:
                   activeWatchlist && !activeWatchlist.isDefault && !busy
@@ -1556,10 +1547,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || watchlists.length <= 1 || busy}
               style={{
                 minHeight: dim(38),
-                border: `1px solid ${T.border}`,
+                border: "none",
                 background: T.bg1,
                 color: watchlists.length <= 1 ? T.textMuted : T.red,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(9),
                 cursor:
                   activeWatchlist && watchlists.length > 1 && !busy
@@ -1574,7 +1565,7 @@ export const Watchlist = ({
           <div
             data-testid="watchlist-manage-add-panel"
             style={{
-              border: `1px solid ${T.border}`,
+              border: "none",
               background: T.bg1,
               overflow: "hidden",
             }}
@@ -1600,7 +1591,7 @@ export const Watchlist = ({
                   border: "none",
                   outline: "none",
                   color: T.text,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: fs(11),
                 }}
               />
@@ -1619,7 +1610,7 @@ export const Watchlist = ({
                         width: "100%",
                         minHeight: dim(38),
                         display: "grid",
-                        gridTemplateColumns: "64px minmax(0, 1fr)",
+                        gridTemplateColumns: `${dim(64)}px minmax(0, 1fr)`,
                         gap: sp(8),
                         alignItems: "center",
                         padding: sp("0 8px"),
@@ -1631,7 +1622,7 @@ export const Watchlist = ({
                         cursor: "pointer",
                       }}
                     >
-                      <span style={{ fontFamily: T.mono, fontSize: fs(11) }}>
+                      <span style={{ fontFamily: T.sans, fontSize: fs(11) }}>
                         {result.ticker}
                       </span>
                       <span
@@ -1668,7 +1659,7 @@ export const Watchlist = ({
                         borderBottom: `1px solid ${T.border}20`,
                         color: T.text,
                         cursor: "pointer",
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontSize: fs(10),
                       }}
                     >
@@ -1683,7 +1674,7 @@ export const Watchlist = ({
                   style={{
                     padding: sp("12px 8px"),
                     color: T.textDim,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     fontSize: fs(9),
                   }}
                 >

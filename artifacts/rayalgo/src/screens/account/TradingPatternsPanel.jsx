@@ -35,10 +35,10 @@ const arrayValue = (value) => (Array.isArray(value) ? value : []);
 const PatternMetric = ({ label, value, tone = T.text }) => (
   <div
     style={{
-      border: `1px solid ${T.border}`,
-      borderRadius: dim(4),
-      background: T.bg0,
-      padding: sp("5px 6px"),
+      border: "none",
+      borderRadius: dim(10),
+      background: T.bg2,
+      padding: sp("6px 8px"),
       minWidth: 0,
     }}
   >
@@ -62,9 +62,9 @@ const PatternMetric = ({ label, value, tone = T.text }) => (
 
 const toneColor = (tone) =>
   tone === "green"
-    ? T.green
+    ? "var(--ra-pnl-positive)"
     : tone === "red"
-      ? T.red
+      ? "var(--ra-pnl-negative)"
       : tone === "amber"
         ? T.amber
         : tone === "cyan"
@@ -156,7 +156,7 @@ const AnalysisReadinessStrip = ({ readiness = [] }) => {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(132)}px, 1fr))`,
         gap: sp(4),
       }}
     >
@@ -243,7 +243,7 @@ const BucketDrilldownStrip = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`,
           gap: sp(4),
         }}
       >
@@ -257,10 +257,10 @@ const BucketDrilldownStrip = ({
               className="ra-interactive"
               onClick={() => onLensChange?.(group.kind, lensInputForBucket(group))}
               style={{
-                border: `1px solid ${active ? T.cyan : T.border}`,
-                borderRadius: dim(4),
-                background: active ? `${T.cyan}14` : T.bg0,
-                padding: sp("5px 6px"),
+                border: "none",
+                borderRadius: dim(10),
+                background: active ? `${T.cyan}14` : T.bg2,
+                padding: sp("7px 9px"),
                 display: "grid",
                 gap: sp(2),
                 minWidth: 0,
@@ -321,10 +321,10 @@ const OutcomeBreakdownRows = ({ title, groups = [], currency, maskValues }) => {
               gridTemplateColumns: "minmax(0, 1fr) auto auto",
               gap: sp(5),
               alignItems: "center",
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(4),
-              background: T.bg0,
-              padding: sp("4px 5px"),
+              border: "none",
+              borderRadius: dim(8),
+              background: T.bg2,
+              padding: sp("5px 8px"),
               fontFamily: T.data,
               fontSize: textSize("label"),
             }}
@@ -400,9 +400,24 @@ const StopScenarioRows = ({ scenarios = [], currency, maskValues }) => {
   );
 };
 
-const startOfIsoWeek = (input) => {
-  const d = input instanceof Date ? new Date(input.getTime()) : new Date(input);
-  if (Number.isNaN(d.getTime())) return null;
+export const startOfIsoWeek = (input) => {
+  const dateOnly = typeof input === "string"
+    ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim())
+    : null;
+  const d = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : input instanceof Date
+      ? new Date(input.getTime())
+      : new Date(input);
+  if (
+    Number.isNaN(d.getTime()) ||
+    (dateOnly &&
+      (d.getFullYear() !== Number(dateOnly[1]) ||
+        d.getMonth() !== Number(dateOnly[2]) - 1 ||
+        d.getDate() !== Number(dateOnly[3])))
+  ) {
+    return null;
+  }
   d.setHours(0, 0, 0, 0);
   const dayOffset = (d.getDay() + 6) % 7;
   d.setDate(d.getDate() - dayOffset);
@@ -499,10 +514,10 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
       style={{
         display: "grid",
         gap: sp(3),
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(5),
-        background: T.bg0,
-        padding: sp("6px 8px"),
+        border: "none",
+        borderRadius: dim(10),
+        background: T.bg2,
+        padding: sp("8px 10px"),
       }}
     >
       <div
@@ -591,7 +606,11 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
 };
 
 const histogramBucketColor = (side) =>
-  side === "loss" ? T.red : side === "win" ? T.green : T.textMuted;
+  side === "loss"
+    ? "var(--ra-pnl-negative)"
+    : side === "win"
+      ? "var(--ra-pnl-positive)"
+      : T.textMuted;
 
 const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive = false }) => {
   const model = useMemo(
@@ -621,7 +640,7 @@ const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive 
           {formatNumber(model.summary.totalTrades, 0)} trades
         </div>
       </div>
-      <div style={{ display: "grid", gap: 2 }}>
+      <div style={{ display: "grid", gap: sp(2) }}>
         {orderedBuckets.map((bucket) => {
           const widthPct = (bucket.count / maxCount) * 100;
           const color = histogramBucketColor(bucket.side);
@@ -638,7 +657,7 @@ const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive 
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(46px, auto) minmax(0, 1fr) minmax(20px, auto)",
+                  gridTemplateColumns: `minmax(${dim(46)}px, auto) minmax(0, 1fr) minmax(${dim(20)}px, auto)`,
                   alignItems: "center",
                   gap: sp(4),
                   fontFamily: T.data,
@@ -660,9 +679,9 @@ const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive 
                 <div
                   style={{
                     height: dim(10),
-                    background: T.bg0,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(2),
+                    background: T.bg3,
+                    border: "none",
+                    borderRadius: 999,
                     overflow: "hidden",
                   }}
                 >
@@ -809,7 +828,6 @@ export const TradingPatternsPanel = ({
   const loading = query.isLoading || query.isPending;
   const refreshing = snapshotMutation?.isPending;
   const selectedSymbol = selectedLens?.symbol || "";
-  const selectedSourceType = selectedLens?.sourceType || "all";
   const selectedCloseHour = selectedLens?.closeHour ?? null;
   const selectSymbol = (symbol) => {
     onSymbolSelect?.(symbol);
@@ -923,7 +941,7 @@ export const TradingPatternsPanel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
+            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(88)}px, 1fr))`,
             gap: sp(4),
           }}
         >
@@ -967,7 +985,7 @@ export const TradingPatternsPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`,
               gap: sp(5),
             }}
           >
@@ -996,7 +1014,7 @@ export const TradingPatternsPanel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`,
             gap: sp(7),
           }}
         >
@@ -1041,13 +1059,13 @@ export const TradingPatternsPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`,
               gap: sp(7),
             }}
           >
             <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
               <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }}>
-                <Pill tone={tickerOrder === "bottom" ? "red" : "green"}>
+                <Pill tone={tickerOrder === "bottom" ? "pnl-negative" : "pnl-positive"}>
                   {tickerOrder === "bottom" ? "Bottom Tickers" : "Top Tickers"}
                 </Pill>
                 <Pill tone="purple">{formatNumber(summary.symbolsTraded || 0, 0)} symbols</Pill>
@@ -1071,30 +1089,19 @@ export const TradingPatternsPanel = ({
               <div style={{ display: "grid", gap: sp(3) }}>
                 <div style={mutedLabelStyle}>SOURCE BREAKDOWN</div>
                 {sourceRows.map((row) => (
-                  <button
-                    type="button"
+                  <div
                     key={row.key || row.label}
-                    onClick={() => onLensChange?.("source", row)}
-                    className="ra-interactive"
                     style={{
                       display: "grid",
                       gridTemplateColumns: "minmax(0, 1fr) auto",
                       gap: sp(4),
-                      border: `1px solid ${
-                        selectedSourceType !== "all" && selectedSourceType === row.sourceType
-                          ? T.pink
-                          : T.border
-                      }`,
-                      borderRadius: dim(4),
-                      background:
-                        selectedSourceType !== "all" && selectedSourceType === row.sourceType
-                          ? `${T.pink}14`
-                          : "transparent",
-                      padding: sp("4px 5px"),
+                      border: "none",
+                      borderRadius: dim(8),
+                      background: T.bg2,
+                      padding: sp("5px 7px"),
                       color: T.textSec,
                       fontFamily: T.data,
                       fontSize: textSize("tableCell"),
-                      cursor: "pointer",
                       textAlign: "left",
                     }}
                   >
@@ -1104,7 +1111,7 @@ export const TradingPatternsPanel = ({
                     <span style={{ color: toneForValue(row.realizedPnl), fontWeight: 400 }}>
                       {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
                     </span>
-                  </button>
+                  </div>
                 ))}
               </div>
               <div style={{ display: "grid", gap: sp(3) }}>

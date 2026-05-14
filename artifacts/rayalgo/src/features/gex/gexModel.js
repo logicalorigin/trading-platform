@@ -40,11 +40,21 @@ const normalizeRight = (value) => {
 const parseExpirationDateParts = (value) => {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return null;
-  return {
-    year: Number(match[1]),
-    month: Number(match[2]),
-    day: Number(match[3]),
-  };
+  return validateExpirationDateParts(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  );
+};
+
+const validateExpirationDateParts = (year, month, day) => {
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? { year, month, day }
+    : null;
 };
 
 export const getGexOptionContractKey = (quote) => {
@@ -167,7 +177,8 @@ export const normalizeGexResponseOptions = (options = []) => {
       strike == null ||
       expireYear == null ||
       expireMonth == null ||
-      expireDay == null
+      expireDay == null ||
+      !validateExpirationDateParts(expireYear, expireMonth, expireDay)
     ) {
       return;
     }

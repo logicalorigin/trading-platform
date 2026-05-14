@@ -116,7 +116,7 @@ test("critical memory pressure pauses hidden preload without dropping broad flow
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
 });
 
-test("defers broad flow runtime while page is hidden", () => {
+test("keeps broad flow runtime active while page is hidden", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     pageVisible: false,
@@ -124,7 +124,7 @@ test("defers broad flow runtime while page is hidden", () => {
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.streams.accountRealtime, false);
   assert.equal(schedule.streams.marketStockAggregates, false);
 });

@@ -1,6 +1,6 @@
 import { useChartHydrationStats } from "../charting/chartHydrationStats";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
-import { T, textSize } from "../../lib/uiTokens";
+import { T, dim, sp, textSize } from "../../lib/uiTokens";
 import { SCREENS } from "./screenRegistry.jsx";
 import { useRuntimeWorkloadStats } from "./workloadStats";
 const formatLatencyMetric = (value) => (
@@ -38,14 +38,14 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
     <div
       style={{
         position: "fixed",
-        right: 12,
-        bottom: 12,
+        right: dim(12),
+        bottom: dim(12),
         zIndex: 10000,
         display: "flex",
-        gap: 8,
+        gap: sp(8),
         alignItems: "center",
-        padding: "8px 10px",
-        borderRadius: 10,
+        padding: sp("8px 10px"),
+        borderRadius: dim(10),
         border: "1px solid rgba(148,163,184,0.35)",
         background: "rgba(2,6,23,0.88)",
         color: "#dbeafe",

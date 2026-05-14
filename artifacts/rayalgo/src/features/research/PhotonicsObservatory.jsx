@@ -745,8 +745,10 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
         {aiR && (
           <div style={{
-            marginTop: 6, background: "rgba(0,0,0,.035)", borderRadius: 5, padding: 8,
-            borderLeft: "3px solid " + (aiR.impact === "positive" ? "#1a8a5c" : aiR.impact === "negative" ? "#c44040" : "#CDA24E"),
+            marginTop: 6,
+            background: aiR.impact === "positive" ? "rgba(26,138,92,.08)" : aiR.impact === "negative" ? "rgba(196,64,64,.08)" : "rgba(205,162,78,.08)",
+            borderRadius: 8,
+            padding: 10,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 5 }}>
               <span style={{
@@ -1320,7 +1322,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
                 <stop offset="100%" stopColor={vc.c} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#eee" }} tickLine={false} interval={tickInterval} minTickGap={8} />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} interval={tickInterval} minTickGap={8} />
             <YAxis
               tick={{ fontSize: 10, fill: "#aaa", fontVariantNumeric: "tabular-nums" }}
               axisLine={false} tickLine={false}
@@ -2030,7 +2032,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
         {/* ── DESCRIPTION + PRODUCT ── */}
         <div style={STYLE_SECTION}>
           <p style={{ fontSize: 13, color: "#555", lineHeight: 1.7, margin: "0 0 8px" }}>{co.d}</p>
-          <div style={{ background: vc.bg, borderRadius: 6, padding: "4px 8px", fontSize: 11, color: "#555", borderLeft: "3px solid " + vc.c }}>{co.pr}</div>
+          <div style={{ background: vc.bg, borderRadius: 8, padding: "6px 10px", fontSize: 11, color: "#555" }}>{co.pr}</div>
         </div>
 
         {/* ── SUPPLY CHAIN + RISKS/CATALYSTS ── */}
@@ -2063,11 +2065,11 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           <div>
             <div style={{ background: "rgba(196,64,64,.03)", borderRadius: 6, padding: 7, marginBottom: 6 }}>
               <div style={{ fontSize: 10, color: "#c44040", letterSpacing: 1.5, marginBottom: 4 }}>RISKS</div>
-              {co.ri.map((r, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 8, borderLeft: "2px solid rgba(196,64,64,.15)", lineHeight: 1.5 }}>{r}</div>)}
+              {co.ri.map((r, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 12, lineHeight: 1.5 }}>{r}</div>)}
             </div>
             <div style={{ background: "rgba(26,138,92,.03)", borderRadius: 6, padding: 7 }}>
               <div style={{ fontSize: 10, color: "#1a8a5c", letterSpacing: 1.5, marginBottom: 4 }}>CATALYSTS</div>
-              {co.ca.map((c, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 8, borderLeft: "2px solid rgba(26,138,92,.15)", lineHeight: 1.5 }}>{c}</div>)}
+              {co.ca.map((c, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 12, lineHeight: 1.5 }}>{c}</div>)}
             </div>
           </div>
         </div>
@@ -2077,7 +2079,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           <div style={STYLE_LABEL}>Annual Revenue</div>
           <ResponsiveContainer width="100%" height={75}>
             <BarChart data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
-              <XAxis dataKey="year" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#e0e0e0" }} tickLine={false} />
+              <XAxis dataKey="year" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "#aaa" }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={chartTooltipContentStyle} formatter={(v) => [fmtMC(v), "Revenue"]} />
               <Bar dataKey="rev" fill={vc.c} radius={[4, 4, 0, 0]} barSize={28} fillOpacity={0.7}>
@@ -2165,7 +2167,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
                 </table>
               </div>
             ) : (
-              <div style={{ background: vc.bg, borderRadius: 6, padding: "6px 10px", fontSize: 11, color: "#555", borderLeft: "3px solid " + vc.c }}>{co.pr}</div>
+              <div style={{ background: vc.bg, borderRadius: 8, padding: "8px 12px", fontSize: 11, color: "#555" }}>{co.pr}</div>
             )}
           </div>
 
@@ -2253,7 +2255,7 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
             <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, padding: "8px 10px" }}>
 	              <ResponsiveContainer width="100%" height={140}>
 	                <BarChart data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
-	                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#e0e0e0" }} tickLine={false} />
+	                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} />
 	                  <YAxis tick={{ fontSize: 10, fill: "#aaa" }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
 	                  <Tooltip contentStyle={chartTooltipContentStyle}
 	                    formatter={(v, name) => [isFiniteNumber(v) ? "$" + v.toFixed(2) : "—", name]} />
@@ -3441,7 +3443,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={{ ...card, padding: "8px 4px" }}>
           <ResponsiveContainer width="100%" height={200}>
             <ScatterChart margin={{ top: 14, right: 16, bottom: 8, left: 0 }}>
-              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#e0e0e0" }} tickLine={false}
+              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false}
                 label={{ value: "P/E Ratio", position: "bottom", fontSize: 10, fill: "#aaa", offset: -2 }} />
               <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false}
                 label={{ value: "Rev Growth %", angle: -90, position: "insideLeft", fontSize: 10, fill: "#aaa", offset: 10 }} />

@@ -77,7 +77,7 @@ test("live flow scanner waits for on-demand IBKR hydration", () => {
   assert.match(source, /queueRefresh:\s*blocking/);
 });
 
-test("flow scanner requests broad backend flow and filters scanner scope locally", () => {
+test("flow scanner uses backend aggregate flow for broad scans", () => {
   const source = readFileSync(
     new URL("./useLiveMarketFlow.js", import.meta.url),
     "utf8",
@@ -87,14 +87,17 @@ test("flow scanner requests broad backend flow and filters scanner scope locally
   )?.[0];
 
   assert.ok(requestBlock, "flow scanner request block must be present");
+  assert.match(source, /listAggregateFlowEventsRequest/);
+  assert.match(source, /const usesBackendBroadScanner = flowScannerModeUsesMarketUniverse/);
+  assert.match(source, /const shouldUseClientSymbolScanner = !usesBackendBroadScanner/);
+  assert.match(source, /!shouldUseClientSymbolScanner/);
   assert.match(requestBlock, /scope:\s*FLOW_SCANNER_SCOPE\.all/);
   assert.doesNotMatch(requestBlock, /scope:\s*effectiveScannerConfig\.scope/);
   assert.doesNotMatch(requestBlock, /unusualThreshold/);
   assert.match(source, /filterFlowScannerEvents\([\s\S]*effectiveScannerConfig/);
-  assert.match(source, /promotedBackendSymbols/);
-  assert.match(source, /backendRadarBatchSymbols/);
+  assert.match(source, /backendCurrentBatchSymbols/);
   assert.match(source, /FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS/);
-  assert.match(source, /blocking\s*===\s*false[\s\S]*flowScannerModeUsesMarketUniverse/);
+  assert.match(source, /blocking\s*===\s*false[\s\S]*usesBackendBroadScanner/);
   assert.match(source, /marketSymbols:\s*marketSymbolsForScanner/);
 });
 
@@ -109,9 +112,11 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.doesNotMatch(source, /header-flow-scan-mode/);
   assert.match(source, /useMarketFlowSnapshotForStoreKey\(\s*BROAD_MARKET_FLOW_STORE_KEY/);
   assert.match(source, /useFlowTapeFilterState\(\{[\s\S]*subscribe:\s*enabled/);
+  assert.match(source, /const buildHeaderFlowTapeFilters = \(filters\) => \(\{/);
+  assert.match(source, /symbol:\s*null/);
   assert.match(source, /rawUnusualEvents/);
-  assert.match(source, /filterFlowTapeEvents\(rawUnusualEvents,\s*flowTapeFilters\)/);
-  assert.match(source, /flowTapeFiltersAreActive\(flowTapeFilters\)/);
+  assert.match(source, /filterFlowTapeEvents\(rawUnusualEvents,\s*headerFlowTapeFilters\)/);
+  assert.match(source, /flowTapeFiltersAreActive\(headerFlowTapeFilters\)/);
   assert.match(source, /FLOW FILTERED/);
   assert.match(source, /mode:\s*FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
   assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
@@ -161,6 +166,28 @@ test("mobile shell uses bottom navigation and separates watchlist activity surfa
   assert.match(watchlistDrawerSource, /<WatchlistComponent/);
   assert.match(headerSource, /<BottomSheet/);
   assert.match(headerSource, /compactSettings=\{isPhone\}/);
+});
+
+test("floating platform controls use pointer outside-click listeners", () => {
+  const marketActivitySource = readFileSync(
+    new URL("../market/MarketActivityPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const headerSource = readFileSync(
+    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
+    "utf8",
+  );
+  const tickerSearchSource = readFileSync(
+    new URL("./tickerSearch/TickerSearch.jsx", import.meta.url),
+    "utf8",
+  );
+
+  [marketActivitySource, headerSource, tickerSearchSource].forEach((source) => {
+    assert.match(source, /addEventListener\("pointerdown", handlePointerDown\)/);
+    assert.match(source, /removeEventListener\("pointerdown", handlePointerDown\)/);
+    assert.doesNotMatch(source, /addEventListener\("mousedown", handlePointerDown\)/);
+    assert.doesNotMatch(source, /removeEventListener\("mousedown", handlePointerDown\)/);
+  });
 });
 
 test("Market phone layout uses the app-frame activity sheet instead of the old panel", () => {
@@ -219,6 +246,40 @@ test("Account phone layout uses card lists for dense trading tables", () => {
   assert.match(positionsSource, /data-testid="account-positions-row-list"/);
   assert.match(tradesOrdersSource, /data-testid="account-orders-row-list"/);
   assert.match(tradesOrdersSource, /data-testid="account-trades-row-list"/);
+});
+
+test("Account performance pilot defers below-fold panels and memoizes mobile rows", () => {
+  const accountSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const deferredRenderSource = readFileSync(
+    new URL("../../components/platform/DeferredRender.jsx", import.meta.url),
+    "utf8",
+  );
+  const positionsSource = readFileSync(
+    new URL("../../screens/account/PositionsPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const tradesOrdersSource = readFileSync(
+    new URL("../../screens/account/TradesOrdersPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  assert.match(deferredRenderSource, /new window\.IntersectionObserver/);
+  assert.match(deferredRenderSource, /observer\.disconnect\(\)/);
+  assert.match(accountSource, /<DeferredRender[\s\S]*account-deferred-positions/);
+  assert.match(accountSource, /<DeferredRender[\s\S]*account-deferred-trades-orders/);
+  assert.match(cssSource, /--ra-color-pnl-positive/);
+  assert.match(cssSource, /\.ra-deferred-render__placeholder/);
+  assert.match(positionsSource, /const MobilePositionRow = memo/);
+  assert.match(positionsSource, /data-action="chart"/);
+  assert.match(positionsSource, /onRowAction=\{handleMobileRowAction\}/);
+  assert.match(tradesOrdersSource, /const MobileOrderRow = memo/);
+  assert.match(tradesOrdersSource, /const MobileTradeRow = memo/);
+  assert.match(tradesOrdersSource, /data-action="cancel"/);
+  assert.match(tradesOrdersSource, /onRowAction=\{handleOrderRowAction\}/);
 });
 
 test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {
@@ -339,6 +400,7 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
   assert.doesNotMatch(source, /const BROAD_FLOW_STARTUP_DELAY_MS = 45_000;/);
   assert.doesNotMatch(broadRuntime, /activeSymbols/);
   assert.match(broadRuntime, /FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
+  assert.doesNotMatch(broadRuntime, /setFlowScannerControlState/);
   assert.match(broadRuntime, /if \(!runtimeActive\)[\s\S]*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);
   assert.match(sharedRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*true/);
   assert.match(broadRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*false/);
@@ -377,7 +439,7 @@ test("Broad scanner owns Flow and Market flow without the shared all-flow runtim
   assert.match(schedulerSource, /const firstScreenReady = screenWarmupPhase !== "initial"/);
   assert.match(
     schedulerSource,
-    /const broadFlowAllowed = Boolean\([\s\S]*visible[\s\S]*sessionReady[\s\S]*backgroundIbkr[\s\S]*firstScreenReady[\s\S]*\)/,
+    /const broadFlowAllowed = Boolean\(sessionReady\)/,
   );
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);
@@ -466,7 +528,6 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.match(source, /getGetSignalOptionsAutomationStateQueryKey/);
   assert.match(source, /getGetSignalOptionsPerformanceQueryKey/);
   assert.match(source, /Signal -&gt; Action/);
-  assert.match(source, /Performance vs Rules/);
   assert.match(source, /signal-options-expanded-capacity/);
   assert.match(source, /SHADOW ONLY/);
   assert.match(source, /CREATE SHADOW DEPLOYMENT/);
@@ -529,6 +590,7 @@ test("hidden-mounted Trade keeps execution warm and gates analysis by visibility
   assert.match(platformRouterSource, /isRetained=\{screen !== "trade"\}/);
   assert.match(tradeScreenSource, /const buildTradeRuntimeActivity =/);
   assert.match(tradeScreenSource, /executionWarm:\s*screenWarm/);
+  assert.match(tradeScreenSource, /primaryVisible:\s*Boolean\(isVisible\)/);
   assert.match(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
   assert.match(tradeScreenSource, /const tradeExecutionWorkEnabled = tradeRuntimeActivity\.executionWarm/);
   assert.match(tradeScreenSource, /const tradeAnalysisWorkEnabled = tradeRuntimeActivity\.analysisVisible/);
@@ -595,4 +657,46 @@ test("Research live refresh waits for screen visibility", () => {
 
   assert.match(source, /if \(isVisible && apiKey && researchDataReady\)/);
   assert.match(source, /\[apiKey, isVisible, refreshData, researchDataReady\]/);
+});
+
+test("color semantics route status surfaces through purpose tokens", () => {
+  const indexCss = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+  const footerSource = readFileSync(
+    new URL("./FooterMemoryPressureIndicator.jsx", import.meta.url),
+    "utf8",
+  );
+  const diagnosticsSource = readFileSync(
+    new URL("../../screens/DiagnosticsScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const accountUtilsSource = readFileSync(
+    new URL("../../screens/account/accountUtils.jsx", import.meta.url),
+    "utf8",
+  );
+  const ibkrSource = readFileSync(
+    new URL("./IbkrConnectionStatus.jsx", import.meta.url),
+    "utf8",
+  );
+
+  for (const token of [
+    "--ra-pnl-positive",
+    "--ra-side-buy",
+    "--ra-stream-healthy",
+    "--ra-pressure-high",
+    "--ra-toast-info",
+    "--ra-category-automation",
+    "--ra-gex-zero-gamma",
+  ]) {
+    assert.match(indexCss, new RegExp(token));
+  }
+
+  assert.doesNotMatch(footerSource, /#fb923c/i);
+  assert.match(footerSource, /--ra-pressure-high/);
+  assert.match(diagnosticsSource, /--ra-toast-info/);
+  assert.match(diagnosticsSource, /--ra-toast-success/);
+  assert.match(accountUtilsSource, /pnl-positive/);
+  assert.match(accountUtilsSource, /side-buy/);
+  assert.match(accountUtilsSource, /category-automation/);
+  assert.match(ibkrSource, /canonicalizeStreamState/);
+  assert.match(ibkrSource, /streamStateTokenVar/);
 });

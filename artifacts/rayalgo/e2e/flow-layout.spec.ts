@@ -208,7 +208,7 @@ async function mockFlowApi(
   page: Page,
   options: {
     emptyOptionBars?: boolean;
-    flowPromotedSymbols?: string[];
+    flowCurrentBatchSymbols?: string[];
     flowUniverseSymbols?: string[];
     invalidFirstProviderContractId?: boolean;
     missingFirstProviderContractId?: boolean;
@@ -263,11 +263,10 @@ async function mockFlowApi(
           cooldownCount: 0,
           scannedSymbols: 0,
           cycleScannedSymbols: 0,
-          currentBatch: [],
+          currentBatch: options.flowCurrentBatchSymbols || [],
           degradedReason: options.flowUniverseSymbols
             ? "mock partial universe"
             : null,
-          promotedSymbols: options.flowPromotedSymbols || [],
         },
       };
     } else if (url.pathname === "/api/flow/premium-distribution") {
@@ -486,8 +485,19 @@ async function mockFlowApi(
           : makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()),
       };
     } else if (url.pathname === "/api/flow/events/aggregate") {
+      options.onFlowEventsRequest?.(url);
+      const aggregateSymbols = Array.from(
+        new Set([
+          ...(options.flowCurrentBatchSymbols?.length
+            ? options.flowCurrentBatchSymbols
+            : []),
+          ...premiumSymbols,
+        ]),
+      );
       body = {
-        events: premiumSymbols.flatMap((symbol) => makeFlowEvents(symbol, options)),
+        events: aggregateSymbols.flatMap((symbol) =>
+          makeFlowEvents(symbol, options),
+        ),
         source: {
           provider: "ibkr",
           status: "live",
@@ -496,18 +506,17 @@ async function mockFlowApi(
           unusualThreshold: 1,
           scannerCoverage: {
             mode: "market",
-            targetSize: premiumSymbols.length,
-            activeTargetSize: premiumSymbols.length,
-            selectedSymbols: premiumSymbols.length,
+            targetSize: aggregateSymbols.length,
+            activeTargetSize: aggregateSymbols.length,
+            selectedSymbols: aggregateSymbols.length,
             selectedShortfall: 0,
             fallbackUsed: false,
             stale: false,
             cooldownCount: 0,
-            scannedSymbols: premiumSymbols.length,
-            cycleScannedSymbols: premiumSymbols.length,
-            currentBatch: premiumSymbols,
+            scannedSymbols: aggregateSymbols.length,
+            cycleScannedSymbols: aggregateSymbols.length,
+            currentBatch: options.flowCurrentBatchSymbols || aggregateSymbols,
             degradedReason: null,
-            promotedSymbols: [],
           },
         },
       };
@@ -750,13 +759,8 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
   const broadScanRequests: string[] = [];
   await mockFlowApi(page, {
     onFlowEventsRequest: (url) => {
-      if (
-        url.searchParams.get("scope") === "all" &&
-        url.searchParams.get("limit") === "25"
-      ) {
-        broadScanRequests.push(
-          url.searchParams.get("underlying")?.toUpperCase() || "",
-        );
+      if (url.pathname === "/api/flow/events/aggregate") {
+        broadScanRequests.push(url.toString());
       }
     },
   });
@@ -801,7 +805,7 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
 
 test("Flow tape includes broad scanner feed events", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockFlowApi(page, { flowPromotedSymbols: ["DIA"] });
+  await mockFlowApi(page, { flowCurrentBatchSymbols: ["DIA"] });
   await openFlowWithState(page, {
     flowScannerConfig: {
       mode: "market",
@@ -827,16 +831,14 @@ test("Flow tape includes broad scanner feed events", async ({ page }) => {
 test("Flow scanner fills a partial backend universe beyond the active watchlist", async ({
   page,
 }) => {
-  const requestedUnderlyings: string[] = [];
+  const aggregateRequests: string[] = [];
   await page.setViewportSize({ width: 1440, height: 1000 });
   await mockFlowApi(page, {
     watchlistSymbols: ["AMD"],
     flowUniverseSymbols: ["AMD", "SPY", "QQQ"],
-    flowPromotedSymbols: ["SPY", "QQQ"],
+    flowCurrentBatchSymbols: ["SPY", "QQQ"],
     onFlowEventsRequest: (url) => {
-      requestedUnderlyings.push(
-        (url.searchParams.get("underlying") || "").toUpperCase(),
-      );
+      aggregateRequests.push(url.pathname);
     },
   });
   await openFlowWithState(page, {
@@ -857,8 +859,8 @@ test("Flow scanner fills a partial backend universe beyond the active watchlist"
   const flowHost = page.getByTestId("screen-host-flow");
   await expect(flowHost.getByRole("button", { name: "Stop Flow scan" })).toBeVisible();
   await expect
-    .poll(() => Array.from(new Set(requestedUnderlyings)), { timeout: 15_000 })
-    .toEqual(expect.arrayContaining(["AMD", "SPY", "QQQ"]));
+    .poll(() => aggregateRequests.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
   await expect(
     page.getByTestId("flow-tape-row").filter({ hasText: "SPY" }).first(),
   ).toBeVisible({ timeout: 15_000 });
@@ -925,7 +927,7 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
 
   const flowHost = page.getByTestId("screen-host-flow");
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
-  await expect(page.getByTestId("flow-scanner-status-panel")).toBeVisible();
+  await expect(page.getByTestId("flow-distribution-status-rail")).toBeVisible();
   await expect(flowHost.getByText("Flow Scanner", { exact: true })).toHaveCount(1);
   await expect(flowHost.getByText("Options Flow Tape", { exact: true })).toBeVisible();
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
@@ -1170,12 +1172,18 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
 
   await page.getByTestId("flow-filter-toggle").click();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
-  await page.getByTestId("flow-filter-toggle").click();
+  await page
+    .getByRole("dialog", { name: "Flow Filters" })
+    .getByLabel("Close Flow Filters")
+    .click();
   await expect(page.getByTestId("flow-filter-panel")).toBeHidden();
 
   await page.getByTestId("flow-column-toggle").click();
   await expect(page.getByTestId("flow-column-drawer")).toBeVisible();
-  await page.getByTestId("flow-column-toggle").click();
+  await page
+    .getByRole("dialog", { name: "Flow Columns" })
+    .getByLabel("Close Flow column drawer")
+    .click();
 
   await firstCard.getByLabel("Copy flow contract").click();
   await expect(firstCard.getByLabel("Copy flow contract")).toHaveAttribute(

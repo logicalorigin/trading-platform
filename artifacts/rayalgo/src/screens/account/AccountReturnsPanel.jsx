@@ -55,7 +55,7 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
     style={{
       minWidth: 0,
       display: "grid",
-      gridTemplateColumns: "minmax(42px, auto) minmax(0, 1fr)",
+      gridTemplateColumns: `minmax(${dim(42)}px, auto) minmax(0, 1fr)`,
       alignItems: "baseline",
       columnGap: sp(6),
       minHeight: dim(18),
@@ -77,7 +77,7 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
         minWidth: 0,
         color: tone,
         fontSize: fs(8),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontWeight: 400,
         lineHeight: 1.25,
         textAlign: "right",
@@ -124,7 +124,7 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
           }}
         >
           <span style={mutedLabelStyle}>Outcome Distribution</span>
-          <span style={{ fontSize: fs(7), fontFamily: T.mono, color: T.textDim }}>
+          <span style={{ fontSize: fs(7), fontFamily: T.sans, color: T.textDim }}>
             {formatNumber(summary.totalTrades, 0)} trades
           </span>
         </div>
@@ -132,7 +132,7 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
           style={{
             display: "grid",
             gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
-            gap: 1,
+            gap: sp(1),
             height: dim(28),
             alignItems: "end",
           }}
@@ -163,7 +163,7 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
             display: "flex",
             justifyContent: "space-between",
             fontSize: fs(7),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             color: T.textMuted,
             gap: sp(3),
             flexWrap: "wrap",
@@ -214,6 +214,37 @@ const CALENDAR_VIEW_OPTIONS = [
   { value: "month", label: "Month" },
   { value: "year", label: "Year" },
 ];
+
+export const msUntilNextLocalDay = (now = new Date()) => {
+  const current = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(current.getTime())) return 60_000;
+  const nextDay = new Date(
+    current.getFullYear(),
+    current.getMonth(),
+    current.getDate() + 1,
+    0,
+    0,
+    0,
+    25,
+  );
+  return Math.max(1_000, nextDay.getTime() - current.getTime());
+};
+
+const useLocalToday = () => {
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    let timerId;
+    const schedule = () => {
+      timerId = window.setTimeout(() => {
+        setToday(new Date());
+        schedule();
+      }, msUntilNextLocalDay());
+    };
+    schedule();
+    return () => window.clearTimeout(timerId);
+  }, []);
+  return today;
+};
 
 const CALENDAR_PROFIT_BG = "#d7f7df";
 const CALENDAR_LOSS_BG = "#ffd6d6";
@@ -375,7 +406,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-        gap: 1,
+        gap: sp(1),
         background: calendarStyle.gridLine,
         borderRadius: dim(4),
         overflow: "hidden",
@@ -411,7 +442,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
                 style={{
                   color: tone.dayColor,
                   fontSize: fs(isPhone ? 6 : 7),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                   lineHeight: 1,
                   textAlign: "left",
@@ -426,7 +457,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
                 style={{
                   color: tone.color,
                   fontSize: fs(isPhone ? 7 : 8),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                   lineHeight: 1,
                   textAlign: "center",
@@ -461,7 +492,7 @@ const YearCalendarGrid = ({
     style={{
       display: "grid",
       gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-      gap: 1,
+      gap: sp(1),
       background: calendarStyle.gridLine,
       borderRadius: dim(4),
       overflow: "hidden",
@@ -529,7 +560,7 @@ const YearCalendarGrid = ({
                       ? T.text
                       : T.textSec,
                 fontSize: fs(isPhone ? 7 : 8),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -543,7 +574,7 @@ const YearCalendarGrid = ({
                 minWidth: 0,
                 color: tone.color,
                 fontSize: fs(isPhone ? 7 : 8),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontWeight: 400,
                 lineHeight: 1,
                 fontVariantNumeric: "tabular-nums",
@@ -559,7 +590,7 @@ const YearCalendarGrid = ({
                 minWidth: 0,
                 color: T.textMuted,
                 fontSize: fs(7),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -594,7 +625,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle }) => {
         alignItems: "center",
         paddingTop: sp(1),
         fontSize: fs(7),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         color: calendarStyle.dayText,
         gap: sp(4),
         flexWrap: "wrap",
@@ -642,7 +673,7 @@ const DailyPnlCalendar = ({
 }) => {
   const { theme } = useContext(ThemeContext);
   const calendarStyle = useMemo(() => calendarThemeStyle(theme), [theme]);
-  const today = useMemo(() => new Date(), []);
+  const today = useLocalToday();
   const [view, setView] = useState("month");
   const [visibleMonth, setVisibleMonth] = useState(
     () => new Date(today.getFullYear(), today.getMonth(), 1),
@@ -735,7 +766,7 @@ const DailyPnlCalendar = ({
             style={{
               color: T.text,
               fontSize: fs(10),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               lineHeight: 1,
               fontVariantNumeric: "tabular-nums",
@@ -758,7 +789,7 @@ const DailyPnlCalendar = ({
           }}
         >
           <ToggleGroup options={CALENDAR_VIEW_OPTIONS} value={view} onChange={handleViewChange} />
-          <span style={{ display: "inline-flex", gap: 1 }}>
+          <span style={{ display: "inline-flex", gap: sp(1) }}>
             <CalendarNavButton
               label="Previous period"
               onClick={() => shiftCalendar(-1)}
@@ -823,6 +854,13 @@ export const AccountReturnsPanel = ({
   const risk = model?.risk || {};
   const hasRiskStats = model?.available?.hasRiskAdjustedStats;
   const transferAdjustedPnl = equity.transferAdjustedPnl ?? null;
+  const returnTooltip = equity.returnPercentDiscrepancy
+    ? `Transfer-adjusted return over the selected range. API value ${formatSignedPercent(
+        equity.providerReturnPercent,
+        2,
+        maskValues,
+      )} differed from recomputed value, so the recomputed value is shown.`
+    : "Transfer-adjusted return over the selected equity range. External deposits and withdrawals are excluded.";
 
   const metrics = [
     {
@@ -966,14 +1004,14 @@ export const AccountReturnsPanel = ({
         }}
       >
         <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
-          <div style={labelCapsStyle}>
-            Returns · {range || model?.range || "Range"}
-          </div>
-          <div
+          <AppTooltip content={returnTooltip}><div style={labelCapsStyle}>
+            Adj return · {range || model?.range || "Range"}
+          </div></AppTooltip>
+          <AppTooltip content={returnTooltip}><div
             style={{
               color: metricTone(equity.returnPercent),
               fontSize: fs(compact ? 15 : 17),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               lineHeight: 1,
               fontVariantNumeric: "tabular-nums",
@@ -983,7 +1021,7 @@ export const AccountReturnsPanel = ({
             }}
           >
             {formatSignedPercent(equity.returnPercent, 2, maskValues)}
-          </div>
+          </div></AppTooltip>
         </div>
         <div style={{ minWidth: 0, display: "grid", gap: sp(2), textAlign: "right" }}>
           <div style={labelCapsStyle}>
@@ -993,7 +1031,7 @@ export const AccountReturnsPanel = ({
             style={{
               color: metricTone(transferAdjustedPnl),
               fontSize: fs(compact ? 10 : 11),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               lineHeight: 1.2,
               fontVariantNumeric: "tabular-nums",

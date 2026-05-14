@@ -48,6 +48,7 @@
     "vite": "catalog:"
   },
   "dependencies": {
+    "@workspace/account-math": "workspace:*",
     "@radix-ui/react-tooltip": "^1.2.8",
     "hls.js": "^1.6.16",
     "lightweight-charts": "^5.1.0"

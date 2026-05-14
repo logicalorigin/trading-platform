@@ -9,18 +9,44 @@ import {
 const SVG_W = 320;
 const SVG_H = 74;
 const PAD = { l: 4, r: 4, t: 6, b: 6 };
+const MARKET_TIME_ZONE = "America/New_York";
+const MARKET_OPEN_MINUTES = 9 * 60 + 30;
+const MARKET_CLOSE_MINUTES = 16 * 60;
+const marketTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: MARKET_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 const finite = (value) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 };
 
-const buildIntradaySeries = (queryData) => {
-  const rawPoints = Array.isArray(queryData?.series) ? queryData.series : [];
+const timestampMsForPoint = (point) => {
+  const timestampMs = finite(point?.timestampMs);
+  if (timestampMs != null) return timestampMs;
+  if (!point?.timestamp) return null;
+  const parsed = Date.parse(point.timestamp);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const buildIntradaySeries = (queryData) => {
+  const rawPoints = Array.isArray(queryData?.series)
+    ? queryData.series
+    : Array.isArray(queryData?.points)
+      ? queryData.points
+      : [];
+  let baselineNav = null;
   const points = rawPoints
     .map((point) => {
-      const ts = finite(point?.timestampMs);
-      const pnl = finite(point?.cumulativePnl);
+      const ts = timestampMsForPoint(point);
+      const nav = finite(point?.netLiquidation);
+      if (baselineNav == null && nav != null) baselineNav = nav;
+      const pnl =
+        finite(point?.cumulativePnl) ??
+        (nav != null && baselineNav != null ? nav - baselineNav : null);
       if (ts == null || pnl == null) return null;
       return { timestampMs: ts, pnl };
     })
@@ -29,10 +55,26 @@ const buildIntradaySeries = (queryData) => {
   return points;
 };
 
-const formatHm = (timestampMs) => {
+export const formatIntradayMarketTime = (timestampMs) => {
   if (!Number.isFinite(timestampMs)) return "";
-  const d = new Date(timestampMs);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  return marketTimeFormatter.format(new Date(timestampMs));
+};
+
+const marketMinutes = (timestampMs) => {
+  if (!Number.isFinite(timestampMs)) return null;
+  const parts = marketTimeFormatter.formatToParts(new Date(timestampMs));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+};
+
+export const intradayMarketSessionPctElapsed = (timestampMs) => {
+  const minutes = marketMinutes(timestampMs);
+  if (minutes == null) return 0;
+  const total = MARKET_CLOSE_MINUTES - MARKET_OPEN_MINUTES;
+  const elapsed = Math.max(0, Math.min(total, minutes - MARKET_OPEN_MINUTES));
+  return (elapsed / total) * 100;
 };
 
 export const IntradayPnlPanel = ({
@@ -55,9 +97,9 @@ export const IntradayPnlPanel = ({
   }, [series]);
 
   const chart = useMemo(() => {
-    if (series.length < 2) return null;
-    const max = Math.max(...series.map((p) => p.pnl), 0);
-    const min = Math.min(...series.map((p) => p.pnl), 0);
+    if (series.length < 2 || !stats) return null;
+    const max = Math.max(stats.high, 0);
+    const min = Math.min(stats.low, 0);
     const range = max - min || 1;
     const chartW = SVG_W - PAD.l - PAD.r;
     const chartH = SVG_H - PAD.t - PAD.b;
@@ -69,21 +111,13 @@ export const IntradayPnlPanel = ({
       .join(" ");
     const areaPath = `${path} L${xFor(series.length - 1).toFixed(1)},${zeroY.toFixed(1)} L${PAD.l},${zeroY.toFixed(1)} Z`;
     return { path, areaPath, zeroY, xFor, yFor };
-  }, [series]);
+  }, [series, stats]);
 
   const positive = stats ? stats.last.pnl >= 0 : true;
-  const lineColor = positive ? T.green : T.red;
+  const lineColor = positive ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
   const sessionPctElapsed = (() => {
     if (!stats) return 0;
-    const now = new Date(stats.last.timestampMs);
-    const open = new Date(now);
-    open.setHours(9, 30, 0, 0);
-    const close = new Date(now);
-    close.setHours(16, 0, 0, 0);
-    const total = close.getTime() - open.getTime();
-    if (total <= 0) return 100;
-    const elapsed = Math.max(0, Math.min(total, now.getTime() - open.getTime()));
-    return (elapsed / total) * 100;
+    return intradayMarketSessionPctElapsed(stats.last.timestampMs);
   })();
 
   return (
@@ -91,8 +125,8 @@ export const IntradayPnlPanel = ({
       title="Intraday P&L"
       rightRail={
         stats ? (
-          <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
-            {formatHm(stats.last.timestampMs)} ET
+          <span style={{ fontSize: fs(9), fontFamily: T.sans, color: T.textDim }}>
+            {formatIntradayMarketTime(stats.last.timestampMs)} ET
           </span>
         ) : null
       }
@@ -113,7 +147,7 @@ export const IntradayPnlPanel = ({
               style={{
                 fontSize: fs(17),
                 fontWeight: 400,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 color: lineColor,
                 letterSpacing: 0,
               }}
@@ -138,8 +172,8 @@ export const IntradayPnlPanel = ({
                     y2={PAD.t}
                     gradientUnits="userSpaceOnUse"
                   >
-                    <stop offset="0%" stopColor={T.green} stopOpacity="0" />
-                    <stop offset="100%" stopColor={T.green} stopOpacity="0.35" />
+                    <stop offset="0%" stopColor="var(--ra-pnl-positive)" stopOpacity="0" />
+                    <stop offset="100%" stopColor="var(--ra-pnl-positive)" stopOpacity="0.35" />
                   </linearGradient>
                   <linearGradient
                     id="intradayPnlGradNeg"
@@ -149,8 +183,8 @@ export const IntradayPnlPanel = ({
                     y2={SVG_H - PAD.b}
                     gradientUnits="userSpaceOnUse"
                   >
-                    <stop offset="0%" stopColor={T.red} stopOpacity="0" />
-                    <stop offset="100%" stopColor={T.red} stopOpacity="0.35" />
+                    <stop offset="0%" stopColor="var(--ra-pnl-negative)" stopOpacity="0" />
+                    <stop offset="100%" stopColor="var(--ra-pnl-negative)" stopOpacity="0.35" />
                   </linearGradient>
                 </defs>
                 <line
@@ -194,12 +228,12 @@ export const IntradayPnlPanel = ({
               display: "flex",
               justifyContent: "space-between",
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
             }}
           >
             <span style={{ color: T.textMuted }}>
               HIGH{" "}
-              <span style={{ color: T.green, fontWeight: 400 }}>
+              <span style={{ color: "var(--ra-pnl-positive)", fontWeight: 400 }}>
                 {formatAccountSignedMoney(stats.high, currency, false, maskValues)}
               </span>
             </span>
@@ -209,7 +243,7 @@ export const IntradayPnlPanel = ({
             </span>
             <span style={{ color: T.textMuted }}>
               LOW{" "}
-              <span style={{ color: T.red, fontWeight: 400 }}>
+              <span style={{ color: "var(--ra-pnl-negative)", fontWeight: 400 }}>
                 {formatAccountSignedMoney(stats.low, currency, false, maskValues)}
               </span>
             </span>

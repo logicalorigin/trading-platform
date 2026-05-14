@@ -100,6 +100,24 @@ test("compareFlowEvents sorts by headers and respects direction", () => {
   );
 });
 
+test("compareFlowEvents sorts impossible expirations after valid expiration dates", () => {
+  const valid = flowEvent({
+    id: "valid-expiration",
+    expirationDate: "2026-03-03",
+  });
+  const invalid = flowEvent({
+    id: "invalid-expiration",
+    expirationDate: "2026-02-31",
+  });
+
+  assert.deepEqual(
+    [invalid, valid].sort((left, right) =>
+      compareFlowEvents(left, right, "expiration", "asc"),
+    ),
+    [valid, invalid],
+  );
+});
+
 test("compareFlowEvents sorts flow mark and out-of-money percent", () => {
   const near = flowEvent({
     ticker: "AAPL",

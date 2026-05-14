@@ -1,3 +1,5 @@
+import { externalTransferAmount } from "@workspace/account-math";
+
 export const PNL_CALENDAR_WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 const MONTH_LABELS = [
@@ -23,8 +25,23 @@ const finiteNumber = (value) => {
 
 export const startOfCalendarDay = (input) => {
   if (input == null || input === "") return null;
-  const date = input instanceof Date ? new Date(input.getTime()) : new Date(input);
-  if (Number.isNaN(date.getTime())) return null;
+  const dateOnly = typeof input === "string"
+    ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim())
+    : null;
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : input instanceof Date
+      ? new Date(input.getTime())
+      : new Date(input);
+  if (
+    Number.isNaN(date.getTime()) ||
+    (dateOnly &&
+      (date.getFullYear() !== Number(dateOnly[1]) ||
+        date.getMonth() !== Number(dateOnly[2]) - 1 ||
+        date.getDate() !== Number(dateOnly[3])))
+  ) {
+    return null;
+  }
   date.setHours(0, 0, 0, 0);
   return date;
 };
@@ -107,8 +124,7 @@ const buildEquityDailyMap = (equityPoints = []) => {
     const nav = finiteNumber(point?.netLiquidation);
     if (nav == null) return;
     const key = isoCalendarDay(day);
-    const transferDelta =
-      (finiteNumber(point?.deposits) ?? 0) - (finiteNumber(point?.withdrawals) ?? 0);
+    const transferDelta = externalTransferAmount(point);
     const current = byDay.get(key) || {
       iso: key,
       firstNav: null,

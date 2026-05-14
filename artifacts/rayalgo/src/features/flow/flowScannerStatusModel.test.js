@@ -30,6 +30,9 @@ test("resolveFlowScannerProgress exposes scanned, queued, source, scope, and cap
     coverage: {
       mode: "market",
       scope: "unusual",
+      batchSize: 25,
+      concurrency: 10,
+      estimatedCycleMs: 300_000,
       currentBatch: ["SPY", "QQQ"],
       lastScannedAt: { AAPL: 1_000, MSFT: 2_000 },
     },
@@ -43,7 +46,8 @@ test("resolveFlowScannerProgress exposes scanned, queued, source, scope, and cap
   assert.equal(progress.cycleLabel, "4/10");
   assert.equal(progress.queueLabel, "6 queued");
   assert.equal(progress.capLabel, "cap 500");
-  assert.equal(progress.batchLabel, "30 batch / 2 conc");
+  assert.equal(progress.batchLabel, "25 batch / 10 conc");
+  assert.equal(progress.cycleEstimateLabel, "~5m cycle");
   assert.equal(
     progress.progressText,
     "Market-wide · Unusual flow · 4/10 scanned · 6 queued · cap 500",

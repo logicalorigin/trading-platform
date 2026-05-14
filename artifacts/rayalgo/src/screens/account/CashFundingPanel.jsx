@@ -22,11 +22,11 @@ const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(11), fontFamily: T.mono, fontWeight: 400 }}>
+    <div style={{ color: tone, fontSize: fs(11), fontFamily: T.sans, fontWeight: 400 }}>
       {value}
     </div>
     {subvalue ? (
-      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>{subvalue}</div>
+      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>{subvalue}</div>
     ) : null}
   </div>
 );
@@ -43,6 +43,8 @@ const typeTone = (type) => {
 const sourceTone = (sourceType) =>
   sourceType === "automation"
     ? "pink"
+    : sourceType === "signal_options_replay"
+      ? "cyan"
     : sourceType === "watchlist_backtest"
       ? "purple"
       : "default";
@@ -67,7 +69,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(120)}px, 1fr))`,
             gap: sp("3px 8px"),
             paddingBottom: sp(4),
             borderBottom: `1px solid ${T.border}`,
@@ -103,7 +105,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1.1fr) minmax(230px, 0.9fr)",
+            gridTemplateColumns: `minmax(0, 1.1fr) minmax(${dim(230)}px, 0.9fr)`,
             gap: sp(6),
             alignItems: "start",
           }}
@@ -198,7 +200,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                   <div style={{ color: T.textSec, fontSize: fs(8), lineHeight: 1.25 }}>
                     {dividend.description || "Dividend"}
                   </div>
-                  <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>
+                  <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>
                     {formatAppDate(dividend.paidDate)}
                   </div>
                 </div>

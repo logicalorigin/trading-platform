@@ -110,6 +110,7 @@ const MARKET_LABELS = {
   futures: "Futures",
   fx: "FX",
   indices: "Index",
+  options: "Option",
   otc: "OTC",
   stocks: "Stock",
 };
@@ -120,6 +121,7 @@ const MARKET_ICON_BY_KEY = {
   futures: CandlestickChart,
   fx: CircleDollarSign,
   indices: Landmark,
+  options: BadgeDollarSign,
   otc: Globe2,
   stocks: Building2,
 };
@@ -414,9 +416,9 @@ export function MarketIdentityMark({
         overflow: "hidden",
         background: logoReady ? T.bg0 : identity.fallbackColor,
         color: "#fff",
-        border: `1px solid ${T.border}`,
+        border: "none",
         boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12)",
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontSize: fs(size <= 14 ? 6 : size <= 20 ? 8 : 9),
         fontWeight: 400,
         lineHeight: 1,
@@ -508,11 +510,11 @@ export function MarketIdentityChips({
         <AppTooltip key={chip.key} content={chip.title}><span
           key={chip.key}
           style={{
-            border: `1px solid ${T.border}`,
+            border: "none",
             color: T.textMuted,
             background: compact ? "transparent" : T.bg2,
             fontSize: fs(compact ? 7 : 8),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
             lineHeight: 1,
             padding: sp(compact ? "2px 3px" : "2px 4px"),
@@ -558,7 +560,7 @@ export function MarketIdentityInline({
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           color: T.text,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontWeight: 400,
         }}
       >

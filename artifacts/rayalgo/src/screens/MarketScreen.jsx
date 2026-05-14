@@ -61,6 +61,7 @@ import {
 } from "../lib/motion";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 
 
@@ -94,7 +95,7 @@ const TradingViewStockHeatmapWidget = memo(function TradingViewStockHeatmapWidge
     copyright.className = "tradingview-widget-copyright";
     copyright.style.cssText = [
       `color: ${T.textDim}`,
-      `font: 700 ${fs(8)}px ${T.mono}`,
+      `font: 700 ${fs(8)}px ${T.sans}`,
       "height: 16px",
       "line-height: 16px",
       "padding: 0 8px",
@@ -635,18 +636,25 @@ export const MarketScreen = ({
         flexDirection: "column",
         height: "100%",
         overflow: "hidden",
+        background: T.bg0,
       }}
     >
       <div
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(8),
+          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "20px 28px"),
           display: "flex",
           flexDirection: "column",
-          gap: 6,
+          gap: sp(12),
         }}
       >
+        <CockpitHeader
+          eyebrow="Live"
+          title="Market"
+          subtitle="Charts, watchlists and unusual activity"
+          pulse={{ state: "live", label: "Market data streaming" }}
+        />
         {/* ── ROW 1: Chart workspace + activity feed ── */}
         <div
           ref={marketWorkspaceRef}
@@ -658,7 +666,7 @@ export const MarketScreen = ({
               showMarketActivityPanel && !stackActivityPanel
                 ? `minmax(0, 1fr) 6px ${activityPanelWidth}px`
                 : "minmax(0, 1fr)",
-            gap: 6,
+            gap: sp(6),
             alignItems: "start",
           }}
         >
@@ -777,7 +785,7 @@ export const MarketScreen = ({
           style={{
             display: "grid",
             gridTemplateColumns: marketModuleGridTemplate,
-            gap: 6,
+            gap: sp(6),
             alignItems: "start",
           }}
         >
@@ -815,7 +823,7 @@ export const MarketScreen = ({
                 gap: sp(8),
                 padding: sp("5px 10px 7px"),
                 color: T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(8),
               }}
             >
@@ -832,7 +840,7 @@ export const MarketScreen = ({
                 alignItems: "center",
                 minHeight: dim(18),
                 color: T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(8),
                 fontWeight: 400,
                 textTransform: "uppercase",
@@ -845,15 +853,15 @@ export const MarketScreen = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: marketDetailGridTemplate,
-                gap: 6,
+                gap: sp(6),
               }}
             >
               {marketPulseItems.map((item) => (
-                <Card key={item.label} style={{ padding: "6px 8px", minHeight: dim(56) }}>
+                <Card key={item.label} style={{ padding: sp("6px 8px"), minHeight: dim(56) }}>
                   <div
                     style={{
                       color: T.textDim,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       fontSize: fs(8),
                       fontWeight: 400,
                       textTransform: "uppercase",
@@ -864,7 +872,7 @@ export const MarketScreen = ({
                   <div
                     style={{
                       color: item.tone,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       fontSize: fs(15),
                       fontWeight: 400,
                       marginTop: sp(4),
@@ -872,20 +880,20 @@ export const MarketScreen = ({
                   >
                     {item.value}
                   </div>
-                  <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(1) }}>
+                  <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(1) }}>
                     {item.sub}
                   </div>
                 </Card>
               ))}
             </div>
 
-            <Card className="ra-panel-enter" style={{ padding: "8px 10px" }}>
+            <Card className="ra-panel-enter" style={{ padding: sp("8px 10px") }}>
               <CardTitle
                 right={
                   <span
                     style={{
                       color: flowStatus === "live" ? T.accent : T.textMuted,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       fontSize: fs(8),
                     }}
                   >
@@ -923,7 +931,7 @@ export const MarketScreen = ({
                               style={{
                                 ...motionRowStyle(index, 10, 100),
                                 display: "grid",
-                                gridTemplateColumns: "82px minmax(0, 1fr) 56px",
+                                gridTemplateColumns: `${dim(82)}px minmax(0, 1fr) ${dim(56)}px`,
                                 gap: sp(6),
                                 alignItems: "center",
                                 border: "none",
@@ -932,7 +940,7 @@ export const MarketScreen = ({
                                 cursor: "pointer",
                               }}
                             >
-                              <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "left" }}>
+                              <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400, textAlign: "left" }}>
                                 {sector.sector}
                               </span>
                               <span style={{ position: "relative", height: dim(8), background: T.bg3 }}>
@@ -949,7 +957,7 @@ export const MarketScreen = ({
                                   }}
                                 />
                               </span>
-                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
+                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
                                 {sector.net >= 0 ? "+" : "-"}
                                 {fmtM(Math.abs(sector.net))}
                               </span>
@@ -971,7 +979,7 @@ export const MarketScreen = ({
               )}
             </Card>
 
-            <Card className="ra-panel-enter" style={{ padding: "8px 10px" }}>
+            <Card className="ra-panel-enter" style={{ padding: sp("8px 10px") }}>
               <CardTitle>Leadership / Weakness</CardTitle>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(10) }}>
                 {[
@@ -979,7 +987,7 @@ export const MarketScreen = ({
                   ["Laggards", marketMovers.laggards, T.red],
                 ].map(([label, rows, color]) => (
                   <div key={label} style={{ minWidth: 0 }}>
-                    <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, marginBottom: sp(3) }}>
+                    <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400, marginBottom: sp(3) }}>
                       {label.toUpperCase()}
                     </div>
                     {rows.map((row, index) => (
@@ -989,7 +997,7 @@ export const MarketScreen = ({
                         onClick={() => onSymClick?.(row.sym)}
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "58px minmax(0, 1fr) 48px",
+                          gridTemplateColumns: `${dim(58)}px minmax(0, 1fr) ${dim(48)}px`,
                           gap: sp(5),
                           width: "100%",
                           border: "none",
@@ -1000,11 +1008,11 @@ export const MarketScreen = ({
                           textAlign: "left",
                         }}
                       >
-                        <span style={{ color, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>{row.sym}</span>
-                        <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ color, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>{row.sym}</span>
+                        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {row.group}
                         </span>
-                        <span style={{ color, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
+                        <span style={{ color, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
                           {formatSignedPercent(row.change)}
                         </span>
                       </button>
@@ -1023,10 +1031,10 @@ export const MarketScreen = ({
               marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(1080)
                 ? "minmax(0, 1fr)"
                 : "minmax(0, 1.2fr) minmax(260px, 0.7fr) minmax(300px, 0.9fr)",
-            gap: 6,
+            gap: sp(6),
           }}
         >
-          <Card style={{ padding: "7px 10px" }}>
+          <Card style={{ padding: sp("7px 10px") }}>
             <CardTitle>Rates Proxies</CardTitle>
             <div style={{ display: "grid", gap: sp(4) }}>
               {RATES_PROXIES.map((item, index) => {
@@ -1041,11 +1049,11 @@ export const MarketScreen = ({
                     style={{
                       ...motionRowStyle(index, 10, 90),
                       display: "grid",
-                      gridTemplateColumns: "46px 72px minmax(0, 1fr) 44px",
+                      gridTemplateColumns: `${dim(46)}px ${dim(72)}px minmax(0, 1fr) ${dim(44)}px`,
                       alignItems: "center",
                       gap: sp(5),
                       fontSize: fs(8),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     <span style={{ color: T.textDim }}>{item.term}</span>
@@ -1072,21 +1080,21 @@ export const MarketScreen = ({
               })}
             </div>
           </Card>
-          <Card style={{ padding: "7px 10px" }}>
+          <Card style={{ padding: sp("7px 10px") }}>
             <CardTitle>Breadth</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginBottom: sp(6) }}>
-              <span style={{ color: T.green, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
+              <span style={{ color: T.green, fontFamily: T.sans, fontSize: fs(12), fontWeight: 400 }}>
                 {breadth.total ? breadth.advancers : MISSING_VALUE}
               </span>
               <span style={{ flex: 1, display: "flex", height: dim(8), background: T.bg3, overflow: "hidden" }}>
                 <span style={{ width: `${upPct}%`, background: T.green }} />
                 <span style={{ width: `${downPct}%`, background: T.red }} />
               </span>
-              <span style={{ color: T.red, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
+              <span style={{ color: T.red, fontFamily: T.sans, fontSize: fs(12), fontWeight: 400 }}>
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3), fontFamily: T.mono, fontSize: fs(8) }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3), fontFamily: T.sans, fontSize: fs(8) }}>
               {[
                 ["5D+", isFiniteNumber(breadth.positive5dPct) ? `${breadth.positive5dPct.toFixed(0)}%` : MISSING_VALUE],
                 ["Sectors+", breadth.sectorCoverage ? `${breadth.positiveSectors}/${breadth.sectorCoverage}` : MISSING_VALUE],
@@ -1105,7 +1113,7 @@ export const MarketScreen = ({
             style={{
               display: "flex",
               flexDirection: "column",
-              padding: "6px 8px",
+              padding: sp("6px 8px"),
             }}
           >
             <CardTitle right={<Badge color={T.purple}>REGIME</Badge>}>
@@ -1117,9 +1125,10 @@ export const MarketScreen = ({
                 fontFamily: T.sans,
                 color: T.textSec,
                 lineHeight: 1.45,
-                padding: sp("6px 8px"),
-                background: T.bg0,
-                border: `1px solid ${T.border}`,
+                padding: sp("10px 12px"),
+                background: T.bg2,
+                border: "none",
+                borderRadius: dim(10),
               }}
             >
               <span style={{ color: marketPulseItems[0].tone }}>▸</span>{" "}
@@ -1142,10 +1151,10 @@ export const MarketScreen = ({
               marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(980)
                 ? "minmax(0, 1fr)"
                 : "minmax(0, 1.4fr) minmax(260px, 0.7fr)",
-            gap: 6,
+            gap: sp(6),
           }}
         >
-          <Card className="ra-panel-enter" style={{ padding: "6px 10px" }}>
+          <Card className="ra-panel-enter" style={{ padding: sp("6px 10px") }}>
             <CardTitle
               right={
                 <span
@@ -1155,7 +1164,7 @@ export const MarketScreen = ({
                       newsStatusLabel === "live · news"
                         ? T.accent
                         : T.textDim,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                   }}
                 >
                   {newsStatusLabel}
@@ -1231,7 +1240,7 @@ export const MarketScreen = ({
                     style={{
                       fontSize: fs(8),
                       color: T.textMuted,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -1250,7 +1259,7 @@ export const MarketScreen = ({
               />
             )}
           </Card>
-          <Card className="ra-panel-enter" style={{ padding: "6px 10px" }}>
+          <Card className="ra-panel-enter" style={{ padding: sp("6px 10px") }}>
             <CardTitle
               right={
                 <span
@@ -1260,7 +1269,7 @@ export const MarketScreen = ({
                       calendarStatusLabel === "earnings · live"
                         ? T.accent
                         : T.textDim,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                   }}
                 >
                   {calendarStatusLabel}
@@ -1322,7 +1331,7 @@ export const MarketScreen = ({
                         style={{
                           fontSize: fs(8),
                           color: T.textMuted,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                         }}
                       >
                         {ev.date}

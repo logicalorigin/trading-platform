@@ -61,7 +61,21 @@ import {
   motionVars,
 } from "../lib/motion";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { buildCockpitGateSummary } from "./algoCockpitDiagnosticsModel";
+import {
+  buildAttentionStream,
+  buildCockpitGateSummary,
+  isDiagRowsHealthy,
+  isGateSummaryHealthy,
+} from "./algoCockpitDiagnosticsModel";
+import { TabBar } from "../components/ui/tabs.jsx";
+import { SectionHeader } from "../components/ui/SectionHeader.jsx";
+import { AlgoStatusBar } from "./algo/AlgoStatusBar.jsx";
+import { DiagPanel } from "./algo/DiagPanel.jsx";
+import { ProfileSection } from "./algo/ProfileSection.jsx";
+import { KpiTile } from "./algo/KpiTile.jsx";
+import { HeroKpi } from "./algo/HeroKpi.jsx";
+import { AttentionList } from "./algo/AttentionList.jsx";
+import { PipelineStrip } from "./algo/PipelineStrip.jsx";
 
 const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
@@ -87,6 +101,22 @@ const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     requireFreshQuote: true,
   },
   entryGate: {
+    mtfAlignment: {
+      enabled: true,
+      requiredCount: 2,
+    },
+    blockedPutSymbols: [
+      "SQQQ",
+      "SH",
+      "PSQ",
+      "DOG",
+      "SDS",
+      "QID",
+      "TWM",
+      "SPXU",
+      "SDOW",
+      "TZA",
+    ],
     bearishRegime: {
       enabled: true,
       minAdx: 25,
@@ -99,10 +129,10 @@ const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     chaseSteps: [0, 0.35, 0.65, 0.9],
   },
   exitPolicy: {
-    hardStopPct: -50,
-    trailActivationPct: 150,
-    minLockedGainPct: 25,
-    trailGivebackPct: 45,
+    hardStopPct: -40,
+    trailActivationPct: 40,
+    minLockedGainPct: 10,
+    trailGivebackPct: 25,
     tightenAtFiveXGivebackPct: 35,
     tightenAtTenXGivebackPct: 25,
     flipOnOppositeSignal: true,
@@ -110,8 +140,8 @@ const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
 };
 
 const SIGNAL_OPTIONS_EXPANDED_CAPACITY = {
-  maxOpenSymbols: 10,
-  maxDailyLoss: 2000,
+  maxOpenSymbols: 5,
+  maxDailyLoss: 1000,
 };
 
 const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
@@ -170,6 +200,10 @@ const mergeSignalOptionsProfile = (source) => {
     entryGate: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate,
       ...asRecord(rawProfile.entryGate),
+      mtfAlignment: {
+        ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment,
+        ...asRecord(asRecord(rawProfile.entryGate).mtfAlignment),
+      },
       bearishRegime: {
         ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime,
         ...asRecord(asRecord(rawProfile.entryGate).bearishRegime),
@@ -413,17 +447,41 @@ export const AlgoScreen = ({
     : algoIsNarrow
       ? "repeat(2, minmax(0, 1fr))"
       : "repeat(5, minmax(0, 1fr))";
-  const algoTwoColumnTemplate = algoIsNarrow
+  const algoCommandGridTemplate = algoIsPhone
     ? "minmax(0, 1fr)"
-    : "minmax(320px, 0.95fr) minmax(420px, 1.35fr)";
-  const algoCandidateGridTemplate = algoIsNarrow
+    : algoIsNarrow
+      ? "minmax(230px, 0.95fr) minmax(230px, 0.85fr)"
+      : "minmax(260px, 0.95fr) minmax(240px, 0.7fr) minmax(420px, 1.35fr)";
+  const algoTwoColumnTemplate = algoIsPhone
     ? "minmax(0, 1fr)"
-    : "minmax(280px, 0.95fr) minmax(360px, 1.25fr)";
+    : algoIsNarrow
+      ? "minmax(220px, 0.85fr) minmax(0, 1.15fr)"
+      : "minmax(320px, 0.95fr) minmax(420px, 1.35fr)";
+  const algoCandidateGridTemplate = algoIsPhone
+    ? "minmax(0, 1fr)"
+    : algoIsNarrow
+      ? "minmax(220px, 0.85fr) minmax(0, 1.15fr)"
+      : "minmax(280px, 0.95fr) minmax(360px, 1.25fr)";
+  const algoDetailGridTemplate = algoIsPhone
+    ? "minmax(0, 1fr)"
+    : algoIsNarrow
+      ? "minmax(0, 1.15fr) minmax(240px, 0.85fr)"
+      : "minmax(0, 1.25fr) minmax(320px, 0.9fr)";
+  const algoPerformanceGridTemplate = algoIsPhone
+    ? "minmax(0, 1fr)"
+    : algoIsNarrow
+      ? "minmax(0, 1.2fr) minmax(220px, 0.8fr)"
+      : "minmax(0, 1.25fr) minmax(240px, 0.75fr)";
   const algoProfileGridTemplate = algoIsPhone
     ? "minmax(0, 1fr)"
     : algoIsNarrow
       ? "repeat(2, minmax(0, 1fr))"
       : "repeat(3, minmax(0, 1fr))";
+  const algoDiagnosticsGridTemplate = algoIsPhone
+    ? "minmax(0, 1fr)"
+    : algoIsNarrow
+      ? "minmax(150px, 0.65fr) repeat(2, minmax(0, 1fr))"
+      : "minmax(180px, 0.7fr) repeat(3, minmax(0, 1fr))";
   const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const queryClient = useQueryClient();
@@ -431,8 +489,9 @@ export const AlgoScreen = ({
   const [deploymentName, setDeploymentName] = useState("");
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
-  const [automationTab, setAutomationTab] = useState("Candidates");
-  const [secondaryPanel, setSecondaryPanel] = useState(null);
+  const [primaryTab, setPrimaryTab] = useState("now");
+  const [diagExpansion, setDiagExpansion] = useState({});
+  const [profileSectionOpen, setProfileSectionOpen] = useState("risk");
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
   const [profileDraft, setProfileDraft] = useState(
@@ -558,8 +617,12 @@ export const AlgoScreen = ({
   const cockpitSignalFreshness = cockpitGateSummary.signalFreshness;
   const cockpitTradePath = cockpitGateSummary.tradePath;
   const cockpitSkipReasonRows = cockpitGateSummary.skipReasonRows;
+  const cockpitSkipCategoryRows = cockpitGateSummary.skipCategoryRows;
   const cockpitEntryGateRows = cockpitGateSummary.entryGateRows;
   const cockpitOptionChainRows = cockpitGateSummary.optionChainRows;
+  const cockpitReadinessRows = cockpitGateSummary.readinessRows;
+  const cockpitLifecycleRows = cockpitGateSummary.lifecycleRows;
+  const cockpitMarkHealthRows = cockpitGateSummary.markHealthRows;
   const signalOptionsPerformanceSummary = asRecord(
     signalOptionsPerformance?.summary,
   );
@@ -1061,20 +1124,21 @@ export const AlgoScreen = ({
 
   const compactButtonStyle = ({
     active = false,
-    color = T.border,
+    color = T.accent,
     fill = false,
     disabled = false,
   } = {}) => ({
-    padding: sp("6px 10px"),
-    borderRadius: dim(4),
-    border: `1px solid ${active ? color : T.border}`,
-    background: active ? `${color}18` : T.bg0,
-    color: active ? T.text : T.textSec,
-    fontSize: fs(8),
-    fontFamily: T.mono,
-    fontWeight: 400,
+    padding: sp("6px 12px"),
+    borderRadius: 999,
+    border: "none",
+    background: active ? `${color}18` : T.bg2,
+    color: active ? color : T.text,
+    fontSize: fs(9),
+    fontFamily: T.sans,
+    fontWeight: active ? 600 : 500,
+    letterSpacing: "0.02em",
     cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.62 : 1,
+    opacity: disabled ? 0.55 : 1,
     width: fill ? "100%" : "auto",
     whiteSpace: "nowrap",
   });
@@ -1267,13 +1331,20 @@ export const AlgoScreen = ({
       data-testid="algo-screen"
       data-layout={algoIsPhone ? "phone" : algoIsNarrow ? "tablet" : "desktop"}
       style={{
-        padding: sp(algoIsPhone ? 6 : 12),
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(10),
+        background: T.bg0,
         height: "100%",
         width: "100%",
         overflowY: "auto",
+        minWidth: 0,
+      }}
+    >
+    <div
+      style={{
+        width: "100%",
+        padding: sp(algoIsPhone ? "12px 12px 16px" : "20px 28px 24px"),
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(algoIsPhone ? 10 : 14),
         minWidth: 0,
       }}
     >
@@ -1298,7 +1369,7 @@ export const AlgoScreen = ({
               style={{
                 fontSize: fs(11),
                 fontWeight: 400,
-                fontFamily: T.display,
+                fontFamily: T.sans,
                 color: T.amber,
                 letterSpacing: "0.05em",
               }}
@@ -1329,7 +1400,7 @@ export const AlgoScreen = ({
               style={{
                 fontSize: fs(8),
                 color: T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 textAlign: "right",
               }}
             >
@@ -1347,7 +1418,7 @@ export const AlgoScreen = ({
                 border: `1px solid ${T.amber}55`,
                 background: `${T.amber}18`,
                 color: T.amber,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(8),
                 fontWeight: 400,
                 cursor:
@@ -1365,7 +1436,7 @@ export const AlgoScreen = ({
                 width: "100%",
                 fontSize: fs(8),
                 color: bridgeLauncherError ? T.red : T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 lineHeight: 1.45,
                 wordBreak: "break-word",
               }}
@@ -1376,329 +1447,393 @@ export const AlgoScreen = ({
         </div>
       )}
 
+      <AlgoStatusBar
+        focusedDeployment={focusedDeployment}
+        deployments={deployments}
+        onSelectDeployment={setFocusedDeploymentId}
+        gatewayReady={gatewayReady}
+        gatewayBridgeLaunching={gatewayBridgeLaunching}
+        environment={environment}
+        bridgeTone={bridgeTone}
+        accountId={activeAccountId}
+        lastEvalMsAgo={
+          focusedDeployment?.lastEvaluatedAt
+            ? Date.now() -
+              new Date(focusedDeployment.lastEvaluatedAt).getTime()
+            : null
+        }
+        lastEvalLabel={formatRelativeTimeShort(
+          focusedDeployment?.lastEvaluatedAt,
+        )}
+        lastSignalLabel={formatRelativeTimeShort(
+          focusedDeployment?.lastSignalAt,
+        )}
+        onRefresh={() => refreshAlgoQueries()}
+        onToggleEnable={() =>
+          focusedDeployment && handleToggleDeployment(focusedDeployment)
+        }
+        onRunScan={handleRunShadowScan}
+        refreshPending={
+          deploymentsQuery.isFetching || cockpitQuery.isFetching
+        }
+        togglePending={
+          enableDeploymentMutation.isPending ||
+          pauseDeploymentMutation.isPending
+        }
+        scanPending={runShadowScanMutation.isPending}
+        narrow={algoIsNarrow}
+      />
+      <TabBar
+        dataTestId="algo-primary-tabs"
+        value={primaryTab}
+        onChange={setPrimaryTab}
+        dense={algoIsPhone}
+        sticky={algoIsPhone}
+        tabs={[
+          { id: "now", label: "Now" },
+          {
+            id: "signals",
+            label: "Signals",
+            badge:
+              Number(cockpitTradePath?.blockedCandidates) > 0
+                ? cockpitTradePath.blockedCandidates
+                : null,
+          },
+          { id: "positions", label: "Positions" },
+          { id: "diagnostics", label: "Diagnostics" },
+          { id: "profile", label: "Profile" },
+          {
+            id: "events",
+            label: "Events",
+            badge: events.length || null,
+          },
+          {
+            id: "drafts",
+            label: "Drafts",
+            badge: candidateDrafts.length || null,
+          },
+        ]}
+      />
       <div
-        data-testid="algo-cockpit"
+        key={primaryTab}
+        data-testid="algo-tab-content"
+        data-tab={primaryTab}
         className="ra-panel-enter"
         style={{
-          background: T.bg2,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp(algoIsPhone ? "9px 10px" : "12px 14px"),
           display: "flex",
           flexDirection: "column",
           gap: sp(10),
           minWidth: 0,
         }}
       >
-        <div
-          data-testid="algo-command-bar"
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(260px, 0.95fr) minmax(240px, 0.7fr) minmax(420px, 1.35fr)",
-            gap: sp(10),
-            alignItems: "center",
-            minWidth: 0,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(7),
-                flexWrap: "wrap",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(13),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Execution Control Plane
-              </span>
-              <Badge color={T.cyan}>SHADOW</Badge>
-              <Badge color={gatewayReady ? T.green : T.amber}>
-                {gatewayReady ? "DATA READY" : "DATA BLOCKED"}
-              </Badge>
-              <Badge color={focusedDeployment?.enabled ? T.green : T.textDim}>
-                {focusedDeployment?.enabled ? "ENABLED" : "PAUSED"}
-              </Badge>
-            </div>
-            <div
-              style={{
-                color: T.textDim,
-                fontFamily: T.mono,
-                fontSize: fs(8),
-                marginTop: sp(3),
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {focusedDeployment
-                ? `${focusedDeployment.name} · ${String(focusedDeployment.mode || environment).toUpperCase()} · ${focusedDeployment.symbolUniverse.length} symbols`
-                : "No deployment selected"}
-            </div>
-          </div>
-
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                color: T.textMuted,
-                fontFamily: T.mono,
-                fontSize: fs(7),
-                letterSpacing: "0.08em",
-                marginBottom: sp(3),
-              }}
-            >
-              ACTIVE DEPLOYMENT
-            </div>
-            {deployments.length ? (
-              <select
-                value={focusedDeployment?.id || ""}
-                onChange={(event) => setFocusedDeploymentId(event.target.value)}
-                style={{
-                  width: "100%",
-                  background: T.bg3,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(4),
-                  color: T.text,
-                  padding: sp("7px 9px"),
-                  fontFamily: T.mono,
-                  fontSize: fs(9),
-                  outline: "none",
-                }}
-              >
-                {deployments.map((deployment) => (
-                  <option key={deployment.id} value={deployment.id}>
-                    {deployment.name} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "enabled" : "paused"}
-                  </option>
-                ))}
-              </select>
-            ) : (
+        {primaryTab === "now" && (() => {
+          if (!deployments.length) {
+            return (
               <div
                 style={{
-                  border: `1px dashed ${T.border}`,
-                  borderRadius: dim(4),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                  fontSize: fs(9),
-                  padding: sp("7px 9px"),
+                  border: "none",
+                  borderRadius: dim(10),
+                  background: T.bg2,
+                  padding: sp("12px 14px"),
+                  minWidth: 0,
                 }}
               >
-                create from a promoted draft
+                <SectionHeader title="Setup Shadow Deployment" />
+                {candidateDrafts.length ? (
+                  <div style={{ display: "grid", gap: sp(7) }}>
+                    <select
+                      value={selectedDraft?.id || ""}
+                      onChange={(event) => setSelectedDraftId(event.target.value)}
+                      style={{
+                        width: "100%",
+                        background: T.bg1,
+                        border: "none",
+                        borderRadius: dim(8),
+                        padding: sp("8px 10px"),
+                        color: T.text,
+                        fontSize: fs(10),
+                        fontFamily: T.sans,
+                        outline: "none",
+                      }}
+                    >
+                      {candidateDrafts.map((draft) => (
+                        <option key={draft.id} value={draft.id}>
+                          {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={deploymentName}
+                      onChange={(event) => setDeploymentName(event.target.value)}
+                      placeholder="Deployment name"
+                      style={{
+                        width: "100%",
+                        background: T.bg1,
+                        border: "none",
+                        borderRadius: dim(8),
+                        padding: sp("8px 10px"),
+                        color: T.text,
+                        fontSize: fs(10),
+                        fontFamily: T.sans,
+                        outline: "none",
+                      }}
+                    />
+                    <input
+                      value={symbolUniverseInput}
+                      onChange={(event) => setSymbolUniverseInput(event.target.value)}
+                      placeholder="SPY, QQQ, NVDA"
+                      style={{
+                        width: "100%",
+                        background: T.bg1,
+                        border: "none",
+                        borderRadius: dim(8),
+                        padding: sp("8px 10px"),
+                        color: T.text,
+                        fontSize: fs(10),
+                        fontFamily: T.sans,
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateDeployment}
+                      disabled={createDeploymentMutation.isPending}
+                      style={{
+                        ...compactButtonStyle({
+                          fill: true,
+                          disabled: createDeploymentMutation.isPending,
+                        }),
+                        border: "none",
+                        background: T.accent,
+                        color: "#fff",
+                      }}
+                    >
+                      {createDeploymentMutation.isPending
+                        ? "CREATING..."
+                        : "CREATE SHADOW DEPLOYMENT"}
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      border: `1px dashed ${T.border}`,
+                      borderRadius: dim(5),
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(10),
+                      lineHeight: 1.45,
+                      padding: sp("14px 10px"),
+                    }}
+                  >
+                    No promoted draft strategies are available yet. Promote a completed
+                    backtest run first, then return here to create a Shadow signal deployment.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: sp(6),
-              flexWrap: "wrap",
-              justifyContent: algoIsNarrow ? "flex-start" : "flex-end",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => refreshAlgoQueries()}
-              disabled={deploymentsQuery.isFetching || cockpitQuery.isFetching}
-              style={compactButtonStyle({
-                disabled: deploymentsQuery.isFetching || cockpitQuery.isFetching,
-              })}
-            >
-              REFRESH
-            </button>
-            <button
-              type="button"
-              onClick={() => focusedDeployment && handleToggleDeployment(focusedDeployment)}
-              disabled={
-                !focusedDeployment ||
-                enableDeploymentMutation.isPending ||
-                pauseDeploymentMutation.isPending ||
-                gatewayBridgeLaunching
-              }
-              style={compactButtonStyle({
-                active: Boolean(focusedDeployment?.enabled),
-                color: focusedDeployment?.enabled ? T.amber : T.green,
-                disabled:
-                  !focusedDeployment ||
-                  enableDeploymentMutation.isPending ||
-                  pauseDeploymentMutation.isPending ||
-                  gatewayBridgeLaunching,
-              })}
-            >
-              {focusedDeployment?.enabled ? "PAUSE" : "ENABLE"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAutomationTab("Profile");
-                setSecondaryPanel(null);
-              }}
-              disabled={!focusedDeployment}
-              style={compactButtonStyle({
-                active: automationTab === "Profile" && !secondaryPanel,
-                color: T.amber,
-                disabled: !focusedDeployment,
-              })}
-            >
-              RISK/PROFILE
-            </button>
-            <button
-              type="button"
-              onClick={handleRunShadowScan}
-              disabled={
-                !focusedDeployment ||
-                runShadowScanMutation.isPending ||
-                gatewayBridgeLaunching
-              }
-              style={{
-                ...compactButtonStyle({
-                  disabled:
-                    !focusedDeployment ||
-                    runShadowScanMutation.isPending ||
-                    gatewayBridgeLaunching,
-                }),
-                border: "none",
-                background: !focusedDeployment
-                  ? T.textMuted
-                  : gatewayReady
-                    ? T.cyan
-                    : T.amber,
-                color: "#031216",
-              }}
-            >
-              {runShadowScanMutation.isPending
-                ? "SCANNING..."
-                : !gatewayReady
-                  ? gatewayBridgeLaunching
-                    ? "PREPARING..."
-                    : "START DATA"
-                  : "RUN SCAN"}
-            </button>
-            <button
-              type="button"
-              data-testid="algo-secondary-activity"
-              onClick={() =>
-                setSecondaryPanel(secondaryPanel === "activity" ? null : "activity")
-              }
-              style={compactButtonStyle({
-                active: secondaryPanel === "activity",
-                color: T.accent,
-              })}
-            >
-              ACTIVITY {events.length}
-            </button>
-            <button
-              type="button"
-              data-testid="algo-secondary-drafts"
-              onClick={() =>
-                setSecondaryPanel(secondaryPanel === "drafts" ? null : "drafts")
-              }
-              style={compactButtonStyle({
-                active: secondaryPanel === "drafts",
-                color: T.accent,
-              })}
-            >
-              DRAFTS {candidateDrafts.length}
-            </button>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(280px, 0.85fr) minmax(0, 1.4fr)",
-            gap: sp(10),
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("9px 10px"),
-              minWidth: 0,
-            }}
-          >
+            );
+          }
+          const freshSignals = Number(cockpitSignalFreshness.fresh ?? 0);
+          const staleSignals = Number(cockpitSignalFreshness.notFresh ?? 0);
+          const activePositions = Number(
+            cockpitKpis.openPositions ?? signalOptionsPositions.length,
+          );
+          const candidatesCount = Number(
+            cockpitKpis.candidates ?? signalOptionsCandidates.length,
+          );
+          const blockedCount = Number(cockpitTradePath.blockedCandidates ?? 0);
+          const filledCount = Number(cockpitTradePath.shadowFilledCandidates ?? 0);
+          const todayPnl = Number(cockpitKpis.todayPnl ?? 0);
+          const realizedPnl = Number(cockpitKpis.dailyRealizedPnl ?? 0);
+          const unrealizedPnl = Number(cockpitKpis.openUnrealizedPnl ?? 0);
+          const winRate = signalOptionsPerformanceSummary.winRatePercent;
+          const ruleFail = signalOptionsRuleAdherence.some(
+            (rule) => asRecord(rule).status === "fail",
+          );
+          const ruleWarn = signalOptionsRuleAdherence.some(
+            (rule) => asRecord(rule).status === "warning",
+          );
+          const ruleFailCount = signalOptionsRuleAdherence.filter(
+            (rule) => asRecord(rule).status === "fail",
+          ).length;
+          const ruleWarnCount = signalOptionsRuleAdherence.filter(
+            (rule) => asRecord(rule).status === "warning",
+          ).length;
+          return (
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
+                flexDirection: "column",
                 gap: sp(8),
-                marginBottom: sp(8),
+                minWidth: 0,
               }}
             >
-              <div>
-                <div
-                  style={{
-                    color: T.text,
-                    fontFamily: T.display,
-                    fontSize: fs(11),
-                    fontWeight: 400,
-                  }}
-                >
-                  {deployments.length ? "Deployment Focus" : "Setup Shadow Deployment"}
-                </div>
-                <div
-                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
-                >
-                  {deployments.length
-                    ? "select, enable, scan, inspect"
-                    : "promoted draft -> shadow automation"}
-                </div>
-              </div>
-              <Badge color={bridgeTone.color}>{bridgeTone.label.toUpperCase()}</Badge>
+              <HeroKpi
+                pnlValue={todayPnl}
+                pnlValueDisplay={formatMoney(todayPnl, 2)}
+                pnlPercentDisplay={
+                  Number.isFinite(realizedPnl)
+                    ? `R ${formatMoney(realizedPnl, 0)} · U ${formatMoney(unrealizedPnl, 0)}`
+                    : "—"
+                }
+                wins={
+                  Number.isFinite(winRate)
+                    ? Math.round((filledCount * winRate) / 100)
+                    : 0
+                }
+                losses={
+                  Number.isFinite(winRate)
+                    ? Math.max(
+                        0,
+                        filledCount -
+                          Math.round((filledCount * winRate) / 100),
+                      )
+                    : filledCount
+                }
+                activePositions={activePositions}
+                unrealizedDisplay={formatMoney(unrealizedPnl, 0)}
+                freshSignals={freshSignals}
+                freshSignalsDetail={
+                  staleSignals > 0 ? `${staleSignals} stale` : null
+                }
+                rulesState={
+                  ruleFail ? "FAIL" : ruleWarn ? "REVIEW" : "OK"
+                }
+                rulesDetail={
+                  ruleFail
+                    ? `${ruleFailCount} failing`
+                    : ruleWarn
+                      ? `${ruleWarnCount} review`
+                      : "all green"
+                }
+                candidates={candidatesCount}
+                candidatesDetail={
+                  blockedCount > 0 ? `${blockedCount} blocked` : null
+                }
+                todayFired={filledCount}
+                todayFiredDetail={
+                  Number.isFinite(winRate)
+                    ? `${formatPct(winRate, 0)} win`
+                    : null
+                }
+                narrow={algoIsPhone || algoIsNarrow}
+              />
             </div>
+          );
+        })()}
 
-            {deployments.length ? (
-              <div style={{ display: "grid", gap: sp(7) }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                    gap: sp(6),
-                  }}
-                >
-                  {[
-                    ["Account", focusedDeployment?.providerAccountId || "shadow"],
-                    [
-                      "Last eval",
-                      formatRelativeTimeShort(focusedDeployment?.lastEvaluatedAt),
-                    ],
-                    [
-                      "Last signal",
-                      formatRelativeTimeShort(focusedDeployment?.lastSignalAt),
-                    ],
-                    [
-                      "Updated",
-                      formatRelativeTimeShort(focusedDeployment?.updatedAt),
-                    ],
-                  ].map(([label, value]) => (
-                    <div
-                      key={label}
+        {primaryTab === "diagnostics" && (() => {
+          const diagPanels = [
+            { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: T.red },
+            { key: "skip-reasons", title: "Skip Reasons", rows: cockpitSkipReasonRows, color: T.red },
+            { key: "readiness", title: "Readiness", rows: cockpitReadinessRows, color: T.amber },
+            { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: T.cyan },
+            { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: T.green },
+            { key: "entry-gate", title: "Entry Gate", rows: cockpitEntryGateRows, color: T.amber },
+            { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: T.cyan },
+          ];
+          const gateHealthy = isGateSummaryHealthy(cockpitTradePath);
+          const resolveExpanded = (panel) => {
+            const healthy = isDiagRowsHealthy(panel.rows);
+            const override = diagExpansion[panel.key];
+            return typeof override === "boolean" ? override : !healthy;
+          };
+          const expandedPanels = diagPanels.filter((panel) => resolveExpanded(panel));
+          const collapsedPanels = diagPanels.filter((panel) => !resolveExpanded(panel));
+          return (
+            <div
+              data-testid="algo-cockpit-diagnostics"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: sp(8),
+                minWidth: 0,
+              }}
+            >
+              <SectionHeader
+                title="Diagnostics"
+                right={
+                  <div style={{ display: "flex", gap: sp(5) }}>
+                    <button
+                      type="button"
+                      data-testid="algo-diag-expand-all"
+                      onClick={() =>
+                        setDiagExpansion(
+                          Object.fromEntries(diagPanels.map((p) => [p.key, true])),
+                        )
+                      }
                       style={{
-                        border: `1px solid ${T.border}`,
-                        borderRadius: dim(4),
+                        padding: sp("4px 10px"),
+                        fontSize: fs(9),
+                        fontFamily: T.sans,
+                        fontWeight: 500,
+                        color: T.textSec,
                         background: T.bg2,
-                        padding: sp("6px 7px"),
-                        minWidth: 0,
+                        border: "none",
+                        borderRadius: dim(999),
+                        cursor: "pointer",
+                        letterSpacing: "0.02em",
                       }}
                     >
+                      Expand all
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="algo-diag-collapse-all"
+                      onClick={() =>
+                        setDiagExpansion(
+                          Object.fromEntries(diagPanels.map((p) => [p.key, false])),
+                        )
+                      }
+                      style={{
+                        padding: sp("4px 10px"),
+                        fontSize: fs(9),
+                        fontFamily: T.sans,
+                        fontWeight: 500,
+                        color: T.textSec,
+                        background: T.bg2,
+                        border: "none",
+                        borderRadius: dim(999),
+                        cursor: "pointer",
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      Collapse all
+                    </button>
+                  </div>
+                }
+              />
+
+              <div
+                data-testid="algo-diag-gate-summary"
+                style={{
+                  border: "none",
+                  borderRadius: dim(10),
+                  background: T.bg1,
+                  padding: sp("8px 10px"),
+                  display: "grid",
+                  gridTemplateColumns: algoIsPhone
+                    ? "repeat(2, minmax(0, 1fr))"
+                    : "repeat(6, minmax(0, 1fr))",
+                  gap: sp(6),
+                }}
+              >
+                {[
+                  ["Fresh", cockpitSignalFreshness.fresh ?? 0, T.green],
+                  ["Stale", cockpitSignalFreshness.notFresh ?? 0, T.amber],
+                  ["Blocked", cockpitTradePath.blockedCandidates ?? 0, T.red],
+                  ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, T.green],
+                  ["Marks", cockpitTradePath.markEvents ?? 0, T.cyan],
+                  ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, T.amber],
+                ].map(([label, value, color]) => {
+                  const isAlarm =
+                    (label === "Blocked" || label === "Gateway") &&
+                    Number(value) > 0;
+                  return (
+                    <div key={label} style={{ minWidth: 0 }}>
                       <div
                         style={{
                           color: T.textMuted,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           fontSize: fs(7),
                           letterSpacing: "0.08em",
                         }}
@@ -1707,635 +1842,105 @@ export const AlgoScreen = ({
                       </div>
                       <div
                         style={{
-                          color: T.text,
-                          fontFamily: T.mono,
-                          fontSize: fs(9),
+                          color: isAlarm
+                            ? color
+                            : Number(value) > 0 && label !== "Stale"
+                              ? color
+                              : T.text,
+                          fontFamily: T.sans,
+                          fontSize: fs(11),
                           marginTop: sp(2),
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
                         }}
                       >
-                        {value}
+                        {Number(value || 0).toLocaleString()}
                       </div>
                     </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
-                  {deployments.slice(0, 4).map((deployment) => {
-                    const active = focusedDeployment?.id === deployment.id;
-                    const tone = deployment.enabled
-                      ? T.green
-                      : deployment.lastError
-                        ? T.red
-                        : T.textDim;
-                    return (
-                      <button
-                        key={deployment.id}
-                        type="button"
-                        className={joinMotionClasses(
-                          "ra-interactive",
-                          active && "ra-focus-rail",
-                        )}
-                        onClick={() => setFocusedDeploymentId(deployment.id)}
-                        style={compactButtonStyle({
-                          active,
-                          color: tone,
-                        })}
-                      >
-                        {deployment.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                {focusedDeployment?.lastError && (
-                  <div
-                    style={{
-                      color: T.red,
-                      fontFamily: T.sans,
-                      fontSize: fs(9),
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {focusedDeployment.lastError}
-                  </div>
-                )}
+                  );
+                })}
               </div>
-            ) : candidateDrafts.length ? (
-              <div style={{ display: "grid", gap: sp(7) }}>
-                <select
-                  value={selectedDraft?.id || ""}
-                  onChange={(event) => setSelectedDraftId(event.target.value)}
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 9px"),
-                    color: T.text,
-                    fontSize: fs(9),
-                    fontFamily: T.mono,
-                    outline: "none",
-                  }}
-                >
-                  {candidateDrafts.map((draft) => (
-                    <option key={draft.id} value={draft.id}>
-                      {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={deploymentName}
-                  onChange={(event) => setDeploymentName(event.target.value)}
-                  placeholder="Deployment name"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 9px"),
-                    color: T.text,
-                    fontSize: fs(9),
-                    fontFamily: T.sans,
-                    outline: "none",
-                  }}
-                />
-                <input
-                  value={symbolUniverseInput}
-                  onChange={(event) => setSymbolUniverseInput(event.target.value)}
-                  placeholder="SPY, QQQ, NVDA"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 9px"),
-                    color: T.text,
-                    fontSize: fs(9),
-                    fontFamily: T.mono,
-                    outline: "none",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleCreateDeployment}
-                  disabled={createDeploymentMutation.isPending}
-                  style={{
-                    ...compactButtonStyle({
-                      fill: true,
-                      disabled: createDeploymentMutation.isPending,
-                    }),
-                    border: "none",
-                    background: T.accent,
-                    color: "#fff",
-                  }}
-                >
-                  {createDeploymentMutation.isPending
-                    ? "CREATING..."
-                    : "CREATE SHADOW DEPLOYMENT"}
-                </button>
-              </div>
-            ) : (
-              <div
-                style={{
-                  border: `1px dashed ${T.border}`,
-                  borderRadius: dim(5),
-                  color: T.textDim,
-                  fontFamily: T.sans,
-                  fontSize: fs(10),
-                  lineHeight: 1.45,
-                  padding: sp("14px 10px"),
-                }}
-              >
-                No promoted draft strategies are available yet. Promote a completed
-                backtest run first, then return here to create a Shadow signal deployment.
-              </div>
-            )}
-          </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: algoMetricsGridTemplate,
-              gap: sp(7),
-              minWidth: 0,
-            }}
-          >
-            {cockpitMetricCards.map((metric, index) => (
-              <div
-                key={metric.label}
-                className="ra-row-enter"
-                style={{
-                  ...motionRowStyle(index, 12, 70),
-                  ...motionVars({ accent: metric.color }),
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg0,
-                  padding: sp("8px 9px"),
-                  minWidth: 0,
-                }}
-              >
+              {expandedPanels.length ? (
                 <div
                   style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  {metric.label.toUpperCase()}
-                </div>
-                <div
-                  style={{
-                    color: metric.color,
-                    fontFamily: T.mono,
-                    fontSize: fs(11),
-                    fontWeight: 400,
-                    marginTop: sp(3),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {metric.value}
-                </div>
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
-                    marginTop: sp(2),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {metric.detail}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div
-          data-testid="algo-cockpit-diagnostics"
-          style={{
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(5),
-            background: T.bg0,
-            padding: sp("9px 10px"),
-            display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(180px, 0.7fr) repeat(3, minmax(0, 1fr))",
-            gap: sp(8),
-            minWidth: 0,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(11),
-                fontWeight: 400,
-              }}
-            >
-              Gate Summary
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: sp(5),
-                marginTop: sp(7),
-              }}
-            >
-              {[
-                ["Fresh", cockpitSignalFreshness.fresh ?? 0, T.green],
-                ["Stale", cockpitSignalFreshness.notFresh ?? 0, T.amber],
-                ["Blocked", cockpitTradePath.blockedCandidates ?? 0, T.red],
-                ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, T.green],
-              ].map(([label, value, color]) => (
-                <div
-                  key={label}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    background: T.bg2,
-                    padding: sp("6px 7px"),
+                    display: "grid",
+                    gridTemplateColumns: algoIsPhone
+                      ? "1fr"
+                      : algoIsNarrow
+                        ? "repeat(2, minmax(0, 1fr))"
+                        : "repeat(3, minmax(0, 1fr))",
+                    gap: sp(8),
                     minWidth: 0,
                   }}
                 >
-                  <div
-                    style={{
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {String(label).toUpperCase()}
-                  </div>
-                  <div
-                    style={{
-                      color,
-                      fontFamily: T.mono,
-                      fontSize: fs(10),
-                      marginTop: sp(2),
-                    }}
-                  >
-                    {Number(value || 0).toLocaleString()}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          {[
-            ["Skip Reasons", cockpitSkipReasonRows, T.red],
-            ["Entry Gate", cockpitEntryGateRows, T.amber],
-            ["Option Chain", cockpitOptionChainRows, T.cyan],
-          ].map(([title, rows, color]) => (
-            <div
-              key={title}
-              style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
-                background: T.bg2,
-                padding: sp("7px 8px"),
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={{
-                  color,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  letterSpacing: "0.08em",
-                  marginBottom: sp(6),
-                }}
-              >
-                {String(title).toUpperCase()}
-              </div>
-              {rows.length ? (
-                <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
-                  {rows.map(([label, count]) => (
-                    <div
-                      key={label}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: sp(7),
-                        alignItems: "center",
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: T.textSec,
-                          fontFamily: T.mono,
-                          fontSize: fs(8),
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {formatEnumLabel(label)}
-                      </span>
-                      <span
-                        style={{
-                          color: T.text,
-                          fontFamily: T.mono,
-                          fontSize: fs(8),
-                        }}
-                      >
-                        {count}
-                      </span>
-                    </div>
+                  {expandedPanels.map((panel) => (
+                    <DiagPanel
+                      key={panel.key}
+                      title={panel.title}
+                      color={panel.color}
+                      rows={panel.rows}
+                      healthy={isDiagRowsHealthy(panel.rows)}
+                      expanded={true}
+                      onToggle={() =>
+                        setDiagExpansion((current) => ({
+                          ...current,
+                          [panel.key]: false,
+                        }))
+                      }
+                    />
                   ))}
                 </div>
-              ) : (
+              ) : null}
+
+              {collapsedPanels.length ? (
                 <div
                   style={{
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: sp(5),
+                    paddingTop: sp(2),
                   }}
                 >
-                  none
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div
-          data-testid="algo-signal-options-performance"
-          style={{
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(5),
-            background: T.bg0,
-            padding: sp("9px 10px"),
-            display: "grid",
-            gap: sp(8),
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: sp(8),
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  color: T.text,
-                  fontFamily: T.display,
-                  fontSize: fs(11),
-                  fontWeight: 400,
-                }}
-              >
-                Performance vs Rules
-              </div>
-              <div
-                style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
-              >
-                {signalOptionsPerformance
-                  ? `${signalOptionsPerformance.range || "1M"} shadow automation`
-                  : signalOptionsPerformanceQuery.isError
-                    ? "performance unavailable"
-                    : "loading performance"}
-              </div>
-            </div>
-            <Badge
-              color={
-                signalOptionsRuleAdherence.some((rule) => asRecord(rule).status === "fail")
-                  ? T.red
-                  : signalOptionsRuleAdherence.some(
-                      (rule) => asRecord(rule).status === "warning",
-                    )
-                    ? T.amber
-                    : T.green
-              }
-            >
-              {signalOptionsRuleAdherence.some((rule) => asRecord(rule).status === "fail")
-                ? "RULE FAIL"
-                : signalOptionsRuleAdherence.some(
-                      (rule) => asRecord(rule).status === "warning",
-                    )
-                  ? "REVIEW"
-                  : "RULES OK"}
-            </Badge>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: algoIsPhone
-                ? "repeat(2, minmax(0, 1fr))"
-                : "repeat(4, minmax(0, 1fr))",
-              gap: sp(6),
-              minWidth: 0,
-            }}
-          >
-            {signalOptionsPerformanceCards.map(([label, value, color]) => (
-              <div
-                key={label}
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(4),
-                  background: T.bg2,
-                  padding: sp("6px 7px"),
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  {String(label).toUpperCase()}
-                </div>
-                <div
-                  style={{
-                    color,
-                    fontFamily: T.mono,
-                    fontSize: fs(9),
-                    marginTop: sp(2),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {value}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: algoIsNarrow
-                ? "minmax(0, 1fr)"
-                : "minmax(0, 1.25fr) minmax(240px, 0.75fr)",
-              gap: sp(8),
-              minWidth: 0,
-            }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gap: sp(5),
-                minWidth: 0,
-              }}
-            >
-              {signalOptionsRuleAdherence.slice(0, 9).map((rule, index) => {
-                const ruleRecord = asRecord(rule);
-                const color = signalOptionsRuleColor(ruleRecord.status);
-                return (
-                  <div
-                    key={ruleRecord.id || index}
+                  <span
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: algoIsPhone
-                        ? "minmax(0, 1fr)"
-                        : "minmax(130px, 0.55fr) minmax(0, 1fr) minmax(52px, 0.2fr)",
-                      gap: sp(7),
-                      alignItems: "center",
-                      border: `1px solid ${color}35`,
-                      borderRadius: dim(4),
-                      background: `${color}0d`,
-                      padding: sp("6px 7px"),
-                      minWidth: 0,
+                      fontFamily: T.sans,
+                      fontSize: fs(7),
+                      color: T.textMuted,
+                      letterSpacing: "0.08em",
+                      alignSelf: "center",
+                      marginRight: sp(2),
                     }}
                   >
-                    <div
-                      style={{
-                        color,
-                        fontFamily: T.mono,
-                        fontSize: fs(8),
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {String(ruleRecord.label || ruleRecord.id || "Rule").toUpperCase()}
-                    </div>
-                    <div
-                      style={{
-                        color: T.textDim,
-                        fontFamily: T.sans,
-                        fontSize: fs(8),
-                        lineHeight: 1.35,
-                        minWidth: 0,
-                      }}
-                    >
-                      {ruleRecord.detail || MISSING_VALUE}
-                    </div>
-                    <div
-                      style={{
-                        color,
-                        fontFamily: T.mono,
-                        fontSize: fs(8),
-                        textAlign: algoIsPhone ? "left" : "right",
-                      }}
-                    >
-                      {formatEnumLabel(ruleRecord.status || "pass")}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div
-              style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
-                background: T.bg2,
-                padding: sp("7px 8px"),
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={{
-                  color: T.amber,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  letterSpacing: "0.08em",
-                  marginBottom: sp(6),
-                }}
-              >
-                TOP BLOCKERS
-              </div>
-              {signalOptionsTopBlockers.length ? (
-                <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
-                  {signalOptionsTopBlockers.slice(0, 5).map((blocker, index) => {
-                    const blockerRecord = asRecord(blocker);
-                    return (
-                      <div
-                        key={blockerRecord.reason || index}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "minmax(0, 1fr) auto",
-                          gap: sp(7),
-                          alignItems: "center",
-                          minWidth: 0,
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: T.textSec,
-                            fontFamily: T.mono,
-                            fontSize: fs(8),
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {blockerRecord.label || formatEnumLabel(blockerRecord.reason)}
-                        </span>
-                        <span
-                          style={{
-                            color: T.text,
-                            fontFamily: T.mono,
-                            fontSize: fs(8),
-                          }}
-                        >
-                          {Number(blockerRecord.count || 0).toLocaleString()}
-                        </span>
-                      </div>
-                    );
-                  })}
+                    {gateHealthy && expandedPanels.length === 0
+                      ? "ALL HEALTHY · "
+                      : "HEALTHY · "}
+                  </span>
+                  {collapsedPanels.map((panel) => (
+                    <DiagPanel
+                      key={panel.key}
+                      title={panel.title}
+                      color={panel.color}
+                      rows={panel.rows}
+                      healthy={isDiagRowsHealthy(panel.rows)}
+                      expanded={false}
+                      onToggle={() =>
+                        setDiagExpansion((current) => ({
+                          ...current,
+                          [panel.key]: true,
+                        }))
+                      }
+                    />
+                  ))}
                 </div>
-              ) : (
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
-                  }}
-                >
-                  none
-                </div>
-              )}
+              ) : null}
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
+        {primaryTab === "signals" && (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(0, 1.25fr) minmax(320px, 0.9fr)",
+            gridTemplateColumns: algoDetailGridTemplate,
             gap: sp(10),
             minWidth: 0,
           }}
@@ -2343,42 +1948,18 @@ export const AlgoScreen = ({
           <div
             data-testid="algo-signal-action-panel"
             style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
+              border: "none",
+              borderRadius: dim(10),
+              background: T.bg1,
               padding: sp("9px 10px"),
               minWidth: 0,
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(8),
-                marginBottom: sp(8),
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    color: T.text,
-                    fontFamily: T.display,
-                    fontSize: fs(11),
-                    fontWeight: 400,
-                  }}
-                >
-                  Signal -&gt; Action
-                </div>
-                <div
-                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
-                >
-                  universe signal mapping and candidate queue
-                </div>
-              </div>
-              <Badge color={T.cyan}>SHADOW ONLY</Badge>
-            </div>
+            <SectionHeader
+              title={<>Signal -&gt; Action</>}
+              subtitle="universe signal mapping and candidate queue"
+              right={<Badge color={T.cyan}>SHADOW ONLY</Badge>}
+            />
 
             {!visibleSignalRows.length ? (
               <div
@@ -2463,7 +2044,7 @@ export const AlgoScreen = ({
                             <div
                               style={{
                                 color: T.textMuted,
-                                fontFamily: T.mono,
+                                fontFamily: T.sans,
                                 fontSize: fs(7),
                                 letterSpacing: "0.08em",
                               }}
@@ -2473,7 +2054,7 @@ export const AlgoScreen = ({
                             <div
                               style={{
                                 color: label === "Action" ? tone : T.text,
-                                fontFamily: T.mono,
+                                fontFamily: T.sans,
                                 fontSize: fs(9),
                                 fontWeight: 400,
                                 marginTop: sp(3),
@@ -2496,24 +2077,14 @@ export const AlgoScreen = ({
 
           <div
             style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
+              border: "none",
+              borderRadius: dim(10),
+              background: T.bg1,
               padding: sp("9px 10px"),
               minWidth: 0,
             }}
           >
-            <div
-              style={{
-                color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(11),
-                fontWeight: 400,
-                marginBottom: sp(8),
-              }}
-            >
-              Selected Action
-            </div>
+            <SectionHeader title="Selected Action" />
             {selectedCandidate ? (
               <div
                 style={{
@@ -2544,8 +2115,8 @@ export const AlgoScreen = ({
                   <div
                     key={label}
                     style={{
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(4),
+                      border: "none",
+                      borderRadius: dim(10),
                       background: T.bg2,
                       padding: sp("7px 8px"),
                       minWidth: 0,
@@ -2554,7 +2125,7 @@ export const AlgoScreen = ({
                     <div
                       style={{
                         color: T.textMuted,
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontSize: fs(7),
                         letterSpacing: "0.08em",
                       }}
@@ -2564,7 +2135,7 @@ export const AlgoScreen = ({
                     <div
                       style={{
                         color: T.text,
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontSize: fs(9),
                         marginTop: sp(3),
                         overflow: "hidden",
@@ -2614,407 +2185,300 @@ export const AlgoScreen = ({
             )}
           </div>
         </div>
+        )}
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoIsNarrow
-              ? "minmax(0, 1fr)"
-              : "minmax(0, 1.35fr) minmax(320px, 0.95fr)",
-            gap: sp(10),
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("9px 10px"),
-              minWidth: 0,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(8),
-                marginBottom: sp(8),
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    color: T.text,
-                    fontFamily: T.display,
-                    fontSize: fs(11),
-                    fontWeight: 400,
-                  }}
-                >
-                  Pipeline + Attention
-                </div>
-                <div
-                  style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}
-                >
-                  scan -&gt; signal -&gt; action -&gt; contract -&gt; gate -&gt; shadow -&gt; exit
-                </div>
-              </div>
-              <Badge
-                color={
-                  cockpitAttentionItems.some((item) => item.severity === "critical")
-                    ? T.red
-                    : cockpitAttentionItems.length
-                      ? T.amber
-                      : T.green
-                }
-              >
-                {cockpitAttentionItems.length
-                  ? `${cockpitAttentionItems.length} OPEN`
-                  : "CLEAR"}
-              </Badge>
-            </div>
+        {primaryTab === "now" && (() => {
+          const attentionStream = buildAttentionStream({
+            attentionItems: cockpitAttentionItems,
+            ruleAdherence: signalOptionsRuleAdherence,
+            gatewayReady,
+            gatewayBlocks: cockpitTradePath.gatewayBlocks,
+          });
+          const openCount = attentionStream.length;
+          const criticalCount = attentionStream.filter(
+            (item) => item.severity === "critical",
+          ).length;
+          return (
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: algoIsPhone
                   ? "minmax(0, 1fr)"
-                  : "repeat(auto-fit, minmax(92px, 1fr))",
-                gap: sp(6),
+                  : "minmax(0, 1.6fr) minmax(0, 1fr)",
+                gap: sp(8),
+                minWidth: 0,
               }}
             >
-              {cockpitStageItems.map((stage, index) => {
-                const color = cockpitStageColor(stage.status);
-                const selected = selectedStage?.id === stage.id;
-                return (
-                  <button
-                    key={stage.id}
-                    type="button"
-                    className="ra-row-enter"
-                    onClick={() => setSelectedPipelineStageId(stage.id)}
+              <div
+                style={{
+                  border: "none",
+                  borderRadius: dim(10),
+                  background: T.bg1,
+                  padding: sp("9px 10px"),
+                  minWidth: 0,
+                }}
+              >
+                <SectionHeader
+                  title="Pipeline"
+                  right={
+                    <span
+                      style={{
+                        color: T.textMuted,
+                        fontFamily: T.sans,
+                        fontSize: fs(9),
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      scan → signal → action → contract → gate → shadow → exit
+                    </span>
+                  }
+                />
+                <PipelineStrip
+                  stages={cockpitStageItems}
+                  selectedStageId={selectedStage?.id}
+                  onSelectStage={(id) => setSelectedPipelineStageId(id)}
+                  narrow={algoIsPhone}
+                />
+                <div
+                  style={{
+                    marginTop: sp(8),
+                    border: "none",
+                    borderRadius: dim(10),
+                    background: T.bg2,
+                    padding: sp("7px 9px"),
+                    minWidth: 0,
+                  }}
+                >
+                  <div
                     style={{
-                      ...motionRowStyle(index, 8, 60),
-                      textAlign: "left",
-                      border: `1px solid ${selected ? color : T.border}`,
-                      borderRadius: dim(5),
-                      background: selected ? `${color}14` : T.bg2,
-                      padding: sp("7px 8px"),
-                      cursor: "pointer",
-                      minHeight: dim(72),
+                      color: T.textMuted,
+                      fontFamily: T.sans,
+                      fontSize: fs(7),
+                      letterSpacing: "0.08em",
                     }}
                   >
-                    <div
-                      style={{
-                        color: T.text,
-                        fontFamily: T.sans,
-                        fontSize: fs(8),
-                        lineHeight: 1.2,
-                        minHeight: dim(20),
-                      }}
-                    >
-                      {stage.label}
-                    </div>
-                    <div
-                      style={{
-                        color,
-                        fontFamily: T.mono,
-                        fontSize: fs(12),
-                        marginTop: sp(5),
-                      }}
-                    >
-                      {stage.count}
-                    </div>
-                    <div
-                      style={{
-                        color: T.textDim,
-                        fontFamily: T.mono,
-                        fontSize: fs(7),
-                        marginTop: sp(2),
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {formatEnumLabel(stage.status)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: algoIsPhone
-                  ? "minmax(0, 1fr)"
-                  : "minmax(0, 1fr) minmax(0, 1fr)",
-                gap: sp(8),
-                marginTop: sp(8),
-              }}
-            >
-              <div
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg2,
-                  padding: sp("7px 8px"),
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  SELECTED STAGE
-                </div>
-                <div
-                  style={{
-                    color: selectedStage
-                      ? cockpitStageColor(selectedStage.status)
-                      : T.textDim,
-                    fontFamily: T.mono,
-                    fontSize: fs(9),
-                    marginTop: sp(3),
-                  }}
-                >
-                  {selectedStage?.label || "No stage"}
-                </div>
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.sans,
-                    fontSize: fs(8),
-                    lineHeight: 1.35,
-                    marginTop: sp(3),
-                  }}
-                >
-                  {selectedStage?.detail || "No timestamp"}
-                </div>
-              </div>
-              <div
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg2,
-                  padding: sp("7px 8px"),
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  TOP ATTENTION
-                </div>
-                {cockpitAttentionItems.length ? (
-                  <>
-                    <div
-                      style={{
-                        color: cockpitAttentionColor(cockpitAttentionItems[0].severity),
-                        fontFamily: T.mono,
-                        fontSize: fs(9),
-                        marginTop: sp(3),
-                      }}
-                    >
-                      {cockpitAttentionItems[0].symbol ||
-                        formatEnumLabel(cockpitAttentionItems[0].stage)}
-                    </div>
-                    <div
-                      style={{
-                        color: T.textDim,
-                        fontFamily: T.sans,
-                        fontSize: fs(8),
-                        lineHeight: 1.35,
-                        marginTop: sp(3),
-                      }}
-                    >
-                      {cockpitAttentionItems[0].summary}
-                    </div>
-                  </>
-                ) : (
+                    SELECTED STAGE
+                  </div>
+                  <div
+                    style={{
+                      color: T.text,
+                      fontFamily: T.sans,
+                      fontSize: fs(10),
+                      marginTop: sp(3),
+                    }}
+                  >
+                    {selectedStage?.label || "No stage"}
+                  </div>
                   <div
                     style={{
                       color: T.textDim,
                       fontFamily: T.sans,
                       fontSize: fs(8),
                       lineHeight: 1.35,
-                      marginTop: sp(3),
+                      marginTop: sp(2),
                     }}
                   >
-                    No active blockers or drift detected.
+                    {selectedStage?.detail || "No timestamp"}
                   </div>
-                )}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "none",
+                  borderRadius: dim(10),
+                  background: T.bg1,
+                  padding: sp("9px 10px"),
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: sp(6),
+                }}
+              >
+                <SectionHeader
+                  title="Attention"
+                  spacing="none"
+                  right={
+                    <Badge
+                      color={
+                        criticalCount > 0
+                          ? T.red
+                          : openCount > 0
+                            ? T.amber
+                            : T.green
+                      }
+                    >
+                      {openCount ? `${openCount} OPEN` : "CLEAR"}
+                    </Badge>
+                  }
+                />
+                <AttentionList items={attentionStream} />
               </div>
             </div>
-          </div>
+          );
+        })()}
 
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg0,
-              padding: sp("9px 10px"),
-              minWidth: 0,
-            }}
-          >
+        {primaryTab === "now" && (() => {
+          const recentSignals = signalOptionsSignals.slice(0, 5);
+          return (
             <div
+              data-testid="algo-now-recent-signals"
               style={{
-                color: T.text,
-                fontFamily: T.display,
-                fontSize: fs(11),
-                fontWeight: 400,
-                marginBottom: sp(8),
+                border: "none",
+                borderRadius: dim(10),
+                background: T.bg1,
+                padding: sp("9px 10px"),
+                minWidth: 0,
               }}
             >
-              Risk + Source Backtest
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: sp(6),
-              }}
-            >
-              {cockpitRiskCards.slice(0, 8).map(([label, value, color]) => (
+              <SectionHeader
+                title="Recent signal mapping"
+                right={
+                  <button
+                    type="button"
+                    onClick={() => setPrimaryTab("signals")}
+                    style={{
+                      padding: sp("3px 8px"),
+                      fontSize: fs(9),
+                      fontFamily: T.sans,
+                      fontWeight: 500,
+                      color: T.accent,
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    see all in Signals →
+                  </button>
+                }
+              />
+              {recentSignals.length ? (
+                <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+                  {recentSignals.map((signal, index) => {
+                    const symbol = String(
+                      signal?.symbol || signal?.ticker || "—",
+                    ).toUpperCase();
+                    const direction =
+                      signal?.direction === "short" ||
+                      signal?.direction === "bearish"
+                        ? "short"
+                        : "long";
+                    const score =
+                      Number.isFinite(Number(signal?.score)) ||
+                      Number.isFinite(Number(signal?.confidence))
+                        ? Number(signal?.score ?? signal?.confidence)
+                        : null;
+                    const action = signalActionLabel(
+                      signal,
+                      signal?.action || signal?.mappedAction,
+                    );
+                    const freshness = signalFreshnessLabel(signal);
+                    const tone =
+                      freshness === "fresh"
+                        ? T.green
+                        : freshness === "stale"
+                          ? T.amber
+                          : T.textDim;
+                    return (
+                      <div
+                        key={signal?.id || `${symbol}-${index}`}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: algoIsPhone
+                            ? "minmax(0, 1fr) auto"
+                            : "60px minmax(0, 1fr) minmax(0, 2fr) auto",
+                          gap: sp(8),
+                          alignItems: "center",
+                          padding: sp("3px 0"),
+                          borderBottom:
+                            index < recentSignals.length - 1
+                              ? `1px solid ${T.border}`
+                              : "none",
+                          minWidth: 0,
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: T.textMuted,
+                            fontFamily: T.sans,
+                            fontSize: fs(8),
+                          }}
+                        >
+                          {symbol}
+                        </span>
+                        {!algoIsPhone && (
+                          <span
+                            style={{
+                              color: T.textSec,
+                              fontFamily: T.sans,
+                              fontSize: fs(8),
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            {direction === "short" ? "▼ short" : "▲ long"}
+                            {score != null ? ` ${score.toFixed(2)}` : ""}
+                          </span>
+                        )}
+                        {!algoIsPhone && (
+                          <span
+                            style={{
+                              color: T.text,
+                              fontFamily: T.sans,
+                              fontSize: fs(8),
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            → {action}
+                          </span>
+                        )}
+                        <span
+                          style={{
+                            color: tone,
+                            fontFamily: T.sans,
+                            fontSize: fs(8),
+                            letterSpacing: "0.04em",
+                            textAlign: "right",
+                          }}
+                        >
+                          {freshness}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
                 <div
-                  key={label}
                   style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    background: T.bg2,
-                    padding: sp("6px 7px"),
-                    minWidth: 0,
+                    color: T.textDim,
+                    fontFamily: T.sans,
+                    fontSize: fs(9),
+                    padding: sp("8px 0"),
                   }}
                 >
-                  <div
-                    style={{
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {String(label).toUpperCase()}
-                  </div>
-                  <div
-                    style={{
-                      color,
-                      fontFamily: T.mono,
-                      fontSize: fs(9),
-                      marginTop: sp(2),
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {value}
-                  </div>
+                  No signals yet — fresh universe signals will appear here as
+                  the algo evaluates.
                 </div>
-              ))}
+              )}
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: sp(6),
-                marginTop: sp(7),
-              }}
-            >
-              {cockpitBacktestCards.slice(0, 4).map(([label, value]) => (
-                <div
-                  key={label}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    background: T.bg2,
-                    padding: sp("6px 7px"),
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {String(label).toUpperCase()}
-                  </div>
-                  <div
-                    style={{
-                      color: T.text,
-                      fontFamily: T.mono,
-                      fontSize: fs(9),
-                      marginTop: sp(2),
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {value}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+          );
+        })()}
 
+        {(primaryTab === "signals" ||
+          primaryTab === "positions" ||
+          primaryTab === "profile") && (
         <div
           style={{
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(5),
-            background: T.bg0,
+            border: "none",
+            borderRadius: dim(10),
+            background: T.bg1,
             padding: sp("9px 10px"),
             minWidth: 0,
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              gap: sp(6),
-              flexWrap: "wrap",
-              marginBottom: sp(8),
-            }}
-          >
-            {["Candidates", "Positions", "Profile"].map((tab) => (
-              <button
-                key={tab}
-                data-testid={`algo-signal-options-tab-${tab.toLowerCase()}`}
-                type="button"
-                onClick={() => {
-                  setAutomationTab(tab);
-                  setSecondaryPanel(null);
-                }}
-                style={compactButtonStyle({
-                  active: automationTab === tab && !secondaryPanel,
-                  color: T.accent,
-                })}
-              >
-                {tab.toUpperCase()}
-              </button>
-            ))}
-            <button
-              data-testid="algo-signal-options-tab-events"
-              type="button"
-              onClick={() => setSecondaryPanel("activity")}
-              style={compactButtonStyle({
-                active: secondaryPanel === "activity",
-                color: T.accent,
-              })}
-            >
-              EVENTS
-            </button>
-          </div>
-
-          {automationTab === "Candidates" && !secondaryPanel && (
+          {primaryTab === "signals" && (
             <div
               style={{
                 display: "grid",
@@ -3078,7 +2542,7 @@ export const AlgoScreen = ({
                           <span
                             style={{
                               color: T.text,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                               fontSize: fs(9),
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -3097,7 +2561,7 @@ export const AlgoScreen = ({
                         <div
                           style={{
                             color: T.textDim,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             fontSize: fs(8),
                             marginTop: sp(3),
                           }}
@@ -3114,8 +2578,8 @@ export const AlgoScreen = ({
 
               <div
                 style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
+                  border: "none",
+                  borderRadius: dim(10),
                   background: T.bg2,
                   padding: sp("8px 9px"),
                   minWidth: 0,
@@ -3126,7 +2590,7 @@ export const AlgoScreen = ({
                     <div
                       style={{
                         color: T.text,
-                        fontFamily: T.display,
+                        fontFamily: T.sans,
                         fontSize: fs(12),
                         fontWeight: 400,
                       }}
@@ -3137,7 +2601,7 @@ export const AlgoScreen = ({
                     <div
                       style={{
                         color: T.textDim,
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontSize: fs(8),
                         lineHeight: 1.35,
                       }}
@@ -3165,9 +2629,9 @@ export const AlgoScreen = ({
                         <div
                           key={label}
                           style={{
-                            border: `1px solid ${T.border}`,
-                            borderRadius: dim(4),
-                            background: T.bg0,
+                            border: "none",
+                            borderRadius: dim(10),
+                            background: T.bg1,
                             padding: sp("6px 7px"),
                             minWidth: 0,
                           }}
@@ -3175,7 +2639,7 @@ export const AlgoScreen = ({
                           <div
                             style={{
                               color: T.textMuted,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                               fontSize: fs(7),
                               letterSpacing: "0.08em",
                             }}
@@ -3185,7 +2649,7 @@ export const AlgoScreen = ({
                           <div
                             style={{
                               color: T.text,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                               fontSize: fs(9),
                               marginTop: sp(2),
                               overflow: "hidden",
@@ -3228,7 +2692,7 @@ export const AlgoScreen = ({
             </div>
           )}
 
-          {automationTab === "Positions" && !secondaryPanel && (
+          {primaryTab === "positions" && (
             <div style={{ display: "grid", gap: sp(7) }}>
               {!signalOptionsPositions.length ? (
                 <div
@@ -3268,8 +2732,8 @@ export const AlgoScreen = ({
                           : "minmax(160px, 1fr) repeat(4, minmax(82px, 0.7fr))",
                         gap: sp(8),
                         alignItems: "center",
-                        border: `1px solid ${T.border}`,
-                        borderRadius: dim(5),
+                        border: "none",
+                        borderRadius: dim(10),
                         background: T.bg2,
                         padding: sp("8px 9px"),
                         minWidth: 0,
@@ -3279,7 +2743,7 @@ export const AlgoScreen = ({
                         <div
                           style={{
                             color: T.text,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             fontSize: fs(9),
                             overflow: "hidden",
                             textOverflow: "ellipsis",
@@ -3291,7 +2755,7 @@ export const AlgoScreen = ({
                         <div
                           style={{
                             color: T.textDim,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             fontSize: fs(8),
                             marginTop: sp(2),
                           }}
@@ -3310,7 +2774,7 @@ export const AlgoScreen = ({
                           <div
                             style={{
                               color: T.textMuted,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                               fontSize: fs(7),
                               letterSpacing: "0.08em",
                             }}
@@ -3325,7 +2789,7 @@ export const AlgoScreen = ({
                                   : label === "P&L" && Number(unrealized) > 0
                                     ? T.green
                                     : T.text,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                               fontSize: fs(9),
                               marginTop: sp(2),
                             }}
@@ -3341,381 +2805,456 @@ export const AlgoScreen = ({
             </div>
           )}
 
-          {automationTab === "Profile" && !secondaryPanel && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: algoProfileGridTemplate,
-                gap: sp(8),
-              }}
-            >
-              <div
-                style={{
-                  gridColumn: "1 / -1",
-                  border: `1px solid ${T.amber}35`,
-                  borderRadius: dim(5),
-                  background: `${T.amber}0d`,
-                  padding: sp("8px 9px"),
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: sp(10),
-                  flexWrap: "wrap",
-                  minWidth: 0,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      color: T.amber,
-                      fontFamily: T.mono,
-                      fontSize: fs(8),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    EXPANDED CAPACITY
-                  </div>
-                  <div
-                    style={{
-                      color: T.textDim,
-                      fontFamily: T.mono,
-                      fontSize: fs(8),
-                      marginTop: sp(2),
-                    }}
-                  >
-                    {SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxOpenSymbols} symbols ·{" "}
-                    {formatMoney(SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxDailyLoss)} halt
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  data-testid="signal-options-expanded-capacity"
-                  onClick={handleApplyExpandedCapacity}
-                  disabled={!focusedDeployment || updateProfileMutation.isPending}
-                  style={{
-                    ...compactButtonStyle({
-                      disabled: !focusedDeployment || updateProfileMutation.isPending,
-                    }),
-                    border: `1px solid ${T.amber}55`,
-                    background: `${T.amber}18`,
-                    color: T.amber,
-                  }}
-                >
-                  {updateProfileMutation.isPending ? "SAVING..." : "APPLY"}
-                </button>
-              </div>
-              {profileNumberFields.map(([section, key, label, step]) => (
-                <label
-                  key={`${section}.${key}`}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(5),
-                    background: T.bg2,
-                    padding: sp("8px 9px"),
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: sp(5),
-                  }}
-                >
-                  <span
-                    style={{
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {label.toUpperCase()}
-                  </span>
-                  <input
-                    type="number"
-                    step={step}
-                    value={profileDraft?.[section]?.[key] ?? ""}
-                    onChange={(event) =>
-                      patchProfileDraft(
-                        section,
-                        key,
-                        numberFrom(event.target.value, 0),
-                      )
-                    }
-                    style={{
-                      background: T.bg3,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(4),
-                      color: T.text,
-                      padding: sp("6px 8px"),
-                      fontFamily: T.mono,
-                      fontSize: fs(9),
-                      outline: "none",
-                    }}
-                  />
-                </label>
-              ))}
-              {[
-                ["optionSelection", "callStrikeSlot", "Call strike slot"],
-                ["optionSelection", "putStrikeSlot", "Put strike slot"],
-              ].map(([section, key, label]) => (
-                <label
-                  key={`${section}.${key}`}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(5),
-                    background: T.bg2,
-                    padding: sp("8px 9px"),
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: sp(5),
-                  }}
-                >
-                  <span
-                    style={{
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      fontSize: fs(7),
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {label.toUpperCase()}
-                  </span>
-                  <select
-                    value={profileDraft?.[section]?.[key] ?? ""}
-                    onChange={(event) =>
-                      patchProfileDraft(section, key, Number(event.target.value))
-                    }
-                    style={{
-                      background: T.bg3,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(4),
-                      color: T.text,
-                      padding: sp("6px 8px"),
-                      fontFamily: T.mono,
-                      fontSize: fs(9),
-                      outline: "none",
-                    }}
-                  >
-                    {SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-              <label
-                style={{
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  background: T.bg2,
-                  padding: sp("8px 9px"),
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: sp(5),
-                }}
-              >
-                <span
-                  style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  BEAR ADX MIN
-                </span>
+          {primaryTab === "profile" && (() => {
+            const numberFieldStyle = {
+              border: "none",
+              borderRadius: dim(10),
+              background: T.bg2,
+              padding: sp("7px 9px"),
+              display: "flex",
+              flexDirection: "column",
+              gap: sp(4),
+            };
+            const labelTextStyle = {
+              color: T.textMuted,
+              fontFamily: T.sans,
+              fontSize: fs(7),
+              letterSpacing: "0.08em",
+            };
+            const inputStyle = {
+              background: T.bg3,
+              border: "none",
+              borderRadius: dim(3),
+              color: T.text,
+              padding: sp("5px 7px"),
+              fontFamily: T.sans,
+              fontSize: fs(9),
+              outline: "none",
+            };
+            const renderNumberField = (section, key, label, step) => (
+              <label key={`${section}.${key}`} style={numberFieldStyle}>
+                <span style={labelTextStyle}>{label.toUpperCase()}</span>
                 <input
                   type="number"
-                  step={1}
-                  value={
-                    profileDraft?.entryGate?.bearishRegime?.minAdx ??
-                    SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime.minAdx
-                  }
+                  step={step}
+                  value={profileDraft?.[section]?.[key] ?? ""}
                   onChange={(event) =>
-                    patchProfileDraftNested(
-                      "entryGate",
-                      "bearishRegime",
-                      "minAdx",
+                    patchProfileDraft(
+                      section,
+                      key,
                       numberFrom(event.target.value, 0),
                     )
                   }
-                  style={{
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    color: T.text,
-                    padding: sp("6px 8px"),
-                    fontFamily: T.mono,
-                    fontSize: fs(9),
-                    outline: "none",
-                  }}
+                  style={inputStyle}
                 />
               </label>
-              {profileBooleanFields.map(([section, key, label]) => (
-                <label
-                  key={`${section}.${key}`}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(5),
-                    background: T.bg2,
-                    padding: sp("8px 9px"),
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: sp(10),
-                  }}
-                >
-                  <span
-                    style={{
-                      color: T.textSec,
-                      fontFamily: T.mono,
-                      fontSize: fs(8),
-                    }}
-                  >
-                    {label.toUpperCase()}
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(profileDraft?.[section]?.[key])}
-                    onChange={(event) =>
-                      patchProfileDraft(section, key, event.target.checked)
-                    }
-                  />
-                </label>
-              ))}
-              {[
-                ["enabled", "Bear gate enabled"],
-                ["rejectFullyBullishMtf", "Reject bullish MTF puts"],
-              ].map(([key, label]) => (
-                <label
-                  key={`entryGate.bearishRegime.${key}`}
-                  style={{
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(5),
-                    background: T.bg2,
-                    padding: sp("8px 9px"),
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: sp(10),
-                  }}
-                >
-                  <span
-                    style={{
-                      color: T.textSec,
-                      fontFamily: T.mono,
-                      fontSize: fs(8),
-                    }}
-                  >
-                    {label.toUpperCase()}
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(
-                      profileDraft?.entryGate?.bearishRegime?.[key],
-                    )}
-                    onChange={(event) =>
-                      patchProfileDraftNested(
-                        "entryGate",
-                        "bearishRegime",
-                        key,
-                        event.target.checked,
-                      )
-                    }
-                  />
-                </label>
-              ))}
+            );
+            const renderBoolean = (checked, onChange, label, key) => (
               <label
+                key={key}
                 style={{
-                  gridColumn: "1 / -1",
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
+                  border: "none",
+                  borderRadius: dim(10),
                   background: T.bg2,
-                  padding: sp("8px 9px"),
+                  padding: sp("7px 9px"),
                   display: "flex",
-                  flexDirection: "column",
-                  gap: sp(5),
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: sp(10),
                 }}
               >
                 <span
                   style={{
-                    color: T.textMuted,
-                    fontFamily: T.mono,
-                    fontSize: fs(7),
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  CHASE LADDER %
-                </span>
-                <input
-                  value={formatChaseSteps(profileDraft?.fillPolicy?.chaseSteps)}
-                  onChange={(event) =>
-                    patchProfileDraft(
-                      "fillPolicy",
-                      "chaseSteps",
-                      parseChaseSteps(
-                        event.target.value,
-                        profileDraft?.fillPolicy?.chaseSteps || [],
-                      ),
-                    )
-                  }
-                  style={{
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    color: T.text,
-                    padding: sp("6px 8px"),
-                    fontFamily: T.mono,
-                    fontSize: fs(9),
-                    outline: "none",
-                  }}
-                />
-              </label>
-              <div
-                style={{
-                  gridColumn: "1 / -1",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: sp(10),
-                  flexWrap: "wrap",
-                }}
-              >
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.mono,
+                    color: T.textSec,
+                    fontFamily: T.sans,
                     fontSize: fs(8),
                   }}
                 >
-                  Premium {formatMoney(signalOptionsProfile.riskCaps.maxPremiumPerEntry)} ·
-                  spread {formatPct(signalOptionsProfile.liquidityGate.maxSpreadPctOfMid, 0)}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSaveProfile}
-                  disabled={!focusedDeployment || updateProfileMutation.isPending}
+                  {label.toUpperCase()}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(checked)}
+                  onChange={(event) => onChange(event.target.checked)}
+                />
+              </label>
+            );
+            const gridStyle = {
+              display: "grid",
+              gridTemplateColumns: algoIsPhone
+                ? "1fr"
+                : "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: sp(6),
+              minWidth: 0,
+            };
+            const numberByKey = (section, key) =>
+              profileNumberFields.find(
+                ([s, k]) => s === section && k === key,
+              );
+            const callSlot = SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.find(
+              (option) =>
+                option.value === profileDraft?.optionSelection?.callStrikeSlot,
+            );
+            const putSlot = SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.find(
+              (option) =>
+                option.value === profileDraft?.optionSelection?.putStrikeSlot,
+            );
+            const riskSummary = `${formatMoney(profileDraft?.riskCaps?.maxPremiumPerEntry)}/entry · ${profileDraft?.riskCaps?.maxOpenSymbols ?? "?"} sym · ${formatMoney(profileDraft?.riskCaps?.maxDailyLoss)} halt`;
+            const gatesSummary = `bear ADX ${profileDraft?.entryGate?.bearishRegime?.minAdx ?? "?"} · ${profileDraft?.entryGate?.bearishRegime?.enabled ? "bear on" : "bear off"}`;
+            const strikesSummary = `${profileDraft?.optionSelection?.minDte ?? 0}-${profileDraft?.optionSelection?.maxDte ?? 0} DTE · call ${callSlot?.label || "?"} · put ${putSlot?.label || "?"}`;
+            const fillsSummary = `${formatPct(profileDraft?.liquidityGate?.maxSpreadPctOfMid, 0)} spread · ${profileDraft?.fillPolicy?.ttlSeconds ?? "?"}s · chase ${formatChaseSteps(profileDraft?.fillPolicy?.chaseSteps)}`;
+            const exitsSummary = `stop ${profileDraft?.exitPolicy?.hardStopPct ?? "?"}% · trail ${profileDraft?.exitPolicy?.trailActivationPct ?? "?"}/${profileDraft?.exitPolicy?.trailGivebackPct ?? "?"}`;
+            const toggleSection = (id) =>
+              setProfileSectionOpen((current) => (current === id ? null : id));
+            return (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: sp(7),
+                }}
+              >
+                <div
+                  data-testid="algo-profile-capacity-banner"
                   style={{
-                    ...compactButtonStyle({
-                      disabled: !focusedDeployment || updateProfileMutation.isPending,
-                    }),
-                    border: "none",
-                    background: T.green,
-                    color: "#fff",
+                    border: `1px solid ${T.amber}35`,
+                    borderRadius: dim(5),
+                    background: `${T.amber}0d`,
+                    padding: sp("8px 10px"),
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(10),
+                    flexWrap: "wrap",
                   }}
                 >
-                  {updateProfileMutation.isPending ? "SAVING..." : "SAVE PROFILE"}
-                </button>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        color: T.amber,
+                        fontFamily: T.sans,
+                        fontSize: fs(8),
+                        letterSpacing: "0.08em",
+                      }}
+                    >
+                      EXPANDED CAPACITY
+                    </div>
+                    <div
+                      style={{
+                        color: T.textDim,
+                        fontFamily: T.sans,
+                        fontSize: fs(8),
+                        marginTop: sp(2),
+                      }}
+                    >
+                      {SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxOpenSymbols} symbols ·{" "}
+                      {formatMoney(SIGNAL_OPTIONS_EXPANDED_CAPACITY.maxDailyLoss)} halt
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="signal-options-expanded-capacity"
+                    onClick={handleApplyExpandedCapacity}
+                    disabled={
+                      !focusedDeployment || updateProfileMutation.isPending
+                    }
+                    style={{
+                      ...compactButtonStyle({
+                        disabled:
+                          !focusedDeployment ||
+                          updateProfileMutation.isPending,
+                      }),
+                      border: `1px solid ${T.amber}55`,
+                      background: `${T.amber}18`,
+                      color: T.amber,
+                    }}
+                  >
+                    {updateProfileMutation.isPending ? "SAVING..." : "APPLY"}
+                  </button>
+                </div>
+
+                <ProfileSection
+                  id="risk"
+                  title="Risk caps"
+                  summary={riskSummary}
+                  expanded={profileSectionOpen === "risk"}
+                  onToggle={() => toggleSection("risk")}
+                >
+                  <div style={gridStyle}>
+                    {numberByKey("riskCaps", "maxPremiumPerEntry") &&
+                      renderNumberField(...numberByKey("riskCaps", "maxPremiumPerEntry"))}
+                    {numberByKey("riskCaps", "maxContracts") &&
+                      renderNumberField(...numberByKey("riskCaps", "maxContracts"))}
+                    {numberByKey("riskCaps", "maxOpenSymbols") &&
+                      renderNumberField(...numberByKey("riskCaps", "maxOpenSymbols"))}
+                    {numberByKey("riskCaps", "maxDailyLoss") &&
+                      renderNumberField(...numberByKey("riskCaps", "maxDailyLoss"))}
+                  </div>
+                </ProfileSection>
+
+                <ProfileSection
+                  id="gates"
+                  title="Signal gates"
+                  summary={gatesSummary}
+                  expanded={profileSectionOpen === "gates"}
+                  onToggle={() => toggleSection("gates")}
+                >
+                  <div style={gridStyle}>
+                    <label style={numberFieldStyle}>
+                      <span style={labelTextStyle}>BEAR ADX MIN</span>
+                      <input
+                        type="number"
+                        step={1}
+                        value={
+                          profileDraft?.entryGate?.bearishRegime?.minAdx ??
+                          SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.bearishRegime
+                            .minAdx
+                        }
+                        onChange={(event) =>
+                          patchProfileDraftNested(
+                            "entryGate",
+                            "bearishRegime",
+                            "minAdx",
+                            numberFrom(event.target.value, 0),
+                          )
+                        }
+                        style={inputStyle}
+                      />
+                    </label>
+                    {renderBoolean(
+                      profileDraft?.entryGate?.bearishRegime?.enabled,
+                      (value) =>
+                        patchProfileDraftNested(
+                          "entryGate",
+                          "bearishRegime",
+                          "enabled",
+                          value,
+                        ),
+                      "Bear gate enabled",
+                      "entryGate.bearishRegime.enabled",
+                    )}
+                    {renderBoolean(
+                      profileDraft?.entryGate?.bearishRegime
+                        ?.rejectFullyBullishMtf,
+                      (value) =>
+                        patchProfileDraftNested(
+                          "entryGate",
+                          "bearishRegime",
+                          "rejectFullyBullishMtf",
+                          value,
+                        ),
+                      "Reject bullish MTF puts",
+                      "entryGate.bearishRegime.rejectFullyBullishMtf",
+                    )}
+                  </div>
+                </ProfileSection>
+
+                <ProfileSection
+                  id="strikes"
+                  title="Strike slots"
+                  summary={strikesSummary}
+                  expanded={profileSectionOpen === "strikes"}
+                  onToggle={() => toggleSection("strikes")}
+                >
+                  <div style={gridStyle}>
+                    {numberByKey("optionSelection", "minDte") &&
+                      renderNumberField(...numberByKey("optionSelection", "minDte"))}
+                    {numberByKey("optionSelection", "targetDte") &&
+                      renderNumberField(...numberByKey("optionSelection", "targetDte"))}
+                    {numberByKey("optionSelection", "maxDte") &&
+                      renderNumberField(...numberByKey("optionSelection", "maxDte"))}
+                    {[
+                      ["optionSelection", "callStrikeSlot", "Call strike slot"],
+                      ["optionSelection", "putStrikeSlot", "Put strike slot"],
+                    ].map(([section, key, label]) => (
+                      <label key={`${section}.${key}`} style={numberFieldStyle}>
+                        <span style={labelTextStyle}>{label.toUpperCase()}</span>
+                        <select
+                          value={profileDraft?.[section]?.[key] ?? ""}
+                          onChange={(event) =>
+                            patchProfileDraft(
+                              section,
+                              key,
+                              Number(event.target.value),
+                            )
+                          }
+                          style={inputStyle}
+                        >
+                          {SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                    {renderBoolean(
+                      profileDraft?.optionSelection?.allowZeroDte,
+                      (value) =>
+                        patchProfileDraft("optionSelection", "allowZeroDte", value),
+                      "Allow 0DTE",
+                      "optionSelection.allowZeroDte",
+                    )}
+                  </div>
+                </ProfileSection>
+
+                <ProfileSection
+                  id="fills"
+                  title="Fills (limit · spread · chase)"
+                  summary={fillsSummary}
+                  expanded={profileSectionOpen === "fills"}
+                  onToggle={() => toggleSection("fills")}
+                >
+                  <div style={gridStyle}>
+                    {numberByKey("liquidityGate", "maxSpreadPctOfMid") &&
+                      renderNumberField(
+                        ...numberByKey("liquidityGate", "maxSpreadPctOfMid"),
+                      )}
+                    {numberByKey("liquidityGate", "minBid") &&
+                      renderNumberField(...numberByKey("liquidityGate", "minBid"))}
+                    {numberByKey("fillPolicy", "ttlSeconds") &&
+                      renderNumberField(...numberByKey("fillPolicy", "ttlSeconds"))}
+                    {renderBoolean(
+                      profileDraft?.liquidityGate?.requireBidAsk,
+                      (value) =>
+                        patchProfileDraft("liquidityGate", "requireBidAsk", value),
+                      "Require bid/ask",
+                      "liquidityGate.requireBidAsk",
+                    )}
+                    {renderBoolean(
+                      profileDraft?.liquidityGate?.requireFreshQuote,
+                      (value) =>
+                        patchProfileDraft(
+                          "liquidityGate",
+                          "requireFreshQuote",
+                          value,
+                        ),
+                      "Require fresh quote",
+                      "liquidityGate.requireFreshQuote",
+                    )}
+                  </div>
+                  <label
+                    style={{ ...numberFieldStyle, gridColumn: "1 / -1" }}
+                  >
+                    <span style={labelTextStyle}>CHASE LADDER %</span>
+                    <input
+                      value={formatChaseSteps(
+                        profileDraft?.fillPolicy?.chaseSteps,
+                      )}
+                      onChange={(event) =>
+                        patchProfileDraft(
+                          "fillPolicy",
+                          "chaseSteps",
+                          parseChaseSteps(
+                            event.target.value,
+                            profileDraft?.fillPolicy?.chaseSteps || [],
+                          ),
+                        )
+                      }
+                      style={inputStyle}
+                    />
+                  </label>
+                </ProfileSection>
+
+                <ProfileSection
+                  id="exits"
+                  title="Exits"
+                  summary={exitsSummary}
+                  expanded={profileSectionOpen === "exits"}
+                  onToggle={() => toggleSection("exits")}
+                >
+                  <div style={gridStyle}>
+                    {numberByKey("exitPolicy", "hardStopPct") &&
+                      renderNumberField(...numberByKey("exitPolicy", "hardStopPct"))}
+                    {numberByKey("exitPolicy", "trailActivationPct") &&
+                      renderNumberField(
+                        ...numberByKey("exitPolicy", "trailActivationPct"),
+                      )}
+                    {numberByKey("exitPolicy", "minLockedGainPct") &&
+                      renderNumberField(
+                        ...numberByKey("exitPolicy", "minLockedGainPct"),
+                      )}
+                    {numberByKey("exitPolicy", "trailGivebackPct") &&
+                      renderNumberField(
+                        ...numberByKey("exitPolicy", "trailGivebackPct"),
+                      )}
+                    {numberByKey("exitPolicy", "tightenAtFiveXGivebackPct") &&
+                      renderNumberField(
+                        ...numberByKey("exitPolicy", "tightenAtFiveXGivebackPct"),
+                      )}
+                    {numberByKey("exitPolicy", "tightenAtTenXGivebackPct") &&
+                      renderNumberField(
+                        ...numberByKey("exitPolicy", "tightenAtTenXGivebackPct"),
+                      )}
+                    {renderBoolean(
+                      profileDraft?.exitPolicy?.flipOnOppositeSignal,
+                      (value) =>
+                        patchProfileDraft(
+                          "exitPolicy",
+                          "flipOnOppositeSignal",
+                          value,
+                        ),
+                      "Exit on opposite signal",
+                      "exitPolicy.flipOnOppositeSignal",
+                    )}
+                  </div>
+                </ProfileSection>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: sp(10),
+                    flexWrap: "wrap",
+                    marginTop: sp(4),
+                  }}
+                >
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(8),
+                    }}
+                  >
+                    Premium {formatMoney(signalOptionsProfile.riskCaps.maxPremiumPerEntry)} ·
+                    spread {formatPct(signalOptionsProfile.liquidityGate.maxSpreadPctOfMid, 0)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={
+                      !focusedDeployment || updateProfileMutation.isPending
+                    }
+                    style={{
+                      ...compactButtonStyle({
+                        disabled:
+                          !focusedDeployment ||
+                          updateProfileMutation.isPending,
+                      }),
+                      border: "none",
+                      background: T.green,
+                      color: "#fff",
+                    }}
+                  >
+                    {updateProfileMutation.isPending
+                      ? "SAVING..."
+                      : "SAVE PROFILE"}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
+        )}
       </div>
 
 
-      {secondaryPanel === "activity" && (
+      {primaryTab === "events" && (
       <div
         style={{
           background: T.bg2,
-          border: `1px solid ${T.border}`,
+          border: "none",
           borderRadius: dim(6),
           padding: sp("8px 10px"),
           flex: "0 1 auto",
@@ -3735,14 +3274,14 @@ export const AlgoScreen = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: 400,
-                fontFamily: T.display,
+                fontFamily: T.sans,
                 color: T.text,
               }}
             >
               Execution Events
             </div>
             <div
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
+              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}
             >
               {focusedDeployment
                 ? `filtered to ${focusedDeployment.name}`
@@ -3750,7 +3289,7 @@ export const AlgoScreen = ({
             </div>
           </div>
           <span
-            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
+            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}
           >
             {events.length} rows
           </span>
@@ -3778,7 +3317,7 @@ export const AlgoScreen = ({
               style={{
                 ...motionRowStyle(index, 10, 140),
                 display: "grid",
-                gridTemplateColumns: "64px 132px 1fr 88px",
+                gridTemplateColumns: `${dim(64)}px ${dim(132)}px 1fr ${dim(88)}px`,
                 gap: sp(8),
                 alignItems: "start",
                 padding: sp("8px 0"),
@@ -3786,11 +3325,11 @@ export const AlgoScreen = ({
                 fontSize: fs(9),
               }}
             >
-              <span style={{ color: T.textDim, fontFamily: T.mono }}>
+              <span style={{ color: T.textDim, fontFamily: T.sans }}>
                 {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
               </span>
               <span
-                style={{ color: T.accent, fontFamily: T.mono, fontWeight: 400 }}
+                style={{ color: T.accent, fontFamily: T.sans, fontWeight: 400 }}
               >
                 {formatEnumLabel(event.eventType)}
               </span>
@@ -3806,7 +3345,7 @@ export const AlgoScreen = ({
               <span
                 style={{
                   color: event.symbol ? T.text : T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   textAlign: "right",
                 }}
               >
@@ -3818,13 +3357,14 @@ export const AlgoScreen = ({
       </div>
       )}
 
-      {secondaryPanel === "drafts" && (
+      {primaryTab === "drafts" && (
         <AlgoDraftStrategiesPanel
           theme={T}
           scale={{ fs, sp, dim }}
-          isVisible={isVisible && secondaryPanel === "drafts"}
+          isVisible={isVisible && primaryTab === "drafts"}
         />
       )}
+    </div>
     </div>
   );
 };

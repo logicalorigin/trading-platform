@@ -71,11 +71,11 @@ const Donut = ({ title, data, currency, maskValues = false, compact = false }) =
             data={data}
             dataKey="value"
             nameKey="label"
-            innerRadius="58%"
-            outerRadius="84%"
-            paddingAngle={2}
+            innerRadius="62%"
+            outerRadius="86%"
+            paddingAngle={0.5}
             stroke={T.bg1}
-            strokeWidth={2}
+            strokeWidth={1}
             isAnimationActive={false}
           >
             {data.map((entry, index) => (
@@ -166,7 +166,7 @@ const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = fa
         marginTop: sp(2),
         color: tone,
         fontSize: fs(10),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontWeight: 400,
         lineHeight: 1.1,
         whiteSpace: "nowrap",
@@ -214,7 +214,7 @@ export const AllocationPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: compact ? "minmax(86px, 0.78fr) minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))",
+              gridTemplateColumns: compact ? `minmax(${dim(86)}px, 0.78fr) minmax(0, 1fr)` : "repeat(2, minmax(0, 1fr))",
               gap: sp(compact ? 4 : 5),
               alignItems: compact ? "start" : undefined,
             }}
@@ -342,7 +342,7 @@ export const AllocationPanel = ({
                   justifyContent: "center",
                   color: "#ffffff",
                   fontSize: fs(compact ? 7 : 8),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                 }}
               >
@@ -357,7 +357,7 @@ export const AllocationPanel = ({
                   justifyContent: "center",
                   color: "#ffffff",
                   fontSize: fs(compact ? 7 : 8),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontWeight: 400,
                 }}
               >
@@ -372,7 +372,7 @@ export const AllocationPanel = ({
                 flexWrap: "wrap",
                 color: T.textDim,
                 fontSize: fs(compact ? 7 : 8),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
               }}
             >
               <span>Gross {formatAccountMoney(grossTotal, currency, true, maskValues)}</span>

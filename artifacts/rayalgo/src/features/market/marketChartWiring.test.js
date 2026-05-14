@@ -103,6 +103,15 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.doesNotMatch(source, /useUnderfilledChartBackfill/);
 });
 
+test("Market active mini chart adds the GEX zero-gamma reference line", () => {
+  const source = readLocalSource("./MiniChartCell.jsx");
+
+  assert.match(source, /useGexZeroGamma\(ticker,\s*\{ enabled: isActive \}\)/);
+  assert.match(source, /useGexZeroGammaReferenceLine\(gexZeroGamma\)/);
+  assert.match(source, /const gexReferenceLines = useMemo/);
+  assert.match(source, /referenceLines=\{gexReferenceLines\}/);
+});
+
 test("Market mini chart grid uses one-column phone density", () => {
   const source = readLocalSource("./MultiChartGrid.jsx");
 

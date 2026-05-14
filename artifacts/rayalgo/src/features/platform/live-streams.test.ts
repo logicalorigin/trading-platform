@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  applyAccountPageLivePayloadToCache,
   applyAccountPagePayloadToCache,
   applyIbkrAccountPayloadToCache,
   applyShadowAccountPayloadToCache,
+  flushAccountPagePayloadQueue,
+  getAccountPositionRowSnapshot,
   getAccountPageStreamUrl,
   getShadowAccountStreamUrl,
   getOptionChainContractExpirationKey,
@@ -14,6 +17,7 @@ import {
   mergeOptionChainContracts,
   mergeQuotesIntoCache,
   patchOptionQuotesIntoContracts,
+  queueAccountPagePayloadToCache,
 } from "./live-streams";
 
 const optionQuote = (
@@ -68,11 +72,12 @@ test("account page stream URL carries visible account page inputs", () => {
       assetClass: "Options",
       tradeFilters: {
         symbol: "SPY",
+        assetClass: "Options",
         from: "2026-05-01T00:00:00.000Z",
       },
       performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
     }),
-    "/api/streams/accounts/page?accountId=combined&mode=paper&range=1D&orderTab=working&assetClass=Options&from=2026-05-01T00%3A00%3A00.000Z&symbol=SPY&performanceCalendarFrom=2025-04-01T00%3A00%3A00.000Z",
+    "/api/streams/accounts/page?accountId=combined&mode=paper&range=1D&orderTab=working&assetClass=Options&from=2026-05-01T00%3A00%3A00.000Z&symbol=SPY&tradeAssetClass=Options&performanceCalendarFrom=2025-04-01T00%3A00%3A00.000Z",
   );
 });
 
@@ -88,8 +93,9 @@ test("account page stream is owned by the visible account screen", () => {
   assert.doesNotMatch(accountScreenSource, /useShadowAccountSnapshotStream/);
   assert.match(
     accountScreenSource,
-    /enabled:\s*Boolean\(isVisible\s*&&\s*accountQueriesEnabled\)/,
+    /enabled:\s*accountPageStreamEnabled/,
   );
+  assert.match(accountScreenSource, /isVisible && accountQueriesEnabled/);
   assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountFresh/);
 });
 
@@ -123,12 +129,16 @@ test("account page stream refreshes freshness on page snapshots", () => {
   assert.match(source, /source\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/);
   assert.match(source, /source\.addEventListener\("live", handleLive as EventListener\)/);
   assert.match(source, /source\.addEventListener\("derived", handleDerived as EventListener\)/);
-  assert.match(source, /applyAccountPagePayloadToCache\(queryClient, payload\)/);
-  assert.match(source, /applyAccountPageLivePayloadToCache\(queryClient, payload\)/);
-  assert.match(source, /applyAccountPageDerivedPayloadToCache\(queryClient, payload\)/);
+  assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "bootstrap", payload\)/);
+  assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "live", payload\)/);
+  assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "derived", payload\)/);
+  assert.match(source, /requestAnimationFrame/);
   assert.match(source, /payload\.stream !== "account-page-bootstrap"/);
   assert.match(source, /payload\.stream !== "account-page-live"/);
   assert.match(source, /payload\.stream !== "account-page-derived"/);
+  assert.match(source, /export const useAccountPositionRow/);
+  assert.match(source, /export const useAccountSummaryField/);
+  assert.match(source, /export const useBrokerFreshnessFor/);
 });
 
 test("platform root subscribes only to coarse broker stream freshness", () => {
@@ -183,6 +193,19 @@ test("mergeOptionChainContracts preserves full metadata rows when a narrow updat
       (quote) => quote.contract.providerContractId === "SPY-20260427-C700",
     )?.bid,
     1.5,
+  );
+});
+
+test("mergeOptionChainContracts keeps expiration sorting deterministic with malformed dates", () => {
+  const merged = mergeOptionChainContracts(undefined, [
+    optionQuote("SPY-invalid-C700", "not-a-date", 700),
+    optionQuote("SPY-20260501-C700", "2026-05-01", 700),
+    optionQuote("SPY-20260427-C700", "2026-04-27T00:00:00.000Z", 700),
+  ]);
+
+  assert.deepEqual(
+    merged.map((quote) => quote.contract.providerContractId),
+    ["SPY-20260427-C700", "SPY-20260501-C700", "SPY-invalid-C700"],
   );
 });
 
@@ -359,8 +382,17 @@ test("applyShadowAccountPayloadToCache patches shadow account caches without inv
   const risk = { accountId: "shadow", margin: { marginAvailable: 100_000 } };
   const { queryClient, writes, invalidated } = createMockQueryClient([
     ["/api/accounts/shadow/summary", { mode: "paper" }],
+    ["/api/accounts/shadow/summary", { mode: "paper", source: "signal_options_replay" }],
     ["/api/accounts/shadow/positions", { mode: "paper", assetClass: "Options" }],
+    [
+      "/api/accounts/shadow/positions",
+      { mode: "paper", assetClass: "Options", source: "signal_options_replay" },
+    ],
     ["/api/accounts/shadow/orders", { mode: "paper", tab: "history" }],
+    [
+      "/api/accounts/shadow/orders",
+      { mode: "paper", tab: "history", source: "signal_options_replay" },
+    ],
     ["/api/accounts/shadow/allocation", { mode: "paper" }],
     ["/api/accounts/shadow/risk", { mode: "paper" }],
     ["/api/accounts/shadow/equity-history", { mode: "paper", range: "ALL" }],
@@ -411,6 +443,33 @@ test("applyShadowAccountPayloadToCache patches shadow account caches without inv
       ?.assetClass[0].label,
     "Cash",
   );
+  assert.equal(
+    writes.get(
+      JSON.stringify([
+        "/api/accounts/shadow/summary",
+        { mode: "paper", source: "signal_options_replay" },
+      ]),
+    ),
+    undefined,
+  );
+  assert.equal(
+    writes.get(
+      JSON.stringify([
+        "/api/accounts/shadow/positions",
+        { mode: "paper", assetClass: "Options", source: "signal_options_replay" },
+      ]),
+    ),
+    undefined,
+  );
+  assert.equal(
+    writes.get(
+      JSON.stringify([
+        "/api/accounts/shadow/orders",
+        { mode: "paper", tab: "history", source: "signal_options_replay" },
+      ]),
+    ),
+    undefined,
+  );
   assert.equal(invalidated.length, 0);
 });
 
@@ -429,6 +488,7 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     {
       mode: "paper",
       symbol: "SPY",
+      assetClass: "Options",
       pnlSign: "winner",
       from: "2026-05-01T00:00:00.000Z",
     },
@@ -445,6 +505,18 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     "/api/accounts/combined/equity-history",
     { mode: "paper", range: "1D", benchmark: "SPY" },
   ];
+  const sourceScopedPositionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "paper", assetClass: "Options", source: "signal_options_replay" },
+  ];
+  const sourceScopedTradesKey = [
+    "/api/accounts/combined/closed-trades",
+    { mode: "paper", source: "signal_options_replay" },
+  ];
+  const sourceScopedEquityKey = [
+    "/api/accounts/combined/equity-history",
+    { mode: "paper", range: "1D", source: "signal_options_replay" },
+  ];
   const healthKey = ["/api/accounts/flex/health"];
   const { queryClient, writes } = createMockQueryClient([
     summaryKey,
@@ -454,6 +526,9 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     calendarTradesKey,
     equityKey,
     benchmarkKey,
+    sourceScopedPositionsKey,
+    sourceScopedTradesKey,
+    sourceScopedEquityKey,
     healthKey,
   ]);
 
@@ -468,6 +543,7 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
       from: "2026-05-01T00:00:00.000Z",
       to: null,
       symbol: "SPY",
+      assetClass: "Options",
       pnlSign: "winner",
       holdDuration: null,
     },
@@ -514,7 +590,178 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     (writes.get(JSON.stringify(benchmarkKey)) as any)?.points[0].timestamp,
     "spy",
   );
+  assert.equal(writes.get(JSON.stringify(sourceScopedPositionsKey)), undefined);
+  assert.equal(writes.get(JSON.stringify(sourceScopedTradesKey)), undefined);
+  assert.equal(writes.get(JSON.stringify(sourceScopedEquityKey)), undefined);
   assert.equal((writes.get(JSON.stringify(healthKey)) as any)?.flexConfigured, true);
+});
+
+test("queueAccountPagePayloadToCache coalesces account page live writes until frame flush", () => {
+  const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
+  const positionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const ordersKey = [
+    "/api/accounts/combined/orders",
+    { mode: "paper", tab: "working" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([
+    summaryKey,
+    positionsKey,
+    ordersKey,
+    ["/api/accounts/combined/allocation", { mode: "paper" }],
+    ["/api/accounts/combined/risk", { mode: "paper" }],
+    ["/api/accounts/combined/equity-history", { mode: "paper", range: "1D" }],
+  ]);
+  const livePayload = (netLiquidation: number) => ({
+    stream: "account-page-live",
+    accountId: "combined",
+    mode: "paper",
+    orderTab: "working",
+    assetClass: "Options",
+    updatedAt: "2026-05-12T00:00:00.000Z",
+    summary: {
+      accountId: "combined",
+      metrics: { netLiquidation: { value: netLiquidation } },
+    },
+    positions: {
+      accountId: "combined",
+      positions: [{ id: "P1", symbol: "SPY", mark: 5 }],
+    },
+    orders: {
+      accountId: "combined",
+      tab: "working",
+      orders: [{ id: "O1", symbol: "SPY", status: "working" }],
+    },
+    allocation: { accountId: "combined", assetClass: [] },
+    risk: { accountId: "combined", margin: {} },
+    intradayEquity: {
+      accountId: "combined",
+      range: "1D",
+      points: [{ timestamp: "live" }],
+    },
+  });
+
+  queueAccountPagePayloadToCache(queryClient as any, "live", livePayload(1) as any);
+  queueAccountPagePayloadToCache(queryClient as any, "live", livePayload(2) as any);
+
+  assert.equal(writes.get(JSON.stringify(summaryKey)), undefined);
+
+  flushAccountPagePayloadQueue();
+
+  assert.equal(
+    (writes.get(JSON.stringify(summaryKey)) as any)?.metrics.netLiquidation.value,
+    2,
+  );
+  assert.equal((writes.get(JSON.stringify(positionsKey)) as any)?.positions[0].id, "P1");
+  assert.equal((writes.get(JSON.stringify(ordersKey)) as any)?.orders[0].id, "O1");
+
+  const firstSnapshot = getAccountPositionRowSnapshot({
+    accountId: "combined",
+    mode: "paper",
+    rowId: "P1",
+  });
+  queueAccountPagePayloadToCache(queryClient as any, "live", livePayload(3) as any);
+  flushAccountPagePayloadQueue();
+  assert.equal(
+    getAccountPositionRowSnapshot({
+      accountId: "combined",
+      mode: "paper",
+      rowId: "P1",
+    }),
+    firstSnapshot,
+  );
+});
+
+test("applyAccountPageLivePayloadToCache patches performance-calendar equity ranges from live summary", () => {
+  const equityKey = [
+    "/api/accounts/shadow/equity-history",
+    { mode: "paper", range: "1Y" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(equityKey),
+      {
+        accountId: "shadow",
+        range: "1Y",
+        currency: "USD",
+        flexConfigured: true,
+        lastFlexRefreshAt: null,
+        benchmark: null,
+        asOf: "2026-05-12T20:00:00.000Z",
+        latestSnapshotAt: "2026-05-12T20:00:00.000Z",
+        isStale: false,
+        staleReason: null,
+        terminalPointSource: "shadow_ledger",
+        liveTerminalIncluded: false,
+        points: [
+          {
+            timestamp: "2026-05-12T20:00:00.000Z",
+            netLiquidation: 30_000,
+            currency: "USD",
+            source: "SHADOW_LEDGER",
+            deposits: 0,
+            withdrawals: 0,
+            dividends: 0,
+            fees: 0,
+            returnPercent: 0,
+            benchmarkPercent: null,
+          },
+        ],
+        events: [],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient([equityKey], initialData);
+
+  applyAccountPageLivePayloadToCache(queryClient as any, {
+    stream: "account-page-live",
+    accountId: "shadow",
+    mode: "paper",
+    orderTab: "history",
+    assetClass: null,
+    updatedAt: "2026-05-13T15:03:12.357Z",
+    summary: {
+      accountId: "shadow",
+      isCombined: false,
+      mode: "paper",
+      currency: "USD",
+      accounts: [],
+      updatedAt: "2026-05-13T15:03:12.357Z",
+      fx: { baseCurrency: "USD", timestamp: null, rates: {}, warning: null },
+      badges: {},
+      metrics: {
+        netLiquidation: {
+          value: 30_112.14,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          field: "netLiquidation",
+          updatedAt: "2026-05-13T15:03:12.357Z",
+        },
+      },
+    },
+    intradayEquity: {
+      accountId: "shadow",
+      range: "1D",
+      currency: "USD",
+      points: [],
+      events: [],
+    },
+    allocation: { accountId: "shadow", assetClass: [] },
+    positions: { accountId: "shadow", positions: [] },
+    orders: { accountId: "shadow", tab: "history", orders: [] },
+    risk: { accountId: "shadow", margin: {} },
+  } as any);
+
+  const patched = writes.get(JSON.stringify(equityKey)) as any;
+  assert.equal(patched.points.length, 2);
+  assert.equal(patched.points[1].timestamp, "2026-05-13T15:03:12.357Z");
+  assert.equal(patched.points[1].netLiquidation, 30_112.14);
+  assert.equal(patched.points[1].source, "SHADOW_LEDGER");
+  assert.equal(patched.liveTerminalIncluded, true);
+  assert.equal(patched.terminalPointSource, "shadow_ledger");
+  assert.equal(Number(patched.points[1].returnPercent.toFixed(4)), 0.3738);
 });
 
 test("applyIbkrAccountPayloadToCache patches scoped account positions from stream", () => {

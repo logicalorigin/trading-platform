@@ -4,6 +4,7 @@ export const LOCAL_ALERT_DISMISS_TTL_MS = 24 * 60 * 60_000;
 export const MAX_LOCAL_ALERTS = 50;
 
 const SEVERITY_RANK = {
+  success: 0,
   info: 0,
   warning: 1,
   critical: 2,
@@ -20,7 +21,9 @@ const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
 const normalizeSeverity = (value) =>
-  value === "critical" || value === "warning" ? value : "info";
+  value === "critical" || value === "warning" || value === "success"
+    ? value
+    : "info";
 
 const severityRank = (severity) => SEVERITY_RANK[normalizeSeverity(severity)] ?? 0;
 

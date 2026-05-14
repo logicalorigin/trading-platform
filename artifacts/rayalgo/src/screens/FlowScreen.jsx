@@ -8,6 +8,7 @@ import {
 import {
   Area,
   AreaChart,
+  CartesianGrid,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -71,6 +72,8 @@ import {
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import { Drawer } from "../components/platform/Drawer.jsx";
+import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
+import { Stat } from "../components/ui/Stat.jsx";
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
   fmtCompactNumber,
@@ -470,7 +473,7 @@ const FlowPlaceholderCard = ({
   <Card
     className="ra-panel-enter"
     style={{
-      padding: "8px 10px",
+      padding: sp("8px 10px"),
       display: "flex",
       flexDirection: "column",
       gap: sp(dense ? 4 : 6),
@@ -487,7 +490,7 @@ const FlowPlaceholderCard = ({
         style={{
           fontSize: fs(10),
           fontWeight: 400,
-          fontFamily: T.display,
+          fontFamily: T.sans,
           color: T.textSec,
         }}
       >
@@ -1205,7 +1208,7 @@ const PremiumDistributionWidget = ({
         data-testid="flow-premium-distribution-widget"
         className="ra-panel-enter"
         style={{
-          padding: "6px",
+          padding: sp("6px"),
           display: "flex",
           flexDirection: "column",
           gap: sp(2),
@@ -1244,7 +1247,7 @@ const PremiumDistributionWidget = ({
       className="ra-panel-enter"
       style={{
         ...motionVars({ accent: netColor }),
-        padding: "6px",
+        padding: sp("6px"),
         display: "flex",
         flexDirection: "column",
         gap: sp(1),
@@ -1293,7 +1296,7 @@ const PremiumDistributionWidget = ({
           title={widgetHydrationWarning}
           style={{
             color: T.amber,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(6),
             fontWeight: 400,
             overflow: "hidden",
@@ -1600,6 +1603,10 @@ const FlowOverviewPanel = ({
     isFetching: false,
     lastScannedAt: {},
     isRotating: false,
+    oldestScanAt: null,
+    newestScanAt: null,
+    estimatedCycleMs: null,
+    lineBudget: null,
   };
   const totalCoverageSymbols =
     coverage.activeTargetSize ||
@@ -1617,13 +1624,15 @@ const FlowOverviewPanel = ({
       ? "market-wide"
       : "watchlist";
   const oldestScanAt = useMemo(() => {
+    if (Number.isFinite(coverage.oldestScanAt)) return coverage.oldestScanAt;
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.min(...timestamps) : null;
-  }, [coverage.lastScannedAt]);
+  }, [coverage.lastScannedAt, coverage.oldestScanAt]);
   const newestScanAt = useMemo(() => {
+    if (Number.isFinite(coverage.newestScanAt)) return coverage.newestScanAt;
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.max(...timestamps) : null;
-  }, [coverage.lastScannedAt]);
+  }, [coverage.lastScannedAt, coverage.newestScanAt]);
   const flowQuality = useMemo(
     () =>
       resolveFlowQuality({
@@ -2691,10 +2700,10 @@ const FlowOverviewPanel = ({
             style={{
               position: "relative",
               height: dim(7),
-              borderRadius: dim(2),
+              borderRadius: 999,
               overflow: "hidden",
-              border: `1px solid ${T.border}`,
-              background: T.bg1,
+              border: "none",
+              background: T.bg3,
             }}
           >
             <span
@@ -2966,16 +2975,17 @@ const FlowOverviewPanel = ({
               onJumpToTrade?.(event);
             }}
             style={{
-              width: dim(22),
-              height: dim(22),
+              width: dim(24),
+              height: dim(24),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${T.border}`,
+              border: "none",
               background: T.bg2,
-              color: T.textDim,
+              color: T.textSec,
               cursor: "pointer",
               padding: 0,
+              borderRadius: 999,
             }}
           >
             <ExternalLink size={12} />
@@ -2987,20 +2997,23 @@ const FlowOverviewPanel = ({
   };
 
   const toolbarChipStyle = (active, accent = T.accent) => ({
-    padding: sp("3px 7px"),
-    fontSize: fs(8),
-    fontFamily: T.mono,
-    border: `1px solid ${active ? accent : T.border}`,
+    padding: sp("4px 10px"),
+    fontSize: fs(9),
+    fontFamily: T.sans,
+    fontWeight: active ? 600 : 500,
+    letterSpacing: "0.02em",
+    border: "none",
     background: active ? `${accent}18` : T.bg2,
-    color: active ? accent : T.textDim,
+    color: active ? accent : T.textSec,
     cursor: "pointer",
-    borderRadius: dim(3),
+    borderRadius: 999,
+    transition: "background 120ms ease, color 120ms ease",
   });
 
   const panelLabelStyle = {
     fontSize: fs(8),
     color: T.textDim,
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontWeight: 400,
     letterSpacing: "0.05em",
   };
@@ -3138,7 +3151,7 @@ const FlowOverviewPanel = ({
           ...motionVars({ accent: rowAccent }),
           padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
           fontSize: denseRows ? fs(9) : fs(10),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           columnGap: sp(2),
           alignItems: "center",
           borderBottom: `1px solid ${T.border}15`,
@@ -3149,11 +3162,6 @@ const FlowOverviewPanel = ({
               : event.golden
                 ? `${T.amber}0f`
                 : "transparent",
-          borderLeft: selected
-            ? `2px solid ${T.accent}`
-            : pinned || event.golden
-              ? `2px solid ${T.amber}`
-              : "2px solid transparent",
           cursor: "pointer",
         },
       };
@@ -3166,7 +3174,7 @@ const FlowOverviewPanel = ({
       data-testid="flow-filter-panel"
       className="ra-panel-enter"
       style={{
-        padding: "8px 10px",
+        padding: sp("8px 10px"),
         display: "flex",
         flexDirection: "column",
         gap: sp(8),
@@ -3207,7 +3215,7 @@ const FlowOverviewPanel = ({
           gap: sp(3),
           fontSize: fs(8),
           color: T.textDim,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
         }}
       >
         Include tickers
@@ -3220,11 +3228,12 @@ const FlowOverviewPanel = ({
           placeholder="SPY, QQQ, NVDA"
           style={{
             width: "100%",
-            padding: sp("6px 8px"),
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            padding: sp("7px 10px"),
+            background: T.bg2,
+            border: "none",
+            borderRadius: dim(8),
             color: T.text,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(10),
           }}
         />
@@ -3237,7 +3246,7 @@ const FlowOverviewPanel = ({
           gap: sp(3),
           fontSize: fs(8),
           color: T.textDim,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
         }}
       >
         Exclude tickers
@@ -3250,11 +3259,12 @@ const FlowOverviewPanel = ({
           placeholder="AAPL, TSLA"
           style={{
             width: "100%",
-            padding: sp("6px 8px"),
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            padding: sp("7px 10px"),
+            background: T.bg2,
+            border: "none",
+            borderRadius: dim(8),
             color: T.text,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(10),
           }}
         />
@@ -3388,7 +3398,7 @@ const FlowOverviewPanel = ({
                     activeScanId === scan.id ? `${T.accent}18` : T.bg1,
                   cursor: "pointer",
                   fontSize: fs(8),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   color: activeScanId === scan.id ? T.accent : T.textSec,
                 }}
               >
@@ -3429,7 +3439,7 @@ const FlowOverviewPanel = ({
         right: isMobileFlowLayout ? undefined : dim(8),
         width: isMobileFlowLayout ? "auto" : dim(310),
         zIndex: isMobileFlowLayout ? undefined : 20,
-        padding: "8px 10px",
+        padding: sp("8px 10px"),
         display: "flex",
         flexDirection: "column",
         gap: sp(7),
@@ -3450,7 +3460,7 @@ const FlowOverviewPanel = ({
           <span style={{ fontSize: fs(11), fontWeight: 400, color: T.text }}>
             Columns
           </span>
-          <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+          <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
             Show, hide, and order the tape fields.
           </span>
         </div>
@@ -3491,7 +3501,7 @@ const FlowOverviewPanel = ({
                   minWidth: 0,
                   fontSize: fs(9),
                   color: checked ? T.text : T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   cursor: "pointer",
                 }}
               >
@@ -3609,15 +3619,8 @@ const FlowOverviewPanel = ({
                 ? T.amber
                 : executionMeta.color,
           }),
-          padding: sp("8px 9px"),
-          borderBottom: `1px solid ${T.border}55`,
-          borderLeft: selected
-            ? `2px solid ${T.accent}`
-            : pinned
-              ? `2px solid ${T.amber}`
-              : event.golden
-                ? `2px solid ${T.amber}`
-                : "2px solid transparent",
+          padding: sp("10px 12px"),
+          borderBottom: `1px solid ${T.borderLight}`,
           background: selected
             ? `${T.accent}12`
             : pinned
@@ -3645,7 +3648,7 @@ const FlowOverviewPanel = ({
                 fontSize: fs(12),
                 fontWeight: 400,
                 color: T.text,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
               }}
             >
               {event.ticker}{" "}
@@ -3658,7 +3661,7 @@ const FlowOverviewPanel = ({
               style={{
                 fontSize: fs(9),
                 color: T.textDim,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
               }}
             >
               {formatExpirationLabel(event.expirationDate)} · {ageLabel} · {occurredAt} {appTimeZoneLabel}
@@ -3668,7 +3671,7 @@ const FlowOverviewPanel = ({
             style={{
               fontSize: fs(12),
               color: event.premium >= 250000 ? T.amber : T.text,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontWeight: 400,
               whiteSpace: "nowrap",
             }}
@@ -3701,7 +3704,7 @@ const FlowOverviewPanel = ({
             gap: sp(5),
             fontSize: fs(8),
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           <span>Size {fmtCompactNumber(event.vol)}</span>
@@ -3714,7 +3717,7 @@ const FlowOverviewPanel = ({
           style={{
             fontSize: fs(8),
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           Fill{" "}
@@ -3769,7 +3772,7 @@ const FlowOverviewPanel = ({
         style={{
           fontSize: fs(8),
           color: T.textDim,
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontWeight: 400,
         }}
       >
@@ -3785,13 +3788,15 @@ const FlowOverviewPanel = ({
             data-testid={`flow-built-in-preset-${preset.id}`}
             onClick={() => applyBuiltInPreset(preset)}
             style={{
-              padding: sp("4px 8px"),
-              border: `1px solid ${active ? presetColor : T.border}`,
+              padding: sp("4px 10px"),
+              border: "none",
+              borderRadius: 999,
               background: active ? `${presetColor}18` : T.bg2,
               color: active ? presetColor : T.textSec,
-              fontSize: fs(8),
-              fontFamily: T.mono,
-              fontWeight: 400,
+              fontSize: fs(9),
+              fontFamily: T.sans,
+              fontWeight: active ? 600 : 500,
+              letterSpacing: "0.02em",
               cursor: "pointer",
             }}
           >
@@ -3804,12 +3809,15 @@ const FlowOverviewPanel = ({
           type="button"
           onClick={() => updateFlowTapeFilters({ activeFlowPresetId: null }, { clearPreset: false })}
           style={{
-            padding: sp("4px 8px"),
-            border: `1px solid ${T.border}`,
-            background: T.bg1,
-            color: T.textDim,
-            fontSize: fs(8),
-            fontFamily: T.mono,
+            padding: sp("4px 10px"),
+            border: "none",
+            borderRadius: 999,
+            background: T.bg2,
+            color: T.textSec,
+            fontSize: fs(9),
+            fontFamily: T.sans,
+            fontWeight: 500,
+            letterSpacing: "0.02em",
             cursor: "pointer",
           }}
         >
@@ -3825,14 +3833,16 @@ const FlowOverviewPanel = ({
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: sp(3),
-            padding: sp("4px 8px"),
-            border: `1px solid ${T.accent}`,
+            gap: sp(4),
+            padding: sp("4px 10px"),
+            border: "none",
+            borderRadius: 999,
             background: `${T.accent}18`,
             color: T.accent,
-            fontSize: fs(8),
-            fontFamily: T.mono,
-            fontWeight: 400,
+            fontSize: fs(9),
+            fontFamily: T.sans,
+            fontWeight: 600,
+            letterSpacing: "0.02em",
             cursor: "pointer",
           }}
         >
@@ -3862,6 +3872,7 @@ const FlowOverviewPanel = ({
         height: "100%",
         overflow: "hidden",
         position: "relative",
+        background: T.bg0,
       }}
     >
       <div
@@ -3869,18 +3880,24 @@ const FlowOverviewPanel = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(8),
+          padding: sp(isMobileFlowLayout ? "12px 12px" : "20px 28px"),
           display: "grid",
           gridAutoRows: "max-content",
           alignContent: "start",
-          gap: 6,
+          gap: sp(10),
           minWidth: 0,
         }}
       >
+        <CockpitHeader
+          eyebrow="Live"
+          title="Flow"
+          subtitle="Unusual options activity, signals and execution tape"
+          pulse={{ state: "live", label: "Flow scanner running" }}
+        />
         <Card
           data-testid="flow-top-toolbar"
           style={{
-            padding: "8px 10px",
+            padding: sp("8px 10px"),
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -3905,7 +3922,7 @@ const FlowOverviewPanel = ({
                 style={{
                   fontSize: fs(12),
                   fontWeight: 400,
-                  fontFamily: T.display,
+                  fontFamily: T.sans,
                   color: T.text,
                 }}
               >
@@ -3915,7 +3932,7 @@ const FlowOverviewPanel = ({
                 style={{
                   fontSize: fs(8),
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                 }}
               >
                 {filtered.length} / {flowEvents.length} shown ·{" "}
@@ -3934,7 +3951,7 @@ const FlowOverviewPanel = ({
                 background: `${feedStateColor}12`,
                 color: feedStateColor,
                 fontSize: fs(8),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
@@ -3957,7 +3974,7 @@ const FlowOverviewPanel = ({
                   background: `${T.amber}12`,
                   color: T.amber,
                   fontSize: fs(8),
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   cursor: "pointer",
                 }}
               >
@@ -4074,7 +4091,7 @@ const FlowOverviewPanel = ({
           style={{
             display: "grid",
             gridTemplateColumns: flowMainGridTemplate,
-            gap: 6,
+            gap: sp(6),
             alignItems: "start",
             position: "relative",
           }}
@@ -4084,7 +4101,7 @@ const FlowOverviewPanel = ({
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: 6,
+              gap: sp(6),
               minWidth: 0,
               gridColumn: showContextRail ? "auto" : "1 / -1",
             }}
@@ -4122,9 +4139,10 @@ const FlowOverviewPanel = ({
                 <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
                   <span
                     style={{
-                      fontSize: fs(11),
-                      fontWeight: 400,
-                      fontFamily: T.display,
+                      fontSize: fs(14),
+                      fontWeight: 600,
+                      fontFamily: T.sans,
+                      letterSpacing: "-0.01em",
                       color: T.text,
                     }}
                   >
@@ -4134,7 +4152,7 @@ const FlowOverviewPanel = ({
                     style={{
                       fontSize: fs(8),
                       color: T.textDim,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     {isFlowLoadingShell
@@ -4148,7 +4166,7 @@ const FlowOverviewPanel = ({
                     gap: sp(8),
                     flexWrap: "wrap",
                     fontSize: fs(8),
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     color: T.textDim,
                   }}
                 >
@@ -4198,9 +4216,9 @@ const FlowOverviewPanel = ({
                       height: dim(8),
                       display: "flex",
                       overflow: "hidden",
-                      borderRadius: dim(2),
-                      border: `1px solid ${T.border}`,
-                      background: T.bg1,
+                      borderRadius: 999,
+                      border: "none",
+                      background: T.bg3,
                     }}
                   >
                     <span
@@ -4264,7 +4282,7 @@ const FlowOverviewPanel = ({
                         flexWrap: "wrap",
                         justifyContent: "flex-end",
                         fontSize: fs(8),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         color: T.textDim,
                       }}
                     >
@@ -4322,7 +4340,7 @@ const FlowOverviewPanel = ({
                               borderTop: `1px solid ${T.border}`,
                               fontSize: fs(8),
                               color: T.textDim,
-                              fontFamily: T.mono,
+                              fontFamily: T.sans,
                             }}
                           >
                             Showing the first {rowsPerPage} matching prints.
@@ -4423,7 +4441,7 @@ const FlowOverviewPanel = ({
                           letterSpacing: "0.08em",
                           borderBottom: `1px solid ${T.border}`,
                           columnGap: sp(2),
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                         }}
                         minWidth={tapeTableMinWidth}
                         overscan={18}
@@ -4438,7 +4456,7 @@ const FlowOverviewPanel = ({
                             borderTop: `1px solid ${T.border}`,
                             fontSize: fs(8),
                             color: T.textDim,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                           }}
                         >
                           Showing the first {rowsPerPage} matching prints. Increase row count
@@ -4452,10 +4470,10 @@ const FlowOverviewPanel = ({
             </Card>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: sp(6), minWidth: 0 }}>
             {shouldRenderDeferredPanels ? (
               <>
-                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
+                <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle
                 right={
                   activeTicker ? (
@@ -4470,7 +4488,7 @@ const FlowOverviewPanel = ({
                       style={{
                         fontSize: fs(8),
                         color: T.textDim,
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                       }}
                     >
                       No ticker
@@ -4484,68 +4502,47 @@ const FlowOverviewPanel = ({
                 style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: sp(6),
+                  gap: sp(10),
                 }}
               >
                 {[
                   {
                     label: "Total premium",
                     value: fmtM(selectedTickerSummary.totalPremium),
-                    color: T.text,
+                    tone: T.text,
                   },
                   {
                     label: "Call / put",
                     value: `${fmtM(selectedCallPremium)} / ${fmtM(selectedPutPremium)}`,
-                    color: selectedCallPremium >= selectedPutPremium ? T.green : T.red,
+                    tone: selectedCallPremium >= selectedPutPremium ? T.green : T.red,
                   },
                   {
                     label: "Unusual",
                     value: selectedTickerSummary.unusualCount,
-                    color: T.amber,
+                    tone: T.amber,
                   },
                   {
                     label: "0DTE",
                     value: selectedTickerSummary.zeroDteCount,
-                    color: T.cyan,
+                    tone: T.cyan,
                   },
                 ].map((metric) => (
-                  <div
+                  <Stat
                     key={metric.label}
-                    style={{
-                      border: `1px solid ${T.border}`,
-                      background: T.bg1,
-                      padding: sp("6px 8px"),
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: fs(7),
-                        fontFamily: T.mono,
-                        color: T.textDim,
-                        marginBottom: sp(2),
-                      }}
-                    >
-                      {metric.label.toUpperCase()}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: fs(11),
-                        fontWeight: 400,
-                        color: metric.color,
-                        fontFamily: T.mono,
-                      }}
-                    >
-                      {metric.value}
-                    </div>
-                  </div>
+                    label={metric.label}
+                    value={metric.value}
+                    tone={metric.tone}
+                    size="md"
+                  />
                 ))}
               </div>
                   {selectedEvt ? (
                     <div
                       style={{
-                        padding: sp("8px 9px"),
-                        border: `1px solid ${T.border}`,
-                        background: T.bg1,
+                        padding: sp("10px 11px"),
+                        border: "none",
+                        borderRadius: dim(8),
+                        background: T.bg2,
                         display: "flex",
                         flexDirection: "column",
                         gap: sp(4),
@@ -4563,7 +4560,7 @@ const FlowOverviewPanel = ({
                           style={{
                             fontSize: fs(11),
                             fontWeight: 400,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             color: T.text,
                           }}
                         >
@@ -4620,7 +4617,7 @@ const FlowOverviewPanel = ({
                 <Card
                   data-testid="flow-ticker-lens"
                   style={{
-                    padding: "6px 8px",
+                    padding: sp("6px 8px"),
                     display: "flex",
                     flexDirection: "column",
                     gap: sp(5),
@@ -4628,7 +4625,7 @@ const FlowOverviewPanel = ({
                 >
                   <CardTitle
                     right={
-                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                         {selectedTickerEvents.length} rows
                       </span>
                     }
@@ -4671,26 +4668,27 @@ const FlowOverviewPanel = ({
                       <div
                         key={metric.label}
                         style={{
-                          padding: sp("6px 7px"),
-                          background: T.bg1,
-                          border: `1px solid ${T.border}`,
+                          padding: sp("8px 10px"),
+                          background: T.bg2,
+                          border: "none",
+                          borderRadius: dim(8),
                         }}
                       >
-                        <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>
+                        <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.04em", textTransform: "uppercase" }}>
                           {metric.label.toUpperCase()}
                         </div>
                         <div
                           style={{
                             fontSize: fs(11),
                             fontWeight: 400,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             color: metric.color,
                             marginTop: sp(1),
                           }}
                         >
                           {metric.value}
                         </div>
-                        <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                        <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                           {metric.sub}
                         </div>
                       </div>
@@ -4715,30 +4713,31 @@ const FlowOverviewPanel = ({
                             }}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "54px minmax(0, 1fr) auto",
+                              gridTemplateColumns: `${dim(54)}px minmax(0, 1fr) auto`,
                               gap: sp(6),
                               alignItems: "center",
-                              background: T.bg1,
-                              border: `1px solid ${T.border}`,
-                              padding: sp("5px 6px"),
+                              background: T.bg2,
+                              border: "none",
+                              borderRadius: dim(6),
+                              padding: sp("6px 8px"),
                               cursor: "pointer",
                             }}
                           >
-                            <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
+                            <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
                               {expiry.label}
                             </span>
                             <span style={{ display: "flex", height: dim(6), background: T.bg3, overflow: "hidden" }}>
                               <span style={{ width: `${callPct}%`, background: T.green }} />
                               <span style={{ flex: 1, background: T.red }} />
                             </span>
-                            <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
                               {fmtM(expiry.premium)}
                             </span>
                           </button>
                         );
                       })
                     ) : (
-                      <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
                         No expiry ladder for the selected ticker yet.
                       </span>
                     )}
@@ -4755,10 +4754,11 @@ const FlowOverviewPanel = ({
                             display: "flex",
                             justifyContent: "space-between",
                             gap: sp(4),
-                            background: T.bg1,
-                            border: `1px solid ${T.border}`,
+                            background: T.bg2,
+                            border: "none",
+                            borderRadius: dim(6),
                             color: T.textDim,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             fontSize: fs(8),
                             padding: sp("4px 5px"),
                             cursor: "pointer",
@@ -4782,10 +4782,11 @@ const FlowOverviewPanel = ({
                             display: "flex",
                             justifyContent: "space-between",
                             gap: sp(4),
-                            background: T.bg1,
-                            border: `1px solid ${T.border}`,
+                            background: T.bg2,
+                            border: "none",
+                            borderRadius: dim(6),
                             color: T.textDim,
-                            fontFamily: T.mono,
+                            fontFamily: T.sans,
                             fontSize: fs(8),
                             padding: sp("4px 5px"),
                             cursor: "pointer",
@@ -4802,52 +4803,51 @@ const FlowOverviewPanel = ({
                   </div>
                 </Card>
 
-                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
+                <Card style={{ display: "flex", flexDirection: "column", gap: sp(10) }}>
               <CardTitle>Execution Stats</CardTitle>
-              <div style={{ display: "grid", gridTemplateColumns: metricGridTemplate, gap: sp(6) }}>
+              <div style={{ display: "grid", gridTemplateColumns: metricGridTemplate, gap: sp(10) }}>
                 {[
-                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), color: T.green },
-                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), color: T.red },
-                  { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), color: T.textDim },
+                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: T.green },
+                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: T.red },
+                  { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), tone: T.textDim },
                 ].map((metric) => (
-                  <div key={metric.label} style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
-                    <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>{metric.label.toUpperCase()}</div>
-                    <div style={{ fontSize: fs(12), fontWeight: 400, fontFamily: T.mono, color: metric.color, marginTop: sp(1) }}>{metric.value}</div>
-                    <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>{metric.sub}</div>
-                  </div>
+                  <Stat
+                    key={metric.label}
+                    label={metric.label}
+                    value={metric.value}
+                    detail={metric.sub}
+                    tone={metric.tone}
+                    size="md"
+                  />
                 ))}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(6) }}>
-                <div style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
-                  <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>SWEEP / BLOCK</div>
-                  <div style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
-                    {executionStats.sweepCount} / {executionStats.blockCount}
-                  </div>
-                  <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                    {fmtM(executionStats.sweepPrem)} / {fmtM(executionStats.blockPrem)}
-                  </div>
-                </div>
-                <div style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
-                  <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>AVG SIZE / TOP EXP</div>
-                  <div style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
-                    {isFiniteNumber(executionStats.avgSize)
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(10) }}>
+                <Stat
+                  label="Sweep / block"
+                  value={`${executionStats.sweepCount} / ${executionStats.blockCount}`}
+                  detail={`${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`}
+                  size="md"
+                />
+                <Stat
+                  label="Avg size / top exp"
+                  value={
+                    isFiniteNumber(executionStats.avgSize)
                       ? fmtCompactNumber(executionStats.avgSize)
-                      : MISSING_VALUE}
-                  </div>
-                  <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                    {executionStats.topExpiration}
-                  </div>
-                </div>
+                      : MISSING_VALUE
+                  }
+                  detail={executionStats.topExpiration}
+                  size="md"
+                />
               </div>
-              <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+              <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.02em" }}>
                 Basis mix · trade {executionStats.tradeCount} · snapshot {executionStats.snapshotCount}
               </div>
                 </Card>
 
-                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(4) }}>
+                <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(4) }}>
               <CardTitle
                 right={
-                  <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                  <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                     ranked
                   </span>
                 }
@@ -4872,11 +4872,11 @@ const FlowOverviewPanel = ({
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                        <span style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
+                        <span style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.sans, color: T.text }}>
                           {event.ticker} {event.cp}
                           {event.strike}
                         </span>
-                        <span style={{ fontSize: fs(8), fontFamily: T.mono, color: T.amber, fontWeight: 400 }}>
+                        <span style={{ fontSize: fs(8), fontFamily: T.sans, color: T.amber, fontWeight: 400 }}>
                           {actionScore.toFixed(0)}
                         </span>
                       </div>
@@ -4890,17 +4890,17 @@ const FlowOverviewPanel = ({
                         {event.isUnusual ? <Badge color={T.cyan}>VOL/OI</Badge> : null}
                         {cluster ? <Badge color={T.cyan}>Repeat {cluster.count}×</Badge> : null}
                       </div>
-                      <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                      <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                         {fmtM(event.premium)} · {event.time} ET · {event.dte}d
                       </div>
                     </button>
                   ))}
                 </Card>
 
-                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
+                <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle
                 right={
-                  <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                  <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                     {activeTicker || "market"}
                   </span>
                 }
@@ -4923,18 +4923,19 @@ const FlowOverviewPanel = ({
                               padding: sp("6px 7px"),
                               textDecoration: "none",
                               color: T.text,
-                              background: T.bg1,
-                              border: `1px solid ${T.border}`,
+                              background: T.bg2,
+                              border: "none",
+                              borderRadius: dim(8),
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                              <span style={{ fontSize: fs(8), fontFamily: T.mono, color: T.textDim }}>
+                              <span style={{ fontSize: fs(8), fontFamily: T.sans, color: T.textDim }}>
                                 {item.tag}
                               </span>
                               <span
                                 style={{
                                   fontSize: fs(8),
-                                  fontFamily: T.mono,
+                                  fontFamily: T.sans,
                                   color:
                                     item.sentimentScore > 0
                                       ? T.green
@@ -4948,7 +4949,7 @@ const FlowOverviewPanel = ({
                             </div>
                             <span style={{ fontSize: fs(10), lineHeight: 1.35 }}>{item.title}</span>
                             {item.publisher ? (
-                              <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                              <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                                 {item.publisher}
                               </span>
                             ) : null}
@@ -4987,7 +4988,7 @@ const FlowOverviewPanel = ({
                       border: `1px solid ${item.color}25`,
                       color: item.color,
                       fontSize: fs(8),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     {item.label} · {item.value}
@@ -4996,7 +4997,7 @@ const FlowOverviewPanel = ({
               </div>
                 </Card>
 
-                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
+                <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle>Strike + Sector Map</CardTitle>
               <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
                 {strikeConcentration.length ? (
@@ -5008,28 +5009,29 @@ const FlowOverviewPanel = ({
                         justifyContent: "space-between",
                         alignItems: "center",
                         gap: sp(6),
-                        padding: sp("5px 6px"),
-                        background: T.bg1,
-                        border: `1px solid ${T.border}`,
+                        padding: sp("6px 8px"),
+                        background: T.bg2,
+                        border: "none",
+                        borderRadius: dim(6),
                       }}
                     >
                       <span
                         style={{
                           fontSize: fs(9),
                           fontWeight: 400,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           color: strike.event.cp === "C" ? T.green : T.red,
                         }}
                       >
                         {strike.label}
                       </span>
-                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                         {strike.count} prints · {fmtM(strike.premium)}
                       </span>
                     </div>
                   ))
                 ) : (
-                  <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                  <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}>
                     No strike concentration yet for the selected ticker.
                   </div>
                 )}
@@ -5041,7 +5043,7 @@ const FlowOverviewPanel = ({
                   const callPct = total ? (sector.calls / total) * 100 : 50;
                   return (
                     <div key={sector.sector} style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(8), fontFamily: T.mono }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(8), fontFamily: T.sans }}>
                         <span style={{ color: T.text }}>{sector.sector}</span>
                         <span style={{ color: bullish >= 0 ? T.green : T.red }}>
                           {bullish >= 0 ? "+" : "-"}
@@ -5076,11 +5078,11 @@ const FlowOverviewPanel = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: summaryGridTemplate,
-                gap: 6,
+                gap: sp(6),
               }}
             >
               {summaryCards.map((card) => (
-                <Card key={card.label} style={{ padding: "6px 9px" }}>
+                <Card key={card.label} style={{ padding: sp("6px 9px") }}>
                   <div
                     style={{
                       fontSize: fs(7),
@@ -5099,7 +5101,7 @@ const FlowOverviewPanel = ({
                     style={{
                       fontSize: fs(16),
                       fontWeight: 400,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       color: card.color,
                       marginTop: sp(2),
                     }}
@@ -5125,8 +5127,8 @@ const FlowOverviewPanel = ({
               <div
                 style={{
                   background: T.bg2,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(6),
+                  border: "none",
+                  borderRadius: dim(8),
                   padding: sp("8px 10px"),
                   overflow: "hidden",
                 }}
@@ -5141,10 +5143,11 @@ const FlowOverviewPanel = ({
                 >
                   <span
                     style={{
-                      fontSize: fs(10),
-                      fontWeight: 400,
-                      fontFamily: T.display,
-                      color: T.textSec,
+                      fontSize: fs(13),
+                      fontWeight: 600,
+                      fontFamily: T.sans,
+                      letterSpacing: "-0.01em",
+                      color: T.text,
                     }}
                   >
                     Premium Tide
@@ -5154,7 +5157,7 @@ const FlowOverviewPanel = ({
                       display: "flex",
                       gap: sp(8),
                       fontSize: fs(9),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     <span style={{ color: T.green }}>■ Calls {fmtM(totalCallPrem)}</span>
@@ -5168,11 +5171,20 @@ const FlowOverviewPanel = ({
                 <div style={{ height: dim(200), width: "100%" }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={flowTide}>
+                      <CartesianGrid
+                        stroke={T.borderLight || T.border}
+                        strokeDasharray="0"
+                        vertical={false}
+                      />
                       <XAxis
                         dataKey="time"
+                        axisLine={false}
+                        tickLine={false}
                         tick={{ fontSize: fs(9), fill: T.textMuted }}
                       />
                       <YAxis
+                        axisLine={false}
+                        tickLine={false}
                         tick={{ fontSize: fs(9), fill: T.textMuted }}
                         tickFormatter={(value) => `$${(value / 1e6).toFixed(1)}M`}
                       />
@@ -5185,22 +5197,22 @@ const FlowOverviewPanel = ({
                       <ReferenceLine
                         y={0}
                         stroke={T.textMuted}
-                        strokeDasharray="2 2"
+                        strokeDasharray="0"
                       />
                       <Area
                         type="monotone"
                         dataKey="cumNet"
                         stroke={T.accent}
-                        strokeWidth={2}
+                        strokeWidth={1.25}
                         fill={T.accent}
-                        fillOpacity={0.4}
+                        fillOpacity={0.18}
                       />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              <Card style={{ padding: "8px 10px" }}>
+              <Card style={{ padding: sp("8px 10px") }}>
                 <div
                   style={{
                     display: "flex",
@@ -5211,10 +5223,11 @@ const FlowOverviewPanel = ({
                 >
                   <span
                     style={{
-                      fontSize: fs(10),
-                      fontWeight: 400,
-                      fontFamily: T.display,
-                      color: T.textSec,
+                      fontSize: fs(13),
+                      fontWeight: 600,
+                      fontFamily: T.sans,
+                      letterSpacing: "-0.01em",
+                      color: T.text,
                     }}
                   >
                     Ticker Leaders
@@ -5223,7 +5236,7 @@ const FlowOverviewPanel = ({
                     style={{
                       fontSize: fs(8),
                       color: T.textDim,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     top contracts inline
@@ -5250,7 +5263,7 @@ const FlowOverviewPanel = ({
                           justifyContent: "space-between",
                           alignItems: "center",
                           fontSize: fs(9),
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           marginBottom: sp(1),
                         }}
                       >
@@ -5313,10 +5326,10 @@ const FlowOverviewPanel = ({
                                   display: "flex",
                                   alignItems: "center",
                                   gap: sp(4),
-                                  padding: sp("4px 6px"),
-                                  background: `${cpColor}08`,
-                                  border: `1px solid ${cpColor}30`,
-                                  borderLeft: `2px solid ${cpColor}`,
+                                  padding: sp("6px 10px"),
+                                  background: `${cpColor}14`,
+                                  border: "none",
+                                  borderRadius: dim(8),
                                   cursor: "pointer",
                                 }}
                               >
@@ -5324,7 +5337,7 @@ const FlowOverviewPanel = ({
                                   style={{
                                     fontSize: fs(10),
                                     fontWeight: 400,
-                                    fontFamily: T.mono,
+                                    fontFamily: T.sans,
                                     color: cpColor,
                                   }}
                                 >
@@ -5337,7 +5350,7 @@ const FlowOverviewPanel = ({
                                     display: "flex",
                                     justifyContent: "space-between",
                                     fontSize: fs(8),
-                                    fontFamily: T.mono,
+                                    fontFamily: T.sans,
                                     color: T.textDim,
                                   }}
                                 >
@@ -5359,15 +5372,15 @@ const FlowOverviewPanel = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: metricGridTemplate,
-                gap: 6,
+                gap: sp(6),
               }}
             >
               <div
                 style={{
                   background: T.bg2,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(6),
-                  padding: "6px 10px",
+                  border: "none",
+                  borderRadius: dim(8),
+                  padding: sp("6px 10px"),
                 }}
               >
             <div
@@ -5380,10 +5393,11 @@ const FlowOverviewPanel = ({
             >
               <span
                 style={{
-                  fontSize: fs(10),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.textSec,
+                  fontSize: fs(13),
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  letterSpacing: "-0.01em",
+                  color: T.text,
                 }}
               >
                 Flow Clock
@@ -5392,7 +5406,7 @@ const FlowOverviewPanel = ({
                 style={{
                   fontSize: fs(8),
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                 }}
               >
                 activity by time
@@ -5404,7 +5418,7 @@ const FlowOverviewPanel = ({
                 alignItems: "flex-end",
                 gap: sp(2),
                 height: dim(72),
-                padding: "0 2px",
+                padding: sp("0 2px"),
               }}
             >
               {flowClock.map((bucket, index) => {
@@ -5446,9 +5460,9 @@ const FlowOverviewPanel = ({
                 justifyContent: "space-between",
                 fontSize: fs(7),
                 color: T.textMuted,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 marginTop: sp(2),
-                padding: "0 2px",
+                padding: sp("0 2px"),
               }}
             >
               <span>9:30</span>
@@ -5462,7 +5476,7 @@ const FlowOverviewPanel = ({
                 background: T.bg3,
                 borderRadius: dim(3),
                 fontSize: fs(8),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 color: T.textDim,
                 display: "flex",
                 justifyContent: "space-between",
@@ -5486,9 +5500,9 @@ const FlowOverviewPanel = ({
           <div
             style={{
               background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: "6px 10px",
+              border: "none",
+              borderRadius: dim(8),
+              padding: sp("6px 10px"),
             }}
           >
             <div
@@ -5501,10 +5515,11 @@ const FlowOverviewPanel = ({
             >
               <span
                 style={{
-                  fontSize: fs(10),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.textSec,
+                  fontSize: fs(13),
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  letterSpacing: "-0.01em",
+                  color: T.text,
                 }}
               >
                 Order Flow
@@ -5513,7 +5528,7 @@ const FlowOverviewPanel = ({
                 style={{
                   fontSize: fs(8),
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                 }}
               >
                 by trade size
@@ -5569,7 +5584,7 @@ const FlowOverviewPanel = ({
                         style={{
                           display: "flex",
                           justifyContent: "space-between",
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                           fontSize: fs(10),
                         }}
                       >
@@ -5608,7 +5623,7 @@ const FlowOverviewPanel = ({
                         style={{
                           fontSize: fs(8),
                           color: T.textDim,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                         }}
                       >
                         {buyPct.toFixed(1)}% buy ·{" "}
@@ -5662,9 +5677,9 @@ const FlowOverviewPanel = ({
           <div
             style={{
               background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: "6px 10px",
+              border: "none",
+              borderRadius: dim(8),
+              padding: sp("6px 10px"),
             }}
           >
             <div
@@ -5677,10 +5692,11 @@ const FlowOverviewPanel = ({
             >
               <span
                 style={{
-                  fontSize: fs(10),
-                  fontWeight: 400,
-                  fontFamily: T.display,
-                  color: T.textSec,
+                  fontSize: fs(13),
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  letterSpacing: "-0.01em",
+                  color: T.text,
                 }}
               >
                 Expiration Buckets
@@ -5689,7 +5705,7 @@ const FlowOverviewPanel = ({
                 style={{
                   fontSize: fs(8),
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                 }}
               >
                 calls vs puts
@@ -5711,7 +5727,7 @@ const FlowOverviewPanel = ({
                         display: "flex",
                         justifyContent: "space-between",
                         fontSize: fs(8),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         marginBottom: 1,
                       }}
                     >
@@ -5757,7 +5773,7 @@ const FlowOverviewPanel = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: summaryGridTemplate,
-                gap: 6,
+                gap: sp(6),
               }}
             >
               {Array.from({ length: 6 }).map((_, index) => (
@@ -5772,7 +5788,7 @@ const FlowOverviewPanel = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: metricGridTemplate,
-                gap: 6,
+                gap: sp(6),
               }}
             >
               <FlowPlaceholderCard title="Flow Clock" rows={5} />

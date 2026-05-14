@@ -246,7 +246,7 @@ export const TradeL2Panel = ({
         fontSize: fs(9),
         fontWeight: 400,
         color: tab === id ? T.text : T.textMuted,
-        fontFamily: T.display,
+        fontFamily: T.sans,
         letterSpacing: "0.08em",
         cursor: "pointer",
         borderBottom:
@@ -348,7 +348,7 @@ export const TradeL2Panel = ({
             gap: sp(4),
             padding: sp("4px 0 6px"),
             borderBottom: `1px solid ${T.border}`,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           <div>
@@ -397,13 +397,13 @@ export const TradeL2Panel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "42px 58px 42px 34px",
+            gridTemplateColumns: `${dim(42)}px ${dim(58)}px ${dim(42)}px ${dim(34)}px`,
             gap: sp(4),
             padding: sp("4px 0"),
             fontSize: fs(7),
             color: T.textMuted,
             letterSpacing: "0.08em",
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           <span style={{ textAlign: "right" }}>BID SZ</span>
@@ -426,12 +426,12 @@ export const TradeL2Panel = ({
               key={`${level.row}_${level.price}`}
               style={{
                 display: "grid",
-                gridTemplateColumns: "42px 58px 42px 34px",
+                gridTemplateColumns: `${dim(42)}px ${dim(58)}px ${dim(42)}px ${dim(34)}px`,
                 gap: sp(4),
                 alignItems: "center",
                 padding: sp("3px 0"),
                 fontSize: fs(9),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 borderBottom: `1px solid ${T.border}08`,
                 background: level.isLastTrade ? `${T.accent}10` : "transparent",
               }}
@@ -555,13 +555,13 @@ export const TradeL2Panel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "28px 24px 52px 56px 44px",
+            gridTemplateColumns: `${dim(28)}px ${dim(24)}px ${dim(52)}px ${dim(56)}px ${dim(44)}px`,
             gap: sp(4),
             padding: sp("4px 0"),
             fontSize: fs(7),
             color: T.textMuted,
             letterSpacing: "0.08em",
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           <span>SIDE</span>
@@ -575,12 +575,12 @@ export const TradeL2Panel = ({
             key={execution.id}
             style={{
               display: "grid",
-              gridTemplateColumns: "28px 24px 52px 56px 44px",
+              gridTemplateColumns: `${dim(28)}px ${dim(24)}px ${dim(52)}px ${dim(56)}px ${dim(44)}px`,
               gap: sp(4),
               alignItems: "center",
               padding: sp("4px 0"),
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               borderBottom: `1px solid ${T.border}08`,
             }}
           >
@@ -671,7 +671,7 @@ export const TradeL2Panel = ({
                   : brokerAuthenticated
                     ? T.green
                     : T.textDim,
-              fontFamily: T.mono,
+              fontFamily: T.sans,
             }}
           >
             {liveStatusLabel}
@@ -679,7 +679,7 @@ export const TradeL2Panel = ({
           <span
             style={{
               fontSize: fs(9),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               color: contractColor,
               fontWeight: 400,
             }}
@@ -687,7 +687,7 @@ export const TradeL2Panel = ({
             {contractLabel}
           </span>
           <span
-            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
+            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}
           >
             {spread.toFixed(2)} sprd
           </span>
@@ -738,7 +738,7 @@ export const TradeL2Panel = ({
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     fontSize: fs(10),
                   }}
                 >
@@ -805,7 +805,7 @@ export const TradeL2Panel = ({
                         style={{
                           fontSize: fs(8),
                           color: T.textDim,
-                          fontFamily: T.mono,
+                          fontFamily: T.sans,
                         }}
                       >
                         {buyPct.toFixed(1)}% buy

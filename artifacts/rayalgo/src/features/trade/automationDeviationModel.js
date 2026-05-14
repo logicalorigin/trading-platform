@@ -1,3 +1,5 @@
+import { parseExpirationValue } from "../../lib/formatters";
+
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -15,8 +17,8 @@ const finiteNumber = (value) => {
 
 const dateKey = (value) => {
   if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
+  const date = parseExpirationValue(value);
+  if (!date || Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
 };
 

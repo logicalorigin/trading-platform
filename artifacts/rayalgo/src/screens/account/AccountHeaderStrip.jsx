@@ -20,11 +20,6 @@ const isShadowAccount = (account) =>
 const metricValue = (metric, currency, kind = "money", maskValues = false) => {
   if (!metric) return "----";
   if (kind === "percent") return formatAccountPercent(metric.value, 2, maskValues);
-  if (kind === "ratioPercent") {
-    return metric.value == null
-      ? "----"
-      : formatAccountPercent(Number(metric.value) * 100, 1, maskValues);
-  }
   if (kind === "signedMoney") {
     return formatAccountSignedMoney(metric.value, currency, true, maskValues);
   }
@@ -72,7 +67,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
       style={{
         color: tone,
         fontSize: fs(strong ? 10 : 9),
-        fontFamily: T.mono,
+        fontFamily: T.sans,
         fontWeight: 400,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -118,9 +113,18 @@ const AccountSwitcher = ({
         setOpen(false);
       }
     };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
 
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => window.removeEventListener("mousedown", handlePointerDown);
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   return (
@@ -181,7 +185,7 @@ const AccountSwitcher = ({
             style={{
               color: T.textDim,
               fontSize: fs(7),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -202,7 +206,7 @@ const AccountSwitcher = ({
             right: 0,
             zIndex: 20,
             borderRadius: dim(6),
-            border: `1px solid ${T.border}`,
+            border: "none",
             background: T.bg1,
             boxShadow:
               T.bg0 === "#f5f5f4"
@@ -252,7 +256,7 @@ const AccountSwitcher = ({
                     marginTop: sp(2),
                     color: T.textDim,
                     fontSize: fs(8),
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                   }}
                 >
                   {combinedCount} real accounts · base {currency}
@@ -311,7 +315,7 @@ const AccountSwitcher = ({
                       marginTop: sp(2),
                       color: T.textDim,
                       fontSize: fs(8),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
                     {account.id}
@@ -402,7 +406,7 @@ export const AccountHeaderStrip = ({
               {badge}
             </Pill>
           ))}
-          <Pill tone={brokerAuthenticated ? "green" : "default"}>
+          <Pill tone={brokerAuthenticated ? "stream-healthy" : "default"}>
             {brokerAuthenticated ? "Bridge live" : "Bridge off"}
           </Pill>
           {showPdtBadge ? (
@@ -467,11 +471,11 @@ export const AccountHeaderStrip = ({
           },
           {
             label: "Cushion",
-            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent", maskValues),
+            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "percent", maskValues),
             tone:
-              metrics.maintenanceMarginCushionPercent?.value > 0.5
+              metrics.maintenanceMarginCushionPercent?.value > 50
                 ? T.green
-                : metrics.maintenanceMarginCushionPercent?.value > 0.25
+                : metrics.maintenanceMarginCushionPercent?.value > 25
                   ? T.amber
                   : T.red,
             title: metricTitle(metrics.maintenanceMarginCushionPercent),
@@ -479,7 +483,7 @@ export const AccountHeaderStrip = ({
           {
             label: "Day",
             value: metricValue(metrics.dayPnl, currency, "signedMoney", maskValues),
-            tone: metrics.dayPnl?.value >= 0 ? T.green : T.red,
+            tone: metrics.dayPnl?.value >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)",
             title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}${
               metrics.dayPnlPercent
                 ? `\nPercent: ${formatAccountPercent(metrics.dayPnlPercent.value, 2, maskValues)}`
@@ -490,7 +494,7 @@ export const AccountHeaderStrip = ({
           {
             label: "Total",
             value: metricValue(metrics.totalPnl, currency, "signedMoney", maskValues),
-            tone: metrics.totalPnl?.value >= 0 ? T.green : T.red,
+            tone: metrics.totalPnl?.value >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)",
             title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}${
               metrics.totalPnlPercent
                 ? `\nPercent: ${formatAccountPercent(metrics.totalPnlPercent.value, 2, maskValues)}`

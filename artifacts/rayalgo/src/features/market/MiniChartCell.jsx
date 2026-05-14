@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getChartTimeframeValues, normalizeChartTimeframe } from "../charting/timeframes";
 import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
+import {
+  useGexZeroGamma,
+  useGexZeroGammaReferenceLine,
+} from "../gex/useGexZeroGamma.js";
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
 import { MarketIdentityMark } from "../platform/marketIdentity";
 import { MiniChartTickerSearch } from "../platform/tickerSearch/TickerSearch.jsx";
@@ -69,6 +73,8 @@ export const MiniChartCell = ({
   dataTestId,
   slotId = dataTestId || "market-mini-chart",
   chartViewportLayoutKey = null,
+  crosshairSyncGroupId = null,
+  crosshairSyncInstanceId = null,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
   const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
@@ -79,6 +85,14 @@ export const MiniChartCell = ({
     DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
     WATCHLIST.find((item) => item.sym === ticker) ||
     WATCHLIST[0];
+  const gexZeroGamma = useGexZeroGamma(ticker, { enabled: isActive });
+  const gexZeroGammaReferenceLine =
+    useGexZeroGammaReferenceLine(gexZeroGamma);
+  const gexReferenceLine = isActive ? gexZeroGammaReferenceLine : null;
+  const gexReferenceLines = useMemo(
+    () => (gexReferenceLine ? [gexReferenceLine] : []),
+    [gexReferenceLine],
+  );
   const [pendingTickerSelection, setPendingTickerSelection] = useState(null);
   const pendingPointerRef = useRef(null);
   const suppressNextClickRef = useRef(false);
@@ -298,6 +312,9 @@ export const MiniChartCell = ({
           }
           workspaceChart={{ timeframe }}
           onWorkspaceChartChange={handleWorkspaceChartChange}
+          referenceLines={gexReferenceLines}
+          crosshairSyncGroupId={crosshairSyncGroupId}
+          crosshairSyncInstanceId={crosshairSyncInstanceId}
         />
       </div>
       <MiniChartPremiumFlowIndicator

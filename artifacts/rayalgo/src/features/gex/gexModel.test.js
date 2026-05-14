@@ -79,6 +79,30 @@ test("normalizes API GEX response options without option-chain contract wrappers
   assert.equal(coverage.withGamma, 1);
 });
 
+test("GEX normalization rejects impossible expiration dates", () => {
+  const chain = normalizeGexOptionChain([
+    quote({ right: "call", strike: 100, expirationDate: "2026-02-31" }),
+  ]);
+  assert.equal(chain.coverage.total, 1);
+  assert.equal(chain.coverage.usable, 0);
+  assert.equal(chain.rows.length, 0);
+
+  const response = normalizeGexResponseOptions([
+    {
+      strike: 100,
+      expireYear: 2026,
+      expireMonth: 2,
+      expireDay: 31,
+      cp: "C",
+      gamma: 0.02,
+      openInterest: 10,
+    },
+  ]);
+  assert.equal(response.coverage.total, 1);
+  assert.equal(response.coverage.usable, 0);
+  assert.equal(response.rows.length, 0);
+});
+
 test("contractGex signs calls positive and puts negative", () => {
   const { rows } = normalizeGexOptionChain([
     quote({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),

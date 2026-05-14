@@ -43,6 +43,7 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import {
   joinMotionClasses,
@@ -163,10 +164,14 @@ const formatFreshnessAge = (value) => {
 };
 
 const severityTone = (severity) => {
-  if (severity === "critical") return T.red;
-  if (severity === "warning") return T.amber;
-  return T.green;
+  if (severity === "critical") return "var(--ra-toast-critical)";
+  if (severity === "warning") return "var(--ra-toast-warning)";
+  if (severity === "success") return "var(--ra-toast-success)";
+  return "var(--ra-toast-info)";
 };
+
+const severityBorder = (severity) =>
+  `color-mix(in srgb, ${severityTone(severity)} 40%, transparent)`;
 
 const statusLabel = (value) =>
   value === "down"
@@ -212,7 +217,7 @@ const JsonBlock = ({ value }) => (
       margin: 0,
       maxHeight: dim(300),
       overflow: "auto",
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: fs(9),
       color: T.textSec,
       whiteSpace: "pre-wrap",
@@ -227,7 +232,7 @@ const Panel = ({ title, action, children }) => (
   <section
     className="ra-panel-enter"
     style={{
-        border: `1px solid ${T.border}`,
+        border: "none",
         background: T.bg1,
         borderRadius: dim(6),
         padding: sp("8px 10px"),
@@ -267,7 +272,7 @@ const StateRow = ({ label, value, tone = T.textSec, onClick }) => (
       borderBottom: `1px solid ${T.border}55`,
       background: "transparent",
       padding: sp("7px 0"),
-      fontFamily: T.mono,
+      fontFamily: T.sans,
       fontSize: fs(10),
       cursor: onClick ? "pointer" : "default",
       textAlign: "left",
@@ -296,7 +301,7 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
     onClick={onClick}
     style={{
       ...motionVars({ accent: severityTone(severity) }),
-      border: `1px solid ${severityTone(severity)}66`,
+      border: `1px solid ${severityBorder(severity)}`,
       borderRadius: dim(6),
       background: T.bg2,
       padding: sp("7px 8px"),
@@ -309,13 +314,13 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
       textAlign: "left",
     }}
   >
-    <span style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
+    <span style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.sans }}>
       {label}
     </span>
     <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: 400 }}>
       {value ?? MISSING_VALUE}
     </span>
-    <span style={{ color: T.textSec, fontSize: fs(9), fontFamily: T.mono }}>
+    <span style={{ color: T.textSec, fontSize: fs(9), fontFamily: T.sans }}>
       {sub || MISSING_VALUE}
     </span>
   </button>
@@ -332,7 +337,7 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
     .filter((point) => Number.isFinite(point.value));
   if (!data.length) {
     return (
-      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
+      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         No samples in selected window.
       </div>
     );
@@ -384,36 +389,36 @@ const EventList = ({ events, onSelect }) => (
           style={{
             ...motionRowStyle(index, 16, 160),
             ...motionVars({ accent: severityTone(event.severity) }),
-            border: `1px solid ${severityTone(event.severity)}66`,
+            border: `1px solid ${severityBorder(event.severity)}`,
             background: T.bg2,
             borderRadius: dim(5),
             padding: sp(9),
             display: "grid",
-            gridTemplateColumns: "96px minmax(0, 1fr) 72px",
+            gridTemplateColumns: `${dim(96)}px minmax(0, 1fr) ${dim(72)}px`,
             gap: sp(8),
             alignItems: "start",
             textAlign: "left",
             cursor: "pointer",
           }}
         >
-          <span style={{ color: severityTone(event.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+          <span style={{ color: severityTone(event.severity), fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
             {event.severity.toUpperCase()}
           </span>
           <span style={{ minWidth: 0 }}>
             <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400, whiteSpace: "normal", overflowWrap: "anywhere" }}>
               {event.message}
             </div>
-            <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
+            <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.sans }}>
               {event.subsystem} / {event.category} / {event.code || "no-code"}
             </div>
           </span>
-          <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(9), textAlign: "right" }}>
+          <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(9), textAlign: "right" }}>
             x{event.eventCount}
           </span>
         </button>
       ))
     ) : (
-      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
+      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         No diagnostic events in this window.
       </div>
     )}
@@ -429,7 +434,7 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
       gridTemplateColumns: "minmax(0, 1fr) auto",
       gap: sp(8),
       alignItems: "stretch",
-      border: `1px solid ${severityTone(alert.severity)}66`,
+      border: `1px solid ${severityBorder(alert.severity)}`,
       background: T.bg2,
       borderRadius: dim(5),
       padding: sp(8),
@@ -443,7 +448,7 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         background: "transparent",
         color: T.text,
         display: "grid",
-        gridTemplateColumns: "88px minmax(0, 1fr) 64px",
+        gridTemplateColumns: `${dim(88)}px minmax(0, 1fr) ${dim(64)}px`,
         gap: sp(8),
         alignItems: "start",
         minWidth: 0,
@@ -452,23 +457,23 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         cursor: "pointer",
       }}
     >
-      <span style={{ color: severityTone(alert.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
+      <span style={{ color: severityTone(alert.severity), fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
         {alert.severity.toUpperCase()}
       </span>
       <span style={{ minWidth: 0 }}>
         <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400, whiteSpace: "normal", overflowWrap: "anywhere" }}>
           {alert.message}
         </div>
-        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {alert.subsystem || "diagnostics"} / {alert.category || alert.kind} / {alert.code || alert.incidentKey}
         </div>
       </span>
-      <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(9), textAlign: "right" }}>
+      <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(9), textAlign: "right" }}>
         x{alert.repeatCount}
       </span>
     </button>
     <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
-      <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), whiteSpace: "nowrap" }}>
+      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), whiteSpace: "nowrap" }}>
         {formatAgo(alert.lastSeenAt)}
       </span>
       <button type="button" onClick={() => onDismiss(alert)} style={smallButton()}>
@@ -528,7 +533,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
             border: `1px solid ${health.color}66`,
             background: T.bg2,
             color: health.color,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(9),
             fontWeight: 400,
             padding: sp("3px 6px"),
@@ -1023,74 +1028,65 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(diagnosticsIsPhone ? 6 : 10),
+        padding: sp(diagnosticsIsPhone ? "12px 12px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: sp(12),
-          marginBottom: sp(14),
-          flexDirection: diagnosticsIsPhone ? "column" : "row",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: fs(18), fontWeight: 400 }}>Diagnostics</div>
-          <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
-            Real-time SSE, 7-day history, per-subsystem uptime, events, probes, and thresholds
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: diagnosticsIsPhone ? "flex-start" : "flex-end", width: diagnosticsIsPhone ? "100%" : undefined }}>
-          <span style={{ color: severityTone(topSeverity), fontFamily: T.mono, fontSize: fs(10), fontWeight: 400 }}>
-            {statusLabel(latest?.status)}
-          </span>
-          <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
-            {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
-          </span>
-          {WINDOW_OPTIONS.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => setWindowMinutes(option.minutes)}
+      <CockpitHeader
+        eyebrow="System"
+        title="Diagnostics"
+        subtitle="Real-time SSE, 7-day history, per-subsystem uptime, events, probes, and thresholds"
+        actions={
+          <>
+            <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: 400 }}>
+              {statusLabel(latest?.status)}
+            </span>
+            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
+              {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
+            </span>
+            {WINDOW_OPTIONS.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                onClick={() => setWindowMinutes(option.minutes)}
+                style={{
+                  border: "none",
+                  background: windowMinutes === option.minutes ? T.greenBg : T.bg2,
+                  color: windowMinutes === option.minutes ? T.green : T.text,
+                  borderRadius: 999,
+                  padding: sp("6px 12px"),
+                  fontFamily: T.sans,
+                  fontSize: fs(10),
+                  fontWeight: windowMinutes === option.minutes ? 600 : 500,
+                  letterSpacing: "0.02em",
+                  cursor: "pointer",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+            <a
+              href={exportUrl}
+              target="_blank"
+              rel="noreferrer"
               style={{
-                border: `1px solid ${windowMinutes === option.minutes ? T.green : T.border}`,
-                background: windowMinutes === option.minutes ? T.greenBg : T.bg2,
-                color: windowMinutes === option.minutes ? T.green : T.textSec,
+                border: "none",
+                background: T.bg2,
+                color: T.textSec,
                 borderRadius: dim(4),
                 padding: sp("5px 8px"),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 fontSize: fs(9),
                 fontWeight: 400,
-                cursor: "pointer",
+                textDecoration: "none",
               }}
             >
-              {option.label}
-            </button>
-          ))}
-          <a
-            href={exportUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textSec,
-              borderRadius: dim(4),
-              padding: sp("5px 8px"),
-              fontFamily: T.mono,
-              fontSize: fs(9),
-              fontWeight: 400,
-              textDecoration: "none",
-            }}
-          >
-            Export Raw
-          </a>
-        </div>
-      </div>
+              Export Raw
+            </a>
+          </>
+        }
+      />
 
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginBottom: sp(14) }}>
         {TABS.map((tab) => (
@@ -1110,7 +1106,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               color: activeTab === tab ? T.green : T.textSec,
               borderRadius: dim(4),
               padding: sp("7px 10px"),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(9),
               fontWeight: 400,
               cursor: "pointer",
@@ -1174,12 +1170,12 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               />
             ))}
             {activeLocalAlerts.length > 8 && (
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9) }}>
                 {activeLocalAlerts.length - 8} more grouped alerts
               </div>
             )}
             {dismissedLocalAlerts.length > 0 && (
-              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9) }}>
                 {dismissedLocalAlerts.length} dismissed active alert{dismissedLocalAlerts.length === 1 ? "" : "s"}
               </div>
             )}
@@ -1189,7 +1185,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
       {activeTab === "Overview" && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: sp(8), margin: sp("10px 0"), alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`, gap: sp(8), margin: sp("10px 0"), alignItems: "start" }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
             <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
             <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
@@ -1200,7 +1196,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
             <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} onClick={() => selectMetric("storage", "storage.ping_ms")} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(10), alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(10), alignItems: "start" }}>
             <Panel title="API Latency Trend">
               <Sparkline points={historyData.points || []} subsystem="api" metricKey="p95LatencyMs" />
             </Panel>
@@ -1216,7 +1212,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
       {activeTab === "IBKR" && (
         <div style={{ display: "grid", gap: sp(14) }}>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: sp(14) }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
             <GatewayPanel latest={latest} latencyStats={latencyStats} onMetric={selectMetric} />
             <Panel title="Bridge Governor">
               {governorRows.length ? (
@@ -1273,7 +1269,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "Market Data" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Backend Quote Stream">
             <StateRow label="Consumers" value={formatCount(marketDataMetrics.activeConsumerCount)} />
             <StateRow label="Symbols" value={formatCount(marketDataMetrics.unionSymbolCount)} />
@@ -1333,7 +1329,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "API" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="API Golden Signals">
             <StateRow label="Requests / 5m" value={formatCount(apiMetrics.requestCount5m)} />
             <StateRow label="4xx / 5m" value={formatCount(apiMetrics.warningCount5m)} />
@@ -1361,7 +1357,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "Browser" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Frontend Workload">
             <StateRow label="Streams" value={workloadStats.kindCounts?.stream ?? 0} />
             <StateRow label="Pollers" value={workloadStats.kindCounts?.poll ?? 0} />
@@ -1396,13 +1392,13 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             {chartHydrationScopes.length ? (
               chartHydrationScopes.slice(0, 8).map((scope) => (
                 <div key={scope.scope} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0") }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), fontFamily: T.mono, fontSize: fs(10), color: T.textSec }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), fontFamily: T.sans, fontSize: fs(10), color: T.textSec }}>
                     <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{scope.scope}</span>
                     <span style={{ color: scope.hasExhaustedOlderHistory ? T.amber : scope.isPrependingOlder ? T.green : T.textDim }}>
                       {scope.role || "chart"} / {scope.timeframe || MISSING_VALUE}
                     </span>
                   </div>
-                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: sp(6), fontFamily: T.mono, fontSize: fs(9), color: T.textDim }}>
+                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(110)}px, 1fr))`, gap: sp(6), fontFamily: T.sans, fontSize: fs(9), color: T.textDim }}>
                     <span>bars {formatCount(scope.hydratedBaseCount)} / {formatCount(scope.renderedBarCount)}</span>
                     <span>oldest {scope.oldestLoadedAt ? formatAgo(scope.oldestLoadedAt) : MISSING_VALUE}</span>
                     <span>pages {formatCount(scope.olderHistoryPageCount)}</span>
@@ -1413,7 +1409,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>No chart scopes observed.</div>
+              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>No chart scopes observed.</div>
             )}
           </Panel>
           <Panel title="Current Option Session">
@@ -1428,12 +1424,12 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           <Panel title="Local Rollups" action={<button type="button" onClick={clearOptionHydrationDiagnosticsHistory} style={smallButton()}>Clear History</button>}>
             {history.length ? (
               history.slice(-8).reverse().map((entry) => (
-                <div key={entry.id} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0"), fontFamily: T.mono, fontSize: fs(9), color: T.textSec }}>
+                <div key={entry.id} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0"), fontFamily: T.sans, fontSize: fs(9), color: T.textSec }}>
                   {formatAppDateTime(entry.updatedAt)} / failures {entry.failureCount} / {entry.transportStates.join(", ") || "no state"}
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>No local rollups yet.</div>
+              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>No local rollups yet.</div>
             )}
           </Panel>
           <Panel title="Browser Events">
@@ -1447,7 +1443,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "Memory" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Pressure State">
             <StateRow label="Level" value={String(resourcePressureMetrics.pressureLevel || "normal").toUpperCase()} tone={severityTone(resourcePressureSnapshot?.severity)} />
             <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "critical" ? T.red : footerSignal.level === "high" || footerSignal.level === "watch" ? T.amber : T.green} />
@@ -1511,7 +1507,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "Orders/Accounts" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Accounts Probe">
             <StateRow label="Accounts" value={formatCount(accountMetrics.accountCount)} />
             <StateRow label="Positions" value={formatCount(accountMetrics.positionCount)} />
@@ -1544,7 +1540,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       )}
 
       {activeTab === "Events" && (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.7fr)", gap: sp(14) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(320)}px, 0.7fr)`, gap: sp(14) }}>
           <Panel title="Events">
             <EventList events={events} onSelect={setSelectedEvent} />
           </Panel>
@@ -1552,7 +1548,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             {selectedEvent ? (
               <JsonBlock value={eventDetail || selectedEvent} />
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
+              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
                 Select an event or metric to inspect raw context.
               </div>
             )}
@@ -1569,12 +1565,12 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
 function smallButton() {
   return {
-    border: `1px solid ${T.border}`,
+    border: "none",
     background: T.bg2,
     color: T.textSec,
     borderRadius: dim(4),
     padding: sp("5px 8px"),
-    fontFamily: T.mono,
+    fontFamily: T.sans,
     fontSize: fs(9),
     fontWeight: 400,
     cursor: "pointer",

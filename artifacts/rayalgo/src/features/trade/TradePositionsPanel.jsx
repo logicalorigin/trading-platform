@@ -46,6 +46,29 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const compactOrderKeyPart = (value) => {
+  const normalized = String(value ?? "").trim();
+  return normalized || "_";
+};
+
+export const getTradeLiveOrderRowId = (order) => {
+  if (order?.id) {
+    return String(order.id);
+  }
+
+  return [
+    order?.accountId,
+    order?.symbol,
+    order?.side,
+    order?.type,
+    order?.quantity,
+    order?.filledQuantity,
+    order?.status,
+    order?.updatedAt,
+  ]
+    .map(compactOrderKeyPart)
+    .join("|");
+};
 
 export const TradePositionsPanel = ({
   accountId,
@@ -787,7 +810,7 @@ export const TradePositionsPanel = ({
           justifyContent: "space-between",
           alignItems: "center",
           borderBottom: `1px solid ${T.border}`,
-          paddingBottom: 4,
+          paddingBottom: sp(4),
           gap: sp(4),
         }}
       >
@@ -808,14 +831,14 @@ export const TradePositionsPanel = ({
               fontSize: fs(9),
               fontWeight: 400,
               color: tab === "open" ? T.text : T.textMuted,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "open"
                   ? `2px solid ${T.accent}`
                   : "2px solid transparent",
-              paddingBottom: 2,
+              paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
@@ -833,14 +856,14 @@ export const TradePositionsPanel = ({
               fontSize: fs(9),
               fontWeight: 400,
               color: tab === "history" ? T.text : T.textMuted,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "history"
                   ? `2px solid ${T.accent}`
                   : "2px solid transparent",
-              paddingBottom: 2,
+              paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
@@ -858,14 +881,14 @@ export const TradePositionsPanel = ({
               fontSize: fs(9),
               fontWeight: 400,
               color: tab === "orders" ? T.text : T.textMuted,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "orders"
                   ? `2px solid ${T.accent}`
                   : "2px solid transparent",
-              paddingBottom: 2,
+              paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
@@ -879,7 +902,7 @@ export const TradePositionsPanel = ({
           style={{
             fontSize: fs(10),
             fontWeight: 400,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             color: headerSummaryColor,
             whiteSpace: "nowrap",
           }}
@@ -1012,7 +1035,7 @@ export const TradePositionsPanel = ({
                       gap: sp(3),
                       padding: sp("3px 4px"),
                       fontSize: fs(9),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       borderBottom: `1px solid ${T.border}08`,
                       cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
@@ -1119,7 +1142,7 @@ export const TradePositionsPanel = ({
                         border: `1px solid ${T.red}40`,
                         color: T.red,
                         fontSize: fs(9),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontWeight: 400,
                         borderRadius: dim(2),
                         cursor: closeDisabled ? "not-allowed" : "pointer",
@@ -1250,7 +1273,7 @@ export const TradePositionsPanel = ({
                     gap: sp(3),
                     padding: sp("3px 4px"),
                     fontSize: fs(9),
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     borderBottom: `1px solid ${T.border}08`,
                     alignItems: "center",
                   }}
@@ -1425,19 +1448,19 @@ export const TradePositionsPanel = ({
                 <span></span>
               </div>
               {liveOrders.map((order) => {
+                const orderRowId = getTradeLiveOrderRowId(order);
                 const isTerminal = FINAL_ORDER_STATUSES.has(order.status);
                 const isOption = Boolean(order.optionContract);
                 const cancelDisabled =
                   isTerminal || cancelOrderMutation.isPending || gatewayActionDisabled;
                 return (
-                  <AppTooltip key={order.id} content={
+                  <AppTooltip key={orderRowId} content={
                       isOption
                         ? `Load ${formatOptionContractLabel(order.optionContract, {
                             symbol: order.symbol,
                           })} into Order Ticket`
                         : order.id
                     }><div
-                    key={order.id}
                     onClick={() => {
                       if (!isOption) return;
                       onLoadPosition({
@@ -1456,7 +1479,7 @@ export const TradePositionsPanel = ({
                       gap: sp(3),
                       padding: sp("3px 4px"),
                       fontSize: fs(9),
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       borderBottom: `1px solid ${T.border}08`,
                       cursor: isOption ? "pointer" : "default",
                       alignItems: "center",
@@ -1518,7 +1541,7 @@ export const TradePositionsPanel = ({
                         border: `1px solid ${isTerminal ? T.border : T.red}40`,
                         color: isTerminal ? T.textDim : T.red,
                         fontSize: fs(9),
-                        fontFamily: T.mono,
+                        fontFamily: T.sans,
                         fontWeight: 400,
                         borderRadius: dim(2),
                         cursor:
@@ -1623,7 +1646,7 @@ export const TradePositionsPanel = ({
             marginTop: "auto",
             fontSize: fs(8),
             color: T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
           }}
         >
           {brokerConfigured

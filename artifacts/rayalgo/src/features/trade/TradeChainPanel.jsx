@@ -260,7 +260,7 @@ const ChainStatePanel = ({
       >
         {title}
       </span>
-      <span style={{ fontSize: fs(9), fontFamily: T.mono }}>{detail}</span>
+      <span style={{ fontSize: fs(9), fontFamily: T.sans }}>{detail}</span>
     </span>
     {actionLabel && onAction ? (
       <button
@@ -273,7 +273,7 @@ const ChainStatePanel = ({
           borderRadius: dim(4),
           padding: sp("4px 8px"),
           fontSize: fs(9),
-          fontFamily: T.mono,
+          fontFamily: T.sans,
           fontWeight: 400,
           cursor: "pointer",
         }}
@@ -444,7 +444,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                           : T.textSec,
                     fontSize: fs(9),
                     fontWeight: 400,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                     textAlign: side === "C" ? "right" : "left",
                     whiteSpace: "nowrap",
                   }}
@@ -518,7 +518,7 @@ const StrikeRows = ({
             borderBottom: `1px solid ${T.border}12`,
             background: isAtmRow ? rgba(T.amber, 0.16) : "transparent",
             color: isAtmRow ? T.amber : T.text,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontSize: fs(10),
             fontWeight: 400,
           }}
@@ -908,7 +908,7 @@ export const TradeChainPanel = ({
           style={{
             fontSize: fs(10),
             fontWeight: 400,
-            fontFamily: T.display,
+            fontFamily: T.sans,
             color: T.textSec,
           }}
         >
@@ -927,7 +927,7 @@ export const TradeChainPanel = ({
             border: `1px solid ${T.border}`,
             color: hasExpirationOptions ? T.text : T.textDim,
             fontSize: fs(9),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
             cursor: hasExpirationOptions ? "pointer" : "default",
             padding: sp("2px 6px"),
@@ -948,7 +948,7 @@ export const TradeChainPanel = ({
             gap: sp(4),
             fontSize: fs(9),
             color: heatmapEnabled ? T.amber : T.textDim,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             cursor: "pointer",
           }}
         >
@@ -969,7 +969,7 @@ export const TradeChainPanel = ({
             border: `1px solid ${T.border}`,
             color: T.textSec,
             fontSize: fs(9),
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
             cursor: onChangeChainCoverage ? "pointer" : "default",
             padding: sp("2px 6px"),
@@ -985,14 +985,14 @@ export const TradeChainPanel = ({
         </select>
         <span style={{ flex: 1 }} />
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
-        <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
+        <span style={{ fontSize: fs(9), fontFamily: T.sans, color: T.textDim }}>
           IMP{" "}
           <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 400 }}>
             {impMove != null ? `+/-$${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
           {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
         </span>
-        <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
+        <span style={{ fontSize: fs(9), fontFamily: T.sans, color: T.textDim }}>
           ATM{" "}
           <span style={{ color: T.accent, fontWeight: 400 }}>
             {atmStrike ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
@@ -1003,7 +1003,7 @@ export const TradeChainPanel = ({
           style={{
             fontSize: fs(8),
             color: statusColor,
-            fontFamily: T.mono,
+            fontFamily: T.sans,
             fontWeight: 400,
           }}
         >
@@ -1018,7 +1018,7 @@ export const TradeChainPanel = ({
               minHeight: 0,
               display: "flex",
               flexDirection: "column",
-              fontFamily: T.mono,
+              fontFamily: T.sans,
               fontSize: fs(9),
             }}
           >

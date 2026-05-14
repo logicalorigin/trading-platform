@@ -16,7 +16,20 @@ const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
 
 export const getAccountTradeId = (trade) => {
   if (!trade) return "";
-  return `${normalizeText(trade.source, "TRADE")}:${normalizeText(trade.id, trade.symbol)}`;
+  const fallbackId = [
+    trade.symbol,
+    trade.openDate,
+    trade.closeDate,
+    trade.side,
+    trade.quantity,
+  ]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(":");
+  return `${normalizeText(trade.source, "TRADE")}:${normalizeText(
+    trade.id,
+    fallbackId || "unknown",
+  )}`;
 };
 
 const tradePnl = (trade) => finiteNumber(trade?.realizedPnl) ?? 0;

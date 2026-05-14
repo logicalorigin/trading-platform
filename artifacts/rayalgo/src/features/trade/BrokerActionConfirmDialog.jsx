@@ -59,7 +59,7 @@ export const BrokerActionConfirmDialog = ({
               fontSize: fs(10),
               fontWeight: 400,
               color: confirmTone,
-              fontFamily: T.display,
+              fontFamily: T.sans,
               letterSpacing: "0.08em",
             }}
           >
@@ -96,7 +96,7 @@ export const BrokerActionConfirmDialog = ({
               background: T.bg2,
               border: `1px solid ${T.border}`,
               borderRadius: dim(5),
-              fontFamily: T.mono,
+              fontFamily: T.sans,
             }}
           >
             {lines.map((line) => (

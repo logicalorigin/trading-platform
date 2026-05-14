@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useCallback,
@@ -27,24 +28,51 @@ import {
   LineStyle,
   PriceScaleMode,
 } from "lightweight-charts";
-import { Copy } from "lucide-react";
+import type {
+  DeepPartial,
+  IChartApi,
+  IPriceLine,
+  IPriceScaleApi,
+  IPaneApi,
+  ISeriesApi,
+  ISeriesMarkersPluginApi,
+  ITimeScaleApi,
+  MouseEventParams,
+  SeriesType,
+  Time,
+  TimeChartOptions,
+} from "lightweight-charts";
 import type {
   ChartModel,
   IndicatorWindow,
   IndicatorZone,
   StudySpec,
 } from "./types";
-import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
+import type {
+  ChartEvent,
+  ChartEventBias,
+  ChartEventSeverity,
+  FlowChartEventConversion,
+} from "./chartEvents";
 import {
   buildFlowChartBuckets,
   buildFlowChartEventPlacements,
   buildFlowChartVolumeBuckets,
   buildFlowTooltipModel,
+  compactCurrency,
   summarizeFlowChartBucketPlacement,
   type FlowChartBucket,
   type FlowChartEventPlacement,
+  type FlowChartSourceBasis,
   type FlowTooltipModel,
 } from "./flowChartEvents";
+import {
+  SPIDER_BASE_RADIUS,
+  SPIDER_MARKER_SIZE,
+  buildFlowEventClusters,
+  computeSpiderChildPositions,
+  type FlowEventCluster,
+} from "./flowChartSpider";
 import {
   EMPTY_CHART_POSITION_OVERLAYS,
   type ChartPositionEntryLine,
@@ -72,13 +100,121 @@ import {
   recordChartHydrationMetric,
   type ChartHydrationCounterKey,
 } from "./chartHydrationStats";
+import {
+  publishCrosshairSync,
+  subscribeCrosshairSync,
+  type CrosshairSyncEvent,
+} from "./chartCrosshairSyncStore";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
   "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3";
 
 type DisposableChart = { remove: () => void };
+type ChartTimeScaleApi = Omit<
+  ITimeScaleApi<Time>,
+  | "coordinateToTime"
+  | "getVisibleLogicalRange"
+  | "setVisibleLogicalRange"
+  | "subscribeVisibleLogicalRangeChange"
+  | "timeToCoordinate"
+  | "unsubscribeVisibleLogicalRangeChange"
+> & {
+  timeToCoordinate(time: number): number | null;
+  coordinateToTime(coordinate: number): number | null;
+  getVisibleLogicalRange(): VisibleLogicalRange | null;
+  setVisibleLogicalRange(range: VisibleLogicalRange): void;
+  subscribeVisibleLogicalRangeChange(
+    handler: (range: VisibleLogicalRange | null) => void,
+  ): void;
+  unsubscribeVisibleLogicalRangeChange(
+    handler: (range: VisibleLogicalRange | null) => void,
+  ): void;
+  fitContent(): void;
+  scrollToRealTime(): void;
+  resetTimeScale(): void;
+};
+type ChartPriceScaleApi = IPriceScaleApi & {
+  applyOptions(options: Record<string, unknown>): void;
+};
+type ChartPriceLine = IPriceLine;
+type ChartSeriesApi = Omit<
+  ISeriesApi<SeriesType, Time>,
+  | "applyOptions"
+  | "barsInLogicalRange"
+  | "coordinateToPrice"
+  | "createPriceLine"
+  | "priceToCoordinate"
+  | "setData"
+  | "update"
+> & {
+  setData(data: Array<Record<string, unknown>>): void;
+  update(data: Record<string, unknown>): void;
+  applyOptions(options: Record<string, unknown>): void;
+  priceToCoordinate(price: number): number | null;
+  coordinateToPrice(coordinate: number): number | null;
+  createPriceLine(options: Record<string, unknown>): ChartPriceLine;
+  barsInLogicalRange?(range: VisibleLogicalRange | null): unknown;
+};
+type ChartApi = Omit<
+  IChartApi,
+  | "addSeries"
+  | "applyOptions"
+  | "panes"
+  | "priceScale"
+  | "removeSeries"
+  | "setCrosshairPosition"
+  | "subscribeClick"
+  | "subscribeCrosshairMove"
+  | "takeScreenshot"
+  | "timeScale"
+  | "unsubscribeClick"
+  | "unsubscribeCrosshairMove"
+> & {
+  timeScale(): ChartTimeScaleApi;
+  addSeries(
+    seriesDefinition: unknown,
+    options?: Record<string, unknown>,
+    paneIndex?: number,
+  ): ChartSeriesApi;
+  removeSeries(series: ChartSeriesApi): void;
+  priceScale(priceScaleId: string, paneIndex?: number): ChartPriceScaleApi;
+  applyOptions(options: Record<string, unknown>): void;
+  resize(width: number, height: number): void;
+  panes?(): ChartPaneApi[];
+  subscribeCrosshairMove(handler: (param: ChartMouseEvent) => void): void;
+  unsubscribeCrosshairMove(handler: (param: ChartMouseEvent) => void): void;
+  subscribeClick(handler: (param: ChartMouseEvent) => void): void;
+  unsubscribeClick(handler: (param: ChartMouseEvent) => void): void;
+  clearCrosshairPosition(): void;
+  setCrosshairPosition(price: number, time: number, series: ChartSeriesApi): void;
+  takeScreenshot(addTopLayer: boolean, includeCrosshair: boolean): HTMLCanvasElement;
+};
+type ChartMarkerApi = Omit<ISeriesMarkersPluginApi<Time>, "setMarkers"> & {
+  setMarkers(markers: Array<Record<string, unknown>>): void;
+};
+type ChartMouseEvent = Pick<MouseEventParams<Time>, "time" | "point">;
+type ChartPaneApi = IPaneApi<Time> & {
+  setStretchFactor?: (stretchFactor: number) => void;
+};
+
+const createResearchChart = (
+  container: HTMLElement,
+  options: Record<string, unknown>,
+): ChartApi => createChart(
+  container,
+  options as DeepPartial<TimeChartOptions>,
+) as IChartApi & ChartApi;
+
+const createResearchSeriesMarkers = (series: ChartSeriesApi): ChartMarkerApi => {
+  const typedSeries = series as ChartSeriesApi & ISeriesApi<SeriesType, Time>;
+  return createSeriesMarkers(typedSeries, []) as ISeriesMarkersPluginApi<Time> &
+    ChartMarkerApi;
+};
 
 const liveCharts = new Set<DisposableChart>();
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && globalThis.Number.isFinite(value);
 
 const registerChart = (chart: DisposableChart | null | undefined) => {
   if (chart) liveCharts.add(chart);
@@ -113,7 +249,7 @@ const HISTOGRAM_VALUE_DISPLAY_CAP = 9_000_000_000_000;
 
 const isHistogramValueSafe = (value: unknown): value is number =>
   typeof value === "number" &&
-  Number.isFinite(value) &&
+  isFiniteNumber(value) &&
   Math.abs(value) <= HISTOGRAM_VALUE_DISPLAY_CAP;
 
 const sanitizeHistogramPoint = <T extends Record<string, unknown>>(
@@ -180,7 +316,7 @@ export const normalizeVisibleLogicalRange = (
   }
 
   const record = range as { from?: unknown; to?: unknown };
-  if (!Number.isFinite(record.from) || !Number.isFinite(record.to)) {
+  if (!isFiniteNumber(record.from) || !isFiniteNumber(record.to)) {
     return null;
   }
 
@@ -300,7 +436,7 @@ export const resolvePrependedVisibleLogicalRange = ({
   prependCount: number;
 }): VisibleLogicalRange | null => {
   const range = normalizeVisibleLogicalRange(visibleRange);
-  if (!range || !Number.isFinite(prependCount) || prependCount <= 0) {
+  if (!range || !isFiniteNumber(prependCount) || prependCount <= 0) {
     return null;
   }
 
@@ -639,6 +775,39 @@ type FlowVolumeOverlay = {
   tooltip: FlowTooltipModel;
 };
 
+type FlowClusterMember = {
+  id: string;
+  left: number;
+  top: number;
+  label: string;
+  title: string;
+  source?: string;
+  severity?: ChartEventSeverity;
+  symbol?: string;
+  tone: ChartEventBias;
+  flowSourceBasis: FlowChartSourceBasis;
+  flowEventTime: string;
+  flowEventDay: string;
+  flowTimeBasis: string;
+  flowTimeSourceField: string;
+  flowBucket: FlowChartBucket;
+  tooltip: FlowTooltipModel;
+};
+
+type FlowClusterOverlay = {
+  id: string;
+  kind: "single" | "cluster";
+  anchorLeft: number;
+  anchorTop: number;
+  count: number;
+  totalPremium: number;
+  aggregatePremiumLabel: string;
+  dominantTone: ChartEventBias;
+  dominantSeverity: ChartEventSeverity;
+  summaryTitle: string;
+  members: FlowClusterMember[];
+};
+
 type FlowTooltipState = {
   id: string;
   left: number;
@@ -666,8 +835,8 @@ const resolveChartEventToneColor = (
   return theme.accent || theme.text;
 };
 
-const FLOW_TOOLTIP_WIDTH = 248;
-const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 232;
+const FLOW_TOOLTIP_WIDTH = 220;
+const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 180;
 const FLOW_TOOLTIP_HIDE_DELAY_MS = 120;
 
 type FlowTooltipStatCell = {
@@ -688,20 +857,23 @@ const buildFlowTooltipStatCells = (
     { label: "Prem", value: model.premium, required: true },
     { label: "Events", value: String(model.eventCount), required: true },
     { label: "Contracts", value: model.contracts, required: true },
-    { label: "OI", value: model.openInterest },
+    { label: "Call $", value: model.callPremiumLabel },
+    { label: "Put $", value: model.putPremiumLabel },
     { label: "C/P", value: model.callPutMix, required: true },
     { label: "Bias", value: model.sentiment, required: true },
     { label: "Basis", value: model.biasBasis },
-    { label: "Side", value: model.side },
     { label: "Conf", value: model.sideConfidence },
+    { label: "Side", value: model.side },
     { label: "DTE", value: model.dte },
+    { label: "Score", value: model.unusualScore },
     { label: "IV", value: model.iv },
     { label: "Delta", value: model.delta },
-    { label: "Score", value: model.unusualScore },
+    { label: "OI", value: model.openInterest },
     { label: "Fill", value: model.price },
     { label: "Bid/Ask", value: model.bidAsk },
     { label: "Mny", value: model.moneyness },
     { label: "Dist", value: model.distance },
+    { label: "Intensity", value: model.intensity },
   ].filter((cell) => cell.required || flowTooltipHasValue(cell.value));
 
 const FLOW_TOOLTIP_SCALAR_KEYS: Array<Exclude<keyof FlowTooltipModel, "tags">> = [
@@ -736,6 +908,15 @@ const FLOW_TOOLTIP_SCALAR_KEYS: Array<Exclude<keyof FlowTooltipModel, "tags">> =
   "sentiment",
   "intensity",
   "eventCount",
+  "callPremiumLabel",
+  "putPremiumLabel",
+  "bullishPremiumLabel",
+  "bearishPremiumLabel",
+  "neutralPremiumLabel",
+  "markerPremiumLabel",
+  "topStrike",
+  "topExpiry",
+  "topRight",
 ];
 
 export type ChartLegendStudyItem = {
@@ -783,7 +964,7 @@ export const resolveDashboardStripTier = (
   plotWidth: number,
   compact: boolean,
 ): IndicatorDashboardStripTier => {
-  if (Number.isFinite(plotWidth) && plotWidth > 0) {
+  if (isFiniteNumber(plotWidth) && plotWidth > 0) {
     if (plotWidth <= 360) {
       return "micro";
     }
@@ -1296,6 +1477,8 @@ type ResearchChartSurfaceProps = {
   externalViewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
   persistScalePrefs?: boolean;
+  crosshairSyncGroupId?: string | null;
+  crosshairSyncInstanceId?: string | null;
 };
 
 const EMPTY_DRAWINGS: ResearchDrawing[] = [];
@@ -1409,12 +1592,12 @@ export const resolveVisibleChartEvents = ({
 type StudyRegistryEntry = {
   paneIndex: number;
   seriesType: StudySpec["seriesType"];
-  series: any;
+  series: ChartSeriesApi;
   data: Array<Record<string, unknown>>;
 };
 
 const resolveSeriesTimeComparable = (time: unknown): number | string | null => {
-  if (typeof time === "number" && Number.isFinite(time)) {
+  if (typeof time === "number" && isFiniteNumber(time)) {
     return time;
   }
   if (typeof time === "string" && time.trim()) {
@@ -1843,7 +2026,7 @@ export const resolveZoomedVisibleRange = ({
   minimumHalfRange?: number;
 }): VisibleLogicalRange | null => {
   const range = resolveViewportVisibleLogicalRange(currentRange);
-  if (!range || !Number.isFinite(factor) || factor <= 0) {
+  if (!range || !isFiniteNumber(factor) || factor <= 0) {
     return null;
   }
 
@@ -1869,8 +2052,8 @@ export const isVisibleRangeNearRealtime = ({
 }): boolean => {
   if (
     !visibleRange ||
-    !Number.isFinite(visibleRange.to) ||
-    !Number.isFinite(barCount) ||
+    !isFiniteNumber(visibleRange.to) ||
+    !isFiniteNumber(barCount) ||
     barCount <= 0
   ) {
     return false;
@@ -1910,9 +2093,9 @@ export const clampVisibleLogicalRangeToBarCount = (
 ): VisibleLogicalRange | null => {
   if (
     !visibleRange ||
-    !Number.isFinite(visibleRange.from) ||
-    !Number.isFinite(visibleRange.to) ||
-    !Number.isFinite(barCount) ||
+    !isFiniteNumber(visibleRange.from) ||
+    !isFiniteNumber(visibleRange.to) ||
+    !isFiniteNumber(barCount) ||
     barCount <= 0
   ) {
     return null;
@@ -2006,7 +2189,7 @@ export const resolveAutoHydrationVisibleRange = ({
   const visibleRange = normalizeVisibleLogicalRange(defaultVisibleRange);
   if (
     !visibleRange ||
-    !Number.isFinite(barCount) ||
+    !isFiniteNumber(barCount) ||
     barCount <= 0 ||
     visibleRange.to < visibleRange.from
   ) {
@@ -2131,7 +2314,7 @@ const writeStoredChartScalePrefs = (
 };
 
 const syncSeriesData = (
-  series: any,
+  series: ChartSeriesApi,
   previous: Array<Record<string, unknown>>,
   next: Array<Record<string, unknown>>,
   instrumentationScope?: string | null,
@@ -2199,7 +2382,7 @@ const syncSeriesData = (
 };
 
 const nowMs = (): number =>
-  typeof performance !== "undefined" && Number.isFinite(performance.now())
+  typeof performance !== "undefined" && isFiniteNumber(performance.now())
     ? performance.now()
     : Date.now();
 
@@ -2251,7 +2434,7 @@ export const expandStudySpecsForRender = (specs: StudySpec[]): StudySpec[] =>
     };
 
     spec.data.forEach((point) => {
-      if (Number.isFinite(point.value)) {
+      if (isFiniteNumber(point.value)) {
         currentSegment.push(point);
         return;
       }
@@ -2294,14 +2477,14 @@ export const resolvePreferenceRightOffset = (
   bars: number,
   compact: boolean,
 ): number => {
-  const normalized = Number.isFinite(Number(bars))
+  const normalized = isFiniteNumber(Number(bars))
     ? Math.max(0, Math.min(MAX_CHART_FUTURE_EXPANSION_BARS, Number(bars)))
     : 0;
   return compact ? Math.min(4, normalized) : normalized;
 };
 
 const chartTimeToDate = (value: unknown): Date | null => {
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (typeof value === "number" && isFiniteNumber(value)) {
     return new Date(value * 1000);
   }
   if (typeof value === "string" && value.trim()) {
@@ -2330,7 +2513,7 @@ const resolveDateLikeMs = (value: unknown): number | null => {
   if (value instanceof Date) {
     return value.getTime();
   }
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (typeof value === "number" && isFiniteNumber(value)) {
     return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
   }
   if (typeof value === "string" && value.trim()) {
@@ -2491,34 +2674,34 @@ const buildChartOptions = (
         formatChartAxisTimestamp(value, preferences, ""),
     },
     grid: {
-      vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
-      horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
+      vertLines: { color: withAlpha(theme.border, "20"), visible: showGrid, style: LineStyle.Solid },
+      horzLines: { color: withAlpha(theme.border, "28"), visible: showGrid, style: LineStyle.Solid },
     },
     crosshair: {
       mode: CrosshairMode.MagnetOHLC,
       vertLine: {
-        color: withAlpha(theme.textMuted, "90"),
+        color: withAlpha(theme.textMuted, "70"),
         width: 1,
-        style: LineStyle.Dashed,
+        style: LineStyle.Solid,
         visible: true,
         labelVisible: true,
-        labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+        labelBackgroundColor: withAlpha(theme.bg2, "f5"),
       },
       horzLine: {
-        color: withAlpha(theme.textMuted, "90"),
+        color: withAlpha(theme.textMuted, "70"),
         width: 1,
-        style: LineStyle.Dashed,
+        style: LineStyle.Solid,
         visible: true,
         labelVisible: true,
-        labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+        labelBackgroundColor: withAlpha(theme.bg2, "f5"),
       },
     },
     rightPriceScale: {
       borderColor: theme.border,
       textColor: theme.textMuted,
       visible: showRightPriceScale,
-      borderVisible: showRightPriceScale,
-      ticksVisible: showRightPriceScale,
+      borderVisible: false,
+      ticksVisible: false,
       minimumWidth: compact ? 34 : 50,
       autoScale,
       invertScale,
@@ -2530,11 +2713,11 @@ const buildChartOptions = (
     },
     timeScale: {
       borderColor: theme.border,
-      borderVisible: !hideTimeScale && showTimeScale,
+      borderVisible: false,
       visible: !hideTimeScale && showTimeScale,
       timeVisible: !hideTimeScale && showTimeScale,
       secondsVisible,
-      ticksVisible: !hideTimeScale && showTimeScale,
+      ticksVisible: false,
       rightOffset: rightOffset ?? (compact ? 1 : 6),
       rightBarStaysOnScroll: false,
       lockVisibleTimeRangeOnResize: true,
@@ -2582,7 +2765,7 @@ const resolveStudySpecValueAtTime = (
   spec: StudySpec,
   time: number | null | undefined,
 ): number | null => {
-  if (typeof time !== "number" || !Number.isFinite(time)) {
+  if (typeof time !== "number" || !isFiniteNumber(time)) {
     return null;
   }
 
@@ -2590,10 +2773,10 @@ const resolveStudySpecValueAtTime = (
     (item) =>
       item.time === time &&
       typeof item.value === "number" &&
-      Number.isFinite(item.value),
+      isFiniteNumber(item.value),
   );
 
-  return typeof point?.value === "number" && Number.isFinite(point.value)
+  return typeof point?.value === "number" && isFiniteNumber(point.value)
     ? point.value
     : null;
 };
@@ -2651,7 +2834,7 @@ export const buildChartLegendStudyItems = ({
 };
 
 const formatCompactNumber = (value: number): string => {
-  if (!Number.isFinite(value)) {
+  if (!isFiniteNumber(value)) {
     return "0";
   }
 
@@ -2677,7 +2860,7 @@ const formatLegendNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !isFiniteNumber(value)) {
     return "—";
   }
 
@@ -2688,7 +2871,7 @@ const formatLegendSignedNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !isFiniteNumber(value)) {
     return "—";
   }
 
@@ -2701,7 +2884,7 @@ const formatLegendSignedNumber = (
 };
 
 const formatLegendPercent = (value: number | null | undefined): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !isFiniteNumber(value)) {
     return "—";
   }
 
@@ -2737,7 +2920,7 @@ const formatLegendSourceLabel = (
 };
 
 const countValueDecimals = (value: number): number => {
-  if (!Number.isFinite(value)) {
+  if (!isFiniteNumber(value)) {
     return 0;
   }
 
@@ -2755,7 +2938,7 @@ export const formatChartPriceAxisValue = (
   value: number | null | undefined,
   precision = 2,
 ): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !isFiniteNumber(value)) {
     return "—";
   }
 
@@ -2808,8 +2991,8 @@ const buildChartPriceFormat = (pricePrecision: number) =>
   }) as const;
 
 const numbersClose = (left: number, right: number, epsilon = 0.5): boolean =>
-  Number.isFinite(left) &&
-  Number.isFinite(right) &&
+  isFiniteNumber(left) &&
+  isFiniteNumber(right) &&
   Math.abs(left - right) <= epsilon;
 
 const overlayShapesEqual = (
@@ -2940,6 +3123,60 @@ const flowVolumeOverlaysEqual = (
       !numbersClose(current.width, next.width) ||
       !numbersClose(current.height, next.height) ||
       !flowTooltipModelsEqual(current.tooltip, next.tooltip)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const flowClusterMembersEqual = (
+  left: FlowClusterMember[],
+  right: FlowClusterMember[],
+): boolean => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.label !== next.label ||
+      current.title !== next.title ||
+      current.tone !== next.tone ||
+      current.flowSourceBasis !== next.flowSourceBasis ||
+      current.flowBucket !== next.flowBucket ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !flowTooltipModelsEqual(current.tooltip, next.tooltip)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const flowClusterOverlaysEqual = (
+  left: FlowClusterOverlay[],
+  right: FlowClusterOverlay[],
+): boolean => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.kind !== next.kind ||
+      current.count !== next.count ||
+      current.aggregatePremiumLabel !== next.aggregatePremiumLabel ||
+      current.dominantTone !== next.dominantTone ||
+      current.dominantSeverity !== next.dominantSeverity ||
+      current.summaryTitle !== next.summaryTitle ||
+      !numbersClose(current.totalPremium, next.totalPremium) ||
+      !numbersClose(current.anchorLeft, next.anchorLeft) ||
+      !numbersClose(current.anchorTop, next.anchorTop) ||
+      !flowClusterMembersEqual(current.members, next.members)
     ) {
       return false;
     }
@@ -3189,7 +3426,7 @@ const resolveOverlayLabelPosition = (
 };
 
 const resolveFiniteMetaNumber = (value: unknown, fallback: number): number =>
-  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  typeof value === "number" && isFiniteNumber(value) ? value : fallback;
 
 const clampCoordinate = (value: number, min: number, max: number): number => {
   if (max < min) {
@@ -3216,7 +3453,7 @@ export const isOverlayAnchorVisibleOnAxis = (
   halfSize: number,
   viewportSize: number,
 ): boolean =>
-  Number.isFinite(value) &&
+  isFiniteNumber(value) &&
   viewportSize > 0 &&
   value + halfSize >= 0 &&
   value - halfSize <= viewportSize;
@@ -3240,18 +3477,30 @@ export const clampOverlayRectPosition = ({
   top: clampCoordinate(top, 0, Math.max(0, viewportHeight - height)),
 });
 
-const resolveChartDrawableWidth = (chart: any, fallbackWidth: number): number => {
-  const timeScaleWidth = chart?.timeScale?.()?.width?.();
-  if (!Number.isFinite(timeScaleWidth) || timeScaleWidth <= 0) {
+const resolveChartDrawableWidth = (
+  chart: ChartApi | null | undefined,
+  fallbackWidth: number,
+): number => {
+  if (!chart) {
+    return Math.max(0, fallbackWidth);
+  }
+  const timeScaleWidth = chart.timeScale().width();
+  if (!isFiniteNumber(timeScaleWidth) || timeScaleWidth <= 0) {
     return Math.max(0, fallbackWidth);
   }
 
   return Math.max(0, Math.min(fallbackWidth, timeScaleWidth));
 };
 
-const resolveChartDrawableHeight = (chart: any, fallbackHeight: number): number => {
-  const timeScaleHeight = chart?.timeScale?.()?.height?.();
-  if (!Number.isFinite(timeScaleHeight) || timeScaleHeight < 0) {
+const resolveChartDrawableHeight = (
+  chart: ChartApi | null | undefined,
+  fallbackHeight: number,
+): number => {
+  if (!chart) {
+    return Math.max(0, fallbackHeight);
+  }
+  const timeScaleHeight = chart.timeScale().height();
+  if (!isFiniteNumber(timeScaleHeight) || timeScaleHeight < 0) {
     return Math.max(0, fallbackHeight);
   }
 
@@ -3263,7 +3512,7 @@ const isCoordinateWithinViewport = (
   viewportSize: number,
   padding = 0,
 ): boolean =>
-  Number.isFinite(value) && value >= -padding && value <= viewportSize + padding;
+  isFiniteNumber(value) && value >= -padding && value <= viewportSize + padding;
 
 const doesRectIntersectViewport = (
   left: number,
@@ -3273,10 +3522,10 @@ const doesRectIntersectViewport = (
   viewportWidth: number,
   viewportHeight: number,
 ): boolean =>
-  Number.isFinite(left) &&
-  Number.isFinite(top) &&
-  Number.isFinite(width) &&
-  Number.isFinite(height) &&
+  isFiniteNumber(left) &&
+  isFiniteNumber(top) &&
+  isFiniteNumber(width) &&
+  isFiniteNumber(height) &&
   left + width >= 0 &&
   left <= viewportWidth &&
   top + height >= 0 &&
@@ -3290,8 +3539,8 @@ const isMarkerVisibleInLogicalRange = (
 ): boolean => {
   if (
     !visibleLogicalRange ||
-    !Number.isFinite(visibleLogicalRange.from) ||
-    !Number.isFinite(visibleLogicalRange.to)
+    !isFiniteNumber(visibleLogicalRange.from) ||
+    !isFiniteNumber(visibleLogicalRange.to)
   ) {
     return true;
   }
@@ -3308,9 +3557,9 @@ const clipSpanToViewport = (
   minimumSize = 1,
 ): { start: number; size: number } | null => {
   if (
-    !Number.isFinite(start) ||
-    !Number.isFinite(end) ||
-    !Number.isFinite(viewportSize) ||
+    !isFiniteNumber(start) ||
+    !isFiniteNumber(end) ||
+    !isFiniteNumber(viewportSize) ||
     viewportSize <= 0
   ) {
     return null;
@@ -3374,7 +3623,7 @@ const estimateMonoTextWidth = (
   horizontalPadding: number,
 ): number => text.length * fontSize * 0.68 + horizontalPadding * 2 + 2;
 
-const resolveBarSpacing = (chart: any, model: ChartModel): number => {
+const resolveBarSpacing = (chart: ChartApi, model: ChartModel): number => {
   const sample = model.chartBars.slice(-40);
   const diffs: number[] = [];
 
@@ -3397,7 +3646,7 @@ const resolveBarSpacing = (chart: any, model: ChartModel): number => {
 };
 
 const buildWindowOverlays = (
-  chart: any,
+  chart: ChartApi,
   model: ChartModel,
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3426,7 +3675,7 @@ const buildWindowOverlays = (
       const rightBase =
         endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
 
-      if (!Number.isFinite(left)) {
+      if (!isFiniteNumber(left)) {
         return result;
       }
 
@@ -3504,8 +3753,8 @@ const buildWindowOverlays = (
 };
 
 const buildZoneOverlays = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3534,9 +3783,9 @@ const buildZoneOverlays = (
       const meta = zone.meta ?? {};
 
       if (
-        !Number.isFinite(left) ||
-        !Number.isFinite(top) ||
-        !Number.isFinite(bottom)
+        !isFiniteNumber(left) ||
+        !isFiniteNumber(top) ||
+        !isFiniteNumber(bottom)
       ) {
         return result;
       }
@@ -3686,7 +3935,7 @@ const buildZoneOverlays = (
 };
 
 const buildVerticalDrawingOverlays = (
-  chart: any,
+  chart: ChartApi,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3697,7 +3946,7 @@ const buildVerticalDrawingOverlays = (
     }
 
     const x = chart.timeScale().timeToCoordinate(drawing.time);
-    if (!Number.isFinite(x)) {
+    if (!isFiniteNumber(x)) {
       return result;
     }
 
@@ -3717,8 +3966,8 @@ const buildVerticalDrawingOverlays = (
   }, []);
 
 const buildBoxDrawingOverlays = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3741,10 +3990,10 @@ const buildBoxDrawingOverlays = (
     const bottomCoordinate = series.priceToCoordinate?.(drawing.bottom);
 
     if (
-      !Number.isFinite(leftCoordinate) ||
-      !Number.isFinite(rightCoordinate) ||
-      !Number.isFinite(topCoordinate) ||
-      !Number.isFinite(bottomCoordinate)
+      !isFiniteNumber(leftCoordinate) ||
+      !isFiniteNumber(rightCoordinate) ||
+      !isFiniteNumber(topCoordinate) ||
+      !isFiniteNumber(bottomCoordinate)
     ) {
       return result;
     }
@@ -3786,16 +4035,16 @@ const resolvePositionPnlColor = (
 ): string => (pnl >= 0 ? theme.green : theme.red);
 
 const isPositionEntryLineInPane = (
-  series: any,
+  series: ChartSeriesApi,
   line: ChartPositionEntryLine,
   viewportHeight: number,
 ): boolean => {
   const y = series.priceToCoordinate?.(line.price);
-  return Number.isFinite(y) && y >= 0 && y <= viewportHeight;
+  return isFiniteNumber(y) && y >= 0 && y <= viewportHeight;
 };
 
 const buildPositionBubbleOverlays = (
-  series: any,
+  series: ChartSeriesApi,
   bubbles: ChartPositionPnlBubble[],
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3806,7 +4055,7 @@ const buildPositionBubbleOverlays = (
     if (viewportWidth <= 0 || viewportHeight <= 0) {
       return [];
     }
-    const anchorY = Number.isFinite(rawAnchorY)
+    const anchorY = isFiniteNumber(rawAnchorY)
       ? rawAnchorY
       : 24 + index * 34;
 
@@ -3850,7 +4099,7 @@ const buildPositionOffPaneOverlays = ({
 }: {
   entryLines: ChartPositionEntryLine[];
   offPaneIndicators: ChartPositionOffPaneIndicator[];
-  series: any;
+  series: ChartSeriesApi;
   theme: ResearchChartTheme;
   viewportWidth: number;
   viewportHeight: number;
@@ -3863,7 +4112,7 @@ const buildPositionOffPaneOverlays = ({
     ...offPaneIndicators,
     ...entryLines.flatMap<ChartPositionOffPaneIndicator>((line) => {
       const y = series.priceToCoordinate?.(line.price);
-      if (!Number.isFinite(y) || (y >= 0 && y <= viewportHeight)) {
+      if (!isFiniteNumber(y) || (y >= 0 && y <= viewportHeight)) {
         return [];
       }
       return [
@@ -3934,8 +4183,8 @@ const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
 };
 
 const buildTradeMarkerTargets = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -3967,7 +4216,7 @@ const buildTradeMarkerTargets = (
           : bar.l;
     const yBase = series.priceToCoordinate?.(priceValue);
 
-    if (!Number.isFinite(x) || !Number.isFinite(yBase)) {
+    if (!isFiniteNumber(x) || !isFiniteNumber(yBase)) {
       return result;
     }
 
@@ -4034,8 +4283,8 @@ const buildTradeMarkerTargets = (
 };
 
 const buildChartEventOverlays = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   events: ChartEvent[],
   viewportWidth: number,
@@ -4048,14 +4297,14 @@ const buildChartEventOverlays = (
   const barByTime = new Map(model.chartBars.map((bar) => [bar.time, bar]));
   return events.reduce<ChartEventOverlay[]>((result, event) => {
     const parsed = Date.parse(event.time);
-    if (!Number.isFinite(parsed)) {
+    if (!isFiniteNumber(parsed)) {
       return result;
     }
 
     const time = Math.floor(parsed / 1000);
     const x = chart.timeScale().timeToCoordinate(time);
     const size = event.placement === "timescale" ? 18 : 22;
-    if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
+    if (!isFiniteNumber(x) || !isOverlayAnchorVisibleOnAxis(x, size / 2, viewportWidth)) {
       return result;
     }
 
@@ -4064,7 +4313,7 @@ const buildChartEventOverlays = (
     const anchorTop =
       event.placement === "timescale"
         ? viewportHeight - size / 2
-        : Number.isFinite(bar?.h)
+        : isFiniteNumber(bar?.h)
           ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size
           : size / 2;
     const left = clampVisualAnchor(x, size / 2, viewportWidth);
@@ -4114,120 +4363,116 @@ const buildFlowBucketSlotOffsetMap = (
   return offsets;
 };
 
-const buildFlowEventSlotOffsetMap = (
-  placements: FlowChartEventPlacement[],
-): Map<string, { x: number; y: number }> => {
-  const byBarIndex = new Map<number, FlowChartEventPlacement[]>();
-  placements.forEach((placement) => {
-    const current = byBarIndex.get(placement.barIndex) || [];
-    current.push(placement);
-    byBarIndex.set(placement.barIndex, current);
-  });
-
-  const offsets = new Map<string, { x: number; y: number }>();
-  const maxColumns = 9;
-  byBarIndex.forEach((barPlacements) => {
-    const sorted = [...barPlacements].sort(
-      (left, right) =>
-        left.eventTimeMs - right.eventTimeMs ||
-        left.sourceBasis.localeCompare(right.sourceBasis) ||
-        left.id.localeCompare(right.id),
-    );
-    sorted.forEach((placement, index) => {
-      const row = Math.floor(index / maxColumns);
-      const rowStart = row * maxColumns;
-      const rowSize = Math.min(maxColumns, sorted.length - rowStart);
-      const column = index - rowStart;
-      const center = (rowSize - 1) / 2;
-      offsets.set(placement.id, {
-        x: (column - center) * 14,
-        y: row * 16,
-      });
-    });
-  });
-  return offsets;
-};
-
-const buildFlowChartEventOverlays = (
-  chart: any,
-  series: any,
+const buildFlowChartEventClusterOverlays = (
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   placements: FlowChartEventPlacement[],
   viewportWidth: number,
   viewportHeight: number,
-): ChartEventOverlay[] => {
+): FlowClusterOverlay[] => {
   if (!chart || !series || !placements.length || !viewportWidth || !viewportHeight) {
     return [];
   }
 
-  const slotOffsetByPlacementId = buildFlowEventSlotOffsetMap(placements);
-  return placements.reduce<ChartEventOverlay[]>((result, placement) => {
-    const bucket = placement.bucket;
+  const size = SPIDER_MARKER_SIZE;
+  const resolveAnchorXY = (
+    placement: FlowChartEventPlacement,
+  ): { x: number; y: number } | null => {
     const rawX = chart.timeScale().timeToCoordinate(placement.time);
-    const size = 24;
-    const slotOffset = slotOffsetByPlacementId.get(placement.id) || { x: 0, y: 0 };
-    const x = Number(rawX) + slotOffset.x;
-    if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
-      return result;
-    }
-
+    if (!isFiniteNumber(rawX)) return null;
     const bar = model.chartBars[placement.barIndex];
-    const anchorTop = Number.isFinite(bar?.h)
-      ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size - slotOffset.y
-      : size / 2;
-    const left = clampVisualAnchor(x, size / 2, viewportWidth);
-    const top = clampVisualAnchor(anchorTop, size / 2, viewportHeight);
+    if (!isFiniteNumber(bar?.h)) return null;
+    const priceY = series.priceToCoordinate?.(bar?.h);
+    if (priceY === undefined || priceY === null || !isFiniteNumber(priceY)) {
+      return null;
+    }
+    return { x: Number(rawX), y: Number(priceY) - size };
+  };
 
+  const clusters = buildFlowEventClusters(placements, resolveAnchorXY, {
+    mergeThresholdPx: SPIDER_BASE_RADIUS,
+  });
+
+  return clusters.flatMap((cluster: FlowEventCluster): FlowClusterOverlay[] => {
+    if (!isOverlayAnchorVisibleOnAxis(cluster.anchorX, size / 2, viewportWidth)) {
+      return [];
+    }
+    const anchorLeft = clampVisualAnchor(cluster.anchorX, size / 2, viewportWidth);
+    const anchorTop = clampVisualAnchor(cluster.anchorY, size / 2, viewportHeight);
     if (
       !doesRectIntersectViewport(
-        left - size / 2,
-        top - size / 2,
+        anchorLeft - size / 2,
+        anchorTop - size / 2,
         size,
         size,
         viewportWidth,
         viewportHeight,
       )
     ) {
-      return result;
+      return [];
     }
 
-    const tooltip = buildFlowTooltipModel(bucket);
-    const right = String(bucket.topEvent.metadata?.cp || bucket.topEvent.metadata?.right || "")
-      .trim()
-      .toUpperCase()
-      .slice(0, 1);
-    const label =
-      bucket.sourceBasis === "snapshot_activity"
-        ? "S"
-        : right || "F";
-
-    result.push({
-      id: placement.id,
-      left,
-      top,
-      label,
-      title: `${tooltip.title}: ${tooltip.summary}`,
-      eventType: bucket.topEvent.eventType,
-      source: bucket.topEvent.source,
-      severity: bucket.severity,
-      symbol: bucket.topEvent.symbol,
-      tone: bucket.bias,
-      placement: "bar",
-      count: 1,
-      flowSourceBasis: bucket.sourceBasis,
-      flowEventTime: placement.eventIso,
-      flowEventDay: placement.eventDay,
-      flowTimeBasis: placement.timeBasis,
-      flowTimeSourceField: placement.timeSourceField,
-      flowBucket: bucket,
-      tooltip,
+    const childPositions = computeSpiderChildPositions(cluster);
+    const members: FlowClusterMember[] = cluster.members.map((placement, memberIndex) => {
+      const child = cluster.kind === "single"
+        ? { x: cluster.anchorX, y: cluster.anchorY }
+        : childPositions[memberIndex];
+      const left = clampVisualAnchor(child.x, size / 2, viewportWidth);
+      const top = clampVisualAnchor(child.y, size / 2, viewportHeight);
+      const bucket = placement.bucket;
+      const tooltip = buildFlowTooltipModel(bucket);
+      const right = String(bucket.topEvent.metadata?.cp || bucket.topEvent.metadata?.right || "")
+        .trim()
+        .toUpperCase()
+        .slice(0, 1);
+      const label = bucket.sourceBasis === "snapshot_activity" ? "S" : right || "F";
+      return {
+        id: placement.id,
+        left,
+        top,
+        label,
+        title: `${tooltip.title}: ${tooltip.summary}`,
+        source: bucket.topEvent.source,
+        severity: bucket.severity,
+        symbol: bucket.topEvent.symbol,
+        tone: bucket.bias,
+        flowSourceBasis: bucket.sourceBasis,
+        flowEventTime: placement.eventIso,
+        flowEventDay: placement.eventDay,
+        flowTimeBasis: placement.timeBasis,
+        flowTimeSourceField: placement.timeSourceField,
+        flowBucket: bucket,
+        tooltip,
+      };
     });
-    return result;
-  }, []);
+
+    const aggregatePremiumLabel = compactCurrency(cluster.totalPremium);
+    const summaryTitle =
+      cluster.kind === "single"
+        ? members[0].title
+        : `${cluster.count} flow events totaling ${aggregatePremiumLabel}`;
+
+    return [
+      {
+        id: cluster.id,
+        kind: cluster.kind,
+        anchorLeft,
+        anchorTop,
+        count: cluster.count,
+        totalPremium: cluster.totalPremium,
+        aggregatePremiumLabel,
+        dominantTone: cluster.dominantBias,
+        dominantSeverity: cluster.dominantSeverity,
+        summaryTitle,
+        members,
+      },
+    ];
+  });
 };
 
 const estimateBarOverlayWidth = (
-  chart: any,
+  chart: ChartApi,
   bars: ChartModel["chartBars"],
   index: number,
 ): number => {
@@ -4240,7 +4485,7 @@ const estimateBarOverlayWidth = (
       : null;
   const distances = [previousX, nextX]
     .map((x) =>
-      Number.isFinite(x) && Number.isFinite(currentX)
+      isFiniteNumber(x) && isFiniteNumber(currentX)
         ? Math.abs(Number(x) - Number(currentX))
         : null,
     )
@@ -4250,7 +4495,7 @@ const estimateBarOverlayWidth = (
 };
 
 const buildFlowVolumeOverlays = (
-  chart: any,
+  chart: ChartApi,
   model: ChartModel,
   buckets: FlowChartBucket[],
   viewportWidth: number,
@@ -4267,7 +4512,7 @@ const buildFlowVolumeOverlays = (
 
   return buckets.reduce<FlowVolumeOverlay[]>((result, bucket) => {
     const rawX = chart.timeScale().timeToCoordinate(bucket.time);
-    if (!Number.isFinite(rawX)) {
+    if (!isFiniteNumber(rawX)) {
       return result;
     }
 
@@ -4325,8 +4570,8 @@ const buildFlowVolumeOverlays = (
 };
 
 const buildSelectedTradeOverlays = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   theme: ResearchChartTheme,
   viewportWidth: number,
@@ -4454,10 +4699,10 @@ const buildSelectedTradeOverlays = (
       : null
     : null;
   const connector =
-    Number.isFinite(entryAnchorX) &&
-    Number.isFinite(entryAnchorY) &&
-    Number.isFinite(exitAnchorX) &&
-    Number.isFinite(exitAnchorY) &&
+    isFiniteNumber(entryAnchorX) &&
+    isFiniteNumber(entryAnchorY) &&
+    isFiniteNumber(exitAnchorX) &&
+    isFiniteNumber(exitAnchorY) &&
     exitAnchorX >= entryAnchorX &&
     doesRectIntersectViewport(
       Math.min(entryAnchorX, exitAnchorX),
@@ -4489,9 +4734,9 @@ const buildSelectedTradeOverlays = (
         const top = series.priceToCoordinate?.(segment.value);
 
         if (
-          !Number.isFinite(left) ||
-          !Number.isFinite(right) ||
-          !Number.isFinite(top)
+          !isFiniteNumber(left) ||
+          !isFiniteNumber(right) ||
+          !isFiniteNumber(top)
         ) {
           return result;
         }
@@ -4533,8 +4778,8 @@ const buildSelectedTradeOverlays = (
 };
 
 const buildIndicatorEventOverlays = (
-  chart: any,
-  series: any,
+  chart: ChartApi,
+  series: ChartSeriesApi,
   model: ChartModel,
   viewportWidth: number,
   viewportHeight: number,
@@ -4589,7 +4834,7 @@ const buildIndicatorEventOverlays = (
 
     const x = chart.timeScale().timeToCoordinate(bar.time);
     const price =
-      typeof meta.price === "number" && Number.isFinite(meta.price)
+      typeof meta.price === "number" && isFiniteNumber(meta.price)
         ? meta.price
         : overlay === "badge"
           ? event.direction === "short"
@@ -4598,7 +4843,7 @@ const buildIndicatorEventOverlays = (
           : null;
     const y = typeof price === "number" ? series.priceToCoordinate?.(price) : null;
 
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
       return;
     }
 
@@ -4688,7 +4933,7 @@ const buildIndicatorEventOverlays = (
 
     if (overlay === "dot") {
       const size =
-        typeof meta.size === "number" && Number.isFinite(meta.size)
+        typeof meta.size === "number" && isFiniteNumber(meta.size)
           ? meta.size
           : 8;
       const visualRadius = size / 2 + 2;
@@ -4724,7 +4969,7 @@ const buildIndicatorEventOverlays = (
 };
 
 const syncStudySeries = (
-  chart: any,
+  chart: ChartApi,
   registry: Record<string, StudyRegistryEntry>,
   specs: StudySpec[],
   instrumentationScope?: string | null,
@@ -4737,7 +4982,7 @@ const syncStudySeries = (
     const existing = nextRegistry[spec.key];
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
     const seriesData = spec.data.map((point) => {
-      if (!Number.isFinite(point.value)) {
+      if (!isFiniteNumber(point.value)) {
         return { time: point.time };
       }
       // Histogram series will throw an assertion error and crash the entire
@@ -4797,7 +5042,7 @@ const syncStudySeries = (
 };
 
 const applyChartPaneStretchFactors = (
-  chart: any,
+  chart: ChartApi,
   {
     compact,
     lowerPaneCount,
@@ -4813,7 +5058,7 @@ const applyChartPaneStretchFactors = (
 
   const pricePaneStretch = compact ? 3.2 : 4.6;
   const lowerPaneStretch = compact ? 0.85 : 1.15;
-  panes.forEach((pane: any, index: number) => {
+  panes.forEach((pane: ChartPaneApi, index: number) => {
     const stretch =
       index === 0
         ? pricePaneStretch
@@ -4874,6 +5119,8 @@ export const ResearchChartSurface = ({
   externalViewportUserTouched = false,
   onViewportSnapshotChange,
   persistScalePrefs = true,
+  crosshairSyncGroupId = null,
+  crosshairSyncInstanceId = null,
 }: ResearchChartSurfaceProps) => {
   const { preferences: userPreferences } = useUserPreferences();
   const resolvedPositionOverlays =
@@ -4894,7 +5141,7 @@ export const ResearchChartSurface = ({
   });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<any>(null);
+  const chartRef = useRef<ChartApi | null>(null);
   const surfaceDiagnosticsRef = useRef({
     chartInstanceCreates: 0,
     chartInstanceDisposes: 0,
@@ -4909,12 +5156,12 @@ export const ResearchChartSurface = ({
     viewportPrependRangeAdjusts: 0,
     viewportSkippedResets: 0,
   });
-  const candleSeriesRef = useRef<any>(null);
-  const barSeriesRef = useRef<any>(null);
-  const lineSeriesRef = useRef<any>(null);
-  const areaSeriesRef = useRef<any>(null);
-  const baselineSeriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
+  const candleSeriesRef = useRef<ChartSeriesApi | null>(null);
+  const barSeriesRef = useRef<ChartSeriesApi | null>(null);
+  const lineSeriesRef = useRef<ChartSeriesApi | null>(null);
+  const areaSeriesRef = useRef<ChartSeriesApi | null>(null);
+  const baselineSeriesRef = useRef<ChartSeriesApi | null>(null);
+  const volumeSeriesRef = useRef<ChartSeriesApi | null>(null);
   const baseSeriesDataRef = useRef<{
     candles: Array<Record<string, unknown>>;
     bars: Array<Record<string, unknown>>;
@@ -4930,10 +5177,10 @@ export const ResearchChartSurface = ({
     baseline: [],
     volume: [],
   });
-  const markerApisRef = useRef<any[]>([]);
+  const markerApisRef = useRef<ChartMarkerApi[]>([]);
   const markerSignatureRef = useRef<string | null>(null);
   const studyRegistryRef = useRef<Record<string, StudyRegistryEntry>>({});
-  const visibleLogicalRangeRef = useRef<any>(null);
+  const visibleLogicalRangeRef = useRef<VisibleLogicalRange | null>(null);
   const realtimeFollowRef = useRef(true);
   const chartBarCountRef = useRef(model.chartBars.length);
   const rangeIdentityKeyRef = useRef<string | null>(null);
@@ -4947,15 +5194,25 @@ export const ResearchChartSurface = ({
   const pendingStoredRangeSyncRef = useRef(true);
   const lastUserVisibleRangeRef = useRef<VisibleLogicalRange | null>(null);
   const lastSelectionFocusTokenRef = useRef<number | null>(null);
-  const drawingLinesRef = useRef<Record<BaseSeriesType, any[]>>({
+  const drawingLinesRef = useRef<Record<BaseSeriesType, ChartPriceLine[]>>({
     candles: [],
     bars: [],
     line: [],
     area: [],
     baseline: [],
   });
-  const activePriceSeriesRef = useRef<any>(null);
+  const activePriceSeriesRef = useRef<ChartSeriesApi | null>(null);
   const barLookupRef = useRef<Map<number, HoverBar>>(new Map());
+  const barTimesSortedRef = useRef<number[]>([]);
+  const crosshairSyncGroupIdRef = useRef<string | null>(crosshairSyncGroupId);
+  const crosshairSyncInstanceIdRef = useRef<string | null>(
+    crosshairSyncInstanceId,
+  );
+  const crosshairSyncRafRef = useRef<number | null>(null);
+  const pendingCrosshairSyncEventRef = useRef<CrosshairSyncEvent | null>(null);
+  const lastPublishedCrosshairTimeRef = useRef<number | null | "cleared">(
+    "cleared",
+  );
   const scalePrefsRef = useRef({
     scaleMode: defaultScaleMode,
     autoScale: true,
@@ -5180,12 +5437,66 @@ export const ResearchChartSurface = ({
   const [chartEventOverlays, setChartEventOverlays] = useState<
     ChartEventOverlay[]
   >([]);
+  const [flowClusterOverlays, setFlowClusterOverlays] = useState<
+    FlowClusterOverlay[]
+  >([]);
   const [flowVolumeOverlays, setFlowVolumeOverlays] = useState<
     FlowVolumeOverlay[]
   >([]);
   const [flowTooltip, setFlowTooltip] = useState<FlowTooltipState | null>(null);
   const flowTooltipHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
+  );
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+  const [lockedClusterId, setLockedClusterId] = useState<string | null>(null);
+  const lockedClusterIdRef = useRef<string | null>(null);
+  const hoveredClusterCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClusterCollapseTimer = useCallback(() => {
+    if (hoveredClusterCollapseTimerRef.current !== null) {
+      clearTimeout(hoveredClusterCollapseTimerRef.current);
+      hoveredClusterCollapseTimerRef.current = null;
+    }
+  }, []);
+  const setLockedCluster = useCallback(
+    (next: string | null) => {
+      cancelClusterCollapseTimer();
+      lockedClusterIdRef.current = next;
+      setLockedClusterId(next);
+      if (next === null) {
+        setHoveredClusterId(null);
+      }
+    },
+    [cancelClusterCollapseTimer],
+  );
+  const handleClusterPointerEnter = useCallback(
+    (clusterId: string) => {
+      cancelClusterCollapseTimer();
+      if (lockedClusterIdRef.current !== null) return;
+      setHoveredClusterId(clusterId);
+    },
+    [cancelClusterCollapseTimer],
+  );
+  const handleClusterPointerLeave = useCallback(
+    (clusterId: string) => {
+      if (lockedClusterIdRef.current !== null) return;
+      cancelClusterCollapseTimer();
+      hoveredClusterCollapseTimerRef.current = setTimeout(() => {
+        hoveredClusterCollapseTimerRef.current = null;
+        if (lockedClusterIdRef.current !== null) return;
+        setHoveredClusterId((current) =>
+          current === clusterId ? null : current,
+        );
+      }, 140);
+    },
+    [cancelClusterCollapseTimer],
+  );
+  const toggleLockedCluster = useCallback(
+    (clusterId: string) => {
+      setLockedCluster(
+        lockedClusterIdRef.current === clusterId ? null : clusterId,
+      );
+    },
+    [setLockedCluster],
   );
   const [indicatorDashboardOverlay, setIndicatorDashboardOverlay] =
     useState<IndicatorDashboardOverlay | null>(null);
@@ -5205,6 +5516,41 @@ export const ResearchChartSurface = ({
     },
     [],
   );
+  useEffect(() => {
+    cancelClusterCollapseTimer();
+    lockedClusterIdRef.current = null;
+    setLockedClusterId(null);
+    setHoveredClusterId(null);
+  }, [overlayRevision, cancelClusterCollapseTimer]);
+  useEffect(() => () => cancelClusterCollapseTimer(), [cancelClusterCollapseTimer]);
+  useEffect(() => {
+    if (lockedClusterId === null) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const handlePointerDown = (event: Event) => {
+      const target = event.target as Element | null;
+      if (target) {
+        const closest = target.closest(
+          "[data-flow-cluster-glyph], [data-flow-cluster-member]",
+        );
+        const clusterId = closest?.getAttribute("data-flow-cluster-glyph")
+          ?? closest?.getAttribute("data-flow-cluster-member");
+        if (clusterId && clusterId === lockedClusterIdRef.current) return;
+      }
+      setLockedCluster(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setLockedCluster(null);
+      }
+    };
+    container.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      container.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [lockedClusterId, setLockedCluster]);
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
@@ -5287,6 +5633,11 @@ export const ResearchChartSurface = ({
   const syncFlowVolumeOverlaysState = (next: FlowVolumeOverlay[]) => {
     setFlowVolumeOverlays((current) =>
       flowVolumeOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncFlowClusterOverlaysState = (next: FlowClusterOverlay[]) => {
+    setFlowClusterOverlays((current) =>
+      flowClusterOverlaysEqual(current, next) ? current : next,
     );
   };
   const syncTradeMarkerTargetsState = (next: TradeMarkerTarget[]) => {
@@ -5384,6 +5735,144 @@ export const ResearchChartSurface = ({
   useEffect(() => {
     viewportSnapshotChangeRef.current = onViewportSnapshotChange;
   }, [onViewportSnapshotChange]);
+
+  useEffect(() => {
+    crosshairSyncGroupIdRef.current = crosshairSyncGroupId;
+    crosshairSyncInstanceIdRef.current = crosshairSyncInstanceId;
+  }, [crosshairSyncGroupId, crosshairSyncInstanceId]);
+
+  const flushPendingCrosshairSync = useCallback(() => {
+    crosshairSyncRafRef.current = null;
+    const event = pendingCrosshairSyncEventRef.current;
+    pendingCrosshairSyncEventRef.current = null;
+    if (!event) {
+      return;
+    }
+    publishCrosshairSync(event);
+  }, []);
+
+  const schedulePublishCrosshairSync = useCallback(
+    (time: number | null) => {
+      const groupId = crosshairSyncGroupIdRef.current;
+      const sourceId = crosshairSyncInstanceIdRef.current;
+      if (!groupId || !sourceId) {
+        return;
+      }
+      if (
+        time == null &&
+        lastPublishedCrosshairTimeRef.current === "cleared"
+      ) {
+        return;
+      }
+      if (time != null && lastPublishedCrosshairTimeRef.current === time) {
+        return;
+      }
+      lastPublishedCrosshairTimeRef.current = time == null ? "cleared" : time;
+      pendingCrosshairSyncEventRef.current =
+        time == null
+          ? { kind: "clear", groupId, sourceId }
+          : { kind: "move", groupId, sourceId, time };
+      if (crosshairSyncRafRef.current != null) {
+        return;
+      }
+      if (typeof window === "undefined") {
+        flushPendingCrosshairSync();
+        return;
+      }
+      crosshairSyncRafRef.current = window.requestAnimationFrame(
+        flushPendingCrosshairSync,
+      );
+    },
+    [flushPendingCrosshairSync],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (
+        crosshairSyncRafRef.current != null &&
+        typeof window !== "undefined"
+      ) {
+        window.cancelAnimationFrame(crosshairSyncRafRef.current);
+      }
+      crosshairSyncRafRef.current = null;
+      pendingCrosshairSyncEventRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!crosshairSyncGroupId || !crosshairSyncInstanceId) {
+      return;
+    }
+    const unsubscribe = subscribeCrosshairSync(
+      crosshairSyncGroupId,
+      crosshairSyncInstanceId,
+      (event) => {
+        const chart = chartRef.current;
+        if (!chart) {
+          return;
+        }
+        if (event.kind === "clear") {
+          try {
+            chart.clearCrosshairPosition?.();
+          } catch (_e) {
+            // ignore
+          }
+          return;
+        }
+        const sortedTimes = barTimesSortedRef.current;
+        if (!sortedTimes.length) {
+          return;
+        }
+        let low = 0;
+        let high = sortedTimes.length - 1;
+        let resolvedIndex = -1;
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          const value = sortedTimes[mid];
+          if (value === event.time) {
+            resolvedIndex = mid;
+            break;
+          }
+          if (value < event.time) {
+            resolvedIndex = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        if (resolvedIndex < 0) {
+          try {
+            chart.clearCrosshairPosition?.();
+          } catch (_e) {
+            // ignore
+          }
+          return;
+        }
+        const targetTime = sortedTimes[resolvedIndex];
+        const bar = barLookupRef.current.get(targetTime);
+        const series = activePriceSeriesRef.current;
+        if (!bar || !series) {
+          return;
+        }
+        try {
+          chart.setCrosshairPosition?.(bar.close, bar.time, series);
+        } catch (_e) {
+          // ignore
+        }
+      },
+    );
+    return () => {
+      unsubscribe();
+      const chart = chartRef.current;
+      if (chart) {
+        try {
+          chart.clearCrosshairPosition?.();
+        } catch (_e) {
+          // ignore
+        }
+      }
+    };
+  }, [crosshairSyncGroupId, crosshairSyncInstanceId]);
 
   useEffect(() => {
     chartBarCountRef.current = model.chartBars.length;
@@ -5987,6 +6476,7 @@ export const ResearchChartSurface = ({
       setProgrammaticVisibleLogicalRange(matchingStoredRange, {
         markInitialized: true,
         markProgrammaticIntent: !restoreState.matchingSnapshot?.userTouched,
+        respectRecentUserRange: false,
       });
     } else if (model.defaultVisibleLogicalRange) {
       recordViewportDiagnostic(
@@ -5995,6 +6485,7 @@ export const ResearchChartSurface = ({
       );
       setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange, {
         markInitialized: true,
+        respectRecentUserRange: false,
       });
     } else {
       markProgrammaticViewportIntent();
@@ -6128,6 +6619,9 @@ export const ResearchChartSurface = ({
         },
       ]),
     );
+    barTimesSortedRef.current = model.chartBars
+      .map((bar) => bar.time)
+      .sort((left, right) => left - right);
     setTapSelectedBar((current) =>
       current && !barLookupRef.current.has(current.time) ? null : current,
     );
@@ -6142,7 +6636,7 @@ export const ResearchChartSurface = ({
           line: lineSeriesRef.current,
           area: areaSeriesRef.current,
           baseline: baselineSeriesRef.current,
-        } satisfies Record<BaseSeriesType, any>
+        } satisfies Record<BaseSeriesType, ChartSeriesApi | null>
       )[baseSeriesType] || candleSeriesRef.current;
   }, [baseSeriesType]);
 
@@ -6159,14 +6653,14 @@ export const ResearchChartSurface = ({
       return undefined;
     }
 
-    let chart: any = null;
-    let handleVisibleRangeChange: ((range: any) => void) | null = null;
-    let handleCrosshairMove: ((param: any) => void) | null = null;
-    let handleClick: ((param: any) => void) | null = null;
+    let chart: ChartApi | null = null;
+    let handleVisibleRangeChange: ((range: VisibleLogicalRange | null) => void) | null = null;
+    let handleCrosshairMove: ((param: ChartMouseEvent) => void) | null = null;
+    let handleClick: ((param: ChartMouseEvent) => void) | null = null;
 
     try {
       setChartError(null);
-      chart = createChart(
+      chart = createResearchChart(
         containerRef.current,
         buildChartOptions(theme, {
           compact,
@@ -6185,7 +6679,7 @@ export const ResearchChartSurface = ({
           secondsVisible: userPreferences.time.showSeconds,
           rightOffset: chartTimeScaleRightOffset,
           preferences: userPreferences,
-        }) as any,
+        }),
       );
       registerChart(chart);
       chart.applyOptions({
@@ -6224,7 +6718,7 @@ export const ResearchChartSurface = ({
       });
       const lineSeries = chart.addSeries(LineSeries, {
         color: theme.accent || theme.text,
-        lineWidth: 2,
+        lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -6232,9 +6726,9 @@ export const ResearchChartSurface = ({
       });
       const areaSeries = chart.addSeries(AreaSeries, {
         lineColor: theme.accent || theme.text,
-        topColor: withAlpha(theme.accent || theme.text, "30"),
-        bottomColor: withAlpha(theme.accent || theme.text, "05"),
-        lineWidth: 2,
+        topColor: withAlpha(theme.accent || theme.text, "1e"),
+        bottomColor: withAlpha(theme.accent || theme.text, "02"),
+        lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -6243,12 +6737,12 @@ export const ResearchChartSurface = ({
       const baselineSeries = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: model.chartBars[0]?.o ?? 0 },
         topLineColor: theme.green,
-        topFillColor1: withAlpha(theme.green, "2f"),
-        topFillColor2: withAlpha(theme.green, "08"),
+        topFillColor1: withAlpha(theme.green, "1e"),
+        topFillColor2: withAlpha(theme.green, "04"),
         bottomLineColor: theme.red,
-        bottomFillColor1: withAlpha(theme.red, "08"),
-        bottomFillColor2: withAlpha(theme.red, "2f"),
-        lineWidth: 2,
+        bottomFillColor1: withAlpha(theme.red, "04"),
+        bottomFillColor2: withAlpha(theme.red, "1e"),
+        lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -6266,11 +6760,11 @@ export const ResearchChartSurface = ({
       });
 
       markerApisRef.current = [
-        createSeriesMarkers(candleSeries, []),
-        createSeriesMarkers(barSeries, []),
-        createSeriesMarkers(lineSeries, []),
-        createSeriesMarkers(areaSeries, []),
-        createSeriesMarkers(baselineSeries, []),
+        createResearchSeriesMarkers(candleSeries),
+        createResearchSeriesMarkers(barSeries),
+        createResearchSeriesMarkers(lineSeries),
+        createResearchSeriesMarkers(areaSeries),
+        createResearchSeriesMarkers(baselineSeries),
       ];
       markerSignatureRef.current = null;
       chartRef.current = chart;
@@ -6285,7 +6779,7 @@ export const ResearchChartSurface = ({
       volumeSeriesRef.current = volumeSeries;
       activePriceSeriesRef.current = candleSeries;
 
-      handleVisibleRangeChange = (range: any) => {
+      handleVisibleRangeChange = (range: VisibleLogicalRange | null) => {
         const normalizedRange = normalizeVisibleLogicalRange(range);
         const activePlotPanRange =
           (plotPanRef.current?.active ||
@@ -6323,12 +6817,13 @@ export const ResearchChartSurface = ({
         });
         publishVisibleLogicalRange(range, { source });
       };
-      handleCrosshairMove = (param: any) => {
+      handleCrosshairMove = (param: ChartMouseEvent) => {
         if (tapSelectedBarRef.current) {
           return;
         }
         const rawTime = param?.time;
         const time = typeof rawTime === "number" ? rawTime : null;
+        schedulePublishCrosshairSync(time);
         if (time == null) {
           setHoverBar((current) => (current === null ? current : null));
           return;
@@ -6339,14 +6834,19 @@ export const ResearchChartSurface = ({
           hoverBarsEqual(current, bar || null) ? current : bar || null,
         );
       };
-      handleClick = (param: any) => {
+      handleClick = (param: ChartMouseEvent) => {
+        const activeChart = chart;
+        if (!activeChart) {
+          return;
+        }
+
         if (!interactionRef.current.drawMode) {
           if (longPressActivatedRef.current) {
             longPressActivatedRef.current = false;
             return;
           }
           if (mobileTrackingModeRef.current) {
-            chart.clearCrosshairPosition?.();
+            activeChart.clearCrosshairPosition?.();
             setTapSelectedBar((current) => (current === null ? current : null));
             setMobileTrackingMode(false);
             return;
@@ -6355,7 +6855,7 @@ export const ResearchChartSurface = ({
             typeof param?.time === "number"
               ? param.time
               : param?.point
-                ? chart.timeScale().coordinateToTime(param.point.x)
+                ? activeChart.timeScale().coordinateToTime(param.point.x)
                 : null;
           const resolvedTime = typeof rawTime === "number" ? rawTime : null;
           const bar = resolvedTime == null
@@ -6363,15 +6863,20 @@ export const ResearchChartSurface = ({
             : barLookupRef.current.get(resolvedTime) || null;
 
           if (!bar) {
-            chart.clearCrosshairPosition?.();
+            activeChart.clearCrosshairPosition?.();
             setTapSelectedBar((current) => (current === null ? current : null));
             return;
           }
 
-          chart.setCrosshairPosition?.(
+          const activePriceSeries = activePriceSeriesRef.current;
+          if (!activePriceSeries) {
+            return;
+          }
+
+          activeChart.setCrosshairPosition?.(
             bar.close,
             bar.time,
-            activePriceSeriesRef.current,
+            activePriceSeries,
           );
           setTapSelectedBar((current) =>
             hoverBarsEqual(current, bar) ? current : bar,
@@ -6384,13 +6889,13 @@ export const ResearchChartSurface = ({
         }
 
         autoHydrationViewportRef.current = false;
-        const timeValue = chart.timeScale().coordinateToTime(param.point.x);
+        const timeValue = activeChart.timeScale().coordinateToTime(param.point.x);
         const price = activePriceSeriesRef.current?.coordinateToPrice?.(
           param.point.y,
         );
         const resolvedTime = typeof timeValue === "number" ? timeValue : null;
         const resolvedPrice =
-          typeof price === "number" && Number.isFinite(price) ? price : null;
+          typeof price === "number" && isFiniteNumber(price) ? price : null;
 
         if (interactionRef.current.drawMode === "horizontal") {
           if (resolvedPrice == null) {
@@ -6742,8 +7247,8 @@ export const ResearchChartSurface = ({
       seriesFullResetDuringSync &&
         initializedRangeRef.current &&
         visibleRangeBeforeDataSync &&
-        Number.isFinite(visibleRangeBeforeDataSync.from) &&
-        Number.isFinite(visibleRangeBeforeDataSync.to),
+        isFiniteNumber(visibleRangeBeforeDataSync.from) &&
+        isFiniteNumber(visibleRangeBeforeDataSync.to),
     );
     const wantedProgrammaticRangeSync = Boolean(
       autoHydrationVisibleRange ||
@@ -6816,8 +7321,8 @@ export const ResearchChartSurface = ({
     areaSeries.applyOptions({
       visible: baseSeriesType === "area",
       lineColor: theme.accent || theme.text,
-      topColor: withAlpha(theme.accent || theme.text, "30"),
-      bottomColor: withAlpha(theme.accent || theme.text, "05"),
+      topColor: withAlpha(theme.accent || theme.text, "1e"),
+      bottomColor: withAlpha(theme.accent || theme.text, "02"),
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -6852,8 +7357,8 @@ export const ResearchChartSurface = ({
       autoScale,
       invertScale,
       visible: showRightPriceScale,
-      borderVisible: showRightPriceScale,
-      ticksVisible: showRightPriceScale,
+      borderVisible: false,
+      ticksVisible: false,
       minimumWidth: compact ? 34 : 50,
       textColor: theme.textMuted,
       mode: resolvePriceScaleModeOption(scaleMode),
@@ -6871,12 +7376,14 @@ export const ResearchChartSurface = ({
       },
       grid: {
         vertLines: {
-          color: withAlpha(theme.border, "30"),
+          color: withAlpha(theme.border, "20"),
           visible: effectiveShowGrid,
+          style: LineStyle.Solid,
         },
         horzLines: {
-          color: withAlpha(theme.border, "50"),
+          color: withAlpha(theme.border, "28"),
           visible: effectiveShowGrid,
+          style: LineStyle.Solid,
         },
       },
       crosshair: {
@@ -6886,31 +7393,31 @@ export const ResearchChartSurface = ({
             ? CrosshairMode.Normal
             : CrosshairMode.MagnetOHLC,
         vertLine: {
-          color: withAlpha(theme.textMuted, "90"),
+          color: withAlpha(theme.textMuted, "70"),
           width: 1,
-          style: LineStyle.Dashed,
+          style: LineStyle.Solid,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
-          labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+          labelBackgroundColor: withAlpha(theme.bg2, "f5"),
         },
         horzLine: {
-          color: withAlpha(theme.textMuted, "90"),
+          color: withAlpha(theme.textMuted, "70"),
           width: 1,
-          style: LineStyle.Dashed,
+          style: LineStyle.Solid,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
-          labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+          labelBackgroundColor: withAlpha(theme.bg2, "f5"),
         },
       },
       handleScroll: chartInteractionConfig.handleScroll,
       handleScale: chartInteractionConfig.handleScale,
       timeScale: {
         borderColor: theme.border,
-        borderVisible: !hideTimeScale && showTimeScaleState,
+        borderVisible: false,
         visible: !hideTimeScale && showTimeScaleState,
         timeVisible: !hideTimeScale && showTimeScaleState,
         secondsVisible: userPreferences.time.showSeconds,
-        ticksVisible: !hideTimeScale && showTimeScaleState,
+        ticksVisible: false,
         rightOffset: chartTimeScaleRightOffset,
         rightBarStaysOnScroll: false,
         lockVisibleTimeRangeOnResize: true,
@@ -6930,7 +7437,7 @@ export const ResearchChartSurface = ({
           line: lineSeries,
           area: areaSeries,
           baseline: baselineSeries,
-        } satisfies Record<BaseSeriesType, any>
+        } satisfies Record<BaseSeriesType, ChartSeriesApi>
       )[baseSeriesType] || candleSeries;
     recordChartHydrationMetric(
       "seriesSyncMs",
@@ -7122,7 +7629,7 @@ export const ResearchChartSurface = ({
         }
 
         const x = chart.timeScale().timeToCoordinate(marker.time);
-        if (!Number.isFinite(x)) {
+        if (!isFiniteNumber(x)) {
           return false;
         }
 
@@ -7165,23 +7672,24 @@ export const ResearchChartSurface = ({
   ]);
 
   useLayoutEffect(() => {
-    if (
-      !candleSeriesRef.current ||
-      !barSeriesRef.current ||
-      !lineSeriesRef.current ||
-      !areaSeriesRef.current ||
-      !baselineSeriesRef.current
-    ) {
+    const candleSeries = candleSeriesRef.current;
+    const barSeries = barSeriesRef.current;
+    const lineSeries = lineSeriesRef.current;
+    const areaSeries = areaSeriesRef.current;
+    const baselineSeries = baselineSeriesRef.current;
+
+    if (!candleSeries || !barSeries || !lineSeries || !areaSeries || !baselineSeries) {
       return;
     }
 
     const priceSeriesByType = {
-      candles: candleSeriesRef.current,
-      bars: barSeriesRef.current,
-      line: lineSeriesRef.current,
-      area: areaSeriesRef.current,
-      baseline: baselineSeriesRef.current,
-    } satisfies Record<BaseSeriesType, any>;
+      candles: candleSeries,
+      bars: barSeries,
+      line: lineSeries,
+      area: areaSeries,
+      baseline: baselineSeries,
+    } satisfies Record<BaseSeriesType, ChartSeriesApi>;
+    const activePriceSeries = priceSeriesByType[baseSeriesType] || candleSeries;
 
     (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach(
       (seriesType) => {
@@ -7192,7 +7700,7 @@ export const ResearchChartSurface = ({
       },
     );
 
-    const addPriceLine = (lineConfig: any) => {
+    const addPriceLine = (lineConfig: Record<string, unknown>) => {
       (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach(
         (seriesType) => {
           drawingLinesRef.current[seriesType].push(
@@ -7205,7 +7713,7 @@ export const ResearchChartSurface = ({
     drawings
       .filter(
         (drawing) =>
-          drawing?.type === "horizontal" && Number.isFinite(drawing?.price),
+          drawing?.type === "horizontal" && isFiniteNumber(drawing?.price),
       )
       .forEach((drawing) => {
         const drawingLine = {
@@ -7222,7 +7730,7 @@ export const ResearchChartSurface = ({
     referenceLines
       .filter(
         (line) =>
-          typeof line?.price === "number" && Number.isFinite(line.price),
+          typeof line?.price === "number" && isFiniteNumber(line.price),
       )
       .forEach((line) => {
         const referenceLine = {
@@ -7238,13 +7746,13 @@ export const ResearchChartSurface = ({
 
     if (positionOverlaysEnabled) {
       resolvedPositionOverlays.entryLines
-        .filter((line) => Number.isFinite(line.price))
+        .filter((line) => isFiniteNumber(line.price))
         .filter((line) => {
           if (resolvedPositionOverlays.density !== "mini" || !plotSize.height) {
             return true;
           }
           return isPositionEntryLineInPane(
-            activePriceSeriesRef.current,
+            activePriceSeries,
             line,
             plotSize.height,
           );
@@ -7288,6 +7796,7 @@ export const ResearchChartSurface = ({
       syncIndicatorBadgeOverlaysState([]);
       syncIndicatorDotOverlaysState([]);
       syncChartEventOverlaysState([]);
+      syncFlowClusterOverlaysState([]);
       syncFlowVolumeOverlaysState([]);
       setFlowTooltip(null);
       syncIndicatorDashboardOverlayState(null);
@@ -7396,8 +7905,8 @@ export const ResearchChartSurface = ({
     const nonFlowChartEvents = visibleChartEvents.filter(
       (event) => event.eventType !== "unusual_flow",
     );
-    syncChartEventOverlaysState([
-      ...buildChartEventOverlays(
+    syncChartEventOverlaysState(
+      buildChartEventOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
         deferredModel,
@@ -7405,7 +7914,9 @@ export const ResearchChartSurface = ({
         viewportWidth,
         viewportHeight,
       ),
-      ...buildFlowChartEventOverlays(
+    );
+    syncFlowClusterOverlaysState(
+      buildFlowChartEventClusterOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
         flowChartModel,
@@ -7413,7 +7924,7 @@ export const ResearchChartSurface = ({
         viewportWidth,
         viewportHeight,
       ),
-    ]);
+    );
     syncFlowVolumeOverlaysState(
       showFlowEvents
         ? buildFlowVolumeOverlays(
@@ -7884,12 +8395,6 @@ export const ResearchChartSurface = ({
       scheduleHideFlowTooltip(currentId);
     }
   }, [flowTooltip?.id, scheduleHideFlowTooltip]);
-  const copyFlowContract = useCallback((contract: string) => {
-    if (!contract || typeof navigator === "undefined" || !navigator.clipboard) {
-      return;
-    }
-    void navigator.clipboard.writeText(contract);
-  }, []);
   const cycleScaleMode = () => {
     setScaleMode((value) =>
       value === "linear"
@@ -8766,7 +9271,7 @@ export const ResearchChartSurface = ({
       ? Math.max(0, Date.now() - latestQuoteUpdatedAtMs)
       : null;
   const watchlistChartPriceDelta =
-    Number.isFinite(latestQuotePrice) && Number.isFinite(latestRenderedBar?.c)
+    isFiniteNumber(latestQuotePrice) && isFiniteNumber(latestRenderedBar?.c)
       ? Number((Number(latestRenderedBar?.c) - Number(latestQuotePrice)).toFixed(6))
       : null;
   const flowChartEventCount = visibleChartEvents.filter(
@@ -8788,9 +9293,10 @@ export const ResearchChartSurface = ({
   const otherFlowEventCount = flowChartBucketDiagnostics.otherFlowEventCount ?? 0;
   const duplicateFlowEventDropCount =
     flowChartBucketDiagnostics.droppedDuplicateFlowEventCount ?? 0;
-  const renderedFlowMarkerCount = chartEventOverlays.filter(
-    (overlay) => overlay.eventType === "unusual_flow",
-  ).length;
+  const renderedFlowMarkerCount = flowClusterOverlays.reduce(
+    (sum, overlay) => sum + overlay.count,
+    0,
+  );
   const chartFlowHydrationState =
     flowChartEventCount <= 0
       ? rawFlowInputCount > 0
@@ -9120,6 +9626,7 @@ export const ResearchChartSurface = ({
           tradeThresholdOverlays.length ||
           flowVolumeOverlays.length ||
           chartEventOverlays.length ||
+          flowClusterOverlays.length ||
           tradeMarkerTargets.length ||
           selectedTradeConnector ||
           selectedTradeEntryBadge ||
@@ -9646,34 +10153,236 @@ export const ResearchChartSurface = ({
                   </div></AppTooltip>
                 );
               })}
+              {(() => {
+                const expandedClusterId = lockedClusterId ?? hoveredClusterId;
+                const expandedClusters = flowClusterOverlays.filter(
+                  (cluster) =>
+                    cluster.kind === "cluster" && cluster.id === expandedClusterId,
+                );
+                const resolveGlyphFontSize = (label: string): string =>
+                  label.length >= 6 ? TYPE_CSS_VAR.micro : TYPE_CSS_VAR.label;
+                const renderMarker = (
+                  member: FlowClusterMember,
+                  options: { clusterId?: string; keyPrefix: string },
+                ) => {
+                  const color = resolveFlowToneColor(member.tone, theme);
+                  const premiumLabel = member.tooltip.markerPremiumLabel;
+                  return (
+                    <AppTooltip
+                      key={`${options.keyPrefix}-${member.id}`}
+                      content={member.title}
+                    >
+                      <div
+                        aria-label={member.title}
+                        data-testid={
+                          dataTestId ? `${dataTestId}-chart-event` : undefined
+                        }
+                        data-chart-event-type="unusual_flow"
+                        data-chart-event-source={member.source || undefined}
+                        data-chart-event-severity={member.severity || undefined}
+                        data-chart-event-symbol={member.symbol || undefined}
+                        data-chart-event-tone={member.tone}
+                        data-chart-flow-marker-tone={member.tone}
+                        data-chart-flow-marker-basis={member.flowSourceBasis}
+                        data-chart-flow-event-time={member.flowEventTime}
+                        data-chart-flow-event-day={member.flowEventDay}
+                        data-chart-flow-time-basis={member.flowTimeBasis}
+                        data-chart-flow-source-field={
+                          member.flowTimeSourceField || undefined
+                        }
+                        data-flow-cluster-member={options.clusterId || undefined}
+                        onPointerEnter={() => {
+                          if (options.clusterId) {
+                            handleClusterPointerEnter(options.clusterId);
+                          }
+                          showFlowTooltip({
+                            id: member.id,
+                            left: member.left,
+                            top: member.top,
+                            model: member.tooltip,
+                          });
+                        }}
+                        onPointerLeave={() => {
+                          if (options.clusterId) {
+                            handleClusterPointerLeave(options.clusterId);
+                          }
+                          scheduleHideFlowTooltip(member.id);
+                        }}
+                        onFocus={() =>
+                          showFlowTooltip({
+                            id: member.id,
+                            left: member.left,
+                            top: member.top,
+                            model: member.tooltip,
+                          })
+                        }
+                        onBlur={() => scheduleHideFlowTooltip(member.id)}
+                        tabIndex={0}
+                        style={{
+                          position: "absolute",
+                          left: member.left,
+                          top: member.top,
+                          width: SPIDER_MARKER_SIZE,
+                          height: SPIDER_MARKER_SIZE,
+                          transform: "translate(-50%, -50%)",
+                          borderRadius: 999,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          boxSizing: "border-box",
+                          background: withAlpha(color, "22"),
+                          border: `1px solid ${withAlpha(color, "dd")}`,
+                          color,
+                          fontFamily: theme.mono,
+                          fontSize: resolveGlyphFontSize(premiumLabel),
+                          fontWeight: 500,
+                          letterSpacing: "-0.02em",
+                          lineHeight: 1,
+                          boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                          pointerEvents: "auto",
+                          cursor: "help",
+                        }}
+                      >
+                        {premiumLabel}
+                      </div>
+                    </AppTooltip>
+                  );
+                };
+                return (
+                  <>
+                    {expandedClusters.length ? (
+                      <svg
+                        data-testid={
+                          dataTestId ? `${dataTestId}-flow-cluster-spider` : undefined
+                        }
+                        width={drawablePlotWidth || "100%"}
+                        height={drawablePlotHeight || "100%"}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          pointerEvents: "none",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {expandedClusters.flatMap((cluster) => {
+                          const stroke = withAlpha(
+                            resolveFlowToneColor(cluster.dominantTone, theme),
+                            "66",
+                          );
+                          return cluster.members.map((member) => (
+                            <line
+                              key={`flow-cluster-leader-${cluster.id}-${member.id}`}
+                              x1={cluster.anchorLeft}
+                              y1={cluster.anchorTop}
+                              x2={member.left}
+                              y2={member.top}
+                              stroke={stroke}
+                              strokeWidth={1}
+                            />
+                          ));
+                        })}
+                      </svg>
+                    ) : null}
+                    {flowClusterOverlays.map((cluster) => {
+                      if (cluster.kind === "single") {
+                        return renderMarker(cluster.members[0], {
+                          keyPrefix: "flow-single",
+                        });
+                      }
+                      const isExpanded = cluster.id === expandedClusterId;
+                      const color = resolveFlowToneColor(cluster.dominantTone, theme);
+                      return (
+                        <Fragment key={`flow-cluster-${cluster.id}`}>
+                          <div
+                            data-testid={
+                              dataTestId
+                                ? `${dataTestId}-flow-cluster-glyph`
+                                : undefined
+                            }
+                            data-flow-cluster-glyph={cluster.id}
+                            data-flow-cluster-count={cluster.count}
+                            data-flow-cluster-tone={cluster.dominantTone}
+                            data-flow-cluster-severity={cluster.dominantSeverity}
+                            data-flow-cluster-expanded={
+                              isExpanded ? "true" : undefined
+                            }
+                            aria-label={cluster.summaryTitle}
+                            aria-haspopup="true"
+                            aria-expanded={isExpanded}
+                            role="button"
+                            tabIndex={0}
+                            onPointerEnter={() => handleClusterPointerEnter(cluster.id)}
+                            onPointerLeave={() => handleClusterPointerLeave(cluster.id)}
+                            onClick={() => toggleLockedCluster(cluster.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                toggleLockedCluster(cluster.id);
+                              } else if (event.key === "Escape") {
+                                setLockedCluster(null);
+                              }
+                            }}
+                            style={{
+                              position: "absolute",
+                              left: cluster.anchorLeft,
+                              top: cluster.anchorTop,
+                              width: SPIDER_MARKER_SIZE,
+                              height: SPIDER_MARKER_SIZE,
+                              transform: "translate(-50%, -50%)",
+                              borderRadius: 999,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              boxSizing: "border-box",
+                              background: withAlpha(color, isExpanded ? "16" : "22"),
+                              border: `1px solid ${withAlpha(color, "dd")}`,
+                              color,
+                              fontFamily: theme.mono,
+                              fontSize: resolveGlyphFontSize(cluster.aggregatePremiumLabel),
+                              fontWeight: 600,
+                              letterSpacing: "-0.02em",
+                              lineHeight: 1,
+                              boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                              pointerEvents: "auto",
+                              cursor: "pointer",
+                              opacity: isExpanded ? 0.7 : 1,
+                            }}
+                          >
+                            {cluster.aggregatePremiumLabel}
+                          </div>
+                          {isExpanded
+                            ? cluster.members.map((member) =>
+                                renderMarker(member, {
+                                  clusterId: cluster.id,
+                                  keyPrefix: `flow-cluster-${cluster.id}`,
+                                }),
+                              )
+                            : null}
+                        </Fragment>
+                      );
+                    })}
+                  </>
+                );
+              })()}
               {flowTooltip
                 ? (() => {
                     const model = flowTooltip.model;
                     const toneColor = resolveFlowToneColor(model.tone, theme);
                     const statCells = buildFlowTooltipStatCells(model);
-                    const mixSegments = [
-                      {
-                        key: "bull",
-                        label: `Bull ${model.bullishPercent}%`,
-                        percent: model.bullishPercent,
-                        color: theme.green,
-                      },
-                      {
-                        key: "bear",
-                        label: `Bear ${model.bearishPercent}%`,
-                        percent: model.bearishPercent,
-                        color: theme.red,
-                      },
-                      {
-                        key: "mix",
-                        label: `Mix ${model.neutralPercent}%`,
-                        percent: model.neutralPercent,
-                        color: theme.amber,
-                      },
+                    const biasSegments = [
+                      { key: "bull", percent: model.bullishPercent, color: theme.green, label: model.bullishPremiumLabel, prefix: "B" },
+                      { key: "bear", percent: model.bearishPercent, color: theme.red, label: model.bearishPremiumLabel, prefix: "R" },
+                      { key: "mix", percent: model.neutralPercent, color: theme.amber, label: model.neutralPremiumLabel, prefix: "M" },
                     ];
-                    const copyLabel = flowTooltipHasValue(model.copyLabel)
-                      ? model.copyLabel
-                      : model.topContract;
+                    const contractSegments = [
+                      model.topContract,
+                      flowTooltipHasValue(model.topExpiry) ? model.topExpiry : null,
+                      flowTooltipHasValue(model.side) ? model.side : null,
+                      flowTooltipHasValue(model.price) ? `@${model.price}` : null,
+                      flowTooltipHasValue(model.delta) ? `Δ${model.delta}` : null,
+                    ].filter(Boolean);
+                    const contractRow = contractSegments.join(" · ");
                     const sourceText = [model.sourceLabel, model.timeBasis]
                       .filter(Boolean)
                       .join(" · ");
@@ -9703,8 +10412,8 @@ export const ResearchChartSurface = ({
                           top: flowTooltip.top,
                           width: FLOW_TOOLTIP_WIDTH,
                           maxWidth: "calc(100% - 16px)",
-                          borderRadius: 6,
-                          padding: 8,
+                          borderRadius: 5,
+                          padding: 5,
                           boxSizing: "border-box",
                           background: "var(--ra-tooltip-bg)",
                           border: "1px solid var(--ra-tooltip-border)",
@@ -9721,9 +10430,9 @@ export const ResearchChartSurface = ({
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
-                            gap: 8,
+                            gap: 6,
                             alignItems: "baseline",
-                            marginBottom: 5,
+                            marginBottom: 3,
                             minWidth: 0,
                           }}
                         >
@@ -9731,19 +10440,32 @@ export const ResearchChartSurface = ({
                             style={{
                               minWidth: 0,
                               fontSize: TYPE_CSS_VAR.bodyStrong,
-                              fontWeight: 400,
+                              fontWeight: 500,
                               lineHeight: 1.1,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
                             }}
                           >
+                            {model.eventCount > 1 ? (
+                              <span
+                                style={{
+                                  fontFamily: theme.mono,
+                                  color: theme.textMuted,
+                                  marginRight: 4,
+                                  fontSize: TYPE_CSS_VAR.label,
+                                }}
+                              >
+                                {model.eventCount}×
+                              </span>
+                            ) : null}
                             {model.title}
                           </div>
                           <div
                             style={{
                               fontSize: TYPE_CSS_VAR.bodyStrong,
                               fontFamily: theme.mono,
+                              fontWeight: 600,
                               color: toneColor,
                               whiteSpace: "nowrap",
                             }}
@@ -9752,59 +10474,27 @@ export const ResearchChartSurface = ({
                           </div>
                         </div>
 
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            marginBottom: 6,
-                            minWidth: 0,
-                          }}
-                        >
+                        {contractRow ? (
                           <div
-                            data-chart-flow-tooltip-contract="true"
-                            title={model.topContract}
+                            data-chart-flow-tooltip-top-contract="true"
+                            title={contractRow}
                             style={{
-                              flex: 1,
-                              minWidth: 0,
-                              color: theme.text,
+                              color: theme.textMuted,
                               fontFamily: theme.mono,
-                              fontSize: TYPE_CSS_VAR.body,
+                              fontSize: TYPE_CSS_VAR.label,
                               lineHeight: 1.2,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
+                              marginBottom: 4,
                             }}
                           >
-                            {model.topContract}
+                            {contractRow}
                           </div>
-                          {flowTooltipHasValue(copyLabel) ? (
-                            <button
-                              type="button"
-                              aria-label={`Copy ${copyLabel}`}
-                              onClick={() => copyFlowContract(copyLabel)}
-                              style={{
-                                width: 18,
-                                height: 18,
-                                minWidth: 18,
-                                border: `1px solid ${withAlpha(theme.border, "a0")}`,
-                                background: withAlpha(theme.bg4, "cc"),
-                                color: theme.text,
-                                borderRadius: 5,
-                                padding: 0,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Copy size={11} strokeWidth={1.8} />
-                            </button>
-                          ) : null}
-                        </div>
+                        ) : null}
 
                         <div
-                          data-chart-flow-tooltip-mix-strip="true"
+                          data-chart-flow-tooltip-bias-bar="true"
                           title={model.flowMix}
                           style={{
                             height: 7,
@@ -9813,13 +10503,13 @@ export const ResearchChartSurface = ({
                             borderRadius: 999,
                             border: `1px solid ${withAlpha(theme.border, "80")}`,
                             background: withAlpha(theme.bg4, "80"),
-                            marginBottom: 3,
+                            marginBottom: 2,
                           }}
                         >
-                          {mixSegments.map((segment) => (
+                          {biasSegments.map((segment) => (
                             <div
                               key={segment.key}
-                              title={segment.label}
+                              title={`${segment.prefix} ${segment.label}`}
                               style={{
                                 width: `${segment.percent}%`,
                                 minWidth: segment.percent > 0 ? 3 : 0,
@@ -9832,26 +10522,30 @@ export const ResearchChartSurface = ({
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
-                            gap: 6,
-                            marginBottom: 6,
+                            gap: 4,
+                            marginBottom: 4,
                             color: theme.textMuted,
                             fontFamily: theme.mono,
-                            fontSize: TYPE_CSS_VAR.label,
+                            fontSize: TYPE_CSS_VAR.micro,
                             lineHeight: 1.1,
                           }}
                         >
-                          <span>B {model.bullishPercent}%</span>
-                          <span>R {model.bearishPercent}%</span>
-                          <span>M {model.neutralPercent}%</span>
+                          {biasSegments.map((segment) =>
+                            segment.percent > 0 && flowTooltipHasValue(segment.label) ? (
+                              <span key={segment.key} style={{ color: withAlpha(segment.color, "ee") }}>
+                                {segment.prefix} {segment.label}
+                              </span>
+                            ) : null,
+                          )}
                         </div>
 
                         <div
                           data-chart-flow-tooltip-stat-grid="true"
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                            gap: "3px 5px",
-                            fontSize: TYPE_CSS_VAR.body,
+                            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                            gap: "2px 3px",
+                            fontSize: TYPE_CSS_VAR.label,
                             lineHeight: 1.15,
                           }}
                         >
@@ -9863,9 +10557,9 @@ export const ResearchChartSurface = ({
                                 display: "flex",
                                 alignItems: "baseline",
                                 justifyContent: "space-between",
-                                gap: 4,
-                                padding: "2px 4px",
-                                borderRadius: 4,
+                                gap: 3,
+                                padding: "1px 3px",
+                                borderRadius: 3,
                                 background: withAlpha(theme.bg4, "55"),
                               }}
                             >
@@ -9897,13 +10591,13 @@ export const ResearchChartSurface = ({
 
                         <div
                           style={{
-                            marginTop: 6,
+                            marginTop: 4,
                             display: "flex",
                             alignItems: "center",
-                            gap: 5,
+                            gap: 4,
                             flexWrap: "wrap",
                             color: theme.textMuted,
-                            fontSize: TYPE_CSS_VAR.label,
+                            fontSize: TYPE_CSS_VAR.micro,
                             lineHeight: 1.15,
                           }}
                         >
@@ -9916,21 +10610,13 @@ export const ResearchChartSurface = ({
                           >
                             {sourceText}
                           </span>
-                          <span
-                            style={{
-                              fontFamily: theme.mono,
-                              color: toneColor,
-                            }}
-                          >
-                            {model.intensity}
-                          </span>
                           {model.tags.map((tag) => (
                             <span
                               key={tag}
                               style={{
                                 fontFamily: theme.mono,
                                 color: theme.text,
-                                padding: "1px 4px",
+                                padding: "0 3px",
                                 borderRadius: 999,
                                 border: `1px solid ${withAlpha(theme.border, "80")}`,
                                 background: withAlpha(theme.bg4, "80"),

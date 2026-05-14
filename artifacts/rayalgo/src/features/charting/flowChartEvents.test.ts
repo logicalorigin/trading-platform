@@ -932,6 +932,79 @@ test("buildFlowTooltipModel returns compact TradingView-style event details", ()
   assert.equal(tooltip.moneyness, "OTM");
   assert.equal(tooltip.distance, "+1.4%");
   assert.deepEqual(tooltip.tags, ["sweep"]);
+  assert.equal(tooltip.markerPremiumLabel, "$1.3M");
+  assert.equal(tooltip.callPremiumLabel, "$1.3M");
+  assert.equal(tooltip.putPremiumLabel, "n/a");
+  assert.equal(tooltip.bullishPremiumLabel, "$1.3M");
+  assert.equal(tooltip.bearishPremiumLabel, "n/a");
+  assert.equal(tooltip.neutralPremiumLabel, "n/a");
+  assert.equal(tooltip.topRight, "C");
+});
+
+test("buildFlowTooltipModel exposes split premium labels for mixed call/put flow", () => {
+  const buckets = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "call-buy",
+        bias: "bullish",
+        metadata: { cp: "C", premium: 600_000 },
+      }),
+      flowEvent({
+        id: "put-buy",
+        bias: "bearish",
+        metadata: { cp: "P", premium: 400_000 },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+  const tooltip = buildFlowTooltipModel(buckets[0]);
+  assert.equal(tooltip.callPremiumLabel, "$600K");
+  assert.equal(tooltip.putPremiumLabel, "$400K");
+  assert.equal(tooltip.bullishPremiumLabel, "$600K");
+  assert.equal(tooltip.bearishPremiumLabel, "$400K");
+  assert.equal(tooltip.markerPremiumLabel, "$1.0M");
+});
+
+test("buildFlowTooltipModel formats strike, expiry, and right for the top contract", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        metadata: {
+          cp: "P",
+          premium: 200_000,
+          strike: 487.5,
+          expirationDate: "2026-05-16",
+          contractLabel: "SPY P487.5",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+  const tooltip = buildFlowTooltipModel(bucket);
+  assert.equal(tooltip.topRight, "P");
+  assert.equal(tooltip.topStrike, "487.50");
+  assert.equal(tooltip.topExpiry, "5/16");
+});
+
+test("buildFlowTooltipModel rejects impossible expiration labels", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        metadata: {
+          cp: "C",
+          premium: 200_000,
+          strike: 500,
+          expirationDate: "2026-02-31",
+          contractLabel: "SPY C500",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  const tooltip = buildFlowTooltipModel(bucket);
+  assert.equal(tooltip.topExpiry, "n/a");
+  assert.equal(tooltip.dte, "n/a");
 });
 
 test("buildFlowTooltipModel labels snapshot buckets as contract activity", () => {

@@ -10,6 +10,8 @@ import {
 test("flow option identity normalizes expiration, side, and strike", () => {
   assert.equal(normalizeFlowOptionExpirationIso("20260428"), "2026-04-28");
   assert.equal(normalizeFlowOptionExpirationIso("2026-04-28T13:30:00Z"), "2026-04-28");
+  assert.equal(normalizeFlowOptionExpirationIso("20260231"), null);
+  assert.equal(normalizeFlowOptionExpirationIso("2026-02-31T13:30:00Z"), null);
   assert.equal(normalizeFlowOptionRight("CALL"), "call");
   assert.equal(normalizeFlowOptionRight("Put"), "put");
   assert.equal(normalizeFlowOptionRight(null, "P"), "put");

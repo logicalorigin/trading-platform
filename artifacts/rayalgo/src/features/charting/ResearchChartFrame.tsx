@@ -225,6 +225,8 @@ type ResearchChartFrameProps = {
   persistScalePrefs?: boolean;
   frameSignalState?: FrameSignalState;
   positionOverlayContext?: ChartPositionOverlayContext | null;
+  crosshairSyncGroupId?: string | null;
+  crosshairSyncInstanceId?: string | null;
 };
 
 export const ResearchChartFrame = ({
@@ -270,6 +272,8 @@ export const ResearchChartFrame = ({
   persistScalePrefs,
   frameSignalState = null,
   positionOverlayContext = null,
+  crosshairSyncGroupId = null,
+  crosshairSyncInstanceId = null,
 }: ResearchChartFrameProps) => {
   const placementPolicy = resolveResearchChartFramePlacement(placement);
   const resolvedCompact = compact ?? placementPolicy.compact;
@@ -308,7 +312,7 @@ export const ResearchChartFrame = ({
       aria-label={signalActive ? frameSignalState?.label : undefined}
       style={{
         background: theme.bg2,
-        borderRadius: 0,
+        borderRadius: 10,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -320,8 +324,8 @@ export const ResearchChartFrame = ({
         ...style,
         border: signalActive
           ? `1px solid ${frameBorderColor}`
-          : style?.border || `1px solid ${theme.border}`,
-        borderColor: frameBorderColor,
+          : style?.border || "none",
+        borderColor: signalActive ? frameBorderColor : undefined,
       }}
     >
       {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
@@ -367,6 +371,8 @@ export const ResearchChartFrame = ({
           positionOverlaysAvailable={positionOverlayState.available}
           positionOverlaysEnabled={positionOverlayState.enabled}
           onPositionOverlaysEnabledChange={positionOverlayState.setLocalEnabled}
+          crosshairSyncGroupId={crosshairSyncGroupId}
+          crosshairSyncInstanceId={crosshairSyncInstanceId}
         />
       </div>
       {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}

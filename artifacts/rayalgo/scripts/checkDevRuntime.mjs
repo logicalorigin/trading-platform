@@ -279,12 +279,9 @@ const sanitizeDatabaseOutput = (text = "") =>
     (_match, prefix) => `${prefix}***@`,
   );
 
-const classifyDatabaseSource = (sourceEnv, url) => {
+const classifyDatabaseSource = (url) => {
   const host = url.hostname || url.searchParams.get("host") || "";
-  if (
-    sourceEnv === "LOCAL_DATABASE_URL" &&
-    (!url.hostname || host.includes(".local/postgres"))
-  ) {
+  if (!url.hostname || host.includes(".local/postgres")) {
     return "workspace-local-postgres";
   }
   if (url.hostname === "helium") {
@@ -293,30 +290,9 @@ const classifyDatabaseSource = (sourceEnv, url) => {
   return "external-postgres";
 };
 
-const shouldUseLocalDatabaseUrl = () => {
-  const preference = (process.env.RAYALGO_DATABASE_SOURCE || "")
-    .trim()
-    .toLowerCase();
-  return (
-    preference === "local" ||
-    preference === "workspace-local-postgres" ||
-    preference === "local-postgres"
-  );
-};
-
 const resolveDatabaseUrl = () => {
-  const useLocalUrl = Boolean(
-    process.env.LOCAL_DATABASE_URL &&
-      (!process.env.DATABASE_URL || shouldUseLocalDatabaseUrl()),
-  );
-  const raw = useLocalUrl
-    ? process.env.LOCAL_DATABASE_URL
-    : process.env.DATABASE_URL || null;
-  const sourceEnv = useLocalUrl
-    ? "LOCAL_DATABASE_URL"
-    : process.env.DATABASE_URL
-      ? "DATABASE_URL"
-      : null;
+  const raw = process.env.DATABASE_URL || null;
+  const sourceEnv = raw ? "DATABASE_URL" : null;
   if (!raw || !sourceEnv) {
     return {
       configured: false,
@@ -339,9 +315,9 @@ const resolveDatabaseUrl = () => {
     return {
       configured: true,
       raw,
-      source: classifyDatabaseSource(sourceEnv, url),
+      source: classifyDatabaseSource(url),
       sourceEnv,
-      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(process.env.DATABASE_URL),
+      overrideActive: false,
       protocol: url.protocol.replace(/:$/, ""),
       host: url.hostname || url.searchParams.get("host") || null,
       port:
@@ -362,7 +338,7 @@ const resolveDatabaseUrl = () => {
       raw,
       source: null,
       sourceEnv,
-      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(process.env.DATABASE_URL),
+      overrideActive: false,
       protocol: null,
       host: null,
       port: null,
@@ -643,7 +619,7 @@ if (!chartSurfaceFingerprint.version) {
 const databaseReachability = readDatabaseReachability();
 if (!databaseReachability.configured) {
   warnings.push(
-    "LOCAL_DATABASE_URL or DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
+    "DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
   );
 } else if (databaseReachability.parseError) {
   warnings.push(
@@ -715,7 +691,7 @@ if (jsonOnly) {
       console.log(`postgres probe: ${databaseReachability.probe.output}`);
     }
   } else {
-    console.log("postgres: LOCAL_DATABASE_URL or DATABASE_URL not set");
+    console.log("postgres: DATABASE_URL not set");
   }
   console.log(
     `browser verification: ${browserVerification.prepared ? "patched chromium ready" : "patched chromium unavailable"}; command=${browserVerification.command}`,

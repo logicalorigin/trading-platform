@@ -101,6 +101,24 @@ test("account trading analysis builds selected trade details and lifecycle rows"
   assert.ok(model.lifecycleRows.some((row) => row.key === "position"));
 });
 
+test("account trade ids stay distinct when imported trades lack source ids", () => {
+  const first = getAccountTradeId({
+    symbol: "RBLX",
+    closeDate: "2026-05-13T15:00:00.000Z",
+    side: "sell",
+    quantity: 1,
+  });
+  const second = getAccountTradeId({
+    symbol: "RBLX",
+    closeDate: "2026-05-13T16:00:00.000Z",
+    side: "sell",
+    quantity: 1,
+  });
+
+  assert.notEqual(first, second);
+  assert.equal(first.startsWith("TRADE:RBLX:"), true);
+});
+
 test("account lifecycle omits unavailable rows", () => {
   const rows = buildAccountTradeLifecycleRows({
     trade: {
