@@ -249,8 +249,8 @@ const useLocalToday = () => {
 const CALENDAR_PROFIT_BG = "#d7f7df";
 const CALENDAR_LOSS_BG = "#ffd6d6";
 const CALENDAR_ACTIVE_TEXT = "#0b0f14";
-const CALENDAR_PROFIT_TEXT = "#047857";
-const CALENDAR_LOSS_TEXT = "#b91c1c";
+const CALENDAR_PROFIT_TEXT = "#0F6E51";
+const CALENDAR_LOSS_TEXT = "#B5403B";
 
 const calendarThemeStyle = (theme) => {
   const isLight = theme === "light" || T.bg1 === "#ffffff";
@@ -271,7 +271,7 @@ const calendarThemeStyle = (theme) => {
       shadow: "none",
       border: "#eef2f6",
       navBg: "#ffffff",
-      navText: "#475569",
+      navText: "#605C57",
     };
   }
   return {

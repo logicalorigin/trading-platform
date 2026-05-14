@@ -48,14 +48,14 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         borderRadius: dim(10),
         border: "1px solid rgba(148,163,184,0.35)",
         background: "rgba(2,6,23,0.88)",
-        color: "#dbeafe",
+        color: "#F2EFE9",
         fontFamily: T.data,
         fontSize: textSize("bodyStrong"),
         boxShadow: "0 18px 45px rgba(0,0,0,0.35)",
         pointerEvents: "none",
       }}
     >
-      <strong style={{ color: "#93c5fd", fontWeight: 400 }}>Latency</strong>
+      <strong style={{ color: "#7CA7D9", fontWeight: 400 }}>Latency</strong>
       {cells.map(([label, metric]) => (
         <span key={label} style={{ whiteSpace: "nowrap" }}>
           {label} p50 {formatLatencyMetric(metric.p50)} p95{" "}
@@ -63,29 +63,29 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         </span>
       ))}
       {chartCells.map(([label, metric]) => (
-        <span key={label} style={{ whiteSpace: "nowrap", color: "#bfdbfe" }}>
+        <span key={label} style={{ whiteSpace: "nowrap", color: "#B8B4AC" }}>
           {label} p50 {formatLatencyMetric(metric.p50)} p95{" "}
           {formatLatencyMetric(metric.p95)}
         </span>
       ))}
-      <span style={{ color: "#cbd5f5", whiteSpace: "nowrap" }}>
+      <span style={{ color: "#B8B4AC", whiteSpace: "nowrap" }}>
         Stream c{stream.activeConsumerCount} s{stream.unionSymbolCount} r
         {stream.reconnectCount} g{stream.streamGapCount}
       </span>
-      <span style={{ color: "#a7f3d0", whiteSpace: "nowrap" }}>
+      <span style={{ color: "#9FD8B5", whiteSpace: "nowrap" }}>
         Screens {mountedCount}/{SCREENS.length} vis {screen}
       </span>
-      <span style={{ color: "#fde68a", whiteSpace: "nowrap" }}>
+      <span style={{ color: "#EBCB9C", whiteSpace: "nowrap" }}>
         Work p{formatWorkloadCount(workloadStats.kindCounts.poll)} s
         {formatWorkloadCount(workloadStats.kindCounts.stream)} m
         {formatWorkloadCount(workloadStats.kindCounts.media)}
       </span>
       {activeWorkloadLabels ? (
-        <span style={{ color: "#fcd34d", whiteSpace: "nowrap" }}>
+        <span style={{ color: "#E2B97E", whiteSpace: "nowrap" }}>
           {activeWorkloadLabels}
         </span>
       ) : null}
-      <span style={{ color: "#94a3b8" }}>
+      <span style={{ color: "#86837D" }}>
         n={stats.sampleCount}/{chartStats.sampleCount}
       </span>
     </div>

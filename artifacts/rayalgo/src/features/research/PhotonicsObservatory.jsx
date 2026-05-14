@@ -3296,7 +3296,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                       : gr < 10 ? `rgba(255,255,255,${0.06 + gr/100})`
                       : gr < 40 ? `rgba(26,138,92,${0.15 + gr/120})`
                       : `rgba(26,138,92,${Math.min(0.85, 0.3 + gr/150)})`;
-                    const textColor = gr < -5 ? "#fca5a5" : gr < 10 ? "rgba(255,255,255,.6)" : gr < 40 ? "#a7f3d0" : "#6ee7b7";
+                    const textColor = gr < -5 ? "#EDB7B5" : gr < 10 ? "rgba(255,255,255,.6)" : gr < 40 ? "#9FD8B5" : "#6BC498";
                     const br = BRAND[c.t] || [v.color, c.t.slice(0,2)];
                     return (
                       <div key={c.t} onClick={() => onSelect && onSelect(c.t)}

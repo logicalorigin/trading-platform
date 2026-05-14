@@ -209,7 +209,7 @@ const AccountSwitcher = ({
             border: "none",
             background: T.bg1,
             boxShadow:
-              T.bg0 === "#f5f5f4"
+              T.bg0 === "#FAFAF7"
                 ? "0 18px 45px rgba(15,23,42,0.12)"
                 : "0 18px 45px rgba(0,0,0,0.3)",
             overflow: "hidden",

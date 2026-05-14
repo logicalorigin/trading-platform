@@ -55,7 +55,7 @@ export const TradingViewWidgetReference = memo(({
       symbol,
       theme,
       timezone: "Etc/UTC",
-      backgroundColor: theme === "dark" ? "#131722" : "#ffffff",
+      backgroundColor: theme === "dark" ? "#16151A" : "#ffffff",
       gridColor: "rgba(46, 46, 46, 0.06)",
       watchlist: [],
       withdateranges: false,
@@ -76,7 +76,7 @@ export const TradingViewWidgetReference = memo(({
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: ${theme === "dark" ? "#131722" : "#ffffff"};
+        background: ${theme === "dark" ? "#16151A" : "#ffffff"};
         font-family: ${APP_FONT_FALLBACK};
       }
       .tradingview-widget-container {
@@ -94,8 +94,8 @@ export const TradingViewWidgetReference = memo(({
         align-items: center;
         padding: 0 10px;
         font-size: var(--ra-type-body-strong, 11px);
-        color: #64748b;
-        background: ${theme === "dark" ? "#131722" : "#ffffff"};
+        color: #86837D;
+        background: ${theme === "dark" ? "#16151A" : "#ffffff"};
         border-top: 1px solid ${theme === "dark" ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.08)"};
       }
       .tradingview-widget-copyright a {
@@ -130,7 +130,7 @@ export const TradingViewWidgetReference = memo(({
         height: "100%",
         border: "none",
         display: "block",
-        background: theme === "dark" ? "#131722" : "#ffffff",
+        background: theme === "dark" ? "#16151A" : "#ffffff",
       }}
     /></AppTooltip>
   );

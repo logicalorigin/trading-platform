@@ -105,7 +105,7 @@ export const panelStyle = {
     return dim(12);
   },
   get boxShadow() {
-    return T.bg0 === "#f5f5f4"
+    return T.bg0 === "#FAFAF7"
       ? "0 1px 2px rgba(15,23,42,0.05)"
       : "0 1px 2px rgba(0,0,0,0.12)";
   },

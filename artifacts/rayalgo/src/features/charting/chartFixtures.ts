@@ -145,7 +145,7 @@ const buildFixtureMarkers = (bars: MarketBar[], seed: number): ChartMarker[] => 
       barIndex,
       position: bullish ? "belowBar" : "aboveBar",
       shape: bullish ? "arrowUp" : "arrowDown",
-      color: bullish ? "#10b981" : "#ef4444",
+      color: bullish ? "#4FB286" : "#D77470",
       text: index % 2 === 0 ? "S" : "",
       size: 1.1,
     });

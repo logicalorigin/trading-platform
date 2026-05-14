@@ -4921,9 +4921,9 @@ const buildIndicatorEventOverlays = (
         left: clampedLeft,
         top: clampedTop,
         text,
-        background: (meta.background as string | undefined) || "#111827",
-        borderColor: (meta.borderColor as string | undefined) || "#9ca3af",
-        textColor: (meta.textColor as string | undefined) || "#ffffff",
+        background: (meta.background as string | undefined) || "#1E1D22",
+        borderColor: (meta.borderColor as string | undefined) || "#86837D",
+        textColor: (meta.textColor as string | undefined) || "#F2EFE9",
         placement,
         arrow: meta.arrow as IndicatorBadgeOverlay["arrow"] | undefined,
         variant,
@@ -10896,7 +10896,7 @@ export const ResearchChartSurface = ({
             maxWidth: dashboardDensity.maxWidth,
             padding: dashboardDensity.padding,
             background: withAlpha("#05070a", "d9"),
-            border: `1px solid ${withAlpha("#9ca3af", "66")}`,
+            border: `1px solid ${withAlpha("#86837D", "66")}`,
             borderRadius: 0,
             boxSizing: "border-box",
             color: "#ffffff",
@@ -10937,12 +10937,12 @@ export const ResearchChartSurface = ({
                     dashboardTier === "micro"
                       ? "transparent"
                       : isTitle
-                        ? withAlpha("#6b7280", "54")
+                        ? withAlpha("#86837D", "54")
                         : "transparent",
                   border: "none",
                   borderLeft:
                     index > 0
-                      ? `1px solid ${withAlpha("#9ca3af", "4d")}`
+                      ? `1px solid ${withAlpha("#86837D", "4d")}`
                       : "none",
                   color: "#ffffff",
                   fontSize: isTitle
@@ -10962,7 +10962,7 @@ export const ResearchChartSurface = ({
                   <span
                     style={{
                       flexShrink: 0,
-                      color: "#9ca3af",
+                      color: "#86837D",
                       fontWeight: 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -10974,7 +10974,7 @@ export const ResearchChartSurface = ({
                 <span
                   style={{
                     minWidth: 0,
-                    color: isSubtitle ? "#cbd5e1" : segmentColor,
+                    color: isSubtitle ? "#B8B4AC" : segmentColor,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                   }}
@@ -10985,7 +10985,7 @@ export const ResearchChartSurface = ({
                   <span
                     style={{
                       minWidth: 0,
-                      color: "#6b7280",
+                      color: "#86837D",
                       fontSize: dashboardDensity.detailSize,
                       fontWeight: 400,
                       overflow: "hidden",

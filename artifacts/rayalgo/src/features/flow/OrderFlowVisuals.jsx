@@ -6,14 +6,14 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const total = totalBuy + totalSell || 1;
   const net = totalBuy - totalSell;
   const segs = [
-    { value: flow.buyXL, color: "#047857" },
-    { value: flow.buyL, color: "#10b981" },
-    { value: flow.buyM, color: "#34d399" },
-    { value: flow.buyS, color: "#6ee7b7" },
-    { value: flow.sellS, color: "#fca5a5" },
-    { value: flow.sellM, color: "#f87171" },
-    { value: flow.sellL, color: "#ef4444" },
-    { value: flow.sellXL, color: "#b91c1c" },
+    { value: flow.buyXL, color: "#1F3A2C" },
+    { value: flow.buyL, color: "#4FB286" },
+    { value: flow.buyM, color: "#6BC498" },
+    { value: flow.buyS, color: "#9FD8B5" },
+    { value: flow.sellS, color: "#EDB7B5" },
+    { value: flow.sellM, color: "#E29592" },
+    { value: flow.sellL, color: "#D77470" },
+    { value: flow.sellXL, color: "#9C4945" },
   ];
 
   const cx = size / 2;

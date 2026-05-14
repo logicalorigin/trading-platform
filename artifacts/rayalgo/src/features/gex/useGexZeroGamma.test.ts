@@ -76,11 +76,11 @@ test("zero-gamma reference line uses a right-axis chart label", () => {
   assert.equal(line?.title, GEX_ZERO_GAMMA_LABEL);
   assert.equal(line?.axisLabelVisible, true);
   assert.equal(line?.lineWidth, 1);
-  assert.equal(line?.color, "#06b6d4");
+  assert.equal(line?.color, "#6FB5C2");
 });
 
 test("stale zero-gamma line blends toward the chart surface", () => {
-  assert.equal(blendGexOverlayColor("#06b6d4", "#0d1117", 0.5), "#0a6476");
+  assert.equal(blendGexOverlayColor("#6FB5C2", "#1E1D22", 0.5), "#476972");
 });
 
 test("GEX zero-gamma hook shares the GEX screen query cache key", () => {

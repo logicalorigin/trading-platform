@@ -14,9 +14,9 @@ export const GEX_ZERO_GAMMA_STALE_MS = 15 * 60_000;
 export const GEX_ZERO_GAMMA_LABEL = "γ flip";
 
 const GEX_ZERO_GAMMA_TOKEN = "--ra-gex-zero-gamma";
-const GEX_ZERO_GAMMA_FALLBACK = "#06b6d4";
+const GEX_ZERO_GAMMA_FALLBACK = "#6FB5C2";
 const GEX_ZERO_GAMMA_STALE_BLEND_TOKEN = "--ra-surface-1";
-const GEX_ZERO_GAMMA_STALE_BLEND_FALLBACK = "#0d1117";
+const GEX_ZERO_GAMMA_STALE_BLEND_FALLBACK = "#1E1D22";
 const THEME_ATTRIBUTE_FILTER = [
   "data-rayalgo-theme",
   "data-rayalgo-color-mode",

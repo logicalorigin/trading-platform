@@ -227,18 +227,18 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   showTodayOpen: true,
   showPriorWeekHigh: true,
   showPriorWeekLow: true,
-  bullColor: "#00bcd4",
-  bearColor: "#e91e63",
-  orderBlockBullColor: "#00bcd433",
-  orderBlockBearColor: "#e91e6333",
-  supportZoneColor: "#00bcd440",
-  resistanceZoneColor: "#e91e6340",
-  keyLevelHighColor: "#ef5350",
-  keyLevelLowColor: "#26a69a",
-  keyLevelCloseColor: "#9ca3af",
-  keyLevelOpenColor: "#facc15",
-  shadowColor: "#787b86e6",
-  filteredCandleColor: "#787b86",
+  bullColor: "#6FB5C2",
+  bearColor: "#D9849B",
+  orderBlockBullColor: "#6FB5C233",
+  orderBlockBearColor: "#D9849B33",
+  supportZoneColor: "#6FB5C240",
+  resistanceZoneColor: "#D9849B40",
+  keyLevelHighColor: "#D77470",
+  keyLevelLowColor: "#4FB286",
+  keyLevelCloseColor: "#86837D",
+  keyLevelOpenColor: "#EBCB9C",
+  shadowColor: "#605C57E6",
+  filteredCandleColor: "#605C57",
   showLondonSession: false,
   showNewYorkSession: false,
   showTokyoSession: false,
@@ -247,9 +247,9 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   showLastBarOnly: false,
   plotOverrides: {},
 };
-const REACTION_COLOR = "#facc15";
-const STOP_LOSS_COLOR = "#ef4444";
-const TAKE_PROFIT_COLOR = "#22c55e";
+const REACTION_COLOR = "#EBCB9C";
+const STOP_LOSS_COLOR = "#D77470";
+const TAKE_PROFIT_COLOR = "#4FB286";
 const TREND_REVERSAL_LINE_STYLE = "dashed";
 const TP_SL_LINE_STYLE = "dashed";
 export const RAY_REPLICA_TIME_HORIZON_OPTIONS = [2, 4, 6, 8, 10, 15, 20] as const;
@@ -2371,10 +2371,10 @@ const SESSION_WINDOW_COLORS: Record<
   "london" | "new_york" | "tokyo" | "sydney",
   { fill: string; border: string }
 > = {
-  london: { fill: "#60a5fa14", border: "#60a5fa3d" },
-  new_york: { fill: "#34d39914", border: "#34d3993d" },
-  tokyo: { fill: "#a78bfa14", border: "#a78bfa3d" },
-  sydney: { fill: "#f59e0b14", border: "#f59e0b3d" },
+  london: { fill: "#7CA7D914", border: "#7CA7D93D" },
+  new_york: { fill: "#6BC49814", border: "#6BC4983D" },
+  tokyo: { fill: "#B7A4DC14", border: "#B7A4DC3D" },
+  sydney: { fill: "#D9A86414", border: "#D9A8643D" },
 };
 
 const buildSessionDisplayWindows = (
@@ -2811,8 +2811,8 @@ export function createRayReplicaPineRuntimeAdapter(
                     placement: "above",
                     arrow: "down",
                     price: bar.h,
-                    background: withHexAlpha("#6b7280", "cc"),
-                    borderColor: withHexAlpha("#6b7280", "f2"),
+                    background: withHexAlpha("#86837D", "cc"),
+                    borderColor: withHexAlpha("#86837D", "f2"),
                     textColor: "#ffffff",
                   },
                 ),
@@ -2850,8 +2850,8 @@ export function createRayReplicaPineRuntimeAdapter(
                     placement: "below",
                     arrow: "up",
                     price: bar.l,
-                    background: withHexAlpha("#6b7280", "cc"),
-                    borderColor: withHexAlpha("#6b7280", "f2"),
+                    background: withHexAlpha("#86837D", "cc"),
+                    borderColor: withHexAlpha("#86837D", "f2"),
                     textColor: "#ffffff",
                   },
                 ),
@@ -2903,7 +2903,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 bottom: Number((pivotResistance - thickness / 2).toFixed(6)),
                 fillColor: resistanceZoneColor,
                 borderColor: withHexAlpha(
-                  resolveSolidHexColor(resistanceZoneColor, "#ef4444"),
+                  resolveSolidHexColor(resistanceZoneColor, "#D77470"),
                   "70",
                 ),
               });
@@ -2931,7 +2931,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 bottom: Number((pivotSupport - thickness / 2).toFixed(6)),
                 fillColor: supportZoneColor,
                 borderColor: withHexAlpha(
-                  resolveSolidHexColor(supportZoneColor, "#22c55e"),
+                  resolveSolidHexColor(supportZoneColor, "#4FB286"),
                   "70",
                 ),
               });
@@ -3427,7 +3427,7 @@ export function createRayReplicaPineRuntimeAdapter(
             index,
             bbUpper[index],
             bbLower[index],
-            withHexAlpha(resolveSolidHexColor(shadowColor, "#787b86"), "18"),
+            withHexAlpha(resolveSolidHexColor(shadowColor, "#605C57"), "18"),
           );
         }
 
@@ -3757,7 +3757,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 label: "SESSION",
                 value: marketSession.label,
                 detail: marketSession.title,
-                color: marketSession.open ? bullColor : "#9ca3af",
+                color: marketSession.open ? bullColor : "#86837D",
               },
             ],
             mtf: mtfConfigs,
@@ -3833,7 +3833,7 @@ export function createRayReplicaPineRuntimeAdapter(
                   bbUpper,
                   {
                     color: withHexAlpha(
-                      resolveSolidHexColor(shadowColor, "#787b86"),
+                      resolveSolidHexColor(shadowColor, "#605C57"),
                       "55",
                     ),
                     lineWidth: 1,
@@ -3847,7 +3847,7 @@ export function createRayReplicaPineRuntimeAdapter(
                   bbLower,
                   {
                     color: withHexAlpha(
-                      resolveSolidHexColor(shadowColor, "#787b86"),
+                      resolveSolidHexColor(shadowColor, "#605C57"),
                       "55",
                     ),
                     lineWidth: 1,

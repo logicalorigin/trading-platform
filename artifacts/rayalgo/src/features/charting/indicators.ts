@@ -394,9 +394,9 @@ const createRsiPlugin = (
           priceLineVisible: false,
           lastValueVisible: false,
         }, paneKey),
-        buildGuideStudy(`${id}-guide-70`, chartBars, 70, paneKey, "#ef444488"),
-        buildGuideStudy(`${id}-guide-50`, chartBars, 50, paneKey, "#94a3b888"),
-        buildGuideStudy(`${id}-guide-30`, chartBars, 30, paneKey, "#10b98188"),
+        buildGuideStudy(`${id}-guide-70`, chartBars, 70, paneKey, "#D7747088"),
+        buildGuideStudy(`${id}-guide-50`, chartBars, 50, paneKey, "#86837D88"),
+        buildGuideStudy(`${id}-guide-30`, chartBars, 30, paneKey, "#4FB28688"),
       ],
     };
   },
@@ -477,29 +477,29 @@ const createMacdPlugin = (
           priceLineVisible: false,
           lastValueVisible: false,
         }, paneKey),
-        buildGuideStudy(`${id}-zero`, chartBars, 0, paneKey, "#94a3b866"),
+        buildGuideStudy(`${id}-zero`, chartBars, 0, paneKey, "#86837D66"),
       ],
     };
   },
 });
 
 export const defaultIndicatorRegistry: IndicatorRegistry = {
-  "ema-21": createEmaPlugin("ema-21", 21, "#60a5fa", 2),
-  "ema-55": createEmaPlugin("ema-55", 55, "#f59e0b", 2),
-  "sma-20": createSmaPlugin("sma-20", 20, "#c084fc", 2),
-  vwap: createVwapPlugin("vwap", "#22d3ee"),
+  "ema-21": createEmaPlugin("ema-21", 21, "#7CA7D9", 2),
+  "ema-55": createEmaPlugin("ema-55", 55, "#D9A864", 2),
+  "sma-20": createSmaPlugin("sma-20", 20, "#B7A4DC", 2),
+  vwap: createVwapPlugin("vwap", "#6FB5C2"),
   "bb-20": createBollingerPlugin("bb-20", 20, 2, {
-    basis: "#94a3b8",
-    upper: "#38bdf8",
-    lower: "#38bdf8",
+    basis: "#86837D",
+    upper: "#7CA7D9",
+    lower: "#7CA7D9",
   }),
-  "rsi-14": createRsiPlugin("rsi-14", 14, "#22c55e"),
-  "atr-14": createAtrPlugin("atr-14", 14, "#f97316"),
+  "rsi-14": createRsiPlugin("rsi-14", 14, "#4FB286"),
+  "atr-14": createAtrPlugin("atr-14", 14, "#DB8C56"),
   "macd-12-26-9": createMacdPlugin("macd-12-26-9", 12, 26, 9, {
-    macd: "#60a5fa",
-    signal: "#f59e0b",
-    positive: "#10b98199",
-    negative: "#ef444499",
+    macd: "#7CA7D9",
+    signal: "#D9A864",
+    positive: "#4FB28699",
+    negative: "#D7747099",
   }),
 };
 

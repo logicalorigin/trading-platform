@@ -117,7 +117,7 @@ export const PositionTreemapPanel = ({
 
   const { theme } = useContext(ThemeContext);
   const isDarkTheme = theme !== "light";
-  const labelFill = isDarkTheme ? "#ffffff" : "#0f172a";
+  const labelFill = isDarkTheme ? "#F2EFE9" : "#19171A";
   const subLabelFill = isDarkTheme ? "rgba(255,255,255,0.85)" : "rgba(15,23,42,0.85)";
 
   return (

@@ -527,7 +527,7 @@ export function RayReplicaSettingsMenu({
     },
     {
       label: "HH / LH / HL / LL swing markers",
-      color: "#6b7280",
+      color: "#86837D",
       detail: "badge markers • tiny labels",
     },
     {
