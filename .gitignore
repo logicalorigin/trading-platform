@@ -49,7 +49,7 @@ Thumbs.db
 .local/
 
 # local agent/tool settings
-.claude/settings.local.json
+.claude/
 
 # local vendored/runtime experiments
 .vendor/

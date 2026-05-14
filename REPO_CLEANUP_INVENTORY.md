@@ -2,6 +2,31 @@
 
 This inventory records the evidence used for the May 6 cleanup pass.
 
+## May 13 App-Wide Audit Follow-Up
+
+- Shadow-equity forward worker findings were intentionally skipped by request.
+- Non-WIP orphan-test candidates were rechecked and kept. The flagged account,
+  backtesting, order-readiness, runtime-diagnostics, IBKR client, platform root,
+  and account-position-row tests all import active modules or assert intentional
+  source-level contracts.
+- Dependency catalog cleanup was completed for shared HTTP/logging/build
+  dependencies used by the API server, IBKR bridge, and backtest worker.
+- Production type-escape cleanup was completed for
+  `artifacts/api-server/src/services/platform.ts` and
+  `artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx`; targeted
+  search now reports no `any`, `as any`, `as unknown as`, or ts-ignore style
+  escapes in those hotspots.
+- Added audit guardrails:
+  `scripts/check-env-example.mjs`, `scripts/check-markdown-paths.mjs`, and
+  `scripts/check-api-codegen-drift.mjs`, wired through root `audit:*` scripts.
+- Current validation passed: `pnpm run typecheck`, `pnpm run audit:guards`,
+  `pnpm run deadcode`, `pnpm run deadcode:prod`,
+  `pnpm --filter @workspace/api-server run test:unit` (457 tests),
+  `pnpm --filter @workspace/rayalgo run test:unit` (676 tests),
+  `pnpm --filter @workspace/api-server run build`,
+  `pnpm --filter @workspace/rayalgo run build`, `pnpm install --lockfile-only
+  --ignore-scripts`, and `git diff --check`.
+
 ## Baseline
 
 - Working tree started clean at `3382353 Recover May 6 worktree changes`.
@@ -20,8 +45,8 @@ This inventory records the evidence used for the May 6 cleanup pass.
 - `artifacts/ibgateway-bridge-windows-current.tar.gz`: externalized. The API route still serves a local copy when present, but otherwise redirects to `IBKR_BRIDGE_BUNDLE_URL` or `RAYALGO_IBKR_BRIDGE_BUNDLE_URL`. The removed tracked bundle was 1,542,958 bytes with SHA-256 `29a82d80c27f476c462f0d8de11d54084e5eaa851bbf47b8f734b752d8698a91`.
 - Pine script data under `artifacts/api-server/data/**`: kept. It is loaded by the Pine script service at runtime.
 - Chart hydration cleanup: preserved a recovered low-risk lifecycle fix that clears chart hydration scope state on unmount, plus a unit test and richer memory-soak diagnostics.
-- Unit test commands: replaced long inline package scripts with package-local `scripts/runUnitTests.mjs` manifests that preserve the same test files.
-- RayAlgo dev-port wrapper: removed `artifacts/rayalgo/scripts/reapDevPort.mjs`; it only imported the root `scripts/reap-dev-port.mjs`, and the package script already calls the root helper directly.
+- Unit test commands: replaced long inline package scripts with package-local manifests (`artifacts/api-server/scripts/runUnitTests.mjs` and `artifacts/rayalgo/scripts/runUnitTests.mjs`) that preserve the same test files.
+- RayAlgo dev-port wrapper: removed the obsolete package-local wrapper; it only imported the root `scripts/reap-dev-port.mjs`, and the package script already calls the root helper directly.
 - Retained May handoffs: kept only May 6 recovery notes. Some may reference older handoff files removed from the repo root; current recovery should start from `SESSION_HANDOFF_MASTER.md` plus the retained May 6 handoffs.
 - Oversized live modules: inventoried but not refactored in this cleanup pass. The largest retained source files are active research/charting/platform modules and generated API clients.
 - Flow snapshot queue refresh control: preserved and committed before deeper cleanup. `GET /flow/events` supports `queueRefresh=false` so nonblocking broad scanner reads can avoid enqueueing deep scans.
@@ -32,7 +57,7 @@ The following dirty or untracked work is protected WIP, not cleanup debt. Do not
 
 - Polygon premium-distribution API/spec/client work: `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/**`, `lib/api-zod/src/generated/**`, `artifacts/api-server/src/providers/polygon/market-data.ts`, `artifacts/api-server/src/providers/polygon/market-data.test.ts`, `artifacts/api-server/src/routes/platform.ts`, and `artifacts/api-server/src/services/platform.ts`.
 - Premium/order-intent work: `artifacts/api-server/src/services/option-order-intent.ts` and `lib/ibkr-contracts/src/client.ts`.
-- Chart/flow recovered WIP: `artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts`, `artifacts/rayalgo/src/features/flow/flowTapeColumns.js`, and `artifacts/rayalgo/src/features/flow/flowTapeColumns.test.js`.
+- Chart/flow recovered WIP: `artifacts/rayalgo/src/features/flow/flowTapeColumns.js` and `artifacts/rayalgo/src/features/flow/flowTapeColumns.test.js`.
 - Flow scanner/platform recovery work currently in the tree, including `artifacts/rayalgo/src/screens/FlowScreen.jsx`, should remain isolated from chart cleanup commits.
 
 Mini-chart premium flow currently comes from broad scanner flow events. The Polygon premium-distribution endpoint/client work above is a separate in-flight backend surface and should not be wired into mini charts without an explicit product decision.
@@ -60,7 +85,7 @@ Current diagnostic status for this boundary pass:
 
 - `pnpm --filter @workspace/rayalgo run typecheck`: passed.
 - `pnpm --filter @workspace/api-server run typecheck`: passed.
-- `pnpm run deadcode`: fails on protected WIP file `artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts`.
+- `pnpm run deadcode`: was diagnostic only while protected chart/flow WIP was present. Re-run current dead-code checks before relying on this older cleanup boundary.
 
 Do not claim full repo health until that WIP is completed, removed, or intentionally excluded from the relevant checks.
 
@@ -69,7 +94,7 @@ Do not claim full repo health until that WIP is completed, removed, or intention
 - Passed: `pnpm run deadcode`, `pnpm run deadcode:prod`, `pnpm run typecheck`.
 - Passed: `pnpm --filter @workspace/api-server run test:unit` (305 tests) and `pnpm --filter @workspace/rayalgo run test:unit` (404 tests).
 - Passed: API server build, RayAlgo production build with `PORT=18747 BASE_PATH=/`, and Playwright test discovery.
-- Known browser gate failure: `pnpm --filter @workspace/rayalgo run test:e2e:replit` launched Chromium but failed existing Flow/Market/Trade UI specs. A focused rerun of `e2e/flow-layout.spec.ts:478` and `e2e/market-premium-flow.spec.ts:228` still failed after rejecting the unrelated queue-refresh work, so those failures were not kept in this cleanup diff.
+- Known browser gate failure: `pnpm --filter @workspace/rayalgo run test:e2e:replit` launched Chromium but failed existing Flow/Market/Trade UI specs. A focused rerun of `artifacts/rayalgo/e2e/flow-layout.spec.ts:478` and `artifacts/rayalgo/e2e/market-premium-flow.spec.ts:228` still failed after rejecting the unrelated queue-refresh work, so those failures were not kept in this cleanup diff.
 
 ## Follow-Up Candidates
 
