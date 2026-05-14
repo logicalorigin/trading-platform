@@ -453,7 +453,7 @@ export const MarketScreen = ({
   const stackActivityPanel =
     showMarketActivityPanel &&
     marketWorkspaceWidth > 0 &&
-    marketWorkspaceWidth < activityPanelWidth + dim(760) + dim(24);
+    marketWorkspaceWidth < activityPanelWidth + dim(740) + dim(24);
   const marketActivityLayout = showMarketActivityPanel
     ? stackActivityPanel
       ? "stacked"
@@ -643,7 +643,7 @@ export const MarketScreen = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "20px 28px"),
+          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "16px 20px"),
           display: "flex",
           flexDirection: "column",
           gap: sp(12),

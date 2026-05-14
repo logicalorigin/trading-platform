@@ -570,12 +570,12 @@ test("Market startup resolves nested light theme before React mounts", async ({
   ).toBe("light");
   await expect
     .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
-    .toBe("rgb(245, 245, 244)");
+    .toBe("rgb(250, 250, 247)");
   const fallback = page.getByTestId("app-loading-fallback");
   await expect(fallback).toBeVisible();
   await expect(fallback).toHaveAttribute("data-theme", "light");
   expect(await fallback.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
-    "rgb(245, 245, 244)",
+    "rgb(250, 250, 247)",
   );
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
   await expect
@@ -613,10 +613,10 @@ test("Market chart frames render signal colors and extended-session shading", as
   const sellFrame = page.getByTestId("market-mini-chart-1");
   await expect(buyFrame).toHaveAttribute("data-signal-frame-active", "true");
   await expect(buyFrame).toHaveAttribute("data-signal-direction", "buy");
-  await expect(buyFrame).toHaveAttribute("data-signal-frame-color", "#3b82f6");
+  await expect(buyFrame).toHaveAttribute("data-signal-frame-color", "#7CA7D9");
   await expect(sellFrame).toHaveAttribute("data-signal-frame-active", "true");
   await expect(sellFrame).toHaveAttribute("data-signal-direction", "sell");
-  await expect(sellFrame).toHaveAttribute("data-signal-frame-color", "#ef4444");
+  await expect(sellFrame).toHaveAttribute("data-signal-frame-color", "#D77470");
 
   const buyBorderColor = await buyFrame.evaluate(
     (element) => getComputedStyle(element).borderColor,
@@ -624,8 +624,8 @@ test("Market chart frames render signal colors and extended-session shading", as
   const sellBorderColor = await sellFrame.evaluate(
     (element) => getComputedStyle(element).borderColor,
   );
-  expect(buyBorderColor).toBe("rgb(59, 130, 246)");
-  expect(sellBorderColor).toBe("rgb(239, 68, 68)");
+  expect(buyBorderColor).toBe("rgb(124, 167, 217)");
+  expect(sellBorderColor).toBe("rgb(215, 116, 112)");
 
   const firstSurface = page.getByTestId("market-mini-chart-0-surface");
   const chartSurfaces = page.locator(

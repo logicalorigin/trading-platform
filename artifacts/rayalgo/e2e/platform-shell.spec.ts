@@ -1256,7 +1256,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
 
   await openScreen(page, "Algo", "algo");
   await expect(page.getByTestId("algo-screen")).toBeVisible();
-  await expect(page.getByText("Execution Control Plane")).toBeVisible();
+  await expect(page.getByTestId("algo-primary-tabs")).toBeVisible();
   await expect(page.getByText("No promoted draft strategies").first()).toBeVisible();
 
   await openScreen(page, "Backtest", "backtest");

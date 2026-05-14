@@ -390,7 +390,7 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
     "data-chart-flow-event-day",
     /^\d{4}-\d{2}-\d{2}$/,
   );
-  await expect(spyMarker).toHaveCSS("color", "rgb(16, 185, 129)");
+  await expect(spyMarker).toHaveCSS("color", "rgb(79, 178, 134)");
   await spyMarker.hover();
   const spyTooltip = page.getByTestId("market-mini-chart-0-surface-flow-tooltip");
   await expect(spyTooltip).toBeVisible();
@@ -424,7 +424,7 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
     "data-chart-flow-marker-basis",
     "confirmed_trade",
   );
-  await expect(qqqMarker).toHaveCSS("color", "rgb(239, 68, 68)");
+  await expect(qqqMarker).toHaveCSS("color", "rgb(215, 116, 112)");
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(2);
 });
