@@ -5,8 +5,6 @@ import test from "node:test";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 
 process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
-const previousLocalDatabaseUrl = process.env["LOCAL_DATABASE_URL"];
-delete process.env["LOCAL_DATABASE_URL"];
 process.env["DB_CONNECTION_TIMEOUT_MS"] = "50";
 process.env["DB_QUERY_TIMEOUT_MS"] = "50";
 process.env["DB_STATEMENT_TIMEOUT_MS"] = "50";
@@ -64,11 +62,6 @@ test.after(() => {
   } else {
     process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] =
       previousRuntimeOverrideFile;
-  }
-  if (previousLocalDatabaseUrl === undefined) {
-    delete process.env["LOCAL_DATABASE_URL"];
-  } else {
-    process.env["LOCAL_DATABASE_URL"] = previousLocalDatabaseUrl;
   }
 });
 

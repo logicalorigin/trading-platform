@@ -19,6 +19,11 @@ export type SignalOptionsExecutionProfile = {
     maxDailyLoss: number;
   };
   entryGate: {
+    mtfAlignment: {
+      enabled: boolean;
+      requiredCount: number;
+    };
+    blockedPutSymbols: string[];
     bearishRegime: {
       enabled: boolean;
       minAdx: number;
@@ -66,6 +71,22 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       maxDailyLoss: 1_000,
     },
     entryGate: {
+      mtfAlignment: {
+        enabled: true,
+        requiredCount: 2,
+      },
+      blockedPutSymbols: [
+        "SQQQ",
+        "SH",
+        "PSQ",
+        "DOG",
+        "SDS",
+        "QID",
+        "TWM",
+        "SPXU",
+        "SDOW",
+        "TZA",
+      ],
       bearishRegime: {
         enabled: true,
         minAdx: 25,
@@ -84,10 +105,10 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       chaseSteps: [0, 0.35, 0.65, 0.9],
     },
     exitPolicy: {
-      hardStopPct: -50,
-      trailActivationPct: 150,
-      minLockedGainPct: 25,
-      trailGivebackPct: 45,
+      hardStopPct: -40,
+      trailActivationPct: 40,
+      minLockedGainPct: 10,
+      trailGivebackPct: 25,
       tightenAtFiveXGivebackPct: 35,
       tightenAtTenXGivebackPct: 25,
       flipOnOppositeSignal: true,
@@ -136,6 +157,17 @@ function chaseSteps(value: unknown, fallback: number[]) {
   return steps.length ? Array.from(new Set(steps)).sort((a, b) => a - b) : fallback;
 }
 
+function symbolList(value: unknown, fallback: string[]) {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  const symbols = value
+    .map((symbol) => String(symbol).trim().toUpperCase())
+    .filter(Boolean);
+  return symbols.length ? Array.from(new Set(symbols)).sort() : fallback;
+}
+
 export function resolveSignalOptionsExecutionProfile(
   input: unknown,
 ): SignalOptionsExecutionProfile {
@@ -153,6 +185,7 @@ export function resolveSignalOptionsExecutionProfile(
   const optionSelection = asRecord(root.optionSelection);
   const riskCaps = asRecord(root.riskCaps);
   const entryGate = asRecord(root.entryGate);
+  const mtfAlignment = asRecord(entryGate.mtfAlignment ?? root.mtfAlignment);
   const bearishRegime = asRecord(
     entryGate.bearishRegime ?? root.bearishRegime,
   );
@@ -224,6 +257,22 @@ export function resolveSignalOptionsExecutionProfile(
       ),
     },
     entryGate: {
+      mtfAlignment: {
+        enabled: booleanValue(
+          mtfAlignment.enabled ?? root.mtfAlignmentEnabled,
+          defaults.entryGate.mtfAlignment.enabled,
+        ),
+        requiredCount: finiteInteger(
+          mtfAlignment.requiredCount ?? root.mtfAlignmentRequiredCount,
+          defaults.entryGate.mtfAlignment.requiredCount,
+          1,
+          3,
+        ),
+      },
+      blockedPutSymbols: symbolList(
+        entryGate.blockedPutSymbols ?? root.blockedPutSymbols,
+        defaults.entryGate.blockedPutSymbols,
+      ),
       bearishRegime: {
         enabled: booleanValue(
           bearishRegime.enabled ?? root.bearishRegimeEnabled,

@@ -9,8 +9,10 @@ import {
   type RayReplicaBar,
   type RayReplicaSignalEvent,
 } from "@workspace/rayreplica-core";
+import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   db,
+  executionEventsTable,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
   shadowFillsTable,
@@ -60,6 +62,8 @@ const OPTION_FIXED_COMMISSION_PER_CONTRACT = 0.65;
 const OPTION_ORF_PER_CONTRACT = 0.02295;
 const WATCHLIST_BACKTEST_SOURCE = "watchlist_backtest";
 const WATCHLIST_BACKTEST_MARK_SOURCE = "watchlist_backtest_mark";
+export const SIGNAL_OPTIONS_REPLAY_SOURCE = "signal_options_replay";
+export const SIGNAL_OPTIONS_REPLAY_MARK_SOURCE = "signal_options_replay_mark";
 const WATCHLIST_BACKTEST_TIMEFRAME_MS: Record<ShadowWatchlistBacktestTimeframe, number> = {
   "1m": 60_000,
   "5m": 5 * 60_000,
@@ -91,6 +95,9 @@ const WATCHLIST_BACKTEST_SCALE_DOWN_FRACTION = 0.5;
 const WATCHLIST_BACKTEST_FIXED_REGIME_BARS = 12;
 const SHADOW_ORDER_HISTORY_LIMIT = 5_000;
 const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
+const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
+const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
+const SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS = 1_000;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 
@@ -101,14 +108,20 @@ const shadowAccountDbBackoff = createTransientPostgresBackoff({
 type OrderTab = "working" | "history";
 type ShadowAssetClass = "equity" | "option";
 type ShadowSide = "buy" | "sell";
-type ShadowOrderSource = "manual" | "automation" | "watchlist_backtest";
+type ShadowOrderSource =
+  | "manual"
+  | "automation"
+  | "watchlist_backtest"
+  | "signal_options_replay";
 type ShadowOptionContract = NonNullable<PlaceOrderInput["optionContract"]>;
+type ShadowBenchmarkBars = Awaited<ReturnType<typeof getBars>>["bars"];
 type ShadowOrderInput = Omit<PlaceOrderInput, "accountId" | "mode"> & {
   accountId?: string | null;
   mode?: RuntimeMode;
   source?: ShadowOrderSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;
+  positionKey?: string | null;
   requestedFillPrice?: number | null;
   payload?: Record<string, unknown>;
   placedAt?: Date | null;
@@ -299,9 +312,116 @@ let shadowFreshStateCache:
     }
   | null = null;
 let shadowFreshStateInFlight: Promise<ShadowTotals> | null = null;
+let shadowFreshStateCacheVersion = 0;
+let shadowPositionMarkRefreshInFlight:
+  | Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
+  | null = null;
+const SHADOW_READ_CACHE_TTL_MS = 2_500;
+const shadowReadCache = new Map<string, { expiresAt: number; value: unknown }>();
+const shadowReadInFlight = new Map<string, Promise<unknown>>();
+let shadowReadCacheVersion = 0;
+const shadowBenchmarkBarsCache = new Map<
+  string,
+  { expiresAt: number; bars: ShadowBenchmarkBars }
+>();
+const shadowBenchmarkBarsInFlight = new Map<
+  string,
+  Promise<ShadowBenchmarkBars | null>
+>();
 
 function invalidateShadowFreshStateCache() {
   shadowFreshStateCache = null;
+  shadowFreshStateInFlight = null;
+  shadowFreshStateCacheVersion += 1;
+  shadowReadCache.clear();
+  shadowReadInFlight.clear();
+  shadowReadCacheVersion += 1;
+}
+
+function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
+  shadowFreshStateCache = null;
+  shadowFreshStateCacheVersion += 1;
+  shadowReadCache.clear();
+  shadowReadCacheVersion += 1;
+}
+
+async function withShadowReadCache<T>(
+  key: string,
+  factory: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const cached = shadowReadCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value as T;
+  }
+  const inFlight = shadowReadInFlight.get(key);
+  if (inFlight) {
+    return inFlight as Promise<T>;
+  }
+  const version = shadowReadCacheVersion;
+  const request = factory()
+    .then((value) => {
+      if (version === shadowReadCacheVersion) {
+        shadowReadCache.set(key, {
+          value,
+          expiresAt: Date.now() + SHADOW_READ_CACHE_TTL_MS,
+        });
+      }
+      return value;
+    })
+    .finally(() => {
+      if (shadowReadInFlight.get(key) === request) {
+        shadowReadInFlight.delete(key);
+      }
+    });
+  shadowReadInFlight.set(key, request);
+  return request;
+}
+
+function trackShadowFreshStateRefresh(
+  request: Promise<ShadowTotals>,
+  version = shadowFreshStateCacheVersion,
+) {
+  const trackedRequest = request
+    .then((totals) => {
+      if (version === shadowFreshStateCacheVersion) {
+        shadowFreshStateCache = {
+          totals,
+          expiresAt: Date.now() + SHADOW_STATE_REFRESH_TTL_MS,
+        };
+      }
+      return totals;
+    })
+    .finally(() => {
+      if (shadowFreshStateInFlight === trackedRequest) {
+        shadowFreshStateInFlight = null;
+      }
+    });
+  shadowFreshStateInFlight = trackedRequest;
+  return trackedRequest;
+}
+
+function kickShadowPositionMarkRefresh() {
+  if (shadowPositionMarkRefreshInFlight) {
+    return shadowPositionMarkRefreshInFlight;
+  }
+
+  shadowPositionMarkRefreshInFlight = refreshShadowPositionMarks()
+    .then((result) => {
+      if (result.updatedCount > 0) {
+        invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+      }
+      return result;
+    })
+    .catch((error) => {
+      logger.debug?.({ err: error }, "Shadow mark refresh failed");
+      return { updatedCount: 0 };
+    })
+    .finally(() => {
+      shadowPositionMarkRefreshInFlight = null;
+    });
+
+  return shadowPositionMarkRefreshInFlight;
 }
 
 function toNumber(value: unknown): number | null {
@@ -440,12 +560,101 @@ function isWatchlistBacktestPositionKey(value: unknown): boolean {
   return typeof value === "string" && value.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`);
 }
 
-function shadowSourceType(order?: ShadowOrderRow | null): "manual" | "automation" | "watchlist_backtest" {
+function isSignalOptionsReplayPositionKey(value: unknown): boolean {
+  return typeof value === "string" && value.startsWith(`${SIGNAL_OPTIONS_REPLAY_SOURCE}:`);
+}
+
+function isSimulationShadowOrderSource(source: string | null | undefined): boolean {
+  return source === WATCHLIST_BACKTEST_SOURCE;
+}
+
+function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
+  return !isSimulationShadowOrderSource(order?.source);
+}
+
+function isLiveShadowPosition(position: Pick<ShadowPositionRow, "positionKey">): boolean {
+  return !isWatchlistBacktestPositionKey(position.positionKey);
+}
+
+function positionMatchesShadowSource(
+  position: Pick<ShadowPositionRow, "positionKey">,
+  source: string,
+): boolean {
+  if (source === WATCHLIST_BACKTEST_SOURCE) {
+    return isWatchlistBacktestPositionKey(position.positionKey);
+  }
+  if (source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return isSignalOptionsReplayPositionKey(position.positionKey);
+  }
+  return (
+    !isWatchlistBacktestPositionKey(position.positionKey) &&
+    !isSignalOptionsReplayPositionKey(position.positionKey)
+  );
+}
+
+function shadowMarkSnapshotSourceForPosition(
+  position: Pick<ShadowPositionRow, "positionKey">,
+) {
+  if (isWatchlistBacktestPositionKey(position.positionKey)) {
+    return WATCHLIST_BACKTEST_MARK_SOURCE;
+  }
+  if (isSignalOptionsReplayPositionKey(position.positionKey)) {
+    return SIGNAL_OPTIONS_REPLAY_MARK_SOURCE;
+  }
+  return "mark";
+}
+
+function withCurrentOpenPositionTerminalTimestamp(
+  totals: ShadowTotals,
+  openPositionCount: number,
+  now = new Date(),
+): ShadowTotals {
+  if (openPositionCount <= 0 || totals.updatedAt.getTime() >= now.getTime()) {
+    return totals;
+  }
+  return {
+    ...totals,
+    updatedAt: now,
+  };
+}
+
+type ShadowAttributionSource =
+  | "manual"
+  | "automation"
+  | "watchlist_backtest"
+  | "signal_options_replay";
+
+type ShadowSourceScope = ShadowAttributionSource;
+
+function normalizeShadowSourceScope(source: string | null | undefined): ShadowSourceScope | null {
+  if (
+    source === "manual" ||
+    source === "automation" ||
+    source === WATCHLIST_BACKTEST_SOURCE ||
+    source === SIGNAL_OPTIONS_REPLAY_SOURCE
+  ) {
+    return source;
+  }
+  return null;
+}
+
+function shadowSourceCacheKey(source: string | null | undefined) {
+  return normalizeShadowSourceScope(source) ?? "live";
+}
+
+function isAutomatedShadowSource(source: ShadowOrderSource | null | undefined) {
+  return source === "automation" || source === SIGNAL_OPTIONS_REPLAY_SOURCE;
+}
+
+function shadowSourceType(order?: ShadowOrderRow | null): ShadowAttributionSource {
   if (order?.source === "automation") {
     return "automation";
   }
   if (order?.source === WATCHLIST_BACKTEST_SOURCE) {
     return WATCHLIST_BACKTEST_SOURCE;
+  }
+  if (order?.source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
   }
   return "manual";
 }
@@ -456,6 +665,9 @@ function shadowSourceLabel(sourceType: string, fallback: string | null = null) {
   }
   if (sourceType === WATCHLIST_BACKTEST_SOURCE) {
     return "Watchlist Backtest";
+  }
+  if (sourceType === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return "Options Backtest";
   }
   return fallback;
 }
@@ -488,10 +700,47 @@ function shadowSourceMetadata(order?: ShadowOrderRow | null) {
     deploymentName,
     sourceEventId: order?.sourceEventId ?? null,
     attributionStatus:
-      candidateId || sourceType === "automation" || sourceType === WATCHLIST_BACKTEST_SOURCE
+      candidateId ||
+      sourceType === "automation" ||
+      sourceType === WATCHLIST_BACKTEST_SOURCE ||
+      sourceType === SIGNAL_OPTIONS_REPLAY_SOURCE
         ? "attributed"
         : "unknown",
   };
+}
+
+function shadowPayloadPositionKey(payload: unknown): string | null {
+  const payloadRecord = readRecord(payload) ?? {};
+  const metadata = readRecord(payloadRecord.metadata) ?? {};
+  const position = readRecord(payloadRecord.position) ?? {};
+  return (
+    readString(metadata.positionKey) ??
+    readString(payloadRecord.positionKey) ??
+    readString(position.positionKey)
+  );
+}
+
+function shadowPositionKeyForOrder(order?: ShadowOrderRow | null): string | null {
+  if (!order) {
+    return null;
+  }
+  const payloadKey = shadowPayloadPositionKey(order.payload);
+  if (payloadKey) {
+    return payloadKey;
+  }
+  return positionKey({
+    symbol: order.symbol,
+    assetClass: order.assetClass === "option" ? "option" : "equity",
+    optionContract: asOptionContract(order.optionContract),
+  });
+}
+
+function shadowPositionKeysForOrders(orders: Array<ShadowOrderRow | undefined>) {
+  return new Set(
+    orders
+      .map((order) => shadowPositionKeyForOrder(order))
+      .filter((key): key is string => Boolean(key)),
+  );
 }
 
 function buildPositionSourceAttribution(
@@ -502,7 +751,7 @@ function buildPositionSourceAttribution(
   const buckets = new Map<
     string,
     {
-      sourceType: "manual" | "automation" | "watchlist_backtest";
+      sourceType: ShadowAttributionSource;
       strategyLabel: string | null;
       candidateId: string | null;
       deploymentId: string | null;
@@ -533,7 +782,8 @@ function buildPositionSourceAttribution(
       const metadata = shadowSourceMetadata(order);
       const sourceType =
         metadata.sourceType === "automation" ||
-        metadata.sourceType === WATCHLIST_BACKTEST_SOURCE
+        metadata.sourceType === WATCHLIST_BACKTEST_SOURCE ||
+        metadata.sourceType === SIGNAL_OPTIONS_REPLAY_SOURCE
           ? metadata.sourceType
           : "manual";
       const bucketKey = [
@@ -583,6 +833,8 @@ function buildPositionSourceAttribution(
         ? attribution[0]?.strategyLabel ?? "Signal Options"
         : sourceType === WATCHLIST_BACKTEST_SOURCE
           ? attribution[0]?.strategyLabel ?? "Watchlist Backtest"
+        : sourceType === SIGNAL_OPTIONS_REPLAY_SOURCE
+          ? attribution[0]?.strategyLabel ?? "Options Backtest"
         : sourceType === "mixed"
           ? "Mixed"
           : null,
@@ -645,6 +897,13 @@ function optionPayload(value: ShadowOptionContract | null | undefined) {
         providerContractId: value.providerContractId ?? null,
       }
     : null;
+}
+
+function isExpiredOptionContractForShadowClose(
+  contract: ShadowOptionContract,
+  now = new Date(),
+) {
+  return optionDateKey(contract.expirationDate) <= optionDateKey(now);
 }
 
 export function computeShadowOrderFees(input: {
@@ -730,13 +989,69 @@ async function readOpenShadowPositions(): Promise<ShadowPositionRow[]> {
     .orderBy(desc(shadowPositionsTable.updatedAt));
 }
 
-async function computeShadowTotals(): Promise<ShadowTotals> {
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const positions = await readOpenShadowPositions();
-  const cash = toNumber(account.cash) ?? SHADOW_STARTING_BALANCE;
+async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
+  return (await readOpenShadowPositions()).filter(isLiveShadowPosition);
+}
+
+async function readShadowOrdersByFillOrderId(
+  fills: Pick<ShadowFillRow, "orderId">[],
+): Promise<Map<string, ShadowOrderRow>> {
+  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
+  const orders = orderIds.length
+    ? await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(inArray(shadowOrdersTable.id, orderIds))
+    : [];
+  return new Map(orders.map((order) => [order.id, order]));
+}
+
+async function readShadowFillsWithOrders() {
+  const fills = await db
+    .select()
+    .from(shadowFillsTable)
+    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
+  return {
+    fills,
+    ordersById: await readShadowOrdersByFillOrderId(fills),
+  };
+}
+
+function latestShadowTotalsDate(
+  account: ShadowAccountRow,
+  positions: ShadowPositionRow[],
+  fills: ShadowFillRow[],
+) {
+  const initial = account.createdAt ?? new Date();
+  const fromPositions = positions.reduce(
+    (latest, position) => {
+      const candidate = position.updatedAt ?? position.asOf;
+      return candidate && candidate > latest ? candidate : latest;
+    },
+    initial,
+  );
+  return fills.reduce(
+    (latest, fill) => (fill.occurredAt && fill.occurredAt > latest ? fill.occurredAt : latest),
+    fromPositions,
+  );
+}
+
+function buildShadowTotalsFromLedger(input: {
+  account: ShadowAccountRow;
+  fills: ShadowFillRow[];
+  positions: ShadowPositionRow[];
+}): ShadowTotals {
+  const { account, fills, positions } = input;
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  const realizedPnl = toNumber(account.realizedPnl) ?? 0;
-  const fees = toNumber(account.fees) ?? 0;
+  const cash = fills.reduce(
+    (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
+    startingBalance,
+  );
+  const realizedPnl = fills.reduce(
+    (sum, fill) => sum + (toNumber(fill.realizedPnl) ?? 0),
+    0,
+  );
+  const fees = fills.reduce((sum, fill) => sum + (toNumber(fill.fees) ?? 0), 0);
   const marketValue = positions.reduce(
     (sum, position) => sum + (toNumber(position.marketValue) ?? 0),
     0,
@@ -744,11 +1059,6 @@ async function computeShadowTotals(): Promise<ShadowTotals> {
   const unrealizedPnl = positions.reduce(
     (sum, position) => sum + (toNumber(position.unrealizedPnl) ?? 0),
     0,
-  );
-  const updatedAt = positions.reduce(
-    (latest, position) =>
-      position.updatedAt && position.updatedAt > latest ? position.updatedAt : latest,
-    account.updatedAt ?? new Date(),
   );
   return {
     cash,
@@ -758,35 +1068,56 @@ async function computeShadowTotals(): Promise<ShadowTotals> {
     fees,
     marketValue,
     netLiquidation: cash + marketValue,
-    updatedAt,
+    updatedAt: latestShadowTotalsDate(account, positions, fills),
   };
+}
+
+async function computeShadowTotalsForSource(
+  source: string | null,
+  options: {
+    useCurrentTimestampForOpenPositions?: boolean;
+    now?: Date;
+  } = {},
+): Promise<ShadowTotals> {
+  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
+  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const selectedFills = source
+    ? fills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
+  const selectedPositionKeys = source
+    ? shadowPositionKeysForOrders(
+        selectedFills.map((fill) => ordersById.get(fill.orderId)),
+      )
+    : null;
+  const positions = (await readOpenShadowPositions()).filter((position) =>
+    source ? selectedPositionKeys!.has(position.positionKey) : isLiveShadowPosition(position),
+  );
+  const totals = buildShadowTotalsFromLedger({
+    account,
+    fills: selectedFills,
+    positions,
+  });
+  return options.useCurrentTimestampForOpenPositions
+    ? withCurrentOpenPositionTerminalTimestamp(
+        totals,
+        positions.length,
+        options.now,
+      )
+    : totals;
+}
+
+async function computeShadowTotals(): Promise<ShadowTotals> {
+  return computeShadowTotalsForSource(null);
 }
 
 async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktestStartingBook> {
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
   const positions = (await readOpenShadowPositions()).filter(
-    (position) => !isWatchlistBacktestPositionKey(position.positionKey),
+    isLiveShadowPosition,
   );
-  const fills = await db
-    .select()
-    .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
-  const orderIds = Array.from(
-    new Set(fills.map((fill) => fill.orderId).filter((value): value is string => Boolean(value))),
-  );
-  const orders = orderIds.length
-    ? await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
-  const baselineFills = fills.filter(
-    (fill) =>
-      shadowSourceType(fill.orderId ? ordersById.get(fill.orderId) : null) !==
-      WATCHLIST_BACKTEST_SOURCE,
-  );
+  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const baselineFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const cash = baselineFills.reduce(
     (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
     startingBalance,
@@ -831,30 +1162,26 @@ async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktest
 
 async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) {
   invalidateShadowFreshStateCache();
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const positions = await readOpenShadowPositions();
-  const cash = toNumber(account.cash) ?? SHADOW_STARTING_BALANCE;
-  const realizedPnl = toNumber(account.realizedPnl) ?? 0;
-  const fees = toNumber(account.fees) ?? 0;
-  const marketValue = positions.reduce(
-    (sum, position) => sum + (toNumber(position.marketValue) ?? 0),
-    0,
-  );
-  const unrealizedPnl = positions.reduce(
-    (sum, position) => sum + (toNumber(position.unrealizedPnl) ?? 0),
-    0,
+  const totals = await computeShadowTotalsForSource(
+    source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+      ? SIGNAL_OPTIONS_REPLAY_SOURCE
+      : source === WATCHLIST_BACKTEST_MARK_SOURCE ||
+          source.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`) ||
+          source.startsWith("watchlist_bt:")
+        ? WATCHLIST_BACKTEST_SOURCE
+        : null,
   );
   const [snapshot] = await db
     .insert(shadowBalanceSnapshotsTable)
     .values({
       accountId: SHADOW_ACCOUNT_ID,
       currency: SHADOW_CURRENCY,
-      cash: money(cash),
-      buyingPower: money(cash),
-      netLiquidation: money(cash + marketValue),
-      realizedPnl: money(realizedPnl),
-      unrealizedPnl: money(unrealizedPnl),
-      fees: money(fees),
+      cash: money(totals.cash),
+      buyingPower: money(totals.cash),
+      netLiquidation: money(totals.netLiquidation),
+      realizedPnl: money(totals.realizedPnl),
+      unrealizedPnl: money(totals.unrealizedPnl),
+      fees: money(totals.fees),
       source,
       asOf,
     })
@@ -967,10 +1294,20 @@ async function resolveFillPrice(input: ShadowOrderInput): Promise<{
       });
     }
     const mark = await resolveOptionMark(contract);
+    const explicitLimit = toNumber(input.limitPrice);
     const price =
       input.side === "buy"
         ? mark.ask ?? mark.price ?? toNumber(input.limitPrice)
-        : mark.bid ?? mark.price ?? toNumber(input.limitPrice);
+        : mark.bid ?? mark.price ?? explicitLimit;
+    if (
+      (price == null || price <= 0) &&
+      input.side === "sell" &&
+      explicitLimit != null &&
+      explicitLimit >= 0 &&
+      isExpiredOptionContractForShadowClose(contract)
+    ) {
+      return { price: cents(explicitLimit), markSource: "expired_option_limit" };
+    }
     if (price == null || price <= 0) {
       throw new HttpError(409, "No option quote is available for the Shadow fill.", {
         code: "shadow_option_quote_unavailable",
@@ -1058,7 +1395,13 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
     price: fill.price,
     multiplier,
   });
-  const key = positionKey({
+  const requestedPositionKey =
+    typeof input.positionKey === "string" && input.positionKey.trim()
+      ? input.positionKey.trim()
+      : null;
+  const key = isAutomatedShadowSource(input.source) && requestedPositionKey
+    ? requestedPositionKey
+    : positionKey({
     symbol,
     assetClass: input.assetClass,
     optionContract: asOptionContract(input.optionContract),
@@ -1075,8 +1418,10 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
     .limit(1);
 
   if (input.side === "buy") {
-    const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-    const cash = toNumber(account.cash) ?? SHADOW_STARTING_BALANCE;
+    const totals = await computeShadowTotalsForSource(
+      input.source === SIGNAL_OPTIONS_REPLAY_SOURCE ? SIGNAL_OPTIONS_REPLAY_SOURCE : null,
+    );
+    const cash = totals.cash;
     const cashNeeded = grossAmount + fees;
     if (cashNeeded > cash) {
       throw new HttpError(409, "Shadow account has insufficient cash for this fill.", {
@@ -1123,7 +1468,7 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
 
 export async function previewShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
-  if (normalized.source !== "automation") {
+  if (!isAutomatedShadowSource(normalized.source)) {
     await assertIbkrGatewayTradingAvailable();
   }
   await ensureShadowAccount();
@@ -1162,7 +1507,7 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
 
 export async function placeShadowOrder(input: ShadowOrderInput) {
   const normalized = normalizeShadowOrderInput(input);
-  if (normalized.source !== "automation") {
+  if (!isAutomatedShadowSource(normalized.source)) {
     await assertIbkrGatewayTradingAvailable();
   }
   await ensureShadowAccount();
@@ -1174,6 +1519,20 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       .where(eq(shadowOrdersTable.sourceEventId, normalized.sourceEventId))
       .limit(1);
     if (existing) {
+      if (existing.source !== normalized.source) {
+        const [updated] = await db
+          .update(shadowOrdersTable)
+          .set({
+            source: normalized.source,
+            clientOrderId: normalized.clientOrderId ?? existing.clientOrderId,
+            updatedAt: new Date(),
+          })
+          .where(eq(shadowOrdersTable.id, existing.id))
+          .returning();
+        invalidateShadowFreshStateCache();
+        notifyShadowAccountChanged();
+        return orderRowToResponse(updated);
+      }
       return orderRowToResponse(existing);
     }
   }
@@ -1187,27 +1546,6 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   const symbol = normalizeSymbol(normalized.symbol).toUpperCase();
 
   await db.transaction(async (tx) => {
-    const [account] = await tx
-      .select()
-      .from(shadowAccountsTable)
-      .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID))
-      .limit(1);
-    if (!account) {
-      throw new HttpError(500, "Shadow account is missing.", {
-        code: "shadow_account_missing",
-        expose: true,
-      });
-    }
-
-    const currentCash = toNumber(account.cash) ?? SHADOW_STARTING_BALANCE;
-    const nextCash = currentCash + plan.cashDelta;
-    if (nextCash < -0.000001) {
-      throw new HttpError(409, "Shadow account has insufficient cash for this fill.", {
-        code: "shadow_insufficient_cash",
-        expose: true,
-      });
-    }
-
     await tx.insert(shadowOrdersTable).values({
       id: orderId,
       accountId: SHADOW_ACCOUNT_ID,
@@ -1266,19 +1604,15 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       occurredAt: now,
     });
 
-    await tx
-      .update(shadowAccountsTable)
-      .set({
-        cash: money(nextCash),
-        realizedPnl: money((toNumber(account.realizedPnl) ?? 0) + plan.realizedPnl),
-        fees: money((toNumber(account.fees) ?? 0) + plan.fees),
-        updatedAt: now,
-      })
-      .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID));
+    await recomputeShadowAccountFromLedger(tx, now);
   });
 
   await writeShadowBalanceSnapshot(
-    normalized.source === "automation" ? "automation" : "ledger",
+    normalized.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+      ? SIGNAL_OPTIONS_REPLAY_SOURCE
+      : normalized.source === "automation"
+        ? "automation"
+        : "ledger",
     now,
   );
 
@@ -1458,6 +1792,8 @@ function orderRowToResponse(order: typeof shadowOrdersTable.$inferSelect | undef
         ? "SHADOW_AUTO"
         : order.source === WATCHLIST_BACKTEST_SOURCE
           ? "SHADOW_BACKTEST"
+        : order.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+          ? "SHADOW_OPTIONS_REPLAY"
           : "SHADOW",
     ...metadata,
   };
@@ -1467,7 +1803,7 @@ export async function refreshShadowPositionMarks() {
   await ensureShadowAccount();
   const positions = await readOpenShadowPositions();
   let updatedCount = 0;
-  let latestMarkAt: Date | null = null;
+  const latestMarkAtBySnapshotSource = new Map<string, Date>();
 
   for (const position of positions) {
     const contract = asOptionContract(position.optionContract);
@@ -1507,18 +1843,17 @@ export async function refreshShadowPositionMarks() {
       asOf: mark.asOf,
     });
     updatedCount += 1;
+    const snapshotSource = shadowMarkSnapshotSourceForPosition(position);
+    const latestMarkAt = latestMarkAtBySnapshotSource.get(snapshotSource);
     if (!latestMarkAt || mark.asOf.getTime() > latestMarkAt.getTime()) {
-      latestMarkAt = mark.asOf;
+      latestMarkAtBySnapshotSource.set(snapshotSource, mark.asOf);
     }
   }
 
   if (updatedCount) {
-    await writeShadowBalanceSnapshot(
-      positions.some((position) => isWatchlistBacktestPositionKey(position.positionKey))
-        ? WATCHLIST_BACKTEST_MARK_SOURCE
-        : "mark",
-      latestMarkAt ?? new Date(),
-    );
+    for (const [source, latestMarkAt] of latestMarkAtBySnapshotSource) {
+      await writeShadowBalanceSnapshot(source, latestMarkAt);
+    }
   }
 
   return { updatedCount };
@@ -1543,30 +1878,20 @@ async function ensureFreshShadowState(refreshMarks = false) {
       return shadowFreshStateCache.totals;
     }
     if (shadowFreshStateInFlight) {
-      return shadowFreshStateInFlight;
+      return await shadowFreshStateInFlight;
     }
 
-    shadowFreshStateInFlight = (async () => {
-      await refreshShadowPositionMarks().catch((error) => {
-        logger.debug?.({ err: error }, "Shadow mark refresh failed");
-      });
-      const totals = await computeShadowTotals();
-      shadowFreshStateCache = {
-        totals,
-        expiresAt: Date.now() + SHADOW_STATE_REFRESH_TTL_MS,
-      };
-      return totals;
-    })();
+    kickShadowPositionMarkRefresh();
+    const version = shadowFreshStateCacheVersion;
+    const request = computeShadowTotals();
 
-    return await shadowFreshStateInFlight;
+    return await trackShadowFreshStateRefresh(request, version);
   } catch (error) {
     if (isTransientPostgresError(error)) {
       markShadowAccountDbUnavailable(error);
       return buildFallbackShadowTotals();
     }
     throw error;
-  } finally {
-    shadowFreshStateInFlight = null;
   }
 }
 
@@ -1747,11 +2072,21 @@ function buildShadowAccountSummaryResponse(input: {
   };
 }
 
-export async function getShadowAccountSummary() {
+export async function getShadowAccountSummary(input: { source?: string | null } = {}) {
+  const source = normalizeShadowSourceScope(input.source);
+  return withShadowReadCache(`summary:${shadowSourceCacheKey(source)}`, async () => {
   try {
-    const totals = await ensureFreshShadowState(true);
+    const totals = source
+      ? await computeShadowTotalsForSource(source)
+      : await ensureFreshShadowState(true);
     const degraded = isShadowAccountDbBackoffActive();
-    const positions = degraded ? [] : await readOpenShadowPositions();
+    const positions = degraded
+      ? []
+      : source
+        ? (await readOpenShadowPositions()).filter((position) =>
+            positionMatchesShadowSource(position, source),
+          )
+        : await readOpenLiveShadowPositions();
     const dayChanges = degraded
       ? new Map<string, ShadowPositionDayChange>()
       : await readShadowPositionDayChanges(positions);
@@ -1771,6 +2106,7 @@ export async function getShadowAccountSummary() {
     }
     throw error;
   }
+  });
 }
 
 function isWatchlistBacktestRunSnapshotSource(source: string | null | undefined) {
@@ -1787,39 +2123,110 @@ function isWatchlistBacktestSnapshotSource(source: string | null | undefined) {
   );
 }
 
-function marketDateFromCompactSource(value: string) {
-  return /^\d{8}$/.test(value)
-    ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
-    : null;
+function isSignalOptionsReplaySnapshotSource(source: string | null | undefined) {
+  return (
+    source === SIGNAL_OPTIONS_REPLAY_SOURCE ||
+    source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+  );
 }
 
-function watchlistBacktestSnapshotSourceBounds(source: string | null | undefined) {
-  if (!source) {
-    return null;
+function shadowBenchmarkBarsCacheKey(input: {
+  symbol: string;
+  timeframe: ReturnType<typeof accountBenchmarkTimeframeForRange>;
+  from: Date;
+  to: Date;
+  limit: number;
+}) {
+  return [
+    normalizeSymbol(input.symbol).toUpperCase(),
+    input.timeframe,
+    input.from.toISOString(),
+    input.to.toISOString(),
+    input.limit,
+  ].join(":");
+}
+
+async function waitForShadowBenchmarkBars(
+  request: Promise<ShadowBenchmarkBars | null>,
+) {
+  return await new Promise<ShadowBenchmarkBars | null>((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, SHADOW_BENCHMARK_BARS_MAX_WAIT_MS);
+    timeout.unref?.();
+
+    request.then((bars) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        resolve(bars);
+      }
+    });
+  });
+}
+
+async function resolveShadowBenchmarkBars(input: {
+  symbol: string;
+  range: AccountRange;
+  from: Date;
+  to: Date;
+}) {
+  const timeframe = accountBenchmarkTimeframeForRange(input.range);
+  const limit = accountBenchmarkLimitForRange(input.range);
+  const cacheKey = shadowBenchmarkBarsCacheKey({
+    symbol: input.symbol,
+    timeframe,
+    from: input.from,
+    to: input.to,
+    limit,
+  });
+  const now = Date.now();
+  const cached = shadowBenchmarkBarsCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.bars;
   }
-  const compactRange = /^watchlist_bt:(\d{8}):(\d{8})$/.exec(source);
-  const compactFrom = compactRange?.[1]
-    ? marketDateFromCompactSource(compactRange[1])
-    : null;
-  const compactTo = compactRange?.[2]
-    ? marketDateFromCompactSource(compactRange[2])
-    : null;
-  const singleDay = /^watchlist_backtest:(\d{4}-\d{2}-\d{2})$/.exec(source);
-  const from = compactFrom ?? singleDay?.[1] ?? null;
-  const to = compactTo ?? singleDay?.[1] ?? null;
-  if (!from || !to) {
-    return null;
+
+  let request = shadowBenchmarkBarsInFlight.get(cacheKey);
+  if (!request) {
+    request = getBars({
+      symbol: input.symbol,
+      timeframe,
+      from: input.from,
+      to: input.to,
+      limit,
+      outsideRth: true,
+      allowHistoricalSynthesis: true,
+    })
+      .then((bars) => {
+        const sortedBars = [...bars.bars].sort(
+          (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+        );
+        shadowBenchmarkBarsCache.set(cacheKey, {
+          bars: sortedBars,
+          expiresAt: Date.now() + SHADOW_BENCHMARK_BARS_CACHE_TTL_MS,
+        });
+        return sortedBars;
+      })
+      .catch((error) => {
+        logger.debug?.(
+          { err: error, benchmark: input.symbol },
+          "Shadow benchmark overlay unavailable",
+        );
+        return null;
+      })
+      .finally(() => {
+        if (shadowBenchmarkBarsInFlight.get(cacheKey) === request) {
+          shadowBenchmarkBarsInFlight.delete(cacheKey);
+        }
+      });
+    shadowBenchmarkBarsInFlight.set(cacheKey, request);
   }
-  parseMarketDateKey(from);
-  parseMarketDateKey(to);
-  return {
-    start: zonedDateTimeToUtc({ marketDate: from, hour: 9, minute: 30 }),
-    end: zonedDateTimeToUtc({
-      marketDate: addDaysToMarketDate(to, 1),
-      hour: 0,
-      minute: 0,
-    }),
-  };
+
+  return (await waitForShadowBenchmarkBars(request)) ?? cached?.bars ?? null;
 }
 
 async function resolveShadowBenchmarkPercents(input: {
@@ -1833,23 +2240,20 @@ async function resolveShadowBenchmarkPercents(input: {
   }
 
   try {
-    const bars = await getBars({
+    const bars = await resolveShadowBenchmarkBars({
       symbol: input.benchmark,
-      timeframe: accountBenchmarkTimeframeForRange(input.range),
+      range: input.range,
       from:
         input.start ??
         input.points[0]?.timestamp ??
         new Date(Date.now() - 365 * 86_400_000),
       to: input.points[input.points.length - 1]?.timestamp ?? new Date(),
-      limit: accountBenchmarkLimitForRange(input.range),
-      outsideRth: true,
-      allowHistoricalSynthesis: true,
     });
+    if (!bars?.length) {
+      return input.points.map(() => null);
+    }
 
-    const sortedBars = [...bars.bars].sort(
-      (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
-    );
-    const base = toNumber(sortedBars[0]?.close);
+    const base = toNumber(bars[0]?.close);
     if (base == null || base === 0) {
       return input.points.map(() => null);
     }
@@ -1857,13 +2261,13 @@ async function resolveShadowBenchmarkPercents(input: {
     let cursor = 0;
     return input.points.map((point) => {
       while (
-        cursor + 1 < sortedBars.length &&
-        sortedBars[cursor + 1]!.timestamp.getTime() <= point.timestamp.getTime()
+        cursor + 1 < bars.length &&
+        bars[cursor + 1]!.timestamp.getTime() <= point.timestamp.getTime()
       ) {
         cursor += 1;
       }
 
-      const close = toNumber(sortedBars[cursor]?.close);
+      const close = toNumber(bars[cursor]?.close);
       return close != null ? ((close - base) / base) * 100 : null;
     });
   } catch (error) {
@@ -1875,42 +2279,207 @@ async function resolveShadowBenchmarkPercents(input: {
   }
 }
 
-function selectShadowEquityHistoryRows<
+function latestShadowBacktestSnapshotSource<
   T extends Pick<ShadowBalanceSnapshotRow, "source" | "asOf" | "createdAt">,
 >(rows: T[]) {
-  const backtestRows = rows.filter((row) =>
-    isWatchlistBacktestRunSnapshotSource(row.source),
-  );
-  if (backtestRows.length) {
-    const selectedSource = backtestRows
-      .slice()
-      .sort((left, right) => {
-        const createdDelta =
-          (right.createdAt?.getTime() ?? 0) - (left.createdAt?.getTime() ?? 0);
-        if (createdDelta) return createdDelta;
-        return right.asOf.getTime() - left.asOf.getTime();
-      })[0]!.source;
-    const bounds = watchlistBacktestSnapshotSourceBounds(selectedSource);
+  return rows
+    .filter((row) => isWatchlistBacktestRunSnapshotSource(row.source))
+    .sort((left, right) => {
+      const leftCreated = left.createdAt?.getTime() ?? 0;
+      const rightCreated = right.createdAt?.getTime() ?? 0;
+      if (leftCreated !== rightCreated) {
+        return rightCreated - leftCreated;
+      }
+      return right.asOf.getTime() - left.asOf.getTime();
+    })[0]?.source ?? null;
+}
+
+function selectShadowEquityHistoryRows<
+  T extends Pick<ShadowBalanceSnapshotRow, "source" | "asOf" | "createdAt">,
+>(rows: T[], input: { source?: string | null } = {}) {
+  const source = normalizeShadowSourceScope(input.source);
+  if (source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
     return {
-      scope: "watchlist_backtest" as const,
-      selectedSource,
-      includeInitialPoint: false,
-      includeLiveTerminal: false,
-      rows: rows.filter(
-        (row) =>
-          row.source === selectedSource &&
-          (!bounds || (row.asOf >= bounds.start && row.asOf <= bounds.end)),
-      ),
+      scope: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      selectedSource: SIGNAL_OPTIONS_REPLAY_SOURCE,
+      includeInitialPoint: true,
+      includeLiveTerminal: true,
+      rows: rows.filter((row) => isSignalOptionsReplaySnapshotSource(row.source)),
     };
   }
-
+  if (source === WATCHLIST_BACKTEST_SOURCE) {
+    const selectedSource = latestShadowBacktestSnapshotSource(rows);
+    return {
+      scope: WATCHLIST_BACKTEST_SOURCE,
+      selectedSource,
+      includeInitialPoint: true,
+      includeLiveTerminal: true,
+      rows: selectedSource
+        ? rows.filter(
+            (row) =>
+              row.source === selectedSource ||
+              row.source === WATCHLIST_BACKTEST_MARK_SOURCE,
+          )
+        : [],
+    };
+  }
   return {
     scope: "ledger" as const,
     selectedSource: null,
     includeInitialPoint: true,
     includeLiveTerminal: true,
-    rows: rows.filter((row) => !isWatchlistBacktestSnapshotSource(row.source)),
+    rows: rows.filter(
+      (row) =>
+        !isWatchlistBacktestSnapshotSource(row.source),
+    ),
   };
+}
+
+const SHADOW_LEDGER_SNAPSHOT_TOLERANCE = 0.05;
+
+function nearlyEqualMoney(left: number, right: number) {
+  return Math.abs(left - right) <= SHADOW_LEDGER_SNAPSHOT_TOLERANCE;
+}
+
+function liveShadowLedgerTotalsAt(input: {
+  account: Pick<ShadowAccountRow, "startingBalance">;
+  fills: ShadowFillRow[];
+  asOf: Date;
+}) {
+  const startingBalance = toNumber(input.account.startingBalance) ?? SHADOW_STARTING_BALANCE;
+  return input.fills
+    .filter((fill) => fill.occurredAt.getTime() <= input.asOf.getTime())
+    .reduce(
+      (totals, fill) => ({
+        cash: totals.cash + (toNumber(fill.cashDelta) ?? 0),
+        realizedPnl: totals.realizedPnl + (toNumber(fill.realizedPnl) ?? 0),
+        fees: totals.fees + (toNumber(fill.fees) ?? 0),
+      }),
+      { cash: startingBalance, realizedPnl: 0, fees: 0 },
+    );
+}
+
+function filterShadowEquityHistoryRowsToLiveLedger<
+  T extends Pick<
+    ShadowBalanceSnapshotRow,
+    "asOf" | "source" | "cash" | "realizedPnl" | "fees"
+  >,
+>(
+  rows: T[],
+  input: {
+    account: Pick<ShadowAccountRow, "startingBalance">;
+    fills: ShadowFillRow[];
+  },
+) {
+  return rows.filter((row) => {
+    const expected = liveShadowLedgerTotalsAt({
+      account: input.account,
+      fills: input.fills,
+      asOf: row.asOf,
+    });
+    return (
+      nearlyEqualMoney(toNumber(row.cash) ?? 0, expected.cash) &&
+      nearlyEqualMoney(toNumber(row.realizedPnl) ?? 0, expected.realizedPnl) &&
+      nearlyEqualMoney(toNumber(row.fees) ?? 0, expected.fees)
+    );
+  });
+}
+
+async function computeShadowEquityHistoryTerminalTotals(
+  source: ShadowSourceScope | null = null,
+): Promise<ShadowTotals> {
+  await ensureShadowAccount();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  await Promise.race([
+    kickShadowPositionMarkRefresh().then(() => undefined),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(
+        resolve,
+        SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS,
+      );
+    }),
+  ]);
+  if (timeout) {
+    clearTimeout(timeout);
+  }
+  return computeShadowTotalsForSource(source, {
+    useCurrentTimestampForOpenPositions: true,
+  });
+}
+
+function compactShadowEquityHistoryRows<
+  T extends Pick<ShadowBalanceSnapshotRow, "asOf" | "createdAt">,
+>(rows: T[]) {
+  return Array.from(
+    rows
+      .reduce((map, row) => {
+        const key = row.asOf.toISOString();
+        const current = map.get(key);
+        if (
+          !current ||
+          (row.createdAt?.getTime() ?? 0) >= (current.createdAt?.getTime() ?? 0)
+        ) {
+          map.set(key, row);
+        }
+        return map;
+      }, new Map<string, T>())
+      .values(),
+  ).sort((left, right) => left.asOf.getTime() - right.asOf.getTime());
+}
+
+function bucketShadowEquityHistoryRows<
+  T extends Pick<ShadowBalanceSnapshotRow, "asOf">,
+>(rows: T[], bucketSizeMs: number | null) {
+  if (!bucketSizeMs || rows.length <= 1) {
+    return rows;
+  }
+
+  const byBucket = new Map<number, T>();
+  const firstByDay = new Map<string, T>();
+  rows.forEach((row) => {
+    byBucket.set(Math.floor(row.asOf.getTime() / bucketSizeMs), row);
+
+    const dayKey = row.asOf.toISOString().slice(0, 10);
+    const currentFirst = firstByDay.get(dayKey);
+    if (!currentFirst || row.asOf.getTime() < currentFirst.asOf.getTime()) {
+      firstByDay.set(dayKey, row);
+    }
+  });
+
+  const byTimestamp = new Map<string, T>();
+  byBucket.forEach((row) => byTimestamp.set(row.asOf.toISOString(), row));
+  firstByDay.forEach((row) => byTimestamp.set(row.asOf.toISOString(), row));
+
+  return Array.from(byTimestamp.values()).sort(
+    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
+  );
+}
+
+function shadowEquityHistoryBucketSizeMs<
+  T extends Pick<ShadowBalanceSnapshotRow, "asOf">,
+>(range: AccountRange, rows: T[]) {
+  const defaultBucketSizeMs = accountSnapshotBucketSizeMs(range);
+  if (!defaultBucketSizeMs || rows.length <= 1) {
+    return defaultBucketSizeMs;
+  }
+
+  const first = rows[0]?.asOf;
+  const last = rows[rows.length - 1]?.asOf;
+  if (!first || !last) {
+    return defaultBucketSizeMs;
+  }
+
+  const spanMs = last.getTime() - first.getTime();
+  const shortHistoryMs = 45 * 24 * 60 * 60_000;
+  if (
+    spanMs > 0 &&
+    spanMs <= shortHistoryMs &&
+    ["3M", "6M", "YTD", "1Y", "ALL"].includes(range)
+  ) {
+    return 5 * 60_000;
+  }
+
+  return defaultBucketSizeMs;
 }
 
 function buildFallbackShadowAccountEquityHistory(input: {
@@ -1965,8 +2534,13 @@ function buildFallbackShadowAccountEquityHistory(input: {
 export async function getShadowAccountEquityHistory(input: {
   range?: AccountRange;
   benchmark?: string | null;
+  source?: string | null;
 }) {
   const range = normalizeAccountRange(input.range);
+  const source = normalizeShadowSourceScope(input.source);
+  return withShadowReadCache(
+    `equity-history:${range}:${input.benchmark || ""}:${shadowSourceCacheKey(source)}`,
+    async () => {
   if (isShadowAccountDbBackoffActive()) {
     return buildFallbackShadowAccountEquityHistory({
       range,
@@ -1985,44 +2559,49 @@ export async function getShadowAccountEquityHistory(input: {
     .from(shadowBalanceSnapshotsTable)
     .where(and(...conditions))
     .orderBy(shadowBalanceSnapshotsTable.asOf);
-  const selection = selectShadowEquityHistoryRows(rows);
+  const selection = selectShadowEquityHistoryRows(rows, { source });
   const totals = selection.includeLiveTerminal
-    ? await ensureFreshShadowState(true)
+    ? await computeShadowEquityHistoryTerminalTotals(source)
     : null;
-  const liveTerminalOpenPositions =
-    totals && selection.includeLiveTerminal ? await readOpenShadowPositions() : [];
+  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const liveFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
+  const sourceUsesSimulationSnapshots =
+    source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === WATCHLIST_BACKTEST_SOURCE;
+  const liveLedgerRows = sourceUsesSimulationSnapshots
+    ? selection.rows
+    : filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
+        account,
+        fills: liveFills,
+      });
   const historyRows = selection.includeInitialPoint
-    ? selection.rows.filter((row) => row.source !== "initial")
-    : selection.rows;
-  const bucketSize = accountSnapshotBucketSizeMs(range);
-  const compacted = bucketSize
-    ? Array.from(
-        historyRows
-          .reduce((map, row) => {
-            const bucket = Math.floor(row.asOf.getTime() / bucketSize);
-            map.set(bucket, row);
-            return map;
-          }, new Map<number, (typeof rows)[number]>())
-          .values(),
-      )
-    : historyRows;
+    ? liveLedgerRows.filter((row) => row.source !== "initial")
+    : liveLedgerRows;
+  const compactHistoryRows = compactShadowEquityHistoryRows(historyRows);
+  const compacted = bucketShadowEquityHistoryRows(
+    compactHistoryRows,
+    shadowEquityHistoryBucketSizeMs(range, compactHistoryRows),
+  );
   const latestCompactedAt = compacted[compacted.length - 1]?.asOf ?? null;
   const includeLiveTerminal =
     totals &&
-    (!latestCompactedAt || liveTerminalOpenPositions.length > 0) &&
     (!latestCompactedAt ||
       totals.updatedAt.getTime() > latestCompactedAt.getTime()) &&
     (!start || totals.updatedAt.getTime() >= start.getTime());
-  const firstHistoryAt = historyRows[0]?.asOf ?? null;
+  const firstHistoryAt = compactHistoryRows[0]?.asOf ?? null;
   const initialPointTimestamp =
     firstHistoryAt && account.createdAt.getTime() > firstHistoryAt.getTime()
-      ? firstHistoryAt
+      ? new Date(firstHistoryAt.getTime() - 1)
       : account.createdAt;
   const initialPoint = {
     timestamp: initialPointTimestamp,
     netLiquidation: toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE,
     currency: SHADOW_CURRENCY,
-    source: "SHADOW_LEDGER",
+    source:
+      source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? "SHADOW_OPTIONS_REPLAY"
+        : source === WATCHLIST_BACKTEST_SOURCE
+          ? "SHADOW_BACKTEST"
+          : "SHADOW_LEDGER",
     deposits: SHADOW_STARTING_BALANCE,
     withdrawals: 0,
     dividends: 0,
@@ -2037,9 +2616,11 @@ export async function getShadowAccountEquityHistory(input: {
       netLiquidation: toNumber(row.netLiquidation) ?? 0,
       currency: row.currency,
       source:
-        selection.scope === "watchlist_backtest"
-          ? "SHADOW_WATCHLIST_BACKTEST"
-          : "SHADOW_LEDGER",
+        source === SIGNAL_OPTIONS_REPLAY_SOURCE
+          ? "SHADOW_OPTIONS_REPLAY"
+          : source === WATCHLIST_BACKTEST_SOURCE
+            ? "SHADOW_BACKTEST"
+            : "SHADOW_LEDGER",
       deposits: 0,
       withdrawals: 0,
       dividends: 0,
@@ -2051,7 +2632,12 @@ export async function getShadowAccountEquityHistory(input: {
             timestamp: totals.updatedAt,
             netLiquidation: totals.netLiquidation,
             currency: SHADOW_CURRENCY,
-            source: "SHADOW_LEDGER",
+            source:
+              source === SIGNAL_OPTIONS_REPLAY_SOURCE
+                ? "SHADOW_OPTIONS_REPLAY"
+                : source === WATCHLIST_BACKTEST_SOURCE
+                  ? "SHADOW_BACKTEST"
+                  : "SHADOW_LEDGER",
             deposits: 0,
             withdrawals: 0,
             dividends: 0,
@@ -2068,15 +2654,14 @@ export async function getShadowAccountEquityHistory(input: {
       }, new Map<string, (typeof rawSeedPoints)[number]>())
       .values(),
   ).sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
-  const baseline =
-    seedPoints.find((point) => Math.abs(point.netLiquidation) > 0)?.netLiquidation ??
-    SHADOW_STARTING_BALANCE;
+  const adjustedReturns = calculateTransferAdjustedReturnSeries(seedPoints);
   const lastPoint = seedPoints[seedPoints.length - 1] ?? null;
   const tradeEvents = input.benchmark
     ? []
     : await getShadowTradeEquityEvents({
         start,
         end: lastPoint?.timestamp ?? new Date(),
+        sources: source ? [source] : undefined,
       });
   const benchmarkPercents = await resolveShadowBenchmarkPercents({
     benchmark: input.benchmark,
@@ -2097,30 +2682,29 @@ export async function getShadowAccountEquityHistory(input: {
     isStale: false,
     staleReason: null,
     terminalPointSource:
-      selection.scope === "watchlist_backtest"
-        ? "shadow_watchlist_backtest"
-        : "shadow_ledger",
+      source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? "shadow_options_replay"
+        : source === WATCHLIST_BACKTEST_SOURCE
+          ? "shadow_watchlist_backtest"
+          : "shadow_ledger",
     liveTerminalIncluded: Boolean(includeLiveTerminal),
     sourceScope: selection.scope,
     selectedSnapshotSource: selection.selectedSource,
     points: seedPoints.map((point, index) => ({
       ...point,
-      returnPercent: baseline ? ((point.netLiquidation - baseline) / baseline) * 100 : 0,
+      returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
       benchmarkPercent: benchmarkPercents[index] ?? null,
     })),
-    events:
-      selection.scope === "watchlist_backtest"
-        ? tradeEvents
-        : [
-            {
-              timestamp: account.createdAt,
-              type: "deposit",
-              amount: SHADOW_STARTING_BALANCE,
-              currency: SHADOW_CURRENCY,
-              source: "SHADOW_LEDGER",
-            },
-            ...tradeEvents,
-          ],
+    events: [
+      {
+        timestamp: account.createdAt,
+        type: "deposit",
+        amount: SHADOW_STARTING_BALANCE,
+        currency: SHADOW_CURRENCY,
+        source: "SHADOW_LEDGER",
+      },
+      ...tradeEvents,
+    ],
   };
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -2132,6 +2716,8 @@ export async function getShadowAccountEquityHistory(input: {
     }
     throw error;
   }
+    },
+  );
 }
 
 function buildShadowAccountAllocationResponse(input: {
@@ -2175,11 +2761,21 @@ function buildShadowAccountAllocationResponse(input: {
   };
 }
 
-export async function getShadowAccountAllocation() {
+export async function getShadowAccountAllocation(input: { source?: string | null } = {}) {
+  const source = normalizeShadowSourceScope(input.source);
+  return withShadowReadCache(`allocation:${shadowSourceCacheKey(source)}`, async () => {
   try {
-    const totals = await ensureFreshShadowState(true);
+    const totals = source
+      ? await computeShadowTotalsForSource(source)
+      : await ensureFreshShadowState(true);
     const degraded = isShadowAccountDbBackoffActive();
-    const positions = degraded ? [] : await readOpenShadowPositions();
+    const positions = degraded
+      ? []
+      : source
+        ? (await readOpenShadowPositions()).filter((position) =>
+            positionMatchesShadowSource(position, source),
+          )
+        : await readOpenLiveShadowPositions();
     return buildShadowAccountAllocationResponse({ totals, positions, degraded });
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -2192,6 +2788,7 @@ export async function getShadowAccountAllocation() {
     }
     throw error;
   }
+  });
 }
 
 type ShadowAccountPositionFallbackRow = {
@@ -2230,19 +2827,31 @@ function buildEmptyShadowAccountPositionsResponse(input: {
 
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
+  source?: string | null;
 }) {
+  const source = normalizeShadowSourceScope(input.source);
+  return withShadowReadCache(
+    `positions:${input.assetClass || "all"}:${shadowSourceCacheKey(source)}`,
+    async () => {
   try {
-  const totals = await ensureFreshShadowState(true);
+  const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
   if (isShadowAccountDbBackoffActive()) {
     return buildEmptyShadowAccountPositionsResponse({ totals, degraded: true });
   }
-  const positions = await readOpenShadowPositions();
   const orders = await db
     .select()
     .from(shadowOrdersTable)
     .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(1000);
+  const sourcePositionKeys = source
+    ? shadowPositionKeysForOrders(orders.filter((order) => order.source === source))
+    : null;
+  const positions = source
+    ? (await readOpenShadowPositions()).filter((position) =>
+        sourcePositionKeys!.has(position.positionKey),
+      )
+    : await readOpenLiveShadowPositions();
   const filtered =
     input.assetClass && input.assetClass !== "all"
       ? positions.filter(
@@ -2325,15 +2934,19 @@ export async function getShadowAccountPositions(input: {
     }
     throw error;
   }
+    },
+  );
 }
 
 export async function getShadowAccountPositionsAtDate(input: {
   date: string | Date;
   assetClass?: string | null;
+  source?: string | null;
 }) {
+  const source = normalizeShadowSourceScope(input.source);
   const window = shadowDateWindowUtc(input.date);
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const fills = await db
+  const rawFills = await db
     .select()
     .from(shadowFillsTable)
     .where(
@@ -2343,14 +2956,10 @@ export async function getShadowAccountPositionsAtDate(input: {
       ),
     )
     .orderBy(shadowFillsTable.occurredAt);
-  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
-  const orders = orderIds.length
-    ? await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+  const fills = source
+    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const books = new Map<
     string,
     {
@@ -2366,17 +2975,22 @@ export async function getShadowAccountPositionsAtDate(input: {
   >();
 
   fills.forEach((fill) => {
+    const order = ordersById.get(fill.orderId);
     const contract = asOptionContract(fill.optionContract);
     const assetClass = fill.assetClass as ShadowAssetClass;
-    const key = positionKey({
-      symbol: fill.symbol,
-      assetClass,
-      optionContract: contract,
-    });
+    const payload = readRecord(order?.payload) ?? {};
+    const metadataPayload = readRecord(payload.metadata) ?? {};
+    const key =
+      readString(metadataPayload.positionKey) ??
+      positionKey({
+        symbol: fill.symbol,
+        assetClass,
+        optionContract: contract,
+      });
     const multiplier = marketMultiplier({ assetClass, optionContract: contract });
     const quantity = Math.abs(toNumber(fill.quantity) ?? 0);
     const price = toNumber(fill.price) ?? 0;
-    const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+    const metadata = shadowSourceMetadata(order);
     const current = books.get(key) ?? {
       symbol: fill.symbol,
       assetClass,
@@ -2555,7 +3169,9 @@ export async function getShadowAccountClosedTrades(input: {
   symbol?: string | null;
   assetClass?: string | null;
   pnlSign?: string | null;
+  source?: string | null;
 }) {
+  const source = normalizeShadowSourceScope(input.source);
   if (isShadowAccountDbBackoffActive()) {
     return {
       accountId: SHADOW_ACCOUNT_ID,
@@ -2579,19 +3195,15 @@ export async function getShadowAccountClosedTrades(input: {
     eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
   ];
   if (input.to) conditions.push(lte(shadowFillsTable.occurredAt, input.to));
-  const fills = await db
+  const rawFills = await db
     .select()
     .from(shadowFillsTable)
     .where(and(...conditions))
     .orderBy(shadowFillsTable.occurredAt);
-  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
-  const orders = orderIds.length
-    ? await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+  const fills = source
+    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const { roundTrips } = buildShadowAnalysisRoundTrips(
     fills.map((fill) => shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId))),
   );
@@ -2715,7 +3327,7 @@ type ShadowAnalysisTradeEvent = {
   cashDelta: number;
   occurredAt: string;
   occurredAtDate: Date;
-  sourceType: "manual" | "automation" | "watchlist_backtest";
+  sourceType: ShadowAttributionSource;
   strategyLabel: string | null;
   candidateId: string | null;
   deploymentId: string | null;
@@ -3476,6 +4088,7 @@ export async function getShadowTradingPatterns(input: {
 async function getShadowTradeEquityEvents(input: {
   start?: Date | null;
   end?: Date | null;
+  sources?: string[];
 }) {
   const conditions: SQL<unknown>[] = [
     eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
@@ -3491,23 +4104,27 @@ async function getShadowTradeEquityEvents(input: {
     .from(shadowFillsTable)
     .where(and(...conditions))
     .orderBy(shadowFillsTable.occurredAt);
-  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
-  const orders = orderIds.length
-    ? await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, orderIds))
-    : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const ordersById = await readShadowOrdersByFillOrderId(fills);
+  const selectedFills = input.sources?.length
+    ? fills.filter((fill) => {
+        const order = ordersById.get(fill.orderId);
+        return Boolean(order && input.sources?.includes(order.source));
+      })
+    : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   return buildShadowEquityAnnotations(
-    fills.map((fill) => shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId))),
+    selectedFills.map((fill) =>
+      shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
+    ),
   );
 }
 
 export async function getShadowAccountOrders(input: {
   tab?: OrderTab;
+  source?: string | null;
 }) {
   const tab = normalizeOrderTab(input.tab);
+  const source = normalizeShadowSourceScope(input.source);
+  return withShadowReadCache(`orders:${tab}:${shadowSourceCacheKey(source)}`, async () => {
   if (isShadowAccountDbBackoffActive()) {
     return {
       accountId: SHADOW_ACCOUNT_ID,
@@ -3530,7 +4147,10 @@ export async function getShadowAccountOrders(input: {
     .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(SHADOW_ORDER_HISTORY_LIMIT);
-  const filtered = orders.filter((order) =>
+  const sourceOrders = source
+    ? orders.filter((order) => order.source === source)
+    : orders.filter(isLiveShadowOrder);
+  const filtered = sourceOrders.filter((order) =>
     tab === "working"
       ? !terminalStatuses.includes(order.status)
       : terminalStatuses.includes(order.status),
@@ -3563,18 +4183,25 @@ export async function getShadowAccountOrders(input: {
     }
     throw error;
   }
+  });
 }
 
 export async function getShadowAccountRisk(input: {
+  source?: string | null;
   totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
   positionsResponse?: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
 } = {}) {
-  const totals = input.totals ?? (await ensureFreshShadowState(true));
+  const source = normalizeShadowSourceScope(input.source);
+  const totals =
+    input.totals ??
+    (source
+      ? await computeShadowTotalsForSource(source)
+      : await ensureFreshShadowState(true));
   const positionsResponse =
-    input.positionsResponse ?? (await getShadowAccountPositions({}));
+    input.positionsResponse ?? (await getShadowAccountPositions({ source }));
   const closedTrades =
-    input.closedTrades ?? (await getShadowAccountClosedTrades({}));
+    input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
   const degraded = Boolean(
     isShadowAccountDbBackoffActive() ||
       positionsResponse.degraded ||
@@ -3712,7 +4339,8 @@ function buildShadowExpiryConcentration(
   return buckets;
 }
 
-export async function getShadowAccountCashActivity() {
+export async function getShadowAccountCashActivity(input: { source?: string | null } = {}) {
+  const source = normalizeShadowSourceScope(input.source);
   const buildFallback = () => ({
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
@@ -3745,22 +4373,18 @@ export async function getShadowAccountCashActivity() {
   }
   try {
   const account = await ensureShadowAccount();
-  const fills = await db
+  const rawFills = await db
     .select()
     .from(shadowFillsTable)
     .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowFillsTable.occurredAt))
     .limit(200);
-  const fillOrderIds = fills.map((fill) => fill.orderId);
-  const orders = fillOrderIds.length
-    ? await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(inArray(shadowOrdersTable.id, fillOrderIds))
-    : [];
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+  const fills = source
+    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
-  const totals = await computeShadowTotals();
+  const totals = source ? await computeShadowTotalsForSource(source) : await computeShadowTotals();
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
@@ -5561,16 +6185,25 @@ async function recomputeShadowAccountFromLedger(tx: ShadowTransaction, updatedAt
     .select()
     .from(shadowFillsTable)
     .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
+  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
+  const orders = orderIds.length
+    ? await tx
+        .select()
+        .from(shadowOrdersTable)
+        .where(inArray(shadowOrdersTable.id, orderIds))
+    : [];
+  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const liveFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  const cash = fills.reduce(
+  const cash = liveFills.reduce(
     (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
     startingBalance,
   );
-  const realizedPnl = fills.reduce(
+  const realizedPnl = liveFills.reduce(
     (sum, fill) => sum + (toNumber(fill.realizedPnl) ?? 0),
     0,
   );
-  const fees = fills.reduce((sum, fill) => sum + (toNumber(fill.fees) ?? 0), 0);
+  const fees = liveFills.reduce((sum, fill) => sum + (toNumber(fill.fees) ?? 0), 0);
   await tx
     .update(shadowAccountsTable)
     .set({
@@ -5784,6 +6417,214 @@ async function resetWatchlistBacktestRowsForRange(input: {
   });
 }
 
+function signalOptionsReplayOrderMatchesDate(
+  payload: unknown,
+  input: { deploymentId: string; marketDate: string },
+) {
+  return signalOptionsReplayOrderMatchesRange(payload, {
+    deploymentId: input.deploymentId,
+    marketDateFrom: input.marketDate,
+    marketDateTo: input.marketDate,
+  });
+}
+
+function isDateKeyInRange(
+  value: string | null,
+  input: { marketDateFrom: string; marketDateTo: string },
+) {
+  return Boolean(
+    value &&
+      value >= input.marketDateFrom &&
+      value <= input.marketDateTo,
+  );
+}
+
+function signalOptionsReplayPayloadMatchesDeployment(
+  payload: unknown,
+  input: { deploymentId: string },
+) {
+  const payloadRecord = readRecord(payload) ?? {};
+  const replay = readRecord(payloadRecord.replay) ?? {};
+  const metadata = readRecord(payloadRecord.metadata) ?? {};
+  return (
+    readString(replay.source) === SIGNAL_OPTIONS_REPLAY_SOURCE &&
+    (readString(replay.deploymentId) ?? readString(metadata.deploymentId)) ===
+      input.deploymentId
+  );
+}
+
+function signalOptionsReplayOrderMatchesRange(
+  payload: unknown,
+  input: {
+    deploymentId: string;
+    marketDateFrom: string;
+    marketDateTo: string;
+  },
+) {
+  if (!signalOptionsReplayPayloadMatchesDeployment(payload, input)) {
+    return false;
+  }
+  const payloadRecord = readRecord(payload) ?? {};
+  const replay = readRecord(payloadRecord.replay) ?? {};
+  const metadata = readRecord(payloadRecord.metadata) ?? {};
+  return (
+    isDateKeyInRange(readString(replay.marketDate), input) ||
+    isDateKeyInRange(readString(metadata.marketDate), input) ||
+    isDateKeyInRange(readString(metadata.positionMarketDate), input)
+  );
+}
+
+function isDateInClosedRange(value: Date, start: Date, end: Date) {
+  const time = value.getTime();
+  return time >= start.getTime() && time <= end.getTime();
+}
+
+function signalOptionsReplayOrderSourceMatchesRange(
+  order: ShadowOrderRow,
+  input: { windowStart: Date; cleanupEnd: Date },
+) {
+  return (
+    order.source === SIGNAL_OPTIONS_REPLAY_SOURCE &&
+    isDateInClosedRange(order.placedAt, input.windowStart, input.cleanupEnd)
+  );
+}
+
+export async function resetSignalOptionsReplayRowsForDate(input: {
+  deploymentId: string;
+  marketDate: string;
+}) {
+  const dayStart = new Date(`${input.marketDate}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60_000);
+  return resetSignalOptionsReplayRowsForRange({
+    deploymentId: input.deploymentId,
+    marketDateFrom: input.marketDate,
+    marketDateTo: input.marketDate,
+    windowStart: dayStart,
+    cleanupEnd: dayEnd,
+  });
+}
+
+export async function resetSignalOptionsReplayRowsForRange(input: {
+  deploymentId: string;
+  marketDateFrom: string;
+  marketDateTo: string;
+  windowStart: Date;
+  cleanupEnd: Date;
+}) {
+  const matchingEvents = (
+    await db
+      .select()
+      .from(executionEventsTable)
+      .where(eq(executionEventsTable.deploymentId, input.deploymentId))
+  ).filter(
+    (event) =>
+      signalOptionsReplayPayloadMatchesDeployment(event.payload, input) &&
+      (signalOptionsReplayOrderMatchesRange(event.payload, input) ||
+        isDateInClosedRange(event.occurredAt, input.windowStart, input.cleanupEnd)),
+  );
+  const matchingEventIds = matchingEvents.map((event) => event.id);
+
+  await db.transaction(async (tx) => {
+    const replayCandidateOrders = await tx
+      .select()
+      .from(shadowOrdersTable)
+      .where(
+        eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+      );
+    const matchingOrders = replayCandidateOrders.filter(
+      (order) =>
+        (signalOptionsReplayPayloadMatchesDeployment(order.payload, input) &&
+          (signalOptionsReplayOrderMatchesRange(order.payload, input) ||
+            isDateInClosedRange(order.placedAt, input.windowStart, input.cleanupEnd))) ||
+        signalOptionsReplayOrderSourceMatchesRange(order, input),
+    );
+    const orderIds = matchingOrders.map((order) => order.id);
+    const positionKeys = Array.from(
+      new Set(
+        matchingOrders
+          .map((order) => {
+            const payload = readRecord(order.payload) ?? {};
+            const metadata = readRecord(payload.metadata) ?? {};
+            return readString(metadata.positionKey) ?? readString(payload.positionKey);
+          })
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    if (positionKeys.length) {
+      const positions = await tx
+        .select({ id: shadowPositionsTable.id })
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            inArray(shadowPositionsTable.positionKey, positionKeys),
+          ),
+        );
+      const positionIds = positions.map((position) => position.id);
+      if (positionIds.length) {
+        await tx
+          .delete(shadowPositionMarksTable)
+          .where(inArray(shadowPositionMarksTable.positionId, positionIds));
+      }
+      await tx
+        .delete(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            inArray(shadowPositionsTable.positionKey, positionKeys),
+          ),
+        );
+    }
+
+    if (orderIds.length) {
+      await tx
+        .delete(shadowFillsTable)
+        .where(
+          and(
+            eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+            inArray(shadowFillsTable.orderId, orderIds),
+          ),
+        );
+      await tx
+        .delete(shadowOrdersTable)
+        .where(
+          and(
+            eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+            inArray(shadowOrdersTable.id, orderIds),
+          ),
+        );
+    }
+
+    await tx
+      .delete(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowBalanceSnapshotsTable.source, [
+            SIGNAL_OPTIONS_REPLAY_SOURCE,
+            SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+          ]),
+          gte(shadowBalanceSnapshotsTable.asOf, input.windowStart),
+          lte(shadowBalanceSnapshotsTable.asOf, input.cleanupEnd),
+        ),
+      );
+
+    if (matchingEventIds.length) {
+      await tx
+        .delete(executionEventsTable)
+        .where(inArray(executionEventsTable.id, matchingEventIds));
+    }
+
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+  invalidateShadowFreshStateCache();
+  notifyShadowAccountChanged();
+  return {
+    deletedEvents: matchingEventIds.length,
+  };
+}
+
 async function insertWatchlistBacktestFills(input: {
   runId: string;
   marketDateFrom: string;
@@ -5905,15 +6746,35 @@ async function insertWatchlistBacktestFills(input: {
 }
 
 export const __shadowWatchlistBacktestInternalsForTests = {
+  invalidateShadowFreshStateCache,
+  withShadowReadCache,
+  trackShadowFreshStateRefresh,
+  getShadowFreshStateInFlight: () => shadowFreshStateInFlight,
+  getShadowFreshStateCache: () => shadowFreshStateCache,
   resolveWatchlistBacktestWindow,
   isWatchlistBacktestRegularSessionTime,
   watchlistBacktestOrderMatchesRange,
+  signalOptionsReplayOrderMatchesDate,
+  signalOptionsReplayOrderMatchesRange,
+  signalOptionsReplayOrderSourceMatchesRange,
+  isSimulationShadowOrderSource,
+  isLiveShadowOrder,
+  isLiveShadowPosition,
+  shadowPositionKeyForOrder,
+  shadowPositionKeysForOrders,
+  shadowMarkSnapshotSourceForPosition,
+  isExpiredOptionContractForShadowClose,
+  withCurrentOpenPositionTerminalTimestamp,
   watchlistBacktestSnapshotSource,
   watchlistBacktestSnapshotSourcesForRange,
   collectWatchlistBacktestUniverse,
   withWatchlistBacktestProxyUniverse,
   computeWatchlistBacktestStartingBook,
   selectShadowEquityHistoryRows,
+  filterShadowEquityHistoryRowsToLiveLedger,
+  compactShadowEquityHistoryRows,
+  shadowEquityHistoryBucketSizeMs,
+  bucketShadowEquityHistoryRows,
   selectLatestShadowPositionMarksByPositionId,
   buildShadowPositionDayChange,
   buildShadowTradingPatternsFromRows,
@@ -6903,20 +7764,36 @@ export function isShadowAccountId(accountId: string | null | undefined): boolean
   return String(accountId ?? "").toLowerCase() === SHADOW_ACCOUNT_ID;
 }
 
-export async function recordShadowAutomationEvent(event: ExecutionEvent) {
+type ShadowAutomationMirrorOptions = {
+  source?: "automation" | "signal_options_replay";
+  markSource?: string;
+};
+
+function shadowAutomationPayloadPositionKey(payload: Record<string, unknown>) {
+  const metadata = readRecord(payload.metadata) ?? {};
+  return readString(metadata.positionKey);
+}
+
+export async function recordShadowAutomationEvent(
+  event: ExecutionEvent,
+  options: ShadowAutomationMirrorOptions = {},
+) {
   if (event.eventType === "signal_options_shadow_entry") {
-    return recordShadowAutomationEntry(event);
+    return recordShadowAutomationEntry(event, options);
   }
   if (event.eventType === "signal_options_shadow_exit") {
-    return recordShadowAutomationExit(event);
+    return recordShadowAutomationExit(event, options);
   }
   if (event.eventType === "signal_options_shadow_mark") {
-    return recordShadowAutomationMark(event);
+    return recordShadowAutomationMark(event, options);
   }
   return null;
 }
 
-async function recordShadowAutomationEntry(event: ExecutionEvent) {
+async function recordShadowAutomationEntry(
+  event: ExecutionEvent,
+  options: ShadowAutomationMirrorOptions,
+) {
   const payload = readRecord(event.payload) ?? {};
   const position = readRecord(payload.position);
   const orderPlan = readRecord(payload.orderPlan) ?? {};
@@ -6942,16 +7819,23 @@ async function recordShadowAutomationEntry(event: ExecutionEvent) {
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: "automation",
+    source: options.source ?? "automation",
     sourceEventId: event.id,
-    clientOrderId: `shadow-auto-entry-${event.id}`,
+    clientOrderId:
+      options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? `shadow-options-replay-entry-${event.id}`
+        : `shadow-auto-entry-${event.id}`,
+    positionKey: shadowAutomationPayloadPositionKey(payload),
     requestedFillPrice: price,
     payload,
     placedAt: event.occurredAt,
   });
 }
 
-async function recordShadowAutomationExit(event: ExecutionEvent) {
+async function recordShadowAutomationExit(
+  event: ExecutionEvent,
+  options: ShadowAutomationMirrorOptions,
+) {
   const payload = readRecord(event.payload) ?? {};
   const position = readRecord(payload.position);
   const contract = asOptionContract(payload.selectedContract ?? position?.selectedContract);
@@ -6973,16 +7857,23 @@ async function recordShadowAutomationExit(event: ExecutionEvent) {
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: "automation",
+    source: options.source ?? "automation",
     sourceEventId: event.id,
-    clientOrderId: `shadow-auto-exit-${event.id}`,
+    clientOrderId:
+      options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? `shadow-options-replay-exit-${event.id}`
+        : `shadow-auto-exit-${event.id}`,
+    positionKey: shadowAutomationPayloadPositionKey(payload),
     requestedFillPrice: price,
     payload,
     placedAt: event.occurredAt,
   });
 }
 
-async function recordShadowAutomationMark(event: ExecutionEvent) {
+async function recordShadowAutomationMark(
+  event: ExecutionEvent,
+  options: ShadowAutomationMirrorOptions,
+) {
   await ensureShadowAccount();
   const payload = readRecord(event.payload) ?? {};
   const position = readRecord(payload.position);
@@ -6996,7 +7887,9 @@ async function recordShadowAutomationMark(event: ExecutionEvent) {
   if (!symbol || !contract || markPrice == null || markPrice <= 0) {
     return null;
   }
-  const key = positionKey({ symbol, assetClass: "option", optionContract: contract });
+  const key =
+    shadowAutomationPayloadPositionKey(payload) ??
+    positionKey({ symbol, assetClass: "option", optionContract: contract });
   const [row] = await db
     .select()
     .from(shadowPositionsTable)
@@ -7016,7 +7909,7 @@ async function recordShadowAutomationMark(event: ExecutionEvent) {
   const multiplier = marketMultiplier({ assetClass: "option", optionContract: contract });
   const marketValue = quantity * markPrice * multiplier;
   const unrealizedPnl = (markPrice - averageCost) * quantity * multiplier;
-  await db
+  const [updated] = await db
     .update(shadowPositionsTable)
     .set({
       mark: money(markPrice),
@@ -7025,16 +7918,31 @@ async function recordShadowAutomationMark(event: ExecutionEvent) {
       asOf: event.occurredAt,
       updatedAt: new Date(),
     })
-    .where(eq(shadowPositionsTable.id, row.id));
+    .where(
+      and(
+        eq(shadowPositionsTable.id, row.id),
+        eq(shadowPositionsTable.status, "open"),
+      ),
+    )
+    .returning({ id: shadowPositionsTable.id });
+  if (!updated) {
+    return null;
+  }
   await db.insert(shadowPositionMarksTable).values({
     accountId: SHADOW_ACCOUNT_ID,
     positionId: row.id,
     mark: money(markPrice),
     marketValue: money(marketValue),
     unrealizedPnl: money(unrealizedPnl),
-    source: "automation",
+    source: options.source ?? "automation",
     asOf: event.occurredAt,
   });
-  await writeShadowBalanceSnapshot("automation_mark", event.occurredAt);
+  await writeShadowBalanceSnapshot(
+    options.markSource ??
+      (options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+        : "automation_mark"),
+    event.occurredAt,
+  );
   return row.id;
 }

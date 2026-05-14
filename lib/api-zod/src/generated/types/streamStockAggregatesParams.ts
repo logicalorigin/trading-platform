@@ -11,4 +11,8 @@ export type StreamStockAggregatesParams = {
  * Comma-separated ticker symbols.
  */
 symbols: string;
+/**
+ * Optional mutable stream session id used to update symbols for an open stream.
+ */
+sessionId?: string;
 };

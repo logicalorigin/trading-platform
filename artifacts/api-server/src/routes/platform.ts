@@ -21,6 +21,7 @@ import {
   GetOptionQuoteSnapshotsResponse,
   GetQuoteSnapshotsQueryParams,
   GetQuoteSnapshotsResponse,
+  GetGexDashboardResponse,
   SearchUniverseTickersQueryParams,
   SearchUniverseTickersResponse,
   GetSessionResponse,
@@ -32,6 +33,8 @@ import {
   GetFlowPremiumDistributionResponse,
   ListFlowEventsQueryParams,
   ListFlowEventsResponse,
+  ListAggregateFlowEventsQueryParams,
+  ListAggregateFlowEventsResponse,
   GetFlowUniverseResponse,
   ListOrdersQueryParams,
   ListOrdersResponse,
@@ -1079,7 +1082,13 @@ router.post("/accounts/flex/test", async (_req, res) => {
 
 router.get("/accounts/:accountId/summary", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
-  res.json(await getAccountSummary({ accountId: req.params.accountId, mode }));
+  res.json(
+    await getAccountSummary({
+      accountId: req.params.accountId,
+      mode,
+      source: readOptionalString(req.query.source, 80),
+    }),
+  );
 });
 
 router.get("/accounts/:accountId/equity-history", async (req, res) => {
@@ -1094,6 +1103,7 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
       benchmark:
         typeof req.query.benchmark === "string" ? req.query.benchmark : null,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1140,7 +1150,13 @@ router.post("/accounts/:accountId/trading-patterns/snapshots", async (req, res) 
 
 router.get("/accounts/:accountId/allocation", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
-  res.json(await getAccountAllocation({ accountId: req.params.accountId, mode }));
+  res.json(
+    await getAccountAllocation({
+      accountId: req.params.accountId,
+      mode,
+      source: readOptionalString(req.query.source, 80),
+    }),
+  );
 });
 
 router.get("/accounts/:accountId/positions", async (req, res) => {
@@ -1151,6 +1167,7 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
       assetClass:
         typeof req.query.assetClass === "string" ? req.query.assetClass : null,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1167,6 +1184,7 @@ router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
       assetClass:
         typeof req.query.assetClass === "string" ? req.query.assetClass : null,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1193,6 +1211,7 @@ router.get("/accounts/:accountId/closed-trades", async (req, res) => {
           ? req.query.holdDuration
           : null,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1207,6 +1226,7 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
           ? req.query.tab
           : undefined,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1223,7 +1243,13 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
-  res.json(await getAccountRisk({ accountId: req.params.accountId, mode }));
+  res.json(
+    await getAccountRisk({
+      accountId: req.params.accountId,
+      mode,
+      source: readOptionalString(req.query.source, 80),
+    }),
+  );
 });
 
 router.get("/accounts/:accountId/cash-activity", async (req, res) => {
@@ -1240,6 +1266,7 @@ router.get("/accounts/:accountId/cash-activity", async (req, res) => {
           ? new Date(req.query.to)
           : null,
       mode,
+      source: readOptionalString(req.query.source, 80),
     }),
   );
 });
@@ -1454,10 +1481,12 @@ router.get("/quotes/snapshot", async (req, res) => {
 });
 
 router.get("/gex/:underlying", async (req, res) => {
-  const data = await getGexDashboardData({
-    underlying: req.params.underlying,
-    signal: createRequestAbortSignal(req, res),
-  });
+  const data = GetGexDashboardResponse.parse(
+    await getGexDashboardData({
+      underlying: req.params.underlying,
+      signal: createRequestAbortSignal(req, res),
+    }),
+  );
 
   res.json(data);
 });
@@ -1696,10 +1725,12 @@ router.get("/flow/events", async (req, res) => {
 });
 
 router.get("/flow/events/aggregate", async (req, res) => {
-  const query = ListFlowEventsQueryParams.parse(
-    coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
+  const query = ListAggregateFlowEventsQueryParams.parse(
+    req.query as Record<string, unknown>,
   );
-  const data = ListFlowEventsResponse.parse(await listAggregateFlowEvents(query));
+  const data = ListAggregateFlowEventsResponse.parse(
+    await listAggregateFlowEvents(query),
+  );
 
   res.json(data);
 });
@@ -2223,6 +2254,11 @@ router.get("/streams/accounts/page", async (req, res) => {
     symbol:
       typeof req.query.symbol === "string" && req.query.symbol.trim()
         ? req.query.symbol.trim()
+        : null,
+    tradeAssetClass:
+      typeof req.query.tradeAssetClass === "string" &&
+      req.query.tradeAssetClass.trim()
+        ? req.query.tradeAssetClass.trim()
         : null,
     pnlSign:
       typeof req.query.pnlSign === "string" && req.query.pnlSign.trim()

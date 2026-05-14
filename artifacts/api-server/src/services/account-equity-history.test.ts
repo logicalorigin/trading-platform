@@ -188,6 +188,24 @@ test("account history backs first-point external transfers out of the return bas
   );
 });
 
+test("account margin snapshot normalizes IBKR cushion ratios to percentage points", async () => {
+  const { buildAccountMarginSnapshot } = await import("./account-summary-model");
+  const snapshot = buildAccountMarginSnapshot([
+    {
+      id: "U1",
+      providerAccountId: "U1",
+      provider: "ibkr",
+      mode: "live",
+      displayName: "IBKR U1",
+      currency: "USD",
+      netLiquidation: 100_000,
+      cushion: 0.375,
+    },
+  ] as any);
+
+  assert.equal(snapshot.maintenanceCushionPercent, 37.5);
+});
+
 test("account history classifies Flex cash transfer rows", async () => {
   const { __accountEquityHistoryInternalsForTests } = await import("./account");
   const classify =

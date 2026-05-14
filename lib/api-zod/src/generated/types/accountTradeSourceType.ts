@@ -12,6 +12,7 @@ export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof 
 export const AccountTradeSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
   watchlist_backtest: 'watchlist_backtest',
   mixed: 'mixed',
 } as const;

@@ -27,7 +27,7 @@ const resolvedDatabaseUrl = databaseRuntimeConfig.url;
 
 if (!resolvedDatabaseUrl) {
   throw new Error(
-    "LOCAL_DATABASE_URL or DATABASE_URL must be set. Did you forget to provision a database?",
+    "DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
 

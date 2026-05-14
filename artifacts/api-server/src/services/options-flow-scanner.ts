@@ -134,6 +134,32 @@ function normalizeLineBudget(value: number | undefined): number | null {
     : null;
 }
 
+function mergeLineBudget(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  const leftBudget = normalizeLineBudget(left);
+  const rightBudget = normalizeLineBudget(right);
+  if (leftBudget === null || rightBudget === null) {
+    return undefined;
+  }
+  return Math.max(leftBudget, rightBudget);
+}
+
+function mergeQueuedRequest(
+  current: OptionsFlowScannerRequest,
+  next: OptionsFlowScannerRequest,
+): OptionsFlowScannerRequest {
+  return {
+    ...current,
+    ...next,
+    limit: Math.max(current.limit, next.limit),
+    unusualThreshold: current.unusualThreshold ?? next.unusualThreshold,
+    lineBudget: mergeLineBudget(current.lineBudget, next.lineBudget),
+    allowPartial: Boolean(current.allowPartial && next.allowPartial),
+  };
+}
+
 const TRANSIENT_EMPTY_REASON_PATTERNS = [
   "backoff",
   "degraded",
@@ -525,13 +551,27 @@ export function createOptionsFlowScanner<TEvent>(
     request: OptionsFlowScannerRequest,
   ): Promise<OptionsFlowScannerRunResult> {
     for (const symbol of uniqueSymbols(symbols, normalizeSymbol)) {
-      queued.set(keyFor(symbol, request.unusualThreshold), { symbol, request });
+      const queueKey = keyFor(symbol, request.unusualThreshold);
+      const existing = queued.get(queueKey);
+      queued.set(queueKey, {
+        symbol,
+        request: existing
+          ? mergeQueuedRequest(existing.request, request)
+          : request,
+      });
     }
 
-    if (!drainPromise) {
-      drainPromise = drainQueue();
+    if (drainPromise) {
+      const activeDrain = drainPromise;
+      return activeDrain.then((result) => {
+        if (drainPromise && drainPromise !== activeDrain) {
+          return drainPromise;
+        }
+        return result;
+      });
     }
 
+    drainPromise = drainQueue();
     return drainPromise;
   }
 

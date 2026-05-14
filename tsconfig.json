@@ -16,6 +16,9 @@
       "path": "./lib/backtest-core"
     },
     {
+      "path": "./lib/account-math"
+    },
+    {
       "path": "./lib/ibkr-contracts"
     },
     {

@@ -4,7 +4,9 @@
 # Used as a pre-step by the api-server dev script while the Replit-managed
 # Helium dev DB is unavailable.
 set -euo pipefail
-PGROOT="${PGROOT:-/home/runner/workspace/.local/postgres}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PGROOT="${PGROOT:-$REPO_ROOT/.local/postgres}"
 mkdir -p "$PGROOT/run" "$PGROOT/log"
 if [ ! -s "$PGROOT/data/PG_VERSION" ]; then
   initdb -D "$PGROOT/data" -U runner --auth=trust -E UTF8 --locale=C >/dev/null

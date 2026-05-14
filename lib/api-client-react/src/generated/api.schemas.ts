@@ -242,6 +242,34 @@ export const BarDataSource = {
 
 export interface JsonObject { [key: string]: unknown }
 
+export interface OkResponse {
+  ok: boolean;
+}
+
+export interface IbkrBridgeLauncherResponse {
+  activationId: string;
+  apiBaseUrl: string;
+  bridgeToken: string;
+  /** @nullable */
+  bundleUrl: string | null;
+  helperUrl: string;
+  helperVersion: string;
+  launchUrl: string;
+  managementToken: string;
+}
+
+export interface IbkrBridgeAttachResponse {
+  runtimeOverrideActive: boolean;
+  bridgeUrl: string;
+  tokenConfigured: boolean;
+  bridge: JsonObject;
+  [key: string]: unknown;
+ }
+
+export interface IbkrBridgeDetachResponse {
+  runtimeOverrideActive: boolean;
+}
+
 export const SessionMarketDataProvidersResearch = {...MarketDataProvider,...ResearchProvider,} as const
 export interface SessionMarketDataProviders {
   live: MarketDataProvider;
@@ -1156,6 +1184,40 @@ export interface Watchlist {
   updatedAt: string;
 }
 
+export interface WatchlistSymbolRequest {
+  symbol: string;
+  /** @nullable */
+  name?: string | null;
+  market?: UniverseMarket | null;
+  /** @nullable */
+  normalizedExchangeMic?: string | null;
+  /** @nullable */
+  exchangeDisplay?: string | null;
+  /** @nullable */
+  countryCode?: string | null;
+  /** @nullable */
+  exchangeCountryCode?: string | null;
+  /** @nullable */
+  sector?: string | null;
+  /** @nullable */
+  industry?: string | null;
+}
+
+export interface CreateWatchlistRequest {
+  name: string;
+  isDefault?: boolean;
+  symbols?: WatchlistSymbolRequest[];
+}
+
+export interface UpdateWatchlistRequest {
+  name?: string;
+  isDefault?: boolean;
+}
+
+export interface ReorderWatchlistItemsRequest {
+  itemIds: string[];
+}
+
 /**
  * @nullable
  */
@@ -1369,6 +1431,7 @@ export const PlaceOrderRequestSource = {
 export interface PlaceOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
+  confirm?: boolean;
   symbol: string;
   assetClass: AssetClass;
   side: OrderSide;
@@ -1919,6 +1982,8 @@ export const FlowEventsSourceScannerCoverageMode = {
   hybrid: 'hybrid',
 } as const;
 
+export type FlowEventsSourceScannerCoverageLastScannedAt = {[key: string]: number};
+
 export type FlowEventsSourceScannerCoverage = {
   mode?: FlowEventsSourceScannerCoverageMode;
   /** @minimum 0 */
@@ -1943,23 +2008,35 @@ export type FlowEventsSourceScannerCoverage = {
   scannedSymbols?: number;
   /** @minimum 0 */
   cycleScannedSymbols?: number;
+  lastScannedAt?: FlowEventsSourceScannerCoverageLastScannedAt;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  oldestScanAt?: number | null;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  newestScanAt?: number | null;
+  /** @minimum 0 */
+  batchSize?: number;
+  /** @minimum 0 */
+  intervalMs?: number;
+  /** @minimum 0 */
+  lineBudget?: number;
+  /** @minimum 0 */
+  concurrency?: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  estimatedCycleMs?: number | null;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: string | null;
   /** @nullable */
   degradedReason?: string | null;
-  /** @minimum 0 */
-  radarSelectedSymbols?: number;
-  /**
-   * @minimum 0
-   * @nullable
-   */
-  radarEstimatedCycleMs?: number | null;
-  /** @minimum 0 */
-  radarBatchSize?: number;
-  /** @minimum 0 */
-  radarIntervalMs?: number;
-  promotedSymbols?: string[];
 };
 
 export interface FlowEventsSource {
@@ -2049,10 +2126,13 @@ export interface AccountSummaryMetrics {
   buyingPower?: AccountMetric;
   marginUsed?: AccountMetric;
   maintenanceMargin?: AccountMetric;
+  /** Maintenance cushion in percentage points, e.g. 37.5 means 37.5%. */
   maintenanceMarginCushionPercent?: AccountMetric;
   dayPnl?: AccountMetric;
+  /** Day P&L as percentage points using the best available transfer-adjusted capital base. */
   dayPnlPercent?: AccountMetric;
   totalPnl?: AccountMetric;
+  /** All-time transfer-adjusted P&L return in percentage points. */
   totalPnlPercent?: AccountMetric;
   settledCash?: AccountMetric;
   unsettledCash?: AccountMetric;
@@ -2101,6 +2181,8 @@ export const AccountEquityPointSource = {
   LOCAL_LEDGER: 'LOCAL_LEDGER',
   IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
   SHADOW_LEDGER: 'SHADOW_LEDGER',
+  SHADOW_BACKTEST: 'SHADOW_BACKTEST',
+  SHADOW_OPTIONS_REPLAY: 'SHADOW_OPTIONS_REPLAY',
 } as const;
 
 export interface AccountEquityPoint {
@@ -2112,7 +2194,9 @@ export interface AccountEquityPoint {
   withdrawals: number;
   dividends: number;
   fees: number;
+  /** Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L. */
   returnPercent: number;
+  /** Benchmark return in percentage points, rebased to the first visible matched point. */
   benchmarkPercent: number | null;
 }
 
@@ -2133,6 +2217,19 @@ export const AccountEquityHistoryResponseTerminalPointSource = {
   flex: 'flex',
   shadow_ledger: 'shadow_ledger',
   shadow_watchlist_backtest: 'shadow_watchlist_backtest',
+  shadow_options_replay: 'shadow_options_replay',
+} as const;
+
+export type AccountEquityHistoryResponseSourceScope = typeof AccountEquityHistoryResponseSourceScope[keyof typeof AccountEquityHistoryResponseSourceScope] | null;
+
+
+export const AccountEquityHistoryResponseSourceScope = {
+  ledger: 'ledger',
+  manual: 'manual',
+  automation: 'automation',
+  watchlist_backtest: 'watchlist_backtest',
+  signal_options_replay: 'signal_options_replay',
+  runtime_fallback: 'runtime_fallback',
 } as const;
 
 export interface AccountEquityHistoryResponse {
@@ -2148,6 +2245,8 @@ export interface AccountEquityHistoryResponse {
   staleReason: string | null;
   terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
   liveTerminalIncluded: boolean;
+  sourceScope?: AccountEquityHistoryResponseSourceScope;
+  selectedSnapshotSource?: string | null;
   points: AccountEquityPoint[];
   events: AccountCashEvent[];
 }
@@ -2174,6 +2273,7 @@ export interface AccountTradingPatternsResponse {
 export interface AccountAllocationBucket {
   label: string;
   value: number;
+  /** Allocation weight in percentage points. */
   weightPercent: number | null;
   source: string;
 }
@@ -2211,6 +2311,8 @@ export type AccountPositionRowSourceType = typeof AccountPositionRowSourceType[k
 export const AccountPositionRowSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
+  watchlist_backtest: 'watchlist_backtest',
   mixed: 'mixed',
 } as const;
 
@@ -2236,10 +2338,13 @@ export interface AccountPositionRow {
   averageCost: number;
   mark: number;
   dayChange: number | null;
+  /** Day change in percentage points. */
   dayChangePercent: number | null;
   unrealizedPnl: number;
+  /** Unrealized P&L in percentage points. */
   unrealizedPnlPercent: number;
   marketValue: number;
+  /** Position weight in percentage points. */
   weightPercent: number | null;
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];
@@ -2311,6 +2416,7 @@ export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof 
 export const AccountTradeSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
   watchlist_backtest: 'watchlist_backtest',
   mixed: 'mixed',
 } as const;
@@ -2389,6 +2495,8 @@ export type AccountOrderSourceType = typeof AccountOrderSourceType[keyof typeof 
 export const AccountOrderSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
+  watchlist_backtest: 'watchlist_backtest',
 } as const;
 
 export interface AccountOrder {
@@ -2566,6 +2674,155 @@ export interface QuoteSnapshotsResponse {
   transport: IbkrBridgeHealthTransport | null;
   delayed: boolean;
   fallbackUsed: boolean;
+}
+
+export interface GexTickerDetails {
+  ticker: string;
+  name: string;
+  sector: string;
+  industry: string;
+  /** @nullable */
+  marketCap: number | null;
+  exchangeShortName: string;
+  country: string;
+  isEtf: boolean;
+  isFund: boolean;
+}
+
+export interface GexProfile {
+  price: number;
+  changes?: number;
+  range?: string;
+  dayLow: number;
+  dayHigh: number;
+  /** @nullable */
+  yearLow: number | null;
+  /** @nullable */
+  yearHigh: number | null;
+  /** @nullable */
+  mktCap: number | null;
+  /** @nullable */
+  logo?: string | null;
+}
+
+export type GexOptionRowCp = typeof GexOptionRowCp[keyof typeof GexOptionRowCp];
+
+
+export const GexOptionRowCp = {
+  C: 'C',
+  P: 'P',
+} as const;
+
+export interface GexOptionRow {
+  strike: number;
+  expireYear: number;
+  expireMonth: number;
+  expireDay: number;
+  cp: GexOptionRowCp;
+  gamma: number;
+  delta: number;
+  openInterest: number;
+  impliedVol: number;
+  bid: number;
+  ask: number;
+}
+
+export interface GexSnapshot {
+  ts: string;
+  netGex: number;
+}
+
+export interface GexFlowContext {
+  bullishShare: number;
+  todayVol: number;
+  /** @nullable */
+  avg30dVol: number | null;
+  netDelta: number;
+  refDelta: number;
+  eventCount: number;
+  volumeBaselineReady: boolean;
+}
+
+export interface GexFlowClassificationBasisCounts {
+  quoteMatch: number;
+  tickTest: number;
+  none: number;
+}
+
+export interface GexFlowClassificationConfidenceCounts {
+  high: number;
+  medium: number;
+  low: number;
+  none: number;
+}
+
+export type GexSourceProvider = typeof GexSourceProvider[keyof typeof GexSourceProvider];
+
+
+export const GexSourceProvider = {
+  massive: 'massive',
+  polygon: 'polygon',
+} as const;
+
+export type GexSourceStatus = typeof GexSourceStatus[keyof typeof GexSourceStatus];
+
+
+export const GexSourceStatus = {
+  ok: 'ok',
+  partial: 'partial',
+  unavailable: 'unavailable',
+} as const;
+
+export type GexSourceFlowStatus = typeof GexSourceFlowStatus[keyof typeof GexSourceFlowStatus];
+
+
+export const GexSourceFlowStatus = {
+  ok: 'ok',
+  unavailable: 'unavailable',
+} as const;
+
+export interface GexSource {
+  provider: GexSourceProvider;
+  status: GexSourceStatus;
+  optionCount: number;
+  usableOptionCount: number;
+  withGamma: number;
+  withOpenInterest: number;
+  withImpliedVolatility: number;
+  /** @nullable */
+  quoteUpdatedAt: string | null;
+  /** @nullable */
+  chainUpdatedAt: string | null;
+  flowStatus: GexSourceFlowStatus;
+  flowEventCount: number;
+  classifiedFlowEventCount: number;
+  flowClassificationCoverage: number;
+  flowClassificationBasisCounts: GexFlowClassificationBasisCounts;
+  flowClassificationConfidenceCounts: GexFlowClassificationConfidenceCounts;
+  /** @nullable */
+  message: string | null;
+}
+
+export type GexDashboardResponseFlowContextStatus = typeof GexDashboardResponseFlowContextStatus[keyof typeof GexDashboardResponseFlowContextStatus];
+
+
+export const GexDashboardResponseFlowContextStatus = {
+  ok: 'ok',
+  unavailable: 'unavailable',
+} as const;
+
+export interface GexDashboardResponse {
+  ticker: string;
+  tickerDetails: GexTickerDetails;
+  profile: GexProfile;
+  spot: number;
+  timestamp: string;
+  isStale: boolean;
+  options: GexOptionRow[];
+  snapshots: GexSnapshot[];
+  flowContext: GexFlowContext | null;
+  flowContextStatus: GexDashboardResponseFlowContextStatus;
+  source: GexSource;
 }
 
 export type RequestDebugCacheStatus = typeof RequestDebugCacheStatus[keyof typeof RequestDebugCacheStatus] | null;
@@ -2837,6 +3094,13 @@ export type OptionChartBarsResponse = BarsResponse & ({
 
 export type SseStream = string;
 
+export interface StockAggregateStreamSessionResponse {
+  sessionId: string;
+  symbols: string[];
+  diagnostics: JsonObject;
+  updatedAt: string;
+}
+
 export interface AlgoDeployment {
   id: string;
   strategyId: string;
@@ -3095,6 +3359,8 @@ export const FlowUniverseCoverageMode = {
   hybrid: 'hybrid',
 } as const;
 
+export type FlowUniverseCoverageLastScannedAt = {[key: string]: number};
+
 export interface FlowUniverseCoverage {
   mode?: FlowUniverseCoverageMode;
   /** @minimum 0 */
@@ -3119,23 +3385,35 @@ export interface FlowUniverseCoverage {
   scannedSymbols?: number;
   /** @minimum 0 */
   cycleScannedSymbols?: number;
+  lastScannedAt?: FlowUniverseCoverageLastScannedAt;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  oldestScanAt?: number | null;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  newestScanAt?: number | null;
+  /** @minimum 0 */
+  batchSize?: number;
+  /** @minimum 0 */
+  intervalMs?: number;
+  /** @minimum 0 */
+  lineBudget?: number;
+  /** @minimum 0 */
+  concurrency?: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  estimatedCycleMs?: number | null;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: string | null;
   /** @nullable */
   degradedReason?: string | null;
-  /** @minimum 0 */
-  radarSelectedSymbols?: number;
-  /**
-   * @minimum 0
-   * @nullable
-   */
-  radarEstimatedCycleMs?: number | null;
-  /** @minimum 0 */
-  radarBatchSize?: number;
-  /** @minimum 0 */
-  radarIntervalMs?: number;
-  promotedSymbols?: string[];
 }
 
 export interface FlowUniverseSources {
@@ -4229,6 +4507,10 @@ to?: string;
 subsystem?: string;
 };
 
+export type RecordIbkrBridgeActivationProgress200 = {
+  ok: boolean;
+};
+
 export type ListAccountsParams = {
 /**
  * Filter by paper or live environment.
@@ -4383,6 +4665,17 @@ export const SearchUniverseTickersMode = {
   'trade-resolve': 'trade-resolve',
 } as const;
 
+export type GetUniverseLogosParams = {
+/**
+ * Comma-separated or repeated symbol list.
+ */
+symbols?: string | string[];
+};
+
+export type ProxyUniverseLogoParams = {
+url: string;
+};
+
 export type GetBarsParams = {
 symbol: string;
 timeframe: BarTimeframe;
@@ -4503,10 +4796,83 @@ export type StreamOptionChainsParams = {
 underlyings: string;
 };
 
+export type StreamOptionQuoteSnapshotsParams = {
+/**
+ * Comma-separated option provider contract IDs.
+ */
+contracts?: string;
+/**
+ * Alias for contracts.
+ */
+providerContractIds?: string;
+underlying?: string;
+};
+
+export type StreamBarsParams = {
+symbol: string;
+timeframe: BarTimeframe;
+assetClass?: AssetClass;
+providerContractId?: string | null;
+outsideRth?: boolean;
+source?: BarDataSource;
+};
+
 export type StreamOrdersParams = {
 accountId?: string;
 mode?: EnvironmentMode;
 status?: OrderStatus;
+};
+
+export type ListExecutionsParams = {
+accountId?: string;
+/**
+ * @minimum 1
+ */
+days?: number;
+/**
+ * @minimum 1
+ */
+limit?: number;
+symbol?: string;
+providerContractId?: string | null;
+};
+
+export type ListExecutions200 = {
+  executions: JsonObject[];
+};
+
+export type StreamExecutionsParams = {
+accountId?: string;
+/**
+ * @minimum 1
+ */
+days?: number;
+/**
+ * @minimum 1
+ */
+limit?: number;
+symbol?: string;
+providerContractId?: string | null;
+};
+
+export type GetMarketDepthParams = {
+symbol: string;
+accountId?: string;
+assetClass?: AssetClass;
+providerContractId?: string | null;
+exchange?: string | null;
+};
+
+export type GetMarketDepth200 = {
+  depth: JsonObject;
+};
+
+export type StreamMarketDepthParams = {
+symbol: string;
+accountId?: string;
+assetClass?: AssetClass;
+providerContractId?: string | null;
+exchange?: string | null;
 };
 
 export type StreamAccountsParams = {
@@ -4514,11 +4880,57 @@ accountId?: string;
 mode?: EnvironmentMode;
 };
 
+export type StreamAccountPageParams = {
+accountId?: string;
+mode?: EnvironmentMode;
+range?: AccountHistoryRange;
+orderTab?: StreamAccountPageOrderTab;
+/**
+ * Asset-class filter for live positions.
+ */
+assetClass?: string;
+from?: string;
+to?: string;
+symbol?: string;
+/**
+ * Asset-class filter for closed trades.
+ */
+tradeAssetClass?: string;
+pnlSign?: StreamAccountPagePnlSign;
+holdDuration?: string;
+performanceCalendarFrom?: string;
+};
+
+export type StreamAccountPageOrderTab = typeof StreamAccountPageOrderTab[keyof typeof StreamAccountPageOrderTab];
+
+
+export const StreamAccountPageOrderTab = {
+  working: 'working',
+  history: 'history',
+} as const;
+
+export type StreamAccountPagePnlSign = typeof StreamAccountPagePnlSign[keyof typeof StreamAccountPagePnlSign];
+
+
+export const StreamAccountPagePnlSign = {
+  all: 'all',
+  winners: 'winners',
+  losers: 'losers',
+} as const;
+
 export type StreamStockAggregatesParams = {
 /**
  * Comma-separated ticker symbols.
  */
 symbols: string;
+/**
+ * Optional mutable stream session id used to update symbols for an open stream.
+ */
+sessionId?: string;
+};
+
+export type UpdateStockAggregateStreamSymbolsBody = {
+  symbols: string | string[];
 };
 
 export type GetFlowPremiumDistributionParams = {
@@ -4627,6 +5039,63 @@ export const ListFlowEventsScope = {
   unusual: 'unusual',
 } as const;
 
+export type ListAggregateFlowEventsParams = {
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * Volume / open-interest ratio at which a print is flagged as unusual.
+ * @minimum 0.1
+ * @maximum 100
+ */
+unusualThreshold?: number;
+scope?: ListAggregateFlowEventsScope;
+/**
+ * @minimum 0
+ * @maximum 50000000
+ */
+minPremium?: number;
+/**
+ * @minimum 0
+ * @maximum 730
+ */
+maxDte?: number;
+/**
+ * @minimum 1
+ * @maximum 150
+ */
+lineBudget?: number;
+};
+
+export type ListAggregateFlowEventsScope = typeof ListAggregateFlowEventsScope[keyof typeof ListAggregateFlowEventsScope];
+
+
+export const ListAggregateFlowEventsScope = {
+  all: 'all',
+  unusual: 'unusual',
+} as const;
+
+export type BenchmarkFlowScannerBodyStrikeCoverage = typeof BenchmarkFlowScannerBodyStrikeCoverage[keyof typeof BenchmarkFlowScannerBodyStrikeCoverage];
+
+
+export const BenchmarkFlowScannerBodyStrikeCoverage = {
+  fast: 'fast',
+  standard: 'standard',
+  full: 'full',
+} as const;
+
+export type BenchmarkFlowScannerBody = {
+  underlying: string;
+  lineBudgets?: string | number[];
+  /** @nullable */
+  maxDte?: number | null;
+  /** @nullable */
+  expirationScanCount?: number | null;
+  strikeCoverage?: BenchmarkFlowScannerBodyStrikeCoverage;
+};
+
 export type GetSignalMonitorProfileParams = {
 environment?: EnvironmentMode;
 };
@@ -4685,8 +5154,20 @@ quarter?: number;
 year?: number;
 };
 
+export type EnsureDefaultSignalOptionsPaperDeploymentBody = {
+  enabled?: boolean;
+};
+
 export type ListAlgoDeploymentsParams = {
 mode?: EnvironmentMode;
+};
+
+export type RunSignalOptionsShadowBackfillBody = {
+  start?: string;
+  end?: string;
+  session?: string;
+  commit?: boolean;
+  profilePatch?: JsonObject;
 };
 
 export type ListExecutionEventsParams = {
@@ -4702,6 +5183,28 @@ export type ListBacktestRunsParams = {
 studyId?: string;
 sweepId?: string;
 status?: BacktestJobStatus;
+};
+
+export type ResolveBacktestOptionContractBodyRight = typeof ResolveBacktestOptionContractBodyRight[keyof typeof ResolveBacktestOptionContractBodyRight];
+
+
+export const ResolveBacktestOptionContractBodyRight = {
+  call: 'call',
+  put: 'put',
+} as const;
+
+export type ResolveBacktestOptionContractBody = {
+  underlying: string;
+  occurredAt: string;
+  right: ResolveBacktestOptionContractBodyRight;
+  spotPrice: number | string;
+  /** @nullable */
+  contractPresetId?: string | null;
+  signalOptionsProfile?: JsonObject | null;
+};
+
+export type ResolveBacktestOptionContract200 = {
+  contract: JsonObject;
 };
 
 export type GetBacktestRunChartParams = {

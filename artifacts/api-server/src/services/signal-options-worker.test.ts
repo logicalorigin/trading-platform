@@ -151,6 +151,53 @@ test("signal-options worker interval-gates scans and rescans after config change
   assert.equal(scanCalls, 3);
 });
 
+test("signal-options worker records signal freshness from successful scans", async () => {
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => ({
+      signals: [
+        {
+          symbol: "SPY",
+          fresh: true,
+          status: "ok",
+          latestBarAt: "2026-04-28T13:55:00.000Z",
+        },
+        {
+          symbol: "QQQ",
+          fresh: false,
+          status: "stale",
+          latestBarAt: "2026-04-28T13:15:00.000Z",
+        },
+        {
+          symbol: "DIA",
+          fresh: false,
+          status: "unavailable",
+          latestBarAt: null,
+        },
+      ],
+      candidates: [
+        { status: "candidate", actionStatus: "blocked" },
+        { status: "skipped", actionStatus: "candidate" },
+        { status: "open", actionStatus: "shadow_filled" },
+      ],
+    }),
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.lastSignalCount, 3);
+  assert.equal(runtime?.lastFreshSignalCount, 1);
+  assert.equal(runtime?.lastStaleSignalCount, 1);
+  assert.equal(runtime?.lastUnavailableSignalCount, 1);
+  assert.equal(runtime?.lastLatestSignalBarAt, "2026-04-28T13:55:00.000Z");
+  assert.equal(runtime?.lastOldestSignalBarAt, "2026-04-28T13:15:00.000Z");
+  assert.equal(runtime?.lastCandidateCount, 3);
+  assert.equal(runtime?.lastBlockedCandidateCount, 2);
+});
+
 test("signal-options worker backs off failed deployment scans", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
@@ -172,4 +219,35 @@ test("signal-options worker backs off failed deployment scans", async () => {
 
   assert.equal(scanCalls, 2);
   assert.equal(worker.getRuntimeSnapshot().deployments[0]?.failureCount, 2);
+  assert.equal(worker.getRuntimeSnapshot().deployments[0]?.totalFailureCount, 2);
+});
+
+test("signal-options worker resets consecutive failures after a successful scan", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+      if (scanCalls <= 2) {
+        throw new Error("Gateway unavailable");
+      }
+    },
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  now = new Date("2026-04-28T14:01:01.000Z");
+  await worker.runOnce();
+  now = new Date("2026-04-28T14:02:02.000Z");
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.scanCount, 1);
+  assert.equal(runtime?.failureCount, 0);
+  assert.equal(runtime?.totalFailureCount, 2);
+  assert.equal(runtime?.lastError, null);
+  assert.equal(runtime?.lastFailureAt, "2026-04-28T14:01:01.000Z");
 });

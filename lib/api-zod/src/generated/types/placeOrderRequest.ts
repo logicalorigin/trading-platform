@@ -19,6 +19,7 @@ import type { TimeInForce } from './timeInForce';
 export interface PlaceOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
+  confirm?: boolean;
   symbol: string;
   assetClass: AssetClass;
   side: OrderSide;

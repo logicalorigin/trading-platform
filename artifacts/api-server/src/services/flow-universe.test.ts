@@ -485,3 +485,43 @@ test("flow universe keeps selected symbols when DB selection persistence fails",
   assert.equal(coverage.selectedShortfall, 0);
   assert.match(coverage.degradedReason || "", /persistence unavailable/i);
 });
+
+test("flow universe coverage reports current-cycle scan timestamps", async () => {
+  let current = new Date("2026-05-08T15:05:00.000Z");
+  const manager = createFlowUniverseManager({
+    db: createFlowUniverseTestDb({}),
+    mode: "watchlist",
+    targetSize: 3,
+    refreshMs: 60_000,
+    markets: ["stocks"],
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    fallbackSymbols: ["SPY", "QQQ", "AAPL"],
+    now: () => current,
+  });
+
+  await manager.recordObservation({
+    symbol: "SPY",
+    scannedAt: new Date("2026-05-08T15:00:00.000Z"),
+  });
+  await manager.recordObservation({
+    symbol: "QQQ",
+    scannedAt: new Date("2026-05-08T15:04:00.000Z"),
+  });
+
+  const fullWindow = manager.getCoverage({ scanWindowMs: 10 * 60_000 });
+  assert.equal(fullWindow.scannedSymbols, 2);
+  assert.deepEqual(fullWindow.lastScannedAt, {
+    QQQ: Date.parse("2026-05-08T15:04:00.000Z"),
+    SPY: Date.parse("2026-05-08T15:00:00.000Z"),
+  });
+  assert.equal(fullWindow.oldestScanAt, Date.parse("2026-05-08T15:00:00.000Z"));
+  assert.equal(fullWindow.newestScanAt, Date.parse("2026-05-08T15:04:00.000Z"));
+
+  current = new Date("2026-05-08T15:07:00.000Z");
+  const narrowWindow = manager.getCoverage({ scanWindowMs: 2 * 60_000 });
+  assert.equal(narrowWindow.scannedSymbols, 0);
+  assert.deepEqual(narrowWindow.lastScannedAt, {});
+  assert.equal(narrowWindow.oldestScanAt, null);
+  assert.equal(narrowWindow.newestScanAt, null);
+});

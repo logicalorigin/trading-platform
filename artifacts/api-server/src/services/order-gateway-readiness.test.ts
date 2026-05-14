@@ -5,6 +5,7 @@ import test from "node:test";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import type { BrokerOrderSnapshot, PlaceOrderInput } from "../providers/ibkr/client";
 import { HttpError } from "../lib/errors";
+import { PlaceOrderBody } from "@workspace/api-zod";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
@@ -105,6 +106,52 @@ function assertGatewayUnavailable(error: unknown, reason: string) {
   assert.equal(error.code, "ibkr_gateway_trading_unavailable");
   assert.equal(error.detail, reason);
 }
+
+test("normalized order request schema preserves the live confirmation flag", () => {
+  const parsed = PlaceOrderBody.parse({
+    ...baseOrder,
+    mode: "live",
+    confirm: true,
+  });
+
+  assert.equal(parsed.confirm, true);
+});
+
+test("live order mutations require explicit confirmation before gateway checks", async () => {
+  const assertConfirmationRequired = (error: unknown) => {
+    assert.ok(error instanceof HttpError);
+    assert.equal(error.statusCode, 409);
+    assert.equal(error.code, "ibkr_live_order_confirmation_required");
+    assert.match(error.message, /confirm=true/);
+    return true;
+  };
+
+  await assert.rejects(
+    () => placeOrder({ ...baseOrder, mode: "live", confirm: false }),
+    assertConfirmationRequired,
+  );
+  await assert.rejects(
+    () =>
+      submitRawOrders({
+        accountId: "DU1234567",
+        mode: "live",
+        confirm: false,
+        ibkrOrders: [{ orderType: "LMT" }],
+      }),
+    assertConfirmationRequired,
+  );
+  await assert.rejects(
+    () =>
+      replaceOrder({
+        accountId: "DU1234567",
+        orderId: "order-1",
+        mode: "live",
+        confirm: false,
+        order: {},
+      }),
+    assertConfirmationRequired,
+  );
+});
 
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);

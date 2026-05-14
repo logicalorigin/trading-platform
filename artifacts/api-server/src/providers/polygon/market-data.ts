@@ -1492,7 +1492,7 @@ function buildPremiumDistributionHydrationWarning(input: {
   return null;
 }
 
-type OptionPremiumTradePrint = {
+export type OptionTradePrint = {
   price: number;
   size: number;
   occurredAt: Date;
@@ -1500,6 +1500,8 @@ type OptionPremiumTradePrint = {
   conditionCodes: string[];
   exchange: string | null;
 };
+
+type OptionPremiumTradePrint = OptionTradePrint;
 
 type OptionTradeConditionMetadata = {
   updatesVolume: boolean | null;
@@ -2920,6 +2922,33 @@ export class PolygonMarketDataClient {
     }
 
     return results;
+  }
+
+  async getOptionTradePrints(input: {
+    optionTicker: string;
+    from: Date;
+    to: Date;
+    limit?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  }): Promise<OptionTradePrint[]> {
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata(
+      input.signal,
+    );
+    const rawTrades = await this.fetchOptionTradePrints({
+      optionTicker: input.optionTicker,
+      since: input.from,
+      until: input.to,
+      limit: input.limit,
+      maxPages: input.maxPages,
+      exactWindow: true,
+      signal: input.signal,
+    });
+    return compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)))
+      .filter(
+        (trade) => optionTradePrintEligibility(trade, conditionMetadata).eligible,
+      )
+      .sort(compareOptionTradePrints);
   }
 
   private async probeOptionQuoteAccess(input: {

@@ -148,9 +148,11 @@ const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
 const DEFAULT_EXECUTION_LINES = 12;
 const DEFAULT_ACCOUNT_MONITOR_LINES = 10;
 const DEFAULT_AUTOMATION_LINES = 5;
-const DEFAULT_FLOW_SCANNER_LINES = 50;
+const DEFAULT_FLOW_SCANNER_LINES = 10;
+const DEFAULT_FLOW_SCANNER_CONCURRENCY = 10;
 const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = 100;
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV = "OPTIONS_FLOW_SCANNER_LINE_BUDGET";
+const OPTIONS_FLOW_SCANNER_CONCURRENCY_ENV = "OPTIONS_FLOW_SCANNER_CONCURRENCY";
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   execution: "IBKR_MARKET_DATA_EXECUTION_LINES",
@@ -166,6 +168,7 @@ const countersByIntent = new Map<MarketDataIntent, AdmissionCounters>();
 const recentEvents: AdmissionEvent[] = [];
 let nextLeaseId = 1;
 let runtimeFlowScannerLineBudget: number | null = null;
+let runtimeFlowScannerConcurrency: number | null = null;
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -191,9 +194,18 @@ function resolveDefaultFlowScannerLineCap(): number {
         DEFAULT_FLOW_SCANNER_LINES,
       ),
   );
-  // The scanner line budget is per scan; the admission pool needs overlap room
-  // while previous scan leases age out.
-  return Math.min(DEFAULT_FLOW_SCANNER_POOL_MAX_LINES, perScanLineBudget * 2);
+  const scannerConcurrency = Math.max(
+    1,
+    runtimeFlowScannerConcurrency ??
+      readPositiveIntegerEnv(
+        OPTIONS_FLOW_SCANNER_CONCURRENCY_ENV,
+        DEFAULT_FLOW_SCANNER_CONCURRENCY,
+      ),
+  );
+  return Math.min(
+    DEFAULT_FLOW_SCANNER_POOL_MAX_LINES,
+    perScanLineBudget * scannerConcurrency,
+  );
 }
 
 function buildDefaultPoolLineCaps(
@@ -265,6 +277,7 @@ function normalizePoolLineCaps(
 
 export function setMarketDataAdmissionRuntimeDefaults(input: {
   flowScannerLineBudget?: number | null;
+  flowScannerConcurrency?: number | null;
 }): void {
   const flowScannerLineBudget = input.flowScannerLineBudget;
   runtimeFlowScannerLineBudget =
@@ -272,6 +285,13 @@ export function setMarketDataAdmissionRuntimeDefaults(input: {
     Number.isFinite(flowScannerLineBudget) &&
     flowScannerLineBudget > 0
       ? Math.floor(flowScannerLineBudget)
+      : null;
+  const flowScannerConcurrency = input.flowScannerConcurrency;
+  runtimeFlowScannerConcurrency =
+    typeof flowScannerConcurrency === "number" &&
+    Number.isFinite(flowScannerConcurrency) &&
+    flowScannerConcurrency > 0
+      ? Math.floor(flowScannerConcurrency)
       : null;
 }
 
@@ -796,4 +816,5 @@ export function __resetMarketDataAdmissionForTests(): void {
   recentEvents.length = 0;
   nextLeaseId = 1;
   runtimeFlowScannerLineBudget = null;
+  runtimeFlowScannerConcurrency = null;
 }

@@ -1642,9 +1642,17 @@ async function buildAutomationMetrics(): Promise<{
       Date.now() - lastSuccessAt >= 120_000
     );
   }).length;
-  const gatewayBlockedCount = automationEvents.filter(
+  const latestSuccessAtMs = latestSuccessMs;
+  const gatewayBlockedEvents = automationEvents.filter(
     (event) => event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
-  ).length;
+  );
+  const gatewayBlockedCount = gatewayBlockedEvents.filter((event) => {
+    const occurredAtMs = timestampMs(event.occurredAt);
+    return (
+      occurredAtMs !== null &&
+      (latestSuccessAtMs === null || occurredAtMs > latestSuccessAtMs)
+    );
+  }).length;
   const candidateSkipCount = automationEvents.filter(
     (event) => event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT,
   ).length;
@@ -1663,10 +1671,74 @@ async function buildAutomationMetrics(): Promise<{
       sum + (numeric(asJsonRecord(deployment)["failureCount"]) ?? 0),
     0,
   );
+  const totalFailureCount = deployments.reduce(
+    (sum, deployment) =>
+      sum +
+      (numeric(asJsonRecord(deployment)["totalFailureCount"]) ??
+        numeric(asJsonRecord(deployment)["failureCount"]) ??
+        0),
+    0,
+  );
+  const latestFailureAt =
+    deployments
+      .map((deployment) => timestampMs(asJsonRecord(deployment)["lastFailureAt"]))
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => right - left)[0] ?? null;
   const latestError =
     deployments
       .map((deployment) => textValue(asJsonRecord(deployment)["lastError"]))
       .find(Boolean) ?? null;
+  const signalCount = deployments.reduce(
+    (sum, deployment) =>
+      sum + (numeric(asJsonRecord(deployment)["lastSignalCount"]) ?? 0),
+    0,
+  );
+  const freshSignalCount = deployments.reduce(
+    (sum, deployment) =>
+      sum + (numeric(asJsonRecord(deployment)["lastFreshSignalCount"]) ?? 0),
+    0,
+  );
+  const staleSignalCount = deployments.reduce(
+    (sum, deployment) =>
+      sum + (numeric(asJsonRecord(deployment)["lastStaleSignalCount"]) ?? 0),
+    0,
+  );
+  const unavailableSignalCount = deployments.reduce(
+    (sum, deployment) =>
+      sum +
+      (numeric(asJsonRecord(deployment)["lastUnavailableSignalCount"]) ?? 0),
+    0,
+  );
+  const notFreshSignalCount = Math.max(0, signalCount - freshSignalCount);
+  const latestSignalBarAt =
+    deployments
+      .map((deployment) =>
+        timestampMs(asJsonRecord(deployment)["lastLatestSignalBarAt"]),
+      )
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => right - left)[0] ?? null;
+  const oldestSignalBarAt =
+    deployments
+      .map((deployment) =>
+        timestampMs(asJsonRecord(deployment)["lastOldestSignalBarAt"]),
+      )
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0] ?? null;
+  const maxSignalBarAgeMs =
+    oldestSignalBarAt === null
+      ? null
+      : Math.max(0, Date.now() - oldestSignalBarAt);
+  const candidateCount = deployments.reduce(
+    (sum, deployment) =>
+      sum + (numeric(asJsonRecord(deployment)["lastCandidateCount"]) ?? 0),
+    0,
+  );
+  const blockedCandidateCount = deployments.reduce(
+    (sum, deployment) =>
+      sum +
+      (numeric(asJsonRecord(deployment)["lastBlockedCandidateCount"]) ?? 0),
+    0,
+  );
 
   return {
     metrics: {
@@ -1680,12 +1752,34 @@ async function buildAutomationMetrics(): Promise<{
       staleScanCount,
       gatewayBlockedCount,
       gateway_blocked_count: gatewayBlockedCount,
+      activeGatewayBlockedCount: gatewayBlockedCount,
+      totalGatewayBlockedCount: gatewayBlockedEvents.length,
       candidateSkipCount,
       dailyHaltCount,
       shadowExitCount,
       failureCount,
       failure_count: failureCount,
+      consecutiveFailureCount: failureCount,
+      totalFailureCount,
+      lastFailureAt:
+        latestFailureAt === null ? null : new Date(latestFailureAt).toISOString(),
       latestError,
+      signalCount,
+      freshSignalCount,
+      notFreshSignalCount,
+      staleSignalCount,
+      unavailableSignalCount,
+      latestSignalBarAt:
+        latestSignalBarAt === null
+          ? null
+          : new Date(latestSignalBarAt).toISOString(),
+      oldestSignalBarAt:
+        oldestSignalBarAt === null
+          ? null
+          : new Date(oldestSignalBarAt).toISOString(),
+      maxSignalBarAgeMs,
+      candidateCount,
+      blockedCandidateCount,
     },
     raw: {
       worker,
@@ -1705,6 +1799,12 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
   const staleScanCount = numeric(metrics["staleScanCount"]) ?? 0;
+  const signalCount = numeric(metrics["signalCount"]) ?? 0;
+  const staleSignalCount = numeric(metrics["staleSignalCount"]) ?? 0;
+  const unavailableSignalCount = numeric(metrics["unavailableSignalCount"]) ?? 0;
+  const degradedSignalInputCount = staleSignalCount + unavailableSignalCount;
+  const degradedSignalInputRatio =
+    signalCount > 0 ? degradedSignalInputCount / signalCount : 0;
 
   if (
     gatewayBlockedCount >= 3 ||
@@ -1722,6 +1822,9 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       staleScanCount > 0 ||
       latestScanAgeMs === null ||
       latestScanAgeMs >= 120_000 ||
+      (signalCount > 0 &&
+        degradedSignalInputCount > 0 &&
+        (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)) ||
       gatewayBlockedCount > 0 ||
       failureCount > 0)
   ) {
@@ -2955,6 +3058,43 @@ export async function collectDiagnosticSnapshot(
       dimensions: {
         staleScanCount: automation.metrics["staleScanCount"],
         latestScanAgeMs: automation.metrics["latestScanAgeMs"],
+      },
+      raw: automation.raw,
+    });
+  }
+
+  const signalCount = numeric(automation.metrics["signalCount"]) ?? 0;
+  const freshSignalCount = numeric(automation.metrics["freshSignalCount"]) ?? 0;
+  const notFreshSignalCount =
+    numeric(automation.metrics["notFreshSignalCount"]) ?? 0;
+  const staleSignalCount = numeric(automation.metrics["staleSignalCount"]) ?? 0;
+  const unavailableSignalCount =
+    numeric(automation.metrics["unavailableSignalCount"]) ?? 0;
+  const degradedSignalInputCount = staleSignalCount + unavailableSignalCount;
+  const degradedSignalInputRatio =
+    signalCount > 0 ? degradedSignalInputCount / signalCount : 0;
+  if (
+    (numeric(automation.metrics["enabledDeployments"]) ?? 0) > 0 &&
+    signalCount > 0 &&
+    degradedSignalInputCount > 0 &&
+    (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)
+  ) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "signal-freshness",
+      code: "signal_options_signal_scan_degraded",
+      severity: "warning",
+      message:
+        "Signal-options scans are completing with stale or unavailable signal inputs.",
+      dimensions: {
+        signalCount,
+        freshSignalCount,
+        notFreshSignalCount,
+        staleSignalCount,
+        unavailableSignalCount,
+        latestSignalBarAt: automation.metrics["latestSignalBarAt"],
+        oldestSignalBarAt: automation.metrics["oldestSignalBarAt"],
+        maxSignalBarAgeMs: automation.metrics["maxSignalBarAgeMs"],
       },
       raw: automation.raw,
     });

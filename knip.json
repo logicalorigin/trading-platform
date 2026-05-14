@@ -1,7 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "ignoreFiles": [
-    "lib/api-zod/src/generated/**"
+    "lib/api-zod/src/generated/**",
+    "scripts/run-options-contract-sweeps.mjs",
+    "artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs"
   ],
   "workspaces": {
     ".": {
@@ -23,7 +25,7 @@
       "ignoreDependencies": ["ws", "@types/ws"]
     },
     "artifacts/backtest-worker": {
-      "entry": ["src/index.ts", "build.mjs"],
+      "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
     "artifacts/rayalgo": {
@@ -48,6 +50,10 @@
     },
     "lib/api-client-react": {
       "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
+    "lib/account-math": {
+      "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
     "lib/db": {

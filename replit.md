@@ -181,7 +181,7 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 - **News** — TWS does not expose the Client Portal `/iserver/news` feed through this bridge; `getNews` falls back to Polygon.
 - **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first. The TWS bridge maps `getMatchingSymbols()` results to IBKR contract metadata, then falls back to Polygon when IBKR returns nothing.
 - **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. Note: the IBKR option-chain mapper currently leaves `volume`/`openInterest` at 0; flow events synthesize size as `volume || 1` so contracts with a real `mark` still surface. To get true volume/OI, extend the snapshot field set in `client.ts` to include OPRA fields (e.g. 7762 = volume).
-  - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
+  - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `artifacts/api-server/src/lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
 - **Bridge surface** — endpoints `GET /news` and `GET /universe/search` live on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). `GET /news` returns empty in TWS mode by design; `GET /universe/search` is backed by TWS contract search.
 
 ## Server log noise (dev server)
@@ -277,7 +277,7 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
 1. **`asNumber` (`artifacts/api-server/src/lib/values.ts`)** — strips leading
    non-numeric prefix chars before parsing, so `"C709.47"` → `709.47`.
 2. **Field set expansion** — both the WebSocket subscribe in
-   `artifacts/ibkr-bridge/src/market-data-stream.ts` and the parser/snapshot
+   `artifacts/ibkr-bridge/src/tws-provider.ts` and the parser/snapshot
    request fields in `artifacts/api-server/src/providers/ibkr/client.ts` now
    include `70` (high), `71` (low), `82`/`83` (change/change%), `87`/`87_raw`/
    `7762` (volume), `7295` (open), `7296`/`7741` (prev close).
@@ -344,7 +344,7 @@ Replit's workspace daemon watches a small set of platform-config files. Any save
 
 **Do not edit these from any agent (Codex, main agent, task agent) during routine work or test cycles unless the user explicitly asked for a config change:**
 
-- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Adding/removing an env var here (e.g. `RAYALGO_DATABASE_SOURCE`) reloads the workspace; use `setEnvVars` / `deleteEnvVars` instead — those persist without a reload. The `LOCAL_DATABASE_URL` and `RAYALGO_DATABASE_SOURCE` entries currently in `[userenv.development]` were placed there only because they need to survive container resets and `userenv` is the documented mechanism; do not "tidy" or move them.
+- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Adding/removing an env var here reloads the workspace; use `setEnvVars` / `deleteEnvVars` instead when possible because those persist without a reload. Development database configuration should use a single `DATABASE_URL` value.
 - `artifacts/*/.replit-artifact/artifact.toml` — the artifact controller reconciles on save, which in `PNPM_WORKSPACE` stack mode (`[agent] stack = "PNPM_WORKSPACE"` in `.replit`) cascades into a full app re-bring-up. Use the artifact skills to update artifact metadata; never hand-edit these.
 - `replit.nix` — same daemon, same reload.
 

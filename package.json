@@ -9,6 +9,10 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "deadcode": "PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints",
     "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files,exports,types,duplicates --no-config-hints --workspace @workspace/rayalgo --workspace @workspace/api-server --workspace @workspace/ibkr-bridge --workspace @workspace/backtest-worker --workspace @workspace/api-client-react --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/backtest-core --workspace @workspace/rayreplica-core --workspace @workspace/ibkr-contracts",
+    "audit:api-codegen": "node scripts/check-api-codegen-drift.mjs",
+    "audit:env": "node scripts/check-env-example.mjs",
+    "audit:markdown-paths": "node scripts/check-markdown-paths.mjs",
+    "audit:guards": "pnpm run audit:env && pnpm run audit:markdown-paths && pnpm run audit:api-codegen",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },

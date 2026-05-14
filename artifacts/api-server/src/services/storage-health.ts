@@ -13,11 +13,12 @@ export type StorageHealthSource =
 
 export type StorageHealthSnapshot = {
   source: StorageHealthSource | null;
-  sourceEnv: "LOCAL_DATABASE_URL" | "DATABASE_URL" | null;
+  sourceEnv: "DATABASE_URL" | "LOCAL_DATABASE_URL" | null;
   overrideActive: boolean;
   configured: boolean;
   status: StorageHealthStatus;
   reachable: boolean;
+  readWriteVerified: boolean;
   checkedAt: string;
   protocol: string | null;
   host: string | null;
@@ -46,6 +47,7 @@ function describeDatabaseUrl(): Omit<
   | "reachable"
   | "checkedAt"
   | "pingMs"
+  | "readWriteVerified"
   | "reason"
   | "error"
   | "transient"
@@ -80,6 +82,7 @@ function buildSnapshot(
     checkedAt: nowIso(),
     status: input.status,
     reachable: input.reachable,
+    readWriteVerified: input.status === "ok" && input.reachable,
     pingMs: input.pingMs,
     reason: input.reason,
     error: input.error,
@@ -97,7 +100,33 @@ let cachedStorageHealth = buildSnapshot({
 });
 
 async function defaultStorageHealthProbe(): Promise<void> {
-  await pool.query("select 1");
+  const client = await pool.connect();
+  const probeId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    await client.query("begin");
+    await client.query(
+      "create temp table if not exists rayalgo_storage_health_probe (id text primary key, value text not null) on commit drop",
+    );
+    await client.query(
+      "insert into rayalgo_storage_health_probe (id, value) values ($1, $2)",
+      [probeId, "ok"],
+    );
+    const result = await client.query(
+      "select value from rayalgo_storage_health_probe where id = $1",
+      [probeId],
+    );
+    if (result.rows[0]?.value !== "ok") {
+      throw new Error("Postgres read/write probe did not return the inserted row.");
+    }
+    await client.query("commit");
+  } catch (error) {
+    try {
+      await client.query("rollback");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function getCachedStorageHealthSnapshot(): StorageHealthSnapshot {
@@ -111,7 +140,7 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
       status: "unavailable",
       reachable: false,
       reason: "database_url_missing",
-      error: "LOCAL_DATABASE_URL or DATABASE_URL is not set.",
+      error: "DATABASE_URL is not set.",
       pingMs: null,
     });
     return cachedStorageHealth;

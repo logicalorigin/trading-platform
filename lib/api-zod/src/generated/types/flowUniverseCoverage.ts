@@ -5,6 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { FlowUniverseCoverageLastScannedAt } from './flowUniverseCoverageLastScannedAt';
 import type { FlowUniverseCoverageMode } from './flowUniverseCoverageMode';
 
 export interface FlowUniverseCoverage {
@@ -31,21 +32,33 @@ export interface FlowUniverseCoverage {
   scannedSymbols?: number;
   /** @minimum 0 */
   cycleScannedSymbols?: number;
+  lastScannedAt?: FlowUniverseCoverageLastScannedAt;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  oldestScanAt?: number | null;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  newestScanAt?: number | null;
+  /** @minimum 0 */
+  batchSize?: number;
+  /** @minimum 0 */
+  intervalMs?: number;
+  /** @minimum 0 */
+  lineBudget?: number;
+  /** @minimum 0 */
+  concurrency?: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  estimatedCycleMs?: number | null;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: Date | null;
   /** @nullable */
   degradedReason?: string | null;
-  /** @minimum 0 */
-  radarSelectedSymbols?: number;
-  /**
-   * @minimum 0
-   * @nullable
-   */
-  radarEstimatedCycleMs?: number | null;
-  /** @minimum 0 */
-  radarBatchSize?: number;
-  /** @minimum 0 */
-  radarIntervalMs?: number;
-  promotedSymbols?: string[];
 }

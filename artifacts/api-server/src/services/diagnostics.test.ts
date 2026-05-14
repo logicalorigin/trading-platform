@@ -9,6 +9,7 @@ process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] = "1";
 
 const diagnosticsModule = await import("./diagnostics");
+const signalOptionsWorkerStateModule = await import("./signal-options-worker-state");
 const storageHealthModule = await import("./storage-health");
 const {
   collectDiagnosticSnapshot,
@@ -24,13 +25,26 @@ const {
   __resetStorageHealthForTests,
   __setStorageHealthProbeForTests,
 } = storageHealthModule;
+const { registerSignalOptionsWorkerSnapshotGetter } = signalOptionsWorkerStateModule;
+
+function registerEmptySignalOptionsWorkerSnapshot() {
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: false,
+    tickRunning: false,
+    deploymentCount: 0,
+    activeDeploymentCount: 0,
+    deployments: [],
+  }));
+}
 
 test.beforeEach(() => {
   __setStorageHealthProbeForTests(async () => {});
+  registerEmptySignalOptionsWorkerSnapshot();
 });
 
 test.afterEach(() => {
   __resetStorageHealthForTests();
+  registerEmptySignalOptionsWorkerSnapshot();
 });
 
 test("diagnostics do not page on low-sample startup latency", async () => {
@@ -136,6 +150,207 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   assert.equal(orders?.metrics.orderCount, 3);
   assert.equal(storage?.status, "ok");
   assert.equal(storage?.metrics.status, "ok");
+});
+
+test("diagnostics treat recovered signal-options worker failures as historical", async () => {
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: Date.now(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date().toISOString(),
+        lastError: null,
+        scanCount: 4,
+        totalFailureCount: 3,
+        failureCount: 0,
+        lastFailureAt: new Date(Date.now() - 120_000).toISOString(),
+        lastSignalCount: 10,
+        lastFreshSignalCount: 10,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date().toISOString(),
+        lastOldestSignalBarAt: new Date().toISOString(),
+        lastCandidateCount: 2,
+        lastBlockedCandidateCount: 1,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: true,
+        strictReady: true,
+        strictReason: null,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        lastTickleAt: new Date().toISOString(),
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+  const workerEvent = collected.events.find(
+    (event) => event.code === "signal_options_worker_failure",
+  );
+
+  assert.equal(automation?.status, "ok");
+  assert.equal(automation?.metrics.failureCount, 0);
+  assert.equal(automation?.metrics.totalFailureCount, 3);
+  assert.equal(workerEvent, undefined);
+});
+
+test("diagnostics surface stale signal-options scan inputs", async () => {
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: Date.now(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date().toISOString(),
+        lastError: null,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 2,
+        lastStaleSignalCount: 5,
+        lastUnavailableSignalCount: 1,
+        lastLatestSignalBarAt: new Date().toISOString(),
+        lastOldestSignalBarAt: new Date(Date.now() - 45 * 60_000).toISOString(),
+        lastCandidateCount: 12,
+        lastBlockedCandidateCount: 12,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: true,
+        strictReady: true,
+        strictReason: null,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        lastTickleAt: new Date().toISOString(),
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+  const signalFreshnessEvent = collected.events.find(
+    (event) => event.code === "signal_options_signal_scan_degraded",
+  );
+
+  assert.equal(automation?.status, "degraded");
+  assert.equal(automation?.metrics.signalCount, 8);
+  assert.equal(automation?.metrics.freshSignalCount, 2);
+  assert.equal(automation?.metrics.notFreshSignalCount, 6);
+  assert.equal(signalFreshnessEvent?.severity, "warning");
+});
+
+test("diagnostics do not treat inactive but current signals as degraded input", async () => {
+  const now = new Date().toISOString();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: Date.now(),
+        failedUntilMs: 0,
+        lastSuccessAt: now,
+        lastError: null,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 0,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: now,
+        lastOldestSignalBarAt: now,
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: true,
+        strictReady: true,
+        strictReason: null,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        lastTickleAt: now,
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+
+  assert.equal(automation?.status, "ok");
+  assert.equal(automation?.metrics.notFreshSignalCount, 8);
 });
 
 test("diagnostics classify configured Postgres outages as storage events only", async () => {

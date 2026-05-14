@@ -58,6 +58,10 @@ const SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE =
   "Postgres is unavailable; using runtime-only signal monitor evaluation.";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_CODE = "signal_monitor_db_unavailable";
 const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS = 10_000;
+const SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS = 60_000;
+const SIGNAL_MONITOR_MATRIX_STALE_TTL_MS = 5 * 60_000;
+const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
+const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();
 const TIMEFRAME_MS: Record<SignalMonitorMatrixTimeframe, number> = {
@@ -237,6 +241,11 @@ const runtimeSignalMonitorEvaluationCache = new Map<
   { expiresAt: number; value: unknown }
 >();
 const runtimeSignalMonitorEvaluationInFlight = new Map<string, Promise<unknown>>();
+const signalMonitorMatrixEvaluationCache = new Map<
+  string,
+  { freshUntil: number; staleUntil: number; value: unknown }
+>();
+const signalMonitorMatrixEvaluationInFlight = new Map<string, Promise<unknown>>();
 
 async function withRuntimeSignalMonitorEvaluationCache<T>(
   key: string,
@@ -282,6 +291,66 @@ function clearRuntimeSignalMonitorEvaluationCache(environment: RuntimeMode): voi
       runtimeSignalMonitorEvaluationInFlight.delete(key);
     }
   }
+}
+
+function clearSignalMonitorMatrixEvaluationCache(environment?: RuntimeMode): void {
+  const prefix = environment ? `signal-matrix:${environment}:` : null;
+  for (const key of signalMonitorMatrixEvaluationCache.keys()) {
+    if (!prefix || key.startsWith(prefix)) {
+      signalMonitorMatrixEvaluationCache.delete(key);
+    }
+  }
+  for (const key of signalMonitorMatrixEvaluationInFlight.keys()) {
+    if (!prefix || key.startsWith(prefix)) {
+      signalMonitorMatrixEvaluationInFlight.delete(key);
+    }
+  }
+}
+
+async function withSignalMonitorMatrixEvaluationCache<T>(
+  key: string,
+  factory: () => Promise<T>,
+  options: { nowMs?: number } = {},
+): Promise<T> {
+  const nowMs = options.nowMs ?? Date.now();
+  const cached = signalMonitorMatrixEvaluationCache.get(key);
+  if (cached && cached.freshUntil > nowMs) {
+    return cached.value as T;
+  }
+
+  const inFlight = signalMonitorMatrixEvaluationInFlight.get(key);
+  if (inFlight) {
+    if (cached && cached.staleUntil > nowMs) {
+      return cached.value as T;
+    }
+    return inFlight as Promise<T>;
+  }
+
+  const request = factory()
+    .then((value) => {
+      const completedAt = Date.now();
+      signalMonitorMatrixEvaluationCache.set(key, {
+        value,
+        freshUntil: completedAt + SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS,
+        staleUntil: completedAt + SIGNAL_MONITOR_MATRIX_STALE_TTL_MS,
+      });
+      return value;
+    })
+    .finally(() => {
+      if (signalMonitorMatrixEvaluationInFlight.get(key) === request) {
+        signalMonitorMatrixEvaluationInFlight.delete(key);
+      }
+    });
+  signalMonitorMatrixEvaluationInFlight.set(key, request);
+
+  if (cached && cached.staleUntil > nowMs) {
+    void request.catch((error) => {
+      logger.warn({ err: error }, "Signal monitor matrix background refresh failed");
+    });
+    return cached.value as T;
+  }
+
+  return request;
 }
 
 function warnSignalMonitorDbUnavailable(error: unknown): void {
@@ -415,6 +484,7 @@ async function updateRuntimeSignalMonitorProfile(input: {
 
   runtimeSignalMonitorProfiles.set(input.environment, updated);
   clearRuntimeSignalMonitorEvaluationCache(input.environment);
+  clearSignalMonitorMatrixEvaluationCache(input.environment);
   return updated;
 }
 
@@ -612,6 +682,25 @@ export function isSignalMonitorBarComplete(input: {
   );
 }
 
+export function signalMonitorCompletedBarsQueryTo(input: {
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}): Date {
+  if (input.timeframe === "1d") {
+    const [year, month, day] = marketDateKey(input.evaluatedAt)
+      .split("-")
+      .map((part) => Number.parseInt(part, 10));
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const completedBoundaryMs =
+    Math.floor(
+      (input.evaluatedAt.getTime() - COMPLETED_BAR_SAFETY_MS) / timeframeMs,
+    ) * timeframeMs;
+  return new Date(Math.max(0, completedBoundaryMs));
+}
+
 function filterCompletedBars(
   inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
   timeframe: SignalMonitorMatrixTimeframe,
@@ -627,6 +716,24 @@ function filterCompletedBars(
       ? isSignalMonitorBarComplete({ timestamp, timeframe, evaluatedAt })
       : false;
   });
+}
+
+function mergeCompletedBars(
+  baseBars: SignalMonitorBarSnapshot[],
+  liveEdgeBars: SignalMonitorBarSnapshot[],
+  limit: number,
+) {
+  const byTimestamp = new Map<number, SignalMonitorBarSnapshot>();
+  [...baseBars, ...liveEdgeBars].forEach((bar) => {
+    const timestamp = dateOrNull(bar.timestamp);
+    if (timestamp) {
+      byTimestamp.set(timestamp.getTime(), bar);
+    }
+  });
+  return Array.from(byTimestamp.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, bar]) => bar)
+    .slice(-limit);
 }
 
 export function aggregateCompletedMinuteBars(
@@ -851,20 +958,83 @@ export async function loadSignalMonitorCompletedBars(input: {
     input.timeframe === "2m"
       ? (input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS) * 2 + 4
       : input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS;
-  const barsResult = await getBars({
-    symbol: input.symbol,
+  const completedLimit = input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS;
+  const queryTo = signalMonitorCompletedBarsQueryTo({
     timeframe: providerTimeframe,
-    limit: providerLimit,
-    assetClass: "equity",
-    outsideRth: true,
-    source: "trades",
-    allowHistoricalSynthesis: true,
+    evaluatedAt: input.evaluatedAt,
   });
-  const completedBars =
+  const fetchBars = (mode: "primary" | "full-retry" | "live-edge") =>
+    getBars({
+      symbol: input.symbol,
+      timeframe: providerTimeframe,
+      limit: mode === "live-edge"
+        ? Math.min(
+            providerLimit,
+            input.timeframe === "2m"
+              ? SIGNAL_MONITOR_STALE_RETRY_BARS * 2
+              : SIGNAL_MONITOR_STALE_RETRY_BARS,
+          )
+        : providerLimit,
+      to: queryTo,
+      assetClass: "equity",
+      outsideRth: true,
+      source: "trades",
+      allowHistoricalSynthesis: mode !== "live-edge",
+      brokerRecentWindowMinutes: mode === "primary"
+        ? null
+        : SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES,
+    });
+  const shouldRetry = (barAt: Date | null) =>
+    !barAt ||
+    isLatestBarStale({
+      latestBarAt: barAt,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    });
+  const acceptNewerBars = (
+    retryCompletedBars: SignalMonitorBarSnapshot[],
+    merge: boolean,
+  ) => {
+    const currentLatestBar = completedBars.at(-1);
+    const currentLatestBarAt = currentLatestBar
+      ? dateOrNull(currentLatestBar.timestamp)
+      : null;
+    const retryLatestBar = retryCompletedBars.at(-1);
+    const retryLatestBarAt = retryLatestBar
+      ? dateOrNull(retryLatestBar.timestamp)
+      : null;
+    if (
+      retryLatestBarAt &&
+      (!currentLatestBarAt ||
+        retryLatestBarAt.getTime() > currentLatestBarAt.getTime())
+    ) {
+      completedBars = merge
+        ? mergeCompletedBars(completedBars, retryCompletedBars, completedLimit)
+        : retryCompletedBars;
+    }
+  };
+  const buildCompletedBars = (
+    bars: Awaited<ReturnType<typeof getBars>>["bars"],
+  ) =>
     input.timeframe === "2m"
-      ? aggregateCompletedMinuteBars(barsResult.bars, "2m", input.evaluatedAt)
-      : filterCompletedBars(barsResult.bars, input.timeframe, input.evaluatedAt);
-  const latestBar = completedBars.at(-1);
+      ? aggregateCompletedMinuteBars(bars, "2m", input.evaluatedAt)
+      : filterCompletedBars(bars, input.timeframe, input.evaluatedAt);
+  const fetchCompletedBars = async (
+    mode: "primary" | "full-retry" | "live-edge",
+  ) => buildCompletedBars((await fetchBars(mode)).bars);
+
+  let completedBars = await fetchCompletedBars("primary");
+  let latestBar = completedBars.at(-1);
+  let latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
+  if (shouldRetry(latestBarAt)) {
+    acceptNewerBars(await fetchCompletedBars("full-retry"), false);
+    latestBar = completedBars.at(-1);
+    latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
+  }
+  if (shouldRetry(latestBarAt)) {
+    acceptNewerBars(await fetchCompletedBars("live-edge"), true);
+    latestBar = completedBars.at(-1);
+  }
   return {
     bars: completedBars,
     latestBarAt: latestBar ? dateOrNull(latestBar.timestamp) : null,
@@ -1622,34 +1792,48 @@ export async function evaluateSignalMonitorMatrix(input: {
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
   const evaluatedAt = new Date();
   const concurrency = positiveInteger(profile.evaluationConcurrency, 3, 1, 10);
-  const tasks = symbols.flatMap((symbol) =>
-    timeframes.map((timeframe) => ({ symbol, timeframe })),
-  );
-  const states = [];
+  const cacheKey = [
+    "signal-matrix",
+    environment,
+    profile.id,
+    input.watchlistId ?? "default",
+    [...symbols].sort().join(","),
+    timeframes.join(","),
+    concurrency,
+    profile.freshWindowBars,
+    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+  ].join(":");
 
-  for (let index = 0; index < tasks.length; index += concurrency) {
-    const batch = tasks.slice(index, index + concurrency);
-    const batchStates = await Promise.all(
-      batch.map((task) =>
-        evaluateSignalMonitorMatrixItem({
-          profile,
-          symbol: task.symbol,
-          timeframe: task.timeframe,
-          evaluatedAt,
-        }),
-      ),
+  return withSignalMonitorMatrixEvaluationCache(cacheKey, async () => {
+    const tasks = symbols.flatMap((symbol) =>
+      timeframes.map((timeframe) => ({ symbol, timeframe })),
     );
-    states.push(...batchStates);
-  }
+    const states = [];
 
-  return {
-    profile: profileToResponse(profile),
-    states,
-    evaluatedAt,
-    timeframes,
-    truncated,
-    skippedSymbols,
-  };
+    for (let index = 0; index < tasks.length; index += concurrency) {
+      const batch = tasks.slice(index, index + concurrency);
+      const batchStates = await Promise.all(
+        batch.map((task) =>
+          evaluateSignalMonitorMatrixItem({
+            profile,
+            symbol: task.symbol,
+            timeframe: task.timeframe,
+            evaluatedAt,
+          }),
+        ),
+      );
+      states.push(...batchStates);
+    }
+
+    return {
+      profile: profileToResponse(profile),
+      states,
+      evaluatedAt,
+      timeframes,
+      truncated,
+      skippedSymbols,
+    };
+  });
 }
 
 export async function getSignalMonitorProfile(input: {
@@ -1741,6 +1925,7 @@ export async function updateSignalMonitorProfile(input: {
       .where(eq(signalMonitorProfilesTable.id, profile.id))
       .returning();
 
+    clearSignalMonitorMatrixEvaluationCache(environment);
     return profileToResponse(updated ?? profile);
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -1753,6 +1938,22 @@ export async function updateSignalMonitorProfile(input: {
     throw error;
   }
 }
+
+export const __signalMonitorInternalsForTests = {
+  clearSignalMonitorMatrixEvaluationCache,
+  withSignalMonitorMatrixEvaluationCache,
+  seedSignalMonitorMatrixCache(
+    key: string,
+    value: unknown,
+    bounds: { freshUntil: number; staleUntil: number },
+  ) {
+    signalMonitorMatrixEvaluationCache.set(key, {
+      value,
+      freshUntil: bounds.freshUntil,
+      staleUntil: bounds.staleUntil,
+    });
+  },
+};
 
 export async function getSignalMonitorState(input: {
   environment?: RuntimeMode;

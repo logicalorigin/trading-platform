@@ -16,6 +16,8 @@ export interface AccountEquityPoint {
   withdrawals: number;
   dividends: number;
   fees: number;
+  /** Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L. */
   returnPercent: number;
+  /** Benchmark return in percentage points, rebased to the first visible matched point. */
   benchmarkPercent: number | null;
 }

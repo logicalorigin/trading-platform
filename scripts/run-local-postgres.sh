@@ -10,7 +10,9 @@
 # pg_ctl and is unchanged.
 set -euo pipefail
 
-PGROOT="${PGROOT:-/home/runner/workspace/.local/postgres}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PGROOT="${PGROOT:-$REPO_ROOT/.local/postgres}"
 mkdir -p "$PGROOT/run" "$PGROOT/log"
 
 if [ ! -s "$PGROOT/data/PG_VERSION" ]; then

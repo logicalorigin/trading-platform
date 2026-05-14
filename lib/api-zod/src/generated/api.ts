@@ -106,6 +106,66 @@ export const GetSessionResponse = zod.object({
 
 
 /**
+ * @summary Get backend settings snapshot
+ */
+export const GetBackendSettingsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Apply backend settings changes
+ */
+export const ApplyBackendSettingsBody = zod.record(zod.string(), zod.unknown())
+
+export const ApplyBackendSettingsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Run a backend settings action
+ */
+export const RunBackendSettingsActionParams = zod.object({
+  "actionId": zod.coerce.string()
+})
+
+export const RunBackendSettingsActionBody = zod.record(zod.string(), zod.unknown())
+
+export const RunBackendSettingsActionResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get user preferences
+ */
+export const GetUserPreferencesResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Update user preferences
+ */
+export const UpdateUserPreferencesBody = zod.record(zod.string(), zod.unknown())
+
+export const UpdateUserPreferencesResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get IBKR lane architecture settings
+ */
+export const GetIbkrLaneArchitectureResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Update IBKR lane architecture settings
+ */
+export const UpdateIbkrLaneArchitectureBody = zod.record(zod.string(), zod.unknown())
+
+export const UpdateIbkrLaneArchitectureResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Get current IBKR line usage
+ */
+export const GetIbkrLineUsageResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
  * Returns read-only bridge, API memory, chart-support, and order-capability diagnostics.
  * @summary Get runtime diagnostics
  */
@@ -376,6 +436,26 @@ export const RecordClientDiagnosticEventBody = zod.object({
 
 
 /**
+ * @summary Record browser/client diagnostics metrics
+ */
+export const RecordClientDiagnosticsMetricsBody = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Record a browser diagnostics report
+ */
+export const RecordBrowserDiagnosticsReportBody = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Prune persisted diagnostics storage
+ */
+export const PruneDiagnosticsStorageBody = zod.record(zod.string(), zod.unknown())
+
+export const PruneDiagnosticsStorageResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
  * @summary Export raw diagnostics for the selected window
  */
 export const ExportDiagnosticsQueryParams = zod.object({
@@ -385,6 +465,75 @@ export const ExportDiagnosticsQueryParams = zod.object({
 })
 
 export const ExportDiagnosticsResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Create an IBKR bridge one-click launcher payload
+ */
+export const GetIbkrBridgeLauncherResponse = zod.object({
+  "activationId": zod.string(),
+  "apiBaseUrl": zod.string(),
+  "bridgeToken": zod.string(),
+  "bundleUrl": zod.string().nullable(),
+  "helperUrl": zod.string(),
+  "helperVersion": zod.string(),
+  "launchUrl": zod.string(),
+  "managementToken": zod.string()
+})
+
+
+/**
+ * @summary Record IBKR bridge activation progress
+ */
+export const RecordIbkrBridgeActivationProgressParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const RecordIbkrBridgeActivationProgressBody = zod.record(zod.string(), zod.unknown())
+
+export const RecordIbkrBridgeActivationProgressResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Complete IBKR bridge activation and attach runtime
+ */
+export const CompleteIbkrBridgeActivationParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const CompleteIbkrBridgeActivationBody = zod.record(zod.string(), zod.unknown())
+
+export const CompleteIbkrBridgeActivationResponse = zod.object({
+  "runtimeOverrideActive": zod.boolean(),
+  "bridgeUrl": zod.string(),
+  "tokenConfigured": zod.boolean(),
+  "bridge": zod.record(zod.string(), zod.unknown())
+})
+
+
+/**
+ * @summary Attach an IBKR bridge runtime override
+ */
+export const AttachIbkrBridgeRuntimeBody = zod.record(zod.string(), zod.unknown())
+
+export const AttachIbkrBridgeRuntimeResponse = zod.object({
+  "runtimeOverrideActive": zod.boolean(),
+  "bridgeUrl": zod.string(),
+  "tokenConfigured": zod.boolean(),
+  "bridge": zod.record(zod.string(), zod.unknown())
+})
+
+
+/**
+ * @summary Detach the IBKR bridge runtime override
+ */
+export const DetachIbkrBridgeRuntimeBody = zod.record(zod.string(), zod.unknown())
+
+export const DetachIbkrBridgeRuntimeResponse = zod.object({
+  "runtimeOverrideActive": zod.boolean()
+})
 
 
 /**
@@ -565,7 +714,7 @@ export const GetAccountSummaryResponse = zod.object({
   "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
   "field": zod.string(),
   "updatedAt": zod.coerce.date().nullable()
-}).optional(),
+}).optional().describe('Maintenance cushion in percentage points, e.g. 37.5 means 37.5%.'),
   "dayPnl": zod.object({
   "value": zod.number().nullable(),
   "currency": zod.string().nullable(),
@@ -579,7 +728,7 @@ export const GetAccountSummaryResponse = zod.object({
   "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
   "field": zod.string(),
   "updatedAt": zod.coerce.date().nullable()
-}).optional(),
+}).optional().describe('Day P&L as percentage points using the best available transfer-adjusted capital base.'),
   "totalPnl": zod.object({
   "value": zod.number().nullable(),
   "currency": zod.string().nullable(),
@@ -593,7 +742,7 @@ export const GetAccountSummaryResponse = zod.object({
   "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
   "field": zod.string(),
   "updatedAt": zod.coerce.date().nullable()
-}).optional(),
+}).optional().describe('All-time transfer-adjusted P&L return in percentage points.'),
   "settledCash": zod.object({
   "value": zod.number().nullable(),
   "currency": zod.string().nullable(),
@@ -671,19 +820,21 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "latestSnapshotAt": zod.coerce.date().nullable(),
   "isStale": zod.boolean(),
   "staleReason": zod.string().nullable(),
-  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest']).nullable(),
+  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest', 'shadow_options_replay']).nullable(),
   "liveTerminalIncluded": zod.boolean(),
+  "sourceScope": zod.enum(['ledger', 'manual', 'automation', 'watchlist_backtest', 'signal_options_replay', 'runtime_fallback']).nullish(),
+  "selectedSnapshotSource": zod.string().nullish(),
   "points": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
   "netLiquidation": zod.number(),
   "currency": zod.string(),
-  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER']),
+  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER', 'SHADOW_BACKTEST', 'SHADOW_OPTIONS_REPLAY']),
   "deposits": zod.number(),
   "withdrawals": zod.number(),
   "dividends": zod.number(),
   "fees": zod.number(),
-  "returnPercent": zod.number(),
-  "benchmarkPercent": zod.number().nullable()
+  "returnPercent": zod.number().describe('Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L.'),
+  "benchmarkPercent": zod.number().nullable().describe('Benchmark return in percentage points, rebased to the first visible matched point.')
 })),
   "events": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
@@ -752,13 +903,13 @@ export const GetAccountAllocationResponse = zod.object({
   "assetClass": zod.array(zod.object({
   "label": zod.string(),
   "value": zod.number(),
-  "weightPercent": zod.number().nullable(),
+  "weightPercent": zod.number().nullable().describe('Allocation weight in percentage points.'),
   "source": zod.string()
 })),
   "sector": zod.array(zod.object({
   "label": zod.string(),
   "value": zod.number(),
-  "weightPercent": zod.number().nullable(),
+  "weightPercent": zod.number().nullable().describe('Allocation weight in percentage points.'),
   "source": zod.string()
 })),
   "exposure": zod.object({
@@ -807,11 +958,11 @@ export const GetAccountPositionsResponse = zod.object({
   "averageCost": zod.number(),
   "mark": zod.number(),
   "dayChange": zod.number().nullable(),
-  "dayChangePercent": zod.number().nullable(),
+  "dayChangePercent": zod.number().nullable().describe('Day change in percentage points.'),
   "unrealizedPnl": zod.number(),
-  "unrealizedPnlPercent": zod.number(),
+  "unrealizedPnlPercent": zod.number().describe('Unrealized P&L in percentage points.'),
   "marketValue": zod.number(),
-  "weightPercent": zod.number().nullable(),
+  "weightPercent": zod.number().nullable().describe('Position weight in percentage points.'),
   "betaWeightedDelta": zod.number().nullable(),
   "lots": zod.array(zod.object({
   "accountId": zod.string(),
@@ -853,7 +1004,7 @@ export const GetAccountPositionsResponse = zod.object({
 }),zod.null()])
 })),
   "source": zod.string(),
-  "sourceType": zod.enum(['manual', 'automation', 'mixed']).optional(),
+  "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
@@ -905,11 +1056,11 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "averageCost": zod.number(),
   "mark": zod.number(),
   "dayChange": zod.number().nullable(),
-  "dayChangePercent": zod.number().nullable(),
+  "dayChangePercent": zod.number().nullable().describe('Day change in percentage points.'),
   "unrealizedPnl": zod.number(),
-  "unrealizedPnlPercent": zod.number(),
+  "unrealizedPnlPercent": zod.number().describe('Unrealized P&L in percentage points.'),
   "marketValue": zod.number(),
-  "weightPercent": zod.number().nullable(),
+  "weightPercent": zod.number().nullable().describe('Position weight in percentage points.'),
   "betaWeightedDelta": zod.number().nullable(),
   "lots": zod.array(zod.object({
   "accountId": zod.string(),
@@ -951,7 +1102,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
 }),zod.null()])
 })),
   "source": zod.string(),
-  "sourceType": zod.enum(['manual', 'automation', 'mixed']).optional(),
+  "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
   "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
@@ -1012,7 +1163,7 @@ export const GetAccountClosedTradesResponse = zod.object({
   "holdDurationMinutes": zod.number().nullable(),
   "commissions": zod.number().nullable(),
   "currency": zod.string(),
-  "sourceType": zod.enum(['manual', 'automation', 'watchlist_backtest', 'mixed']).optional(),
+  "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "candidateId": zod.string().nullish(),
   "deploymentId": zod.string().nullish(),
@@ -1086,7 +1237,7 @@ export const GetAccountOrdersResponse = zod.object({
   "averageFillPrice": zod.number().nullable(),
   "commission": zod.number().nullable(),
   "source": zod.string(),
-  "sourceType": zod.enum(['manual', 'automation']).optional(),
+  "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest']).optional(),
   "strategyLabel": zod.string().nullish(),
   "candidateId": zod.string().nullish(),
   "deploymentId": zod.string().nullish(),
@@ -1188,6 +1339,12 @@ export const GetAccountCashActivityResponse = zod.object({
 
 
 /**
+ * @summary Run a Shadow watchlist backtest
+ */
+export const RunShadowWatchlistBacktestBody = zod.record(zod.string(), zod.unknown())
+
+
+/**
  * @summary List saved watchlists
  */
 export const ListWatchlistsResponse = zod.object({
@@ -1210,6 +1367,172 @@ export const ListWatchlistsResponse = zod.object({
 })),
   "updatedAt": zod.coerce.date()
 }))
+})
+
+
+/**
+ * @summary Create a saved watchlist
+ */
+export const CreateWatchlistBody = zod.object({
+  "name": zod.string(),
+  "isDefault": zod.boolean().optional(),
+  "symbols": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string().nullish(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]).optional(),
+  "normalizedExchangeMic": zod.string().nullish(),
+  "exchangeDisplay": zod.string().nullish(),
+  "countryCode": zod.string().nullish(),
+  "exchangeCountryCode": zod.string().nullish(),
+  "sector": zod.string().nullish(),
+  "industry": zod.string().nullish()
+})).optional()
+})
+
+
+/**
+ * @summary Update a saved watchlist
+ */
+export const UpdateWatchlistParams = zod.object({
+  "watchlistId": zod.coerce.string()
+})
+
+export const UpdateWatchlistBody = zod.object({
+  "name": zod.string().optional(),
+  "isDefault": zod.boolean().optional()
+})
+
+export const UpdateWatchlistResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "isDefault": zod.boolean(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "countryCode": zod.string().nullable(),
+  "exchangeCountryCode": zod.string().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "sortOrder": zod.number(),
+  "addedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Delete a saved watchlist
+ */
+export const DeleteWatchlistParams = zod.object({
+  "watchlistId": zod.coerce.string()
+})
+
+export const DeleteWatchlistResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Add an item to a saved watchlist
+ */
+export const AddWatchlistItemParams = zod.object({
+  "watchlistId": zod.coerce.string()
+})
+
+export const AddWatchlistItemBody = zod.object({
+  "symbol": zod.string(),
+  "name": zod.string().nullish(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]).optional(),
+  "normalizedExchangeMic": zod.string().nullish(),
+  "exchangeDisplay": zod.string().nullish(),
+  "countryCode": zod.string().nullish(),
+  "exchangeCountryCode": zod.string().nullish(),
+  "sector": zod.string().nullish(),
+  "industry": zod.string().nullish()
+})
+
+export const AddWatchlistItemResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "isDefault": zod.boolean(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "countryCode": zod.string().nullable(),
+  "exchangeCountryCode": zod.string().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "sortOrder": zod.number(),
+  "addedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove an item from a saved watchlist
+ */
+export const RemoveWatchlistItemParams = zod.object({
+  "watchlistId": zod.coerce.string(),
+  "itemId": zod.coerce.string()
+})
+
+export const RemoveWatchlistItemResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "isDefault": zod.boolean(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "countryCode": zod.string().nullable(),
+  "exchangeCountryCode": zod.string().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "sortOrder": zod.number(),
+  "addedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Reorder saved watchlist items
+ */
+export const ReorderWatchlistItemsParams = zod.object({
+  "watchlistId": zod.coerce.string()
+})
+
+export const ReorderWatchlistItemsBody = zod.object({
+  "itemIds": zod.array(zod.string())
+})
+
+export const ReorderWatchlistItemsResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "isDefault": zod.boolean(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "countryCode": zod.string().nullable(),
+  "exchangeCountryCode": zod.string().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "sortOrder": zod.number(),
+  "addedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
 })
 
 
@@ -1302,6 +1625,7 @@ export const ListOrdersResponse = zod.object({
 export const PlaceOrderBody = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1335,6 +1659,7 @@ export const PlaceOrderBody = zod.object({
 export const PreviewOrderBody = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1387,6 +1712,7 @@ export const PreviewOrderResponse = zod.object({
 export const PreviewShadowOrderBody = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1439,6 +1765,7 @@ export const PreviewShadowOrderResponse = zod.object({
 export const PlaceShadowOrderBody = zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1472,6 +1799,7 @@ export const PlaceShadowOrderBody = zod.object({
 export const SubmitOrdersBody = zod.union([zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1503,6 +1831,7 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "parentOrderRequest": zod.union([zod.object({
   "accountId": zod.string(),
   "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
   "symbol": zod.string(),
   "assetClass": zod.enum(['equity', 'option']),
   "side": zod.enum(['buy', 'sell']),
@@ -1640,6 +1969,97 @@ export const GetQuoteSnapshotsResponse = zod.object({
   "transport": zod.union([zod.unknown(),zod.null()]),
   "delayed": zod.boolean(),
   "fallbackUsed": zod.boolean()
+})
+
+
+/**
+ * @summary Get gamma exposure dashboard data for an underlying
+ */
+export const GetGexDashboardParams = zod.object({
+  "underlying": zod.coerce.string()
+})
+
+export const GetGexDashboardResponse = zod.object({
+  "ticker": zod.string(),
+  "tickerDetails": zod.object({
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "sector": zod.string(),
+  "industry": zod.string(),
+  "marketCap": zod.number().nullable(),
+  "exchangeShortName": zod.string(),
+  "country": zod.string(),
+  "isEtf": zod.boolean(),
+  "isFund": zod.boolean()
+}),
+  "profile": zod.object({
+  "price": zod.number(),
+  "changes": zod.number().optional(),
+  "range": zod.string().optional(),
+  "dayLow": zod.number(),
+  "dayHigh": zod.number(),
+  "yearLow": zod.number().nullable(),
+  "yearHigh": zod.number().nullable(),
+  "mktCap": zod.number().nullable(),
+  "logo": zod.string().nullish()
+}),
+  "spot": zod.number(),
+  "timestamp": zod.coerce.date(),
+  "isStale": zod.boolean(),
+  "options": zod.array(zod.object({
+  "strike": zod.number(),
+  "expireYear": zod.number(),
+  "expireMonth": zod.number(),
+  "expireDay": zod.number(),
+  "cp": zod.enum(['C', 'P']),
+  "gamma": zod.number(),
+  "delta": zod.number(),
+  "openInterest": zod.number(),
+  "impliedVol": zod.number(),
+  "bid": zod.number(),
+  "ask": zod.number()
+})),
+  "snapshots": zod.array(zod.object({
+  "ts": zod.coerce.date(),
+  "netGex": zod.number()
+})),
+  "flowContext": zod.union([zod.object({
+  "bullishShare": zod.number(),
+  "todayVol": zod.number(),
+  "avg30dVol": zod.number().nullable(),
+  "netDelta": zod.number(),
+  "refDelta": zod.number(),
+  "eventCount": zod.number(),
+  "volumeBaselineReady": zod.boolean()
+}),zod.null()]),
+  "flowContextStatus": zod.enum(['ok', 'unavailable']),
+  "source": zod.object({
+  "provider": zod.enum(['massive', 'polygon']),
+  "status": zod.enum(['ok', 'partial', 'unavailable']),
+  "optionCount": zod.number(),
+  "usableOptionCount": zod.number(),
+  "withGamma": zod.number(),
+  "withOpenInterest": zod.number(),
+  "withImpliedVolatility": zod.number(),
+  "quoteUpdatedAt": zod.coerce.date().nullable(),
+  "chainUpdatedAt": zod.coerce.date().nullable(),
+  "flowStatus": zod.enum(['ok', 'unavailable']),
+  "flowEventCount": zod.number(),
+  "classifiedFlowEventCount": zod.number(),
+  "flowClassificationCoverage": zod.number(),
+  "flowClassificationBasisCounts": zod.object({
+  "quoteMatch": zod.number(),
+  "tickTest": zod.number(),
+  "none": zod.number()
+}),
+  "flowClassificationConfidenceCounts": zod.object({
+  "high": zod.number(),
+  "medium": zod.number(),
+  "low": zod.number(),
+  "none": zod.number()
+}),
+  "message": zod.string().nullable()
+})
 })
 
 
@@ -1800,6 +2220,24 @@ export const SearchUniverseTickersResponse = zod.object({
   "dataProviderPreference": zod.union([zod.enum(['polygon', 'ibkr']),zod.null()]),
   "providerContractId": zod.string().nullable()
 }))
+})
+
+
+/**
+ * @summary Resolve logo metadata for universe symbols
+ */
+export const GetUniverseLogosQueryParams = zod.object({
+  "symbols": zod.union([zod.coerce.string(),zod.array(zod.coerce.string())]).optional().describe('Comma-separated or repeated symbol list.')
+})
+
+export const GetUniverseLogosResponse = zod.record(zod.string(), zod.unknown())
+
+
+/**
+ * @summary Proxy a universe logo image
+ */
+export const ProxyUniverseLogoQueryParams = zod.object({
+  "url": zod.coerce.string()
 })
 
 
@@ -2272,12 +2710,99 @@ export const StreamOptionChainsQueryParams = zod.object({
 
 
 /**
+ * @summary Stream option quote snapshots over server-sent events
+ */
+export const StreamOptionQuoteSnapshotsQueryParams = zod.object({
+  "contracts": zod.coerce.string().optional().describe('Comma-separated option provider contract IDs.'),
+  "providerContractIds": zod.coerce.string().optional().describe('Alias for contracts.'),
+  "underlying": zod.coerce.string().optional()
+})
+
+
+/**
+ * @summary Stream latest historical bar snapshots over server-sent events
+ */
+export const StreamBarsQueryParams = zod.object({
+  "symbol": zod.coerce.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "assetClass": zod.enum(['equity', 'option']).optional(),
+  "providerContractId": zod.coerce.string().nullish(),
+  "outsideRth": zod.coerce.boolean().optional(),
+  "source": zod.enum(['trades', 'midpoint', 'bid_ask']).optional()
+})
+
+
+/**
  * @summary Stream order snapshots over server-sent events
  */
 export const StreamOrdersQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
   "mode": zod.enum(['paper', 'live']).optional(),
   "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
+})
+
+
+/**
+ * @summary List recent execution snapshots
+ */
+
+
+
+
+export const ListExecutionsQueryParams = zod.object({
+  "accountId": zod.coerce.string().optional(),
+  "days": zod.coerce.number().min(1).optional(),
+  "limit": zod.coerce.number().min(1).optional(),
+  "symbol": zod.coerce.string().optional(),
+  "providerContractId": zod.coerce.string().nullish()
+})
+
+export const ListExecutionsResponse = zod.object({
+  "executions": zod.array(zod.record(zod.string(), zod.unknown()))
+})
+
+
+/**
+ * @summary Stream execution snapshots over server-sent events
+ */
+
+
+
+
+export const StreamExecutionsQueryParams = zod.object({
+  "accountId": zod.coerce.string().optional(),
+  "days": zod.coerce.number().min(1).optional(),
+  "limit": zod.coerce.number().min(1).optional(),
+  "symbol": zod.coerce.string().optional(),
+  "providerContractId": zod.coerce.string().nullish()
+})
+
+
+/**
+ * @summary Get a market depth snapshot
+ */
+export const GetMarketDepthQueryParams = zod.object({
+  "symbol": zod.coerce.string(),
+  "accountId": zod.coerce.string().optional(),
+  "assetClass": zod.enum(['equity', 'option']).optional(),
+  "providerContractId": zod.coerce.string().nullish(),
+  "exchange": zod.coerce.string().nullish()
+})
+
+export const GetMarketDepthResponse = zod.object({
+  "depth": zod.record(zod.string(), zod.unknown())
+})
+
+
+/**
+ * @summary Stream market depth snapshots over server-sent events
+ */
+export const StreamMarketDepthQueryParams = zod.object({
+  "symbol": zod.coerce.string(),
+  "accountId": zod.coerce.string().optional(),
+  "assetClass": zod.enum(['equity', 'option']).optional(),
+  "providerContractId": zod.coerce.string().nullish(),
+  "exchange": zod.coerce.string().nullish()
 })
 
 
@@ -2291,10 +2816,49 @@ export const StreamAccountsQueryParams = zod.object({
 
 
 /**
+ * @summary Stream visible Account page snapshots over server-sent events
+ */
+export const StreamAccountPageQueryParams = zod.object({
+  "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional(),
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
+  "orderTab": zod.enum(['working', 'history']).optional(),
+  "assetClass": zod.coerce.string().optional().describe('Asset-class filter for live positions.'),
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "symbol": zod.coerce.string().optional(),
+  "tradeAssetClass": zod.coerce.string().optional().describe('Asset-class filter for closed trades.'),
+  "pnlSign": zod.enum(['all', 'winners', 'losers']).optional(),
+  "holdDuration": zod.coerce.string().optional(),
+  "performanceCalendarFrom": zod.date().optional()
+})
+
+
+/**
  * @summary Stream broker-derived stock minute aggregates over server-sent events
  */
 export const StreamStockAggregatesQueryParams = zod.object({
-  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.'),
+  "sessionId": zod.coerce.string().optional().describe('Optional mutable stream session id used to update symbols for an open stream.')
+})
+
+
+/**
+ * @summary Update symbols for an open stock aggregate stream session
+ */
+export const UpdateStockAggregateStreamSymbolsParams = zod.object({
+  "sessionId": zod.coerce.string()
+})
+
+export const UpdateStockAggregateStreamSymbolsBody = zod.object({
+  "symbols": zod.union([zod.string(),zod.array(zod.string())])
+})
+
+export const UpdateStockAggregateStreamSymbolsResponse = zod.object({
+  "sessionId": zod.string(),
+  "symbols": zod.array(zod.string()),
+  "diagnostics": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
 })
 
 
@@ -2635,13 +3199,21 @@ export const listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin = 0;
 
 export const listFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin = 0;
 
-export const listFlowEventsResponseSourceScannerCoverageRadarSelectedSymbolsMin = 0;
+export const listFlowEventsResponseSourceScannerCoverageLastScannedAtMinOne = 0;
 
-export const listFlowEventsResponseSourceScannerCoverageRadarEstimatedCycleMsMin = 0;
+export const listFlowEventsResponseSourceScannerCoverageOldestScanAtMin = 0;
 
-export const listFlowEventsResponseSourceScannerCoverageRadarBatchSizeMin = 0;
+export const listFlowEventsResponseSourceScannerCoverageNewestScanAtMin = 0;
 
-export const listFlowEventsResponseSourceScannerCoverageRadarIntervalMsMin = 0;
+export const listFlowEventsResponseSourceScannerCoverageBatchSizeMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageIntervalMsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageLineBudgetMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageConcurrencyMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageEstimatedCycleMsMin = 0;
 
 
 
@@ -2720,14 +3292,191 @@ export const ListFlowEventsResponse = zod.object({
   "cooldownCount": zod.number().min(listFlowEventsResponseSourceScannerCoverageCooldownCountMin).optional(),
   "scannedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin).optional(),
   "cycleScannedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin).optional(),
+  "lastScannedAt": zod.record(zod.string(), zod.number().min(listFlowEventsResponseSourceScannerCoverageLastScannedAtMinOne)).optional(),
+  "oldestScanAt": zod.number().min(listFlowEventsResponseSourceScannerCoverageOldestScanAtMin).nullish(),
+  "newestScanAt": zod.number().min(listFlowEventsResponseSourceScannerCoverageNewestScanAtMin).nullish(),
+  "batchSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageBatchSizeMin).optional(),
+  "intervalMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageIntervalMsMin).optional(),
+  "lineBudget": zod.number().min(listFlowEventsResponseSourceScannerCoverageLineBudgetMin).optional(),
+  "concurrency": zod.number().min(listFlowEventsResponseSourceScannerCoverageConcurrencyMin).optional(),
+  "estimatedCycleMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageEstimatedCycleMsMin).nullish(),
   "currentBatch": zod.array(zod.string()).optional(),
   "lastScanAt": zod.coerce.date().nullish(),
-  "degradedReason": zod.string().nullish(),
-  "radarSelectedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarSelectedSymbolsMin).optional(),
-  "radarEstimatedCycleMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarEstimatedCycleMsMin).nullish(),
-  "radarBatchSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarBatchSizeMin).optional(),
-  "radarIntervalMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarIntervalMsMin).optional(),
-  "promotedSymbols": zod.array(zod.string()).optional()
+  "degradedReason": zod.string().nullish()
+}).optional()
+})
+})
+
+
+/**
+ * @summary List aggregate options flow events
+ */
+export const listAggregateFlowEventsQueryLimitMax = 1000;
+
+export const listAggregateFlowEventsQueryUnusualThresholdMin = 0.1;
+export const listAggregateFlowEventsQueryUnusualThresholdMax = 100;
+
+export const listAggregateFlowEventsQueryMinPremiumMin = 0;
+export const listAggregateFlowEventsQueryMinPremiumMax = 50000000;
+
+export const listAggregateFlowEventsQueryMaxDteMin = 0;
+export const listAggregateFlowEventsQueryMaxDteMax = 730;
+
+export const listAggregateFlowEventsQueryLineBudgetMax = 150;
+
+
+
+export const ListAggregateFlowEventsQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(listAggregateFlowEventsQueryLimitMax).optional(),
+  "unusualThreshold": zod.coerce.number().min(listAggregateFlowEventsQueryUnusualThresholdMin).max(listAggregateFlowEventsQueryUnusualThresholdMax).optional().describe('Volume \/ open-interest ratio at which a print is flagged as unusual.'),
+  "scope": zod.enum(['all', 'unusual']).optional(),
+  "minPremium": zod.coerce.number().min(listAggregateFlowEventsQueryMinPremiumMin).max(listAggregateFlowEventsQueryMinPremiumMax).optional(),
+  "maxDte": zod.coerce.number().min(listAggregateFlowEventsQueryMaxDteMin).max(listAggregateFlowEventsQueryMaxDteMax).optional(),
+  "lineBudget": zod.coerce.number().min(1).max(listAggregateFlowEventsQueryLineBudgetMax).optional()
+})
+
+export const listAggregateFlowEventsResponseSourceIbkrExpirationCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrHydratedExpirationCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrContractCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrQualifiedContractCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrCandidateExpirationCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrMetadataContractCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrLiveCandidateCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrAcceptedQuoteCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrRejectedQuoteCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrReturnedQuoteCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrMissingQuoteCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceIbkrFilteredEventCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageTargetSizeMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageActiveTargetSizeMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageSelectedShortfallMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageCooldownCountMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageScannedSymbolsMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageLastScannedAtMinOne = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageOldestScanAtMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageNewestScanAtMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageBatchSizeMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageIntervalMsMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageLineBudgetMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageConcurrencyMin = 0;
+
+export const listAggregateFlowEventsResponseSourceScannerCoverageEstimatedCycleMsMin = 0;
+
+
+
+export const ListAggregateFlowEventsResponse = zod.object({
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "underlying": zod.string(),
+  "provider": zod.enum(['ibkr', 'polygon']),
+  "basis": zod.enum(['snapshot', 'trade']),
+  "optionTicker": zod.string(),
+  "providerContractId": zod.string().nullable().describe('Broker contract identifier, when the flow source can map the option to a broker-backed contract.'),
+  "strike": zod.number(),
+  "expirationDate": zod.coerce.date(),
+  "right": zod.enum(['call', 'put']),
+  "price": zod.number(),
+  "bid": zod.number().nullish().describe('Best bid observed with the event or snapshot, when available.'),
+  "ask": zod.number().nullish().describe('Best ask observed with the event or snapshot, when available.'),
+  "last": zod.number().nullish().describe('Last option price observed with the event or snapshot, when available.'),
+  "mark": zod.number().nullish().describe('Mark or midpoint price used for snapshot-derived flow, when available.'),
+  "size": zod.number(),
+  "premium": zod.number(),
+  "multiplier": zod.number().nullish().describe('Option contract multiplier, when the source provides it.'),
+  "sharesPerContract": zod.number().nullish().describe('Shares represented by one option contract, when the source provides it.'),
+  "openInterest": zod.number(),
+  "impliedVolatility": zod.union([zod.number(),zod.null()]),
+  "delta": zod.number().nullish(),
+  "gamma": zod.number().nullish(),
+  "theta": zod.number().nullish(),
+  "vega": zod.number().nullish(),
+  "underlyingPrice": zod.number().nullish().describe('Underlying reference price used to classify moneyness, when available.'),
+  "moneyness": zod.union([zod.literal('ITM'),zod.literal('ATM'),zod.literal('OTM'),zod.literal('UNKNOWN'),zod.literal(null)]).nullish(),
+  "distancePercent": zod.number().nullish().describe('Signed strike distance from the underlying reference price, in percent.'),
+  "confidence": zod.enum(['confirmed_trade', 'snapshot_activity', 'fallback_estimate']).optional().describe('Data-confidence class for the flow row.'),
+  "sourceBasis": zod.enum(['confirmed_trade', 'snapshot_activity', 'fallback_estimate']).optional().describe('Machine-readable source basis shown by the Flow UI.'),
+  "exchange": zod.string(),
+  "side": zod.string(),
+  "sentiment": zod.enum(['bullish', 'bearish', 'neutral']),
+  "tradeConditions": zod.array(zod.string()),
+  "occurredAt": zod.coerce.date(),
+  "unusualScore": zod.number().describe('Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover.'),
+  "isUnusual": zod.boolean().describe('True when the contract\'s day volume meets or exceeds its open interest (the default unusual-flow threshold).')
+})),
+  "source": zod.object({
+  "provider": zod.enum(['ibkr', 'polygon', 'none']),
+  "status": zod.enum(['live', 'fallback', 'empty', 'error']),
+  "fallbackUsed": zod.boolean(),
+  "attemptedProviders": zod.array(zod.enum(['ibkr', 'polygon'])),
+  "errorMessage": zod.string().nullable(),
+  "fetchedAt": zod.coerce.date(),
+  "unusualThreshold": zod.number().optional().describe('Volume \/ open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.'),
+  "ibkrStatus": zod.enum(['loaded', 'empty', 'degraded', 'error']).optional(),
+  "ibkrReason": zod.string().nullish(),
+  "ibkrExpirationCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrExpirationCountMin).optional(),
+  "ibkrHydratedExpirationCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrHydratedExpirationCountMin).optional(),
+  "ibkrContractCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrContractCountMin).optional(),
+  "ibkrQualifiedContractCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrQualifiedContractCountMin).optional(),
+  "ibkrCandidateExpirationCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrCandidateExpirationCountMin).optional(),
+  "ibkrMetadataContractCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrMetadataContractCountMin).optional(),
+  "ibkrLiveCandidateCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrLiveCandidateCountMin).optional(),
+  "ibkrAcceptedQuoteCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrAcceptedQuoteCountMin).optional(),
+  "ibkrRejectedQuoteCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrRejectedQuoteCountMin).optional(),
+  "ibkrReturnedQuoteCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrReturnedQuoteCountMin).optional(),
+  "ibkrMissingQuoteCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrMissingQuoteCountMin).optional(),
+  "ibkrFilteredEventCount": zod.number().min(listAggregateFlowEventsResponseSourceIbkrFilteredEventCountMin).optional(),
+  "scannerCoverage": zod.object({
+  "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
+  "targetSize": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageTargetSizeMin).optional(),
+  "activeTargetSize": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageActiveTargetSizeMin).optional(),
+  "selectedSymbols": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin).optional(),
+  "selectedShortfall": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageSelectedShortfallMin).optional(),
+  "rankedAt": zod.coerce.date().nullish(),
+  "lastRefreshAt": zod.coerce.date().nullish(),
+  "lastGoodAt": zod.coerce.date().nullish(),
+  "stale": zod.boolean().optional(),
+  "fallbackUsed": zod.boolean().optional(),
+  "cooldownCount": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageCooldownCountMin).optional(),
+  "scannedSymbols": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageScannedSymbolsMin).optional(),
+  "cycleScannedSymbols": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin).optional(),
+  "lastScannedAt": zod.record(zod.string(), zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageLastScannedAtMinOne)).optional(),
+  "oldestScanAt": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageOldestScanAtMin).nullish(),
+  "newestScanAt": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageNewestScanAtMin).nullish(),
+  "batchSize": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageBatchSizeMin).optional(),
+  "intervalMs": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageIntervalMsMin).optional(),
+  "lineBudget": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageLineBudgetMin).optional(),
+  "concurrency": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageConcurrencyMin).optional(),
+  "estimatedCycleMs": zod.number().min(listAggregateFlowEventsResponseSourceScannerCoverageEstimatedCycleMsMin).nullish(),
+  "currentBatch": zod.array(zod.string()).optional(),
+  "lastScanAt": zod.coerce.date().nullish(),
+  "degradedReason": zod.string().nullish()
 }).optional()
 })
 })
@@ -2750,13 +3499,21 @@ export const getFlowUniverseResponseCoverageScannedSymbolsMin = 0;
 
 export const getFlowUniverseResponseCoverageCycleScannedSymbolsMin = 0;
 
-export const getFlowUniverseResponseCoverageRadarSelectedSymbolsMin = 0;
+export const getFlowUniverseResponseCoverageLastScannedAtMinOne = 0;
 
-export const getFlowUniverseResponseCoverageRadarEstimatedCycleMsMin = 0;
+export const getFlowUniverseResponseCoverageOldestScanAtMin = 0;
 
-export const getFlowUniverseResponseCoverageRadarBatchSizeMin = 0;
+export const getFlowUniverseResponseCoverageNewestScanAtMin = 0;
 
-export const getFlowUniverseResponseCoverageRadarIntervalMsMin = 0;
+export const getFlowUniverseResponseCoverageBatchSizeMin = 0;
+
+export const getFlowUniverseResponseCoverageIntervalMsMin = 0;
+
+export const getFlowUniverseResponseCoverageLineBudgetMin = 0;
+
+export const getFlowUniverseResponseCoverageConcurrencyMin = 0;
+
+export const getFlowUniverseResponseCoverageEstimatedCycleMsMin = 0;
 
 
 
@@ -2775,14 +3532,17 @@ export const GetFlowUniverseResponse = zod.object({
   "cooldownCount": zod.number().min(getFlowUniverseResponseCoverageCooldownCountMin).optional(),
   "scannedSymbols": zod.number().min(getFlowUniverseResponseCoverageScannedSymbolsMin).optional(),
   "cycleScannedSymbols": zod.number().min(getFlowUniverseResponseCoverageCycleScannedSymbolsMin).optional(),
+  "lastScannedAt": zod.record(zod.string(), zod.number().min(getFlowUniverseResponseCoverageLastScannedAtMinOne)).optional(),
+  "oldestScanAt": zod.number().min(getFlowUniverseResponseCoverageOldestScanAtMin).nullish(),
+  "newestScanAt": zod.number().min(getFlowUniverseResponseCoverageNewestScanAtMin).nullish(),
+  "batchSize": zod.number().min(getFlowUniverseResponseCoverageBatchSizeMin).optional(),
+  "intervalMs": zod.number().min(getFlowUniverseResponseCoverageIntervalMsMin).optional(),
+  "lineBudget": zod.number().min(getFlowUniverseResponseCoverageLineBudgetMin).optional(),
+  "concurrency": zod.number().min(getFlowUniverseResponseCoverageConcurrencyMin).optional(),
+  "estimatedCycleMs": zod.number().min(getFlowUniverseResponseCoverageEstimatedCycleMsMin).nullish(),
   "currentBatch": zod.array(zod.string()).optional(),
   "lastScanAt": zod.coerce.date().nullish(),
-  "degradedReason": zod.string().nullish(),
-  "radarSelectedSymbols": zod.number().min(getFlowUniverseResponseCoverageRadarSelectedSymbolsMin).optional(),
-  "radarEstimatedCycleMs": zod.number().min(getFlowUniverseResponseCoverageRadarEstimatedCycleMsMin).nullish(),
-  "radarBatchSize": zod.number().min(getFlowUniverseResponseCoverageRadarBatchSizeMin).optional(),
-  "radarIntervalMs": zod.number().min(getFlowUniverseResponseCoverageRadarIntervalMsMin).optional(),
-  "promotedSymbols": zod.array(zod.string()).optional()
+  "degradedReason": zod.string().nullish()
 }),
   "symbols": zod.array(zod.string()),
   "sources": zod.object({
@@ -2790,6 +3550,20 @@ export const GetFlowUniverseResponse = zod.object({
   "flowUniverseSymbols": zod.array(zod.string())
 })
 })
+
+
+/**
+ * @summary Benchmark one options flow scanner ticker pass
+ */
+export const BenchmarkFlowScannerBody = zod.object({
+  "underlying": zod.string(),
+  "lineBudgets": zod.union([zod.string(),zod.array(zod.number())]).optional(),
+  "maxDte": zod.number().nullish(),
+  "expirationScanCount": zod.number().nullish(),
+  "strikeCoverage": zod.enum(['fast', 'standard', 'full']).optional()
+})
+
+export const BenchmarkFlowScannerResponse = zod.record(zod.string(), zod.unknown())
 
 
 /**
@@ -3289,6 +4063,14 @@ export const GetResearchTranscriptResponse = zod.object({
 
 
 /**
+ * @summary Ensure the default signal-options paper deployment exists
+ */
+export const EnsureDefaultSignalOptionsPaperDeploymentBody = zod.object({
+  "enabled": zod.boolean().optional()
+})
+
+
+/**
  * @summary List saved algo deployments
  */
 export const ListAlgoDeploymentsQueryParams = zod.object({
@@ -3590,6 +4372,22 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
+})
+
+
+/**
+ * @summary Run a signal-options shadow backfill
+ */
+export const RunSignalOptionsShadowBackfillParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const RunSignalOptionsShadowBackfillBody = zod.object({
+  "start": zod.string().optional(),
+  "end": zod.string().optional(),
+  "session": zod.string().optional(),
+  "commit": zod.boolean().optional(),
+  "profilePatch": zod.record(zod.string(), zod.unknown()).optional()
 })
 
 
@@ -4044,6 +4842,23 @@ export const CreateBacktestRunBody = zod.object({
   "studyId": zod.string(),
   "name": zod.string().nullable(),
   "parameters": zod.record(zod.string(), zod.unknown()).nullable()
+})
+
+
+/**
+ * @summary Resolve an option contract for backtest internals
+ */
+export const ResolveBacktestOptionContractBody = zod.object({
+  "underlying": zod.string(),
+  "occurredAt": zod.coerce.date(),
+  "right": zod.enum(['call', 'put']),
+  "spotPrice": zod.union([zod.number(),zod.string()]),
+  "contractPresetId": zod.string().nullish(),
+  "signalOptionsProfile": zod.union([zod.record(zod.string(), zod.unknown()),zod.null()]).optional()
+})
+
+export const ResolveBacktestOptionContractResponse = zod.object({
+  "contract": zod.record(zod.string(), zod.unknown())
 })
 
 

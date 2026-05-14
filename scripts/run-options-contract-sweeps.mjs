@@ -6,7 +6,7 @@ const API_BASE_URL = (
   process.env.API_BASE_URL ??
   "http://127.0.0.1:8080/api"
 ).replace(/\/$/, "");
-const DATABASE_URL = process.env.LOCAL_DATABASE_URL ?? process.env.DATABASE_URL;
+const DATABASE_URL = process.env.DATABASE_URL;
 const FROM_DATE = process.env.BACKTEST_FROM_DATE ?? "2026-01-01";
 const TO_DATE = process.env.BACKTEST_TO_DATE ?? "2026-05-08";
 
@@ -30,7 +30,7 @@ const OPTIMIZER_CONFIG = {
 function usage() {
   console.error(
     [
-      "Usage: LOCAL_DATABASE_URL=postgres://... node scripts/run-options-contract-sweeps.mjs",
+      "Usage: DATABASE_URL=postgres://... node scripts/run-options-contract-sweeps.mjs",
       "",
       "Optional env:",
       "  BACKTEST_API_BASE_URL=http://127.0.0.1:8080/api",
@@ -62,7 +62,7 @@ async function request(path, options = {}) {
 function readSignalOptionsDeployment() {
   if (!DATABASE_URL) {
     usage();
-    throw new Error("LOCAL_DATABASE_URL or DATABASE_URL is required");
+    throw new Error("DATABASE_URL is required");
   }
 
   const sql = `
@@ -223,7 +223,7 @@ async function main() {
           },
         ],
         workerCommand:
-          'DATABASE_URL="$LOCAL_DATABASE_URL" BACKTEST_API_BASE_URL=http://127.0.0.1:8080/api pnpm --filter @workspace/backtest-worker run dev',
+          "DATABASE_URL=postgres://... BACKTEST_API_BASE_URL=http://127.0.0.1:8080/api pnpm --filter @workspace/backtest-worker run dev",
       },
       null,
       2,

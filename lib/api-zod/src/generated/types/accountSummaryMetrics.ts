@@ -13,10 +13,13 @@ export interface AccountSummaryMetrics {
   buyingPower?: AccountMetric;
   marginUsed?: AccountMetric;
   maintenanceMargin?: AccountMetric;
+  /** Maintenance cushion in percentage points, e.g. 37.5 means 37.5%. */
   maintenanceMarginCushionPercent?: AccountMetric;
   dayPnl?: AccountMetric;
+  /** Day P&L as percentage points using the best available transfer-adjusted capital base. */
   dayPnlPercent?: AccountMetric;
   totalPnl?: AccountMetric;
+  /** All-time transfer-adjusted P&L return in percentage points. */
   totalPnlPercent?: AccountMetric;
   settledCash?: AccountMetric;
   unsettledCash?: AccountMetric;

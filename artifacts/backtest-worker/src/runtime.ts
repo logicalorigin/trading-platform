@@ -1,5 +1,13 @@
-export const API_BASE_URL =
-  process.env.BACKTEST_API_BASE_URL ?? "http://127.0.0.1:80/api";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8080/api";
+
+export function resolveApiBaseUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const explicit = env.BACKTEST_API_BASE_URL?.trim() || env.API_BASE_URL?.trim();
+  return explicit || DEFAULT_API_BASE_URL;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const WORKER_POLL_INTERVAL_MS = Number(
   process.env.BACKTEST_WORKER_POLL_INTERVAL_MS ?? "3000",

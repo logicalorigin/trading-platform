@@ -21,14 +21,17 @@ export type FlowUniverseCoverage = {
   cooldownCount: number;
   scannedSymbols: number;
   cycleScannedSymbols: number;
+  lastScannedAt: Record<string, number>;
+  oldestScanAt: number | null;
+  newestScanAt: number | null;
+  batchSize?: number;
+  intervalMs?: number;
+  lineBudget?: number;
+  concurrency?: number;
+  estimatedCycleMs?: number | null;
   currentBatch: string[];
   lastScanAt: Date | null;
   degradedReason: string | null;
-  radarSelectedSymbols?: number;
-  radarEstimatedCycleMs?: number | null;
-  radarBatchSize?: number;
-  radarIntervalMs?: number;
-  promotedSymbols?: string[];
 };
 
 export type FlowUniverseObservation = {
@@ -329,7 +332,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   let rankedAt: Date | null = null;
   let degradedReason: string | null = null;
   let cooldownCount = 0;
-  let scannedSymbols = new Set<string>();
+  let scannedAtBySymbol = new Map<string, Date>();
   let currentBatch: string[] = [];
   let lastScanAt: Date | null = null;
 
@@ -797,7 +800,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     const symbol = normalizeSymbol(input.symbol);
     if (!symbol) return;
     const observedAt = input.scannedAt ?? now();
-    scannedSymbols.add(symbol);
+    scannedAtBySymbol.set(symbol, observedAt);
     lastScanAt = observedAt;
     const flowScore = scoreObservation(input.events);
     const hasEvents = Boolean(input.events?.length);
@@ -840,8 +843,33 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     }
   }
 
-  function getCoverage(): FlowUniverseCoverage {
+  function getCoverage(input: { scanWindowMs?: number } = {}): FlowUniverseCoverage {
     const current = now();
+    const scanWindowMs =
+      typeof input.scanWindowMs === "number" &&
+      Number.isFinite(input.scanWindowMs) &&
+      input.scanWindowMs > 0
+        ? input.scanWindowMs
+        : null;
+    const scanCutoffMs =
+      scanWindowMs === null ? null : current.getTime() - scanWindowMs;
+    const selectedSet = new Set(selectedSymbols.map((symbol) => normalizeSymbol(symbol)));
+    const lastScannedAt = Object.fromEntries(
+      Array.from(scannedAtBySymbol.entries())
+        .filter(([symbol, scannedAt]) => {
+          if (selectedSet.size > 0 && !selectedSet.has(symbol)) {
+            return false;
+          }
+          return scanCutoffMs === null || scannedAt.getTime() >= scanCutoffMs;
+        })
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([symbol, scannedAt]) => [symbol, scannedAt.getTime()]),
+    );
+    const scanTimes = Object.values(lastScannedAt).filter((value) =>
+      Number.isFinite(value),
+    );
+    const oldestScanAt = scanTimes.length ? Math.min(...scanTimes) : null;
+    const newestScanAt = scanTimes.length ? Math.max(...scanTimes) : null;
     return {
       mode: runtimeOptions.mode,
       targetSize: runtimeOptions.targetSize,
@@ -857,8 +885,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       ),
       fallbackUsed: Boolean(degradedReason),
       cooldownCount,
-      scannedSymbols: scannedSymbols.size,
-      cycleScannedSymbols: scannedSymbols.size,
+      scannedSymbols: scanTimes.length,
+      cycleScannedSymbols: scanTimes.length,
+      lastScannedAt,
+      oldestScanAt,
+      newestScanAt,
       currentBatch,
       lastScanAt,
       degradedReason,
@@ -895,7 +926,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     rankedAt = null;
     degradedReason = null;
     cooldownCount = 0;
-    scannedSymbols = new Set();
+    scannedAtBySymbol = new Map();
     currentBatch = [];
     lastScanAt = null;
   }

@@ -5,24 +5,21 @@
 # Postgres via scripts/start-local-postgres.sh because root .replit workflows
 # are intentionally not used for app bring-up in this workspace.
 #
-# Fail-fast in local mode: exits non-zero with a clear operator message
-# if Postgres is not reachable within 10s. Skips entirely (exits 0) when
-# the project is wired to a hosted DATABASE_URL instead of local PG.
+# Fail-fast when DATABASE_URL points at the workspace-local socket: exits
+# non-zero with a clear operator message if Postgres is not reachable within
+# 10s. Skips entirely (exits 0) when the project is wired to a hosted DB.
 set -u
 
-PGROOT="${PGROOT:-/home/runner/workspace/.local/postgres}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PGROOT="${PGROOT:-$REPO_ROOT/.local/postgres}"
 SOCK="$PGROOT/run/.s.PGSQL.5432"
 
-# Decide whether local PG is the selected DB source. Skip entirely when
-# the project is wired to a hosted DATABASE_URL.
+# Decide whether local PG is the selected DB source. DATABASE_URL is the only
+# runtime database input; local mode is inferred from its socket host.
 local_mode=0
-case "${RAYALGO_DATABASE_SOURCE:-}" in
-  local|workspace-local-postgres|local-postgres) local_mode=1 ;;
-  *)
-    if [ -z "${DATABASE_URL:-}" ] && [ -n "${LOCAL_DATABASE_URL:-}" ]; then
-      local_mode=1
-    fi
-    ;;
+case "${DATABASE_URL:-}" in
+  *".local/postgres"*|*"host=$PGROOT/run"*) local_mode=1 ;;
 esac
 if [ "$local_mode" -ne 1 ]; then
   exit 0
@@ -36,7 +33,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 0.25
 done
 
-echo "[wait-for-local-postgres] FATAL: workspace-local Postgres is not reachable on $SOCK after 10s, but RAYALGO_DATABASE_SOURCE/LOCAL_DATABASE_URL says local is the selected DB source." >&2
+echo "[wait-for-local-postgres] FATAL: workspace-local Postgres is not reachable on $SOCK after 10s, but DATABASE_URL points at the local socket." >&2
 echo "[wait-for-local-postgres] Start it with: bash scripts/start-local-postgres.sh" >&2
 echo "[wait-for-local-postgres] Refusing to bring up the api-server with a missing local DB. Exiting non-zero." >&2
 exit 1

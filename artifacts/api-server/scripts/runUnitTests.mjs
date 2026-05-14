@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 
 const unitTestFiles = [
+  "../../lib/account-math/src/index.test.ts",
   "../../lib/backtest-core/src/engine.test.ts",
   "src/lib/runtime.test.ts",
   "src/providers/ibkr/bridge-client.test.ts",
@@ -46,7 +47,6 @@ const unitTestFiles = [
   "src/services/shadow-equity-forward-worker.test.ts",
   "src/services/flow-universe.test.ts",
   "src/services/options-flow-scanner.test.ts",
-  "src/services/options-flow-radar-scanner.test.ts",
   "src/services/ibkr-lane-policy.test.ts",
   "src/services/ibkr-line-usage.test.ts",
   "src/services/bridge-quote-stream.test.ts",

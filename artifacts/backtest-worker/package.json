@@ -14,12 +14,12 @@
     "@workspace/backtest-core": "workspace:*",
     "@workspace/db": "workspace:*",
     "drizzle-orm": "catalog:",
-    "pino": "^9"
+    "pino": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "esbuild": "^0.27.3",
-    "esbuild-plugin-pino": "^2.3.3",
+    "esbuild": "catalog:",
+    "esbuild-plugin-pino": "catalog:",
     "pino-pretty": "^13",
     "thread-stream": "3.1.0",
     "tsx": "catalog:"

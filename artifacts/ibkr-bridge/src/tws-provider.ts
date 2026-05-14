@@ -4433,7 +4433,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
                 providerContractId: resolved.resolved.providerContractId,
                 // 100 = option volume, 101 = option open interest, 106 =
                 // implied volatility. Sampling the underlying with these generic
-                // ticks gives the broad radar enough activity data without
+                // ticks gives the scanner enough activity data without
                 // hydrating every option contract in the chain.
                 genericTickList: "100,101,106",
               });

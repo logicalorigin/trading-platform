@@ -9,6 +9,7 @@ import {
   sql,
   type SQL,
 } from "drizzle-orm";
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import {
@@ -57,6 +58,7 @@ import {
   type MarketDataProvider,
   type OptionChainContract as PolygonOptionChainContract,
   type OptionPremiumDistribution,
+  type OptionTradePrint,
   type PremiumDistributionClassificationConfidence,
   type PremiumDistributionDataAccess,
   type PremiumDistributionHydrationDiagnostics,
@@ -68,6 +70,7 @@ import {
   type UniverseTicker,
   type UniverseMarket,
 } from "../providers/polygon/market-data";
+export type { OptionTradePrint } from "../providers/polygon/market-data";
 import { FmpResearchClient } from "../providers/fmp/client";
 import {
   createOptionsFlowScanner,
@@ -93,10 +96,6 @@ import {
   type FlowEventsSource,
   type FlowSourceInput,
 } from "./flow-events-model";
-import {
-  createOptionsFlowRadarScanner,
-  type OptionsFlowRadarCoverage,
-} from "./options-flow-radar-scanner";
 import {
   createFlowUniverseManager,
   getFlowScannerIntervalMs,
@@ -3390,13 +3389,9 @@ function normalizeUniverseCatalogName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-const universeCatalogListingsHydrationColumns =
-  universeCatalogListingsTable as typeof universeCatalogListingsTable & {
-    ibkrHydrationStatus: any;
-    ibkrHydrationAttemptedAt: any;
-    ibkrHydratedAt: any;
-    ibkrHydrationError: any;
-  };
+type UniverseCatalogListingUpdateSet = PgUpdateSetSource<
+  typeof universeCatalogListingsTable
+>;
 
 function normalizeUniverseCatalogHydrationStatus(
   value: string | null | undefined,
@@ -3992,22 +3987,22 @@ export async function upsertUniverseCatalogRows(rows: UniverseTicker[]) {
         ibkrHydrationStatus: sql<UniverseCatalogHydrationStatus>`case
           when coalesce(excluded.provider_contract_id, ${universeCatalogListingsTable.providerContractId}) is not null
             then 'hydrated'::universe_hydration_status
-          else ${universeCatalogListingsHydrationColumns.ibkrHydrationStatus}
+          else ${universeCatalogListingsTable.ibkrHydrationStatus}
         end`,
         ibkrHydrationAttemptedAt: sql<Date | null>`case
           when excluded.provider_contract_id is not null
             then coalesce(excluded.ibkr_hydration_attempted_at, now())
-          else ${universeCatalogListingsHydrationColumns.ibkrHydrationAttemptedAt}
+          else ${universeCatalogListingsTable.ibkrHydrationAttemptedAt}
         end`,
         ibkrHydratedAt: sql<Date | null>`case
           when coalesce(excluded.provider_contract_id, ${universeCatalogListingsTable.providerContractId}) is not null
             then coalesce(excluded.ibkr_hydrated_at, now())
-          else ${universeCatalogListingsHydrationColumns.ibkrHydratedAt}
+          else ${universeCatalogListingsTable.ibkrHydratedAt}
         end`,
         ibkrHydrationError: sql<string | null>`case
           when coalesce(excluded.provider_contract_id, ${universeCatalogListingsTable.providerContractId}) is not null
             then null
-          else ${universeCatalogListingsHydrationColumns.ibkrHydrationError}
+          else ${universeCatalogListingsTable.ibkrHydrationError}
         end`,
         contractDescription: value.contractDescription,
         contractMeta: sql<Record<string, unknown> | null>`case
@@ -4018,7 +4013,7 @@ export async function upsertUniverseCatalogRows(rows: UniverseTicker[]) {
         lastUpdatedAt: value.lastUpdatedAt,
         lastSeenAt: value.lastSeenAt,
         updatedAt: value.updatedAt,
-      } as any;
+      } satisfies UniverseCatalogListingUpdateSet;
       await tx
         .insert(universeCatalogListingsTable)
         .values(value)
@@ -4317,7 +4312,7 @@ export async function hydrateUniverseCatalogListingWithIbkr(
         lastUpdatedAt: mergedValue.lastUpdatedAt,
         lastSeenAt: row.lastSeenAt,
         updatedAt: new Date(),
-      } as any;
+      } satisfies UniverseCatalogListingUpdateSet;
       await db
         .update(universeCatalogListingsTable)
         .set(hydratedSet)
@@ -4341,7 +4336,7 @@ export async function hydrateUniverseCatalogListingWithIbkr(
           ? `IBKR returned ${results.results.length} non-matching candidates for ${row.ticker}.`
           : `IBKR returned no tradable match for ${row.ticker}.`,
       updatedAt: new Date(),
-    } as any;
+    } satisfies UniverseCatalogListingUpdateSet;
     await db
       .update(universeCatalogListingsTable)
       .set(unresolvedSet)
@@ -4359,7 +4354,7 @@ export async function hydrateUniverseCatalogListingWithIbkr(
       ibkrHydrationAttemptedAt: attemptedAt,
       ibkrHydrationError: message,
       updatedAt: new Date(),
-    } as any;
+    } satisfies UniverseCatalogListingUpdateSet;
     await db
       .update(universeCatalogListingsTable)
       .set(failedSet)
@@ -7677,33 +7672,13 @@ const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_ALWAYS_ON",
   true,
 );
-const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
-  "OPTIONS_FLOW_RADAR_ENABLED",
-  true,
-);
-const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_BATCH_SIZE",
-  50,
-);
-const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
-  3,
-);
-const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
-  "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
-  0,
-);
-const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
-  50,
-);
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
-  2,
+  25,
 );
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_CONCURRENCY",
-  2,
+  10,
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -7711,7 +7686,7 @@ const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
-  50,
+  10,
 );
 const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
   "OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE",
@@ -7733,11 +7708,6 @@ export type OptionsFlowRuntimeConfig = {
   universeMinPrice: number;
   universeMinDollarVolume: number;
   scannerAlwaysOn: boolean;
-  radarEnabled: boolean;
-  radarBatchSize: number;
-  radarDeepCandidateCount: number;
-  radarFallbackDeepCandidateCount: number;
-  radarDeepLineBudget: number;
   scannerBatchSize: number;
   scannerConcurrency: number;
   scannerLimit: number;
@@ -7764,11 +7734,6 @@ const OPTIONS_FLOW_DEFAULT_CONFIG: OptionsFlowRuntimeConfig = {
   universeMinPrice: OPTIONS_FLOW_UNIVERSE_MIN_PRICE,
   universeMinDollarVolume: OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME,
   scannerAlwaysOn: OPTIONS_FLOW_SCANNER_ALWAYS_ON,
-  radarEnabled: OPTIONS_FLOW_RADAR_ENABLED,
-  radarBatchSize: OPTIONS_FLOW_RADAR_BATCH_SIZE,
-  radarDeepCandidateCount: OPTIONS_FLOW_RADAR_DEEP_CANDIDATES,
-  radarFallbackDeepCandidateCount: OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES,
-  radarDeepLineBudget: OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET,
   scannerBatchSize: OPTIONS_FLOW_SCANNER_BATCH_SIZE,
   scannerConcurrency: OPTIONS_FLOW_SCANNER_CONCURRENCY,
   scannerLimit: OPTIONS_FLOW_SCANNER_LIMIT,
@@ -7826,6 +7791,7 @@ function syncMarketDataAdmissionRuntimeDefaults(
 ): void {
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: config.scannerLineBudget,
+    flowScannerConcurrency: config.scannerConcurrency,
   });
 }
 
@@ -7975,29 +7941,6 @@ const flowUniverseManager = createFlowUniverseManager({
   },
 });
 
-async function getOptionsFlowScannerBridgeSkipReason(): Promise<string | null> {
-  const health = await getIbkrClient().getHealth().catch(() => null);
-  if (!health) {
-    return "bridge-health-unavailable";
-  }
-  if (health.configured === false) {
-    return "bridge-not-configured";
-  }
-  if (health.transport !== "tws") {
-    return "transport-not-tws";
-  }
-  if (health.connected === false) {
-    return "gateway-not-connected";
-  }
-  if (health.authenticated === false) {
-    return "gateway-not-authenticated";
-  }
-  if (health.liveMarketDataAvailable === false) {
-    return "market-data-not-live";
-  }
-  return null;
-}
-
 const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   normalizeSymbol,
   maxConcurrency: resolveOptionsFlowScannerEffectiveConcurrency(
@@ -8047,92 +7990,6 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
     logger.warn({ err: error, ...context }, "Options flow scanner error");
   },
 });
-const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
-  normalizeSymbol,
-  shouldSkip: getOptionsFlowScannerBridgeSkipReason,
-  fetchBatch: async (symbols) => {
-    return {
-      quotes: await fetchOptionsFlowRadarQuotes(symbols),
-      source: {
-        provider: "ibkr",
-        status: "live",
-      },
-    };
-  },
-  onBatch: (symbols) => {
-    flowUniverseManager.noteBatch(symbols);
-  },
-  onPromotions: async (symbols) => {
-    const config = getOptionsFlowRuntimeConfig();
-    const deepLineBudget = Math.max(
-      1,
-      Math.min(config.radarDeepLineBudget, config.scannerLineBudget),
-    );
-    await optionsFlowScanner.requestScan(symbols, {
-      limit: Math.min(config.scannerLimit, deepLineBudget),
-      lineBudget: deepLineBudget,
-    });
-  },
-  onError: (error, context) => {
-    logger.warn({ err: error, ...context }, "Options flow radar scanner error");
-  },
-});
-
-async function fetchOptionsFlowRadarQuotes(
-  symbols: readonly string[],
-): Promise<QuoteSnapshot[]> {
-  const normalizedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
-  if (!normalizedSymbols.length) {
-    return [];
-  }
-
-  try {
-    return await runBridgeWork(
-      "quotes",
-      () => getIbkrClient().getOptionActivitySnapshots([...normalizedSymbols]),
-      { bypassBackoff: true, recordFailure: false },
-    );
-  } catch (error) {
-    logger.warn(
-      { err: error, symbolCount: normalizedSymbols.length },
-      "Options flow radar batch quote hydration failed; retrying per symbol",
-    );
-  }
-
-  const quoteConcurrency = Math.max(
-    1,
-    getBridgeGovernorConfigSnapshot().quotes.concurrency,
-  );
-  const results = await mapWithConcurrency(
-    normalizedSymbols,
-    quoteConcurrency,
-    async (symbol) => {
-      try {
-        return await runBridgeWork(
-          "quotes",
-          () => getIbkrClient().getOptionActivitySnapshots([symbol]),
-          { bypassBackoff: true, recordFailure: false },
-        );
-      } catch (error) {
-        logger.debug(
-          { err: error, symbol },
-          "Options flow radar symbol quote hydration failed",
-        );
-        return [];
-      }
-    },
-  );
-
-  return results.flat();
-}
-
-export async function __fetchOptionsFlowRadarQuotesForTests(
-  symbols: readonly string[],
-): Promise<QuoteSnapshot[]> {
-  return fetchOptionsFlowRadarQuotes(symbols);
-}
 
 let optionsFlowScannerStarted = false;
 
@@ -8192,12 +8049,6 @@ export function getOptionsFlowLaneSourceSymbols(): {
   return { builtInSymbols, flowUniverseSymbols };
 }
 
-export function getOptionsFlowRadarIntervalMs(
-  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
-): number {
-  return Math.max(1_000, config.scannerIntervalMs);
-}
-
 export function getOptionsFlowDeepScannerIntervalMs(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): number {
@@ -8205,6 +8056,24 @@ export function getOptionsFlowDeepScannerIntervalMs(
     baseIntervalMs: config.scannerIntervalMs,
     alwaysOn: config.scannerAlwaysOn,
   });
+}
+
+function estimateOptionsFlowScannerCycleMs(input: {
+  activeTargetSize: number;
+  batchSize: number;
+  intervalMs: number;
+}): number | null {
+  const activeTargetSize = Math.max(0, Math.floor(input.activeTargetSize || 0));
+  if (activeTargetSize <= 0) {
+    return null;
+  }
+  const batchSize = Math.max(1, Math.floor(input.batchSize || 1));
+  const intervalMs = Math.max(1_000, Math.floor(input.intervalMs || 1_000));
+  return Math.max(
+    intervalMs,
+    Math.ceil(activeTargetSize / Math.min(batchSize, activeTargetSize)) *
+      intervalMs,
+  );
 }
 
 export function startOptionsFlowScanner(): void {
@@ -8223,50 +8092,24 @@ export function startOptionsFlowScanner(): void {
   const effectiveScannerConcurrency =
     resolveOptionsFlowScannerEffectiveConcurrency(config);
   optionsFlowScanner.setMaxConcurrency(effectiveScannerConcurrency);
-  const resolveRadarIntervalMs = () => getOptionsFlowRadarIntervalMs();
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
-  if (config.radarEnabled) {
-    optionsFlowRadarScanner.startRotation({
-      symbols: resolveScannerSymbols,
-      intervalMs: resolveRadarIntervalMs,
-      batchSize: () =>
-        Math.max(
-          1,
-          Math.min(
-            getOptionsFlowRuntimeConfig().radarBatchSize,
-            getOptionsFlowRuntimeConfig().scannerLineBudget,
-          ),
-        ),
-      promoteCount: () => getOptionsFlowRuntimeConfig().radarDeepCandidateCount,
-      fallbackPromoteCount: () =>
-        getOptionsFlowRuntimeConfig().radarFallbackDeepCandidateCount,
-    });
-  } else {
-    optionsFlowScanner.startRotation({
-      symbols: resolveScannerSymbols,
-      request: {
-        limit: Math.min(config.scannerLimit, config.scannerLineBudget),
-        lineBudget: config.scannerLineBudget,
-      },
-      intervalMs: resolveDeepIntervalMs,
-      batchSize: () =>
-        Math.max(
-          1,
-          Math.min(
-            getOptionsFlowRuntimeConfig().scannerBatchSize,
-            getOptionsFlowRuntimeConfig().scannerLineBudget,
-          ),
-        ),
-    });
-  }
+  optionsFlowScanner.startRotation({
+    symbols: resolveScannerSymbols,
+    request: {
+      limit: Math.min(config.scannerLimit, config.scannerLineBudget),
+      lineBudget: config.scannerLineBudget,
+    },
+    intervalMs: resolveDeepIntervalMs,
+    batchSize: () =>
+      Math.max(
+        1,
+        Math.floor(getOptionsFlowRuntimeConfig().scannerBatchSize || 1),
+      ),
+  });
   optionsFlowScannerStarted = true;
   logger.info(
     {
       symbols: initialSymbols.length,
-      radarEnabled: config.radarEnabled,
-      radarBatchSize: config.radarBatchSize,
-      radarDeepCandidateCount: config.radarDeepCandidateCount,
-      radarDeepLineBudget: config.radarDeepLineBudget,
       batchSize: config.scannerBatchSize,
       concurrency: config.scannerConcurrency,
       effectiveConcurrency: effectiveScannerConcurrency,
@@ -8282,50 +8125,31 @@ export function startOptionsFlowScanner(): void {
 }
 
 export function stopOptionsFlowScanner(): void {
-  optionsFlowRadarScanner.stop();
   optionsFlowScanner.stop();
   optionsFlowScannerStarted = false;
 }
 
 export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
-  const coverage = flowUniverseManager.getCoverage();
-  const radarCoverage: OptionsFlowRadarCoverage = optionsFlowRadarScanner.getCoverage();
-  if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
-    return coverage;
-  }
-  const activeTargetSize = Math.max(
-    coverage.activeTargetSize,
-    coverage.selectedSymbols,
-    radarCoverage.selectedSymbols,
-  );
-  const selectedShortfall = Math.max(0, coverage.targetSize - activeTargetSize);
-  const cycleScannedSymbols = Math.max(
-    coverage.cycleScannedSymbols,
-    coverage.scannedSymbols,
-    radarCoverage.scannedSymbols,
-  );
+  const config = getOptionsFlowRuntimeConfig();
+  const intervalMs = getOptionsFlowDeepScannerIntervalMs(config);
+  const batchSize = Math.max(1, Math.floor(config.scannerBatchSize || 1));
+  const rawCoverage = flowUniverseManager.getCoverage();
+  const estimatedCycleMs = estimateOptionsFlowScannerCycleMs({
+    activeTargetSize: rawCoverage.activeTargetSize,
+    batchSize,
+    intervalMs,
+  });
+  const coverage = flowUniverseManager.getCoverage({
+    scanWindowMs:
+      estimatedCycleMs === null ? undefined : estimatedCycleMs + intervalMs,
+  });
   return {
     ...coverage,
-    activeTargetSize,
-    selectedSymbols: activeTargetSize,
-    selectedShortfall,
-    scannedSymbols: cycleScannedSymbols,
-    cycleScannedSymbols,
-    currentBatch: radarCoverage.currentBatch.length
-      ? radarCoverage.currentBatch
-      : coverage.currentBatch,
-    lastScanAt: radarCoverage.lastScanAt ?? coverage.lastScanAt,
-    degradedReason:
-      coverage.degradedReason ??
-      (selectedShortfall > 0
-        ? `Universe fill short: ${activeTargetSize}/${coverage.targetSize}`
-        : null) ??
-      radarCoverage.degradedReason,
-    radarSelectedSymbols: radarCoverage.selectedSymbols,
-    radarEstimatedCycleMs: radarCoverage.estimatedCycleMs,
-    radarBatchSize: radarCoverage.batchSize,
-    radarIntervalMs: radarCoverage.intervalMs,
-    promotedSymbols: radarCoverage.promotedSymbols,
+    batchSize,
+    intervalMs,
+    lineBudget: config.scannerLineBudget,
+    concurrency: resolveOptionsFlowScannerEffectiveConcurrency(config),
+    estimatedCycleMs,
   };
 }
 
@@ -8443,10 +8267,7 @@ export async function listAggregateFlowEvents(input: {
             runtimeConfig.scannerLineBudget,
           ),
         )
-      : Math.max(
-          1,
-          Math.min(runtimeConfig.radarDeepLineBudget, runtimeConfig.scannerLineBudget),
-        );
+      : runtimeConfig.scannerLineBudget;
   const snapshotLimit = Math.max(
     1,
     Math.min(limit, runtimeConfig.scannerLimit, requestedLineBudget),
@@ -8469,7 +8290,6 @@ export async function listAggregateFlowEvents(input: {
 
   const scannerRequest = {
     limit: snapshotLimit,
-    unusualThreshold,
     lineBudget: requestedLineBudget,
     allowPartial: true,
   };
@@ -8477,7 +8297,13 @@ export async function listAggregateFlowEvents(input: {
   let queuedSeedRefresh = false;
   if (snapshots.length === 0) {
     const diagnostics = optionsFlowScanner.getDiagnostics();
-    const seedSymbols = (scannerCoverage.currentBatch ?? [])
+    const currentBatchSymbols = (scannerCoverage.currentBatch ?? [])
+      .map((symbol) => normalizeSymbol(String(symbol || "")))
+      .filter(Boolean);
+    const seedSourceSymbols = currentBatchSymbols.length
+      ? currentBatchSymbols
+      : getOptionsFlowScannerLaneResolution().admittedSymbols;
+    const seedSymbols = seedSourceSymbols
       .map((symbol) => normalizeSymbol(String(symbol || "")))
       .filter(Boolean)
       .slice(0, Math.max(1, runtimeConfig.scannerBatchSize));
@@ -9053,17 +8879,11 @@ export async function getFlowPremiumDistribution(input: {
 export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
   const deepScanner = optionsFlowScanner.getDiagnostics();
-  const radar = optionsFlowRadarScanner.getCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
   const effectiveConcurrency = resolveOptionsFlowScannerEffectiveConcurrency(config);
-  const effectiveDeepLineBudget = Math.min(
-    config.radarDeepLineBudget,
-    config.scannerLineBudget,
-  );
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
-    radarEnabled: config.radarEnabled,
     scannerAlwaysOn: config.scannerAlwaysOn,
     lineBudget: config.scannerLineBudget,
     lineUtilization: {
@@ -9071,26 +8891,19 @@ export function getOptionsFlowScannerDiagnostics() {
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
       scannerLineBudget: config.scannerLineBudget,
-      radarDeepLineBudget: config.radarDeepLineBudget,
-      effectiveDeepLineBudget,
       maxDeepScanLines: Math.min(
         admissionBudget.flowScannerLineCap,
-        effectiveConcurrency * effectiveDeepLineBudget,
+        effectiveConcurrency * config.scannerLineBudget,
       ),
       unusedPoolLines: Math.max(
         0,
         admissionBudget.flowScannerLineCap -
-          effectiveConcurrency * effectiveDeepLineBudget,
+          effectiveConcurrency * config.scannerLineBudget,
       ),
     },
     deepScanner,
-    radar,
     lastSkippedReason: deepScanner.lastSkippedReason || null,
-    radarDegradedReason: radar.degradedReason || null,
-    lastBatch: deepScanner.lastBatch.length
-      ? deepScanner.lastBatch
-      : radar.currentBatch,
-    promotedSymbols: radar.promotedSymbols,
+    lastBatch: deepScanner.lastBatch,
   };
 }
 
@@ -9167,7 +8980,6 @@ export function __resetOptionChainCachesForTests(input?: {
   flowEventsInFlight.clear();
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
-    optionsFlowRadarScanner.reset();
     optionsFlowScanner.reset();
     optionsFlowScannerStarted = false;
     flowUniverseManager.reset();
@@ -11023,6 +10835,7 @@ export async function getOptionChartBarsWithDebug(input: {
   right: "call" | "put";
   optionTicker?: string | null;
   providerContractId?: string | null;
+  skipBrokerContractResolution?: boolean;
   timeframe: GetBarsInput["timeframe"];
   limit?: number;
   from?: Date;
@@ -11037,6 +10850,9 @@ export async function getOptionChartBarsWithDebug(input: {
   const strike = Number(input.strike);
   const right = input.right;
   const providedOptionTicker = normalizePolygonOptionTicker(input.optionTicker);
+  const skipBrokerContractResolution = Boolean(
+    input.skipBrokerContractResolution && providedOptionTicker,
+  );
   const rawProvidedProviderContractId =
     typeof input.providerContractId === "string"
       ? input.providerContractId.trim()
@@ -11173,7 +10989,7 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   };
 
-  if (!providerContractId) {
+  if (!providerContractId && !skipBrokerContractResolution) {
     try {
       await resolveFromOptionChain();
     } catch (error) {
@@ -11181,7 +10997,7 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   }
 
-  if (!providerContractId && !chainError) {
+  if (!providerContractId && !chainError && !skipBrokerContractResolution) {
     const resolved = await resolveOptionContractWithDebug({
       underlying,
       expirationDate,
@@ -11271,13 +11087,16 @@ export async function getOptionChartBarsWithDebug(input: {
     );
   }
 
-  const feedIssue = isIbkrOptionHistoryFeedIssue({
-    barsResult: ibkrBarsResult,
-    error: ibkrBarsError,
-  }) || Boolean(
-    !providerContractId &&
-      (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
-  );
+  const feedIssue =
+    !skipBrokerContractResolution &&
+    (isIbkrOptionHistoryFeedIssue({
+      barsResult: ibkrBarsResult,
+      error: ibkrBarsError,
+    }) ||
+      Boolean(
+        !providerContractId &&
+          (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
+      ));
 
   if (!polygonOptionTicker) {
     return finish(
@@ -11439,6 +11258,17 @@ export async function getOptionChartBarsWithDebug(input: {
       { degraded: true },
     );
   }
+}
+
+export async function getHistoricalOptionTrades(input: {
+  optionTicker: string;
+  from: Date;
+  to: Date;
+  limit?: number;
+  maxPages?: number;
+  signal?: AbortSignal;
+}): Promise<OptionTradePrint[]> {
+  return getPolygonClient().getOptionTradePrints(input);
 }
 
 export async function getMarketDepth(input: {
@@ -11769,10 +11599,7 @@ export async function listFlowEvents(input: {
   const nonblockingScannerRefresh =
     nonblockingScannerRead && shouldQueueRefresh;
   const defaultScannerLineBudget = nonblockingScannerRead
-    ? Math.max(
-        1,
-        Math.min(runtimeConfig.radarDeepLineBudget, runtimeConfig.scannerLineBudget),
-      )
+    ? runtimeConfig.scannerLineBudget
     : runtimeConfig.scannerLineBudget;
   const explicitLineBudget =
     Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0

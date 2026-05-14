@@ -134,6 +134,12 @@ router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (re
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
       : {};
+  const replay =
+    body.replay === true || body.source === "signal_options_replay"
+      ? true
+      : body.replay && typeof body.replay === "object" && !Array.isArray(body.replay)
+        ? body.replay
+        : undefined;
 
   res.status(201).json(
     await runSignalOptionsShadowBackfill({
@@ -143,6 +149,8 @@ router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (re
       session: body.session,
       commit: body.commit,
       profilePatch: body.profilePatch,
+      replay,
+      replaceReplayRows: body.replaceReplayRows,
     }),
   );
 });

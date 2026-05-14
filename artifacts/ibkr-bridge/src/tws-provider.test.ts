@@ -1186,7 +1186,7 @@ test("toQuoteSnapshot maps IBKR option volume and open-interest ticks", () => {
   assert.equal(quote.openInterest, 640);
 });
 
-test("option activity snapshot timeout scales with radar batch size", () => {
+test("option activity snapshot timeout scales with batch size", () => {
   assert.equal(
     resolveOptionActivitySnapshotTimeoutMs({
       genericTickSampleMs: 500,

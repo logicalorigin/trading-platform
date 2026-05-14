@@ -6,10 +6,12 @@ process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 
 const signalMonitorModule = await import("./signal-monitor");
 const {
+  __signalMonitorInternalsForTests,
   aggregateCompletedMinuteBars,
   buildSignalMonitorDbUnavailableProfile,
   createSignalMonitorDbUnavailableError,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
+  signalMonitorCompletedBarsQueryTo,
 } = signalMonitorModule;
 
 const baseDate = new Date("2026-04-24T14:30:00.000Z");
@@ -89,6 +91,30 @@ test("2m signal matrix bars roll up completed 1m bars", () => {
   );
 });
 
+test("signal monitor bar queries are scoped to the latest completed boundary", () => {
+  assert.equal(
+    signalMonitorCompletedBarsQueryTo({
+      timeframe: "5m",
+      evaluatedAt: new Date("2026-04-24T14:35:01.999Z"),
+    }).toISOString(),
+    "2026-04-24T14:30:00.000Z",
+  );
+  assert.equal(
+    signalMonitorCompletedBarsQueryTo({
+      timeframe: "5m",
+      evaluatedAt: new Date("2026-04-24T14:35:02.000Z"),
+    }).toISOString(),
+    "2026-04-24T14:35:00.000Z",
+  );
+  assert.equal(
+    signalMonitorCompletedBarsQueryTo({
+      timeframe: "1m",
+      evaluatedAt: new Date("2026-04-24T14:35:02.000Z"),
+    }).toISOString(),
+    "2026-04-24T14:35:00.000Z",
+  );
+});
+
 test("signal matrix state returns neutral unavailable rows without persisting", () => {
   const state = evaluateSignalMonitorMatrixStateFromCompletedBars({
     profile: profile(),
@@ -104,6 +130,35 @@ test("signal matrix state returns neutral unavailable rows without persisting", 
   assert.equal(state.status, "unavailable");
   assert.equal(state.active, true);
   assert.match(state.id, /profile-1:AAPL:2m/);
+});
+
+test("signal matrix cache serves stale data while a refresh is in flight", async () => {
+  const key = "signal-matrix:unit";
+  const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
+  let resolveRefresh: (value: unknown) => void = () => {};
+  let calls = 0;
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
+    freshUntil: 1_000,
+    staleUntil: 20_000,
+  });
+
+  const result = await __signalMonitorInternalsForTests.withSignalMonitorMatrixEvaluationCache(
+    key,
+    async () => {
+      calls += 1;
+      return await new Promise((resolve) => {
+        resolveRefresh = resolve;
+      });
+    },
+    { nowMs: 2_000 },
+  );
+
+  assert.equal(result, staleValue);
+  assert.equal(calls, 1);
+  resolveRefresh({ states: [{ symbol: "QQQ" }], evaluatedAt: "new" });
+  await new Promise((resolve) => setImmediate(resolve));
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
 });
 
 test("signal monitor DB fallback profile is visibly degraded", () => {

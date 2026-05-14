@@ -32,6 +32,7 @@ type AccountPageSnapshotInput = {
   from?: Date | null;
   to?: Date | null;
   symbol?: string | null;
+  tradeAssetClass?: string | null;
   pnlSign?: string | null;
   holdDuration?: string | null;
   performanceCalendarFrom?: Date | null;
@@ -48,6 +49,7 @@ export type AccountPageSnapshotPayload = {
     from: string | null;
     to: string | null;
     symbol: string | null;
+    assetClass: string | null;
     pnlSign: string | null;
     holdDuration: string | null;
   };
@@ -150,6 +152,7 @@ function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSn
     from: input.from ?? null,
     to: input.to ?? null,
     symbol: input.symbol ?? null,
+    tradeAssetClass: input.tradeAssetClass ?? null,
     pnlSign: input.pnlSign ?? null,
     holdDuration: input.holdDuration ?? null,
     performanceCalendarFrom: input.performanceCalendarFrom ?? null,
@@ -311,7 +314,7 @@ export async function fetchAccountPageDerivedPayload(
       from: normalized.from,
       to: normalized.to,
       symbol: normalized.symbol,
-      assetClass: null,
+      assetClass: normalized.tradeAssetClass,
       pnlSign: normalized.pnlSign,
       holdDuration: normalized.holdDuration,
     };
@@ -358,6 +361,7 @@ export async function fetchAccountPageDerivedPayload(
         from: isoOrNull(normalized.from),
         to: isoOrNull(normalized.to),
         symbol: normalized.symbol,
+        assetClass: normalized.tradeAssetClass,
         pnlSign: normalized.pnlSign,
         holdDuration: normalized.holdDuration,
       },

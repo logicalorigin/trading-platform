@@ -3,7 +3,7 @@ export type DatabaseRuntimeSource =
   | "replit-internal-dev-db"
   | "external-postgres";
 
-export type DatabaseRuntimeSourceEnv = "LOCAL_DATABASE_URL" | "DATABASE_URL";
+export type DatabaseRuntimeSourceEnv = "DATABASE_URL" | "LOCAL_DATABASE_URL";
 
 export type DatabaseRuntimeConfig = {
   url: string | null;
@@ -23,15 +23,9 @@ export type DatabaseRuntimeDescription = DatabaseRuntimeConfig & {
   parseError: string | null;
 };
 
-function classifyDatabaseRuntimeSource(
-  sourceEnv: DatabaseRuntimeSourceEnv,
-  url: URL,
-): DatabaseRuntimeSource {
+function classifyDatabaseRuntimeSource(url: URL): DatabaseRuntimeSource {
   const host = url.hostname || url.searchParams.get("host") || "";
-  if (
-    sourceEnv === "LOCAL_DATABASE_URL" &&
-    (!url.hostname || host.includes(".local/postgres"))
-  ) {
+  if (!url.hostname || host.includes(".local/postgres")) {
     return "workspace-local-postgres";
   }
   if (url.hostname === "helium") {
@@ -40,25 +34,44 @@ function classifyDatabaseRuntimeSource(
   return "external-postgres";
 }
 
-function shouldUseLocalDatabaseUrl(env: NodeJS.ProcessEnv): boolean {
-  const preference = env["RAYALGO_DATABASE_SOURCE"]?.trim().toLowerCase();
-  return (
-    preference === "local" ||
-    preference === "workspace-local-postgres" ||
-    preference === "local-postgres"
-  );
+function normalizeDatabaseSourceOverride(
+  value: string | undefined,
+): "local" | "database_url" | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", "-");
+  if (
+    normalized === "local" ||
+    normalized === "local-database-url" ||
+    normalized === "workspace-local" ||
+    normalized === "workspace-local-postgres"
+  ) {
+    return "local";
+  }
+  if (
+    normalized === "database-url" ||
+    normalized === "primary" ||
+    normalized === "default"
+  ) {
+    return "database_url";
+  }
+  return null;
 }
 
 export function resolveDatabaseRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): DatabaseRuntimeConfig {
-  const localUrl = env["LOCAL_DATABASE_URL"];
-  const runtimeUrl = env["DATABASE_URL"];
-  const useLocalUrl = Boolean(localUrl && (!runtimeUrl || shouldUseLocalDatabaseUrl(env)));
-  const url = useLocalUrl ? localUrl! : runtimeUrl || null;
-  const sourceEnv = useLocalUrl
+  const databaseUrl = env["DATABASE_URL"] || null;
+  const localDatabaseUrl = env["LOCAL_DATABASE_URL"] || null;
+  const override = normalizeDatabaseSourceOverride(
+    env["RAYALGO_DATABASE_SOURCE"],
+  );
+  const useLocalOverride = override === "local" && Boolean(localDatabaseUrl);
+  const url = useLocalOverride ? localDatabaseUrl : databaseUrl;
+  const sourceEnv: DatabaseRuntimeSourceEnv | null = useLocalOverride
     ? "LOCAL_DATABASE_URL"
-    : runtimeUrl
+    : url
       ? "DATABASE_URL"
       : null;
 
@@ -74,16 +87,16 @@ export function resolveDatabaseRuntimeConfig(
   try {
     return {
       url,
-      source: classifyDatabaseRuntimeSource(sourceEnv, new URL(url)),
+      source: classifyDatabaseRuntimeSource(new URL(url)),
       sourceEnv,
-      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(runtimeUrl),
+      overrideActive: useLocalOverride,
     };
   } catch {
     return {
       url,
-      source: sourceEnv === "LOCAL_DATABASE_URL" ? "external-postgres" : null,
+      source: null,
       sourceEnv,
-      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(runtimeUrl),
+      overrideActive: useLocalOverride,
     };
   }
 }

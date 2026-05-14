@@ -9,6 +9,7 @@
 export interface AccountAllocationBucket {
   label: string;
   value: number;
+  /** Allocation weight in percentage points. */
   weightPercent: number | null;
   source: string;
 }

@@ -18,6 +18,7 @@ const ENV_KEYS = [
   "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
   "IBKR_MARKET_DATA_CONVENIENCE_LINES",
   "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
+  "OPTIONS_FLOW_SCANNER_CONCURRENCY",
 ] as const;
 
 const originalEnv = Object.fromEntries(
@@ -61,9 +62,12 @@ test("uses a 200-line IBKR budget with a 15-line reserve by default", () => {
   });
 });
 
-test("derives visible headroom from overlapping runtime scanner line budget", () => {
+test("derives visible headroom from runtime scanner line budget and concurrency", () => {
   setEnv({});
-  setMarketDataAdmissionRuntimeDefaults({ flowScannerLineBudget: 40 });
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 40,
+    flowScannerConcurrency: 2,
+  });
 
   const budget = getMarketDataAdmissionBudget();
   assert.deepEqual(budget.poolLineCaps, {
@@ -80,7 +84,10 @@ test("keeps explicit admission env caps ahead of runtime scanner defaults", () =
   setEnv({
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "20",
   });
-  setMarketDataAdmissionRuntimeDefaults({ flowScannerLineBudget: 55 });
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 55,
+    flowScannerConcurrency: 10,
+  });
 
   const budget = getMarketDataAdmissionBudget();
   assert.equal(budget.flowScannerLineCap, 20);

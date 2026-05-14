@@ -5,7 +5,7 @@ import { resolveDatabaseRuntimeConfig } from "./src/runtime";
 const resolvedDatabaseUrl = resolveDatabaseRuntimeConfig().url;
 
 if (!resolvedDatabaseUrl) {
-  throw new Error("LOCAL_DATABASE_URL or DATABASE_URL, ensure the database is provisioned");
+  throw new Error("DATABASE_URL must be set; ensure the database is provisioned");
 }
 
 export default defineConfig({

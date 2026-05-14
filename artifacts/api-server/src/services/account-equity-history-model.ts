@@ -1,5 +1,6 @@
 import type { RuntimeMode } from "../lib/runtime";
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
+import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   accountSnapshotBucketSizeMs,
   type AccountRange,
@@ -65,12 +66,6 @@ function formatDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-function externalTransferAmount(
-  point: Pick<AccountEquityHistorySeedPoint, "deposits" | "withdrawals">,
-): number {
-  return (point.deposits ?? 0) - (point.withdrawals ?? 0);
-}
-
 function isZeroHistoryNumber(value: unknown): boolean {
   const numeric = toHistoryNumber(value);
   return numeric !== null && Math.abs(numeric) === 0;
@@ -108,45 +103,14 @@ export function filterPlaceholderZeroEquitySnapshotRows(
 export function calculateTransferAdjustedReturnPoints(
   seedPoints: AccountEquityHistorySeedPoint[],
 ) {
-  const firstPoint = seedPoints[0] ?? null;
-  const firstPointTransfer = firstPoint ? externalTransferAmount(firstPoint) : 0;
-  const initialPreviousNav = firstPoint
-    ? firstPointTransfer > 0
-      ? Math.max(0, firstPoint.netLiquidation - firstPointTransfer)
-      : firstPoint.netLiquidation - firstPointTransfer
-    : null;
-  const baseline =
-    initialPreviousNav !== null && Math.abs(initialPreviousNav) > 0
-      ? initialPreviousNav
-      : (seedPoints.find((point) => Math.abs(point.netLiquidation) > 0)
-          ?.netLiquidation ??
-        firstPoint?.netLiquidation ??
-        0);
-  let previousNav: number | null = initialPreviousNav;
-  let cumulativePnl = 0;
-  let capitalBase = Math.max(
-    Math.abs(baseline),
-    Math.abs(firstPoint?.netLiquidation ?? 0),
-  );
-
-  return seedPoints.map((point, index) => {
-    const transfer = externalTransferAmount(point);
-    if (index > 0 && transfer > 0) {
-      capitalBase += transfer;
-    }
-    const pnlDelta =
-      previousNav === null ? 0 : point.netLiquidation - previousNav - transfer;
-    cumulativePnl += pnlDelta;
-    previousNav = point.netLiquidation;
-
-    return {
-      ...point,
-      externalTransfer: transfer,
-      pnlDelta,
-      cumulativePnl,
-      returnPercent: capitalBase ? (cumulativePnl / capitalBase) * 100 : 0,
-    };
-  });
+  const adjusted = calculateTransferAdjustedReturnSeries(seedPoints);
+  return seedPoints.map((point, index) => ({
+    ...point,
+    externalTransfer: adjusted[index]?.externalTransfer ?? 0,
+    pnlDelta: adjusted[index]?.pnlDelta ?? 0,
+    cumulativePnl: adjusted[index]?.cumulativePnl ?? 0,
+    returnPercent: adjusted[index]?.returnPercent ?? 0,
+  }));
 }
 
 export function classifyExternalCashTransfer(

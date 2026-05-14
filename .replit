@@ -99,8 +99,7 @@ PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
 
 [userenv.development]
-RAYALGO_DATABASE_SOURCE = "local"
-LOCAL_DATABASE_URL = "postgres:///dev?host=/home/runner/workspace/.local/postgres/run&user=runner"
+DATABASE_URL = "postgres:///dev?host=/home/runner/workspace/.local/postgres/run&user=runner"
 
 [nix]
 channel = "stable-25_05"

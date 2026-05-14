@@ -36,10 +36,12 @@ import {
 } from "./signal-monitor";
 import {
   getBars,
+  getHistoricalOptionTrades,
   getOptionChainWithDebug,
   getOptionChartBarsWithDebug,
   getOptionExpirationsWithDebug,
   listWatchlists,
+  type OptionTradePrint,
 } from "./platform";
 import {
   getAlgoGatewayReadiness,
@@ -52,8 +54,11 @@ import {
 } from "./algo-deployment-account";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import {
+  SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
+  SIGNAL_OPTIONS_REPLAY_SOURCE,
   computeShadowTradingPatterns,
   recordShadowAutomationEvent,
+  resetSignalOptionsReplayRowsForRange,
 } from "./shadow-account";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
@@ -67,6 +72,26 @@ export const SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT =
   "signal_options_manual_deviation";
 
 const activeScanDeploymentIds = new Set<string>();
+
+type SignalOptionsRunMetadata = {
+  runId: string;
+  mode: "live_scan" | "historical_backfill" | "replay";
+  source:
+    | "manual"
+    | "worker"
+    | "signal_options_backfill"
+    | "signal_options_replay";
+  startedAt: string;
+  marketDate?: string | null;
+};
+
+const activeSignalOptionsRunMetadata = new Map<
+  string,
+  SignalOptionsRunMetadata
+>();
+
+const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
+const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 
 type SignalDirection = "buy" | "sell";
 type OptionRight = "call" | "put";
@@ -226,6 +251,10 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -264,6 +293,71 @@ function expirationDateKey(value: unknown): string | null {
 
 function compactString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function signalOptionsRunId(input: {
+  deployment: AlgoDeployment;
+  mode: SignalOptionsRunMetadata["mode"];
+  startedAt: Date;
+}) {
+  const stamp = input.startedAt
+    .toISOString()
+    .replace(/[-:.TZ]/g, "")
+    .slice(0, 14);
+  return [
+    "signal-options",
+    input.mode,
+    input.deployment.id.slice(0, 8),
+    stamp,
+  ].join(":");
+}
+
+function buildSignalOptionsRunMetadata(input: {
+  deployment: AlgoDeployment;
+  mode: SignalOptionsRunMetadata["mode"];
+  source: SignalOptionsRunMetadata["source"];
+  marketDate?: string | null;
+}) {
+  const startedAt = new Date();
+  return {
+    runId: signalOptionsRunId({
+      deployment: input.deployment,
+      mode: input.mode,
+      startedAt,
+    }),
+    mode: input.mode,
+    source: input.source,
+    startedAt: startedAt.toISOString(),
+    marketDate: input.marketDate ?? null,
+  };
+}
+
+function signalOptionsPayloadWithRunMetadata(input: {
+  deployment: AlgoDeployment;
+  payload: Record<string, unknown>;
+}) {
+  const metadata = asRecord(input.payload.metadata);
+  const activeRun = activeSignalOptionsRunMetadata.get(input.deployment.id);
+  const nextMetadata: Record<string, unknown> = {
+    ...(activeRun
+      ? {
+          runId: activeRun.runId,
+          runMode: activeRun.mode,
+          runSource: activeRun.source,
+          runStartedAt: activeRun.startedAt,
+          ...(activeRun.marketDate
+            ? { marketDate: activeRun.marketDate }
+            : {}),
+        }
+      : {}),
+    ...metadata,
+    deploymentId: metadata.deploymentId ?? input.deployment.id,
+    deploymentName: metadata.deploymentName ?? input.deployment.name,
+  };
+  return {
+    ...input.payload,
+    metadata: nextMetadata,
+  };
 }
 
 function optionContractKey(value: unknown): string | null {
@@ -379,6 +473,136 @@ function quoteSnapshotToSignalOptionsQuote(input: {
     dataUpdatedAt: quote.dataUpdatedAt,
     ageMs: finiteNumber(quote.ageMs),
   };
+}
+
+function findSignalOptionsQuoteForContract(input: {
+  contracts: SignalOptionsOptionQuote[];
+  selectedContract: Record<string, unknown>;
+}) {
+  const selectedContract = input.selectedContract;
+  const targetProviderContractId = compactString(
+    selectedContract.providerContractId,
+  );
+  const targetStrike = finiteNumber(selectedContract.strike);
+  const targetRight = selectedContract.right === "put" ? "put" : "call";
+  const targetExpirationKey = expirationDateKey(selectedContract.expirationDate);
+
+  return (
+    input.contracts.find((quote) => {
+      const contract = asRecord(quote.contract);
+      const providerContractId = compactString(contract.providerContractId);
+      const strike = finiteNumber(contract.strike);
+      const right = contract.right === "put" ? "put" : "call";
+      const expirationKey = expirationDateKey(contract.expirationDate);
+
+      if (
+        targetProviderContractId &&
+        providerContractId &&
+        targetProviderContractId !== providerContractId
+      ) {
+        return false;
+      }
+      if (targetStrike != null && strike !== targetStrike) {
+        return false;
+      }
+      if (right !== targetRight) {
+        return false;
+      }
+      if (
+        targetExpirationKey &&
+        expirationKey &&
+        targetExpirationKey !== expirationKey
+      ) {
+        return false;
+      }
+      return true;
+    }) ?? null
+  );
+}
+
+function resolvePositionMarkQuote(input: {
+  quote: SignalOptionsOptionQuote;
+  profile: SignalOptionsExecutionProfile;
+}) {
+  const liquidity = resolveSignalOptionsLiquidity(input.quote, input.profile);
+  const markPrice =
+    liquidity.mid ??
+    finiteNumber(input.quote.mark) ??
+    finiteNumber(input.quote.last);
+  const quoteNotFresh = liquidity.reasons.includes("quote_not_fresh");
+  return {
+    ok: markPrice != null && markPrice > 0 && !quoteNotFresh,
+    markPrice,
+    liquidity,
+    reason:
+      markPrice == null || markPrice <= 0
+        ? "missing_mark"
+        : quoteNotFresh
+          ? "quote_not_fresh"
+          : null,
+  };
+}
+
+function positionMarkAttemptPayload(input: {
+  source: "provider_snapshot" | "chain_standard" | "chain_full";
+  quote: SignalOptionsOptionQuote | null;
+  reason?: string | null;
+  chainDebug?: unknown;
+}) {
+  return {
+    source: input.source,
+    ok: Boolean(input.quote && !input.reason),
+    reason: input.reason ?? (input.quote ? null : "quote_unavailable"),
+    quote: input.quote ? quoteToPayload(input.quote) : null,
+    chainDebug: input.chainDebug ?? null,
+  };
+}
+
+function positionEventMatchesMarkSkip(input: {
+  event: ExecutionEvent;
+  position: SignalOptionsPosition;
+  reason: string;
+}) {
+  if (input.event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) {
+    return false;
+  }
+  const payload = asRecord(input.event.payload);
+  const reason = compactString(payload.reason ?? payload.skipReason);
+  if (reason !== input.reason) {
+    return false;
+  }
+  const position = asRecord(payload.position);
+  const positionId = compactString(position.id);
+  if (positionId && positionId === input.position.id) {
+    return true;
+  }
+  const candidateId = compactString(position.candidateId);
+  return Boolean(candidateId && candidateId === input.position.candidateId);
+}
+
+function shouldRecordPositionMarkSkip(input: {
+  events: ExecutionEvent[];
+  position: SignalOptionsPosition;
+  reason: string;
+  now: Date;
+}) {
+  return !input.events.some((event) => {
+    if (
+      !positionEventMatchesMarkSkip({
+        event,
+        position: input.position,
+        reason: input.reason,
+      })
+    ) {
+      return false;
+    }
+    const occurredAt = dateOrNull(event.occurredAt);
+    return Boolean(
+      occurredAt &&
+        input.now.getTime() - occurredAt.getTime() <
+          SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS,
+    );
+  });
 }
 
 function eventToResponse(event: ExecutionEvent) {
@@ -497,7 +721,13 @@ async function insertSignalOptionsEvent(input: {
   summary: string;
   payload: Record<string, unknown>;
   occurredAt?: Date;
+  ledgerSource?: "automation" | "signal_options_replay";
+  ledgerMarkSource?: string;
 }) {
+  const payload = signalOptionsPayloadWithRunMetadata({
+    deployment: input.deployment,
+    payload: input.payload,
+  });
   const [event] = await db
     .insert(executionEventsTable)
     .values({
@@ -506,7 +736,7 @@ async function insertSignalOptionsEvent(input: {
       symbol: input.symbol ? normalizeSymbol(input.symbol).toUpperCase() : null,
       eventType: input.eventType,
       summary: input.summary,
-      payload: input.payload,
+      payload,
       occurredAt: input.occurredAt ?? new Date(),
     })
     .returning();
@@ -516,7 +746,10 @@ async function insertSignalOptionsEvent(input: {
     event.eventType === SIGNAL_OPTIONS_EXIT_EVENT ||
     event.eventType === SIGNAL_OPTIONS_MARK_EVENT
   ) {
-    await recordShadowAutomationEvent(event).catch((error) => {
+    await recordShadowAutomationEvent(event, {
+      source: input.ledgerSource,
+      markSource: input.ledgerMarkSource,
+    }).catch((error) => {
       logger.warn?.(
         { err: error, eventId: event.id, eventType: event.eventType },
         "Failed to mirror signal-options event into Shadow account ledger",
@@ -805,7 +1038,9 @@ function strikesAroundMoneyForSlot(slot: number) {
   return 1;
 }
 
-function signalOptionsStrikesAroundMoney(input: {
+const SIGNAL_OPTIONS_FALLBACK_STRIKE_STEPS = 2;
+
+function signalOptionsStrikeSlotsForFallback(input: {
   profile: SignalOptionsExecutionProfile;
   optionRight: OptionRight;
 }) {
@@ -813,7 +1048,24 @@ function signalOptionsStrikesAroundMoney(input: {
     input.optionRight === "call"
       ? input.profile.optionSelection.callStrikeSlot
       : input.profile.optionSelection.putStrikeSlot;
-  return strikesAroundMoneyForSlot(Number(slot));
+  const preferredSlot = Math.min(5, Math.max(0, Math.floor(Number(slot))));
+  const slots = [preferredSlot];
+  for (let step = 1; step <= SIGNAL_OPTIONS_FALLBACK_STRIKE_STEPS; step += 1) {
+    const fallbackSlot =
+      input.optionRight === "call" ? preferredSlot + step : preferredSlot - step;
+    if (fallbackSlot >= 0 && fallbackSlot <= 5) {
+      slots.push(fallbackSlot);
+    }
+  }
+  return Array.from(new Set(slots));
+}
+
+function signalOptionsStrikesAroundMoney(input: {
+  profile: SignalOptionsExecutionProfile;
+  optionRight: OptionRight;
+}) {
+  const slots = signalOptionsStrikeSlotsForFallback(input);
+  return Math.max(...slots.map((slot) => strikesAroundMoneyForSlot(slot)));
 }
 
 export function selectSignalOptionsContractFromChain(input: {
@@ -852,6 +1104,127 @@ export function selectSignalOptionsContractFromChain(input: {
       (quote) => finiteNumber(asRecord(quote.contract).strike) === strike,
     ) ?? null
   );
+}
+
+function selectSignalOptionsContractPlanFromChain(input: {
+  contracts: SignalOptionsOptionQuote[];
+  direction: SignalDirection;
+  signalPrice: number | null;
+  profile: SignalOptionsExecutionProfile;
+}) {
+  const optionRight = optionRightForSignal(input.direction);
+  const candidates = input.contracts.filter(
+    (quote) => asRecord(quote.contract).right === optionRight,
+  );
+  const attempts: Array<{
+    slot: number;
+    fallback: boolean;
+    quote: SignalOptionsOptionQuote;
+    orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan>;
+  }> = [];
+  if (!candidates.length) {
+    return {
+      ok: false,
+      selectedQuote: null,
+      orderPlan: null,
+      attempts,
+      preferredSlot: null,
+      selectedSlot: null,
+      fallbackUsed: false,
+    };
+  }
+
+  const strikes = Array.from(
+    new Set(
+      candidates
+        .map((quote) => finiteNumber(asRecord(quote.contract).strike))
+        .filter((strike): strike is number => strike != null),
+    ),
+  ).sort((left, right) => left - right);
+  if (!strikes.length) {
+    return {
+      ok: false,
+      selectedQuote: null,
+      orderPlan: null,
+      attempts,
+      preferredSlot: null,
+      selectedSlot: null,
+      fallbackUsed: false,
+    };
+  }
+
+  const spotPrice = input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
+  const slots = signalOptionsStrikeSlotsForFallback({
+    profile: input.profile,
+    optionRight,
+  });
+  const attemptedStrikes = new Set<number>();
+
+  for (const slot of slots) {
+    const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
+    if (strike == null || attemptedStrikes.has(strike)) {
+      continue;
+    }
+    attemptedStrikes.add(strike);
+    const quote =
+      candidates.find(
+        (item) => finiteNumber(asRecord(item.contract).strike) === strike,
+      ) ?? null;
+    if (!quote) {
+      continue;
+    }
+
+    const orderPlan = buildSignalOptionsShadowOrderPlan(quote, input.profile);
+    const attempt = {
+      slot,
+      fallback: slot !== slots[0],
+      quote,
+      orderPlan,
+    };
+    attempts.push(attempt);
+    if (orderPlan.ok) {
+      return {
+        ok: true,
+        selectedQuote: quote,
+        orderPlan,
+        attempts,
+        preferredSlot: slots[0] ?? null,
+        selectedSlot: slot,
+        fallbackUsed: attempt.fallback,
+      };
+    }
+  }
+
+  const firstAttempt = attempts[0] ?? null;
+  return {
+    ok: false,
+    selectedQuote: firstAttempt?.quote ?? null,
+    orderPlan: firstAttempt?.orderPlan ?? null,
+    attempts,
+    preferredSlot: slots[0] ?? null,
+    selectedSlot: firstAttempt?.slot ?? null,
+    fallbackUsed: false,
+  };
+}
+
+function signalOptionsContractSelectionPayload(
+  selection: ReturnType<typeof selectSignalOptionsContractPlanFromChain>,
+) {
+  return {
+    preferredSlot: selection.preferredSlot,
+    selectedSlot: selection.selectedSlot,
+    fallbackUsed: selection.fallbackUsed,
+    attempts: selection.attempts.map((attempt) => ({
+      slot: attempt.slot,
+      fallback: attempt.fallback,
+      selectedContract: contractToPayload(attempt.quote),
+      quote: quoteToPayload(attempt.quote),
+      orderPlan: attempt.orderPlan,
+      reason: attempt.orderPlan.ok
+        ? null
+        : String(attempt.orderPlan.reason || "liquidity_gate_failed"),
+    })),
+  };
 }
 
 export function resolveSignalOptionsLiquidity(
@@ -1023,6 +1396,25 @@ function shouldRecordActivePositionMark(input: {
   );
 }
 
+function sameUtcMinute(left: unknown, right: unknown) {
+  const leftDate = dateOrNull(left);
+  const rightDate = dateOrNull(right);
+  if (!leftDate || !rightDate) {
+    return false;
+  }
+  return (
+    Math.floor(leftDate.getTime() / 60_000) ===
+    Math.floor(rightDate.getTime() / 60_000)
+  );
+}
+
+function shouldRecordActivePositionMarkForScan(input: {
+  position: Pick<SignalOptionsPosition, "lastMarkedAt">;
+  markAt: Date;
+}) {
+  return !sameUtcMinute(input.position.lastMarkedAt, input.markAt);
+}
+
 function numericArray(value: unknown) {
   return Array.isArray(value)
     ? value
@@ -1031,36 +1423,84 @@ function numericArray(value: unknown) {
     : [];
 }
 
+function signalDirectionSign(direction: SignalDirection) {
+  return direction === "sell" ? -1 : 1;
+}
+
 function evaluateSignalOptionsEntryGate(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
 }) {
-  const gate = input.profile.entryGate.bearishRegime;
-  if (!gate.enabled || input.candidate.optionRight !== "put") {
-    return { ok: true as const, reason: null, reasons: [] as string[] };
-  }
-
   const filterState = asRecord(asRecord(input.candidate.signal).filterState);
+  const mtfGate = input.profile.entryGate.mtfAlignment ?? {
+    enabled: true,
+    requiredCount: 2,
+  };
+  const requiredMtfCount = Math.min(
+    3,
+    Math.max(1, Math.round(finiteNumber(mtfGate.requiredCount) ?? 2)),
+  );
   const adx = finiteNumber(filterState.adx);
   const mtfDirections = numericArray(filterState.mtfDirections);
-  const fullyBullishMtf =
-    mtfDirections.length > 0 && mtfDirections.every((direction) => direction > 0);
+  const directionSign = signalDirectionSign(input.candidate.direction);
+  const mtfMatches = mtfDirections
+    .slice(0, 3)
+    .filter((direction) => direction === directionSign).length;
   const reasons: string[] = [];
 
-  if (adx == null || adx < gate.minAdx) {
-    reasons.push("adx_below_minimum");
+  if (mtfGate.enabled && mtfMatches < requiredMtfCount) {
+    reasons.push("mtf_not_aligned");
   }
-  if (gate.rejectFullyBullishMtf && fullyBullishMtf) {
-    reasons.push("mtf_fully_bullish");
+
+  const blockedPutSymbols = new Set(
+    (input.profile.entryGate.blockedPutSymbols ?? []).map((symbol) =>
+      normalizeSymbol(symbol).toUpperCase(),
+    ),
+  );
+  const symbol = normalizeSymbol(input.candidate.symbol).toUpperCase();
+  if (
+    input.candidate.optionRight === "put" &&
+    symbol &&
+    blockedPutSymbols.has(symbol)
+  ) {
+    reasons.push("inverse_put_blocked");
   }
+
+  const gate = input.profile.entryGate.bearishRegime;
+  const fullyBullishMtf =
+    mtfDirections.length > 0 && mtfDirections.every((direction) => direction > 0);
+  const bearishMtfCount = mtfDirections.filter((direction) => direction < 0).length;
+  const effectiveMinAdx =
+    bearishMtfCount >= 2 ? Math.min(gate.minAdx, 22) : gate.minAdx;
+
+  if (gate.enabled && input.candidate.optionRight === "put") {
+    if (adx == null || adx < effectiveMinAdx) {
+      reasons.push("adx_below_minimum");
+    }
+    if (gate.rejectFullyBullishMtf && fullyBullishMtf) {
+      reasons.push("mtf_fully_bullish");
+    }
+  }
+
+  const reason = reasons.includes("inverse_put_blocked")
+    ? "inverse_put_blocked"
+    : reasons.includes("mtf_not_aligned")
+      ? "mtf_not_aligned"
+      : reasons.length
+        ? "bear_regime_gate_failed"
+        : null;
 
   return {
     ok: reasons.length === 0,
-    reason: reasons.length ? "bear_regime_gate_failed" : null,
+    reason,
     reasons,
     adx,
     minAdx: gate.minAdx,
+    effectiveMinAdx,
     mtfDirections,
+    requiredMtfCount,
+    mtfMatches,
+    bearishMtfCount,
     fullyBullishMtf,
     rejectFullyBullishMtf: gate.rejectFullyBullishMtf,
   };
@@ -1148,6 +1588,98 @@ function candidateFromSignalSnapshot(input: {
     signal,
     action,
   };
+}
+
+function signalMonitorPollIntervalMs(profile: Record<string, unknown>) {
+  const seconds = finiteNumber(profile.pollIntervalSeconds) ?? 60;
+  return Math.min(3_600_000, Math.max(15_000, Math.round(seconds * 1000)));
+}
+
+function stateMatchesSignalOptionsUniverse(
+  state: Record<string, unknown>,
+  universe: Set<string>,
+) {
+  const symbol = normalizeSymbol(String(state.symbol ?? "")).toUpperCase();
+  return Boolean(symbol && (universe.size === 0 || universe.has(symbol)));
+}
+
+function shouldRefreshSignalOptionsMonitorState(input: {
+  evaluated: unknown;
+  universe: Set<string>;
+  now?: Date;
+}) {
+  const evaluated = asRecord(input.evaluated);
+  const profile = asRecord(evaluated.profile);
+  const profileId = compactString(profile.id) ?? "";
+  const runtimeFallbackProfile = profileId.startsWith("runtime-fallback-");
+  const lastEvaluatedAt = dateOrNull(profile.lastEvaluatedAt);
+  const now = input.now ?? new Date();
+  const states = asArray(evaluated.states)
+    .map(asRecord)
+    .filter((state) => stateMatchesSignalOptionsUniverse(state, input.universe));
+
+  if (!runtimeFallbackProfile) {
+    if (!lastEvaluatedAt) {
+      return true;
+    }
+    const maxAgeMs =
+      signalMonitorPollIntervalMs(profile) + SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS;
+    if (now.getTime() - lastEvaluatedAt.getTime() > maxAgeMs) {
+      return true;
+    }
+  }
+
+  if (input.universe.size > 0) {
+    const stateSymbols = new Set(
+      states
+        .map((state) => normalizeSymbol(String(state.symbol ?? "")).toUpperCase())
+        .filter(Boolean),
+    );
+    for (const symbol of input.universe) {
+      if (!stateSymbols.has(symbol)) {
+        return true;
+      }
+    }
+  }
+
+  if (!states.length) {
+    return true;
+  }
+
+  return states.some((state) =>
+    ["error", "stale", "unavailable"].includes(
+      String(state.status ?? "").toLowerCase(),
+    ),
+  );
+}
+
+async function loadSignalOptionsMonitorState(input: {
+  deployment: AlgoDeployment;
+  universe: Set<string>;
+  forceEvaluate?: boolean;
+}) {
+  if (input.forceEvaluate !== false) {
+    return evaluateSignalMonitor({
+      environment: input.deployment.mode,
+      mode: "incremental",
+    });
+  }
+
+  const current = await getSignalMonitorState({
+    environment: input.deployment.mode,
+  });
+  if (
+    shouldRefreshSignalOptionsMonitorState({
+      evaluated: current,
+      universe: input.universe,
+    })
+  ) {
+    return evaluateSignalMonitor({
+      environment: input.deployment.mode,
+      mode: "incremental",
+    });
+  }
+  return current;
 }
 
 function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | null {
@@ -1538,6 +2070,17 @@ const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
   "no_expiration_in_dte_window",
 ]);
 
+const FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
+  "candidate_resolution_failed",
+  "missing_bid_ask",
+  "missing_mark",
+  "no_contract_for_strike_slot",
+  "no_expiration_in_dte_window",
+  "position_mark_unavailable",
+  "quote_not_fresh",
+  "spread_too_wide",
+]);
+
 const RETRYABLE_OPTION_DEBUG_REASONS = new Set([
   "durable_option_chain_after_upstream_failure",
   "durable_option_expirations_after_upstream_failure",
@@ -1547,13 +2090,72 @@ const RETRYABLE_OPTION_DEBUG_REASONS = new Set([
   "options_upstream_failure",
 ]);
 
-function isRetryableSignalOptionsSkip(event: ExecutionEvent) {
+function signalOptionsPositionMatchesCandidate(input: {
+  position: SignalOptionsPosition;
+  candidate: Record<string, unknown>;
+}) {
+  const positionSymbol = normalizeSymbol(input.position.symbol).toUpperCase();
+  const candidateSymbol = normalizeSymbol(String(input.candidate.symbol ?? ""))
+    .toUpperCase();
+  const candidateDirection =
+    input.candidate.direction === "sell" ? "sell" : "buy";
+  return (
+    positionSymbol === candidateSymbol &&
+    input.position.direction === candidateDirection
+  );
+}
+
+function isRetryableSignalOptionsSkip(
+  event: ExecutionEvent,
+  options?: {
+    activePositions?: SignalOptionsPosition[];
+    currentPremiumCap?: number | null;
+    forceRetryMarketData?: boolean;
+  },
+) {
   if (event.eventType !== SIGNAL_OPTIONS_SKIPPED_EVENT) {
     return false;
   }
   const payload = asRecord(event.payload);
   const reason = compactString(payload.reason ?? payload.skipReason);
-  if (!reason || !RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)) {
+  if (!reason) {
+    return false;
+  }
+
+  if (
+    payload.retryable === true &&
+    FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)
+  ) {
+    return true;
+  }
+
+  if (reason === "premium_budget_too_small") {
+    const previousPremiumCap = optionalFiniteNumber(payload.premiumCap);
+    const currentPremiumCap = optionalFiniteNumber(options?.currentPremiumCap);
+    return (
+      currentPremiumCap != null &&
+      (previousPremiumCap == null || previousPremiumCap < currentPremiumCap)
+    );
+  }
+
+  if (reason === "same_direction_position_open") {
+    if (!options?.activePositions) {
+      return false;
+    }
+    const candidate = asRecord(payload.candidate);
+    return !options.activePositions.some((position) =>
+      signalOptionsPositionMatchesCandidate({ position, candidate }),
+    );
+  }
+
+  if (
+    options?.forceRetryMarketData &&
+    FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)
+  ) {
+    return true;
+  }
+
+  if (!RETRYABLE_SIGNAL_OPTION_SKIP_REASONS.has(reason)) {
     return false;
   }
 
@@ -1565,10 +2167,17 @@ function isRetryableSignalOptionsSkip(event: ExecutionEvent) {
   });
 }
 
-function seenSignalKeys(events: ExecutionEvent[]) {
+function seenSignalKeys(
+  events: ExecutionEvent[],
+  options?: {
+    activePositions?: SignalOptionsPosition[];
+    currentPremiumCap?: number | null;
+    forceRetryMarketData?: boolean;
+  },
+) {
   return new Set(
     signalOptionsEvents(events)
-      .filter((event) => !isRetryableSignalOptionsSkip(event))
+      .filter((event) => !isRetryableSignalOptionsSkip(event, options))
       .map((event) => asRecord(event.payload).signalKey)
       .filter((signalKey): signalKey is string => typeof signalKey === "string"),
   );
@@ -1592,6 +2201,11 @@ function mergeProfilePatch(
     entryGate: {
       ...current.entryGate,
       ...asRecord(patch.entryGate),
+      mtfAlignment: {
+        ...current.entryGate.mtfAlignment,
+        ...asRecord(asRecord(patch.entryGate).mtfAlignment),
+        ...asRecord(patch.mtfAlignment),
+      },
       bearishRegime: {
         ...current.entryGate.bearishRegime,
         ...asRecord(asRecord(patch.entryGate).bearishRegime),
@@ -2077,6 +2691,139 @@ function sortedDiagnosticCounter(counter: Record<string, number>) {
   );
 }
 
+function signalOptionsDiagnosticEventWeight(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  const count = finiteNumber(payload.count);
+  return count != null && count > 0 ? count : 1;
+}
+
+function classifySignalOptionsSkipReason(reason: string) {
+  if (
+    [
+      "position_mark_unavailable",
+      "position_mark_failed",
+      "invalid_position_mark",
+    ].includes(reason)
+  ) {
+    return "marking";
+  }
+  if (
+    [
+      "no_contract_for_strike_slot",
+      "no_expiration_in_dte_window",
+      "historical_option_bars_unavailable",
+      "options_upstream_failure",
+    ].includes(reason)
+  ) {
+    return "contract_resolution";
+  }
+  if (
+    [
+      "missing_bid_ask",
+      "spread_too_wide",
+      "bid_below_minimum",
+      "invalid_shadow_order_plan",
+      "invalid_historical_shadow_order_plan",
+    ].includes(reason)
+  ) {
+    return "liquidity";
+  }
+  if (
+    [
+      "max_open_symbols_reached",
+      "daily_loss_halt_active",
+      "premium_budget_exceeded",
+      "quantity_below_minimum",
+    ].includes(reason)
+  ) {
+    return "risk";
+  }
+  if (
+    [
+      "ibkr_not_configured",
+      "gateway_socket_disconnected",
+      "gateway_not_ready",
+      "bridge_unavailable",
+    ].includes(reason)
+  ) {
+    return "gateway";
+  }
+  if (
+    [
+      "bear_regime_gate_failed",
+      "mtf_not_aligned",
+      "inverse_put_blocked",
+      "entry_gate_failed",
+      "same_direction_position_open",
+      "opposite_signal_flip_disabled",
+      "candidate_resolution_failed",
+    ].includes(reason)
+  ) {
+    return "signal_policy";
+  }
+  return "other";
+}
+
+function incrementDiagnosticCounterBy(
+  counter: Record<string, number>,
+  value: unknown,
+  count: number,
+) {
+  const key = compactString(value);
+  if (!key || count <= 0) {
+    return;
+  }
+  counter[key] = (counter[key] ?? 0) + count;
+}
+
+function updateDiagnosticIncident(
+  incidents: Map<
+    string,
+    {
+      source: string;
+      reason: string;
+      count: number;
+      firstSeenAt: string | null;
+      lastSeenAt: string | null;
+      latestMessage: string | null;
+    }
+  >,
+  event: ExecutionEvent,
+) {
+  const payload = asRecord(event.payload);
+  const reason = compactString(payload.reason) ?? "unknown";
+  const source = compactString(payload.source) ?? "unknown";
+  const key = `${source}:${reason}`;
+  const count = signalOptionsDiagnosticEventWeight(event);
+  const readiness = asRecord(payload.readiness);
+  const message =
+    compactString(readiness.message) ?? compactString(payload.message);
+  const firstSeenAt =
+    toIsoString(payload.firstSeenAt) ?? event.occurredAt.toISOString();
+  const lastSeenAt =
+    toIsoString(payload.lastSeenAt) ?? event.occurredAt.toISOString();
+  const existing = incidents.get(key);
+  if (!existing) {
+    incidents.set(key, {
+      source,
+      reason,
+      count,
+      firstSeenAt,
+      lastSeenAt,
+      latestMessage: message,
+    });
+    return;
+  }
+  existing.count += count;
+  if (!existing.firstSeenAt || firstSeenAt < existing.firstSeenAt) {
+    existing.firstSeenAt = firstSeenAt;
+  }
+  if (!existing.lastSeenAt || lastSeenAt > existing.lastSeenAt) {
+    existing.lastSeenAt = lastSeenAt;
+    existing.latestMessage = message ?? existing.latestMessage;
+  }
+}
+
 function buildCockpitDiagnostics(input: {
   signals: SignalOptionsSignalSnapshot[];
   candidates: Array<SignalOptionsCandidate & {
@@ -2087,9 +2834,21 @@ function buildCockpitDiagnostics(input: {
 }) {
   const eventTypes: Record<string, number> = {};
   const skipReasons: Record<string, number> = {};
+  const skipCategories: Record<string, number> = {};
   const entryGateReasons: Record<string, number> = {};
   const optionChainReasons: Record<string, number> = {};
   const signalStatuses: Record<string, number> = {};
+  const readinessIncidents = new Map<
+    string,
+    {
+      source: string;
+      reason: string;
+      count: number;
+      firstSeenAt: string | null;
+      lastSeenAt: string | null;
+      latestMessage: string | null;
+    }
+  >();
   let firstEventAt: string | null = null;
   let latestEventAt: string | null = null;
   let entryEvents = 0;
@@ -2099,6 +2858,7 @@ function buildCockpitDiagnostics(input: {
 
   for (const event of input.events) {
     incrementDiagnosticCounter(eventTypes, event.eventType);
+    const eventWeight = signalOptionsDiagnosticEventWeight(event);
     const occurredAt = event.occurredAt.toISOString();
     if (!firstEventAt || occurredAt < firstEventAt) {
       firstEventAt = occurredAt;
@@ -2114,14 +2874,20 @@ function buildCockpitDiagnostics(input: {
     } else if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT) {
       markEvents += 1;
     } else if (event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT) {
-      gatewayBlocks += 1;
+      gatewayBlocks += eventWeight;
+      updateDiagnosticIncident(readinessIncidents, event);
     }
 
     const payload = asRecord(event.payload);
-    incrementDiagnosticCounter(
-      skipReasons,
-      payload.reason ?? payload.skipReason,
-    );
+    const skipReason = compactString(payload.reason ?? payload.skipReason);
+    if (skipReason) {
+      incrementDiagnosticCounterBy(skipReasons, skipReason, eventWeight);
+      incrementDiagnosticCounterBy(
+        skipCategories,
+        classifySignalOptionsSkipReason(skipReason),
+        eventWeight,
+      );
+    }
 
     const entryGate = asRecord(payload.entryGate);
     if (Array.isArray(entryGate.reasons)) {
@@ -2151,12 +2917,54 @@ function buildCockpitDiagnostics(input: {
   const contractsSelected = input.candidates.filter(
     (candidate) => Object.keys(asRecord(candidate.selectedContract)).length > 0,
   );
+  const actionMapped = input.candidates.filter(
+    (candidate) => Object.keys(asRecord(candidate.action)).length > 0,
+  );
+  const liquidityAccepted = input.candidates.filter((candidate) => {
+    const orderPlan = asRecord(candidate.orderPlan);
+    const liquidity = asRecord(candidate.liquidity);
+    return (
+      orderPlan.ok === true ||
+      liquidity.ok === true ||
+      ["shadow_filled", "partial_shadow", "closed"].includes(
+        String(candidate.actionStatus ?? ""),
+      )
+    );
+  });
   const shadowFilledCandidates = input.candidates.filter((candidate) =>
     ["shadow_filled", "partial_shadow", "closed"].includes(
       String(candidate.actionStatus ?? ""),
     ),
   );
   const shadowFillCount = Math.max(shadowFilledCandidates.length, entryEvents);
+  const now = new Date();
+  const markFailureEvents = input.events.filter((event) => {
+    const reason = compactString(asRecord(event.payload).reason);
+    return (
+      event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
+      (reason === "position_mark_unavailable" ||
+        reason === "position_mark_failed")
+    );
+  });
+  const markHealthPositions = input.activePositions.map((position) => {
+    const markedAt = dateOrNull(position.lastMarkedAt);
+    const ageMs = markedAt ? now.getTime() - markedAt.getTime() : null;
+    return {
+      id: position.id,
+      candidateId: position.candidateId,
+      symbol: position.symbol,
+      direction: position.direction,
+      lastMarkPrice: position.lastMarkPrice ?? null,
+      lastMarkedAt: position.lastMarkedAt ?? null,
+      ageMs,
+      stale: markedAt ? isPositionMarkStale(position, now) : false,
+      unmarked: !markedAt,
+    };
+  });
+  const staleMarks = markHealthPositions.filter((position) => position.stale);
+  const unmarkedPositions = markHealthPositions.filter(
+    (position) => position.unmarked,
+  );
 
   return {
     eventWindow: {
@@ -2183,9 +2991,54 @@ function buildCockpitDiagnostics(input: {
       withoutDirection: signalsWithoutDirection,
       statuses: sortedDiagnosticCounter(signalStatuses),
     },
+    lifecycle: {
+      signals: input.signals.length,
+      freshSignals,
+      candidates: input.candidates.length,
+      actionMapped: actionMapped.length,
+      contractsSelected: contractsSelected.length,
+      liquidityAccepted: liquidityAccepted.length,
+      shadowEntries: entryEvents,
+      shadowFills: shadowFillCount,
+      shadowMarks: markEvents,
+      shadowExits: exitEvents,
+      activePositions: input.activePositions.length,
+      blockedCandidates: blockedCandidates.length,
+    },
     skipReasons: sortedDiagnosticCounter(skipReasons),
+    skipCategories: sortedDiagnosticCounter(skipCategories),
     entryGateReasons: sortedDiagnosticCounter(entryGateReasons),
     optionChainReasons: sortedDiagnosticCounter(optionChainReasons),
+    readinessIncidents: Array.from(readinessIncidents.values()).sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.source.localeCompare(right.source) ||
+        left.reason.localeCompare(right.reason),
+    ),
+    markHealth: {
+      activePositions: input.activePositions.length,
+      fresh: Math.max(
+        0,
+        input.activePositions.length -
+          staleMarks.length -
+          unmarkedPositions.length,
+      ),
+      stale: staleMarks.length,
+      unmarked: unmarkedPositions.length,
+      markFailures: markFailureEvents.length,
+      lastMarkFailureAt: latestIso(
+        markFailureEvents.map((event) => event.occurredAt),
+      ),
+      positions: markHealthPositions
+        .sort(
+          (left, right) =>
+            Number(right.stale) - Number(left.stale) ||
+            Number(right.unmarked) - Number(left.unmarked) ||
+            (right.ageMs ?? -1) - (left.ageMs ?? -1) ||
+            String(left.symbol ?? "").localeCompare(String(right.symbol ?? "")),
+        )
+        .slice(0, 8),
+    },
   };
 }
 
@@ -3062,6 +3915,7 @@ async function refreshActivePosition(input: {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
   position: SignalOptionsPosition;
+  recentEvents?: ExecutionEvent[];
 }) {
   const contract = input.position.selectedContract;
   const expirationDate = dateOrNull(contract.expirationDate);
@@ -3074,8 +3928,36 @@ async function refreshActivePosition(input: {
     typeof contract.providerContractId === "string"
       ? contract.providerContractId
       : null;
-  const strike = finiteNumber(contract.strike);
-  let quote: SignalOptionsOptionQuote | null = null;
+  const markState: {
+    quote: SignalOptionsOptionQuote | null;
+    resolution: ReturnType<typeof resolvePositionMarkQuote> | null;
+  } = {
+    quote: null,
+    resolution: null,
+  };
+  const markAttempts: ReturnType<typeof positionMarkAttemptPayload>[] = [];
+  const useQuote = (
+    source: "provider_snapshot" | "chain_standard" | "chain_full",
+    candidateQuote: SignalOptionsOptionQuote | null,
+    chainDebug?: unknown,
+  ) => {
+    const resolution = candidateQuote
+      ? resolvePositionMarkQuote({ quote: candidateQuote, profile: input.profile })
+      : null;
+    markAttempts.push(
+      positionMarkAttemptPayload({
+        source,
+        quote: candidateQuote,
+        reason: resolution?.ok ? null : resolution?.reason,
+        chainDebug,
+      }),
+    );
+    if (candidateQuote) {
+      markState.quote = candidateQuote;
+      markState.resolution = resolution;
+    }
+    return Boolean(resolution?.ok);
+  };
 
   if (providerContractId) {
     const snapshot = await fetchBridgeOptionQuoteSnapshots({
@@ -3091,9 +3973,10 @@ async function refreshActivePosition(input: {
       snapshot.quotes.find(
         (item) => item.providerContractId?.trim() === providerContractId,
       ) ?? null;
-    quote = matchedQuote
+    const snapshotQuote = matchedQuote
       ? quoteSnapshotToSignalOptionsQuote({ contract, quote: matchedQuote })
       : null;
+    useQuote("provider_snapshot", snapshotQuote);
   } else {
     const chain = await getOptionChainWithDebug({
       underlying: input.position.symbol,
@@ -3103,52 +3986,93 @@ async function refreshActivePosition(input: {
       strikeCoverage: "standard",
       quoteHydration: "snapshot",
     });
-    quote =
-      (chain.contracts as SignalOptionsOptionQuote[]).find((item) => {
-        const itemContract = asRecord(item.contract);
-        return (
-          finiteNumber(itemContract.strike) === strike &&
-          itemContract.right === optionRight
-        );
+    const chainQuote =
+      findSignalOptionsQuoteForContract({
+        contracts: chain.contracts as SignalOptionsOptionQuote[],
+        selectedContract: contract,
       }) ?? null;
+    useQuote("chain_standard", chainQuote, chain.debug);
   }
 
+  if (!markState.resolution?.ok) {
+    const chain = await getOptionChainWithDebug({
+      underlying: input.position.symbol,
+      expirationDate,
+      contractType: optionRight,
+      strikeCoverage: "full",
+      quoteHydration: "snapshot",
+    });
+    const chainQuote = findSignalOptionsQuoteForContract({
+      contracts: chain.contracts as SignalOptionsOptionQuote[],
+      selectedContract: contract,
+    });
+    useQuote("chain_full", chainQuote, chain.debug);
+  }
+
+  const emitPositionMarkSkip = async (inputSkip: {
+    summary: string;
+    message: string;
+    quote?: SignalOptionsOptionQuote | null;
+    liquidity?: unknown;
+  }) => {
+    const occurredAt = new Date();
+    if (
+      !shouldRecordPositionMarkSkip({
+        events: input.recentEvents ?? [],
+        position: input.position,
+        reason: "position_mark_unavailable",
+        now: occurredAt,
+      })
+    ) {
+      return;
+    }
+    await insertSignalOptionsEvent({
+      deployment: input.deployment,
+      symbol: input.position.symbol,
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      summary: inputSkip.summary,
+      occurredAt,
+      payload: {
+        reason: "position_mark_unavailable",
+        message: inputSkip.message,
+        retryable: true,
+        position: input.position,
+        selectedContract: input.position.selectedContract,
+        quote: inputSkip.quote ? quoteToPayload(inputSkip.quote) : null,
+        liquidity: inputSkip.liquidity ?? null,
+        markResolution: {
+          attempts: markAttempts,
+        },
+      },
+    });
+  };
+
+  const quote = markState.quote;
+  const markResolution = markState.resolution;
   if (!quote) {
-    await insertSignalOptionsEvent({
-      deployment: input.deployment,
-      symbol: input.position.symbol,
-      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    await emitPositionMarkSkip({
       summary: `${input.position.symbol} shadow mark skipped: option quote unavailable`,
-      payload: {
-        reason: "position_mark_unavailable",
-        message: "No option quote was returned for the open shadow position.",
-        position: input.position,
-        selectedContract: input.position.selectedContract,
-      },
+      message: "No option quote was returned for the open shadow position.",
     });
     return;
   }
 
-  const liquidity = resolveSignalOptionsLiquidity(quote, input.profile);
-  const markPrice = liquidity.mid ?? finiteNumber(quote.mark) ?? finiteNumber(quote.last);
-  if (markPrice == null || markPrice <= 0) {
-    await insertSignalOptionsEvent({
-      deployment: input.deployment,
-      symbol: input.position.symbol,
-      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+  if (!markResolution?.ok || markResolution.markPrice == null) {
+    await emitPositionMarkSkip({
       summary: `${input.position.symbol} shadow mark skipped: option mark unavailable`,
-      payload: {
-        reason: "position_mark_unavailable",
-        message: "The option quote did not include a positive mark price.",
-        position: input.position,
-        selectedContract: input.position.selectedContract,
-        quote: quoteToPayload(quote),
-        liquidity,
-      },
+      message:
+        markResolution?.reason === "quote_not_fresh"
+          ? "The option quote was stale or unavailable for the open shadow position."
+          : "The option quote did not include a positive mark price.",
+      quote,
+      liquidity: markResolution?.liquidity ?? null,
     });
     return;
   }
 
+  const liquidity = markResolution.liquidity;
+  const markPrice = markResolution.markPrice;
+  const markSource = markAttempts.find((attempt) => attempt.ok)?.source ?? null;
   const peakPrice = Math.max(input.position.peakPrice, markPrice);
   const stop = computePositionStop({
     entryPrice: input.position.entryPrice,
@@ -3160,12 +4084,13 @@ async function refreshActivePosition(input: {
     liquidity.bid != null && liquidity.mid != null
       ? Number((liquidity.mid - (liquidity.mid - liquidity.bid) * 0.9).toFixed(2))
       : Number(markPrice.toFixed(2));
+  const markAt = new Date();
   const positionPatch = {
     ...input.position,
     peakPrice,
     stopPrice: stop.stopPrice,
     lastMarkPrice: Number(markPrice.toFixed(2)),
-    lastMarkedAt: new Date().toISOString(),
+    lastMarkedAt: markAt.toISOString(),
   };
 
   if (stop.exitReason) {
@@ -3174,6 +4099,7 @@ async function refreshActivePosition(input: {
       symbol: input.position.symbol,
       eventType: SIGNAL_OPTIONS_EXIT_EVENT,
       summary: `${input.position.symbol} shadow exit ${stop.exitReason} at ${exitPrice.toFixed(2)}`,
+      occurredAt: markAt,
       payload: {
         reason: stop.exitReason,
         exitPrice,
@@ -3187,6 +4113,10 @@ async function refreshActivePosition(input: {
         selectedContract: input.position.selectedContract,
         quote: quoteToPayload(quote),
         liquidity,
+        markResolution: {
+          source: markSource,
+          attempts: markAttempts,
+        },
         stop,
       },
     });
@@ -3194,11 +4124,9 @@ async function refreshActivePosition(input: {
   }
 
   if (
-    shouldRecordActivePositionMark({
+    shouldRecordActivePositionMarkForScan({
       position: input.position,
-      peakPrice,
-      stopPrice: stop.stopPrice,
-      markPrice,
+      markAt,
     })
   ) {
     await insertSignalOptionsEvent({
@@ -3206,11 +4134,16 @@ async function refreshActivePosition(input: {
       symbol: input.position.symbol,
       eventType: SIGNAL_OPTIONS_MARK_EVENT,
       summary: `${input.position.symbol} shadow mark ${markPrice.toFixed(2)} stop ${stop.stopPrice.toFixed(2)}`,
+      occurredAt: markAt,
       payload: {
         position: positionPatch,
         selectedContract: input.position.selectedContract,
         quote: quoteToPayload(quote),
         liquidity,
+        markResolution: {
+          source: markSource,
+          attempts: markAttempts,
+        },
         stop,
       },
     });
@@ -3284,23 +4217,69 @@ async function processEntryCandidate(input: {
     return false;
   }
 
-  const chain = await getOptionChainWithDebug({
+  const strikesAroundMoney = signalOptionsStrikesAroundMoney({
+    profile: input.profile,
+    optionRight: input.candidate.optionRight,
+  });
+  let chain = await getOptionChainWithDebug({
     underlying: input.candidate.symbol,
     expirationDate: selectedExpiration.expirationDate,
     contractType: input.candidate.optionRight,
-    strikesAroundMoney: signalOptionsStrikesAroundMoney({
-      profile: input.profile,
-      optionRight: input.candidate.optionRight,
-    }),
+    strikesAroundMoney,
     strikeCoverage: "standard",
     quoteHydration: "snapshot",
   });
-  const selectedQuote = selectSignalOptionsContractFromChain({
+  let contractSelection = selectSignalOptionsContractPlanFromChain({
     contracts: chain.contracts as SignalOptionsOptionQuote[],
     direction: input.candidate.direction,
     signalPrice: input.candidate.signalPrice,
     profile: input.profile,
   });
+  const chainAttempts: Array<{
+    source: "bounded" | "full";
+    strikeCoverage: "standard" | "full";
+    strikesAroundMoney: number | null;
+    contractCount: number;
+    selectedQuote: boolean;
+    chainDebug: unknown;
+  }> = [
+    {
+      source: "bounded",
+      strikeCoverage: "standard",
+      strikesAroundMoney,
+      contractCount: chain.contracts.length,
+      selectedQuote: Boolean(contractSelection.selectedQuote),
+      chainDebug: chain.debug,
+    },
+  ];
+  if (!contractSelection.selectedQuote) {
+    const fullChain = await getOptionChainWithDebug({
+      underlying: input.candidate.symbol,
+      expirationDate: selectedExpiration.expirationDate,
+      contractType: input.candidate.optionRight,
+      strikeCoverage: "full",
+      quoteHydration: "snapshot",
+    });
+    const fullSelection = selectSignalOptionsContractPlanFromChain({
+      contracts: fullChain.contracts as SignalOptionsOptionQuote[],
+      direction: input.candidate.direction,
+      signalPrice: input.candidate.signalPrice,
+      profile: input.profile,
+    });
+    chainAttempts.push({
+      source: "full",
+      strikeCoverage: "full",
+      strikesAroundMoney: null,
+      contractCount: fullChain.contracts.length,
+      selectedQuote: Boolean(fullSelection.selectedQuote),
+      chainDebug: fullChain.debug,
+    });
+    if (fullSelection.selectedQuote) {
+      chain = fullChain;
+      contractSelection = fullSelection;
+    }
+  }
+  const selectedQuote = contractSelection.selectedQuote;
   if (!selectedQuote) {
     await emitSkippedCandidate({
       deployment: input.deployment,
@@ -3313,32 +4292,41 @@ async function processEntryCandidate(input: {
           dte: selectedExpiration.dte,
         },
         chainDebug: chain.debug,
+        chainAttempts,
+        retryable: true,
+        contractSelection: signalOptionsContractSelectionPayload(contractSelection),
       },
     });
     return false;
   }
 
-  const orderPlan = buildSignalOptionsShadowOrderPlan(
-    selectedQuote,
-    input.profile,
-  );
+  const orderPlan = contractSelection.orderPlan;
   const selectedContract = contractToPayload(selectedQuote);
   const quote = quoteToPayload(selectedQuote);
-  if (!orderPlan.ok) {
+  if (!orderPlan?.ok) {
+    const reason = String(orderPlan?.reason || "liquidity_gate_failed");
     await emitSkippedCandidate({
       deployment: input.deployment,
       candidate: input.candidate,
       signalKey: input.signalKey,
-      reason: String(orderPlan.reason || "liquidity_gate_failed"),
+      reason,
       detail: {
         selectedContract,
         quote,
-        liquidity: orderPlan.liquidity,
+        liquidity: orderPlan?.liquidity ?? null,
+        premiumCap: input.profile.riskCaps.maxPremiumPerEntry,
+        retryable:
+          reason === "missing_bid_ask" ||
+          reason === "missing_mark" ||
+          reason === "quote_not_fresh" ||
+          reason === "spread_too_wide",
+        contractSelection: signalOptionsContractSelectionPayload(contractSelection),
         selectedExpiration: {
           expirationDate: selectedExpiration.expirationDate.toISOString(),
           dte: selectedExpiration.dte,
         },
         chainDebug: chain.debug,
+        chainAttempts,
       },
     });
     return false;
@@ -3407,6 +4395,7 @@ async function processEntryCandidate(input: {
       liquidity: orderPlan.liquidity,
       position,
       chainDebug: chain.debug,
+      contractSelection: signalOptionsContractSelectionPayload(contractSelection),
     },
   });
 
@@ -3450,6 +4439,51 @@ async function recordSignalOptionsGatewayBlocked(input: {
   readiness: AlgoGatewayReadiness;
   source: "manual" | "worker";
 }) {
+  const now = new Date();
+  const todayKey = now.toISOString().slice(0, 10);
+  const existing = (await listDeploymentEvents(input.deployment.id, 50)).find(
+    (event) => {
+      if (
+        event.eventType !== SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT ||
+        event.occurredAt.toISOString().slice(0, 10) !== todayKey
+      ) {
+        return false;
+      }
+      const payload = asRecord(event.payload);
+      return (
+        payload.reason === input.readiness.reason &&
+        payload.source === input.source
+      );
+    },
+  );
+  if (existing) {
+    const payload = asRecord(existing.payload);
+    const count = signalOptionsDiagnosticEventWeight(existing) + 1;
+    const nextPayload = signalOptionsPayloadWithRunMetadata({
+      deployment: input.deployment,
+      payload: {
+        ...payload,
+        source: input.source,
+        reason: input.readiness.reason,
+        readiness: input.readiness,
+        count,
+        firstSeenAt:
+          toIsoString(payload.firstSeenAt) ?? existing.occurredAt.toISOString(),
+        lastSeenAt: now.toISOString(),
+      },
+    });
+    await db
+      .update(executionEventsTable)
+      .set({
+        summary: `Signal-options scan blocked: ${input.readiness.message}`,
+        payload: nextPayload,
+        occurredAt: now,
+        updatedAt: now,
+      })
+      .where(eq(executionEventsTable.id, existing.id));
+    return;
+  }
+
   await insertSignalOptionsEvent({
     deployment: input.deployment,
     eventType: SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
@@ -3458,7 +4492,11 @@ async function recordSignalOptionsGatewayBlocked(input: {
       source: input.source,
       reason: input.readiness.reason,
       readiness: input.readiness,
+      count: 1,
+      firstSeenAt: now.toISOString(),
+      lastSeenAt: now.toISOString(),
     },
+    occurredAt: now,
   });
 }
 
@@ -3551,6 +4589,17 @@ type SignalOptionsBackfillEventWrite = {
   event: ExecutionEvent | null;
 };
 
+type SignalOptionsHistoricalEventSource =
+  | "signal_options_backfill"
+  | "signal_options_replay";
+
+type SignalOptionsReplayMetadata = {
+  runId: string;
+  marketDate: string;
+  deploymentId: string;
+  deploymentName: string;
+};
+
 type SignalOptionsBackfillSummary = {
   symbolsEvaluated: number;
   symbolUniverse: SignalOptionsBackfillUniverse;
@@ -3603,6 +4652,7 @@ type HistoricalBackfillSignal = {
 type HistoricalBackfillResolvedOption = {
   selectedContract: Record<string, unknown>;
   optionBars: BrokerBarSnapshot[];
+  optionTrades: OptionTradePrint[];
   entryBar: BrokerBarSnapshot;
   quote: Record<string, unknown>;
   liquidity: Record<string, unknown>;
@@ -3612,15 +4662,18 @@ type HistoricalBackfillResolvedOption = {
 
 type HistoricalBackfillOpenPosition = SignalOptionsPosition & {
   optionBars: BrokerBarSnapshot[];
+  optionTrades: OptionTradePrint[];
   nextBarIndex: number;
 };
 
-const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-05-04";
-const DEFAULT_SIGNAL_OPTIONS_BACKFILL_END = "2026-05-08";
+const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
 const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
 const SIGNAL_OPTIONS_BACKFILL_VERSION = 1;
+const SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME = "1m";
 const BACKFILL_WARMUP_DAYS = 90;
 const BACKFILL_OPTION_BAR_LIMIT = 5_000;
+const BACKFILL_OPTION_TRADE_LIMIT = 50_000;
+const HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS = 60_000;
 const BACKFILL_EQUITY_BAR_LIMIT = Math.max(
   1_500,
   RAY_REPLICA_SIGNAL_WARMUP_BARS + 500,
@@ -3657,10 +4710,45 @@ function parseBackfillDate(value: unknown, fallback: string): string {
   return raw;
 }
 
+function addDaysToBackfillDate(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function backfillDateWeekday(value: string) {
+  return new Date(`${value}T00:00:00.000Z`).getUTCDay();
+}
+
+function previousBackfillWeekdayOrSame(value: string) {
+  let cursor = value;
+  while (backfillDateWeekday(cursor) === 0 || backfillDateWeekday(cursor) === 6) {
+    cursor = addDaysToBackfillDate(cursor, -1);
+  }
+  return cursor;
+}
+
+function latestCompletedBackfillMarketDate(now = new Date()) {
+  const parts = marketParts(now);
+  const today = `${parts.year}-${parts.month}-${parts.day}`;
+  const weekday = parts.weekday;
+  if (weekday === "Sat" || weekday === "Sun") {
+    return previousBackfillWeekdayOrSame(today);
+  }
+  const minutes =
+    Number.parseInt(parts.hour ?? "0", 10) * 60 +
+    Number.parseInt(parts.minute ?? "0", 10);
+  if (minutes >= 16 * 60) {
+    return today;
+  }
+  return previousBackfillWeekdayOrSame(addDaysToBackfillDate(today, -1));
+}
+
 function resolveSignalOptionsBackfillWindow(input: {
   start?: unknown;
   end?: unknown;
   session?: unknown;
+  now?: Date;
 }): SignalOptionsBackfillWindow {
   const startDate = parseBackfillDate(
     input.start,
@@ -3668,7 +4756,7 @@ function resolveSignalOptionsBackfillWindow(input: {
   );
   const endDate = parseBackfillDate(
     input.end,
-    DEFAULT_SIGNAL_OPTIONS_BACKFILL_END,
+    latestCompletedBackfillMarketDate(input.now),
   );
   const start = new Date(`${startDate}T00:00:00.000Z`);
   const end = new Date(`${endDate}T00:00:00.000Z`);
@@ -3762,9 +4850,12 @@ function signalPrice(signal: RayReplicaSignalEvent): number | null {
   return finiteNumber(signal.price) ?? finiteNumber(signal.close);
 }
 
-function backfillEventKey(parts: Array<string | number | null | undefined>) {
+function backfillEventKey(
+  parts: Array<string | number | null | undefined>,
+  source: SignalOptionsHistoricalEventSource = SIGNAL_OPTIONS_BACKFILL_SOURCE,
+) {
   return [
-    SIGNAL_OPTIONS_BACKFILL_SOURCE,
+    source,
     SIGNAL_OPTIONS_BACKFILL_VERSION,
     ...parts.map((part) => String(part ?? "")),
   ].join(":");
@@ -3781,6 +4872,127 @@ function buildBackfillEventIndexes(events: ExecutionEvent[]) {
   return byKey;
 }
 
+function candidateIdFromHistoricalPayload(payload: Record<string, unknown>) {
+  const candidate = asRecord(payload.candidate);
+  const position = asRecord(payload.position);
+  return (
+    compactString(position.candidateId) ??
+    compactString(candidate.id) ??
+    compactString(payload.candidateId)
+  );
+}
+
+function replayPositionMarketDate(input: {
+  payload: Record<string, unknown>;
+  occurredAt?: Date | null;
+  fallbackMarketDate: string;
+}) {
+  const candidate = asRecord(input.payload.candidate);
+  const position = asRecord(input.payload.position);
+  const positionAt =
+    dateOrNull(position.openedAt) ??
+    dateOrNull(position.signalAt) ??
+    dateOrNull(candidate.signalAt) ??
+    input.occurredAt ??
+    null;
+  return positionAt ? marketDateKeyFromDate(positionAt) : input.fallbackMarketDate;
+}
+
+function replayEventMarketDate(input: {
+  occurredAt?: Date | null;
+  fallbackMarketDate: string;
+}) {
+  return input.occurredAt
+    ? marketDateKeyFromDate(input.occurredAt)
+    : input.fallbackMarketDate;
+}
+
+function replayPositionKey(input: {
+  replay: SignalOptionsReplayMetadata;
+  payload: Record<string, unknown>;
+  occurredAt?: Date | null;
+}) {
+  const candidateId = candidateIdFromHistoricalPayload(input.payload);
+  const marketDate = replayPositionMarketDate({
+    payload: input.payload,
+    occurredAt: input.occurredAt,
+    fallbackMarketDate: input.replay.marketDate,
+  });
+  return candidateId
+    ? [
+        SIGNAL_OPTIONS_REPLAY_SOURCE,
+        marketDate,
+        input.replay.deploymentId,
+        candidateId,
+      ].join(":")
+    : null;
+}
+
+function historicalEventPayload(input: {
+  source: SignalOptionsHistoricalEventSource;
+  deployment: AlgoDeployment;
+  payload: Record<string, unknown>;
+  backfillEventKey: string;
+  replay?: SignalOptionsReplayMetadata | null;
+  occurredAt?: Date | null;
+}) {
+  const metadata = asRecord(input.payload.metadata);
+  const replayMarketDate = input.replay
+    ? replayEventMarketDate({
+        occurredAt: input.occurredAt,
+        fallbackMarketDate: input.replay.marketDate,
+      })
+    : null;
+  const positionMarketDate = input.replay
+    ? replayPositionMarketDate({
+        payload: input.payload,
+        occurredAt: input.occurredAt,
+        fallbackMarketDate: input.replay.marketDate,
+      })
+    : null;
+  const replayPosition = input.replay
+    ? replayPositionKey({
+        replay: input.replay,
+        payload: input.payload,
+        occurredAt: input.occurredAt,
+      })
+    : null;
+  return {
+    ...input.payload,
+    metadata: {
+      ...metadata,
+      ...(input.replay
+        ? {
+            sourceType: SIGNAL_OPTIONS_REPLAY_SOURCE,
+            strategyLabel: "Options Backtest",
+            runId: input.replay.runId,
+            marketDate: replayMarketDate,
+            positionMarketDate,
+            deploymentId: input.replay.deploymentId,
+            deploymentName: input.replay.deploymentName,
+            positionKey: replayPosition,
+          }
+        : {}),
+    },
+    backfillEventKey: input.backfillEventKey,
+    backfill: {
+      source: input.source,
+      version: SIGNAL_OPTIONS_BACKFILL_VERSION,
+    },
+    ...(input.replay
+      ? {
+          replay: {
+            source: SIGNAL_OPTIONS_REPLAY_SOURCE,
+            runId: input.replay.runId,
+            marketDate: replayMarketDate,
+            deploymentId: input.replay.deploymentId,
+            deploymentName: input.replay.deploymentName,
+          },
+        }
+      : {}),
+  };
+}
+
 async function insertSignalOptionsBackfillEvent(input: {
   deployment: AlgoDeployment;
   symbol?: string | null;
@@ -3789,10 +5001,13 @@ async function insertSignalOptionsBackfillEvent(input: {
   payload: Record<string, unknown>;
   occurredAt: Date;
   backfillEventKey: string;
+  source?: SignalOptionsHistoricalEventSource;
+  replay?: SignalOptionsReplayMetadata | null;
   existingBackfillEvents: Map<string, ExecutionEvent>;
   commit: boolean;
   summaryCounters: SignalOptionsBackfillSummary;
 }): Promise<SignalOptionsBackfillEventWrite> {
+  const source = input.source ?? SIGNAL_OPTIONS_BACKFILL_SOURCE;
   const existing = input.existingBackfillEvents.get(input.backfillEventKey);
   if (existing) {
     input.summaryCounters.existingEvents += 1;
@@ -3802,7 +5017,16 @@ async function insertSignalOptionsBackfillEvent(input: {
         existing.eventType === SIGNAL_OPTIONS_EXIT_EVENT)
     ) {
       input.summaryCounters.mirrorRepairsAttempted += 1;
-      await recordShadowAutomationEvent(existing).catch((error) => {
+      await recordShadowAutomationEvent(existing, {
+        source:
+          input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
+            ? SIGNAL_OPTIONS_REPLAY_SOURCE
+            : "automation",
+        markSource:
+          input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
+            ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+            : undefined,
+      }).catch((error) => {
         logger.warn?.(
           { err: error, eventId: existing.id, backfillEventKey: input.backfillEventKey },
           "Failed to repair existing signal-options backfill shadow mirror",
@@ -3822,14 +5046,22 @@ async function insertSignalOptionsBackfillEvent(input: {
     eventType: input.eventType,
     summary: input.summary,
     occurredAt: input.occurredAt,
-    payload: {
-      ...input.payload,
+    ledgerSource:
+      input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? SIGNAL_OPTIONS_REPLAY_SOURCE
+        : undefined,
+    ledgerMarkSource:
+      input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+        : undefined,
+    payload: historicalEventPayload({
+      source,
+      deployment: input.deployment,
+      payload: input.payload,
       backfillEventKey: input.backfillEventKey,
-      backfill: {
-        source: SIGNAL_OPTIONS_BACKFILL_SOURCE,
-        version: SIGNAL_OPTIONS_BACKFILL_VERSION,
-      },
-    },
+      replay: input.replay,
+      occurredAt: input.occurredAt,
+    }),
   });
   input.existingBackfillEvents.set(input.backfillEventKey, event);
   return { inserted: true, existing: false, event };
@@ -3949,6 +5181,34 @@ function backfillBarPrice(bar: BrokerBarSnapshot): number | null {
   return finiteNumber(bar.close);
 }
 
+function optionTradeSnapshot(trade: OptionTradePrint | null) {
+  return trade
+    ? {
+        price: trade.price,
+        size: trade.size,
+        occurredAt: trade.occurredAt.toISOString(),
+        sequenceNumber: trade.sequenceNumber,
+        conditionCodes: trade.conditionCodes,
+        exchange: trade.exchange,
+      }
+    : null;
+}
+
+function selectHistoricalOptionTradeFill(input: {
+  trades: OptionTradePrint[];
+  at: Date;
+  maxDelayMs?: number;
+}) {
+  const maxDelayMs =
+    input.maxDelayMs ?? HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS;
+  return (
+    input.trades.find((trade) => {
+      const delayMs = trade.occurredAt.getTime() - input.at.getTime();
+      return delayMs >= 0 && delayMs <= maxDelayMs;
+    }) ?? null
+  );
+}
+
 function quoteFromHistoricalBar(bar: BrokerBarSnapshot) {
   const price = backfillBarPrice(bar);
   return {
@@ -3975,6 +5235,11 @@ function quoteFromHistoricalBar(bar: BrokerBarSnapshot) {
 function buildHistoricalOrderPlan(
   fillPrice: number,
   profile: SignalOptionsExecutionProfile,
+  fill?: {
+    source: "polygon-option-trade" | "polygon-option-aggregates";
+    trade?: OptionTradePrint | null;
+    markPrice?: number | null;
+  },
 ) {
   const simulatedFillPrice = Number(fillPrice.toFixed(2));
   const quantity = Math.min(
@@ -4008,10 +5273,21 @@ function buildHistoricalOrderPlan(
       mid: simulatedFillPrice,
       spread: null,
       spreadPctOfMid: null,
-      quoteFreshness: "historical_option_bars",
+      quoteFreshness:
+        fill?.source === "polygon-option-trade"
+          ? "historical_option_trades"
+          : "historical_option_bars",
       marketDataMode: "historical",
+      trade: optionTradeSnapshot(fill?.trade ?? null),
+      markPrice: fill?.markPrice ?? null,
     },
     historicalPricing: true,
+    historicalFill: {
+      source: fill?.source ?? "polygon-option-aggregates",
+      trade: optionTradeSnapshot(fill?.trade ?? null),
+      markPrice: fill?.markPrice ?? null,
+      maxDelayMs: HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS,
+    },
   };
 }
 
@@ -4047,11 +5323,12 @@ async function resolveHistoricalOptionForBackfill(input: {
         strike,
         right: input.candidate.optionRight,
         optionTicker,
-        timeframe: input.candidate.timeframe,
+        skipBrokerContractResolution: true,
+        timeframe: SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
         from: new Date(Math.max(input.window.from.getTime(), signalAt.getTime() - 15 * 60_000)),
         to: input.window.to,
         limit: BACKFILL_OPTION_BAR_LIMIT,
-        outsideRth: input.window.session === "all",
+        outsideRth: false,
       });
       const optionBars = result.bars
         .filter((bar) => {
@@ -4078,7 +5355,22 @@ async function resolveHistoricalOptionForBackfill(input: {
       if (!entryBar || fillPrice == null || fillPrice <= 0) {
         continue;
       }
-      const orderPlan = buildHistoricalOrderPlan(fillPrice, input.profile);
+      const optionTrades = await getHistoricalOptionTrades({
+        optionTicker,
+        from: signalAt,
+        to: input.window.to,
+        limit: BACKFILL_OPTION_TRADE_LIMIT,
+      }).catch(() => [] as OptionTradePrint[]);
+      const entryTrade = selectHistoricalOptionTradeFill({
+        trades: optionTrades,
+        at: signalAt,
+      });
+      const entryFillPrice = entryTrade?.price ?? fillPrice;
+      const orderPlan = buildHistoricalOrderPlan(entryFillPrice, input.profile, {
+        source: entryTrade ? "polygon-option-trade" : "polygon-option-aggregates",
+        trade: entryTrade,
+        markPrice: fillPrice,
+      });
       if (!orderPlan.ok) {
         continue;
       }
@@ -4095,6 +5387,7 @@ async function resolveHistoricalOptionForBackfill(input: {
       return {
         selectedContract,
         optionBars,
+        optionTrades,
         entryBar,
         quote: quoteFromHistoricalBar(entryBar),
         liquidity: asRecord(orderPlan.liquidity),
@@ -4116,7 +5409,10 @@ async function emitBackfillSkippedCandidate(input: {
   existingBackfillEvents: Map<string, ExecutionEvent>;
   commit: boolean;
   summary: SignalOptionsBackfillSummary;
+  eventSource?: SignalOptionsHistoricalEventSource;
+  replay?: SignalOptionsReplayMetadata | null;
 }) {
+  const eventSource = input.eventSource ?? SIGNAL_OPTIONS_BACKFILL_SOURCE;
   const write = await insertSignalOptionsBackfillEvent({
     deployment: input.deployment,
     symbol: input.candidate.symbol,
@@ -4128,7 +5424,9 @@ async function emitBackfillSkippedCandidate(input: {
       input.signalKey,
       "skip",
       input.reason,
-    ]),
+    ], eventSource),
+    source: eventSource,
+    replay: input.replay,
     existingBackfillEvents: input.existingBackfillEvents,
     commit: input.commit,
     summaryCounters: input.summary,
@@ -4158,6 +5456,7 @@ function buildBackfillPosition(input: {
   orderPlan: Record<string, unknown>;
   entryAt: Date;
   optionBars: BrokerBarSnapshot[];
+  optionTrades: OptionTradePrint[];
   nextBarIndex: number;
   profile: SignalOptionsExecutionProfile;
 }): HistoricalBackfillOpenPosition | null {
@@ -4185,6 +5484,7 @@ function buildBackfillPosition(input: {
     lastMarkPrice: entryPrice,
     lastMarkedAt: input.entryAt.toISOString(),
     optionBars: input.optionBars,
+    optionTrades: input.optionTrades,
     nextBarIndex: input.nextBarIndex,
   };
 }
@@ -4238,9 +5538,6 @@ function shouldCloseBackfillPositionAtExpiration(input: {
   position: HistoricalBackfillOpenPosition;
   until: Date;
 }) {
-  if (input.position.nextBarIndex < input.position.optionBars.length) {
-    return false;
-  }
   const expirationKey = backfillPositionExpirationKey(input.position);
   if (!expirationKey) {
     return false;
@@ -4261,9 +5558,17 @@ async function closeBackfillPosition(input: {
   commit: boolean;
   summary: SignalOptionsBackfillSummary;
   realizedByDay: Map<string, number>;
+  eventSource?: SignalOptionsHistoricalEventSource;
+  replay?: SignalOptionsReplayMetadata | null;
 }) {
+  const exitTrade = selectHistoricalOptionTradeFill({
+    trades: input.position.optionTrades,
+    at: input.occurredAt,
+  });
+  const exitMarkPrice = input.exitPrice;
+  const exitPrice = Number((exitTrade?.price ?? exitMarkPrice).toFixed(2));
   const pnl = Number(
-    ((input.exitPrice - input.position.entryPrice) *
+    ((exitPrice - input.position.entryPrice) *
       input.position.quantity *
       100).toFixed(2),
   );
@@ -4274,14 +5579,15 @@ async function closeBackfillPosition(input: {
   );
   const positionPatch = {
     ...backfillPositionPayload(input.position),
-    lastMarkPrice: input.exitPrice,
+    lastMarkPrice: exitPrice,
     lastMarkedAt: input.occurredAt.toISOString(),
   };
+  const eventSource = input.eventSource ?? SIGNAL_OPTIONS_BACKFILL_SOURCE;
   const write = await insertSignalOptionsBackfillEvent({
     deployment: input.deployment,
     symbol: input.position.symbol,
     eventType: SIGNAL_OPTIONS_EXIT_EVENT,
-    summary: `${input.position.symbol} shadow backfill exit ${input.reason} at ${input.exitPrice.toFixed(2)}`,
+    summary: `${input.position.symbol} shadow backfill exit ${input.reason} at ${exitPrice.toFixed(2)}`,
     occurredAt: input.occurredAt,
     backfillEventKey: backfillEventKey([
       input.deployment.id,
@@ -4289,7 +5595,9 @@ async function closeBackfillPosition(input: {
       "exit",
       input.reason,
       input.occurredAt.toISOString(),
-    ]),
+    ], eventSource),
+    source: eventSource,
+    replay: input.replay,
     existingBackfillEvents: input.existingBackfillEvents,
     commit: input.commit,
     summaryCounters: input.summary,
@@ -4299,7 +5607,14 @@ async function closeBackfillPosition(input: {
       signal: input.candidate?.signal ?? null,
       action: input.candidate?.action ?? null,
       candidate: input.candidate ?? null,
-      exitPrice: input.exitPrice,
+      exitPrice,
+      exitMarkPrice,
+      exitFill: {
+        source: exitTrade ? "polygon-option-trade" : "polygon-option-aggregates",
+        trade: optionTradeSnapshot(exitTrade),
+        markPrice: exitMarkPrice,
+        maxDelayMs: HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS,
+      },
       pnl,
       position: positionPatch,
       selectedContract: input.position.selectedContract,
@@ -4326,7 +5641,7 @@ async function closeBackfillPosition(input: {
       openedAt: input.position.openedAt,
       closedAt: input.occurredAt.toISOString(),
       entryPrice: input.position.entryPrice,
-      exitPrice: input.exitPrice,
+      exitPrice,
       quantity: input.position.quantity,
       pnl,
       reason: input.reason,
@@ -4344,7 +5659,10 @@ async function markBackfillPositionsThrough(input: {
   commit: boolean;
   summary: SignalOptionsBackfillSummary;
   realizedByDay: Map<string, number>;
+  eventSource?: SignalOptionsHistoricalEventSource;
+  replay?: SignalOptionsReplayMetadata | null;
 }) {
+  const eventSource = input.eventSource ?? SIGNAL_OPTIONS_BACKFILL_SOURCE;
   for (const [symbol, position] of Array.from(input.positionsBySymbol.entries())) {
     while (position.nextBarIndex < position.optionBars.length) {
       const bar = position.optionBars[position.nextBarIndex];
@@ -4382,6 +5700,8 @@ async function markBackfillPositionsThrough(input: {
           commit: input.commit,
           summary: input.summary,
           realizedByDay: input.realizedByDay,
+          eventSource,
+          replay: input.replay,
         });
         input.positionsBySymbol.delete(symbol);
         break;
@@ -4398,7 +5718,9 @@ async function markBackfillPositionsThrough(input: {
           position.candidateId,
           "mark",
           barAt.toISOString(),
-        ]),
+        ], eventSource),
+        source: eventSource,
+        replay: input.replay,
         existingBackfillEvents: input.existingBackfillEvents,
         commit: input.commit,
         summaryCounters: input.summary,
@@ -4444,6 +5766,8 @@ async function markBackfillPositionsThrough(input: {
         commit: input.commit,
         summary: input.summary,
         realizedByDay: input.realizedByDay,
+        eventSource,
+        replay: input.replay,
       });
       input.positionsBySymbol.delete(symbol);
     }
@@ -4732,6 +6056,9 @@ export async function runSignalOptionsShadowBackfill(input: {
   session?: unknown;
   commit?: boolean;
   profilePatch?: unknown;
+  forceDeploymentUniverse?: boolean;
+  replay?: SignalOptionsReplayMetadata | boolean | null;
+  replaceReplayRows?: boolean;
 }) {
   if (activeScanDeploymentIds.has(input.deploymentId)) {
     throw new HttpError(409, "Signal-options scan is already running.", {
@@ -4746,7 +6073,46 @@ export async function runSignalOptionsShadowBackfill(input: {
   try {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const window = resolveSignalOptionsBackfillWindow(input);
+    const replay =
+      input.replay && typeof input.replay === "object"
+        ? {
+            ...input.replay,
+            marketDate: input.replay.marketDate || window.startDate,
+            deploymentId: input.replay.deploymentId || deployment.id,
+            deploymentName: input.replay.deploymentName || deployment.name,
+          }
+        : input.replay
+          ? {
+              runId: `manual-replay-${window.startDate}-through-${window.endDate}-${Date.now()}`,
+              marketDate: window.startDate,
+              deploymentId: deployment.id,
+              deploymentName: deployment.name,
+            }
+          : null;
     const commit = input.commit !== false;
+    const eventSource = replay
+      ? SIGNAL_OPTIONS_REPLAY_SOURCE
+      : SIGNAL_OPTIONS_BACKFILL_SOURCE;
+    activeSignalOptionsRunMetadata.set(
+      deployment.id,
+      buildSignalOptionsRunMetadata({
+        deployment,
+        mode: replay ? "replay" : "historical_backfill",
+        source: replay
+          ? SIGNAL_OPTIONS_REPLAY_SOURCE
+          : SIGNAL_OPTIONS_BACKFILL_SOURCE,
+        marketDate: replay?.marketDate,
+      }),
+    );
+    if (replay && input.replaceReplayRows !== false && commit) {
+      await resetSignalOptionsReplayRowsForRange({
+        deploymentId: deployment.id,
+        marketDateFrom: window.startDate,
+        marketDateTo: window.endDate,
+        windowStart: window.from,
+        cleanupEnd: window.to,
+      });
+    }
     const baseProfile = resolveDeploymentProfile(deployment);
     const profilePatch = asRecord(input.profilePatch);
     const profile = Object.keys(profilePatch).length
@@ -4759,10 +6125,14 @@ export async function runSignalOptionsShadowBackfill(input: {
       await resolveSignalMonitorProfileUniverse(signalProfile);
     const backfillUniverse = buildSignalOptionsBackfillUniverse({
       deploymentSymbols: deployment.symbolUniverse,
-      signalMonitorSymbols: signalUniverse.symbols,
+      signalMonitorSymbols: input.forceDeploymentUniverse
+        ? []
+        : signalUniverse.symbols,
       watchlistId: signalUniverse.profile.watchlistId,
-      skippedSymbols: signalUniverse.skippedSymbols,
-      truncated: signalUniverse.truncated,
+      skippedSymbols: input.forceDeploymentUniverse
+        ? []
+        : signalUniverse.skippedSymbols,
+      truncated: input.forceDeploymentUniverse ? false : signalUniverse.truncated,
     });
     const timeframe = String(
       signalUniverse.profile.timeframe || "15m",
@@ -4786,7 +6156,9 @@ export async function runSignalOptionsShadowBackfill(input: {
       closedTrades: [],
       errors: [],
     };
-    const initialEvents = await listDeploymentBackfillEvents(deployment.id);
+    const initialEvents = replay
+      ? []
+      : await listDeploymentBackfillEvents(deployment.id);
     const seenSignals = seenSignalKeys(initialEvents);
     const existingBackfillEvents = buildBackfillEventIndexes(initialEvents);
     const positionsBySymbol = new Map<string, HistoricalBackfillOpenPosition>();
@@ -4812,6 +6184,8 @@ export async function runSignalOptionsShadowBackfill(input: {
         commit,
         summary,
         realizedByDay,
+        eventSource,
+        replay,
       });
 
       const state = buildBackfillSignalSnapshot({
@@ -4851,6 +6225,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -4867,6 +6243,8 @@ export async function runSignalOptionsShadowBackfill(input: {
             existingBackfillEvents,
             commit,
             summary,
+            eventSource,
+            replay,
           });
           continue;
         }
@@ -4885,6 +6263,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           commit,
           summary,
           realizedByDay,
+          eventSource,
+          replay,
         });
         positionsBySymbol.delete(symbol);
       }
@@ -4901,6 +6281,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -4925,6 +6307,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -4943,6 +6327,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -4976,6 +6362,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -4996,6 +6384,7 @@ export async function runSignalOptionsShadowBackfill(input: {
         orderPlan: resolved.orderPlan,
         entryAt,
         optionBars: resolved.optionBars,
+        optionTrades: resolved.optionTrades,
         nextBarIndex,
         profile,
       });
@@ -5013,6 +6402,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           existingBackfillEvents,
           commit,
           summary,
+          eventSource,
+          replay,
         });
         continue;
       }
@@ -5027,7 +6418,9 @@ export async function runSignalOptionsShadowBackfill(input: {
           deployment.id,
           signalKey,
           "entry",
-        ]),
+        ], eventSource),
+        source: eventSource,
+        replay,
         existingBackfillEvents,
         commit,
         summaryCounters: summary,
@@ -5074,6 +6467,8 @@ export async function runSignalOptionsShadowBackfill(input: {
       commit,
       summary,
       realizedByDay,
+      eventSource,
+      replay,
     });
 
     if (commit) {
@@ -5101,6 +6496,7 @@ export async function runSignalOptionsShadowBackfill(input: {
         from: window.from.toISOString(),
         to: window.to.toISOString(),
       },
+      timeframe,
       commit,
       summary,
       openPositions:
@@ -5122,6 +6518,7 @@ export async function runSignalOptionsShadowBackfill(input: {
     };
   } finally {
     activeScanDeploymentIds.delete(input.deploymentId);
+    activeSignalOptionsRunMetadata.delete(input.deploymentId);
   }
 }
 
@@ -5143,6 +6540,7 @@ export async function runSignalOptionsShadowScan(input: {
     return await runSignalOptionsShadowScanUnlocked(input);
   } finally {
     activeScanDeploymentIds.delete(input.deploymentId);
+    activeSignalOptionsRunMetadata.delete(input.deploymentId);
   }
 }
 
@@ -5153,6 +6551,14 @@ async function runSignalOptionsShadowScanUnlocked(input: {
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const source = input.source ?? "manual";
+  activeSignalOptionsRunMetadata.set(
+    deployment.id,
+    buildSignalOptionsRunMetadata({
+      deployment,
+      mode: "live_scan",
+      source,
+    }),
+  );
   const readiness = await getAlgoGatewayReadiness();
   if (!readiness.ready) {
     await recordSignalOptionsGatewayBlocked({ deployment, readiness, source });
@@ -5165,17 +6571,35 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const initialPositions = deriveActivePositions(initialSignalEvents);
 
   for (const position of initialPositions) {
-    await refreshActivePosition({ deployment, profile, position }).catch(
+    await refreshActivePosition({
+      deployment,
+      profile,
+      position,
+      recentEvents: initialSignalEvents,
+    }).catch(
       async (error: unknown) => {
+        const occurredAt = new Date();
+        if (
+          !shouldRecordPositionMarkSkip({
+            events: initialSignalEvents,
+            position,
+            reason: "position_mark_failed",
+            now: occurredAt,
+          })
+        ) {
+          return;
+        }
         await insertSignalOptionsEvent({
           deployment,
           symbol: position.symbol,
           eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
           summary: `${position.symbol} shadow mark skipped: option quote unavailable`,
+          occurredAt,
           payload: {
             reason: "position_mark_failed",
             message:
               error instanceof Error ? error.message : "Unknown position mark error",
+            retryable: true,
             position,
           },
         });
@@ -5184,10 +6608,14 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   }
 
   const eventsAfterMarks = await listDeploymentEvents(deployment.id, 750);
-  const seenSignals = seenSignalKeys(eventsAfterMarks);
   const activePositionsAfterMarks = deriveActivePositions(
     signalOptionsEvents(eventsAfterMarks),
   );
+  const seenSignals = seenSignalKeys(eventsAfterMarks, {
+    activePositions: activePositionsAfterMarks,
+    currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
+    forceRetryMarketData: input.forceEvaluate === true,
+  });
   const dailyPnl = computeSignalOptionsDailyPnl(
     eventsAfterMarks,
     activePositionsAfterMarks,
@@ -5204,15 +6632,11 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       .map((symbol) => normalizeSymbol(symbol).toUpperCase())
       .filter(Boolean),
   );
-  const evaluated =
-    input.forceEvaluate === false
-      ? await getSignalMonitorState({
-          environment: deployment.mode,
-        })
-      : await evaluateSignalMonitor({
-          environment: deployment.mode,
-          mode: "incremental",
-        });
+  const evaluated = await loadSignalOptionsMonitorState({
+    deployment,
+    universe,
+    forceEvaluate: input.forceEvaluate,
+  });
   let lastSignalAt: Date | null = null;
   let openSymbols = activePositionsBySymbol.size;
 
@@ -5411,19 +6835,31 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,
   candidateFromEvent,
+  classifySignalOptionsSkipReason,
+  findSignalOptionsQuoteForContract,
   mergeSignalOptionsCandidate,
   computeSignalOptionsDailyPnl,
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,
+  computePositionStop,
   evaluateSignalOptionsEntryGate,
   quoteSnapshotToSignalOptionsQuote,
+  resolvePositionMarkQuote,
+  selectHistoricalOptionTradeFill,
+  selectSignalOptionsContractPlanFromChain,
   seenSignalKeys,
+  shouldRecordPositionMarkSkip,
+  shouldRefreshSignalOptionsMonitorState,
   signalOptionsStrikesAroundMoney,
   shouldRecordActivePositionMark,
+  shouldRecordActivePositionMarkForScan,
+  SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
   buildHistoricalPolygonOptionTicker,
   buildHistoricalOrderPlan,
   buildSignalOptionsBackfillUniverse,
   backfillEventKey,
+  historicalEventPayload,
+  replayPositionKey,
   resolveSignalOptionsBackfillWindow,
   selectHistoricalExpirationCandidates,
   selectHistoricalStrikeCandidates,

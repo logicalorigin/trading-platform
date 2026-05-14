@@ -1,4 +1,5 @@
 import type { BrokerAccountSnapshot } from "../providers/ibkr/client";
+import { ratioToPercentPoint } from "@workspace/account-math";
 
 const IBKR_INITIAL_MARGIN_FIELD = "InitMarginReq";
 const IBKR_MAINTENANCE_MARGIN_FIELD = "MaintMarginReq";
@@ -68,7 +69,9 @@ export function buildAccountMarginSnapshot(accounts: BrokerAccountSnapshot[]) {
     marginUsed,
     marginAvailable: sumAccounts(accounts, "excessLiquidity"),
     maintenanceMargin,
-    maintenanceCushionPercent: weightedAccountAverage(accounts, "cushion"),
+    maintenanceCushionPercent: ratioToPercentPoint(
+      weightedAccountAverage(accounts, "cushion"),
+    ),
     dayTradingBuyingPower: sumAccounts(accounts, "dayTradingBuyingPower"),
     sma: sumAccounts(accounts, "sma"),
     regTInitialMargin: sumAccounts(accounts, "regTInitialMargin"),

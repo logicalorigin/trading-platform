@@ -25,10 +25,13 @@ export interface AccountPositionRow {
   averageCost: number;
   mark: number;
   dayChange: number | null;
+  /** Day change in percentage points. */
   dayChangePercent: number | null;
   unrealizedPnl: number;
+  /** Unrealized P&L in percentage points. */
   unrealizedPnlPercent: number;
   marketValue: number;
+  /** Position weight in percentage points. */
   weightPercent: number | null;
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];

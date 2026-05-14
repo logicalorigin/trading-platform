@@ -45,7 +45,17 @@ type DeploymentRuntime = {
   lastSuccessAt: string | null;
   lastError: string | null;
   scanCount: number;
+  totalFailureCount: number;
   failureCount: number;
+  lastFailureAt: string | null;
+  lastSignalCount: number;
+  lastFreshSignalCount: number;
+  lastStaleSignalCount: number;
+  lastUnavailableSignalCount: number;
+  lastLatestSignalBarAt: string | null;
+  lastOldestSignalBarAt: string | null;
+  lastCandidateCount: number;
+  lastBlockedCandidateCount: number;
 };
 
 const activeDeploymentIds = new Set<string>();
@@ -54,6 +64,65 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function timestampMs(value: unknown): number | null {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : null;
+  }
+  return null;
+}
+
+function summarizeScanResult(result: unknown) {
+  const record = asRecord(result);
+  const signals = asArray(record["signals"]).map(asRecord);
+  const candidates = asArray(record["candidates"]).map(asRecord);
+  const signalBarTimes = signals
+    .map((signal) => timestampMs(signal["latestBarAt"]))
+    .filter((value): value is number => value !== null);
+  const latestSignalBarAt =
+    signalBarTimes.length > 0 ? Math.max(...signalBarTimes) : null;
+  const oldestSignalBarAt =
+    signalBarTimes.length > 0 ? Math.min(...signalBarTimes) : null;
+
+  return {
+    signalCount: signals.length,
+    freshSignalCount: signals.filter((signal) => signal["fresh"] === true).length,
+    staleSignalCount: signals.filter(
+      (signal) => String(signal["status"] ?? "").toLowerCase() === "stale",
+    ).length,
+    unavailableSignalCount: signals.filter(
+      (signal) =>
+        String(signal["status"] ?? "").toLowerCase() === "unavailable" ||
+        timestampMs(signal["latestBarAt"]) === null,
+    ).length,
+    latestSignalBarAt:
+      latestSignalBarAt === null
+        ? null
+        : new Date(latestSignalBarAt).toISOString(),
+    oldestSignalBarAt:
+      oldestSignalBarAt === null
+        ? null
+        : new Date(oldestSignalBarAt).toISOString(),
+    candidateCount: candidates.length,
+    blockedCandidateCount: candidates.filter((candidate) => {
+      const actionStatus = String(candidate["actionStatus"] ?? "");
+      const status = String(candidate["status"] ?? "");
+      return actionStatus === "blocked" || status === "skipped";
+    }).length,
+  };
 }
 
 function positiveInteger(value: unknown, fallback: number, min: number, max: number) {
@@ -142,24 +211,36 @@ async function runDeployment(input: {
 
   activeDeploymentIds.add(deployment.id);
   try {
-    await dependencies.scanDeployment({
+    const scanResult = await dependencies.scanDeployment({
       deploymentId: deployment.id,
       forceEvaluate: false,
       source: "worker",
     });
+    const scanSummary = summarizeScanResult(scanResult);
     runtime.scanCount += 1;
     runtime.lastSuccessAt = dependencies.now().toISOString();
     runtime.lastError = null;
     runtime.failedUntilMs = 0;
+    runtime.failureCount = 0;
+    runtime.lastSignalCount = scanSummary.signalCount;
+    runtime.lastFreshSignalCount = scanSummary.freshSignalCount;
+    runtime.lastStaleSignalCount = scanSummary.staleSignalCount;
+    runtime.lastUnavailableSignalCount = scanSummary.unavailableSignalCount;
+    runtime.lastLatestSignalBarAt = scanSummary.latestSignalBarAt;
+    runtime.lastOldestSignalBarAt = scanSummary.oldestSignalBarAt;
+    runtime.lastCandidateCount = scanSummary.candidateCount;
+    runtime.lastBlockedCandidateCount = scanSummary.blockedCandidateCount;
   } catch (error) {
+    const failedAt = dependencies.now();
     const message =
       error instanceof Error && error.message
         ? error.message
         : "Signal-options shadow worker scan failed.";
+    runtime.totalFailureCount += 1;
     runtime.failureCount += 1;
+    runtime.lastFailureAt = failedAt.toISOString();
     runtime.lastError = message;
-    runtime.failedUntilMs =
-      dependencies.now().getTime() + FAILED_DEPLOYMENT_RETRY_MS;
+    runtime.failedUntilMs = failedAt.getTime() + FAILED_DEPLOYMENT_RETRY_MS;
     dependencies.logger.warn(
       { err: error, deploymentId: deployment.id },
       "Signal-options shadow worker scan failed",
@@ -228,7 +309,17 @@ export function createSignalOptionsWorker(
             lastSuccessAt: null,
             lastError: null,
             scanCount: 0,
+            totalFailureCount: 0,
             failureCount: 0,
+            lastFailureAt: null,
+            lastSignalCount: 0,
+            lastFreshSignalCount: 0,
+            lastStaleSignalCount: 0,
+            lastUnavailableSignalCount: 0,
+            lastLatestSignalBarAt: null,
+            lastOldestSignalBarAt: null,
+            lastCandidateCount: 0,
+            lastBlockedCandidateCount: 0,
           };
           deploymentRuntime.set(deployment.id, runtime);
         }
@@ -317,7 +408,17 @@ export function createSignalOptionsWorker(
           lastSuccessAt: runtime.lastSuccessAt,
           lastError: runtime.lastError,
           scanCount: runtime.scanCount,
+          totalFailureCount: runtime.totalFailureCount,
           failureCount: runtime.failureCount,
+          lastFailureAt: runtime.lastFailureAt,
+          lastSignalCount: runtime.lastSignalCount,
+          lastFreshSignalCount: runtime.lastFreshSignalCount,
+          lastStaleSignalCount: runtime.lastStaleSignalCount,
+          lastUnavailableSignalCount: runtime.lastUnavailableSignalCount,
+          lastLatestSignalBarAt: runtime.lastLatestSignalBarAt,
+          lastOldestSignalBarAt: runtime.lastOldestSignalBarAt,
+          lastCandidateCount: runtime.lastCandidateCount,
+          lastBlockedCandidateCount: runtime.lastBlockedCandidateCount,
         }),
       );
       return {

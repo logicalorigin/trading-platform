@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { defaultSignalOptionsExecutionProfile } from "@workspace/backtest-core";
+import {
+  defaultSignalOptionsExecutionProfile,
+  resolveSignalOptionsExecutionProfile,
+} from "@workspace/backtest-core";
 import {
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
@@ -42,6 +46,21 @@ function quote(strike: number, right: "call" | "put"): SignalOptionsOptionQuote 
     volume: 25,
     updatedAt: "2026-04-28T15:00:00.000Z",
     quoteFreshness: "live",
+  };
+}
+
+function pricedQuote(
+  strike: number,
+  right: "call" | "put",
+  bid: number,
+  ask: number,
+): SignalOptionsOptionQuote {
+  return {
+    ...quote(strike, right),
+    bid,
+    ask,
+    last: Number(((bid + ask) / 2).toFixed(2)),
+    mark: Number(((bid + ask) / 2).toFixed(2)),
   };
 }
 
@@ -103,10 +122,23 @@ test("historical backfill strike and ticker helpers mirror signal-options defaul
 });
 
 test("historical backfill order plan sizes from option bar close", () => {
+  const trade = {
+    price: 1.25,
+    size: 4,
+    occurredAt: new Date("2026-05-11T13:30:01.000Z"),
+    sequenceNumber: 1,
+    conditionCodes: [],
+    exchange: "323",
+  };
   const orderPlan =
     __signalOptionsAutomationInternalsForTests.buildHistoricalOrderPlan(
-      1.25,
+      trade.price,
       profile,
+      {
+        source: "polygon-option-trade",
+        trade,
+        markPrice: 1.2,
+      },
     );
 
   assert.equal(orderPlan.ok, true);
@@ -114,6 +146,69 @@ test("historical backfill order plan sizes from option bar close", () => {
   assert.equal(orderPlan.quantity, 3);
   assert.equal(orderPlan.premiumAtRisk, 375);
   assert.equal(orderPlan.historicalPricing, true);
+  assert.equal(orderPlan.historicalFill.source, "polygon-option-trade");
+  assert.equal(orderPlan.historicalFill.trade?.price, 1.25);
+});
+
+test("historical option trade fills use the first timely Polygon print", () => {
+  const at = new Date("2026-05-11T13:30:00.000Z");
+  const trades = [
+    {
+      price: 1.2,
+      size: 1,
+      occurredAt: new Date("2026-05-11T13:29:59.999Z"),
+      sequenceNumber: 1,
+      conditionCodes: [],
+      exchange: null,
+    },
+    {
+      price: 1.25,
+      size: 1,
+      occurredAt: new Date("2026-05-11T13:30:00.500Z"),
+      sequenceNumber: 2,
+      conditionCodes: [],
+      exchange: null,
+    },
+    {
+      price: 1.3,
+      size: 1,
+      occurredAt: new Date("2026-05-11T13:31:30.000Z"),
+      sequenceNumber: 3,
+      conditionCodes: [],
+      exchange: null,
+    },
+  ];
+
+  const fill =
+    __signalOptionsAutomationInternalsForTests.selectHistoricalOptionTradeFill({
+      trades,
+      at,
+      maxDelayMs: 60_000,
+    });
+  const late =
+    __signalOptionsAutomationInternalsForTests.selectHistoricalOptionTradeFill({
+      trades: [trades[2]!],
+      at,
+      maxDelayMs: 60_000,
+    });
+
+  assert.equal(fill?.price, 1.25);
+  assert.equal(late, null);
+});
+
+test("signal-options replay prices option marks from 1m regular-session bars", () => {
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
+    "1m",
+  );
+
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /timeframe:\s*SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME/);
+  assert.match(source, /outsideRth:\s*false/);
+  assert.match(source, /skipBrokerContractResolution:\s*true/);
 });
 
 test("position mark quote snapshots map onto signal option quotes", () => {
@@ -167,6 +262,79 @@ test("position mark quote snapshots map onto signal option quotes", () => {
   assert.equal(quote.ageMs, 25);
 });
 
+test("signal-options worker refreshes degraded monitor state before scanning", () => {
+  const now = new Date("2026-05-14T14:00:00.000Z");
+  const universe = new Set(["SPY"]);
+  const currentState = {
+    profile: {
+      id: "signal-profile-paper",
+      pollIntervalSeconds: 60,
+      lastEvaluatedAt: "2026-05-14T13:59:20.000Z",
+    },
+    states: [{ symbol: "SPY", status: "ok", fresh: false }],
+  };
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: currentState,
+      universe,
+      now,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: {
+        ...currentState,
+        profile: {
+          ...currentState.profile,
+          lastEvaluatedAt: "2026-05-14T13:58:00.000Z",
+        },
+      },
+      universe,
+      now,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: {
+        ...currentState,
+        states: [{ symbol: "SPY", status: "stale", fresh: false }],
+      },
+      universe,
+      now,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: {
+        ...currentState,
+        states: [{ symbol: "QQQ", status: "ok", fresh: true }],
+      },
+      universe,
+      now,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: {
+        profile: {
+          id: "runtime-fallback-paper",
+          pollIntervalSeconds: 60,
+          lastEvaluatedAt: null,
+        },
+        states: [{ symbol: "SPY", status: "ok", fresh: false }],
+      },
+      universe,
+      now,
+    }),
+    false,
+  );
+});
+
 test("active position marks record changed downside prices", () => {
   const position = {
     peakPrice: 2.55,
@@ -203,10 +371,149 @@ test("active position marks record changed downside prices", () => {
   );
 });
 
-test("historical backfill closes expired positions after option bars are exhausted", () => {
+test("active position scan marks once per UTC minute", () => {
+  const shouldRecord =
+    __signalOptionsAutomationInternalsForTests.shouldRecordActivePositionMarkForScan;
+
+  assert.equal(
+    shouldRecord({
+      position: { lastMarkedAt: null } as never,
+      markAt: new Date("2026-05-12T14:30:15.000Z"),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecord({
+      position: { lastMarkedAt: "2026-05-12T14:30:02.000Z" } as never,
+      markAt: new Date("2026-05-12T14:30:59.000Z"),
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecord({
+      position: { lastMarkedAt: "2026-05-12T14:30:59.000Z" } as never,
+      markAt: new Date("2026-05-12T14:31:00.000Z"),
+    }),
+    true,
+  );
+});
+
+test("position mark quote matching finds the exact selected contract", () => {
+  const selected = quote(102, "call");
+  const match =
+    __signalOptionsAutomationInternalsForTests.findSignalOptionsQuoteForContract({
+      contracts: [quote(101, "call"), selected, quote(103, "put")],
+      selectedContract: selected.contract as Record<string, unknown>,
+    });
+  const providerMismatch =
+    __signalOptionsAutomationInternalsForTests.findSignalOptionsQuoteForContract({
+      contracts: [
+        {
+          ...selected,
+          contract: {
+            ...selected.contract,
+            providerContractId: "different-provider-contract",
+          },
+        },
+      ],
+      selectedContract: selected.contract as Record<string, unknown>,
+    });
+
+  assert.equal(match?.contract?.providerContractId, "call-102");
+  assert.equal(providerMismatch, null);
+});
+
+test("position mark quote resolver requires current positive marks", () => {
+  const live =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
+      quote: quote(102, "call"),
+      profile,
+    });
+  const missingMark =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
+      quote: {
+        ...quote(102, "call"),
+        bid: null,
+        ask: null,
+        last: null,
+        mark: null,
+      },
+      profile,
+    });
+  const stale =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
+      quote: {
+        ...quote(102, "call"),
+        quoteFreshness: "stale",
+      },
+      profile,
+    });
+
+  assert.equal(live.ok, true);
+  assert.equal(live.markPrice, 1.1);
+  assert.equal(missingMark.ok, false);
+  assert.equal(missingMark.reason, "missing_mark");
+  assert.equal(stale.ok, false);
+  assert.equal(stale.reason, "quote_not_fresh");
+});
+
+test("position mark skip diagnostics are rate-limited by open position", () => {
+  const shouldRecord =
+    __signalOptionsAutomationInternalsForTests.shouldRecordPositionMarkSkip;
   const position = {
-    nextBarIndex: 1,
-    optionBars: [{ timestamp: "2026-05-01T19:45:00.000Z" }],
+    id: "position-1",
+    candidateId: "candidate-1",
+  } as never;
+  const events = [
+    {
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-05-13T15:00:00.000Z"),
+      payload: {
+        reason: "position_mark_unavailable",
+        position: {
+          id: "position-1",
+          candidateId: "candidate-1",
+        },
+      },
+    },
+  ] as never;
+
+  assert.equal(
+    shouldRecord({
+      events,
+      position,
+      reason: "position_mark_unavailable",
+      now: new Date("2026-05-13T15:02:00.000Z"),
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecord({
+      events,
+      position,
+      reason: "position_mark_unavailable",
+      now: new Date("2026-05-13T15:06:00.000Z"),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecord({
+      events,
+      position,
+      reason: "position_mark_failed",
+      now: new Date("2026-05-13T15:02:00.000Z"),
+    }),
+    true,
+  );
+});
+
+test("historical backfill closes expired positions once the contract reaches expiration", () => {
+  const position = {
+    nextBarIndex: 0,
+    optionBars: [
+      { timestamp: "2026-05-01T19:45:00.000Z" },
+      { timestamp: "2026-05-04T13:30:00.000Z" },
+    ],
     selectedContract: { expirationDate: "2026-05-01" },
   } as any;
 
@@ -219,17 +526,17 @@ test("historical backfill closes expired positions after option bars are exhaust
   );
   assert.equal(
     __signalOptionsAutomationInternalsForTests.shouldCloseBackfillPositionAtExpiration({
-      position: { ...position, nextBarIndex: 0 },
-      until: new Date("2026-05-01T20:00:00.000Z"),
+      position,
+      until: new Date("2026-04-30T20:00:00.000Z"),
     }),
     false,
   );
 });
 
-test("historical backfill defaults to the requested May 4-8 regular window", () => {
+test("historical backfill defaults to April 1 through the latest completed trading day", () => {
   const window =
     __signalOptionsAutomationInternalsForTests.resolveSignalOptionsBackfillWindow(
-      {},
+      { now: new Date("2026-05-14T14:00:00.000Z") },
     );
   const eventKey =
     __signalOptionsAutomationInternalsForTests.backfillEventKey([
@@ -238,12 +545,132 @@ test("historical backfill defaults to the requested May 4-8 regular window", () 
       "entry",
     ]);
 
-  assert.equal(window.startDate, "2026-05-04");
-  assert.equal(window.endDate, "2026-05-08");
+  assert.equal(window.startDate, "2026-04-01");
+  assert.equal(window.endDate, "2026-05-13");
   assert.equal(window.session, "regular");
   assert.equal(
     eventKey,
     "signal_options_backfill:1:deployment:SPY:entry",
+  );
+});
+
+test("historical backfill default end advances after the New York close", () => {
+  const window =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsBackfillWindow(
+      { now: new Date("2026-05-14T21:01:00.000Z") },
+    );
+
+  assert.equal(window.startDate, "2026-04-01");
+  assert.equal(window.endDate, "2026-05-14");
+});
+
+test("historical backfill explicit dates override April-to-latest defaults", () => {
+  const window =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsBackfillWindow(
+      {
+        start: "2026-05-04",
+        end: "2026-05-08",
+        session: "all",
+        now: new Date("2026-05-14T21:01:00.000Z"),
+      },
+    );
+
+  assert.equal(window.startDate, "2026-05-04");
+  assert.equal(window.endDate, "2026-05-08");
+  assert.equal(window.session, "all");
+});
+
+test("historical backfill rejects inverted explicit date ranges", () => {
+  assert.throws(
+    () =>
+      __signalOptionsAutomationInternalsForTests.resolveSignalOptionsBackfillWindow(
+        {
+          start: "2026-05-08",
+          end: "2026-05-04",
+          now: new Date("2026-05-14T21:01:00.000Z"),
+        },
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "invalid_signal_options_backfill_range",
+  );
+});
+
+test("signal-options replay overwrites existing shadow ledger rows for the resolved window", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /if \(replay && input\.replaceReplayRows !== false && commit\) \{[\s\S]*resetSignalOptionsReplayRowsForRange\(\{[\s\S]*marketDateFrom: window\.startDate,[\s\S]*marketDateTo: window\.endDate,[\s\S]*windowStart: window\.from,[\s\S]*cleanupEnd: window\.to,/,
+  );
+});
+
+test("signal-options backtest uses its own historical event source and position key", () => {
+  const replay = {
+    runId: "run-1",
+    marketDate: "2026-05-12",
+    deploymentId: "deployment-1",
+    deploymentName: "RayReplica Signal Options Shadow Paper",
+  };
+  const eventKey =
+    __signalOptionsAutomationInternalsForTests.backfillEventKey(
+      ["deployment", "SPY", "entry"],
+      "signal_options_replay",
+    );
+  const payload =
+    __signalOptionsAutomationInternalsForTests.historicalEventPayload({
+      source: "signal_options_replay",
+      deployment: { id: "deployment-1", name: replay.deploymentName } as never,
+      backfillEventKey: eventKey,
+      replay,
+      payload: {
+        candidate: { id: "candidate-opposite-signal" },
+        position: { candidateId: "candidate-1" },
+      },
+    });
+
+  assert.equal(eventKey, "signal_options_replay:1:deployment:SPY:entry");
+  assert.equal(payload.replay?.marketDate, "2026-05-12");
+  assert.equal(payload.metadata?.sourceType, "signal_options_replay");
+  assert.equal(payload.metadata?.strategyLabel, "Options Backtest");
+  assert.equal(
+    payload.metadata?.positionKey,
+    "signal_options_replay:2026-05-12:deployment-1:candidate-1",
+  );
+});
+
+test("signal-options replay stamps event dates while preserving entry-scoped position keys", () => {
+  const replay = {
+    runId: "run-1",
+    marketDate: "2026-05-12",
+    deploymentId: "deployment-1",
+    deploymentName: "RayReplica Signal Options Shadow Paper",
+  };
+  const payload =
+    __signalOptionsAutomationInternalsForTests.historicalEventPayload({
+      source: "signal_options_replay",
+      deployment: { id: "deployment-1", name: replay.deploymentName } as never,
+      backfillEventKey: "signal_options_replay:1:deployment:SPY:mark",
+      replay,
+      occurredAt: new Date("2026-05-13T15:00:00.000Z"),
+      payload: {
+        position: {
+          candidateId: "candidate-1",
+          openedAt: "2026-05-12T18:30:00.000Z",
+        },
+      },
+    });
+
+  assert.equal(payload.replay?.marketDate, "2026-05-13");
+  assert.equal(payload.metadata?.marketDate, "2026-05-13");
+  assert.equal(payload.metadata?.positionMarketDate, "2026-05-12");
+  assert.equal(
+    payload.metadata?.positionKey,
+    "signal_options_replay:2026-05-12:deployment-1:candidate-1",
   );
 });
 
@@ -489,17 +916,86 @@ test("selectSignalOptionsContractFromChain maps buy to call above and sell to pu
   assert.equal(put?.contract?.strike, 99);
 });
 
-test("signal-options scan requests a bounded strike window for selected slots", () => {
+test("signal-options contract selection falls back to cheaper call strikes", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
+      contracts: [
+        pricedQuote(101, "call", 12, 12.2),
+        pricedQuote(102, "call", 7, 7.2),
+        pricedQuote(103, "call", 6, 6.2),
+      ],
+      direction: "buy",
+      signalPrice: 100,
+      profile: {
+        ...profile,
+        riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+      },
+    });
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.fallbackUsed, true);
+  assert.equal(selection.selectedQuote?.contract?.strike, 102);
+  assert.equal(selection.orderPlan?.ok, true);
+  assert.equal(selection.orderPlan?.quantity, 1);
+});
+
+test("signal-options contract selection falls back to cheaper put strikes", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
+      contracts: [
+        pricedQuote(97, "put", 6, 6.2),
+        pricedQuote(98, "put", 7, 7.2),
+        pricedQuote(99, "put", 12, 12.2),
+      ],
+      direction: "sell",
+      signalPrice: 100,
+      profile: {
+        ...profile,
+        riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+      },
+    });
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.fallbackUsed, true);
+  assert.equal(selection.selectedQuote?.contract?.strike, 98);
+  assert.equal(selection.orderPlan?.ok, true);
+  assert.equal(selection.orderPlan?.quantity, 1);
+});
+
+test("signal-options contract fallback keeps liquidity gates intact", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
+      contracts: [
+        pricedQuote(101, "call", 12, 12.2),
+        pricedQuote(102, "call", 5, 12),
+        pricedQuote(103, "call", 4, 10),
+      ],
+      direction: "buy",
+      signalPrice: 100,
+      profile: {
+        ...profile,
+        riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+      },
+    });
+
+  assert.equal(selection.ok, false);
+  assert.equal(selection.selectedQuote?.contract?.strike, 101);
+  assert.equal(selection.orderPlan?.ok, false);
+  assert.equal(selection.orderPlan?.reason, "premium_budget_too_small");
+  assert.equal(selection.attempts[1]?.orderPlan.reason, "spread_too_wide");
+});
+
+test("signal-options scan requests a bounded strike window for selected and fallback slots", () => {
   const strikesAroundMoney =
     __signalOptionsAutomationInternalsForTests.signalOptionsStrikesAroundMoney;
 
   assert.equal(
     strikesAroundMoney({ profile, optionRight: "put" }),
-    1,
+    3,
   );
   assert.equal(
     strikesAroundMoney({ profile, optionRight: "call" }),
-    1,
+    3,
   );
   assert.equal(
     strikesAroundMoney({
@@ -567,6 +1063,123 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
           },
         },
       ] as never),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "premium_budget_too_small",
+              premiumCap: 500,
+            },
+          },
+        ] as never,
+        { currentPremiumCap: 1_000 },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "missing_bid_ask",
+            retryable: true,
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "premium_budget_too_small",
+              premiumCap: 1_000,
+            },
+          },
+        ] as never,
+        { currentPremiumCap: 1_000 },
+      ),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "missing_bid_ask",
+            },
+          },
+        ] as never,
+        { forceRetryMarketData: true },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "same_direction_position_open",
+              candidate: {
+                symbol: "SPY",
+                direction: "buy",
+              },
+            },
+          },
+        ] as never,
+        { activePositions: [] },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "same_direction_position_open",
+              candidate: {
+                symbol: "SPY",
+                direction: "buy",
+              },
+            },
+          },
+        ] as never,
+        {
+          activePositions: [
+            {
+              symbol: "SPY",
+              direction: "buy",
+            },
+          ] as never,
+        },
+      ),
     ),
     [signalKey],
   );
@@ -794,10 +1407,46 @@ test("signal-options deployments normalize execution to the shadow account", () 
   );
 });
 
-test("signal-options entry gate blocks weak bearish put regimes only", () => {
+test("signal-options profile normalization fills entry-gate policy defaults", () => {
+  const legacyProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        bearishRegime: {
+          enabled: false,
+        },
+      },
+    },
+  });
+  const customProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          enabled: false,
+          requiredCount: 2,
+        },
+        blockedPutSymbols: ["sqqq", "PSQ", "sqqq"],
+      },
+    },
+  });
+
+  assert.deepEqual(legacyProfile.entryGate.mtfAlignment, {
+    enabled: true,
+    requiredCount: 2,
+  });
+  assert.ok(legacyProfile.entryGate.blockedPutSymbols.includes("SQQQ"));
+  assert.equal(legacyProfile.entryGate.bearishRegime.enabled, false);
+  assert.deepEqual(customProfile.entryGate.mtfAlignment, {
+    enabled: false,
+    requiredCount: 2,
+  });
+  assert.deepEqual(customProfile.entryGate.blockedPutSymbols, ["PSQ", "SQQQ"]);
+});
+
+test("signal-options entry gate requires MTF alignment and blocks inverse puts", () => {
   const buildCandidate = (
     direction: "buy" | "sell",
     filterState: Record<string, unknown>,
+    symbol = "SPY",
   ) =>
     __signalOptionsAutomationInternalsForTests.buildCandidateFromSignal({
       deployment: {
@@ -806,7 +1455,7 @@ test("signal-options entry gate blocks weak bearish put regimes only", () => {
       } as never,
       state: {
         profileId: "11111111-1111-1111-1111-111111111111",
-        symbol: "SPY",
+        symbol,
         timeframe: "15m",
         currentSignalDirection: direction,
         currentSignalAt: "2026-04-28T15:30:00.000Z",
@@ -817,7 +1466,7 @@ test("signal-options entry gate blocks weak bearish put regimes only", () => {
         status: "ok",
       } as never,
       signalAt: "2026-04-28T15:30:00.000Z",
-      signalKey: `profile:SPY:15m:${direction}:2026-04-28T15:30:00.000Z`,
+      signalKey: `profile:${symbol}:15m:${direction}:2026-04-28T15:30:00.000Z`,
       signalMetadata: {
         eventId: "event-1",
         source: "rayreplica",
@@ -833,11 +1482,35 @@ test("signal-options entry gate blocks weak bearish put regimes only", () => {
       }),
       profile,
     });
-  const acceptedPut =
+  const mixedPut =
     __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
       candidate: buildCandidate("sell", {
         adx: 28,
         mtfDirections: [-1, 1, 1],
+      }),
+      profile,
+    });
+  const partiallyAlignedPut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("sell", {
+        adx: 23,
+        mtfDirections: [-1, -1, 1],
+      }),
+      profile,
+    });
+  const alignedPut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("sell", {
+        adx: 28,
+        mtfDirections: [-1, -1, -1],
+      }),
+      profile,
+    });
+  const weakAlignedPut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("sell", {
+        adx: 24,
+        mtfDirections: [-1, -1, -1],
       }),
       profile,
     });
@@ -849,15 +1522,85 @@ test("signal-options entry gate blocks weak bearish put regimes only", () => {
       }),
       profile,
     });
+  const mixedCall =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("buy", {
+        adx: 35,
+        mtfDirections: [-1, 1, 1],
+      }),
+      profile,
+    });
+  const blockedInversePut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate(
+        "sell",
+        {
+          adx: 35,
+          mtfDirections: [-1, -1, -1],
+        },
+        "SQQQ",
+      ),
+      profile,
+    });
+  const allowedInverseCall =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate(
+        "buy",
+        {
+          adx: 35,
+          mtfDirections: [1, 1, 1],
+        },
+        "SQQQ",
+      ),
+      profile,
+    });
 
   assert.equal(bullishPut.ok, false);
-  assert.equal(bullishPut.reason, "bear_regime_gate_failed");
+  assert.equal(bullishPut.reason, "mtf_not_aligned");
   assert.deepEqual(bullishPut.reasons, [
+    "mtf_not_aligned",
     "adx_below_minimum",
     "mtf_fully_bullish",
   ]);
-  assert.equal(acceptedPut.ok, true);
+  assert.equal(mixedPut.ok, false);
+  assert.equal(mixedPut.reason, "mtf_not_aligned");
+  assert.equal(partiallyAlignedPut.ok, true);
+  assert.equal(partiallyAlignedPut.effectiveMinAdx, 22);
+  assert.equal(alignedPut.ok, true);
+  assert.equal(weakAlignedPut.ok, true);
   assert.equal(call.ok, true);
+  assert.equal(mixedCall.ok, true);
+  assert.equal(blockedInversePut.ok, false);
+  assert.equal(blockedInversePut.reason, "inverse_put_blocked");
+  assert.deepEqual(blockedInversePut.reasons, ["inverse_put_blocked"]);
+  assert.equal(allowedInverseCall.ok, true);
+});
+
+test("signal-options conservative exit profile tightens hard stop and runner trail", () => {
+  const inactive =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 5.2,
+      markPrice: 4.5,
+      profile,
+    });
+  const active =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 5.7,
+      markPrice: 3.9,
+      profile,
+    });
+
+  assert.equal(inactive.hardStopPrice, 2.4);
+  assert.equal(inactive.trailActive, false);
+  assert.equal(inactive.stopPrice, 2.4);
+  assert.equal(active.hardStopPrice, 2.4);
+  assert.equal(active.trailActive, true);
+  assert.equal(active.givebackPct, 25);
+  assert.equal(active.trailStopPrice, 4.4);
+  assert.equal(active.stopPrice, 4.4);
+  assert.equal(active.exitReason, "runner_trail_stop");
 });
 
 test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", () => {
@@ -1080,6 +1823,26 @@ test("cockpit diagnostics summarize trade blockers and signal freshness", () => 
       eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
       occurredAt: new Date("2026-04-28T17:56:00.000Z"),
       payload: {
+        reason: "mtf_not_aligned",
+        entryGate: {
+          reasons: ["mtf_not_aligned"],
+        },
+      },
+    },
+    {
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T17:56:30.000Z"),
+      payload: {
+        reason: "inverse_put_blocked",
+        entryGate: {
+          reasons: ["inverse_put_blocked"],
+        },
+      },
+    },
+    {
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T17:56:45.000Z"),
+      payload: {
         reason: "no_contract_for_strike_slot",
         chainDebug: {
           reason: "options_upstream_failure",
@@ -1090,7 +1853,11 @@ test("cockpit diagnostics summarize trade blockers and signal freshness", () => 
       eventType: SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
       occurredAt: new Date("2026-04-28T17:57:00.000Z"),
       payload: {
+        source: "worker",
         reason: "ibkr_not_configured",
+        count: 3,
+        firstSeenAt: "2026-04-28T17:50:00.000Z",
+        lastSeenAt: "2026-04-28T17:57:00.000Z",
       },
     },
     {
@@ -1136,17 +1903,33 @@ test("cockpit diagnostics summarize trade blockers and signal freshness", () => 
       events,
     });
 
-  assert.equal(diagnostics.eventWindow.total, 4);
+  assert.equal(diagnostics.eventWindow.total, 6);
   assert.equal(diagnostics.tradePath.blockedCandidates, 1);
   assert.equal(diagnostics.tradePath.contractsSelected, 1);
   assert.equal(diagnostics.tradePath.shadowFilledCandidates, 1);
   assert.equal(diagnostics.tradePath.entryEvents, 1);
-  assert.equal(diagnostics.tradePath.gatewayBlocks, 1);
+  assert.equal(diagnostics.tradePath.gatewayBlocks, 3);
+  assert.equal(diagnostics.lifecycle.candidates, 2);
+  assert.equal(diagnostics.lifecycle.contractsSelected, 1);
+  assert.equal(diagnostics.lifecycle.shadowEntries, 1);
+  assert.equal(diagnostics.markHealth.activePositions, 1);
+  assert.equal(diagnostics.markHealth.unmarked, 1);
   assert.equal(diagnostics.signalFreshness.fresh, 1);
   assert.equal(diagnostics.signalFreshness.notFresh, 1);
   assert.equal(diagnostics.signalFreshness.withoutDirection, 1);
   assert.equal(diagnostics.skipReasons.bear_regime_gate_failed, 1);
-  assert.equal(diagnostics.skipReasons.ibkr_not_configured, 1);
+  assert.equal(diagnostics.skipReasons.mtf_not_aligned, 1);
+  assert.equal(diagnostics.skipReasons.inverse_put_blocked, 1);
+  assert.equal(diagnostics.skipReasons.ibkr_not_configured, 3);
+  assert.equal(diagnostics.skipCategories.signal_policy, 3);
+  assert.equal(diagnostics.skipCategories.contract_resolution, 1);
+  assert.equal(diagnostics.skipCategories.gateway, 3);
   assert.equal(diagnostics.entryGateReasons.mtf_fully_bullish, 1);
+  assert.equal(diagnostics.entryGateReasons.mtf_not_aligned, 1);
+  assert.equal(diagnostics.entryGateReasons.inverse_put_blocked, 1);
   assert.equal(diagnostics.optionChainReasons.options_upstream_failure, 1);
+  assert.equal(diagnostics.readinessIncidents.length, 1);
+  assert.equal(diagnostics.readinessIncidents[0]?.source, "worker");
+  assert.equal(diagnostics.readinessIncidents[0]?.reason, "ibkr_not_configured");
+  assert.equal(diagnostics.readinessIncidents[0]?.count, 3);
 });

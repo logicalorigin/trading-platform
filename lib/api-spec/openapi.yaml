@@ -12,6 +12,8 @@ tags:
     description: Service health operations
   - name: session
     description: Runtime/session metadata
+  - name: settings
+    description: Backend settings, user preferences, and IBKR lane configuration
   - name: broker
     description: Broker connection metadata
   - name: accounts
@@ -62,6 +64,149 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionInfo"
+
+  /settings/backend:
+    get:
+      operationId: getBackendSettings
+      tags: [settings]
+      summary: Get backend settings snapshot
+      responses:
+        "200":
+          description: Backend settings snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/backend/apply:
+    post:
+      operationId: applyBackendSettings
+      tags: [settings]
+      summary: Apply backend settings changes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Backend settings apply result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/backend/actions/{actionId}:
+    post:
+      operationId: runBackendSettingsAction
+      tags: [settings]
+      summary: Run a backend settings action
+      parameters:
+        - name: actionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Backend settings action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/preferences:
+    get:
+      operationId: getUserPreferences
+      tags: [settings]
+      summary: Get user preferences
+      responses:
+        "200":
+          description: User preferences snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    patch:
+      operationId: updateUserPreferences
+      tags: [settings]
+      summary: Update user preferences
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Updated user preferences snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/ibkr-lanes:
+    get:
+      operationId: getIbkrLaneArchitecture
+      tags: [settings]
+      summary: Get IBKR lane architecture settings
+      responses:
+        "200":
+          description: IBKR lane architecture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    put:
+      operationId: updateIbkrLaneArchitecture
+      tags: [settings]
+      summary: Update IBKR lane architecture settings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Updated IBKR lane architecture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/ibkr-line-usage:
+    get:
+      operationId: getIbkrLineUsage
+      tags: [settings]
+      summary: Get current IBKR line usage
+      responses:
+        "200":
+          description: IBKR line usage snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /settings/ibkr-line-usage/stream:
+    get:
+      operationId: streamIbkrLineUsage
+      tags: [settings]
+      summary: Stream IBKR line usage snapshots
+      responses:
+        "200":
+          description: IBKR line usage SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
 
   /diagnostics/runtime:
     get:
@@ -218,6 +363,63 @@ paths:
               schema:
                 $ref: "#/components/schemas/DiagnosticEventRecordResponse"
 
+  /diagnostics/client-metrics:
+    post:
+      operationId: recordClientDiagnosticsMetrics
+      tags: [diagnostics]
+      summary: Record browser/client diagnostics metrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "202":
+          description: Accepted client diagnostics metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /diagnostics/browser-reports:
+    post:
+      operationId: recordBrowserDiagnosticsReport
+      tags: [diagnostics]
+      summary: Record a browser diagnostics report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "202":
+          description: Browser diagnostics report acceptance result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /diagnostics/storage/prune:
+    post:
+      operationId: pruneDiagnosticsStorage
+      tags: [diagnostics]
+      summary: Prune persisted diagnostics storage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Diagnostics storage prune result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
   /diagnostics/export:
     get:
       operationId: exportDiagnostics
@@ -258,6 +460,147 @@ paths:
             text/event-stream:
               schema:
                 type: string
+
+  /ibkr/bridge/launcher:
+    get:
+      operationId: getIbkrBridgeLauncher
+      tags: [broker]
+      summary: Create an IBKR bridge one-click launcher payload
+      responses:
+        "200":
+          description: IBKR bridge launcher payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeLauncherResponse"
+
+  /ibkr/activation/{activationId}/progress:
+    post:
+      operationId: recordIbkrBridgeActivationProgress
+      tags: [broker]
+      summary: Record IBKR bridge activation progress
+      parameters:
+        - name: activationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Activation progress recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required:
+                  - ok
+
+  /ibkr/activation/{activationId}/complete:
+    post:
+      operationId: completeIbkrBridgeActivation
+      tags: [broker]
+      summary: Complete IBKR bridge activation and attach runtime
+      parameters:
+        - name: activationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Attached IBKR bridge runtime
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeAttachResponse"
+
+  /ibkr/bridge/helper.ps1:
+    get:
+      operationId: getIbkrBridgeHelperScript
+      tags: [broker]
+      summary: Download the IBKR bridge helper PowerShell script
+      responses:
+        "200":
+          description: IBKR bridge helper script
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /ibkr/bridge/bundle.tar.gz:
+    get:
+      operationId: getIbkrBridgeBundle
+      tags: [broker]
+      summary: Download the IBKR bridge helper bundle
+      responses:
+        "200":
+          description: IBKR bridge helper bundle
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: Redirect to configured helper bundle URL
+        "404":
+          description: Helper bundle is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /ibkr/bridge/attach:
+    post:
+      operationId: attachIbkrBridgeRuntime
+      tags: [broker]
+      summary: Attach an IBKR bridge runtime override
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Attached IBKR bridge runtime
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeAttachResponse"
+
+  /ibkr/bridge/detach:
+    post:
+      operationId: detachIbkrBridgeRuntime
+      tags: [broker]
+      summary: Detach the IBKR bridge runtime override
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: Detached IBKR bridge runtime
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeDetachResponse"
 
   /broker-connections:
     get:
@@ -647,6 +990,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountCashActivityResponse"
 
+  /accounts/shadow/watchlist-backtest/runs:
+    post:
+      operationId: runShadowWatchlistBacktest
+      tags: [accounts]
+      summary: Run a Shadow watchlist backtest
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "201":
+          description: Shadow watchlist backtest run result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
   /watchlists:
     get:
       operationId: listWatchlists
@@ -659,6 +1021,139 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WatchlistsResponse"
+    post:
+      operationId: createWatchlist
+      tags: [watchlists]
+      summary: Create a saved watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatchlistRequest"
+      responses:
+        "201":
+          description: Created watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+
+  /watchlists/{watchlistId}:
+    patch:
+      operationId: updateWatchlist
+      tags: [watchlists]
+      summary: Update a saved watchlist
+      parameters:
+        - name: watchlistId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatchlistRequest"
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+    delete:
+      operationId: deleteWatchlist
+      tags: [watchlists]
+      summary: Delete a saved watchlist
+      parameters:
+        - name: watchlistId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /watchlists/{watchlistId}/items:
+    post:
+      operationId: addWatchlistItem
+      tags: [watchlists]
+      summary: Add an item to a saved watchlist
+      parameters:
+        - name: watchlistId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistSymbolRequest"
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+
+  /watchlists/{watchlistId}/items/{itemId}:
+    delete:
+      operationId: removeWatchlistItem
+      tags: [watchlists]
+      summary: Remove an item from a saved watchlist
+      parameters:
+        - name: watchlistId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
+
+  /watchlists/{watchlistId}/items/reorder:
+    put:
+      operationId: reorderWatchlistItems
+      tags: [watchlists]
+      summary: Reorder saved watchlist items
+      parameters:
+        - name: watchlistId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderWatchlistItemsRequest"
+      responses:
+        "200":
+          description: Updated watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watchlist"
 
   /positions:
     get:
@@ -880,6 +1375,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/QuoteSnapshotsResponse"
 
+  /gex/{underlying}:
+    get:
+      operationId: getGexDashboard
+      tags: [market-data]
+      summary: Get gamma exposure dashboard data for an underlying
+      parameters:
+        - name: underlying
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Gamma exposure dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GexDashboardResponse"
+
   /options/quotes:
     post:
       operationId: getOptionQuoteSnapshots
@@ -994,6 +1508,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UniverseTickersResponse"
+
+  /universe/logos:
+    get:
+      operationId: getUniverseLogos
+      tags: [market-data]
+      summary: Resolve logo metadata for universe symbols
+      parameters:
+        - name: symbols
+          in: query
+          required: false
+          description: Comma-separated or repeated symbol list.
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+      responses:
+        "200":
+          description: Universe logo metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+
+  /universe/logo-proxy:
+    get:
+      operationId: proxyUniverseLogo
+      tags: [market-data]
+      summary: Proxy a universe logo image
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proxied logo image
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
   /bars:
     get:
@@ -1356,6 +1914,82 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
+  /streams/options/quotes:
+    get:
+      operationId: streamOptionQuoteSnapshots
+      tags: [market-data]
+      summary: Stream option quote snapshots over server-sent events
+      parameters:
+        - name: contracts
+          in: query
+          required: false
+          description: Comma-separated option provider contract IDs.
+          schema:
+            type: string
+        - name: providerContractIds
+          in: query
+          required: false
+          description: Alias for contracts.
+          schema:
+            type: string
+        - name: underlying
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Option quote SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/bars:
+    get:
+      operationId: streamBars
+      tags: [market-data]
+      summary: Stream latest historical bar snapshots over server-sent events
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/BarTimeframe"
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: outsideRth
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: source
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/BarDataSource"
+      responses:
+        "200":
+          description: Historical bar SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
   /streams/orders:
     get:
       operationId: streamOrders
@@ -1385,6 +2019,184 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
+  /executions:
+    get:
+      operationId: listExecutions
+      tags: [orders]
+      summary: List recent execution snapshots
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        "200":
+          description: Recent executions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/JsonObject"
+                required:
+                  - executions
+
+  /streams/executions:
+    get:
+      operationId: streamExecutions
+      tags: [orders]
+      summary: Stream execution snapshots over server-sent events
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        "200":
+          description: Executions SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /market-depth:
+    get:
+      operationId: getMarketDepth
+      tags: [market-data]
+      summary: Get a market depth snapshot
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: exchange
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        "200":
+          description: Market depth snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  depth:
+                    $ref: "#/components/schemas/JsonObject"
+                required:
+                  - depth
+
+  /streams/market-depth:
+    get:
+      operationId: streamMarketDepth
+      tags: [market-data]
+      summary: Stream market depth snapshots over server-sent events
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: exchange
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        "200":
+          description: Market depth SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
   /streams/accounts:
     get:
       operationId: streamAccounts
@@ -1409,6 +2221,100 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
+  /streams/accounts/shadow:
+    get:
+      operationId: streamShadowAccount
+      tags: [accounts]
+      summary: Stream Shadow account snapshots over server-sent events
+      responses:
+        "200":
+          description: Shadow account SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/accounts/page:
+    get:
+      operationId: streamAccountPage
+      tags: [accounts]
+      summary: Stream visible Account page snapshots over server-sent events
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: range
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AccountHistoryRange"
+        - name: orderTab
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [working, history]
+        - name: assetClass
+          in: query
+          required: false
+          description: Asset-class filter for live positions.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: tradeAssetClass
+          in: query
+          required: false
+          description: Asset-class filter for closed trades.
+          schema:
+            type: string
+        - name: pnlSign
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, winners, losers]
+        - name: holdDuration
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: performanceCalendarFrom
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Visible Account page SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
   /streams/stocks/aggregates:
     get:
       operationId: streamStockAggregates
@@ -1421,6 +2327,12 @@ paths:
           description: Comma-separated ticker symbols.
           schema:
             type: string
+        - name: sessionId
+          in: query
+          required: false
+          description: Optional mutable stream session id used to update symbols for an open stream.
+          schema:
+            type: string
       responses:
         "200":
           description: Stock aggregate SSE stream
@@ -1428,6 +2340,40 @@ paths:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/SseStream"
+
+  /streams/stocks/aggregates/sessions/{sessionId}/symbols:
+    post:
+      operationId: updateStockAggregateStreamSymbols
+      tags: [market-data]
+      summary: Update symbols for an open stock aggregate stream session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbols:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+              required:
+                - symbols
+      responses:
+        "200":
+          description: Updated stock aggregate stream session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAggregateStreamSessionResponse"
 
   /flow/premium-distribution:
     get:
@@ -1576,6 +2522,62 @@ paths:
               schema:
                 $ref: "#/components/schemas/FlowEventsResponse"
 
+  /flow/events/aggregate:
+    get:
+      operationId: listAggregateFlowEvents
+      tags: [flow]
+      summary: List aggregate options flow events
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: unusualThreshold
+          in: query
+          required: false
+          description: Volume / open-interest ratio at which a print is flagged as unusual.
+          schema:
+            type: number
+            minimum: 0.1
+            maximum: 100
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, unusual]
+        - name: minPremium
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+            maximum: 50000000
+        - name: maxDte
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 730
+        - name: lineBudget
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 150
+      responses:
+        "200":
+          description: Aggregate options flow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowEventsResponse"
+
   /flow/universe:
     get:
       operationId: getFlowUniverse
@@ -1588,6 +2590,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FlowUniverseResponse"
+
+  /flow/scanner/benchmark:
+    post:
+      operationId: benchmarkFlowScanner
+      tags: [flow]
+      summary: Benchmark one options flow scanner ticker pass
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                underlying:
+                  type: string
+                lineBudgets:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: number
+                maxDte:
+                  type: [number, "null"]
+                expirationScanCount:
+                  type: [number, "null"]
+                strikeCoverage:
+                  type: string
+                  enum: [fast, standard, full]
+              required:
+                - underlying
+      responses:
+        "200":
+          description: Flow scanner benchmark result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
 
   /signal-monitor/profile:
     get:
@@ -1888,6 +2927,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchTranscriptResponse"
 
+  /algo/signal-options/default-paper-deployment:
+    post:
+      operationId: ensureDefaultSignalOptionsPaperDeployment
+      tags: [automation]
+      summary: Ensure the default signal-options paper deployment exists
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "201":
+          description: Default signal-options paper deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
   /algo/deployments:
     get:
       operationId: listAlgoDeployments
@@ -2037,6 +3098,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignalOptionsAutomationState"
+
+  /algo/deployments/{deploymentId}/signal-options/backfill:
+    post:
+      operationId: runSignalOptionsShadowBackfill
+      tags: [automation]
+      summary: Run a signal-options shadow backfill
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start:
+                  type: string
+                end:
+                  type: string
+                session:
+                  type: string
+                commit:
+                  type: boolean
+                profilePatch:
+                  $ref: "#/components/schemas/JsonObject"
+      responses:
+        "201":
+          description: Signal-options shadow backfill result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
 
   /algo/deployments/{deploymentId}/signal-options/deviation:
     post:
@@ -2296,6 +3393,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/BacktestRunDetail"
 
+  /backtests/internal/resolve-option-contract:
+    post:
+      operationId: resolveBacktestOptionContract
+      tags: [backtests]
+      summary: Resolve an option contract for backtest internals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                underlying:
+                  type: string
+                occurredAt:
+                  type: string
+                  format: date-time
+                right:
+                  type: string
+                  enum: [call, put]
+                spotPrice:
+                  oneOf:
+                    - type: number
+                    - type: string
+                contractPresetId:
+                  type: [string, "null"]
+                signalOptionsProfile:
+                  oneOf:
+                    - $ref: "#/components/schemas/JsonObject"
+                    - type: "null"
+              required:
+                - underlying
+                - occurredAt
+                - right
+                - spotPrice
+      responses:
+        "200":
+          description: Resolved option contract
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contract:
+                    $ref: "#/components/schemas/JsonObject"
+                required:
+                  - contract
+
   /backtests/runs/{runId}:
     get:
       operationId: getBacktestRun
@@ -2460,7 +3605,6 @@ components:
       description: IBKR account id or the virtual "combined" account id.
       schema:
         type: string
-
   schemas:
     HealthStatus:
       type: object
@@ -2580,6 +3724,69 @@ components:
     JsonObject:
       type: object
       additionalProperties: true
+
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+
+    IbkrBridgeLauncherResponse:
+      type: object
+      properties:
+        activationId:
+          type: string
+        apiBaseUrl:
+          type: string
+        bridgeToken:
+          type: string
+        bundleUrl:
+          type: [string, "null"]
+        helperUrl:
+          type: string
+        helperVersion:
+          type: string
+        launchUrl:
+          type: string
+        managementToken:
+          type: string
+      required:
+        - activationId
+        - apiBaseUrl
+        - bridgeToken
+        - bundleUrl
+        - helperUrl
+        - helperVersion
+        - launchUrl
+        - managementToken
+
+    IbkrBridgeAttachResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        runtimeOverrideActive:
+          type: boolean
+        bridgeUrl:
+          type: string
+        tokenConfigured:
+          type: boolean
+        bridge:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - runtimeOverrideActive
+        - bridgeUrl
+        - tokenConfigured
+        - bridge
+
+    IbkrBridgeDetachResponse:
+      type: object
+      properties:
+        runtimeOverrideActive:
+          type: boolean
+      required:
+        - runtimeOverrideActive
 
     SessionMarketDataProviders:
       type: object
@@ -4189,6 +5396,64 @@ components:
         - items
         - updatedAt
 
+    WatchlistSymbolRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: [string, "null"]
+        market:
+          oneOf:
+            - $ref: "#/components/schemas/UniverseMarket"
+            - type: "null"
+        normalizedExchangeMic:
+          type: [string, "null"]
+        exchangeDisplay:
+          type: [string, "null"]
+        countryCode:
+          type: [string, "null"]
+        exchangeCountryCode:
+          type: [string, "null"]
+        sector:
+          type: [string, "null"]
+        industry:
+          type: [string, "null"]
+      required:
+        - symbol
+
+    CreateWatchlistRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchlistSymbolRequest"
+      required:
+        - name
+
+    UpdateWatchlistRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        isDefault:
+          type: boolean
+
+    ReorderWatchlistItemsRequest:
+      type: object
+      properties:
+        itemIds:
+          type: array
+          items:
+            type: string
+      required:
+        - itemIds
+
     QuoteSnapshot:
       type: object
       properties:
@@ -4545,6 +5810,8 @@ components:
           type: string
         mode:
           $ref: "#/components/schemas/EnvironmentMode"
+        confirm:
+          type: boolean
         symbol:
           type: string
         assetClass:
@@ -5313,6 +6580,32 @@ components:
             cycleScannedSymbols:
               type: integer
               minimum: 0
+            lastScannedAt:
+              type: object
+              additionalProperties:
+                type: integer
+                minimum: 0
+            oldestScanAt:
+              type: [integer, "null"]
+              minimum: 0
+            newestScanAt:
+              type: [integer, "null"]
+              minimum: 0
+            batchSize:
+              type: integer
+              minimum: 0
+            intervalMs:
+              type: integer
+              minimum: 0
+            lineBudget:
+              type: integer
+              minimum: 0
+            concurrency:
+              type: integer
+              minimum: 0
+            estimatedCycleMs:
+              type: [integer, "null"]
+              minimum: 0
             currentBatch:
               type: array
               items:
@@ -5322,22 +6615,6 @@ components:
               format: date-time
             degradedReason:
               type: [string, "null"]
-            radarSelectedSymbols:
-              type: integer
-              minimum: 0
-            radarEstimatedCycleMs:
-              type: [integer, "null"]
-              minimum: 0
-            radarBatchSize:
-              type: integer
-              minimum: 0
-            radarIntervalMs:
-              type: integer
-              minimum: 0
-            promotedSymbols:
-              type: array
-              items:
-                type: string
       required:
         - provider
         - status
@@ -5412,14 +6689,17 @@ components:
         maintenanceMargin:
           $ref: "#/components/schemas/AccountMetric"
         maintenanceMarginCushionPercent:
+          description: Maintenance cushion in percentage points, e.g. 37.5 means 37.5%.
           $ref: "#/components/schemas/AccountMetric"
         dayPnl:
           $ref: "#/components/schemas/AccountMetric"
         dayPnlPercent:
+          description: Day P&L as percentage points using the best available transfer-adjusted capital base.
           $ref: "#/components/schemas/AccountMetric"
         totalPnl:
           $ref: "#/components/schemas/AccountMetric"
         totalPnlPercent:
+          description: All-time transfer-adjusted P&L return in percentage points.
           $ref: "#/components/schemas/AccountMetric"
         settledCash:
           $ref: "#/components/schemas/AccountMetric"
@@ -5531,7 +6811,13 @@ components:
           type: string
         source:
           type: string
-          enum: [FLEX, LOCAL_LEDGER, IBKR_ACCOUNT_SUMMARY, SHADOW_LEDGER]
+          enum:
+            - FLEX
+            - LOCAL_LEDGER
+            - IBKR_ACCOUNT_SUMMARY
+            - SHADOW_LEDGER
+            - SHADOW_BACKTEST
+            - SHADOW_OPTIONS_REPLAY
         deposits:
           type: number
         withdrawals:
@@ -5542,9 +6828,11 @@ components:
           type: number
         returnPercent:
           type: number
+          description: Transfer-adjusted simple return in percentage points. External deposits and withdrawals are excluded from P&L.
         benchmarkPercent:
           type: number
           nullable: true
+          description: Benchmark return in percentage points, rebased to the first visible matched point.
       required:
         - timestamp
         - netLiquidation
@@ -5618,8 +6906,22 @@ components:
             - flex
             - shadow_ledger
             - shadow_watchlist_backtest
+            - shadow_options_replay
         liveTerminalIncluded:
           type: boolean
+        sourceScope:
+          type: string
+          nullable: true
+          enum:
+            - ledger
+            - manual
+            - automation
+            - watchlist_backtest
+            - signal_options_replay
+            - runtime_fallback
+        selectedSnapshotSource:
+          type: string
+          nullable: true
         points:
           type: array
           items:
@@ -5715,6 +7017,7 @@ components:
         weightPercent:
           type: number
           nullable: true
+          description: Allocation weight in percentage points.
         source:
           type: string
       required:
@@ -5836,15 +7139,18 @@ components:
         dayChangePercent:
           type: number
           nullable: true
+          description: Day change in percentage points.
         unrealizedPnl:
           type: number
         unrealizedPnlPercent:
           type: number
+          description: Unrealized P&L in percentage points.
         marketValue:
           type: number
         weightPercent:
           type: number
           nullable: true
+          description: Position weight in percentage points.
         betaWeightedDelta:
           type: number
           nullable: true
@@ -5860,7 +7166,7 @@ components:
           type: string
         sourceType:
           type: string
-          enum: [manual, automation, mixed]
+          enum: [manual, automation, signal_options_replay, watchlist_backtest, mixed]
         strategyLabel:
           type: string
           nullable: true
@@ -6058,7 +7364,7 @@ components:
           type: string
         sourceType:
           type: string
-          enum: [manual, automation, watchlist_backtest, mixed]
+          enum: [manual, automation, signal_options_replay, watchlist_backtest, mixed]
         strategyLabel:
           type: string
           nullable: true
@@ -6226,7 +7532,7 @@ components:
           type: string
         sourceType:
           type: string
-          enum: [manual, automation]
+          enum: [manual, automation, signal_options_replay, watchlist_backtest]
         strategyLabel:
           type: string
           nullable: true
@@ -6675,6 +7981,279 @@ components:
         - delayed
         - fallbackUsed
 
+    GexTickerDetails:
+      type: object
+      properties:
+        ticker:
+          type: string
+        name:
+          type: string
+        sector:
+          type: string
+        industry:
+          type: string
+        marketCap:
+          type: [number, "null"]
+        exchangeShortName:
+          type: string
+        country:
+          type: string
+        isEtf:
+          type: boolean
+        isFund:
+          type: boolean
+      required:
+        - ticker
+        - name
+        - sector
+        - industry
+        - marketCap
+        - exchangeShortName
+        - country
+        - isEtf
+        - isFund
+
+    GexProfile:
+      type: object
+      properties:
+        price:
+          type: number
+        changes:
+          type: number
+        range:
+          type: string
+        dayLow:
+          type: number
+        dayHigh:
+          type: number
+        yearLow:
+          type: [number, "null"]
+        yearHigh:
+          type: [number, "null"]
+        mktCap:
+          type: [number, "null"]
+        logo:
+          type: [string, "null"]
+      required:
+        - price
+        - dayLow
+        - dayHigh
+        - yearLow
+        - yearHigh
+        - mktCap
+
+    GexOptionRow:
+      type: object
+      properties:
+        strike:
+          type: number
+        expireYear:
+          type: number
+        expireMonth:
+          type: number
+        expireDay:
+          type: number
+        cp:
+          type: string
+          enum: [C, P]
+        gamma:
+          type: number
+        delta:
+          type: number
+        openInterest:
+          type: number
+        impliedVol:
+          type: number
+        bid:
+          type: number
+        ask:
+          type: number
+      required:
+        - strike
+        - expireYear
+        - expireMonth
+        - expireDay
+        - cp
+        - gamma
+        - delta
+        - openInterest
+        - impliedVol
+        - bid
+        - ask
+
+    GexSnapshot:
+      type: object
+      properties:
+        ts:
+          type: string
+          format: date-time
+        netGex:
+          type: number
+      required:
+        - ts
+        - netGex
+
+    GexFlowContext:
+      type: object
+      properties:
+        bullishShare:
+          type: number
+        todayVol:
+          type: number
+        avg30dVol:
+          type: [number, "null"]
+        netDelta:
+          type: number
+        refDelta:
+          type: number
+        eventCount:
+          type: number
+        volumeBaselineReady:
+          type: boolean
+      required:
+        - bullishShare
+        - todayVol
+        - avg30dVol
+        - netDelta
+        - refDelta
+        - eventCount
+        - volumeBaselineReady
+
+    GexFlowClassificationBasisCounts:
+      type: object
+      properties:
+        quoteMatch:
+          type: number
+        tickTest:
+          type: number
+        none:
+          type: number
+      required:
+        - quoteMatch
+        - tickTest
+        - none
+
+    GexFlowClassificationConfidenceCounts:
+      type: object
+      properties:
+        high:
+          type: number
+        medium:
+          type: number
+        low:
+          type: number
+        none:
+          type: number
+      required:
+        - high
+        - medium
+        - low
+        - none
+
+    GexSource:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [massive, polygon]
+        status:
+          type: string
+          enum: [ok, partial, unavailable]
+        optionCount:
+          type: number
+        usableOptionCount:
+          type: number
+        withGamma:
+          type: number
+        withOpenInterest:
+          type: number
+        withImpliedVolatility:
+          type: number
+        quoteUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        chainUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        flowStatus:
+          type: string
+          enum: [ok, unavailable]
+        flowEventCount:
+          type: number
+        classifiedFlowEventCount:
+          type: number
+        flowClassificationCoverage:
+          type: number
+        flowClassificationBasisCounts:
+          $ref: "#/components/schemas/GexFlowClassificationBasisCounts"
+        flowClassificationConfidenceCounts:
+          $ref: "#/components/schemas/GexFlowClassificationConfidenceCounts"
+        message:
+          type: [string, "null"]
+      required:
+        - provider
+        - status
+        - optionCount
+        - usableOptionCount
+        - withGamma
+        - withOpenInterest
+        - withImpliedVolatility
+        - quoteUpdatedAt
+        - chainUpdatedAt
+        - flowStatus
+        - flowEventCount
+        - classifiedFlowEventCount
+        - flowClassificationCoverage
+        - flowClassificationBasisCounts
+        - flowClassificationConfidenceCounts
+        - message
+
+    GexDashboardResponse:
+      type: object
+      properties:
+        ticker:
+          type: string
+        tickerDetails:
+          $ref: "#/components/schemas/GexTickerDetails"
+        profile:
+          $ref: "#/components/schemas/GexProfile"
+        spot:
+          type: number
+        timestamp:
+          type: string
+          format: date-time
+        isStale:
+          type: boolean
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/GexOptionRow"
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/GexSnapshot"
+        flowContext:
+          oneOf:
+            - $ref: "#/components/schemas/GexFlowContext"
+            - type: "null"
+        flowContextStatus:
+          type: string
+          enum: [ok, unavailable]
+        source:
+          $ref: "#/components/schemas/GexSource"
+      required:
+        - ticker
+        - tickerDetails
+        - profile
+        - spot
+        - timestamp
+        - isStale
+        - options
+        - snapshots
+        - flowContext
+        - flowContextStatus
+        - source
+
     RequestDebug:
       type: object
       properties:
@@ -7099,6 +8678,26 @@ components:
 
     SseStream:
       type: string
+
+    StockAggregateStreamSessionResponse:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        diagnostics:
+          $ref: "#/components/schemas/JsonObject"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - sessionId
+        - symbols
+        - diagnostics
+        - updatedAt
 
     AlgoDeployment:
       type: object
@@ -7642,6 +9241,32 @@ components:
         cycleScannedSymbols:
           type: integer
           minimum: 0
+        lastScannedAt:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        oldestScanAt:
+          type: [integer, "null"]
+          minimum: 0
+        newestScanAt:
+          type: [integer, "null"]
+          minimum: 0
+        batchSize:
+          type: integer
+          minimum: 0
+        intervalMs:
+          type: integer
+          minimum: 0
+        lineBudget:
+          type: integer
+          minimum: 0
+        concurrency:
+          type: integer
+          minimum: 0
+        estimatedCycleMs:
+          type: [integer, "null"]
+          minimum: 0
         currentBatch:
           type: array
           items:
@@ -7651,22 +9276,6 @@ components:
           format: date-time
         degradedReason:
           type: [string, "null"]
-        radarSelectedSymbols:
-          type: integer
-          minimum: 0
-        radarEstimatedCycleMs:
-          type: [integer, "null"]
-          minimum: 0
-        radarBatchSize:
-          type: integer
-          minimum: 0
-        radarIntervalMs:
-          type: integer
-          minimum: 0
-        promotedSymbols:
-          type: array
-          items:
-            type: string
 
     FlowUniverseSources:
       type: object

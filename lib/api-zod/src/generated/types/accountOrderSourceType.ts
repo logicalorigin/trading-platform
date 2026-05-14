@@ -12,4 +12,6 @@ export type AccountOrderSourceType = typeof AccountOrderSourceType[keyof typeof 
 export const AccountOrderSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
+  watchlist_backtest: 'watchlist_backtest',
 } as const;

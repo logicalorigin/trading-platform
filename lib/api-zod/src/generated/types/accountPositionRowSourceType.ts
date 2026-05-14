@@ -12,5 +12,7 @@ export type AccountPositionRowSourceType = typeof AccountPositionRowSourceType[k
 export const AccountPositionRowSourceType = {
   manual: 'manual',
   automation: 'automation',
+  signal_options_replay: 'signal_options_replay',
+  watchlist_backtest: 'watchlist_backtest',
   mixed: 'mixed',
 } as const;

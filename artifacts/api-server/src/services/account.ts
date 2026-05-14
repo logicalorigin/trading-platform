@@ -24,6 +24,7 @@ import {
   pool,
   tickerReferenceCacheTable,
 } from "@workspace/db";
+import { calculateTransferAdjustedReturnSummary } from "@workspace/account-math";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
@@ -45,10 +46,15 @@ import {
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
+  getShadowAccountAllocation,
   getShadowAccountCashActivity,
   getShadowAccountClosedTrades,
   getShadowAccountEquityHistory,
+  getShadowAccountOrders,
+  getShadowAccountPositions,
   getShadowAccountPositionsAtDate,
+  getShadowAccountRisk,
+  getShadowAccountSummary,
   isShadowAccountId,
 } from "./shadow-account";
 import { fetchShadowAccountSnapshotBase } from "./shadow-account-streams";
@@ -227,6 +233,47 @@ function metric(
     source,
     field,
     updatedAt,
+  };
+}
+
+async function resolveAccountSummaryReturnMetrics(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const summarizeRange = async (range: AccountRange) => {
+    try {
+      const history = await getAccountEquityHistory({
+        accountId: input.accountId,
+        range,
+        mode: input.mode,
+        source: input.source,
+      });
+      return calculateTransferAdjustedReturnSummary(
+        history.points.map((point) => ({
+          netLiquidation: point.netLiquidation,
+          deposits: point.deposits,
+          withdrawals: point.withdrawals,
+        })),
+      );
+    } catch (error) {
+      logger.debug?.(
+        { err: error, accountId: input.accountId, range },
+        "Account summary return metrics unavailable",
+      );
+      return null;
+    }
+  };
+
+  const [allTime, intraday] = await Promise.all([
+    summarizeRange("ALL"),
+    summarizeRange("1D"),
+  ]);
+
+  return {
+    totalPnl: allTime?.cumulativePnl ?? null,
+    totalPnlPercent: allTime?.returnPercent ?? null,
+    dayPnlPercentDenominator: intraday?.capitalBase ?? null,
   };
 }
 
@@ -2104,8 +2151,12 @@ export async function listAccounts(
 export async function getAccountSummary(input: {
   accountId: string;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
+    if (input.source) {
+      return getShadowAccountSummary({ source: input.source });
+    }
     return (await fetchShadowAccountSnapshotBase()).summary;
   }
 
@@ -2117,13 +2168,20 @@ export async function getAccountSummary(input: {
   const currency = universe.primaryCurrency;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
   const marginSnapshot = buildAccountMarginSnapshot(universe.accounts);
-  const initialNav = await getInitialFlexNav(universe.accountIds);
-  const totalPnl = initialNav === null ? null : nav - initialNav;
 
   const dayPnl = positions.reduce(
     (sum, position) => sum + (marketHydration.get(position.id)?.dayChange ?? 0),
     0,
   );
+  const returnMetrics = await resolveAccountSummaryReturnMetrics({
+    accountId: input.accountId,
+    mode,
+    source: input.source,
+  });
+  const dayPnlPercentDenominator =
+    returnMetrics.dayPnlPercentDenominator && returnMetrics.dayPnlPercentDenominator !== 0
+      ? Math.abs(returnMetrics.dayPnlPercentDenominator)
+      : Math.abs(nav);
 
   const accountTypes = Array.from(
     new Set(
@@ -2220,18 +2278,24 @@ export async function getAccountSummary(input: {
       ),
       dayPnl: metric(dayPnl, currency, "IBKR_POSITIONS", "QuoteChange", updatedAt),
       dayPnlPercent: metric(
-        nav ? (dayPnl / nav) * 100 : null,
+        dayPnlPercentDenominator ? (dayPnl / dayPnlPercentDenominator) * 100 : null,
         null,
         "IBKR_POSITIONS",
-        "QuoteChange/NetLiquidation",
+        "QuoteChange/TransferAdjustedCapitalBase",
         updatedAt,
       ),
-      totalPnl: metric(totalPnl, currency, "FLEX", "ChangeInNAV", updatedAt),
+      totalPnl: metric(
+        returnMetrics.totalPnl,
+        currency,
+        "FLEX",
+        "TransferAdjustedPnl",
+        updatedAt,
+      ),
       totalPnlPercent: metric(
-        initialNav && totalPnl !== null ? (totalPnl / initialNav) * 100 : null,
+        returnMetrics.totalPnlPercent,
         null,
         "FLEX",
-        "ChangeInNAV/InitialNAV",
+        "TransferAdjustedPnl/CapitalBase",
         updatedAt,
       ),
       settledCash: metric(
@@ -2290,33 +2354,6 @@ export async function getAccountSummary(input: {
       ),
     },
   };
-}
-
-async function getInitialFlexNav(accountIds: string[]): Promise<number | null> {
-  if (!accountIds.length) {
-    return null;
-  }
-
-  const rows = await withOptionalAccountSchemaFallback({
-    tables: ["flex_nav_history"],
-    fallback: () => [],
-    run: async () =>
-      db
-        .select({
-          providerAccountId: flexNavHistoryTable.providerAccountId,
-          statementDate: flexNavHistoryTable.statementDate,
-          netAssetValue: flexNavHistoryTable.netAssetValue,
-        })
-        .from(flexNavHistoryTable)
-        .where(inArray(flexNavHistoryTable.providerAccountId, accountIds))
-        .orderBy(flexNavHistoryTable.statementDate)
-        .limit(accountIds.length),
-  });
-
-  const values = rows
-    .map((row) => toNumber(row.netAssetValue))
-    .filter((value): value is number => value !== null);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
 }
 
 async function resolveBenchmarkPercents(input: {
@@ -2381,11 +2418,13 @@ export async function getAccountEquityHistory(input: {
   range?: AccountRange;
   benchmark?: string | null;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountEquityHistory({
       range: input.range,
       benchmark: input.benchmark,
+      source: input.source,
     });
   }
 
@@ -2694,8 +2733,12 @@ export async function getAccountEquityHistory(input: {
 export async function getAccountAllocation(input: {
   accountId: string;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
+    if (input.source) {
+      return getShadowAccountAllocation({ source: input.source });
+    }
     return (await fetchShadowAccountSnapshotBase()).allocation;
   }
 
@@ -2777,9 +2820,15 @@ export async function getAccountPositions(input: {
   accountId: string;
   assetClass?: string | null;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    const positionsResponse = (await fetchShadowAccountSnapshotBase()).positions;
+    const positionsResponse = input.source
+      ? await getShadowAccountPositions({
+          assetClass: input.assetClass,
+          source: input.source,
+        })
+      : (await fetchShadowAccountSnapshotBase()).positions;
     if (!input.assetClass || input.assetClass === "all") {
       return positionsResponse;
     }
@@ -3054,12 +3103,14 @@ export async function getAccountPositionsAtDate(input: {
   date: string | Date;
   assetClass?: string | null;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   const window = dateWindowUtc(input.date);
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountPositionsAtDate({
       date: window.date,
       assetClass: input.assetClass,
+      source: input.source,
     });
   }
 
@@ -3804,6 +3855,7 @@ export async function getAccountClosedTrades(input: {
   pnlSign?: string | null;
   holdDuration?: string | null;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountClosedTrades({
@@ -3812,6 +3864,7 @@ export async function getAccountClosedTrades(input: {
       symbol: input.symbol,
       assetClass: input.assetClass,
       pnlSign: input.pnlSign,
+      source: input.source,
     });
   }
 
@@ -3841,8 +3894,15 @@ export async function getAccountOrders(input: {
   accountId: string;
   tab?: OrderTab;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
+    if (input.source) {
+      return getShadowAccountOrders({
+        tab: input.tab,
+        source: input.source,
+      });
+    }
     const snapshot = await fetchShadowAccountSnapshotBase();
     return input.tab === "history"
       ? snapshot.historyOrders
@@ -3921,8 +3981,12 @@ export async function cancelAccountOrder(input: {
 export async function getAccountRisk(input: {
   accountId: string;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
+    if (input.source) {
+      return getShadowAccountRisk({ source: input.source });
+    }
     return (await fetchShadowAccountSnapshotBase()).risk;
   }
 
@@ -4143,9 +4207,10 @@ export async function getAccountCashActivity(input: {
   from?: Date | null;
   to?: Date | null;
   mode?: RuntimeMode;
+  source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountCashActivity();
+    return getShadowAccountCashActivity({ source: input.source });
   }
 
   const mode = input.mode ?? getRuntimeMode();

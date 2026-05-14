@@ -10,7 +10,17 @@ export type SignalOptionsWorkerSnapshot = {
     lastSuccessAt: string | null;
     lastError: string | null;
     scanCount: number;
+    totalFailureCount: number;
     failureCount: number;
+    lastFailureAt: string | null;
+    lastSignalCount: number;
+    lastFreshSignalCount: number;
+    lastStaleSignalCount: number;
+    lastUnavailableSignalCount: number;
+    lastLatestSignalBarAt: string | null;
+    lastOldestSignalBarAt: string | null;
+    lastCandidateCount: number;
+    lastBlockedCandidateCount: number;
   }>;
 };
 

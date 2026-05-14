@@ -59,6 +59,7 @@ attached_assets/
 
 # local run artifacts and screenshots
 output/
+artifacts/*.log
 
 # local release/download artifacts
 artifacts/ibgateway-bridge-windows-current.tar.gz
