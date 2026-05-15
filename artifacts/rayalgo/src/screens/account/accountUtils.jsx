@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T, dim, sp, textSize } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -221,7 +221,7 @@ const toneValueMap = () => ({
 export const denseButtonStyle = (active = false) => ({
   height: dim(22),
   padding: sp("0 10px"),
-  borderRadius: 999,
+  borderRadius: dim(RADII.pill),
   border: "none",
   background: active ? T.bg1 : "transparent",
   color: active ? T.text : T.textDim,
@@ -242,7 +242,7 @@ export const primaryButtonStyle = {
   get padding() {
     return sp("0 12px");
   },
-  borderRadius: 999,
+  borderRadius: dim(RADII.pill),
   border: "none",
   get background() {
     return T.accent;
@@ -267,7 +267,7 @@ export const secondaryButtonStyle = {
   get padding() {
     return sp("0 12px");
   },
-  borderRadius: 999,
+  borderRadius: dim(RADII.pill),
   border: "none",
   get background() {
     return T.bg2;
@@ -294,7 +294,7 @@ export const ghostButtonStyle = {
   get padding() {
     return sp("0 12px");
   },
-  borderRadius: 999,
+  borderRadius: dim(RADII.pill),
   border: "none",
   background: "transparent",
   get color() {
@@ -442,7 +442,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         gap: sp(4),
         minHeight: dim(16),
         padding: sp("1px 6px"),
-        borderRadius: 999,
+        borderRadius: dim(RADII.pill),
         border: "none",
         background: palette.bg,
         color: palette.color,
@@ -466,7 +466,7 @@ export const ToggleGroup = ({ options, value, onChange }) => (
       gap: sp(2),
       padding: sp(2),
       border: "none",
-      borderRadius: 999,
+      borderRadius: dim(RADII.pill),
       background: T.bg2,
       flexWrap: "wrap",
     }}
@@ -560,7 +560,7 @@ export const EmptyState = ({ title, body, action }) => (
       fontSize: textSize("body"),
       fontFamily: T.sans,
       border: `1px dashed ${T.border}`,
-      borderRadius: dim(5),
+      borderRadius: dim(RADII.sm),
       background: `${T.bg0}aa`,
     }}
   >
@@ -652,7 +652,7 @@ export const SkeletonRows = ({ rows = 4 }) => (
         className="ra-skeleton"
         style={{
           height: dim(index === 0 ? 34 : 24),
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
           border: "none",
         }}
@@ -669,7 +669,7 @@ export const InlineError = ({ error, onRetry }) => (
       color: T.red,
       background: T.redBg,
       border: `1px solid ${T.red}55`,
-      borderRadius: dim(5),
+      borderRadius: dim(RADII.sm),
       fontSize: textSize("body"),
       fontFamily: T.sans,
       lineHeight: 1.5,

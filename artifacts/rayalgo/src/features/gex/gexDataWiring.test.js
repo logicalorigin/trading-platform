@@ -37,7 +37,7 @@ test("GEX screen has phone filter sheet and expiration chips", () => {
   const source = screenSource();
 
   assert.match(source, /data-layout=\{isPhone \? "phone"/);
-  assert.match(source, /data-testid="gex-mobile-filter-trigger"/);
+  assert.match(source, /dataTestId="gex-mobile-filter-trigger"/);
   assert.match(source, /data-testid="gex-mobile-expiration-chips"/);
   assert.match(source, /testId="gex-mobile-filter-sheet"/);
   assert.match(source, /responsiveFlags\(gexRootSize\.width\)/);

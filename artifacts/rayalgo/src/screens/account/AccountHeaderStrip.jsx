@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   Pill,
@@ -149,7 +149,7 @@ const AccountSwitcher = ({
           style={{
             width: 7,
             height: 7,
-            borderRadius: 999,
+            borderRadius: dim(RADII.pill),
             background: statusColor,
             boxShadow:
               current?.live === false && !isShadowAccount(current)
@@ -205,7 +205,7 @@ const AccountSwitcher = ({
             left: 0,
             right: 0,
             zIndex: 20,
-            borderRadius: dim(6),
+            borderRadius: dim(RADII.sm),
             border: "none",
             background: T.bg1,
             boxShadow:
@@ -291,7 +291,7 @@ const AccountSwitcher = ({
                   style={{
                     width: 6,
                     height: 6,
-                    borderRadius: 999,
+                    borderRadius: dim(RADII.pill),
                     background: isShadowAccount(account)
                       ? T.pink
                       : account.live === false

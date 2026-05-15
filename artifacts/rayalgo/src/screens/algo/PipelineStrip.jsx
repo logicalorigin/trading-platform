@@ -7,7 +7,7 @@ import {
   SlidersHorizontal,
   Target,
 } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const stageColor = (status) => {
@@ -108,7 +108,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
         padding: sp(narrow ? "8px 9px" : "10px 12px"),
         minWidth: dim(narrow ? 110 : 132),
         border: `1px solid ${selected ? color : T.border}`,
-        borderRadius: dim(8),
+        borderRadius: dim(RADII.md),
         background: selected
           ? `${color}14`
           : `linear-gradient(180deg, ${T.bg2} 0%, ${T.bg1} 100%)`,

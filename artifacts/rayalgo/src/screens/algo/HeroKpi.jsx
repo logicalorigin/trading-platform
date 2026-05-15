@@ -6,7 +6,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 const WL_DOTS = 16;
 
@@ -40,7 +40,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
         padding: sp("11px 13px"),
         background: T.bg1,
         border: "none",
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         minWidth: 0,
       }}
     >
@@ -169,7 +169,7 @@ export const HeroKpi = ({
           position: "relative",
           background: T.bg1,
           border: "none",
-          borderRadius: dim(10),
+          borderRadius: dim(RADII.md),
           padding: sp(narrow ? "16px 18px" : "22px 26px"),
           minWidth: 0,
           display: "flex",

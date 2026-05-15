@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -177,7 +177,7 @@ const mobileTaxLotRowStyle = {
 
 const mobileScanShellStyle = (active = false) => ({
   border: "none",
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   background: active ? `${T.cyan}10` : T.bg1,
   boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
   minWidth: 0,
@@ -224,7 +224,7 @@ const mobileIconButtonStyle = {
   height: dim(22),
   padding: 0,
   border: "none",
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   background: T.bg2,
   color: T.textSec,
   display: "inline-grid",
@@ -555,7 +555,7 @@ export const PositionsAtDateInspector = ({
                   key={label}
                   style={{
                     border: "none",
-                    borderRadius: dim(4),
+                    borderRadius: dim(RADII.xs),
                     background: T.bg0,
                     padding: sp("5px 6px"),
                     minWidth: 0,
@@ -682,7 +682,7 @@ export const PositionsAtDateInspector = ({
                     key={row.id}
                     style={{
                       border: "none",
-                      borderRadius: dim(4),
+                      borderRadius: dim(RADII.xs),
                       background: T.bg0,
                       padding: sp("4px 5px"),
                       display: "grid",
@@ -956,7 +956,7 @@ export const PositionsPanel = ({
                             width: 16,
                             height: 16,
                             border: "none",
-                            borderRadius: dim(4),
+                            borderRadius: dim(RADII.xs),
                             background: T.bg0,
                             color: T.textSec,
                             cursor: "pointer",

@@ -1,4 +1,4 @@
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const KpiTile = ({
   label,
@@ -14,7 +14,7 @@ export const KpiTile = ({
       data-testid={dataTestId}
       style={{
         border: `1px solid ${T.border}`,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         background: T.bg1,
         padding: sp("7px 9px"),
         minWidth: 0,

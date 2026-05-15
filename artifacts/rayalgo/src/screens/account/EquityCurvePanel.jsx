@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDate, formatAppDateTime, formatAppTime } from "../../lib/timeZone";
 import {
   ACCOUNT_RANGES,
@@ -88,7 +88,7 @@ const FlatToggle = ({ options, value, onChange, compact = false }) => (
       gap: sp(1),
       padding: sp(1),
       border: "none",
-      borderRadius: dim(4),
+      borderRadius: dim(RADII.xs),
       background: T.bg0,
       minWidth: 0,
       overflow: "hidden",
@@ -142,7 +142,7 @@ const FlatChip = ({
     style={{
       height: dim(20),
       justifyContent: "center",
-      borderRadius: dim(4),
+      borderRadius: dim(RADII.xs),
       border: `1px solid ${active ? color : T.border}`,
       background: active ? `${color}1f` : "transparent",
       color: disabled ? T.textDim : active ? color : T.textMuted,
@@ -200,7 +200,7 @@ const ChartTooltip = ({
       style={{
         background: T.bg0,
         border: "none",
-        borderRadius: dim(5),
+        borderRadius: dim(RADII.sm),
         padding: sp(8),
         color: T.text,
         fontSize: fs(10),

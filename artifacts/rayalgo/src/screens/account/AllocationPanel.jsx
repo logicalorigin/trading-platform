@@ -1,7 +1,7 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
   Panel,
@@ -327,7 +327,7 @@ export const AllocationPanel = ({
             <div
               style={{
                 height: dim(compact ? 12 : 13),
-                borderRadius: dim(4),
+                borderRadius: dim(RADII.xs),
                 overflow: "hidden",
                 display: "flex",
                 background: T.bg3,

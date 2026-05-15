@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { T, dim, sp, textSize } from "../../lib/uiTokens";
+import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -36,7 +36,7 @@ const PatternMetric = ({ label, value, tone = T.text }) => (
   <div
     style={{
       border: "none",
-      borderRadius: dim(10),
+      borderRadius: dim(RADII.md),
       background: T.bg2,
       padding: sp("6px 8px"),
       minWidth: 0,
@@ -90,7 +90,7 @@ const AnalysisCard = ({
       onClick={() => onActivate?.(card)}
       style={{
         border: `1px solid ${color}55`,
-        borderRadius: dim(5),
+        borderRadius: dim(RADII.sm),
         background: `${color}12`,
         padding: sp("6px 7px"),
         textAlign: "left",
@@ -167,7 +167,7 @@ const AnalysisReadinessStrip = ({ readiness = [] }) => {
             key={row.key}
             style={{
               border: `1px solid ${color}44`,
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               background: `${color}0f`,
               padding: sp("4px 5px"),
               display: "grid",
@@ -258,7 +258,7 @@ const BucketDrilldownStrip = ({
               onClick={() => onLensChange?.(group.kind, lensInputForBucket(group))}
               style={{
                 border: "none",
-                borderRadius: dim(10),
+                borderRadius: dim(RADII.md),
                 background: active ? `${T.cyan}14` : T.bg2,
                 padding: sp("7px 9px"),
                 display: "grid",
@@ -322,7 +322,7 @@ const OutcomeBreakdownRows = ({ title, groups = [], currency, maskValues }) => {
               gap: sp(5),
               alignItems: "center",
               border: "none",
-              borderRadius: dim(8),
+              borderRadius: dim(RADII.md),
               background: T.bg2,
               padding: sp("5px 8px"),
               fontFamily: T.data,
@@ -515,7 +515,7 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
         display: "grid",
         gap: sp(3),
         border: "none",
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         background: T.bg2,
         padding: sp("8px 10px"),
       }}
@@ -681,7 +681,7 @@ const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive 
                     height: dim(10),
                     background: T.bg3,
                     border: "none",
-                    borderRadius: 999,
+                    borderRadius: dim(RADII.pill),
                     overflow: "hidden",
                   }}
                 >
@@ -1045,7 +1045,7 @@ export const TradingPatternsPanel = ({
           <div
             style={{
               border: `1px dashed ${T.border}`,
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               background: T.bg0,
               padding: sp(10),
             }}
@@ -1096,7 +1096,7 @@ export const TradingPatternsPanel = ({
                       gridTemplateColumns: "minmax(0, 1fr) auto",
                       gap: sp(4),
                       border: "none",
-                      borderRadius: dim(8),
+                      borderRadius: dim(RADII.md),
                       background: T.bg2,
                       padding: sp("5px 7px"),
                       color: T.textSec,

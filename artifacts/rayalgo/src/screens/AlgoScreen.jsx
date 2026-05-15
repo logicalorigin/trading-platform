@@ -50,6 +50,7 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
@@ -1129,7 +1130,7 @@ export const AlgoScreen = ({
     disabled = false,
   } = {}) => ({
     padding: sp("6px 12px"),
-    borderRadius: 999,
+    borderRadius: dim(RADII.pill),
     border: "none",
     background: active ? `${color}18` : T.bg2,
     color: active ? color : T.text,
@@ -1355,7 +1356,7 @@ export const AlgoScreen = ({
             ...motionVars({ accent: T.amber }),
             background: `${T.amber}12`,
             border: `1px solid ${T.amber}35`,
-            borderRadius: dim(6),
+            borderRadius: dim(RADII.sm),
             padding: sp("10px 12px"),
             display: "flex",
             justifyContent: "space-between",
@@ -1414,7 +1415,7 @@ export const AlgoScreen = ({
               disabled={gatewayBridgeLaunching}
               style={{
                 padding: sp("7px 10px"),
-                borderRadius: dim(4),
+                borderRadius: dim(RADII.xs),
                 border: `1px solid ${T.amber}55`,
                 background: `${T.amber}18`,
                 color: T.amber,
@@ -1532,7 +1533,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg2,
                   padding: sp("12px 14px"),
                   minWidth: 0,
@@ -1548,7 +1549,7 @@ export const AlgoScreen = ({
                         width: "100%",
                         background: T.bg1,
                         border: "none",
-                        borderRadius: dim(8),
+                        borderRadius: dim(RADII.md),
                         padding: sp("8px 10px"),
                         color: T.text,
                         fontSize: fs(10),
@@ -1570,7 +1571,7 @@ export const AlgoScreen = ({
                         width: "100%",
                         background: T.bg1,
                         border: "none",
-                        borderRadius: dim(8),
+                        borderRadius: dim(RADII.md),
                         padding: sp("8px 10px"),
                         color: T.text,
                         fontSize: fs(10),
@@ -1586,7 +1587,7 @@ export const AlgoScreen = ({
                         width: "100%",
                         background: T.bg1,
                         border: "none",
-                        borderRadius: dim(8),
+                        borderRadius: dim(RADII.md),
                         padding: sp("8px 10px"),
                         color: T.text,
                         fontSize: fs(10),
@@ -1617,7 +1618,7 @@ export const AlgoScreen = ({
                   <div
                     style={{
                       border: `1px dashed ${T.border}`,
-                      borderRadius: dim(5),
+                      borderRadius: dim(RADII.sm),
                       color: T.textDim,
                       fontFamily: T.sans,
                       fontSize: fs(10),
@@ -1769,7 +1770,7 @@ export const AlgoScreen = ({
                         color: T.textSec,
                         background: T.bg2,
                         border: "none",
-                        borderRadius: dim(999),
+                        borderRadius: dim(RADII.pill),
                         cursor: "pointer",
                         letterSpacing: "0.02em",
                       }}
@@ -1792,7 +1793,7 @@ export const AlgoScreen = ({
                         color: T.textSec,
                         background: T.bg2,
                         border: "none",
-                        borderRadius: dim(999),
+                        borderRadius: dim(RADII.pill),
                         cursor: "pointer",
                         letterSpacing: "0.02em",
                       }}
@@ -1807,7 +1808,7 @@ export const AlgoScreen = ({
                 data-testid="algo-diag-gate-summary"
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg1,
                   padding: sp("8px 10px"),
                   display: "grid",
@@ -1949,7 +1950,7 @@ export const AlgoScreen = ({
             data-testid="algo-signal-action-panel"
             style={{
               border: "none",
-              borderRadius: dim(10),
+              borderRadius: dim(RADII.md),
               background: T.bg1,
               padding: sp("9px 10px"),
               minWidth: 0,
@@ -1965,7 +1966,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   border: `1px dashed ${T.border}`,
-                  borderRadius: dim(5),
+                  borderRadius: dim(RADII.sm),
                   color: T.textDim,
                   fontFamily: T.sans,
                   fontSize: fs(10),
@@ -2002,7 +2003,7 @@ export const AlgoScreen = ({
                       style={{
                         ...motionRowStyle(index, 9, 60),
                         border: `1px solid ${tone}35`,
-                        borderRadius: dim(5),
+                        borderRadius: dim(RADII.sm),
                         background: `${tone}10`,
                         padding: sp("8px 9px"),
                         minWidth: 0,
@@ -2078,7 +2079,7 @@ export const AlgoScreen = ({
           <div
             style={{
               border: "none",
-              borderRadius: dim(10),
+              borderRadius: dim(RADII.md),
               background: T.bg1,
               padding: sp("9px 10px"),
               minWidth: 0,
@@ -2116,7 +2117,7 @@ export const AlgoScreen = ({
                     key={label}
                     style={{
                       border: "none",
-                      borderRadius: dim(10),
+                      borderRadius: dim(RADII.md),
                       background: T.bg2,
                       padding: sp("7px 8px"),
                       minWidth: 0,
@@ -2212,7 +2213,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg1,
                   padding: sp("9px 10px"),
                   minWidth: 0,
@@ -2243,7 +2244,7 @@ export const AlgoScreen = ({
                   style={{
                     marginTop: sp(8),
                     border: "none",
-                    borderRadius: dim(10),
+                    borderRadius: dim(RADII.md),
                     background: T.bg2,
                     padding: sp("7px 9px"),
                     minWidth: 0,
@@ -2286,7 +2287,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg1,
                   padding: sp("9px 10px"),
                   minWidth: 0,
@@ -2325,7 +2326,7 @@ export const AlgoScreen = ({
               data-testid="algo-now-recent-signals"
               style={{
                 border: "none",
-                borderRadius: dim(10),
+                borderRadius: dim(RADII.md),
                 background: T.bg1,
                 padding: sp("9px 10px"),
                 minWidth: 0,
@@ -2472,7 +2473,7 @@ export const AlgoScreen = ({
         <div
           style={{
             border: "none",
-            borderRadius: dim(10),
+            borderRadius: dim(RADII.md),
             background: T.bg1,
             padding: sp("9px 10px"),
             minWidth: 0,
@@ -2492,7 +2493,7 @@ export const AlgoScreen = ({
                   <div
                     style={{
                       border: `1px dashed ${T.border}`,
-                      borderRadius: dim(5),
+                      borderRadius: dim(RADII.sm),
                       color: T.textDim,
                       fontFamily: T.sans,
                       fontSize: fs(10),
@@ -2525,7 +2526,7 @@ export const AlgoScreen = ({
                           ...motionVars({ accent: tone }),
                           textAlign: "left",
                           border: `1px solid ${selected ? tone : T.border}`,
-                          borderRadius: dim(5),
+                          borderRadius: dim(RADII.sm),
                           background: selected ? `${tone}12` : T.bg2,
                           padding: sp("8px 9px"),
                           cursor: "pointer",
@@ -2579,7 +2580,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg2,
                   padding: sp("8px 9px"),
                   minWidth: 0,
@@ -2630,7 +2631,7 @@ export const AlgoScreen = ({
                           key={label}
                           style={{
                             border: "none",
-                            borderRadius: dim(10),
+                            borderRadius: dim(RADII.md),
                             background: T.bg1,
                             padding: sp("6px 7px"),
                             minWidth: 0,
@@ -2698,7 +2699,7 @@ export const AlgoScreen = ({
                 <div
                   style={{
                     border: `1px dashed ${T.border}`,
-                    borderRadius: dim(5),
+                    borderRadius: dim(RADII.sm),
                     color: T.textDim,
                     fontFamily: T.sans,
                     fontSize: fs(10),
@@ -2733,7 +2734,7 @@ export const AlgoScreen = ({
                         gap: sp(8),
                         alignItems: "center",
                         border: "none",
-                        borderRadius: dim(10),
+                        borderRadius: dim(RADII.md),
                         background: T.bg2,
                         padding: sp("8px 9px"),
                         minWidth: 0,
@@ -2808,7 +2809,7 @@ export const AlgoScreen = ({
           {primaryTab === "profile" && (() => {
             const numberFieldStyle = {
               border: "none",
-              borderRadius: dim(10),
+              borderRadius: dim(RADII.md),
               background: T.bg2,
               padding: sp("7px 9px"),
               display: "flex",
@@ -2854,7 +2855,7 @@ export const AlgoScreen = ({
                 key={key}
                 style={{
                   border: "none",
-                  borderRadius: dim(10),
+                  borderRadius: dim(RADII.md),
                   background: T.bg2,
                   padding: sp("7px 9px"),
                   display: "flex",
@@ -2918,7 +2919,7 @@ export const AlgoScreen = ({
                   data-testid="algo-profile-capacity-banner"
                   style={{
                     border: `1px solid ${T.amber}35`,
-                    borderRadius: dim(5),
+                    borderRadius: dim(RADII.sm),
                     background: `${T.amber}0d`,
                     padding: sp("8px 10px"),
                     display: "flex",
@@ -3255,7 +3256,7 @@ export const AlgoScreen = ({
         style={{
           background: T.bg2,
           border: "none",
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           flex: "0 1 auto",
         }}
@@ -3300,7 +3301,7 @@ export const AlgoScreen = ({
             style={{
               padding: sp("18px 10px"),
               border: `1px dashed ${T.border}`,
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               fontSize: fs(10),
               color: T.textDim,
               fontFamily: T.sans,

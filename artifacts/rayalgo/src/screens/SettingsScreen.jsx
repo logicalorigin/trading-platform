@@ -228,7 +228,7 @@ function smallButton({ active = false, danger = false } = {}) {
     border: "none",
     background: danger ? `${T.red}18` : active ? T.greenBg : T.bg2,
     color: danger ? T.red : active ? T.green : T.text,
-    borderRadius: 999,
+    borderRadius: dim(RADII.pill),
     padding: sp("6px 12px"),
     fontFamily: T.sans,
     fontSize: fs(10),
@@ -243,7 +243,7 @@ function inputStyle() {
     border: "none",
     background: T.bg2,
     color: T.text,
-    borderRadius: dim(8),
+    borderRadius: dim(RADII.md),
     padding: sp("8px 10px"),
     fontFamily: T.sans,
     fontSize: fs(11),
@@ -273,7 +273,7 @@ function Panel({ title, action, children }) {
       style={{
         border: "none",
         background: T.bg1,
-        borderRadius: dim(12),
+        borderRadius: dim(RADII.md),
         padding: sp("14px 16px"),
         minWidth: 0,
         alignSelf: "start",
@@ -422,7 +422,7 @@ function SourceBadge({ setting }) {
         border: `1px solid ${color}66`,
         color,
         background: T.bg2,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         padding: sp("2px 5px"),
         fontFamily: T.sans,
         fontSize: fs(8),
@@ -443,7 +443,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
     <div
       style={{
         border: "none",
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         background: T.bg2,
         padding: sp("8px 10px"),
         display: "grid",
@@ -1144,7 +1144,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {lineUsage.rows.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {lineUsage.rows.map((pool) => (
-            <div key={pool.id} style={{ border: "none", borderRadius: dim(10), padding: sp(10), background: T.bg2 }}>
+            <div key={pool.id} style={{ border: "none", borderRadius: dim(RADII.md), padding: sp(10), background: T.bg2 }}>
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{pool.label}</div>
               <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(pool.used)} / {formatCount(pool.cap)}
@@ -1160,7 +1160,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {governorRows.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {governorRows.map(([id, lane]) => (
-            <div key={id} style={{ border: "none", borderRadius: dim(10), padding: sp(10), background: T.bg2 }}>
+            <div key={id} style={{ border: "none", borderRadius: dim(RADII.md), padding: sp(10), background: T.bg2 }}>
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{id}</div>
               <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
@@ -1333,13 +1333,13 @@ function AppPreferencesPanel({
   return (
     <Panel title="App Preferences">
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(10) }}>
-        <div style={{ border: "none", background: T.bg2, borderRadius: dim(10), padding: sp(10) }}>
+        <div style={{ border: "none", background: T.bg2, borderRadius: dim(RADII.md), padding: sp(10) }}>
           <StateRow label="Theme" value={theme} />
           <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
             Switch to {theme === "dark" ? "light" : "dark"}
           </button>
         </div>
-        <div style={{ border: "none", background: T.bg2, borderRadius: dim(10), padding: sp(10) }}>
+        <div style={{ border: "none", background: T.bg2, borderRadius: dim(RADII.md), padding: sp(10) }}>
           <StateRow label="Sidebar" value={sidebarCollapsed ? "collapsed" : "expanded"} />
           <button type="button" onClick={onToggleSidebar} style={smallButton()}>
             {sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -1731,7 +1731,7 @@ function ChartTimeframeFavoritesPanel() {
               style={{
                 border: "none",
                 background: T.bg2,
-                borderRadius: dim(10),
+                borderRadius: dim(RADII.md),
                 padding: sp(10),
                 display: "grid",
                 gap: sp(8),
@@ -2250,7 +2250,7 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
           style={{
             border: "none",
             background: T.bg1,
-            borderRadius: dim(10),
+            borderRadius: dim(RADII.md),
             padding: sp("10px 12px"),
             display: "grid",
             gap: sp(3),
@@ -2578,7 +2578,7 @@ export default function SettingsScreen({
       <CockpitHeader
         eyebrow="System"
         title="Settings"
-        subtitle="Backend operational controls, guarded applies, restart-required runtime state"
+        subtitle="Backend controls with guarded applies and restart tracking"
         actions={
           <>
             <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400 }}>
@@ -2634,7 +2634,7 @@ export default function SettingsScreen({
           style={{
             border: "none",
             background: T.bg1,
-            borderRadius: dim(12),
+            borderRadius: dim(RADII.md),
             padding: sp(12),
             display: "grid",
             gap: sp(8),
@@ -2663,7 +2663,7 @@ export default function SettingsScreen({
                 background: activeTab === tab.id ? T.bg2 : "transparent",
                 color: activeTab === tab.id ? T.text : T.textSec,
                 fontWeight: activeTab === tab.id ? 600 : 500,
-                borderRadius: 999,
+                borderRadius: dim(RADII.pill),
                 padding: sp("8px 12px"),
                 textAlign: "left",
                 cursor: "pointer",

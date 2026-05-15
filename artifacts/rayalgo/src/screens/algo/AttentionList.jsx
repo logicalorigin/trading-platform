@@ -1,4 +1,4 @@
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 const severityWeight = (severity) => {
   if (severity === "critical") return 0;
@@ -61,7 +61,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
               gap: sp(6),
               padding: sp("8px 10px"),
               border: "none",
-              borderRadius: dim(8),
+              borderRadius: dim(RADII.md),
               background: `${tone}10`,
               minWidth: 0,
             }}

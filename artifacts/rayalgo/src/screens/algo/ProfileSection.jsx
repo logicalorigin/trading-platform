@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const ProfileSection = ({
   id,
@@ -15,7 +15,7 @@ export const ProfileSection = ({
       data-state={expanded ? "expanded" : "collapsed"}
       style={{
         border: `1px solid ${T.border}`,
-        borderRadius: dim(5),
+        borderRadius: dim(RADII.sm),
         background: T.bg1,
         minWidth: 0,
       }}

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ThemeContext } from "../../features/platform/platformContexts";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   ToggleGroup,
   formatAccountMoney,
@@ -300,7 +300,7 @@ const calendarButtonStyle = (style, isPhone = false) => ({
   display: "inline-grid",
   placeItems: "center",
   border: `1px solid ${style.border}`,
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   background: style.navBg,
   color: style.navText,
   padding: 0,
@@ -408,7 +408,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
         gap: sp(1),
         background: calendarStyle.gridLine,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         overflow: "hidden",
       }}
     >
@@ -494,7 +494,7 @@ const YearCalendarGrid = ({
       gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
       gap: sp(1),
       background: calendarStyle.gridLine,
-      borderRadius: dim(4),
+      borderRadius: dim(RADII.xs),
       overflow: "hidden",
       minWidth: 0,
     }}

@@ -26,7 +26,7 @@ import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
+import { RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
 import AccountHeroBlock from "./account/AccountHeroBlock";
@@ -134,7 +134,7 @@ const ShadowWatchlistBacktestPanel = ({
     minHeight: dim(24),
     padding: sp("3px 8px"),
     border: `1px solid ${running ? T.textMuted : T.pink}`,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     background: running ? T.bg2 : `${T.pink}22`,
     color: running ? T.textMuted : T.pink,
     fontSize: fs(8),
@@ -236,7 +236,7 @@ const ShadowWatchlistBacktestPanel = ({
                   key={label}
                   style={{
                     border: "none",
-                    borderRadius: dim(4),
+                    borderRadius: dim(RADII.xs),
                     background: T.bg0,
                     padding: sp("4px 5px"),
                   }}
@@ -300,7 +300,7 @@ const ShadowWatchlistBacktestPanel = ({
               <div
                 style={{
                   border: "none",
-                  borderRadius: dim(4),
+                  borderRadius: dim(RADII.xs),
                   background: T.bg0,
                   padding: sp(6),
                   display: "grid",
@@ -1133,7 +1133,7 @@ export const AccountScreen = ({
         gap: sp(1),
         padding: 2,
         border: "none",
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         background: T.bg2,
       }}
     >
@@ -1397,7 +1397,7 @@ export const AccountScreen = ({
               gap: sp(6),
               flexWrap: "wrap",
               border: "none",
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               background: T.bg2,
               padding: sp("5px 7px"),
               color: T.textSec,
@@ -1422,7 +1422,7 @@ export const AccountScreen = ({
               onClick={handlePatternLensClear}
               style={{
                 border: "none",
-                borderRadius: 999,
+                borderRadius: dim(RADII.pill),
                 background: T.bg2,
                 color: T.text,
                 height: dim(22),
@@ -1552,7 +1552,7 @@ export const AccountScreen = ({
                       key={label}
                       style={{
                         border: "none",
-                        borderRadius: dim(4),
+                        borderRadius: dim(RADII.xs),
                         background: T.bg0,
                         padding: sp("4px 5px"),
                       }}

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAccountMoney, mutedLabelStyle } from "./accountUtils";
 
 const TRADING_DAYS_FORWARD = 45;
@@ -122,7 +122,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         padding: sp(8),
         background: T.bg2,
         border: "none",
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         display: "grid",
         gap: sp(4),
       }}

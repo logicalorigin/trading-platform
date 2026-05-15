@@ -1,5 +1,5 @@
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
   Panel,
@@ -68,7 +68,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
       <div
         style={{
           height: dim(8),
-          borderRadius: dim(5),
+          borderRadius: dim(RADII.sm),
           overflow: "hidden",
           background: T.bg3,
           border: "none",

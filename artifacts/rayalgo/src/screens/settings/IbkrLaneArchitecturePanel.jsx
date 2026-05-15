@@ -13,7 +13,7 @@ import {
   normalizeLaneSymbolList,
   resolveLanePreview,
 } from "./ibkrLaneUiModel";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 
 const formatCount = (value) =>
   Number.isFinite(value) ? Math.max(0, Math.round(value)).toLocaleString() : MISSING_VALUE;
@@ -43,7 +43,7 @@ function Panel({ title, action, children }) {
       style={{
         border: "none",
         background: T.bg1,
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         padding: sp(16),
         minWidth: 0,
       }}
@@ -80,7 +80,7 @@ function smallButton() {
     border: "none",
     background: T.bg2,
     color: T.textSec,
-    borderRadius: dim(999),
+    borderRadius: dim(RADII.pill),
     padding: sp("5px 12px"),
     fontFamily: T.sans,
     fontSize: fs(9),
@@ -108,7 +108,7 @@ function inputStyle() {
     border: "none",
     background: T.bg2,
     color: T.text,
-    borderRadius: dim(6),
+    borderRadius: dim(RADII.sm),
     padding: sp("7px 9px"),
     fontFamily: T.sans,
     fontSize: fs(10),
@@ -122,7 +122,7 @@ function laneChip(color) {
     border: `1px solid ${color}66`,
     background: T.bg1,
     color,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     padding: sp("3px 5px"),
     fontFamily: T.sans,
     fontSize: fs(8),
@@ -282,7 +282,7 @@ function LaneMiniMetric({ label, value, tone = T.textSec }) {
     <div
       style={{
         border: "none",
-        borderRadius: dim(8),
+        borderRadius: dim(RADII.md),
         background: T.bg2,
         padding: sp("8px 10px"),
         minWidth: 0,
@@ -330,7 +330,7 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
           gap: sp(5),
           minHeight: dim(64),
           border: "none",
-          borderRadius: dim(8),
+          borderRadius: dim(RADII.md),
           background: T.bg2,
           padding: sp(10),
         }}
@@ -462,7 +462,7 @@ function LaneMembershipCard({
     <div
       style={{
         border: `1px solid ${tone}66`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         background: T.bg2,
         padding: sp(10),
         display: "grid",
@@ -541,7 +541,7 @@ function LaneMembershipCard({
                   border: `1px solid ${mergedPolicy.sources?.[source] ? laneSourceTone(source) : T.border}`,
                   color: mergedPolicy.sources?.[source] ? laneSourceTone(source) : T.textSec,
                   background: mergedPolicy.sources?.[source] ? T.greenBg : T.bg1,
-                  borderRadius: dim(4),
+                  borderRadius: dim(RADII.xs),
                   padding: sp("4px 6px"),
                   fontFamily: T.sans,
                   fontSize: fs(8),
@@ -576,7 +576,7 @@ function LaneMembershipCard({
           </div>
         </>
       ) : (
-        <div style={{ border: "none", borderRadius: dim(8), background: T.bg2, padding: sp(12), color: T.textDim, fontFamily: T.sans, fontSize: fs(10), lineHeight: 1.4 }}>
+        <div style={{ border: "none", borderRadius: dim(RADII.md), background: T.bg2, padding: sp(12), color: T.textDim, fontFamily: T.sans, fontSize: fs(10), lineHeight: 1.4 }}>
           System lane membership is read-only.
         </div>
       )}
@@ -651,7 +651,7 @@ function LanePresetBar({ onApplyPreset }) {
           onClick={() => onApplyPreset(preset.id)}
           style={{
             border: "none",
-            borderRadius: dim(10),
+            borderRadius: dim(RADII.md),
             background: T.bg2,
             padding: sp(12),
             textAlign: "left",
@@ -679,7 +679,7 @@ function LaneSaveSummary({ changedCount, warnings, bridgeReady, onDiscard }) {
     <div
       style={{
         border: `1px solid ${changedCount ? T.green : T.amber}66`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         background: T.bg2,
         padding: sp(10),
         display: "grid",
@@ -743,7 +743,7 @@ function LaneArchitectureSection({ snapshot }) {
       <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>How Data Moves</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(10) }}>
         {(snapshot.layers || []).map((layer) => (
-          <div key={layer.id} style={{ border: "none", borderRadius: dim(10), padding: sp(12), background: T.bg2 }}>
+          <div key={layer.id} style={{ border: "none", borderRadius: dim(RADII.md), padding: sp(12), background: T.bg2 }}>
             <div style={{ color: T.textMuted, fontFamily: T.sans, fontSize: fs(9), fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: sp(10) }}>
               {layer.label}
             </div>
@@ -753,7 +753,7 @@ function LaneArchitectureSection({ snapshot }) {
                   key={node.id}
                   style={{
                     border: `1px solid ${laneStatusTone(node.status)}66`,
-                    borderRadius: dim(5),
+                    borderRadius: dim(RADII.sm),
                     padding: sp(9),
                     background: T.bg1,
                     minWidth: 0,
@@ -780,7 +780,7 @@ function LaneArchitectureSection({ snapshot }) {
             key={`${edge.from}-${edge.to}`}
             style={{
               border: "none",
-              borderRadius: dim(999),
+              borderRadius: dim(RADII.pill),
               padding: sp("4px 10px"),
               background: T.bg2,
               color: T.textSec,

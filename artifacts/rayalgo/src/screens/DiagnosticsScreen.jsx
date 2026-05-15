@@ -38,12 +38,14 @@ import {
 } from "./diagnostics/localAlerts";
 import {
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
   sp,
 } from "../lib/uiTokens";
 import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
+import { Button } from "../components/ui/Button.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import {
   joinMotionClasses,
@@ -234,7 +236,7 @@ const Panel = ({ title, action, children }) => (
     style={{
         border: "none",
         background: T.bg1,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp("8px 10px"),
         minWidth: 0,
         alignSelf: "start",
@@ -302,7 +304,7 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
     style={{
       ...motionVars({ accent: severityTone(severity) }),
       border: `1px solid ${severityBorder(severity)}`,
-      borderRadius: dim(6),
+      borderRadius: dim(RADII.sm),
       background: T.bg2,
       padding: sp("7px 8px"),
       display: "flex",
@@ -391,7 +393,7 @@ const EventList = ({ events, onSelect }) => (
             ...motionVars({ accent: severityTone(event.severity) }),
             border: `1px solid ${severityBorder(event.severity)}`,
             background: T.bg2,
-            borderRadius: dim(5),
+            borderRadius: dim(RADII.sm),
             padding: sp(9),
             display: "grid",
             gridTemplateColumns: `${dim(96)}px minmax(0, 1fr) ${dim(72)}px`,
@@ -436,7 +438,7 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
       alignItems: "stretch",
       border: `1px solid ${severityBorder(alert.severity)}`,
       background: T.bg2,
-      borderRadius: dim(5),
+      borderRadius: dim(RADII.sm),
       padding: sp(8),
     }}
   >
@@ -1036,7 +1038,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       <CockpitHeader
         eyebrow="System"
         title="Diagnostics"
-        subtitle="Real-time SSE, 7-day history, per-subsystem uptime, events, probes, and thresholds"
+        subtitle="Real-time stream and 7-day history across all subsystems"
         actions={
           <>
             <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: 400 }}>
@@ -1045,45 +1047,27 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
               {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
             </span>
-            {WINDOW_OPTIONS.map((option) => (
-              <button
-                key={option.label}
-                type="button"
-                onClick={() => setWindowMinutes(option.minutes)}
-                style={{
-                  border: "none",
-                  background: windowMinutes === option.minutes ? T.greenBg : T.bg2,
-                  color: windowMinutes === option.minutes ? T.green : T.text,
-                  borderRadius: 999,
-                  padding: sp("6px 12px"),
-                  fontFamily: T.sans,
-                  fontSize: fs(10),
-                  fontWeight: windowMinutes === option.minutes ? 600 : 500,
-                  letterSpacing: "0.02em",
-                  cursor: "pointer",
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
-            <a
-              href={exportUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                border: "none",
-                background: T.bg2,
-                color: T.textSec,
-                borderRadius: dim(4),
-                padding: sp("5px 8px"),
-                fontFamily: T.sans,
-                fontSize: fs(9),
-                fontWeight: 400,
-                textDecoration: "none",
-              }}
+            {WINDOW_OPTIONS.map((option) => {
+              const active = windowMinutes === option.minutes;
+              return (
+                <Button
+                  key={option.label}
+                  variant={active ? "primary" : "secondary"}
+                  color={active ? T.green : undefined}
+                  size="sm"
+                  onClick={() => setWindowMinutes(option.minutes)}
+                >
+                  {option.label}
+                </Button>
+              );
+            })}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(exportUrl, "_blank", "noopener,noreferrer")}
             >
               Export Raw
-            </a>
+            </Button>
           </>
         }
       />
@@ -1104,7 +1088,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               border: `1px solid ${activeTab === tab ? T.green : T.border}`,
               background: activeTab === tab ? T.greenBg : T.bg1,
               color: activeTab === tab ? T.green : T.textSec,
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               padding: sp("7px 10px"),
               fontFamily: T.sans,
               fontSize: fs(9),
@@ -1568,7 +1552,7 @@ function smallButton() {
     border: "none",
     background: T.bg2,
     color: T.textSec,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     padding: sp("5px 8px"),
     fontFamily: T.sans,
     fontSize: fs(9),

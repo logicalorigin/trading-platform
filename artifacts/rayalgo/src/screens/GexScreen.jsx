@@ -43,8 +43,9 @@ import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
+import { Button } from "../components/ui/Button.jsx";
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
@@ -1302,23 +1303,15 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
             <>
               {tickerSearchControl}
               {isPhone ? (
-                <button
-                  type="button"
-                  data-testid="gex-mobile-filter-trigger"
+                <Button
+                  dataTestId="gex-mobile-filter-trigger"
+                  variant="secondary"
+                  size="md"
+                  leftIcon={SlidersHorizontal}
                   onClick={() => setMobileFiltersOpen(true)}
-                  style={{
-                    ...fieldStyle,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: sp(6),
-                    minHeight: dim(38),
-                    padding: sp("0 10px"),
-                    cursor: "pointer",
-                  }}
                 >
-                  <SlidersHorizontal size={14} />
                   Filters
-                </button>
+                </Button>
               ) : (
                 filtersControl
               )}
@@ -1350,7 +1343,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
                       minHeight: dim(36),
                       padding: sp("0 10px"),
                       border: `1px solid ${active ? T.accent : T.border}`,
-                      borderRadius: dim(4),
+                      borderRadius: dim(RADII.xs),
                       background: active ? `${T.accent}18` : T.bg1,
                       color: active ? T.text : T.textSec,
                       fontFamily: T.sans,

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const totalCount = (rows) => {
@@ -64,7 +64,7 @@ export const DiagPanel = ({
       data-state="expanded"
       style={{
         border: "none",
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         background: T.bg2,
         padding: sp("7px 9px"),
         minWidth: 0,

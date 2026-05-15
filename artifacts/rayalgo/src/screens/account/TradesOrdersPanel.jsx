@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { useGetBars } from "@workspace/api-client-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -107,7 +107,7 @@ const mobileDetailPillWrapStyle = {
 
 const mobileScanShellStyle = (active = false) => ({
   border: "none",
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   background: active ? `${T.cyan}10` : T.bg1,
   boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
   minWidth: 0,
@@ -154,7 +154,7 @@ const mobileIconButtonStyle = {
   height: dim(22),
   padding: 0,
   border: "none",
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   background: T.bg2,
   color: T.textSec,
   display: "inline-grid",
@@ -1268,7 +1268,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
       <div
         style={{
           border: `1px dashed ${T.border}`,
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
@@ -1286,7 +1286,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
       <div
         style={{
           border: `1px dashed ${T.border}`,
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
@@ -1312,7 +1312,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
         style={{
           height: dim(H),
           border: "none",
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
           display: "grid",
@@ -1352,7 +1352,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
       <div
         style={{
           border: `1px dashed ${T.border}`,
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
@@ -1550,7 +1550,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               gridTemplateColumns: "auto minmax(0, 1fr) auto",
               gap: sp(5),
               border: "none",
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               background: T.bg0,
               padding: sp("4px 5px"),
               alignItems: "center",

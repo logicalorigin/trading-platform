@@ -3,7 +3,7 @@ import {
   useGetDiagnosticThresholds,
   useUpdateDiagnosticThresholds,
 } from "@workspace/api-client-react";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 
 const THRESHOLD_EVENT = "rayalgo:diagnostic-thresholds-updated";
 
@@ -12,7 +12,7 @@ function smallButton({ active = false } = {}) {
     border: `1px solid ${active ? T.green : T.border}`,
     background: active ? T.greenBg : T.bg2,
     color: active ? T.green : T.textSec,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     padding: sp("5px 8px"),
     fontFamily: T.sans,
     fontSize: fs(9),
@@ -38,7 +38,7 @@ function inputStyle() {
     border: "none",
     background: T.bg0,
     color: T.text,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     padding: sp("6px 7px"),
     fontFamily: T.sans,
     fontSize: fs(10),
@@ -174,7 +174,7 @@ export function DiagnosticThresholdSettingsPanel({
       style={{
         border: "none",
         background: T.bg1,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp(12),
         minWidth: 0,
       }}
@@ -240,7 +240,7 @@ export function DiagnosticThresholdSettingsPanel({
               key={threshold.metricKey}
               style={{
                 border: "none",
-                borderRadius: dim(5),
+                borderRadius: dim(RADII.sm),
                 padding: sp(9),
                 background: T.bg2,
               }}

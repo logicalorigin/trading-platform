@@ -1,4 +1,4 @@
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   IbkrConnectionLane,
@@ -30,7 +30,7 @@ const StatusRow = ({ label, ok, detail }) => (
       style={{
         width: 7,
         height: 7,
-        borderRadius: 999,
+        borderRadius: dim(RADII.pill),
         background: ok ? T.green : T.amber,
         boxShadow: ok ? `0 0 8px ${T.green}` : "none",
         marginTop: sp(3),

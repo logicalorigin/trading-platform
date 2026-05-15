@@ -86,6 +86,7 @@ import {
 } from "../lib/formatters";
 import {
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
@@ -1214,7 +1215,7 @@ const PremiumDistributionWidget = ({
           gap: sp(2),
           minWidth: 0,
           minHeight: dim(96),
-          borderRadius: dim(8),
+          borderRadius: dim(RADII.md),
           background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
           width: "100%",
         }}
@@ -1254,7 +1255,7 @@ const PremiumDistributionWidget = ({
         minWidth: 0,
         width: "100%",
         minHeight: dim(widgetHydrationWarning ? 96 : 84),
-        borderRadius: dim(8),
+        borderRadius: dim(RADII.md),
         background: selected
           ? `linear-gradient(180deg, ${T.bg3}, ${T.bg2})`
           : `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
@@ -2700,7 +2701,7 @@ const FlowOverviewPanel = ({
             style={{
               position: "relative",
               height: dim(7),
-              borderRadius: 999,
+              borderRadius: dim(RADII.pill),
               overflow: "hidden",
               border: "none",
               background: T.bg3,
@@ -2985,7 +2986,7 @@ const FlowOverviewPanel = ({
               color: T.textSec,
               cursor: "pointer",
               padding: 0,
-              borderRadius: 999,
+              borderRadius: dim(RADII.pill),
             }}
           >
             <ExternalLink size={12} />
@@ -3006,7 +3007,7 @@ const FlowOverviewPanel = ({
     background: active ? `${accent}18` : T.bg2,
     color: active ? accent : T.textSec,
     cursor: "pointer",
-    borderRadius: 999,
+    borderRadius: dim(RADII.pill),
     transition: "background 120ms ease, color 120ms ease",
   });
 
@@ -3231,7 +3232,7 @@ const FlowOverviewPanel = ({
             padding: sp("7px 10px"),
             background: T.bg2,
             border: "none",
-            borderRadius: dim(8),
+            borderRadius: dim(RADII.md),
             color: T.text,
             fontFamily: T.sans,
             fontSize: fs(10),
@@ -3262,7 +3263,7 @@ const FlowOverviewPanel = ({
             padding: sp("7px 10px"),
             background: T.bg2,
             border: "none",
-            borderRadius: dim(8),
+            borderRadius: dim(RADII.md),
             color: T.text,
             fontFamily: T.sans,
             fontSize: fs(10),
@@ -3790,7 +3791,7 @@ const FlowOverviewPanel = ({
             style={{
               padding: sp("4px 10px"),
               border: "none",
-              borderRadius: 999,
+              borderRadius: dim(RADII.pill),
               background: active ? `${presetColor}18` : T.bg2,
               color: active ? presetColor : T.textSec,
               fontSize: fs(9),
@@ -3811,7 +3812,7 @@ const FlowOverviewPanel = ({
           style={{
             padding: sp("4px 10px"),
             border: "none",
-            borderRadius: 999,
+            borderRadius: dim(RADII.pill),
             background: T.bg2,
             color: T.textSec,
             fontSize: fs(9),
@@ -3836,7 +3837,7 @@ const FlowOverviewPanel = ({
             gap: sp(4),
             padding: sp("4px 10px"),
             border: "none",
-            borderRadius: 999,
+            borderRadius: dim(RADII.pill),
             background: `${T.accent}18`,
             color: T.accent,
             fontSize: fs(9),
@@ -4216,7 +4217,7 @@ const FlowOverviewPanel = ({
                       height: dim(8),
                       display: "flex",
                       overflow: "hidden",
-                      borderRadius: 999,
+                      borderRadius: dim(RADII.pill),
                       border: "none",
                       background: T.bg3,
                     }}
@@ -4541,7 +4542,7 @@ const FlowOverviewPanel = ({
                       style={{
                         padding: sp("10px 11px"),
                         border: "none",
-                        borderRadius: dim(8),
+                        borderRadius: dim(RADII.md),
                         background: T.bg2,
                         display: "flex",
                         flexDirection: "column",
@@ -4671,7 +4672,7 @@ const FlowOverviewPanel = ({
                           padding: sp("8px 10px"),
                           background: T.bg2,
                           border: "none",
-                          borderRadius: dim(8),
+                          borderRadius: dim(RADII.md),
                         }}
                       >
                         <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.04em", textTransform: "uppercase" }}>
@@ -4718,7 +4719,7 @@ const FlowOverviewPanel = ({
                               alignItems: "center",
                               background: T.bg2,
                               border: "none",
-                              borderRadius: dim(6),
+                              borderRadius: dim(RADII.sm),
                               padding: sp("6px 8px"),
                               cursor: "pointer",
                             }}
@@ -4756,7 +4757,7 @@ const FlowOverviewPanel = ({
                             gap: sp(4),
                             background: T.bg2,
                             border: "none",
-                            borderRadius: dim(6),
+                            borderRadius: dim(RADII.sm),
                             color: T.textDim,
                             fontFamily: T.sans,
                             fontSize: fs(8),
@@ -4784,7 +4785,7 @@ const FlowOverviewPanel = ({
                             gap: sp(4),
                             background: T.bg2,
                             border: "none",
-                            borderRadius: dim(6),
+                            borderRadius: dim(RADII.sm),
                             color: T.textDim,
                             fontFamily: T.sans,
                             fontSize: fs(8),
@@ -4925,7 +4926,7 @@ const FlowOverviewPanel = ({
                               color: T.text,
                               background: T.bg2,
                               border: "none",
-                              borderRadius: dim(8),
+                              borderRadius: dim(RADII.md),
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
@@ -5012,7 +5013,7 @@ const FlowOverviewPanel = ({
                         padding: sp("6px 8px"),
                         background: T.bg2,
                         border: "none",
-                        borderRadius: dim(6),
+                        borderRadius: dim(RADII.sm),
                       }}
                     >
                       <span
@@ -5128,7 +5129,7 @@ const FlowOverviewPanel = ({
                 style={{
                   background: T.bg2,
                   border: "none",
-                  borderRadius: dim(8),
+                  borderRadius: dim(RADII.md),
                   padding: sp("8px 10px"),
                   overflow: "hidden",
                 }}
@@ -5329,7 +5330,7 @@ const FlowOverviewPanel = ({
                                   padding: sp("6px 10px"),
                                   background: `${cpColor}14`,
                                   border: "none",
-                                  borderRadius: dim(8),
+                                  borderRadius: dim(RADII.md),
                                   cursor: "pointer",
                                 }}
                               >
@@ -5379,7 +5380,7 @@ const FlowOverviewPanel = ({
                 style={{
                   background: T.bg2,
                   border: "none",
-                  borderRadius: dim(8),
+                  borderRadius: dim(RADII.md),
                   padding: sp("6px 10px"),
                 }}
               >
@@ -5501,7 +5502,7 @@ const FlowOverviewPanel = ({
             style={{
               background: T.bg2,
               border: "none",
-              borderRadius: dim(8),
+              borderRadius: dim(RADII.md),
               padding: sp("6px 10px"),
             }}
           >
@@ -5678,7 +5679,7 @@ const FlowOverviewPanel = ({
             style={{
               background: T.bg2,
               border: "none",
-              borderRadius: dim(8),
+              borderRadius: dim(RADII.md),
               padding: sp("6px 10px"),
             }}
           >

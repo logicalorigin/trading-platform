@@ -169,6 +169,7 @@ import {
 import { normalizeFlowOptionExpirationIso } from "../features/platform/flowOptionChartIdentity";
 import {
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
@@ -1572,7 +1573,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
                 gap: sp(8),
                 border: "none",
                 background: T.bg2,
-                borderRadius: dim(8),
+                borderRadius: dim(RADII.md),
                 padding: sp("8px 10px"),
                 fontFamily: T.sans,
                 fontSize: fs(9),
@@ -3544,7 +3545,7 @@ export const TradeScreen = ({
   const tradeMobileTabButtonStyle = (active) => ({
     minHeight: dim(40),
     border: `1px solid ${active ? T.accent : T.border}`,
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     background: active ? `${T.accent}18` : T.bg1,
     color: active ? T.text : T.textSec,
     fontFamily: T.sans,
@@ -3556,7 +3557,7 @@ export const TradeScreen = ({
   const tradeMobileActionButtonStyle = {
     minHeight: dim(38),
     border: "none",
-    borderRadius: dim(4),
+    borderRadius: dim(RADII.xs),
     background: T.bg2,
     color: T.textSec,
     fontFamily: T.sans,
@@ -3833,7 +3834,7 @@ export const TradeScreen = ({
               border: `1px solid ${
                 automationContractMatches ? `${T.cyan}35` : `${T.amber}45`
               }`,
-              borderRadius: dim(6),
+              borderRadius: dim(RADII.sm),
               padding: sp("8px 10px"),
               display: "grid",
               gridTemplateColumns: "minmax(0, 1fr) auto",
@@ -3907,7 +3908,7 @@ export const TradeScreen = ({
               onClick={() => setAutomationContext(null)}
               style={{
                 padding: sp("6px 8px"),
-                borderRadius: dim(4),
+                borderRadius: dim(RADII.xs),
                 border: "none",
                 background: T.bg0,
                 color: T.textDim,

@@ -48,6 +48,7 @@ import {
 } from "../lib/formatters";
 import {
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
@@ -1128,7 +1129,7 @@ export const MarketScreen = ({
                 padding: sp("10px 12px"),
                 background: T.bg2,
                 border: "none",
-                borderRadius: dim(10),
+                borderRadius: dim(RADII.md),
               }}
             >
               <span style={{ color: marketPulseItems[0].tone }}>▸</span>{" "}

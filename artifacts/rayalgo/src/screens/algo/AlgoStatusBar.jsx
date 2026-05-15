@@ -1,4 +1,4 @@
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { Badge } from "../../components/platform/primitives.jsx";
 import { PulseDot } from "./PulseDot.jsx";
 
@@ -8,7 +8,7 @@ const compactButton = ({
   disabled = false,
 } = {}) => ({
   padding: sp("5px 9px"),
-  borderRadius: dim(4),
+  borderRadius: dim(RADII.xs),
   border: `1px solid ${active ? color : T.border}`,
   background: active ? `${color}18` : T.bg0,
   color: active ? T.text : T.textSec,
@@ -65,7 +65,7 @@ export const AlgoStatusBar = ({
       style={{
         background: T.bg2,
         border: "none",
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp(narrow ? "6px 8px" : "9px 12px"),
         display: "flex",
         flexDirection: "column",
@@ -108,7 +108,7 @@ export const AlgoStatusBar = ({
             style={{
               background: T.bg3,
               border: "none",
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               color: T.text,
               padding: sp("4px 8px"),
               fontFamily: T.sans,
@@ -130,7 +130,7 @@ export const AlgoStatusBar = ({
               fontFamily: T.sans,
               color: T.textDim,
               border: `1px dashed ${T.border}`,
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               padding: sp("3px 7px"),
             }}
           >
