@@ -1,7 +1,7 @@
 import { EMPTY_PREMIUM_FLOW_SUMMARY, resolvePremiumFlowDisplayState } from "../platform/premiumFlowIndicator";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -255,7 +255,7 @@ export const MiniChartPremiumFlowIndicator = ({
           display: "flex",
           height: dense ? 5 : 6,
           background: T.bg0,
-          borderRadius: 0,
+          borderRadius: RADII.none,
           overflow: "hidden",
         }}
       >

@@ -1,4 +1,6 @@
 import { useMemo, type CSSProperties, type ReactNode } from "react";
+// @ts-expect-error JSX module imported into TypeScript context
+import { RADII, T } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartSurface,
   type ChartViewportSnapshot,
@@ -312,7 +314,7 @@ export const ResearchChartFrame = ({
       aria-label={signalActive ? frameSignalState?.label : undefined}
       style={{
         background: theme.bg2,
-        borderRadius: 10,
+        borderRadius: RADII.md,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -671,7 +673,7 @@ const barButtonStyle = ({
   minWidth: dense ? 20 : 28,
   padding: dense ? "0 4px" : "0 10px",
   border: "none",
-  borderRadius: 0,
+  borderRadius: RADII.none,
   background: active ? palette.hover : "transparent",
   color: disabled
     ? withAlpha(theme.textMuted, "75")
@@ -710,7 +712,7 @@ const railButtonStyle = ({
     justifyContent: "center",
     background: active ? palette.hover : "transparent",
     border: "none",
-    borderRadius: 0,
+    borderRadius: RADII.none,
     color: disabled
       ? withAlpha(theme.textMuted, "75")
       : active
@@ -738,7 +740,7 @@ const legendChipStyle = ({
   alignItems: "center",
   gap: 5,
   padding: dense ? "1px 3px" : "2px 6px",
-  borderRadius: 0,
+  borderRadius: RADII.none,
   background: palette.chipBg,
   border: `1px solid ${palette.chipBorder}`,
   boxShadow: palette.shadow,
@@ -769,7 +771,7 @@ const menuContentStyle = (
     "--chart-menu-font": theme.display || FONT_CSS_VAR.sans,
     minWidth,
     padding: 6,
-    borderRadius: 6,
+    borderRadius: RADII.sm,
     border: `1px solid ${withAlpha(theme.border, "d9")}`,
     background: palette.panel,
     color: theme.text,
@@ -779,7 +781,7 @@ const menuContentStyle = (
   } as CSSProperties);
 
 const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
-  borderRadius: 4,
+  borderRadius: RADII.xs,
   color: theme.text,
   fontFamily: theme.display || FONT_CSS_VAR.sans,
   fontSize: TYPE_CSS_VAR.bodyStrong,
@@ -1188,7 +1190,7 @@ export const ResearchChartWidgetHeader = ({
                 width: dense ? 380 : 430,
                 maxWidth: "calc(100vw - 24px)",
                 padding: 0,
-                borderRadius: 0,
+                borderRadius: RADII.none,
                 border: "none",
                 background: "transparent",
                 boxShadow: "none",
@@ -1742,9 +1744,9 @@ export const ResearchChartWidgetFooter = ({
     width: wide ? (dense ? 22 : 26) : dense ? 16 : 20,
     height: scaleButtonHeight,
     background: active ? theme.accent || theme.text : "transparent",
-    color: active ? "#fff" : theme.textDim || theme.textMuted,
+    color: active ? T.onAccent : theme.textDim || theme.textMuted,
     border: "none",
-    borderRadius: 0,
+    borderRadius: RADII.none,
     cursor: "pointer",
     fontFamily: theme.mono,
     fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
@@ -1856,7 +1858,7 @@ export const ResearchChartWidgetFooter = ({
             gap: 1,
             background: palette.panel,
             border: `1px solid ${theme.border}`,
-            borderRadius: 0,
+            borderRadius: RADII.none,
             boxSizing: "border-box",
             padding: 0,
             pointerEvents: "auto",
@@ -1882,7 +1884,7 @@ export const ResearchChartWidgetFooter = ({
             gap: 1,
             background: palette.panel,
             border: `1px solid ${theme.border}`,
-            borderRadius: 0,
+            borderRadius: RADII.none,
             boxSizing: "border-box",
             padding: 0,
             fontFamily: theme.mono,

@@ -708,7 +708,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           style={{
             padding: sp("5px 10px"),
             background: T.accent,
-            color: "#fff",
+            color: T.onAccent,
             border: "none",
             borderRadius: dim(4),
             cursor: "pointer",

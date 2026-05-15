@@ -22,6 +22,7 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import {
+  RADII,
   T,
   dim,
   fs,
@@ -380,7 +381,7 @@ const MarketIconToolButton = ({
       color: active ? tone : T.textDim,
       cursor: disabled ? "wait" : "pointer",
       opacity: disabled ? 0.78 : 1,
-      borderRadius: 0,
+      borderRadius: RADII.none,
       padding: 0,
     }}
   >
@@ -1005,7 +1006,7 @@ export const MarketActivityPanel = ({
                   fontSize: fs(8),
                   fontWeight: 400,
                   padding: sp("6px 5px"),
-                  borderRadius: 0,
+                  borderRadius: RADII.none,
                   outline: "none",
                 }}
               >
@@ -1085,7 +1086,7 @@ export const MarketActivityPanel = ({
                   fontSize: fs(8),
                   fontWeight: 400,
                   padding: sp("6px 5px"),
-                  borderRadius: 0,
+                  borderRadius: RADII.none,
                   outline: "none",
                 }}
               >
@@ -1115,7 +1116,7 @@ export const MarketActivityPanel = ({
                     border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}40`,
                     background: `${thresholdMatches ? T.textDim : T.amber}12`,
                     padding: sp("6px 5px"),
-                    borderRadius: 0,
+                    borderRadius: RADII.none,
                     whiteSpace: "nowrap",
                     textAlign: "center",
                   }}

@@ -126,7 +126,7 @@ const panelStyle = (theme: WidgetTheme): CSSProperties => ({
   overflowY: "auto",
   zIndex: 1000,
   pointerEvents: "auto",
-  borderRadius: 0,
+  borderRadius: RADII.none,
   border: `1px solid ${theme.border}`,
   background: theme.bg4,
   color: theme.text,
@@ -243,7 +243,7 @@ const rowHelperStyle = (theme: WidgetTheme): CSSProperties => ({
 
 const inputStyle = (theme: WidgetTheme): CSSProperties => ({
   width: "100%",
-  borderRadius: 0,
+  borderRadius: RADII.none,
   border: `1px solid ${theme.border}`,
   background: theme.bg3,
   color: theme.text,

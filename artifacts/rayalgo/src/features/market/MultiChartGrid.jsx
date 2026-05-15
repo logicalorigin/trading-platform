@@ -54,7 +54,7 @@ import {
 import { MiniChartCell } from "./MiniChartCell.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { _initialState, persistState } from "../../lib/workspaceState";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { Card } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -1178,7 +1178,7 @@ export const MultiChartGrid = ({
               background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
               color: gridScaleResetDisabled ? T.textMuted : T.text,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: gridScaleResetDisabled ? "default" : "pointer",
               letterSpacing: "0.04em",
               opacity: gridScaleResetDisabled ? 0.55 : 1,
@@ -1198,7 +1198,7 @@ export const MultiChartGrid = ({
               background: "rgba(255,255,255,0.08)",
               color: T.text,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1233,9 +1233,9 @@ export const MultiChartGrid = ({
               fontFamily: T.sans,
               fontWeight: 400,
               background: syncTimeframes ? T.accent : T.bg3,
-              color: syncTimeframes ? "#fff" : T.textDim,
+              color: syncTimeframes ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1252,9 +1252,9 @@ export const MultiChartGrid = ({
               fontFamily: T.sans,
               fontWeight: 400,
               background: syncCrosshair ? T.accent : T.bg3,
-              color: syncCrosshair ? "#fff" : T.textDim,
+              color: syncCrosshair ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1267,7 +1267,7 @@ export const MultiChartGrid = ({
               gap: sp(2),
               padding: sp(denseGrid ? 1 : 2),
               background: T.bg3,
-              borderRadius: 0,
+              borderRadius: RADII.none,
             }}
           >
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
@@ -1280,9 +1280,9 @@ export const MultiChartGrid = ({
                   fontFamily: T.sans,
                   fontWeight: 400,
                   background: layout === key ? T.accent : "transparent",
-                  color: layout === key ? "#fff" : T.textDim,
+                  color: layout === key ? T.onAccent : T.textDim,
                   border: "none",
-                  borderRadius: 0,
+                  borderRadius: RADII.none,
                   cursor: "pointer",
                   letterSpacing: "0.04em",
                 }}
@@ -1600,7 +1600,7 @@ export const MultiChartGrid = ({
                       height: intersectionHandleSize,
                       padding: 0,
                       border: "none",
-                      borderRadius: 999,
+                      borderRadius: RADII.pill,
                       background: "transparent",
                       cursor: "nwse-resize",
                       pointerEvents: "auto",
@@ -1612,7 +1612,7 @@ export const MultiChartGrid = ({
                       style={{
                         position: "absolute",
                         inset: 0,
-                        borderRadius: 999,
+                        borderRadius: RADII.pill,
                         background: isActive
                           ? T.accent
                           : isHovered

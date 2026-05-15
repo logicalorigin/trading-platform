@@ -2757,7 +2757,7 @@ export const TradeOrderTicket = ({
             background: primarySubmitDisabled ? T.bg3 : primarySubmitColor,
             border: "none",
             borderRadius: dim(4),
-            color: primarySubmitDisabled ? T.textDim : "#fff",
+            color: primarySubmitDisabled ? T.textDim : T.onAccent,
             fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,
             fontWeight: 400,

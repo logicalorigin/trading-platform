@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import type { PineScriptRecord } from "@workspace/api-client-react";
+// @ts-expect-error JSX module imported into TypeScript context
+import { RADII } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartFrame,
   ResearchChartWidgetFooter,
@@ -56,7 +58,7 @@ const THEME = {
 
 const BUTTON_BASE = {
   padding: "4px 9px",
-  borderRadius: 4,
+  borderRadius: RADII.xs,
   border: `1px solid ${THEME.border}`,
   background: THEME.bg3,
   color: THEME.textDim,
@@ -211,7 +213,7 @@ const buildReferenceCard = ({
     style={{
       background: THEME.bg2,
       border: `1px solid ${THEME.border}`,
-      borderRadius: 6,
+      borderRadius: RADII.sm,
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",
@@ -445,7 +447,7 @@ export const ChartParityLab = () => {
           style={{
             background: THEME.bg1,
             border: `1px solid ${THEME.border}`,
-            borderRadius: 8,
+            borderRadius: RADII.md,
             padding: "12px 14px",
             display: "flex",
             flexDirection: "column",
@@ -742,7 +744,7 @@ export const ChartParityLab = () => {
             style={{
               background: THEME.bg1,
               border: `1px solid ${THEME.border}`,
-              borderRadius: 8,
+              borderRadius: RADII.md,
               padding: "12px 14px",
             }}
           >
@@ -760,7 +762,7 @@ export const ChartParityLab = () => {
             style={{
               background: THEME.bg1,
               border: `1px solid ${THEME.border}`,
-              borderRadius: 8,
+              borderRadius: RADII.md,
               padding: "12px 14px",
             }}
           >
@@ -786,7 +788,7 @@ export const ChartParityLab = () => {
                       padding: "5px 7px",
                       border: `1px solid ${THEME.border}`,
                       background: THEME.bg2,
-                      borderRadius: 4,
+                      borderRadius: RADII.xs,
                       fontFamily: THEME.mono,
                       fontSize: TYPE_CSS_VAR.body,
                     }}

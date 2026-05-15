@@ -5,6 +5,7 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { isFiniteNumber } from "../../lib/formatters";
 import {
+  RADII,
   T,
   dim,
   fs,
@@ -382,7 +383,7 @@ export const TradeStrategyGreeksPanel = ({
         />
       </div>
       <div
-        style={{ padding: sp("4px 6px"), background: T.bg3, borderRadius: 3 }}
+        style={{ padding: sp("4px 6px"), background: T.bg3, borderRadius: RADII.xs }}
       >
         <div
           style={{

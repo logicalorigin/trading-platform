@@ -186,7 +186,7 @@ export const BrokerActionConfirmDialog = ({
               background: confirmTone,
               border: "none",
               borderRadius: dim(5),
-              color: "#fff",
+              color: T.onAccent,
               fontSize: fs(10),
               fontFamily: T.sans,
               fontWeight: 400,
