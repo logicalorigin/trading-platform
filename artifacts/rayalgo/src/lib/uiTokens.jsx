@@ -29,6 +29,10 @@ export const THEMES = {
     purple: "#A189CF",
     cyan: "#6FB5C2",
     pink: "#D9849B",
+    onAccent: "#FFFFFF",
+    pulseLive: "#4FB286",
+    pulseAlert: "#D9A864",
+    pulseLoss: "#D77470",
   },
   light: {
     bg0: "#FAFAF7",
@@ -58,6 +62,10 @@ export const THEMES = {
     purple: "#6B4E8E",
     cyan: "#2D7A8B",
     pink: "#B8567A",
+    onAccent: "#FFFFFF",
+    pulseLive: "#0F6E51",
+    pulseAlert: "#C28526",
+    pulseLoss: "#B5403B",
   },
 };
 
@@ -76,6 +84,7 @@ export const TYPOGRAPHY = {
 
 export const FONT_WEIGHTS = {
   regular: 400,
+  medium: 500,
   label: 600,
   emphasis: 700,
 };

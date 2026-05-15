@@ -103,7 +103,7 @@ const BloombergLiveDockLauncher = () => {
             borderRadius: "999px",
             background: "rgba(8, 11, 18, 0.82)",
             boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
-            color: "#f8fafc",
+            color: T.onAccent,
             cursor: "pointer",
             backdropFilter: "blur(18px)",
           }}
@@ -271,7 +271,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
                 justifyContent: "center",
                 borderRadius: dim(999),
                 background: alertColor,
-                color: "#fff",
+                color: T.onAccent,
                 fontFamily: T.sans,
                 fontSize: fs(7),
               }}
@@ -630,7 +630,7 @@ export const PlatformShell = ({
                         padding: sp("0px 4px"),
                         borderRadius: 0,
                         background: alertColor,
-                        color: "#fff",
+                        color: T.onAccent,
                         fontSize: fs(8),
                         fontWeight: 400,
                         fontFamily: T.sans,

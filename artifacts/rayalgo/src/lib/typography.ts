@@ -25,6 +25,7 @@ export const TYPE_PX = {
 
 export const FONT_WEIGHT = {
   regular: 400,
+  medium: 500,
   label: 600,
   emphasis: 700,
 } as const;

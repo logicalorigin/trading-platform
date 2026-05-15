@@ -13,7 +13,7 @@ const resolveVariant = (variant, color) => {
     case "primary":
       return {
         background: accent,
-        color: "#FFFFFF",
+        color: T.onAccent,
         hoverBackground: `${accent}E6`,
         border: "none",
         boxShadow: ELEVATION.sm,
@@ -21,7 +21,7 @@ const resolveVariant = (variant, color) => {
     case "danger":
       return {
         background: T.red,
-        color: "#FFFFFF",
+        color: T.onAccent,
         hoverBackground: `${T.red}E6`,
         border: "none",
         boxShadow: ELEVATION.sm,

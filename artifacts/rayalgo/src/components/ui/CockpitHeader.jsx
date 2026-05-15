@@ -1,31 +1,5 @@
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-
-const PULSE_CSS = `
-@keyframes rayalgoCockpitPulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--ra-cockpit-pulse, currentColor); }
-  50%      { box-shadow: 0 0 0 5px transparent; }
-}
-.ra-cockpit-pulse { animation: rayalgoCockpitPulse 2.4s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .ra-cockpit-pulse { animation: none; }
-}
-`;
-
-const PulseDot = ({ tone, animated }) => (
-  <span
-    aria-hidden="true"
-    className={animated ? "ra-cockpit-pulse" : undefined}
-    style={{
-      ["--ra-cockpit-pulse"]: `${tone}40`,
-      display: "inline-block",
-      width: dim(6),
-      height: dim(6),
-      borderRadius: "50%",
-      background: tone,
-      flexShrink: 0,
-    }}
-  />
-);
+import { T, sp, textSize } from "../../lib/uiTokens.jsx";
+import { PulseDot } from "./PulseDot.jsx";
 
 /**
  * CockpitHeader — unified header for cockpit screens (Flow, Market, etc).
@@ -67,7 +41,6 @@ export const CockpitHeader = ({
         minWidth: 0,
       }}
     >
-      <style>{PULSE_CSS}</style>
       <div
         style={{
           display: "flex",
@@ -102,7 +75,11 @@ export const CockpitHeader = ({
             }}
           >
             {pulse ? (
-              <PulseDot tone={pulseTone} animated={pulse.state === "live"} />
+              <PulseDot
+                color={pulseTone}
+                active={pulse.state === "live"}
+                label={pulse?.label}
+              />
             ) : null}
             <h1
               title={pulse?.label}

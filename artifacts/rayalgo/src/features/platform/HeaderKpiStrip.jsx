@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   formatQuotePrice,
   formatSignedPercent,
@@ -115,7 +115,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
         background: "transparent",
         border: "none",
         borderRight: `1px solid ${T.borderLight}`,
-        borderRadius: 0,
+        borderRadius: RADII.none,
         color: T.text,
         cursor: "pointer",
         transition: "color 0.18s ease",

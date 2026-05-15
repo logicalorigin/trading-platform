@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
@@ -986,7 +986,7 @@ export const HeaderStatusCluster = ({
     padding: sp("3px 7px"),
     background: T.bg1,
     border: "none",
-    borderRadius: 0,
+    borderRadius: RADII.none,
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
   const microLabelStyle = {
@@ -1473,7 +1473,7 @@ export const HeaderStatusCluster = ({
           padding: 0,
           background: T.bg1,
           border: "none",
-          borderRadius: 0,
+          borderRadius: RADII.none,
           color: T.textSec,
           cursor: "pointer",
           fontSize: fs(12),

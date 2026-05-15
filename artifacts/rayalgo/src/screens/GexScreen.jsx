@@ -43,7 +43,7 @@ import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 import { Button } from "../components/ui/Button.jsx";
 
@@ -645,8 +645,8 @@ const HeatmapCard = ({ rows, spot }) => {
     if (!value || !model.maxAbs) return T.bg0;
     const alpha = Math.min(0.85, Math.max(0.08, Math.abs(value) / model.maxAbs));
     return value > 0
-      ? `rgba(16,185,129,${alpha})`
-      : `rgba(239,68,68,${alpha})`;
+      ? `rgba(79,178,134,${alpha})`
+      : `rgba(215,116,112,${alpha})`;
   };
 
   return (
@@ -867,10 +867,10 @@ const SqueezeCard = ({ squeeze, source }) => {
           }}
         >
           <div style={{ display: "flex", alignItems: "baseline", gap: sp(5) }}>
-            <span style={{ color, fontSize: fs(14), fontWeight: 700, fontFamily: T.display }}>
+            <span style={{ color, fontSize: fs(14), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.display }}>
               {directionLabel} Squeeze:
             </span>
-            <span style={{ color, fontSize: fs(14), fontWeight: 700, fontFamily: T.display }}>
+            <span style={{ color, fontSize: fs(14), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.display }}>
               {verdictLabel || "—"}
             </span>
             <span style={{ color: T.textDim, fontSize: textSize("caption") }}>

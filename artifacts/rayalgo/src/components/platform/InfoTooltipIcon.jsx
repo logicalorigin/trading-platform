@@ -1,6 +1,6 @@
 import { Info } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const formatTooltipBody = (entry) => {
   if (!entry) return null;
@@ -12,7 +12,7 @@ const formatTooltipBody = (entry) => {
           style={{
             color: T.text,
             fontFamily: T.display,
-            fontWeight: 700,
+            fontWeight: FONT_WEIGHTS.emphasis,
             fontSize: textSize("bodyStrong"),
           }}
         >

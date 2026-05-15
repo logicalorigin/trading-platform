@@ -12,6 +12,8 @@ import {
   type RayReplicaSessionOption,
 } from "./rayReplicaPineAdapter";
 import { TYPE_CSS_VAR } from "../../lib/typography";
+// @ts-expect-error JSX module imported into TypeScript context
+import { RADII } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -104,7 +106,7 @@ const triggerStyle = (
   disabled: boolean,
 ): CSSProperties => ({
   height: dense ? 22 : 26,
-  borderRadius: 6,
+  borderRadius: RADII.sm,
   border: `1px solid ${disabled ? theme.border : theme.accent || theme.border}`,
   background: disabled ? theme.bg3 : `${theme.bg4}e6`,
   color: disabled ? theme.textMuted : theme.text,

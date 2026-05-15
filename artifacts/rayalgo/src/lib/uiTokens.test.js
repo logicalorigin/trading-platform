@@ -43,6 +43,10 @@ const REQUIRED_PALETTE_KEYS = [
   "purple",
   "cyan",
   "pink",
+  "onAccent",
+  "pulseLive",
+  "pulseAlert",
+  "pulseLoss",
 ];
 
 test("THEMES.dark and THEMES.light expose the full warm palette", () => {
@@ -64,6 +68,15 @@ test("redesign brand accent is the terracotta family on both themes", () => {
   assert.equal(THEMES.light.accent, "#D97757");
   assert.equal(THEMES.dark.borderFocus, "#E08F76");
   assert.equal(THEMES.light.borderFocus, "#D97757");
+});
+
+test("pulse-state aliases mirror green/amber/red on both themes", () => {
+  assert.equal(THEMES.dark.pulseLive, THEMES.dark.green);
+  assert.equal(THEMES.dark.pulseAlert, THEMES.dark.amber);
+  assert.equal(THEMES.dark.pulseLoss, THEMES.dark.red);
+  assert.equal(THEMES.light.pulseLive, THEMES.light.green);
+  assert.equal(THEMES.light.pulseAlert, THEMES.light.amber);
+  assert.equal(THEMES.light.pulseLoss, THEMES.light.red);
 });
 
 test("TYPOGRAPHY_SIZES exposes the public-style display roles", () => {

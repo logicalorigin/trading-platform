@@ -1,6 +1,6 @@
 import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { Badge } from "../../components/platform/primitives.jsx";
-import { PulseDot } from "./PulseDot.jsx";
+import { PulseDot } from "../../components/ui/PulseDot.jsx";
 
 const compactButton = ({
   active = false,

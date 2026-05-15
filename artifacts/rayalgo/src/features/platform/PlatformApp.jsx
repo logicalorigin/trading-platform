@@ -151,19 +151,19 @@ const FONT_CSS = `
 html,body,#root{width:100%;height:100%;overflow:hidden}
 body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
 ::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-thumb{background:#2a3348;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#3a4560}
+::-webkit-scrollbar-thumb{background:#2F2E35;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#3A3940}
 .ra-scrollbar-hidden{scrollbar-width:none;-ms-overflow-style:none}
 .ra-scrollbar-hidden::-webkit-scrollbar{display:none}
 ::-webkit-scrollbar-track{background:transparent}
 input[type=range]{accent-color:#E08F76}
 @keyframes toastSlideIn{from{opacity:0;transform:translateX(20px) scale(0.96)}to{opacity:1;transform:translateX(0) scale(1)}}
 @keyframes toastSlideOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(20px)}}
-@keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0.6)}50%{box-shadow:0 0 0 4px rgba(245,158,11,0)}}
-@keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}
+@keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 rgba(217,168,100,0.6)}50%{box-shadow:0 0 0 4px rgba(217,168,100,0)}}
+@keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(215,116,112,0.6)}50%{box-shadow:0 0 0 4px rgba(215,116,112,0)}}
 @keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
 @keyframes premiumFlowPulse{0%,100%{opacity:0.38;transform:scale(0.82)}50%{opacity:1;transform:scale(1)}}
-@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0.28)}50%{box-shadow:0 0 0 3px rgba(245,158,11,0)}}
+@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 rgba(217,168,100,0.28)}50%{box-shadow:0 0 0 3px rgba(217,168,100,0)}}
 @keyframes headerBroadcastScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-ibkr-wave] *{animation:none!important}}

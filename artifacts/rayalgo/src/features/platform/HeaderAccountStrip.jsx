@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -57,7 +57,7 @@ export const HeaderAccountStrip = ({
     padding: sp("3px 7px"),
     background: T.bg1,
     border: `1px solid ${T.border}`,
-    borderRadius: 0,
+    borderRadius: RADII.none,
     display: "flex",
     alignItems: "center",
     gap: sp(8),

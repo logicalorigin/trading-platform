@@ -29,8 +29,8 @@ const FONT_CSS = `
 html,body,#root{width:100%;height:100%;overflow:hidden}
 body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
 ::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-thumb{background:#2a3348;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#3a4560}
+::-webkit-scrollbar-thumb{background:#2F2E35;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#3A3940}
 ::-webkit-scrollbar-track{background:transparent}
 input[type=range]{accent-color:#E08F76}
 `;

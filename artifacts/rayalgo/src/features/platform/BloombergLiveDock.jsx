@@ -283,7 +283,7 @@ const RoundIconButton = ({
             : prominent
               ? "rgba(8, 11, 18, 0.82)"
               : "rgba(8, 11, 18, 0.62)",
-        color: "#f8fafc",
+        color: T.onAccent,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.45 : 1,
         backdropFilter: "blur(18px)",
@@ -392,7 +392,7 @@ const AudioControlButton = ({
           background: hovered
             ? "rgba(16, 20, 30, 0.78)"
             : "rgba(8, 11, 18, 0.62)",
-          color: "#f8fafc",
+          color: T.onAccent,
           cursor: "pointer",
           opacity: 1,
           backdropFilter: "blur(18px)",
@@ -460,7 +460,7 @@ const AudioControlButton = ({
             fontSize: fs(7),
             fontFamily: T.sans,
             fontWeight: 400,
-            color: muted ? T.amber : "#f8fafc",
+            color: muted ? T.amber : T.onAccent,
             minWidth: dim(24),
             textAlign: "center",
           }}
@@ -562,7 +562,7 @@ const MenuActionButton = ({
 }) => {
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
-  const activeColor = accent ? T.accent : "#f8fafc";
+  const activeColor = accent ? T.accent : T.onAccent;
   const idleColor = disabled ? T.textMuted : accent ? T.accent : T.textSec;
   const foregroundColor = active || hovered ? activeColor : idleColor;
 
@@ -2447,7 +2447,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             borderRadius: "999px",
             background: "rgba(8, 11, 18, 0.82)",
             boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
-            color: "#f8fafc",
+            color: T.onAccent,
             cursor: "pointer",
             backdropFilter: "blur(18px)",
           }}
@@ -2598,13 +2598,13 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       backdropFilter: "blur(10px)",
                     }}
                   >
-                    <Tv size={dim(12)} color="#f8fafc" />
+                    <Tv size={dim(12)} color={T.onAccent} />
                     <span
                       style={{
                         fontSize: fs(8),
                         fontFamily: T.sans,
                         fontWeight: 400,
-                        color: "#f8fafc",
+                        color: T.onAccent,
                       }}
                     >
                       Bloomberg
@@ -2800,7 +2800,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   onChange={(event) => handleScrubToValue(Number(event.target.value))}
                   style={{
                     width: "100%",
-                    accentColor: "#f8fafc",
+                    accentColor: T.onAccent,
                     cursor: hasBufferedWindow ? "pointer" : "default",
                   }}
                 />
@@ -2861,7 +2861,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         background: atLiveEdge
                           ? "rgba(16, 185, 129, 0.22)"
                           : "rgba(8, 11, 18, 0.62)",
-                        color: atLiveEdge ? T.green : "#f8fafc",
+                        color: atLiveEdge ? T.green : T.onAccent,
                         fontSize: fs(7),
                         fontFamily: T.sans,
                         fontWeight: 400,
@@ -3122,7 +3122,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: sp(5),
-                color: "#f8fafc",
+                color: T.onAccent,
                 fontWeight: 400,
               }}
             >

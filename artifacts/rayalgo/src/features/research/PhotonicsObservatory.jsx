@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { AI_VERTICALS, BRAND, FMP_REVERSE } from "./data/researchSymbols";
+import { FONT_WEIGHTS, RADII, T, fs, sp } from "../../lib/uiTokens.jsx";
 import {
   getResearchRuntimeData,
   prefetchResearchThemeDataset,
@@ -64,12 +65,11 @@ function applyResearchRuntimeData(data) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 // ───── SHARED STYLE CONSTANTS (module-level; used across multiple components) ─────
-const FONT_SANS = "var(--ra-font-sans)";
 const FALLBACK_THEME = {
   id: "ai",
   title: "Platform Research",
   subtitle: "Hydrating Research Dataset",
-  accent: "#CDA24E",
+  accent: T.accent,
   icon: "◆",
   verticals: AI_VERTICALS,
   macro: [],
@@ -78,30 +78,30 @@ const FALLBACK_THEME = {
 
 // Standard "card" container used by MarketSummary rows, Detail subsections, etc.
 const STYLE_CARD = {
-  background: "#fff",
+  background: T.bg1,
   border: "1px solid rgba(0,0,0,.06)",
-  borderRadius: 10,
+  borderRadius: RADII.md,
   boxShadow: "0 1px 3px rgba(0,0,0,.03)",
 };
 
 // Uppercase section label: "Price history", "Supply chain", etc.
 const STYLE_LABEL = {
-  fontSize: 11,
-  fontWeight: 400,
-  color: "#aaa",
+  fontSize: fs(11),
+  fontWeight: FONT_WEIGHTS.regular,
+  color: T.textMuted,
   letterSpacing: 1.5,
   textTransform: "uppercase",
-  marginBottom: 5,
+  marginBottom: sp(5),
 };
 
 // Dimmer variant used in MarketSummary row headers
-const STYLE_LABEL_DIM = { ...STYLE_LABEL, color: "#999", marginBottom: 6 };
+const STYLE_LABEL_DIM = { ...STYLE_LABEL, color: T.textDim, marginBottom: sp(6) };
 
 // Visual divider between Detail sections
 const STYLE_SECTION = {
   borderTop: "1px solid rgba(0,0,0,.06)",
-  paddingTop: 10,
-  marginTop: 10,
+  paddingTop: sp(10),
+  marginTop: sp(10),
 };
 
 // Deprecated aliases kept so scatter-reference sections that haven't been refactored yet still work.
@@ -374,7 +374,7 @@ function Sparkline({ values, width = 52, height = 16 }) {
     `${(i / (values.length - 1)) * width},${height - 2 - ((v - mn) / rng) * (height - 4)}`
   ).join(" ");
   const trend = finite[finite.length - 1] > finite[0];
-  const color = trend ? "#1a8a5c" : "#c44040";
+  const color = trend ? T.green : T.red;
   return (
     <svg width={width} height={height} style={{ display: "inline-block", verticalAlign: "middle" }}>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -385,17 +385,17 @@ function Sparkline({ values, width = 52, height = 16 }) {
 /* ════════════════════════ RANGE BAR (for day/52wk ranges) ════════════════════════ */
 function RangeBar({ low, high, current, color }) {
   if (![low, high, current].every(isFiniteNumber) || high <= low) {
-    return <div style={{ fontSize: 10, color: "#aaa" }}>Live range unavailable</div>;
+    return <div style={{ fontSize: fs(10), color: T.textMuted }}>Live range unavailable</div>;
   }
   const pct = ((current - low) / (high - low || 1)) * 100;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10 }}>
-      <span style={{ color: "#888", minWidth: 50, textAlign: "right" }}>${low.toFixed(2)}</span>
-      <div style={{ flex: 1, height: 4, background: "rgba(0,0,0,.06)", borderRadius: 2, position: "relative" }}>
-        <div style={{ position: "absolute", left: 0, top: 0, height: 4, width: pct + "%", background: color, borderRadius: 2, opacity: 0.5 }} />
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs(10) }}>
+      <span style={{ color: T.textDim, minWidth: 50, textAlign: "right" }}>${low.toFixed(2)}</span>
+      <div style={{ flex: 1, height: 4, background: "rgba(0,0,0,.06)", borderRadius: RADII.xs, position: "relative" }}>
+        <div style={{ position: "absolute", left: 0, top: 0, height: 4, width: pct + "%", background: color, borderRadius: RADII.xs, opacity: 0.5 }} />
         <div style={{ position: "absolute", left: `calc(${pct}% - 4px)`, top: -2, width: 8, height: 8, borderRadius: "50%", background: color, border: "1.5px solid #ffffff" }} />
       </div>
-      <span style={{ color: "#888", minWidth: 50 }}>${high.toFixed(2)}</span>
+      <span style={{ color: T.textDim, minWidth: 50 }}>${high.toFixed(2)}</span>
     </div>
   );
 }
@@ -488,23 +488,23 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
       {hasAdj && (
         <div style={{
           background: "rgba(205,162,78,.08)", border: "1px solid rgba(205,162,78,.2)",
-          borderRadius: 6, padding: "6px 10px", marginBottom: 10, fontSize: 12, color: "#b8860b", display: "flex", alignItems: "center", gap: 6,
+          borderRadius: RADII.sm, padding: sp("6px 10px"), marginBottom: sp(10), fontSize: fs(12), color: T.amber, display: "flex", alignItems: "center", gap: 6,
         }}>
-          <span style={{ fontSize: 12 }}>!</span>
+          <span style={{ fontSize: fs(12) }}>!</span>
 	          Scenario adjustment applied: {scenarioAdj.revPct ? "Rev " + (scenarioAdj.revPct > 0 ? "+" : "") + scenarioAdj.revPct + "%" : ""} {scenarioAdj.gmAdj ? "GM " + (scenarioAdj.gmAdj > 0 ? "+" : "") + scenarioAdj.gmAdj + "bps" : ""}
-	          <span style={{ fontSize: 12, marginLeft: "auto", color: "#777" }}>{baseFD.years[lastValueIndex] || "Latest"} column adjusted</span>
+	          <span style={{ fontSize: fs(12), marginLeft: "auto", color: T.textDim }}>{baseFD.years[lastValueIndex] || "Latest"} column adjusted</span>
 	        </div>
 	      )}
 
       {/* Sub-tabs + Period toggle */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, borderBottom: "1px solid rgba(0,0,0,.035)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8), borderBottom: "1px solid rgba(0,0,0,.035)" }}>
         <div style={{ display: "flex", gap: 0 }}>
           {[["is", "Income Statement"], ["bs", "Balance Sheet"], ["cf", "Cash Flow"]].map(([id, lb]) => (
             <button key={id} onClick={() => setSubTab(id)} style={{
               background: "none", border: "none",
               borderBottom: subTab === id ? "2px solid " + color : "2px solid transparent",
-              padding: "5px 12px", color: subTab === id ? color : "#555",
-              fontSize: 10, fontWeight: 400, cursor: "pointer",
+              padding: sp("5px 12px"), color: subTab === id ? color : T.textSec,
+              fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer",
             }}>{lb}</button>
           ))}
         </div>
@@ -518,15 +518,15 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: "5px 6px", fontSize: 11, color: "#aaa", letterSpacing: 1, minWidth: 160 }}>
+              <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: T.textMuted, letterSpacing: 1, minWidth: 160 }}>
                 Item
               </th>
               {activeFD.years.map(y => (
-                <th key={y} style={{ textAlign: "right", padding: "5px 8px", fontSize: 11, color: y.includes("E") ? color : "#555" }}>
+                <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : T.textSec }}>
                   {y}
                 </th>
               ))}
-              <th style={{ textAlign: "center", padding: "5px 4px", fontSize: 10, color: "#aaa", minWidth: 56 }}>
+              <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: T.textMuted, minWidth: 56 }}>
                 5-yr trend
               </th>
             </tr>
@@ -549,14 +549,14 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                   }}
                 >
                   <td style={{
-                    padding: "5px 6px 5px " + (10 + row.d * 18) + "px",
-                    fontSize: 11,
-                    color: row.bold ? "#222" : "#555",
-                    fontWeight: 400,
+                    padding: sp("5px 6px 5px ") + (10 + row.d * 18) + "px",
+                    fontSize: fs(11),
+                    color: row.bold ? T.text : T.textSec,
+                    fontWeight: FONT_WEIGHTS.regular,
                     whiteSpace: "nowrap",
                   }}>
                     {row.expandable && (
-                      <span style={{ display: "inline-block", width: 14, fontSize: 11, color: "#999", transition: "transform 0.15s" }}>
+                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: T.textDim, transition: "transform 0.15s" }}>
                         {expanded.has(row.k) ? "\u25BC" : "\u25B6"}
                       </span>
                     )}
@@ -565,14 +565,14 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                   </td>
                   {values.map((v, i) => (
                     <td key={i} style={{
-                      padding: "5px 8px", textAlign: "right", fontSize: 10,
-                      color: v < 0 ? "#c44040" : (isAdjusted && i === 4 ? "#b8860b" : "#444"),
-                      fontWeight: 400,
+                      padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10),
+                      color: v < 0 ? T.red : (isAdjusted && i === 4 ? T.amber : T.textSec),
+                      fontWeight: FONT_WEIGHTS.regular,
                     }}>
                       {isEPS ? (v < 0 ? "(" + Math.abs(v).toFixed(2) + ")" : v.toFixed(2)) : fmtFS(v)}
                     </td>
                   ))}
-                  <td style={{ padding: "5px 4px", textAlign: "center" }}>
+                  <td style={{ padding: sp("5px 4px"), textAlign: "center" }}>
                     <Sparkline values={values} />
                   </td>
                 </tr>
@@ -657,10 +657,10 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
     const committed = dcfInputs[field];
     const display = dragState[field] ?? committed;
     return (
-      <div style={{ marginBottom: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
-          <span style={{ fontSize: 10, color: "#888" }}>{label}</span>
-          <span style={{ fontSize: 10, color, fontWeight: 400 }}>{display?.toFixed(1)}{unit}</span>
+      <div style={{ marginBottom: sp(4) }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: sp(1) }}>
+          <span style={{ fontSize: fs(10), color: T.textDim }}>{label}</span>
+          <span style={{ fontSize: fs(10), color, fontWeight: FONT_WEIGHTS.regular }}>{display?.toFixed(1)}{unit}</span>
         </div>
         <input type="range" min={min} max={max} step={step} value={display || 0}
           onChange={e => setDragState(prev => ({ ...prev, [field]: parseFloat(e.target.value) }))}
@@ -687,11 +687,11 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
   return (
       <div>
         {/* DCF Model */}
-        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: 10, marginBottom: 10, boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
-          <div style={{ fontSize: 11, fontWeight: 400, color, marginBottom: 6, letterSpacing: 1 }}>
+        <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp(10), marginBottom: sp(10), boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
+          <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color, marginBottom: sp(6), letterSpacing: 1 }}>
             DISCOUNTED CASH FLOW MODEL
           </div>
-          <div style={{ fontSize: 10, color: "#888", marginBottom: 8, lineHeight: 1.5 }}>
+          <div style={{ fontSize: fs(10), color: T.textDim, marginBottom: sp(8), lineHeight: 1.5 }}>
             {liveBaseNotes.length
               ? `${liveBaseNotes.join(" · ")}. WACC and terminal growth remain model assumptions.`
               : "Base case currently falls back to the authored model assumptions for this company."}
@@ -701,87 +701,87 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
         <SliderRow label="Weighted Avg Cost of Capital" field="w" min={5} max={25} step={0.5} unit="%" />
         <SliderRow label="Terminal Growth Rate" field="tg" min={0} max={5} step={0.25} unit="%" />
 
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 6, marginTop: sp(8) }}>
           {[
-            ["DCF Intrinsic", dcfVal > 0 ? fmtPrice(dcfVal) : "NEGATIVE", dcfVal > 0 ? "#1a8a5c" : "#c44040"],
-            ["Current Price", fmtPrice(price), "#333"],
-            ["Implied Upside", upside != null ? (upside > 0 ? "+" : "") + upside.toFixed(0) + "%" : "\u2014", upside > 0 ? "#1a8a5c" : "#c44040"],
+            ["DCF Intrinsic", dcfVal > 0 ? fmtPrice(dcfVal) : "NEGATIVE", dcfVal > 0 ? T.green : T.red],
+            ["Current Price", fmtPrice(price), T.text],
+            ["Implied Upside", upside != null ? (upside > 0 ? "+" : "") + upside.toFixed(0) + "%" : "\u2014", upside > 0 ? T.green : T.red],
           ].map(([label, value, clr]) => (
-            <div key={label} style={{ flex: 1, background: "rgba(0,0,0,.01)", borderRadius: 6, padding: "4px 4px", textAlign: "center", border: "1px solid rgba(0,0,0,.04)" }}>
-              <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
-              <div style={{ fontSize: 14, fontWeight: 400, color: clr, marginTop: 1 }}>{value}</div>
+            <div key={label} style={{ flex: 1, background: "rgba(0,0,0,.01)", borderRadius: RADII.sm, padding: sp("4px 4px"), textAlign: "center", border: "1px solid rgba(0,0,0,.04)" }}>
+              <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
+              <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular, color: clr, marginTop: sp(1) }}>{value}</div>
             </div>
           ))}
         </div>
         <button onClick={() => setOv({})} style={{
-          marginTop: 5, width: "100%", background: "#fff", border: "1px solid rgba(0,0,0,.08)",
-          borderRadius: 4, padding: 3, color: "#999", fontSize: 11, cursor: "pointer",
+          marginTop: sp(5), width: "100%", background: T.bg1, border: "1px solid rgba(0,0,0,.08)",
+          borderRadius: RADII.xs, padding: sp(3), color: T.textDim, fontSize: fs(11), cursor: "pointer",
         }}>RESET TO BASE CASE</button>
       </div>
 
       {/* What-If Scenario Engine */}
-      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
-        <div style={{ fontSize: 10, fontWeight: 400, color, marginBottom: 8, letterSpacing: 1 }}>
+      <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp(14), boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
+        <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color, marginBottom: sp(8), letterSpacing: 1 }}>
           WHAT-IF SCENARIO ENGINE
         </div>
-        <div style={{ fontSize: 10, color: "#888", marginBottom: 5, lineHeight: 1.4 }}>
+        <div style={{ fontSize: fs(10), color: T.textDim, marginBottom: sp(5), lineHeight: 1.4 }}>
           This panel is reserved for a server-side scenario engine. The direct browser LLM call was removed so model credentials stay out of the client.
         </div>
         <textarea value={scen} onChange={e => setScen(e.target.value)}
           placeholder={"e.g. 'US imposes 50% tariff on all semiconductor imports from China'\nor '" + co.nm + "'s largest customer switches to a competitor'"}
           style={{
             width: "100%", background: "rgba(0,0,0,.035)", border: "1px solid rgba(0,0,0,.10)",
-            borderRadius: 5, padding: 7, color: "#444", fontSize: 11,
+            borderRadius: RADII.sm, padding: sp(7), color: T.textSec, fontSize: fs(11),
             resize: "vertical", minHeight: 42, boxSizing: "border-box", lineHeight: 1.5,
           }}
         />
         <button onClick={runScenario} disabled={loading || !scen.trim()} style={{
-          marginTop: 6, width: "100%", background: loading ? "#1a1a1a" : color, border: "none",
-          borderRadius: 5, padding: "5px 0", color: loading ? "#555" : "#fff",
-          fontSize: 11, fontWeight: 400, cursor: loading ? "wait" : "pointer", letterSpacing: 0.5,
+          marginTop: sp(6), width: "100%", background: loading ? T.text : color, border: "none",
+          borderRadius: RADII.sm, padding: sp("5px 0"), color: loading ? T.textSec : T.bg1,
+          fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: loading ? "wait" : "pointer", letterSpacing: 0.5,
         }}>
           {loading ? "CHECKING..." : "SCENARIO AI STATUS"}
         </button>
 
         {aiR && (
           <div style={{
-            marginTop: 6,
+            marginTop: sp(6),
             background: aiR.impact === "positive" ? "rgba(26,138,92,.08)" : aiR.impact === "negative" ? "rgba(196,64,64,.08)" : "rgba(205,162,78,.08)",
-            borderRadius: 8,
-            padding: 10,
+            borderRadius: RADII.md,
+            padding: sp(10),
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 5 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(5) }}>
               <span style={{
-                fontSize: 11, padding: "2px 6px", borderRadius: 4, fontWeight: 400, textTransform: "uppercase",
+                fontSize: fs(11), padding: sp("2px 6px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase",
                 background: aiR.impact === "positive" ? "rgba(72,200,156,.15)" : aiR.impact === "negative" ? "rgba(216,104,104,.15)" : "rgba(205,162,78,.15)",
-                color: aiR.impact === "positive" ? "#1a8a5c" : aiR.impact === "negative" ? "#c44040" : "#CDA24E",
+                color: aiR.impact === "positive" ? T.green : aiR.impact === "negative" ? T.red : T.accent,
               }}>
                 {aiR.impact || "unknown"}
               </span>
-              <span style={{ fontSize: 11, color: "#888" }}>
+              <span style={{ fontSize: fs(11), color: T.textDim }}>
                 Confidence: {aiR.confidence}
               </span>
             </div>
 
-            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: sp(8) }}>
               {[
                 ["Revenue Impact", aiR.revPct ? (aiR.revPct > 0 ? "+" : "") + aiR.revPct + "%" : aiR.revEffect || "\u2014"],
                 ["Margin Impact", aiR.gmBps ? (aiR.gmBps > 0 ? "+" : "") + aiR.gmBps + " bps" : "\u2014"],
                 ["Valuation", aiR.valPct || "\u2014"],
               ].map(([l, v]) => (
-                <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.01)", borderRadius: 4, padding: "3px 5px", border: "1px solid rgba(0,0,0,.04)" }}>
-                  <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1 }}>{l}</div>
-                  <div style={{ fontSize: 12, fontWeight: 400, color: "#333", marginTop: 2 }}>{v}</div>
+                <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.01)", borderRadius: RADII.xs, padding: sp("3px 5px"), border: "1px solid rgba(0,0,0,.04)" }}>
+                  <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{l}</div>
+                  <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: T.text, marginTop: sp(2) }}>{v}</div>
                 </div>
               ))}
             </div>
 
-            <div style={{ fontSize: 10.5, color: "#666", lineHeight: 1.6 }}>
+            <div style={{ fontSize: fs(10.5), color: T.textSec, lineHeight: 1.6 }}>
               {aiR.reasoning}
             </div>
 
             {(aiR.revPct || aiR.gmBps) && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#b8860b" }}>
+              <div style={{ marginTop: sp(8), fontSize: fs(11), color: T.amber }}>
                 \u2192 Adjustments applied to Financials tab (2026E column)
               </div>
             )}
@@ -790,9 +790,9 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
         {scenarioAdj && (scenarioAdj.revPct || scenarioAdj.gmAdj) && (
           <button onClick={() => onScenarioChange(null)} style={{
-            marginTop: 8, width: "100%", background: "rgba(205,162,78,.08)",
-            border: "1px solid rgba(205,162,78,.2)", borderRadius: 4, padding: 5,
-            color: "#b8860b", fontSize: 11, cursor: "pointer",
+            marginTop: sp(8), width: "100%", background: "rgba(205,162,78,.08)",
+            border: "1px solid rgba(205,162,78,.2)", borderRadius: RADII.xs, padding: sp(5),
+            color: T.amber, fontSize: fs(11), cursor: "pointer",
           }}>CLEAR SCENARIO ADJUSTMENTS</button>
         )}
       </div>
@@ -804,7 +804,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
 // Color shading for stacked bars
 function shade(hex, i) {
-  if (!hex) return "#888";
+  if (!hex) return T.textDim;
   const c = hex.replace("#", "");
   const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16);
   const f = Math.max(0.45, 1 - i * 0.16);
@@ -824,7 +824,7 @@ function getPeers(co, n = 4) {
 // Auto-colors green/red based on net change. No axes, no labels — pure shape.
 function PriceSparkline({ data, width = 80, height = 22, strokeWidth = 1 }) {
   if (!data || data.length < 2) {
-    return <span style={{ color: "#ccc", fontSize: 10 }}>—</span>;
+    return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
   }
   // Downsample to ~50 points max for performance/readability
   const stride = Math.max(1, Math.ceil(data.length / 50));
@@ -847,7 +847,7 @@ function PriceSparkline({ data, width = 80, height = 22, strokeWidth = 1 }) {
   const start = prices[0];
   const end = prices[prices.length - 1];
   const ret = start > 0 ? (end - start) / start * 100 : 0;
-  const color = ret >= 0 ? "#1a8a5c" : "#c44040";
+  const color = ret >= 0 ? T.green : T.red;
   const fillColor = ret >= 0 ? "rgba(26,138,92,.1)" : "rgba(196,64,64,.1)";
 
   // Fill path: same shape but closed to baseline
@@ -869,7 +869,7 @@ function StackedBar({ data, color, height = 18 }) {
   if (total === 0) return null;
   return (
     <div>
-      <div style={{ display: "flex", height, borderRadius: 4, overflow: "hidden", border: "1px solid rgba(0,0,0,.05)" }}>
+      <div style={{ display: "flex", height, borderRadius: RADII.xs, overflow: "hidden", border: "1px solid rgba(0,0,0,.05)" }}>
         {data.map(([label, val], i) => {
           const pct = val / total * 100;
           return (
@@ -878,16 +878,16 @@ function StackedBar({ data, color, height = 18 }) {
               display: "flex", alignItems: "center", justifyContent: "center",
               borderRight: i < data.length - 1 ? "1px solid rgba(255,255,255,.4)" : "none",
             }}>
-              {pct > 10 && <span style={{ fontSize: 9, color: "#fff", fontWeight: 400, letterSpacing: 0.3 }}>{Math.round(pct)}%</span>}
+              {pct > 10 && <span style={{ fontSize: fs(9), color: T.onAccent, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3 }}>{Math.round(pct)}%</span>}
             </div></AppTooltip>
           );
         })}
       </div>
-      <div style={{ display: "flex", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginTop: sp(5), flexWrap: "wrap" }}>
         {data.map(([label, val], i) => (
-          <span key={label + i} style={{ fontSize: 10, color: "#666", display: "inline-flex", alignItems: "center", gap: 3 }}>
+          <span key={label + i} style={{ fontSize: fs(10), color: T.textSec, display: "inline-flex", alignItems: "center", gap: 3 }}>
             <span style={{ width: 8, height: 8, background: shade(color, i), borderRadius: 1, display: "inline-block" }} />
-            {label} <span style={{ color: "#999" }}>{(val / total * 100).toFixed(0)}%</span>
+            {label} <span style={{ color: T.textDim }}>{(val / total * 100).toFixed(0)}%</span>
           </span>
         ))}
       </div>
@@ -897,10 +897,10 @@ function StackedBar({ data, color, height = 18 }) {
 
 // Mini sparkline for trend data (percentages over time)
 function TrendSpark({ values, color, width = 80, height = 22, suffix = "%" }) {
-  if (!values || values.length < 2 || values.every(v => v == null)) return <span style={{ color: "#ccc", fontSize: 10 }}>—</span>;
+  if (!values || values.length < 2 || values.every(v => v == null)) return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
   const normalized = values.map(v => isFiniteNumber(v) ? v : null);
   const finite = normalized.filter(isFiniteNumber);
-  if (finite.length < 2) return <span style={{ color: "#ccc", fontSize: 10 }}>—</span>;
+  if (finite.length < 2) return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
   let lastSeen = finite[0];
   const clean = normalized.map(v => {
     if (isFiniteNumber(v)) lastSeen = v;
@@ -919,7 +919,7 @@ function TrendSpark({ values, color, width = 80, height = 22, suffix = "%" }) {
         <path d={path} fill="none" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
         <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r={2.2} fill={color} />
       </svg>
-      <span style={{ fontSize: 11, color: "#333", fontWeight: 400 }}>{last != null ? last.toFixed(1) + suffix : "—"}</span>
+      <span style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{last != null ? last.toFixed(1) + suffix : "—"}</span>
     </span>
   );
 }
@@ -938,12 +938,12 @@ function PeerGrid({ co, color, onSelect }) {
   ];
   const getV = (c, k) => k === "gr" ? (c.fin?.rg?.[4] || 0) : c[k];
   return (
-    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, overflow: "hidden" }}>
+    <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, overflow: "hidden" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ background: "rgba(0,0,0,.018)", borderBottom: "1px solid rgba(0,0,0,.06)" }}>
-            <th style={{ textAlign: "left", padding: "5px 8px", fontSize: 10, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>Peer</th>
-            {metrics.map(m => <th key={m.k} style={{ textAlign: "right", padding: "5px 8px", fontSize: 10, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>{m.l}</th>)}
+            <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Peer</th>
+            {metrics.map(m => <th key={m.k} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>{m.l}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -954,10 +954,10 @@ function PeerGrid({ co, color, onSelect }) {
                 style={{ cursor: isSelf ? "default" : "pointer", borderBottom: ci < allCos.length - 1 ? "1px solid rgba(0,0,0,.04)" : "none", background: isSelf ? "rgba(205,162,78,.06)" : "transparent" }}
                 onMouseEnter={e => { if (!isSelf) e.currentTarget.style.background = "rgba(0,0,0,.022)"; }}
                 onMouseLeave={e => { if (!isSelf) e.currentTarget.style.background = "transparent"; }}>
-                <td style={{ padding: "5px 8px", fontSize: 11 }}>
-                  <Logo ticker={c.t} size={12} style={{ marginRight: 4 }} />
-                  <span style={{ color: isSelf ? color : "#333", fontWeight: 400}}>{c.t}</span>
-                  <span style={{ color: "#aaa", marginLeft: 4, fontSize: 10 }}>{c.s}</span>
+                <td style={{ padding: sp("5px 8px"), fontSize: fs(11) }}>
+                  <Logo ticker={c.t} size={12} style={{ marginRight: sp(4) }} />
+                  <span style={{ color: isSelf ? color : T.text, fontWeight: FONT_WEIGHTS.regular}}>{c.t}</span>
+                  <span style={{ color: T.textMuted, marginLeft: sp(4), fontSize: fs(10) }}>{c.s}</span>
                 </td>
                 {metrics.map(m => {
                   const v = getV(c, m.k);
@@ -965,10 +965,10 @@ function PeerGrid({ co, color, onSelect }) {
                   const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
                   const pos = v != null ? ((v - mn) / rng) : null;
                   return (
-                    <td key={m.k} style={{ padding: "5px 8px", textAlign: "right", fontSize: 11, color: "#333", fontWeight: 400}}>
+                    <td key={m.k} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular}}>
                       <span>{m.fmt(v)}</span>
-                      {pos != null && <span style={{ display: "inline-block", width: 32, height: 3, background: "rgba(0,0,0,.06)", borderRadius: 2, marginLeft: 6, position: "relative", verticalAlign: "middle" }}>
-                        <span style={{ position: "absolute", left: `calc(${pos * 100}% - 2px)`, top: -1, width: 5, height: 5, borderRadius: "50%", background: isSelf ? color : "#888" }} />
+                      {pos != null && <span style={{ display: "inline-block", width: 32, height: 3, background: "rgba(0,0,0,.06)", borderRadius: RADII.xs, marginLeft: sp(6), position: "relative", verticalAlign: "middle" }}>
+                        <span style={{ position: "absolute", left: `calc(${pos * 100}% - 2px)`, top: -1, width: 5, height: 5, borderRadius: "50%", background: isSelf ? color : T.textDim }} />
                       </span>}
                     </td>
                   );
@@ -1008,13 +1008,13 @@ function KeyRatios({ ratios, co, color }) {
         const t = trend(r.k, r.invert);
         const trendValues = ratios.map(x => x[r.k]);
         return (
-          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 6, padding: "5px 7px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
-              <span style={{ fontSize: 9, color: "#999", textTransform: "uppercase", letterSpacing: 1, fontWeight: 400 }}>{r.l}</span>
-              {t && <span style={{ fontSize: 9, color: t.good ? "#1a8a5c" : "#c44040", fontWeight: 400 }}>{t.dir === "up" ? "▲" : "▼"}</span>}
+          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.sm, padding: sp("5px 7px") }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(2) }}>
+              <span style={{ fontSize: fs(9), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>{r.l}</span>
+              {t && <span style={{ fontSize: fs(9), color: t.good ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>{t.dir === "up" ? "▲" : "▼"}</span>}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 400, color: "#222" }}>{r.fmt(latest[r.k])}</span>
+              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{r.fmt(latest[r.k])}</span>
               <TrendSpark values={trendValues} color={color} width={40} height={16} suffix="" />
             </div>
           </div></AppTooltip>
@@ -1040,16 +1040,16 @@ function OpsStrip({ co, color }) {
     ["Institutional", own.institutional != null ? own.institutional + "%" : null],
   ].filter(x => x[1] != null);
   if (items.length === 0) return (
-    <div style={{ padding: "10px 12px", background: "rgba(0,0,0,.015)", border: "1px dashed rgba(0,0,0,.08)", borderRadius: 6, textAlign: "center" }}>
-      <span style={{ fontSize: 10, color: "#aaa", fontStyle: "italic" }}>Operations data pending</span>
+    <div style={{ padding: sp("10px 12px"), background: "rgba(0,0,0,.015)", border: "1px dashed rgba(0,0,0,.08)", borderRadius: RADII.sm, textAlign: "center" }}>
+      <span style={{ fontSize: fs(10), color: T.textMuted, fontStyle: "italic" }}>Operations data pending</span>
     </div>
   );
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
       {items.map(([l, v]) => (
-        <div key={l} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.05)", borderRadius: 5, padding: "4px 7px" }}>
-          <div style={{ fontSize: 9, color: "#aaa", textTransform: "uppercase", letterSpacing: 1, fontWeight: 400, marginBottom: 1 }}>{l}</div>
-          <div style={{ fontSize: 11, color: "#333", fontWeight: 400 }}>{v}</div>
+        <div key={l} style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.05)", borderRadius: RADII.sm, padding: sp("4px 7px") }}>
+          <div style={{ fontSize: fs(9), color: T.textMuted, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(1) }}>{l}</div>
+          <div style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</div>
         </div>
       ))}
     </div>
@@ -1058,9 +1058,9 @@ function OpsStrip({ co, color }) {
 
 function DataNotReported({ label }) {
   return (
-    <div style={{ padding: "10px 12px", background: "rgba(0,0,0,.018)", border: "1px solid rgba(0,0,0,.05)", borderRadius: 6 }}>
-      <span style={{ fontSize: 10, color: "#999", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>Not reported</span>
-      <span style={{ display: "block", marginTop: 3, fontSize: 11, color: "#777", lineHeight: 1.45 }}>{label}</span>
+    <div style={{ padding: sp("10px 12px"), background: "rgba(0,0,0,.018)", border: "1px solid rgba(0,0,0,.05)", borderRadius: RADII.sm }}>
+      <span style={{ fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Not reported</span>
+      <span style={{ display: "block", marginTop: sp(3), fontSize: fs(11), color: T.textDim, lineHeight: 1.45 }}>{label}</span>
     </div>
   );
 }
@@ -1087,9 +1087,9 @@ function CashFlowTable({ fd, color }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            <th style={{ textAlign: "left", padding: "5px 6px", fontSize: 11, color: "#aaa", letterSpacing: 1, minWidth: 180 }}>Item</th>
-            {fd.years.map(y => <th key={y} style={{ textAlign: "right", padding: "5px 8px", fontSize: 11, color: y.includes("E") ? color : "#555" }}>{y}</th>)}
-            <th style={{ textAlign: "center", padding: "5px 4px", fontSize: 10, color: "#aaa" }}>trend</th>
+            <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: T.textMuted, letterSpacing: 1, minWidth: 180 }}>Item</th>
+            {fd.years.map(y => <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : T.textSec }}>{y}</th>)}
+            <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: T.textMuted }}>trend</th>
           </tr>
         </thead>
         <tbody>
@@ -1097,13 +1097,13 @@ function CashFlowTable({ fd, color }) {
             const values = fd.cfData.map(d => d[row.k]);
             return (
               <tr key={row.k} style={{ background: idx % 2 === 0 ? "rgba(0,0,0,.012)" : "transparent", borderBottom: "1px solid rgba(0,0,0,.03)" }}>
-                <td style={{ padding: "5px 6px 5px " + (10 + row.d * 14) + "px", fontSize: 11, color: row.bold ? "#222" : "#555", fontWeight: 400, whiteSpace: "nowrap" }}>{row.l}</td>
+                <td style={{ padding: sp("5px 6px 5px ") + (10 + row.d * 14) + "px", fontSize: fs(11), color: row.bold ? T.text : T.textSec, fontWeight: FONT_WEIGHTS.regular, whiteSpace: "nowrap" }}>{row.l}</td>
                 {values.map((v, i) => (
-                  <td key={i} style={{ padding: "5px 8px", textAlign: "right", fontSize: 10, color: v < 0 ? "#c44040" : "#444", fontWeight: 400}}>
+                  <td key={i} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10), color: v < 0 ? T.red : T.textSec, fontWeight: FONT_WEIGHTS.regular}}>
                     {fmtFS(v)}
                   </td>
                 ))}
-                <td style={{ padding: "5px 4px", textAlign: "center" }}><Sparkline values={values} /></td>
+                <td style={{ padding: sp("5px 4px"), textAlign: "center" }}><Sparkline values={values} /></td>
               </tr>
             );
           })}
@@ -1204,7 +1204,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
     priceHistory.length > 1 && isFiniteNumber(startPrice) && isFiniteNumber(endPrice) && startPrice > 0
       ? ((endPrice - startPrice) / startPrice) * 100
       : null;
-  const retColor = periodReturn >= 0 ? "#1a8a5c" : "#c44040";
+  const retColor = periodReturn >= 0 ? T.green : T.red;
 
   // Show 52-week ref lines only when period is long enough to be visually meaningful
   const showRefs = ["6M", "YTD", "1Y", "5Y"].includes(pricePeriod);
@@ -1237,7 +1237,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       isFiniteNumber(startPrice) && startPrice > 0
         ? ((d.price - startPrice) / startPrice) * 100
         : 0;
-    const chgColor = chg >= 0 ? "#1a8a5c" : "#c44040";
+    const chgColor = chg >= 0 ? T.green : T.red;
     const isIntraday = histInterval === "15min" || histInterval === "1hour";
     const dt = d.isoDT ? new Date(d.isoDT) : d.fullDate ? new Date(d.fullDate) : null;
     const dateLabel = dt
@@ -1247,10 +1247,10 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       : d.date;
     const priceStr = d.price >= 1000 ? d.price.toFixed(0) : d.price.toFixed(2);
     return (
-      <div style={{ ...chartTooltipContentStyle, padding: "6px 10px" }}>
-        <div style={{ fontSize: 10, color: "var(--ra-tooltip-muted)", marginBottom: 2 }}>{dateLabel}</div>
-        <div style={{ fontSize: 14, fontWeight: 400, color: "var(--ra-tooltip-text)", fontVariantNumeric: "tabular-nums" }}>{priceStr}</div>
-        <div style={{ fontSize: 10, color: chgColor, fontWeight: 400, marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ ...chartTooltipContentStyle, padding: sp("6px 10px") }}>
+        <div style={{ fontSize: fs(10), color: "var(--ra-tooltip-muted)", marginBottom: sp(2) }}>{dateLabel}</div>
+        <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular, color: "var(--ra-tooltip-text)", fontVariantNumeric: "tabular-nums" }}>{priceStr}</div>
+        <div style={{ fontSize: fs(10), color: chgColor, fontWeight: FONT_WEIGHTS.regular, marginTop: sp(1), fontVariantNumeric: "tabular-nums" }}>
           {chg >= 0 ? "+" : ""}{chg.toFixed(2)}% vs {pricePeriod} start
         </div>
       </div>
@@ -1260,16 +1260,16 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
   const periods = ["1W", "1M", "3M", "6M", "YTD", "1Y", "5Y"];
 
   return (
-    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: "12px 14px", boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
+    <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp("12px 14px"), boxShadow: "0 1px 3px rgba(0,0,0,.03)" }}>
       {/* Header: label left, period selector right */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 400, color: "#aaa", letterSpacing: 1.5, textTransform: "uppercase" }}>Price history</div>
-        <div style={{ display: "flex", gap: 1, background: "rgba(0,0,0,.03)", borderRadius: 5, padding: 2 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8) }}>
+        <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textMuted, letterSpacing: 1.5, textTransform: "uppercase" }}>Price history</div>
+        <div style={{ display: "flex", gap: 1, background: "rgba(0,0,0,.03)", borderRadius: RADII.sm, padding: sp(2) }}>
           {periods.map(p => (
             <button key={p} onClick={() => setPricePeriod(p)} style={{
-              background: pricePeriod === p ? "#fff" : "transparent",
-              border: "none", borderRadius: 3, padding: "2px 8px", fontSize: 10,
-              color: pricePeriod === p ? vc.c : "#888", cursor: "pointer", fontWeight: 400, letterSpacing: 0.3,
+              background: pricePeriod === p ? T.bg1 : "transparent",
+              border: "none", borderRadius: RADII.xs, padding: sp("2px 8px"), fontSize: fs(10),
+              color: pricePeriod === p ? vc.c : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3,
               boxShadow: pricePeriod === p ? "0 1px 2px rgba(0,0,0,.08)" : "none",
             }}>{p}</button>
           ))}
@@ -1277,37 +1277,37 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       </div>
 
       {/* Price summary row */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 10 }}>
-        <span style={{ fontSize: 26, fontWeight: 400, color: "#111", letterSpacing: -0.5, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: sp(10) }}>
+        <span style={{ fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: -0.5, fontVariantNumeric: "tabular-nums" }}>
           {fmtPrice(endPrice)}
         </span>
         {isFiniteNumber(periodReturn) ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 14, background: periodReturn >= 0 ? "rgba(26,138,92,.1)" : "rgba(196,64,64,.1)", fontSize: 12, fontWeight: 400, color: retColor, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("3px 10px"), borderRadius: RADII.lg, background: periodReturn >= 0 ? "rgba(26,138,92,.1)" : "rgba(196,64,64,.1)", fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: retColor, fontVariantNumeric: "tabular-nums" }}>
             <span>{periodReturn >= 0 ? "▲" : "▼"}</span>
             <span>{periodReturn >= 0 ? "+" : ""}{periodReturn.toFixed(2)}%</span>
-            <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.7, marginLeft: 2 }}>over {pricePeriod}</span>
+            <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, opacity: 0.7, marginLeft: sp(2) }}>over {pricePeriod}</span>
           </span>
         ) : (
-          <span style={{ fontSize: 10, color: "#aaa" }}>Return unavailable</span>
+          <span style={{ fontSize: fs(10), color: T.textMuted }}>Return unavailable</span>
         )}
         {/* Data status pill — shows interval (15m/1h/D) for live intraday */}
         {(() => {
           const intervalLabel = histInterval === "15min" ? " · 15M" : histInterval === "1hour" ? " · 1H" : histInterval === "daily" ? " · DAILY" : "";
-          const pill = loading ? { label: "LOADING", bg: "rgba(184,134,11,.1)", fg: "#b8860b", dot: "#b8860b" }
-            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: "rgba(26,138,92,.1)", fg: "#1a8a5c", dot: "#1a8a5c", pulse: true }
-            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: "rgba(196,64,64,.08)", fg: "#c44040", dot: "#c44040" }
-            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#888" }
-            : { label: "WAITING", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#aaa" };
+          const pill = loading ? { label: "LOADING", bg: "rgba(184,134,11,.1)", fg: T.amber, dot: T.amber }
+            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: "rgba(26,138,92,.1)", fg: T.green, dot: T.green, pulse: true }
+            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: "rgba(196,64,64,.08)", fg: T.red, dot: T.red }
+            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: "rgba(0,0,0,.04)", fg: T.textDim, dot: T.textDim }
+            : { label: "WAITING", bg: "rgba(0,0,0,.04)", fg: T.textDim, dot: T.textMuted };
           return (
-            <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}><span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, background: pill.bg, fontSize: 9, fontWeight: 400, color: pill.fg, letterSpacing: 0.5 }}>
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: pill.dot, animation: pill.pulse ? "pulse 1.8s ease-in-out infinite" : "none" }} />
+            <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}><span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("2px 8px"), borderRadius: RADII.md, background: pill.bg, fontSize: fs(9), fontWeight: FONT_WEIGHTS.regular, color: pill.fg, letterSpacing: 0.5 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: pill.dot, animation: pill.pulse ? "researchObservatoryPulse 1.8s ease-in-out infinite" : "none" }} />
               {pill.label}
             </span></AppTooltip>
           );
         })()}
-        <span style={{ marginLeft: "auto", fontSize: 10, color: "#999", fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ marginLeft: "auto", fontSize: fs(10), color: T.textDim, fontVariantNumeric: "tabular-nums" }}>
           {isFiniteNumber(wkLow) && isFiniteNumber(wkHigh)
-            ? <>52w range: <span style={{ color: "#666", fontWeight: 400 }}>{wkLow.toFixed(2)}</span> – <span style={{ color: "#666", fontWeight: 400 }}>{wkHigh.toFixed(2)}</span></>
+            ? <>52w range: <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkLow.toFixed(2)}</span> – <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkHigh.toFixed(2)}</span></>
             : "52w range unavailable"}
         </span>
       </div>
@@ -1322,9 +1322,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
                 <stop offset="100%" stopColor={vc.c} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} interval={tickInterval} minTickGap={8} />
+            <XAxis dataKey="date" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} interval={tickInterval} minTickGap={8} />
             <YAxis
-              tick={{ fontSize: 10, fill: "#aaa", fontVariantNumeric: "tabular-nums" }}
+              tick={{ fontSize: fs(10), fill: T.textMuted, fontVariantNumeric: "tabular-nums" }}
               axisLine={false} tickLine={false}
               domain={priceDomain}
               tickCount={6}
@@ -1338,22 +1338,22 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
             />
             <Tooltip content={<CustomTooltip />} cursor={{ stroke: vc.c, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.5 }} />
             {showRefs && isFiniteNumber(wkHigh) && (
-              <ReferenceLine y={wkHigh} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
-                label={{ value: "52w hi " + wkHigh.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
+              <ReferenceLine y={wkHigh} stroke={T.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w hi " + wkHigh.toFixed(0), position: "right", fill: T.textDim, fontSize: fs(9) }} />
             )}
             {showRefs && isFiniteNumber(wkLow) && (
-              <ReferenceLine y={wkLow} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
-                label={{ value: "52w lo " + wkLow.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
+              <ReferenceLine y={wkLow} stroke={T.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w lo " + wkLow.toFixed(0), position: "right", fill: T.textDim, fontSize: fs(9) }} />
             )}
             {/* Linear interpolation — more faithful to actual price action than monotone smoothing */}
-            <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: "#fff", strokeWidth: 2 }} isAnimationActive={false} />
+            <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: T.bg1, strokeWidth: 2 }} isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
         {!loading && priceHistory.length === 0 ? (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(0,0,0,.08)", background: "rgba(255,255,255,.92)", boxShadow: "0 6px 20px rgba(0,0,0,.06)", textAlign: "center" }}>
-              <div style={{ fontSize: 11, fontWeight: 400, color: "#444", letterSpacing: 0.4 }}>Broker chart unavailable</div>
-              <div style={{ marginTop: 4, fontSize: 10, color: "#888" }}>No broker bars returned for {co.t} over {pricePeriod}.</div>
+            <div style={{ padding: sp("10px 12px"), borderRadius: RADII.md, border: "1px solid rgba(0,0,0,.08)", background: "rgba(255,255,255,.92)", boxShadow: "0 6px 20px rgba(0,0,0,.06)", textAlign: "center" }}>
+              <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textSec, letterSpacing: 0.4 }}>Broker chart unavailable</div>
+              <div style={{ marginTop: sp(4), fontSize: fs(10), color: T.textDim }}>No broker bars returned for {co.t} over {pricePeriod}.</div>
             </div>
           </div>
         ) : null}
@@ -1436,17 +1436,17 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
       ttmFields: { rev: fund && fund !== "loading" && fund.revenueTTM != null, gm: fund && fund !== "loading" && fund.grossMarginTTM != null, beta: fund && fund !== "loading" && fund.beta != null },
     };
   });
-  const thStyle = { textAlign: "right", padding: "6px 7px", fontSize: 9, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" };
+  const thStyle = { textAlign: "right", padding: sp("6px 7px"), fontSize: fs(9), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" };
   const thLeft = { ...thStyle, textAlign: "left" };
-  const cellBase = { padding: "7px 7px", fontSize: 11, color: "#222", textAlign: "right", whiteSpace: "nowrap" };
+  const cellBase = { padding: sp("7px 7px"), fontSize: fs(11), color: T.text, textAlign: "right", whiteSpace: "nowrap" };
 
   // Live-data indicator — tiny dot that signals the cell is sourced from live API (not authored fallback)
   const Dot = ({ live }) => (
-    <AppTooltip content={live ? "Live" : "Authored fallback"}><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: live ? "#1a8a5c" : "rgba(0,0,0,.12)", marginLeft: 4, verticalAlign: "middle" }} /></AppTooltip>
+    <AppTooltip content={live ? "Live" : "Authored fallback"}><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: live ? T.green : "rgba(0,0,0,.12)", marginLeft: sp(4), verticalAlign: "middle" }} /></AppTooltip>
   );
 
   return (
-    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, overflow: "hidden" }}>
+    <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, overflow: "hidden" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ background: "rgba(0,0,0,.018)", borderBottom: "1px solid rgba(0,0,0,.06)" }}>
@@ -1471,7 +1471,7 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
               opacity: r.status === "ok" ? 1 : 0.55,
               transition: "background .12s",
             };
-            const leftCell = { ...cellBase, textAlign: "left", fontWeight: 400, color: r.focal ? "#111" : "#333" };
+            const leftCell = { ...cellBase, textAlign: "left", fontWeight: FONT_WEIGHTS.regular, color: r.focal ? T.text : T.text };
             return (
               <tr key={r.ticker + "-" + i} style={rowStyle}
                   onClick={() => { if (clickable) onSelect(r.ticker); }}
@@ -1480,14 +1480,14 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                 <td style={leftCell}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                     {r.status === "ok" && <Logo ticker={r.ticker} size={14} />}
-                    <span style={{ fontSize: 11, fontWeight: 400}}>
+                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular}}>
                       {r.cc ? r.cc + " " : ""}{r.label}
                     </span>
-                    {r.focal && <span style={{ fontSize: 9, padding: "1px 5px", background: accent, color: "#fff", borderRadius: 3, letterSpacing: .5, fontWeight: 400 }}>FOCAL</span>}
-                    {r.status === "pvt" && <span style={{ fontSize: 9, color: "#999", fontStyle: "italic" }}>(private)</span>}
-                    {r.status === "unknown" && <span style={{ fontSize: 9, color: "#999", fontStyle: "italic" }}>(not covered)</span>}
+                    {r.focal && <span style={{ fontSize: fs(9), padding: sp("1px 5px"), background: accent, color: T.onAccent, borderRadius: RADII.xs, letterSpacing: .5, fontWeight: FONT_WEIGHTS.regular }}>FOCAL</span>}
+                    {r.status === "pvt" && <span style={{ fontSize: fs(9), color: T.textDim, fontStyle: "italic" }}>(private)</span>}
+                    {r.status === "unknown" && <span style={{ fontSize: fs(9), color: T.textDim, fontStyle: "italic" }}>(not covered)</span>}
                   </span>
-                  {r.name && <div style={{ fontSize: 9, color: "#999", marginTop: 1, fontWeight: 400 }}>{r.name.length > 32 ? r.name.slice(0, 32) + "…" : r.name}</div>}
+                  {r.name && <div style={{ fontSize: fs(9), color: T.textDim, marginTop: sp(1), fontWeight: FONT_WEIGHTS.regular }}>{r.name.length > 32 ? r.name.slice(0, 32) + "…" : r.name}</div>}
                 </td>
                 <td style={cellBase}>
                   {fmt.mc(r.mc)}
@@ -1498,37 +1498,37 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                   {r.status === "ok" && <Dot live={r.liveFields?.pe} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: "#bbb" }}>…</span> : fmt.rev(r.rev)}
+                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : fmt.rev(r.rev)}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.rev} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: "#bbb" }}>…</span> : (r.gm == null ? "—" : r.gm.toFixed(0) + "%")}
+                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : (r.gm == null ? "—" : r.gm.toFixed(0) + "%")}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.gm} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: "#bbb" }}>…</span> : fmt.beta(r.beta)}
+                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : fmt.beta(r.beta)}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.beta} />}
                 </td>
-                <td style={{ ...cellBase, color: r.off52 != null && r.off52 < -20 ? "#c44040" : r.off52 != null && r.off52 > -5 ? "#1a8a5c" : "#222" }}>
+                <td style={{ ...cellBase, color: r.off52 != null && r.off52 < -20 ? T.red : r.off52 != null && r.off52 > -5 ? T.green : T.text }}>
                   {fmt.pct(r.off52)}
                   {r.status === "ok" && <Dot live={r.liveFields?.off52} />}
                 </td>
-                <td style={{ padding: "4px 8px", textAlign: "center", verticalAlign: "middle" }}>
+                <td style={{ padding: sp("4px 8px"), textAlign: "center", verticalAlign: "middle" }}>
                   {r.status === "ok" ? (
                     liveHist[r.ticker] && liveHist[r.ticker].length >= 2 ? (
                       <PriceSparkline data={liveHist[r.ticker]} width={72} height={22} />
                     ) : (
-                      <span style={{ color: "#ccc", fontSize: 9 }}>loading…</span>
+                      <span style={{ color: T.textMuted, fontSize: fs(9) }}>loading…</span>
                     )
-                  ) : <span style={{ color: "#ccc", fontSize: 10 }}>—</span>}
+                  ) : <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>}
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <div style={{ padding: "5px 8px", fontSize: 9, color: "#bbb", background: "rgba(0,0,0,.01)", borderTop: "1px solid rgba(0,0,0,.04)", letterSpacing: .3 }}>
-        <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: "#1a8a5c", marginRight: 4, verticalAlign: "middle" }} />
+      <div style={{ padding: sp("5px 8px"), fontSize: fs(9), color: T.textMuted, background: "rgba(0,0,0,.01)", borderTop: "1px solid rgba(0,0,0,.04)", letterSpacing: .3 }}>
+        <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: T.green, marginRight: sp(4), verticalAlign: "middle" }} />
         Live dots = platform or research APIs · Click a peer row to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
       </div>
     </div>
@@ -1596,10 +1596,10 @@ function FilingsTab({ co, apiKey }) {
   // Badge color per filing category
   const typeBadge = (type) => {
     const cat = filingCategory(type);
-    if (cat === "10K") return { bg: "rgba(196,64,64,.12)", fg: "#c44040" };
-    if (cat === "10Q") return { bg: "rgba(94,148,232,.12)", fg: "#5e94e8" };
-    if (cat === "8K") return { bg: "rgba(184,134,11,.12)", fg: "#b8860b" };
-    return { bg: "rgba(0,0,0,.04)", fg: "#888" };
+    if (cat === "10K") return { bg: "rgba(196,64,64,.12)", fg: T.red };
+    if (cat === "10Q") return { bg: "rgba(94,148,232,.12)", fg: T.blue };
+    if (cat === "8K") return { bg: "rgba(184,134,11,.12)", fg: T.amber };
+    return { bg: "rgba(0,0,0,.04)", fg: T.textDim };
   };
 
   const fmtDate = (iso) => {
@@ -1636,16 +1636,16 @@ function FilingsTab({ co, apiKey }) {
   return (
     <>
       {/* ══════════════════ SEC FILINGS ══════════════════ */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+      <div style={{ marginBottom: sp(16) }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(5) }}>
           <div style={STYLE_LABEL}>SEC Filings · Recent</div>
-          <div style={{ display: "inline-flex", gap: 2, background: "rgba(0,0,0,.03)", borderRadius: 5, padding: 2 }}>
+          <div style={{ display: "inline-flex", gap: 2, background: "rgba(0,0,0,.03)", borderRadius: RADII.sm, padding: sp(2) }}>
             {[["all", "All"], ["10K", "10-K"], ["10Q", "10-Q"], ["8K", "8-K"], ["other", "Other"]].map(([k, lb]) => (
               <button key={k} onClick={() => setFilingTypeFilter(k)} style={{
-                background: filingTypeFilter === k ? "#fff" : "transparent",
-                border: "none", borderRadius: 3, padding: "3px 8px",
-                fontSize: 10, fontWeight: 400,
-                color: filingTypeFilter === k ? "#111" : "#888", cursor: "pointer",
+                background: filingTypeFilter === k ? T.bg1 : "transparent",
+                border: "none", borderRadius: RADII.xs, padding: sp("3px 8px"),
+                fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular,
+                color: filingTypeFilter === k ? T.text : T.textDim, cursor: "pointer",
                 boxShadow: filingTypeFilter === k ? "0 1px 2px rgba(0,0,0,.06)" : "none",
               }}>{lb}</button>
             ))}
@@ -1653,22 +1653,22 @@ function FilingsTab({ co, apiKey }) {
         </div>
 
         {!apiKey && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#888", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
             Add FMP API key in settings to load SEC filings
           </div>
         )}
         {apiKey && filings === null && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#b8860b", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.amber, fontSize: fs(11) }}>
             ⌛ Loading filings…
           </div>
         )}
         {apiKey && filings && filings.length === 0 && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#999", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
             No filings data returned for {co.t} {co.cc?.includes("🇺🇸") ? "" : "(foreign issuer — SEC filings may be limited)"}
           </div>
         )}
         {apiKey && filteredFilings.length > 0 && (
-          <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, overflow: "hidden", maxHeight: 280, overflowY: "auto" }}>
+          <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, overflow: "hidden", maxHeight: 280, overflowY: "auto" }}>
             {filteredFilings.map((f, i) => {
               const badge = typeBadge(f.type);
               return (
@@ -1676,7 +1676,7 @@ function FilingsTab({ co, apiKey }) {
                    style={{
                      display: "grid", gridTemplateColumns: "60px 95px 1fr auto",
                      gap: 10, alignItems: "center",
-                     padding: "7px 10px",
+                     padding: sp("7px 10px"),
                      borderBottom: i < filteredFilings.length - 1 ? "1px solid rgba(0,0,0,.04)" : "none",
                      background: i % 2 ? "rgba(0,0,0,.008)" : "transparent",
                      textDecoration: "none", color: "inherit", cursor: "pointer",
@@ -1684,9 +1684,9 @@ function FilingsTab({ co, apiKey }) {
                    }}
                    onMouseEnter={e => e.currentTarget.style.background = "rgba(205,162,78,.06)"}
                    onMouseLeave={e => e.currentTarget.style.background = i % 2 ? "rgba(0,0,0,.008)" : "transparent"}>
-                  <span style={{ display: "inline-block", padding: "2px 5px", borderRadius: 3, background: badge.bg, color: badge.fg, fontSize: 9, fontWeight: 400, letterSpacing: .3, textAlign: "center" }}>{f.type}</span>
-                  <span style={{ fontSize: 10, color: "#888" }}>{fmtDate(f.fillingDate || f.filingDate)}</span>
-                  <span style={{ fontSize: 11, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ display: "inline-block", padding: sp("2px 5px"), borderRadius: RADII.xs, background: badge.bg, color: badge.fg, fontSize: fs(9), fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3, textAlign: "center" }}>{f.type}</span>
+                  <span style={{ fontSize: fs(10), color: T.textDim }}>{fmtDate(f.fillingDate || f.filingDate)}</span>
+                  <span style={{ fontSize: fs(11), color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {f.type?.includes("10-K") ? "Annual Report" :
                      f.type?.includes("10-Q") ? "Quarterly Report" :
                      f.type?.includes("8-K") ? "Current Report" :
@@ -1694,7 +1694,7 @@ function FilingsTab({ co, apiKey }) {
                      f.type?.includes("S-1") ? "Registration Statement" :
                      f.type || "Filing"}
                   </span>
-                  <span style={{ fontSize: 14, color: "#ccc" }}>↗</span>
+                  <span style={{ fontSize: fs(14), color: T.textMuted }}>↗</span>
                 </a>
               );
             })}
@@ -1704,7 +1704,7 @@ function FilingsTab({ co, apiKey }) {
 
       {/* ══════════════════ EARNINGS TRANSCRIPT ══════════════════ */}
       <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(5) }}>
           <div style={STYLE_LABEL}>Earnings Call Transcript</div>
           {transcriptList && transcriptList.length > 0 && (
             <select
@@ -1724,7 +1724,7 @@ function FilingsTab({ co, apiKey }) {
                   loadTranscript(q, y);
                 }
               }}
-              style={{ fontSize: 10, padding: "3px 6px", border: "1px solid rgba(0,0,0,.1)", borderRadius: 4, background: "#fff", color: "#555", cursor: "pointer" }}
+              style={{ fontSize: fs(10), padding: sp("3px 6px"), border: "1px solid rgba(0,0,0,.1)", borderRadius: RADII.xs, background: T.bg1, color: T.textSec, cursor: "pointer" }}
             >
               <option value="latest">Latest</option>
               {transcriptList.slice(0, 20).map((entry, i) => {
@@ -1739,61 +1739,61 @@ function FilingsTab({ co, apiKey }) {
         </div>
 
         {!apiKey && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#888", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
             Add FMP API key to load transcripts
           </div>
         )}
         {apiKey && transcriptLoading && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#b8860b", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.amber, fontSize: fs(11) }}>
             ⌛ Loading transcript…
           </div>
         )}
         {apiKey && !transcriptLoading && !transcript && (
-          <div style={{ padding: "20px 12px", background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, textAlign: "center", color: "#999", fontSize: 11 }}>
+          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
             No transcript available for {co.t}
           </div>
         )}
         {transcript && (
-          <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, overflow: "hidden" }}>
             {/* Header */}
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid rgba(0,0,0,.06)", background: "rgba(0,0,0,.018)" }}>
+            <div style={{ padding: sp("8px 12px"), borderBottom: "1px solid rgba(0,0,0,.06)", background: "rgba(0,0,0,.018)" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 400, color: "#222" }}>Q{transcript.quarter} {transcript.year}</span>
-                <span style={{ fontSize: 11, color: "#888" }}>{fmtDate(transcript.date)}</span>
-                <span style={{ fontSize: 10, color: "#bbb", marginLeft: "auto" }}>
+                <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>Q{transcript.quarter} {transcript.year}</span>
+                <span style={{ fontSize: fs(11), color: T.textDim }}>{fmtDate(transcript.date)}</span>
+                <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: "auto" }}>
                   {transcript.content ? (transcript.content.length / 1000).toFixed(1) + "k chars" : ""}
                 </span>
               </div>
             </div>
 
             {/* Body */}
-            <div style={{ padding: "10px 12px", fontSize: 12, color: "#333", lineHeight: 1.55, maxHeight: transcriptExpanded ? "70vh" : 260, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+            <div style={{ padding: sp("10px 12px"), fontSize: fs(12), color: T.text, lineHeight: 1.55, maxHeight: transcriptExpanded ? "70vh" : 260, overflowY: "auto", whiteSpace: "pre-wrap" }}>
               {transcriptSections?.prepared && (
                 <>
-                  <div style={{ fontSize: 10, color: "#bbb", fontWeight: 400, letterSpacing: .5, textTransform: "uppercase", marginBottom: 6 }}>Prepared Remarks</div>
+                  <div style={{ fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginBottom: sp(6) }}>Prepared Remarks</div>
                   <div>{transcriptExpanded ? transcriptSections.prepared : transcriptSections.prepared.slice(0, 2200) + (transcriptSections.prepared.length > 2200 ? "…" : "")}</div>
                 </>
               )}
               {transcriptExpanded && transcriptSections?.qa && (
                 <>
-                  <div style={{ fontSize: 10, color: "#bbb", fontWeight: 400, letterSpacing: .5, textTransform: "uppercase", marginTop: 14, marginBottom: 6, borderTop: "1px solid rgba(0,0,0,.06)", paddingTop: 10 }}>Q&A Session</div>
+                  <div style={{ fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginTop: sp(14), marginBottom: sp(6), borderTop: "1px solid rgba(0,0,0,.06)", paddingTop: sp(10) }}>Q&A Session</div>
                   <div>{transcriptSections.qa}</div>
                 </>
               )}
             </div>
 
             {/* Expand/collapse footer */}
-            <div style={{ padding: "6px 10px", borderTop: "1px solid rgba(0,0,0,.06)", background: "rgba(0,0,0,.012)", textAlign: "center" }}>
+            <div style={{ padding: sp("6px 10px"), borderTop: "1px solid rgba(0,0,0,.06)", background: "rgba(0,0,0,.012)", textAlign: "center" }}>
               <button onClick={() => setTranscriptExpanded(!transcriptExpanded)} style={{
-                background: "none", border: "none", padding: "2px 8px",
-                fontSize: 10, color: "#888", cursor: "pointer", fontWeight: 400, letterSpacing: .3,
+                background: "none", border: "none", padding: sp("2px 8px"),
+                fontSize: fs(10), color: T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3,
               }}>
                 {transcriptExpanded ? "▲ Collapse" : transcriptSections?.qa ? "▼ Expand full transcript (incl. Q&A)" : "▼ Expand full transcript"}
               </button>
             </div>
           </div>
         )}
-        <div style={{ fontSize: 9, color: "#bbb", marginTop: 6, textAlign: "right" }}>
+        <div style={{ fontSize: fs(9), color: T.textMuted, marginTop: sp(6), textAlign: "right" }}>
           Transcripts & filings via FMP · Click any filing to open on SEC EDGAR
         </div>
       </div>
@@ -1994,12 +1994,12 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
   return (
     <>
         {/* ── PRICE CHART (full width, prominent) ── */}
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: sp(12) }}>
           <PriceChart co={co} vc={vc} price={price} apiKey={apiKey} wkLow={wkLow} wkHigh={wkHigh} />
         </div>
 
         {/* ── KEY STATS (live TTM when available) ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0, marginBottom: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0, marginBottom: sp(10) }}>
           {[
             ["Mkt Cap", fmtMC(live?.mc || co.mc), live?.mc != null],
             ["P/E (TTM)", (live?.pe || co.pe) ? (live?.pe || co.pe).toFixed(1) + "x" : "—", live?.pe != null],
@@ -2011,65 +2011,65 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
             ["Dividend", co.fin?.div ? "$" + co.fin.div.toFixed(2) : "—", false],
             ["Shares", (isFiniteNumber(valuationBase.sh) ? valuationBase.sh.toFixed(0) + "M" : "—"), valuationBase.hasLiveShares],
           ].map(([l, v, isLive], i) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 8px", background: Math.floor(i / 3) % 2 === 0 ? "rgba(0,0,0,.01)" : "transparent", borderBottom: "1px solid rgba(0,0,0,.025)" }}>
-              <span style={{ fontSize: 11, color: "#999" }}>{l}</span>
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("3px 8px"), background: Math.floor(i / 3) % 2 === 0 ? "rgba(0,0,0,.01)" : "transparent", borderBottom: "1px solid rgba(0,0,0,.025)" }}>
+              <span style={{ fontSize: fs(11), color: T.textDim }}>{l}</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "#333", fontWeight: 400 }}>{v}</span>
-                {isLive && <AppTooltip content="Live from FMP"><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: "#1a8a5c" }} /></AppTooltip>}
+                <span style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</span>
+                {isLive && <AppTooltip content="Live from FMP"><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: T.green }} /></AppTooltip>}
               </span>
             </div>
           ))}
         </div>
 
         {/* ── RANGE BARS ── */}
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "#aaa", marginBottom: 2 }}>Day Range</div>
+        <div style={{ marginBottom: sp(10) }}>
+          <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(2) }}>Day Range</div>
           <RangeBar low={dayLow} high={dayHigh} current={price} color={vc.c} />
-          <div style={{ fontSize: 11, color: "#aaa", marginBottom: 2, marginTop: 5 }}>52 Week Range</div>
+          <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(2), marginTop: sp(5) }}>52 Week Range</div>
           <RangeBar low={wkLow} high={wkHigh} current={price} color={vc.c} />
         </div>
 
         {/* ── DESCRIPTION + PRODUCT ── */}
         <div style={STYLE_SECTION}>
-          <p style={{ fontSize: 13, color: "#555", lineHeight: 1.7, margin: "0 0 8px" }}>{co.d}</p>
-          <div style={{ background: vc.bg, borderRadius: 8, padding: "6px 10px", fontSize: 11, color: "#555" }}>{co.pr}</div>
+          <p style={{ fontSize: fs(13), color: T.textSec, lineHeight: 1.7, margin: "0 0 8px" }}>{co.d}</p>
+          <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("6px 10px"), fontSize: fs(11), color: T.textSec }}>{co.pr}</div>
         </div>
 
         {/* ── SUPPLY CHAIN + RISKS/CATALYSTS ── */}
         <div style={{ ...STYLE_SECTION, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div>
             <div style={STYLE_LABEL}>Supply chain</div>
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>SUPPLIERS → ({sup.length})</div>
+            <div style={{ marginBottom: sp(8) }}>
+              <div style={{ fontSize: fs(10), color: T.textMuted, marginBottom: sp(3) }}>SUPPLIERS → ({sup.length})</div>
               {sup.length > 0 ? sup.map(sx => (
-                <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ fontSize: 11, color: "#777", padding: "2px 0", cursor: "pointer", borderRadius: 3 }}
+                <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ fontSize: fs(11), color: T.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
                   onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                  <Logo ticker={sx.t} size={12} style={{ marginRight: 3 }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === sx.t) || COMPANIES[0]).v].c }}>${sx.t}</span>
-                  <span style={{ color: "#bbb", marginLeft: 4 }}>{sx.l}</span>
+                  <Logo ticker={sx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === sx.t) || COMPANIES[0]).v].c }}>${sx.t}</span>
+                  <span style={{ color: T.textMuted, marginLeft: sp(4) }}>{sx.l}</span>
                 </div>
-              )) : <div style={{ fontSize: 11, color: "#ccc" }}>{"—"}</div>}
+              )) : <div style={{ fontSize: fs(11), color: T.textMuted }}>{"—"}</div>}
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>→ CUSTOMERS ({cust.length})</div>
+              <div style={{ fontSize: fs(10), color: T.textMuted, marginBottom: sp(3) }}>→ CUSTOMERS ({cust.length})</div>
               {cust.length > 0 ? cust.map(cx => (
-                <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ fontSize: 11, color: "#777", padding: "2px 0", cursor: "pointer", borderRadius: 3 }}
+                <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ fontSize: fs(11), color: T.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
                   onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                  <Logo ticker={cx.t} size={12} style={{ marginRight: 3 }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === cx.t) || COMPANIES[0]).v].c }}>${cx.t}</span>
-                  <span style={{ color: "#bbb", marginLeft: 4 }}>{cx.l}</span>
+                  <Logo ticker={cx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === cx.t) || COMPANIES[0]).v].c }}>${cx.t}</span>
+                  <span style={{ color: T.textMuted, marginLeft: sp(4) }}>{cx.l}</span>
                 </div>
-              )) : <div style={{ fontSize: 11, color: "#ccc" }}>End buyer</div>}
+              )) : <div style={{ fontSize: fs(11), color: T.textMuted }}>End buyer</div>}
             </div>
           </div>
           <div>
-            <div style={{ background: "rgba(196,64,64,.03)", borderRadius: 6, padding: 7, marginBottom: 6 }}>
-              <div style={{ fontSize: 10, color: "#c44040", letterSpacing: 1.5, marginBottom: 4 }}>RISKS</div>
-              {co.ri.map((r, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 12, lineHeight: 1.5 }}>{r}</div>)}
+            <div style={{ background: "rgba(196,64,64,.03)", borderRadius: RADII.sm, padding: sp(7), marginBottom: sp(6) }}>
+              <div style={{ fontSize: fs(10), color: T.red, letterSpacing: 1.5, marginBottom: sp(4) }}>RISKS</div>
+              {co.ri.map((r, i) => <div key={i} style={{ fontSize: fs(11), color: T.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{r}</div>)}
             </div>
-            <div style={{ background: "rgba(26,138,92,.03)", borderRadius: 6, padding: 7 }}>
-              <div style={{ fontSize: 10, color: "#1a8a5c", letterSpacing: 1.5, marginBottom: 4 }}>CATALYSTS</div>
-              {co.ca.map((c, i) => <div key={i} style={{ fontSize: 11, color: "#777", marginBottom: 2, paddingLeft: 12, lineHeight: 1.5 }}>{c}</div>)}
+            <div style={{ background: "rgba(26,138,92,.03)", borderRadius: RADII.sm, padding: sp(7) }}>
+              <div style={{ fontSize: fs(10), color: T.green, letterSpacing: 1.5, marginBottom: sp(4) }}>CATALYSTS</div>
+              {co.ca.map((c, i) => <div key={i} style={{ fontSize: fs(11), color: T.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{c}</div>)}
             </div>
           </div>
         </div>
@@ -2079,8 +2079,8 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           <div style={STYLE_LABEL}>Annual Revenue</div>
           <ResponsiveContainer width="100%" height={75}>
             <BarChart data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
-              <XAxis dataKey="year" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#aaa" }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="year" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: fs(11), fill: T.textMuted }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={chartTooltipContentStyle} formatter={(v) => [fmtMC(v), "Revenue"]} />
               <Bar dataKey="rev" fill={vc.c} radius={[4, 4, 0, 0]} barSize={28} fillOpacity={0.7}>
                 {fd.years.map((y, i) => <Cell key={i} fill={y.includes("E") ? vc.c + "88" : vc.c} />)}
@@ -2103,7 +2103,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
   return (
     <>
           {/* Revenue Segments */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Revenue segments</div>
             {co.rs && co.rs.length > 0 ? (
               <StackedBar data={co.rs} color={vc.c} height={22} />
@@ -2113,7 +2113,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           </div>
 
           {/* Geographic Mix */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Geographic mix</div>
             {co.geo && co.geo.length > 0 ? (
               <StackedBar data={co.geo} color={vc.c} height={22} />
@@ -2123,16 +2123,16 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           </div>
 
           {/* Top Customers */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Customer concentration</div>
             {co.tc && co.tc.length > 0 ? (
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, padding: 10 }}>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp(10) }}>
                 <StackedBar data={co.tc.map(([n, p]) => [n, p])} color={vc.c} height={20} />
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(0,0,0,.04)" }}>
+                <div style={{ marginTop: sp(8), paddingTop: sp(8), borderTop: "1px solid rgba(0,0,0,.04)" }}>
                   {co.tc.map(([n, p]) => (
-                    <div key={n} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 11 }}>
-                      <span style={{ color: "#555", fontWeight: 400 }}>{n}</span>
-                      <span style={{ color: "#333", fontWeight: 400 }}>{p}%</span>
+                    <div key={n} style={{ display: "flex", justifyContent: "space-between", padding: sp("2px 0"), fontSize: fs(11) }}>
+                      <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{n}</span>
+                      <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{p}%</span>
                     </div>
                   ))}
                 </div>
@@ -2143,83 +2143,83 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           </div>
 
           {/* Product Lines */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Product portfolio</div>
             {co.pl && co.pl.length > 0 ? (
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, overflow: "hidden" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(0,0,0,.018)", borderBottom: "1px solid rgba(0,0,0,.06)" }}>
-                      <th style={{ textAlign: "left", padding: "5px 8px", fontSize: 10, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>Product</th>
-                      <th style={{ textAlign: "left", padding: "5px 8px", fontSize: 10, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>Description</th>
-                      <th style={{ textAlign: "right", padding: "5px 8px", fontSize: 10, color: "#aaa", fontWeight: 400, letterSpacing: 1, textTransform: "uppercase" }}>Position</th>
+                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Product</th>
+                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Description</th>
+                      <th style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Position</th>
                     </tr>
                   </thead>
                   <tbody>
                     {co.pl.map((p, i) => (
                       <tr key={i} style={{ borderBottom: i < co.pl.length - 1 ? "1px solid rgba(0,0,0,.04)" : "none" }}>
-                        <td style={{ padding: "5px 8px", fontSize: 11, color: "#333", fontWeight: 400 }}>{p.name}</td>
-                        <td style={{ padding: "5px 8px", fontSize: 11, color: "#666" }}>{p.desc}</td>
-                        <td style={{ padding: "5px 8px", fontSize: 11, color: vc.c, textAlign: "right", fontWeight: 400 }}>{p.pos || "—"}</td>
+                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{p.name}</td>
+                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: T.textSec }}>{p.desc}</td>
+                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: vc.c, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>{p.pos || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div style={{ background: vc.bg, borderRadius: 8, padding: "8px 12px", fontSize: 11, color: "#555" }}>{co.pr}</div>
+              <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("8px 12px"), fontSize: fs(11), color: T.textSec }}>{co.pr}</div>
             )}
           </div>
 
           {/* Peer comparison */}
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Peer comparison</div>
             <PeerGrid co={co} color={vc.c} onSelect={onSelect} />
-            <div style={{ fontSize: 10, color: "#aaa", marginTop: 4, fontStyle: "italic" }}>
+            <div style={{ fontSize: fs(10), color: T.textMuted, marginTop: sp(4), fontStyle: "italic" }}>
               Peers selected by closest market cap within same sub-layer and vertical. Dot shows rank in peer set.
             </div>
           </div>
 
           {/* Supply chain detail */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: sp(14) }}>
             <div>
               <div style={STYLE_LABEL}>Suppliers ({sup.length})</div>
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 6, padding: 8, minHeight: 60 }}>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
                 {sup.length > 0 ? sup.map(sx => {
                   const sCo = COMPANIES.find(c => c.t === sx.t);
                   return (
-                    <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 4px", cursor: "pointer", borderRadius: 3, fontSize: 11 }}
+                    <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={sx.t} size={14} />
-                      <span style={{ color: sCo ? VX[sCo.v].c : "#777", fontWeight: 400 }}>{sx.t}</span>
-                      <span style={{ color: "#bbb", marginLeft: "auto", fontSize: 10 }}>{sx.l}</span>
+                      <span style={{ color: sCo ? VX[sCo.v].c : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>{sx.t}</span>
+                      <span style={{ color: T.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{sx.l}</span>
                     </div>
                   );
-                }) : <div style={{ fontSize: 11, color: "#ccc", padding: 4 }}>End of chain</div>}
+                }) : <div style={{ fontSize: fs(11), color: T.textMuted, padding: sp(4) }}>End of chain</div>}
               </div>
             </div>
             <div>
               <div style={STYLE_LABEL}>Customers ({cust.length})</div>
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 6, padding: 8, minHeight: 60 }}>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
                 {cust.length > 0 ? cust.map(cx => {
                   const cCo = COMPANIES.find(c => c.t === cx.t);
                   return (
-                    <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 4px", cursor: "pointer", borderRadius: 3, fontSize: 11 }}
+                    <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={cx.t} size={14} />
-                      <span style={{ color: cCo ? VX[cCo.v].c : "#777", fontWeight: 400 }}>{cx.t}</span>
-                      <span style={{ color: "#bbb", marginLeft: "auto", fontSize: 10 }}>{cx.l}</span>
+                      <span style={{ color: cCo ? VX[cCo.v].c : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>{cx.t}</span>
+                      <span style={{ color: T.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{cx.l}</span>
                     </div>
                   );
-                }) : <div style={{ fontSize: 11, color: "#ccc", padding: 4 }}>End buyer</div>}
+                }) : <div style={{ fontSize: fs(11), color: T.textMuted, padding: sp(4) }}>End buyer</div>}
               </div>
             </div>
           </div>
 
           {/* Peer comparison table */}
-          <div style={{ marginBottom: 4 }}>
+          <div style={{ marginBottom: sp(4) }}>
             <div style={STYLE_LABEL}>Peer comparison · live fundamentals</div>
             {co.cp && co.cp.length > 0 ? (
               <PeerTable co={co} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onSelect={onSelect} accent={vc.c} />
@@ -2237,33 +2237,33 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
   return (
     <>
           {/* Quarterly EPS: beats vs estimates */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <div style={{ marginBottom: sp(12) }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(4) }}>
               <div style={STYLE_LABEL}>Quarterly EPS · actual vs estimate</div>
-              <div style={{ display: "flex", gap: 10, fontSize: 10, color: "#888" }}>
+              <div style={{ display: "flex", gap: 10, fontSize: fs(10), color: T.textDim }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: "#e8e8e8", borderRadius: 1 }} />Estimate
+                  <span style={{ width: 8, height: 8, background: T.bg3, borderRadius: 1 }} />Estimate
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: "#1a8a5c", borderRadius: 1 }} />Beat
+                  <span style={{ width: 8, height: 8, background: T.green, borderRadius: 1 }} />Beat
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: "#c44040", borderRadius: 1 }} />Miss
+                  <span style={{ width: 8, height: 8, background: T.red, borderRadius: 1 }} />Miss
                 </span>
               </div>
             </div>
-            <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, padding: "8px 10px" }}>
+            <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp("8px 10px") }}>
 	              <ResponsiveContainer width="100%" height={140}>
 	                <BarChart data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
-	                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} />
-	                  <YAxis tick={{ fontSize: 10, fill: "#aaa" }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
+	                  <XAxis dataKey="label" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} />
+	                  <YAxis tick={{ fontSize: fs(10), fill: T.textMuted }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
 	                  <Tooltip contentStyle={chartTooltipContentStyle}
 	                    formatter={(v, name) => [isFiniteNumber(v) ? "$" + v.toFixed(2) : "—", name]} />
-	                  <Bar dataKey="estimate" fill="#e8e8e8" radius={[2, 2, 0, 0]} barSize={10} name="Est" />
+	                  <Bar dataKey="estimate" fill={T.bg3} radius={[2, 2, 0, 0]} barSize={10} name="Est" />
 	                  <Bar dataKey="actual" radius={[2, 2, 0, 0]} barSize={10} name="Actual">
-	                    {fd.qEPS.map((e, i) => <Cell key={i} fill={e.beat == null ? "#888" : e.beat ? "#1a8a5c" : "#c44040"} />)}
+	                    {fd.qEPS.map((e, i) => <Cell key={i} fill={e.beat == null ? T.textDim : e.beat ? T.green : T.red} />)}
 	                  </Bar>
-	                  <ReferenceLine y={0} stroke="#ddd" />
+	                  <ReferenceLine y={0} stroke={T.textMuted} />
 	                </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2285,23 +2285,23 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
           <div style={STYLE_SECTION}>
             <div style={STYLE_LABEL}>Investment intensity</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, padding: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1, fontWeight: 400 }}>R&D ÷ Revenue</span>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp(10) }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(4) }}>
+                  <span style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>R&D ÷ Revenue</span>
                   <TrendSpark values={fd.ratiosData.map(r => r.rdIntensity)} color={vc.c} width={120} height={30} />
                 </div>
-                <div style={{ fontSize: 10, color: "#aaa" }}>
+                <div style={{ fontSize: fs(10), color: T.textMuted }}>
                   {co.v === "compute" ? "High R&D intensity is expected — tech leadership requires it" :
                    co.v === "photonics" ? "Photonics R&D reflects process and device innovation" :
                    co.v === "hyperscaler" ? "Hyperscaler R&D funds both software and silicon" : "Steady R&D reinvestment sustains margin"}
                 </div>
               </div>
-              <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 8, padding: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1, fontWeight: 400 }}>Capex ÷ Revenue</span>
+              <div style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, padding: sp(10) }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(4) }}>
+                  <span style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>Capex ÷ Revenue</span>
                   <TrendSpark values={fd.ratiosData.map(r => r.capexIntensity)} color={vc.c} width={120} height={30} />
                 </div>
-                <div style={{ fontSize: 10, color: "#aaa" }}>
+                <div style={{ fontSize: fs(10), color: T.textMuted }}>
                   {co.v === "hyperscaler" ? "AI buildout cycle drives sustained elevated capex" :
                    co.v === "dcInfra" ? "Capital-intensive DC infrastructure by design" :
                    co.v === "memory" || co.s === "Foundry" ? "Fab capex cycles drive margin volatility" : "Typical asset-light model"}
@@ -2316,14 +2316,14 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
 	              <div style={STYLE_LABEL}>Cash runway</div>
 	              <div style={{ background: latestRatio.runwayQtrs < 4 ? "rgba(196,64,64,.04)" : latestRatio.runwayQtrs < 8 ? "rgba(184,134,11,.04)" : "rgba(26,138,92,.04)",
 	                border: "1px solid " + (latestRatio.runwayQtrs < 4 ? "rgba(196,64,64,.15)" : latestRatio.runwayQtrs < 8 ? "rgba(184,134,11,.15)" : "rgba(26,138,92,.15)"),
-	                borderRadius: 6, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+	                borderRadius: RADII.sm, padding: sp("8px 12px"), display: "flex", alignItems: "center", gap: 10 }}>
 	                <div>
-	                  <div style={{ fontSize: 20, fontWeight: 400, color: latestRatio.runwayQtrs < 4 ? "#c44040" : latestRatio.runwayQtrs < 8 ? "#b8860b" : "#1a8a5c" }}>
-	                    {latestRatio.runwayQtrs}<span style={{ fontSize: 11, marginLeft: 3 }}>quarters</span>
+	                  <div style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: latestRatio.runwayQtrs < 4 ? T.red : latestRatio.runwayQtrs < 8 ? T.amber : T.green }}>
+	                    {latestRatio.runwayQtrs}<span style={{ fontSize: fs(11), marginLeft: sp(3) }}>quarters</span>
 	                  </div>
-	                  <div style={{ fontSize: 10, color: "#999" }}>Implied runway at current burn rate</div>
+	                  <div style={{ fontSize: fs(10), color: T.textDim }}>Implied runway at current burn rate</div>
 	                </div>
-	                <div style={{ fontSize: 11, color: "#666", flex: 1 }}>
+	                <div style={{ fontSize: fs(11), color: T.textSec, flex: 1 }}>
 	                  {latestRatio.runwayQtrs < 4 ? "Short runway — capital raise or profitability inflection needed near-term." :
 	                   latestRatio.runwayQtrs < 8 ? "Manageable runway but dilution risk over medium-term if burn continues." :
 	                   "Comfortable runway supports operational execution through the cycle."}
@@ -2406,26 +2406,26 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
     return { ...base, ratiosData };
   }, [co, focalFinancials, live?.mc]);
   return (
-    <div style={{ background: "#ffffff", borderRadius: 14, border: "1px solid rgba(0,0,0,.06)", overflow: "hidden", animation: "slideUp 0.3s ease", boxShadow: "0 4px 16px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background: T.bg1, borderRadius: RADII.lg, border: "1px solid rgba(0,0,0,.06)", overflow: "hidden", animation: "slideUp 0.3s ease", boxShadow: "0 4px 16px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04)" }}>
       {/* ── HEADER ── */}
-      <div style={{ padding: "12px 16px 10px", background: "linear-gradient(to bottom, rgba(0,0,0,.01), transparent)", borderBottom: "1px solid rgba(0,0,0,.05)" }}>
+      <div style={{ padding: sp("12px 16px 10px"), background: "linear-gradient(to bottom, rgba(0,0,0,.01), transparent)", borderBottom: "1px solid rgba(0,0,0,.05)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 11, color: "#999" }}>{vc.n} &middot; {co.s}</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 3 }}>
-              <Logo ticker={co.t} size={22} style={{ marginRight: 6 }} /><span style={{ fontSize: 22, color: "#111" }}>{co.cc} {co.t}</span>
-              <span style={{ fontSize: 13, color: "#888" }}>{co.nm}</span>
+            <div style={{ fontSize: fs(11), color: T.textDim }}>{vc.n} &middot; {co.s}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: sp(3) }}>
+              <Logo ticker={co.t} size={22} style={{ marginRight: sp(6) }} /><span style={{ fontSize: fs(22), color: T.text }}>{co.cc} {co.t}</span>
+              <span style={{ fontSize: fs(13), color: T.textDim }}>{co.nm}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
-              <span style={{ fontSize: 20, fontWeight: 400, color: "#111" }}>{fmtPrice(price)}</span>
-              <span style={{ fontSize: 12, color: isFiniteNumber(dailyChg) && dailyChg >= 0 ? "#1a8a5c" : "#c44040" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: sp(4) }}>
+              <span style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtPrice(price)}</span>
+              <span style={{ fontSize: fs(12), color: isFiniteNumber(dailyChg) && dailyChg >= 0 ? T.green : T.red }}>
                 {isFiniteNumber(dailyChg) && isFiniteNumber(dailyPct)
                   ? `${dailyChg >= 0 ? "+" : ""}${dailyChg.toFixed(2)} (${dailyPct >= 0 ? "+" : ""}${dailyPct.toFixed(2)}%)`
                   : "—"}
               </span>
             </div>
             {(bid != null || ask != null) ? (
-              <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+              <div style={{ fontSize: fs(10), color: T.textMuted, marginTop: sp(2) }}>
                 {bid != null ? `Bid ${bid.toFixed(2)}` : "Bid —"} &nbsp;&middot;&nbsp; {ask != null ? `Ask ${ask.toFixed(2)}` : "Ask —"}
               </div>
             ) : null}
@@ -2436,13 +2436,13 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
             <AppTooltip content="Open this symbol on the Trade tab"><button
               onClick={() => onJumpToTrade && onJumpToTrade(co.t)}
               style={{
-                background: "#fff",
+                background: T.bg1,
                 border: "1px solid rgba(0,0,0,.08)",
-                borderRadius: 6,
-                padding: "4px 10px",
-                fontSize: 11,
-                fontWeight: 400,
-                color: "#333",
+                borderRadius: RADII.sm,
+                padding: sp("4px 10px"),
+                fontSize: fs(11),
+                fontWeight: FONT_WEIGHTS.regular,
+                color: T.text,
                 cursor: "pointer",
                 display: "inline-flex",
                 alignItems: "center",
@@ -2480,11 +2480,11 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                 }
               }}
               style={{
-                background: copyStatus === "copied" ? "rgba(26,138,92,.12)" : copyStatus === "error" ? "rgba(196,64,64,.12)" : "#fff",
+                background: copyStatus === "copied" ? "rgba(26,138,92,.12)" : copyStatus === "error" ? "rgba(196,64,64,.12)" : T.bg1,
                 border: `1px solid ${copyStatus === "copied" ? "rgba(26,138,92,.35)" : copyStatus === "error" ? "rgba(196,64,64,.35)" : "rgba(0,0,0,.08)"}`,
-                borderRadius: 6, padding: "4px 10px",
-                fontSize: 11, fontWeight: 400,
-                color: copyStatus === "copied" ? "#1a8a5c" : copyStatus === "error" ? "#c44040" : "#555",
+                borderRadius: RADII.sm, padding: sp("4px 10px"),
+                fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
+                color: copyStatus === "copied" ? T.green : copyStatus === "error" ? T.red : T.textSec,
                 cursor: "pointer",
                 display: "inline-flex", alignItems: "center", gap: 5,
                 transition: "all .2s ease",
@@ -2503,15 +2503,15 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
         </div>
       </div>
 
-      <div style={{ padding: "10px 14px 14px", maxHeight: "70vh", overflowY: "auto" }}>
+      <div style={{ padding: sp("10px 14px 14px"), maxHeight: "70vh", overflowY: "auto" }}>
         {/* ── TAB BAR ── */}
-        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid rgba(0,0,0,.06)", marginBottom: 10, marginTop: -2 }}>
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid rgba(0,0,0,.06)", marginBottom: sp(10), marginTop: -2 }}>
           {[["overview", "Overview"], ["business", "Business"], ["financials", "Financials"], ["valuation", "Valuation"], ["filings", "📄 Filings"]].map(([id, lb]) => (
             <button key={id} onClick={() => setDetailTab(id)} style={{
               background: "none", border: "none",
               borderBottom: detailTab === id ? "2px solid " + vc.c : "2px solid transparent",
-              padding: "6px 14px", color: detailTab === id ? vc.c : "#888",
-              fontSize: 11, fontWeight: 400, cursor: "pointer", letterSpacing: 0.3,
+              padding: sp("6px 14px"), color: detailTab === id ? vc.c : T.textDim,
+              fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3,
             }}>{lb}</button>
           ))}
         </div>
@@ -2532,10 +2532,10 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
         {detailTab === "filings" && <FilingsTab co={co} apiKey={apiKey} />}
 
         {/* ── BACK TO GRAPH (always visible) ── */}
-        <div style={{ borderTop: "1px solid rgba(0,0,0,.06)", marginTop: 16, paddingTop: 12, textAlign: "center" }}>
+        <div style={{ borderTop: "1px solid rgba(0,0,0,.06)", marginTop: sp(16), paddingTop: sp(12), textAlign: "center" }}>
           <button onClick={onClose} style={{
-            background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 8,
-            padding: "6px 20px", boxShadow: "0 1px 3px rgba(0,0,0,.04)", color: "#888", fontSize: 10, cursor: "pointer", fontWeight: 400,
+            background: T.bg1, border: "1px solid rgba(0,0,0,.08)", borderRadius: RADII.md,
+            padding: sp("6px 20px"), boxShadow: "0 1px 3px rgba(0,0,0,.04)", color: T.textDim, fontSize: fs(10), cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
           }}>Back to graph</button>
         </div>
       </div>
@@ -2552,9 +2552,9 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
   return (
     <>
       {/* ═══ ROW 6: VALUE STREAM ═══ */}
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: sp(14) }}>
         <div style={STYLE_LABEL_DIM}>Value stream — hover to preview, click to explore</div>
-        <div style={{ ...STYLE_CARD, padding: "6px 2px", overflowX: "auto" }}>
+        <div style={{ ...STYLE_CARD, padding: sp("6px 2px"), overflowX: "auto" }}>
           {(() => {
             const focused = sankeyExp;
             const setFocused = setSankeyExp;
@@ -2581,7 +2581,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                 const srcGrp = stages.flatMap(st => st.groups).find(g => g.tickers.includes(s));
                 const k = s + ">" + sg + ">" + tg;
                 const v = Math.max(80, Math.round(rev / (edgeCountCache[s] || 1)));
-                if (!cfMap[k]) cfMap[k] = { from: sg, to: tg, ticker: s, value: 0, color: srcGrp?.bc || "#888" };
+                if (!cfMap[k]) cfMap[k] = { from: sg, to: tg, ticker: s, value: 0, color: srcGrp?.bc || T.textDim };
                 cfMap[k].value += v;
               }
             });
@@ -2911,7 +2911,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
             const focGrp = focGrpId ? allGroups.find(g => g.id === focGrpId) : null;
             const active = (isGrpMode ? null : focused) || hoverTicker;
             const activeCo = active ? COMPANIES.find(c => c.t === active) : null;
-            const activeBrand = active ? (BRAND[active] || ["#888"])[0] : null;
+            const activeBrand = active ? (BRAND[active] || [T.textDim])[0] : null;
             const anyFocus = active || focGrpId;
 
             // Total rev per stage for percentage calc
@@ -2921,10 +2921,10 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
               <div style={{ position: "relative" }}>
                 {(focused || focGrpId) && (
                   <button onClick={() => { setFocused(null); setHoverTicker(null); }} style={{
-                    position: "absolute", top: 4, right: 6, zIndex: 5, background: "#fff",
-                    border: "1px solid rgba(0,0,0,.1)", borderRadius: 6, padding: "3px 10px",
-                    fontSize: 10, color: "#666", cursor: "pointer",
-                    boxShadow: "0 2px 8px rgba(0,0,0,.08)", fontWeight: 400,
+                    position: "absolute", top: 4, right: 6, zIndex: 5, background: T.bg1,
+                    border: "1px solid rgba(0,0,0,.1)", borderRadius: RADII.sm, padding: sp("3px 10px"),
+                    fontSize: fs(10), color: T.textSec, cursor: "pointer",
+                    boxShadow: "0 2px 8px rgba(0,0,0,.08)", fontWeight: FONT_WEIGHTS.regular,
                   }}>✕ Back</button>
                 )}
 
@@ -2969,7 +2969,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         <rect x={g.cx} y={g.y} width={nodeW} height={g.h} rx={3}
                           filter={dimmed ? "none" : "url(#nodeShadow)"}
                           fill={g.bc} fillOpacity={dimmed ? 0.15 : 0.92}
-                          stroke={isGrpFocus ? "#222" : gHasActive ? activeBrand : "rgba(0,0,0,.08)"}
+                          stroke={isGrpFocus ? T.text : gHasActive ? activeBrand : "rgba(0,0,0,.08)"}
                           strokeWidth={isGrpFocus || gHasActive ? 1.5 : 0.5}
                           style={{ transition: "fill-opacity 0.3s ease" }} />
                         {/* Two-line external label with percentage */}
@@ -2979,13 +2979,13 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           const anchor = isRight ? "start" : "end";
                           return (
                             <g opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity 0.3s ease", pointerEvents: "none" }}>
-                              <text x={lx} y={g.y + g.h / 2 - 4} fontSize={11} textAnchor={anchor}
-                                fontFamily="var(--ra-font-sans)" fill="#1a1a1a" fontWeight={400}
+                              <text x={lx} y={g.y + g.h / 2 - 4} fontSize={fs(11)} textAnchor={anchor}
+                                fontFamily={T.display} fill={T.text} fontWeight={FONT_WEIGHTS.regular}
                                 dominantBaseline="middle">{g.label}</text>
                               <text x={lx} y={g.y + g.h / 2 + 9} fontSize={9.5} textAnchor={anchor}
-                                fontFamily="var(--ra-font-sans)" dominantBaseline="middle">
-                                <tspan fill="#333" fontWeight={400}>{pct}%</tspan>
-                                <tspan fill="#999"> · {fmtMC(g.rev)}</tspan>
+                                fontFamily={T.display} dominantBaseline="middle">
+                                <tspan fill={T.text} fontWeight={FONT_WEIGHTS.regular}>{pct}%</tspan>
+                                <tspan fill={T.textDim}> · {fmtMC(g.rev)}</tspan>
                               </text>
                             </g>
                           );
@@ -3007,7 +3007,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                       .sort((a, b) => b.total - a.total).slice(0, 5)
                       .map((p, i) => (
                         <text key={"fl"+i} x={p.mx} y={p.my - 5} textAnchor="middle"
-                          fontSize={9} fill="#bbb" fontWeight={400} fontFamily="var(--ra-font-sans)"
+                          fontSize={fs(9)} fill={T.textMuted} fontWeight={FONT_WEIGHTS.regular} fontFamily={T.display}
                           style={{ pointerEvents: "none" }}>{fmtMC(p.total)}</text>
                       ));
                   })()}
@@ -3017,7 +3017,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     const isRight = i === 6;
                     const isLeft = i === 0;
                     const cx = colX[i] + nodeW / 2;
-                    const stageColor = st.groups[0]?.bc || "#888";
+                    const stageColor = st.groups[0]?.bc || T.textDim;
                     return (
                       <g key={"hdr"+i}>
                         {/* Subtle accent dot */}
@@ -3025,8 +3025,8 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         {/* Stage label */}
                         <text x={cx} y={27}
                           textAnchor={isLeft ? "start" : isRight ? "end" : "middle"}
-                          fontSize={9.5} fill="#888" fontWeight={400}
-                          fontFamily="var(--ra-font-sans)"
+                          fontSize={9.5} fill={T.textDim} fontWeight={FONT_WEIGHTS.regular}
+                          fontFamily={T.display}
                           style={{ letterSpacing: "0.08em", textTransform: "uppercase" }}>
                           {isLeft ? (
                             <tspan x={colX[i]}>{st.label.toUpperCase()}</tspan>
@@ -3038,7 +3038,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     );
                   })}
                   {/* Thin divider line beneath stage headers */}
-                  <line x1={4} x2={W - 4} y1={32} y2={32} stroke="#eee" strokeWidth={1} />
+                  <line x1={4} x2={W - 4} y1={32} y2={32} stroke={T.border} strokeWidth={1} />
                 </svg>
 
                 {/* Hover tooltip */}
@@ -3055,13 +3055,13 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                       top: Math.max(0, ay/H*100 - 8)+"%",
                       ...chartTooltipContentStyle,
                       border: "1px solid var(--ra-tooltip-border)",
-                      padding: "5px 8px", pointerEvents: "none",
+                      padding: sp("5px 8px"), pointerEvents: "none",
                       display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
                     }}>
                       <Logo ticker={hoverTicker} size={20} />
                       <div>
-                        <div style={{ fontSize: 11, fontWeight: 400, color: "var(--ra-tooltip-text)" }}>{co.cc} {hoverTicker}</div>
-                        <div style={{ fontSize: 10, color: "var(--ra-tooltip-muted)" }}>{fmtPrice(price)} · {fmtMC(co.r)} rev</div>
+                        <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: "var(--ra-tooltip-text)" }}>{co.cc} {hoverTicker}</div>
+                        <div style={{ fontSize: fs(10), color: "var(--ra-tooltip-muted)" }}>{fmtPrice(price)} · {fmtMC(co.r)} rev</div>
                       </div>
                     </div>
                   );
@@ -3074,18 +3074,18 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   const outT = groupFlows.filter(f => f.from === focGrpId).reduce((a, f) => a + f.total, 0);
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-                      background: "#fff", border: "1px solid rgba(0,0,0,.1)", borderRadius: 12,
-                      padding: "10px 14px", minWidth: 320, maxWidth: 480,
+                      background: T.bg1, border: "1px solid rgba(0,0,0,.1)", borderRadius: RADII.md,
+                      padding: sp("10px 14px"), minWidth: 320, maxWidth: 480,
                       boxShadow: "0 8px 32px rgba(0,0,0,.14)", zIndex: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingBottom: 6, borderBottom: "2px solid " + focGrp.bc }}>
-                        <span style={{ fontSize: 14, fontWeight: 400 }}>{focGrp.label}</span>
-                        <span style={{ fontSize: 12, color: "#999" }}>{focGrp.tickers.length} cos · {fmtMC(focGrp.rev)}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: sp(6), paddingBottom: sp(6), borderBottom: "2px solid " + focGrp.bc }}>
+                        <span style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{focGrp.label}</span>
+                        <span style={{ fontSize: fs(12), color: T.textDim }}>{focGrp.tickers.length} cos · {fmtMC(focGrp.rev)}</span>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 6 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: sp(6) }}>
                         {[["INFLOWS", inT], ["GROUP REV", focGrp.rev], ["OUTFLOWS", outT]].map(([l, v]) => (
-                          <div key={l} style={{ textAlign: "center", padding: 3, background: "rgba(0,0,0,.015)", borderRadius: 4 }}>
-                            <div style={{ fontSize: 9, color: "#aaa", fontWeight: 400 }}>{l}</div>
-                            <div style={{ fontSize: 12, fontWeight: 400 }}>{fmtMC(v)}</div>
+                          <div key={l} style={{ textAlign: "center", padding: sp(3), background: "rgba(0,0,0,.015)", borderRadius: RADII.xs }}>
+                            <div style={{ fontSize: fs(9), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
+                            <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>{fmtMC(v)}</div>
                           </div>
                         ))}
                       </div>
@@ -3095,13 +3095,13 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           const pct = focGrp.rev > 0 ? (co.r / focGrp.rev * 100).toFixed(0) : 0;
                           return (
                             <div key={co.t} onClick={e => { e.stopPropagation(); setFocused(co.t); }}
-                              style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 6px", cursor: "pointer", borderRadius: 6, border: "1px solid rgba(0,0,0,.04)" }}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: sp("4px 6px"), cursor: "pointer", borderRadius: RADII.sm, border: "1px solid rgba(0,0,0,.04)" }}
                               onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.02)"}
                               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                               <Logo ticker={co.t} size={18} />
                               <div>
-                                <div style={{ fontSize: 11, fontWeight: 400 }}>{co.t} <span style={{ fontWeight: 400, color: "#999", fontSize: 10 }}>{pct}%</span></div>
-                                <div style={{ fontSize: 10, color: "#888" }}>{fmtPrice(price)}</div>
+                                <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>{co.t} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.textDim, fontSize: fs(10) }}>{pct}%</span></div>
+                                <div style={{ fontSize: fs(10), color: T.textDim }}>{fmtPrice(price)}</div>
                               </div>
                             </div>
                           );
@@ -3119,48 +3119,48 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   const customers = EDGES.filter(([s]) => s === focused).map(([, t, l]) => ({ t, l }));
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-                      background: "#fff", border: "1px solid rgba(0,0,0,.1)", borderRadius: 12,
-                      padding: "10px 14px", minWidth: 320, maxWidth: 440,
+                      background: T.bg1, border: "1px solid rgba(0,0,0,.1)", borderRadius: RADII.md,
+                      padding: sp("10px 14px"), minWidth: 320, maxWidth: 440,
                       boxShadow: "0 8px 32px rgba(0,0,0,.14)", zIndex: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: sp(6) }}>
                         <Logo ticker={focused} size={28} />
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 400 }}>{activeCo.cc} {focused} <span style={{ fontWeight: 400, color: "#888", fontSize: 12 }}>{activeCo.nm}</span></div>
-                          <div style={{ fontSize: 11, color: vc.c }}>{vc.n} · {activeCo.s}</div>
+                          <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{activeCo.cc} {focused} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.textDim, fontSize: fs(12) }}>{activeCo.nm}</span></div>
+                          <div style={{ fontSize: fs(11), color: vc.c }}>{vc.n} · {activeCo.s}</div>
                         </div>
                         <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                          <div style={{ fontSize: 16, fontWeight: 400 }}>{fmtPrice(price)}</div>
-                          <div style={{ fontSize: 10, color: "#999" }}>{fmtMC(activeCo.r)} rev</div>
+                          <div style={{ fontSize: fs(16), fontWeight: FONT_WEIGHTS.regular }}>{fmtPrice(price)}</div>
+                          <div style={{ fontSize: fs(10), color: T.textDim }}>{fmtMC(activeCo.r)} rev</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#555", lineHeight: 1.4, padding: "4px 0", borderTop: "1px solid rgba(0,0,0,.05)", fontStyle: "italic" }}>{activeCo.pr}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3, padding: "5px 0", borderBottom: "1px solid rgba(0,0,0,.05)" }}>
+                      <div style={{ fontSize: fs(11), color: T.textSec, lineHeight: 1.4, padding: sp("4px 0"), borderTop: "1px solid rgba(0,0,0,.05)", fontStyle: "italic" }}>{activeCo.pr}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3, padding: sp("5px 0"), borderBottom: "1px solid rgba(0,0,0,.05)" }}>
                         {[["MC", fmtMC(activeCo.mc)], ["P/E", activeCo.pe ? activeCo.pe + "x" : "—"], ["GM", activeCo.g + "%"], ["Growth", (activeCo.fin?.rg?.[4] > 0 ? "+" : "") + (activeCo.fin?.rg?.[4] || 0) + "%"]].map(([l, v]) => (
                           <div key={l} style={{ textAlign: "center" }}>
-                            <div style={{ fontSize: 9, color: "#aaa", fontWeight: 400 }}>{l}</div>
-                            <div style={{ fontSize: 11, fontWeight: 400 }}>{v}</div>
+                            <div style={{ fontSize: fs(9), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
+                            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>{v}</div>
                           </div>
                         ))}
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 4 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: sp(4) }}>
                         {[["SUPPLIERS", suppliers], ["CUSTOMERS", customers]].map(([label, list]) => (
                           <div key={label}>
-                            <div style={{ fontSize: 10, fontWeight: 400, color: "#aaa", marginBottom: 2 }}>{label} ({list.length})</div>
+                            <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: T.textMuted, marginBottom: sp(2) }}>{label} ({list.length})</div>
                             {list.slice(0, 5).map(s => (
                               <div key={s.t + s.l} onClick={e => { e.stopPropagation(); setFocused(s.t); }}
-                                style={{ fontSize: 10, color: "#555", padding: "2px 0", cursor: "pointer", display: "flex", gap: 3, alignItems: "center" }}
+                                style={{ fontSize: fs(10), color: T.textSec, padding: sp("2px 0"), cursor: "pointer", display: "flex", gap: 3, alignItems: "center" }}
                                 onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                                <Logo ticker={s.t} size={12} /><span style={{ fontWeight: 400 }}>{s.t}</span><span style={{ color: "#bbb", fontSize: 9 }}>{s.l}</span>
+                                <Logo ticker={s.t} size={12} /><span style={{ fontWeight: FONT_WEIGHTS.regular }}>{s.t}</span><span style={{ color: T.textMuted, fontSize: fs(9) }}>{s.l}</span>
                               </div>
                             ))}
-                            {list.length > 5 && <div style={{ fontSize: 9, color: "#bbb" }}>+{list.length - 5} more</div>}
+                            {list.length > 5 && <div style={{ fontSize: fs(9), color: T.textMuted }}>+{list.length - 5} more</div>}
                           </div>
                         ))}
                       </div>
                       <button onClick={e => { e.stopPropagation(); onSelect && onSelect(focused); setFocused(null); }}
-                        style={{ marginTop: 8, width: "100%", background: vc.c, border: "none", borderRadius: 6, padding: "6px 0",
-                          color: "#fff", fontSize: 11, fontWeight: 400, cursor: "pointer" }}>
+                        style={{ marginTop: sp(8), width: "100%", background: vc.c, border: "none", borderRadius: RADII.sm, padding: sp("6px 0"),
+                          color: T.onAccent, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer" }}>
                         View full analysis →
                       </button>
                     </div>
@@ -3177,8 +3177,8 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
 }
 
 function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveFund = {} }) {
-  const lbl = { fontSize: 11, fontWeight: 400, color: "#999", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 };
-  const card = { background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, boxShadow: "0 1px 3px rgba(0,0,0,.03)" };
+  const lbl = { fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(6) };
+  const card = { background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.md, boxShadow: "0 1px 3px rgba(0,0,0,.03)" };
 
   const themeVerticals = theme?.verticals || AI_VERTICALS;
   const themeCos = COMPANIES.filter(c => themeMatchesCompany(theme || THEMES.ai, c));
@@ -3238,29 +3238,29 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
   const revDonut = verts.map(v => ({ name: v.name, value: v.rev, color: v.color, pct: (v.rev / totalRev * 100) }));
 
   return (
-    <div style={{ marginTop: 12 }}>
+    <div style={{ marginTop: sp(12) }}>
       {/* ═══ ROW 1: HEADLINE METRICS ═══ */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: sp(14) }}>
         {[
-          ["Total Market Cap", fmtMC(totalMC), "#111", "#1a8a5c"],
-          ["Combined Revenue", fmtMC(totalRev), "#111", "#5E94E8"],
-          ["Median P/E", medPE.toFixed(1) + "x", "#111", "#b8860b"],
-          ["Avg " + primaryMacroName, avgMacro + "%", "#b8860b", theme?.accent || "#CDA24E"],
+          ["Total Market Cap", fmtMC(totalMC), T.text, T.green],
+          ["Combined Revenue", fmtMC(totalRev), T.text, T.blue],
+          ["Median P/E", medPE.toFixed(1) + "x", T.text, T.amber],
+          ["Avg " + primaryMacroName, avgMacro + "%", T.amber, theme?.accent || T.accent],
         ].map(([label, value, color, accent]) => (
-          <div key={label} style={{ ...card, padding: "7px 10px" }}>
-            <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 3 }}>{label}</div>
-            <div style={{ fontSize: 18, fontWeight: 400, color }}>{value}</div>
-            <div style={{ height: 2, borderRadius: 1, background: accent, opacity: 0.3, marginTop: 4 }} />
+          <div key={label} style={{ ...card, padding: sp("7px 10px") }}>
+            <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: sp(3) }}>{label}</div>
+            <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color }}>{value}</div>
+            <div style={{ height: 2, borderRadius: 1, background: accent, opacity: 0.3, marginTop: sp(4) }} />
           </div>
         ))}
       </div>
 
       {/* ═══ ROW 2: ECOSYSTEM HEATMAP ═══ */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+      <div style={{ marginBottom: sp(14) }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(6) }}>
           <div style={lbl}>Ecosystem heatmap</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 10, color: "#c44040" }}>\u25C0 Declining</span>
+            <span style={{ fontSize: fs(10), color: T.red }}>\u25C0 Declining</span>
             <div style={{ display: "flex", gap: 1 }}>
               {[-30,-15,0,15,30,60,100].map(g => (
                 <div key={g} style={{ width: 10, height: 6, borderRadius: 1,
@@ -3268,22 +3268,22 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                 }} />
               ))}
             </div>
-            <span style={{ fontSize: 10, color: "#1a8a5c" }}>Growing \u25B6</span>
+            <span style={{ fontSize: fs(10), color: T.green }}>Growing \u25B6</span>
           </div>
         </div>
-        <div style={{ background: "#1a1a1a", borderRadius: 10, padding: 6, overflow: "hidden" }}>
+        <div style={{ background: T.text, borderRadius: RADII.md, padding: sp(6), overflow: "hidden" }}>
           {verts.map(v => {
             const cosSorted = [...v.cos].sort((a, b) => b.mc - a.mc);
             return (
-              <div key={v.k} style={{ marginBottom: 2 }}>
+              <div key={v.k} style={{ marginBottom: sp(2) }}>
                 <div style={{ display: "flex", gap: 1.5, height: 38 }}>
                   {/* Vertical label cell */}
                   <div onClick={() => onFilterVertical && onFilterVertical(v.k)}
                     style={{ width: 56, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end",
-                      justifyContent: "center", padding: "0 5px", cursor: "pointer", borderRadius: 3,
+                      justifyContent: "center", padding: sp("0 5px"), cursor: "pointer", borderRadius: RADII.xs,
                       background: v.color + "15", borderRight: "2px solid " + v.color }}>
-                    <span style={{ fontSize: 11, fontWeight: 400, color: v.color, lineHeight: 1.2 }}>{v.name}</span>
-                    <span style={{ fontSize: 10, color: "rgba(255,255,255,.3)" }}>{v.count} cos</span>
+                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color, lineHeight: 1.2 }}>{v.name}</span>
+                    <span style={{ fontSize: fs(10), color: "rgba(255,255,255,.3)" }}>{v.count} cos</span>
                   </div>
                   {/* Company cells */}
                   {cosSorted.map(c => {
@@ -3302,18 +3302,18 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                       <div key={c.t} onClick={() => onSelect && onSelect(c.t)}
                         style={{
                           flex: `${pct} 0 0`, minWidth: 22, background: bg,
-                          borderRadius: 3, display: "flex", flexDirection: "column",
-                          justifyContent: "center", padding: "0 3px", cursor: "pointer",
+                          borderRadius: RADII.xs, display: "flex", flexDirection: "column",
+                          justifyContent: "center", padding: sp("0 3px"), cursor: "pointer",
                           overflow: "hidden", transition: "all 0.12s", position: "relative",
                         }}
                         onMouseEnter={e => { e.currentTarget.style.outline = "1.5px solid " + v.color; e.currentTarget.style.zIndex = "5"; e.currentTarget.style.transform = "scale(1.03)"; }}
                         onMouseLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.zIndex = "0"; e.currentTarget.style.transform = "none"; }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <span style={{ fontSize: 10, fontWeight: 400, color: "#fff", textShadow: "0 1px 3px rgba(0,0,0,.5)", letterSpacing: 0.3 }}>{c.t}</span>
-                          {pct > 12 && <span style={{ fontSize: 10, color: textColor, marginLeft: "auto" }}>{gr > 0 ? "+" : ""}{gr}%</span>}
+                          <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: T.onAccent, textShadow: "0 1px 3px rgba(0,0,0,.5)", letterSpacing: 0.3 }}>{c.t}</span>
+                          {pct > 12 && <span style={{ fontSize: fs(10), color: textColor, marginLeft: "auto" }}>{gr > 0 ? "+" : ""}{gr}%</span>}
                         </div>
                         {pct > 6 && (
-                          <span style={{ fontSize: 11, color: "rgba(255,255,255,.55)", marginTop: 1 }}>
+                          <span style={{ fontSize: fs(11), color: "rgba(255,255,255,.55)", marginTop: sp(1) }}>
                             {fmtPrice(price)}
                           </span>
                         )}
@@ -3328,7 +3328,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       </div>
 
       {/* ═══ ROW 3: INTERACTIVE SVG DONUTS ═══ */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: sp(14) }}>
         {[["Market Cap Share", mcDonut, totalMC], ["Revenue Share", revDonut, totalRev]].map(([title, data, total]) => {
           // SVG arc builder
           const R = 42, r = 24, cx = 48, cy = 48;
@@ -3347,29 +3347,29 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             return { ...d, path };
           });
           return (
-            <div key={title} style={{ ...card, padding: 10 }}>
-              <div style={{ ...lbl, marginBottom: 6 }}>{title}</div>
+            <div key={title} style={{ ...card, padding: sp(10) }}>
+              <div style={{ ...lbl, marginBottom: sp(6) }}>{title}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <svg width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
                   {arcs.map(d => (
-                    <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke="#fff" strokeWidth={1.5}
+                    <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={T.bg1} strokeWidth={1.5}
                       style={{ cursor: "pointer", transition: "fill-opacity 0.15s" }}
                       onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
                       onMouseEnter={e => e.target.setAttribute("fill-opacity", "1")}
                       onMouseLeave={e => e.target.setAttribute("fill-opacity", "0.7")} />
                   ))}
-                  <circle cx={cx} cy={cy} r={r - 2} fill="#ffffff" />
-                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={400} fill="#333" fontFamily="var(--ra-font-sans)">{fmtMC(total)}</text>
+                  <circle cx={cx} cy={cy} r={r - 2} fill={T.bg1} />
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={fs(10)} fontWeight={FONT_WEIGHTS.regular} fill={T.text} fontFamily={T.display}>{fmtMC(total)}</text>
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
                   {data.map(d => (
                     <div key={d.name} onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
-                      style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "1px 0", borderRadius: 3 }}
+                      style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: sp("1px 0"), borderRadius: RADII.xs }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.03)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <span style={{ width: 6, height: 6, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 10, color: "#666", flex: 1 }}>{d.name}</span>
-                      <span style={{ fontSize: 10, color: "#333", fontWeight: 400 }}>{d.pct.toFixed(1)}%</span>
+                      <span style={{ fontSize: fs(10), color: T.textSec, flex: 1 }}>{d.name}</span>
+                      <span style={{ fontSize: fs(10), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{d.pct.toFixed(1)}%</span>
                     </div>
                   ))}
                 </div>
@@ -3380,7 +3380,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       </div>
 
       {/* ═══ ROW 4: VERTICAL FINANCIAL COMPARISON ═══ */}
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: sp(14) }}>
         <div style={lbl}>Vertical comparison</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
           {[...verts].sort((a, b) => b.mc - a.mc).slice(0, 4).map(v => {
@@ -3388,28 +3388,28 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
               <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                style={{ ...card, padding: 8, cursor: "pointer", transition: "border-color 0.15s" }}
+                style={{ ...card, padding: sp(8), cursor: "pointer", transition: "border-color 0.15s" }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(0,0,0,.05)"}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(6) }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: v.color }} />
-                  <span style={{ fontSize: 11, fontWeight: 400, color: v.color }}>{v.name}</span>
-                  <span style={{ fontSize: 10, color: "#bbb", marginLeft: "auto" }}>{v.count}</span>
+                  <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</span>
+                  <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: "auto" }}>{v.count}</span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, marginBottom: 6 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, marginBottom: sp(6) }}>
                   {[["GM", v.gm + "%"], ["Growth", (avgGr > 0 ? "+" : "") + avgGr + "%"], ["MC", fmtMC(v.mc)], ["Rev", fmtMC(v.rev)]].map(([l, val]) => (
-                    <div key={l} style={{ background: "rgba(0,0,0,.018)", borderRadius: 4, padding: "2px 4px" }}>
-                      <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase" }}>{l}</div>
-                      <div style={{ fontSize: 11, fontWeight: 400, color: "#333" }}>{val}</div>
+                    <div key={l} style={{ background: "rgba(0,0,0,.018)", borderRadius: RADII.xs, padding: sp("2px 4px") }}>
+                      <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase" }}>{l}</div>
+                      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{val}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{ borderTop: "1px solid rgba(0,0,0,.04)", paddingTop: 4 }}>
+                <div style={{ borderTop: "1px solid rgba(0,0,0,.04)", paddingTop: sp(4) }}>
                   {topCos.map(c => (
                     <div key={c.t} onClick={e => { e.stopPropagation(); onSelect && onSelect(c.t); }}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1px 0", cursor: "pointer" }}>
-                      <span style={{ fontSize: 11, color: "#555" }}><Logo ticker={c.t} size={10} style={{ marginRight: 2 }} />{c.t}</span>
-                      <span style={{ fontSize: 11, color: "#888" }}>{fmtMC(c.mc)}</span>
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: sp("1px 0"), cursor: "pointer" }}>
+                      <span style={{ fontSize: fs(11), color: T.textSec }}><Logo ticker={c.t} size={10} style={{ marginRight: sp(2) }} />{c.t}</span>
+                      <span style={{ fontSize: fs(11), color: T.textDim }}>{fmtMC(c.mc)}</span>
                     </div>
                   ))}
                 </div>
@@ -3417,20 +3417,20 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
             );
           })}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: sp(6) }}>
           {[...verts].sort((a, b) => b.mc - a.mc).slice(4).map(v => {
             const avgGr = v.cos.length ? Math.round(v.cos.reduce((a, c) => a + (c.fin?.rg?.[4] || 0), 0) / v.cos.length) : 0;
             return (
               <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                style={{ ...card, padding: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                style={{ ...card, padding: sp(6), cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(0,0,0,.05)"}>
                 <span style={{ width: 5, height: 5, borderRadius: "50%", background: v.color, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, fontWeight: 400, color: v.color }}>{v.name}</div>
-                  <div style={{ fontSize: 11, color: "#888" }}>{v.count} cos &middot; {v.gm}% GM &middot; {avgGr > 0 ? "+" : ""}{avgGr}%</div>
+                  <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</div>
+                  <div style={{ fontSize: fs(11), color: T.textDim }}>{v.count} cos &middot; {v.gm}% GM &middot; {avgGr > 0 ? "+" : ""}{avgGr}%</div>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 400, color: "#333" }}>{fmtMC(v.mc)}</span>
+                <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtMC(v.mc)}</span>
               </div>
             );
           })}
@@ -3438,23 +3438,23 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       </div>
 
       {/* ═══ ROW 5: VALUATION SCATTER ═══ */}
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ marginBottom: sp(14) }}>
         <div style={lbl}>Valuation spectrum: P/E vs growth</div>
-        <div style={{ ...card, padding: "8px 4px" }}>
+        <div style={{ ...card, padding: sp("8px 4px") }}>
           <ResponsiveContainer width="100%" height={200}>
             <ScatterChart margin={{ top: 14, right: 16, bottom: 8, left: 0 }}>
-              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false}
-                label={{ value: "P/E Ratio", position: "bottom", fontSize: 10, fill: "#aaa", offset: -2 }} />
-              <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false}
-                label={{ value: "Rev Growth %", angle: -90, position: "insideLeft", fontSize: 10, fill: "#aaa", offset: 10 }} />
+              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false}
+                label={{ value: "P/E Ratio", position: "bottom", fontSize: fs(10), fill: T.textMuted, offset: -2 }} />
+              <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false}
+                label={{ value: "Rev Growth %", angle: -90, position: "insideLeft", fontSize: fs(10), fill: T.textMuted, offset: 10 }} />
               <ZAxis type="number" dataKey="mc" range={[30, 500]} />
               <Tooltip cursor={false} content={({ payload }) => {
                 if (!payload?.[0]) return null;
                 const d = payload[0].payload;
                 return (
-                  <div style={{ ...chartTooltipContentStyle, padding: "5px 7px", fontSize: 10 }}>
-                    <div style={{ fontWeight: 400, color: d.color, display: "flex", alignItems: "center", gap: 4 }}>
-                      <Logo ticker={d.name} size={14} />{d.cc} ${d.name} <span style={{ fontWeight: 400, color: "var(--ra-tooltip-muted)", fontSize: 10 }}>{d.v}</span>
+                  <div style={{ ...chartTooltipContentStyle, padding: sp("5px 7px"), fontSize: fs(10) }}>
+                    <div style={{ fontWeight: FONT_WEIGHTS.regular, color: d.color, display: "flex", alignItems: "center", gap: 4 }}>
+                      <Logo ticker={d.name} size={14} />{d.cc} ${d.name} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: "var(--ra-tooltip-muted)", fontSize: fs(10) }}>{d.v}</span>
                     </div>
                     <div style={{ color: "var(--ra-tooltip-text)" }}>P/E: {d.pe}x &middot; Growth: {d.growth > 0 ? "+" : ""}{d.growth}% &middot; {fmtMC(d.mc)}</div>
                   </div>
@@ -3462,7 +3462,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
               }} />
               <Scatter data={scatterData}>
                 {scatterData.map((d, i) => <Cell key={i} fill={d.color} fillOpacity={0.6} stroke={d.color} strokeWidth={0.5} />)}
-                <LabelList dataKey="name" position="top" style={{ fontSize: 11, fontWeight: 400, fill: "#888" }} offset={6} />
+                <LabelList dataKey="name" position="top" style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, fill: T.textDim }} offset={6} />
               </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
@@ -3474,23 +3474,23 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       {/* ═══ ROW 7: MACRO EXPOSURE ═══ */}
       <div>
         <div style={lbl}>Macro exposure by vertical</div>
-        <div style={{ ...card, padding: 8, overflowX: "auto" }}>
+        <div style={{ ...card, padding: sp(8), overflowX: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: "100px repeat(" + macroAxes.length + ", 1fr)", gap: 2 }}>
             <div />
-            {macroAxes.map(m => <div key={m.k} style={{ padding: "3px 0", textAlign: "center", fontSize: 10, color: "#999", fontWeight: 400, textTransform: "uppercase" }}>{m.n}</div>)}
+            {macroAxes.map(m => <div key={m.k} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{m.n}</div>)}
             {verts.map(v => [
               <div key={v.k + "n"} onClick={() => onFilterVertical && onFilterVertical(v.k)}
-                style={{ padding: "3px 4px", fontSize: 10, color: v.color, fontWeight: 400, display: "flex", alignItems: "center", cursor: "pointer", borderRadius: 3 }}
+                style={{ padding: sp("3px 4px"), fontSize: fs(10), color: v.color, fontWeight: FONT_WEIGHTS.regular, display: "flex", alignItems: "center", cursor: "pointer", borderRadius: RADII.xs }}
                 onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,.04)"}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: v.color, marginRight: 4, flexShrink: 0 }} />
-                {v.name} <span style={{ color: "#bbb", marginLeft: 3, fontWeight: 400 }}>({v.count})</span>
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: v.color, marginRight: sp(4), flexShrink: 0 }} />
+                {v.name} <span style={{ color: T.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
               </div>,
               ...macroAxes.map(m => {
                 const mk = m.k;
                 const val = v.count ? Math.round(v.cos.reduce((a, c) => a + (c.ms?.[mk] || 0), 0) / v.count * 100) : 0;
                 const bg = val > 70 ? "rgba(196,64,64," + (val/180) + ")" : val > 40 ? "rgba(184,134,11," + (val/220) + ")" : "rgba(26,138,92," + (val/280) + ")";
-                return <div key={v.k + mk} style={{ background: bg, borderRadius: 3, padding: "3px 0", textAlign: "center", fontSize: 10, color: val > 50 ? "#fff" : "#444", fontWeight: 400 }}>{val}</div>;
+                return <div key={v.k + mk} style={{ background: bg, borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: val > 50 ? T.bg1 : T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{val}</div>;
               }),
             ])}
           </div>
@@ -3560,12 +3560,12 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
   const modes = [["vertical","Vertical"],["pe","P/E"],["growth","Growth"],["ai","AI Exp"]];
   return (
     <div style={{ position: "absolute", top: 5, right: 8, display: "flex", gap: 2, zIndex: 2, alignItems: "center" }}>
-      <span style={{ fontSize: 10, color: "#bbb", marginRight: 2, lineHeight: "18px" }}>Color:</span>
+      <span style={{ fontSize: fs(10), color: T.textMuted, marginRight: sp(2), lineHeight: "18px" }}>Color:</span>
       {modes.map(([id, lb]) => (
         <button key={id} onClick={(e) => { e.stopPropagation(); setColorMode(id); }} style={{
           background: colorMode === id ? "rgba(0,0,0,.07)" : "transparent",
-          border: "none", borderRadius: 3, padding: "1px 4px", fontSize: 10, cursor: "pointer",
-          color: colorMode === id ? "#333" : "#aaa", fontWeight: 400,
+          border: "none", borderRadius: RADII.xs, padding: sp("1px 4px"), fontSize: fs(10), cursor: "pointer",
+          color: colorMode === id ? T.text : T.textMuted, fontWeight: FONT_WEIGHTS.regular,
         }}>{lb}</button>
       ))}
       <AppTooltip content="Unpin all nodes and reset to authored layout"><button
@@ -3579,9 +3579,9 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
           }
         }}
         style={{
-          background: "transparent", border: "1px solid rgba(0,0,0,.08)", borderRadius: 4,
-          padding: "1px 6px", fontSize: 10, cursor: "pointer", marginLeft: 6,
-          color: "#888", fontWeight: 400,
+          background: "transparent", border: "1px solid rgba(0,0,0,.08)", borderRadius: RADII.xs,
+          padding: sp("1px 6px"), fontSize: fs(10), cursor: "pointer", marginLeft: sp(6),
+          color: T.textDim, fontWeight: FONT_WEIGHTS.regular,
         }}>⟲ Reset</button></AppTooltip>
     </div>
   );
@@ -3602,12 +3602,12 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   const W = 680, H = 390;
   const tSet = useMemo(() => new Set(cos.map(c => c.t)), [cos]);
 
-  const peScale = useMemo(() => d3.scaleLinear().domain([8, 40, 180]).range(["#1a8a5c", "#b8860b", "#c44040"]).clamp(true), []);
-  const grScale = useMemo(() => d3.scaleLinear().domain([-10, 25, 100]).range(["#c44040", "#b8860b", "#1a8a5c"]).clamp(true), []);
-  const aiScale = useMemo(() => d3.scaleLinear().domain([0.3, 0.65, 1]).range(["#999", "#b8860b", "#c44040"]).clamp(true), []);
+  const peScale = useMemo(() => d3.scaleLinear().domain([8, 40, 180]).range([T.green, T.amber, T.red]).clamp(true), []);
+  const grScale = useMemo(() => d3.scaleLinear().domain([-10, 25, 100]).range([T.red, T.amber, T.green]).clamp(true), []);
+  const aiScale = useMemo(() => d3.scaleLinear().domain([0.3, 0.65, 1]).range([T.textDim, T.amber, T.red]).clamp(true), []);
 
   const getColor = useCallback((d) => {
-    if (colorMode === "pe") return d.pe ? peScale(d.pe) : "#ccc";
+    if (colorMode === "pe") return d.pe ? peScale(d.pe) : T.textMuted;
     if (colorMode === "growth") return grScale(d.fin?.rg?.[4] || 0);
     if (colorMode === "ai") return aiScale(d.ms?.ai || 0.5);
     return VX[d.v].c;
@@ -3623,17 +3623,17 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // SVG filter for selected node glow
     const defs = g.append("defs");
     defs.append("filter").attr("id", "glow").attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%")
-      .append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 3).attr("flood-color", "#CDA24E").attr("flood-opacity", 0.6);
+      .append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 3).attr("flood-color", T.accent).attr("flood-opacity", 0.6);
 
     // Zone labels
     ZONES.forEach(([x, y, label], zi) => {
       g.append("line").attr("x1", 0).attr("x2", W).attr("y1", y - 6).attr("y2", y - 6)
-        .attr("stroke", "#e4e4e0").attr("stroke-width", 0.4).attr("stroke-dasharray", "2,5").attr("class", "zone-line");
+        .attr("stroke", T.border).attr("stroke-width", 0.4).attr("stroke-dasharray", "2,5").attr("class", "zone-line");
       const zg = g.append("g").attr("class", "zone-label").attr("cursor", "pointer")
         .on("click", (e) => { e.stopPropagation(); setZoneHl(prev => prev === zi ? null : zi); });
       zg.append("rect").attr("x", 0).attr("y", y - 4).attr("width", 120).attr("height", 18).attr("fill", "transparent");
       zg.append("text").attr("x", x).attr("y", y + 4).text(label)
-        .attr("fill", "#aaa").attr("font-size", 10).attr("font-family", "var(--ra-font-sans)").attr("class", "zone-text");
+        .attr("fill", T.textMuted).attr("font-size", fs(10)).attr("font-family", T.display).attr("class", "zone-text");
     });
 
     // Auto-layout fallback for meta-themes (empty POS) — see computeAutoPos helper above
@@ -3680,7 +3680,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
     // Edges with curved paths
     const link = g.append("g").selectAll("path").data(links).join("path")
-      .attr("stroke", "#c8c8c0").attr("stroke-width", 0.6)
+      .attr("stroke", T.borderLight).attr("stroke-width", 0.6)
       .attr("stroke-dasharray", "3,3")
       .attr("stroke-opacity", 0.5)
       .attr("fill", "none")
@@ -3691,8 +3691,8 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("class", "edge-label")
       .text(d => d.label || "")
       .attr("fill", "transparent")
-      .attr("font-size", 8)
-      .attr("font-family", "var(--ra-font-sans)")
+      .attr("font-size", fs(8))
+      .attr("font-family", T.display)
       .attr("text-anchor", "middle")
       .attr("pointer-events", "none");
 
@@ -3702,7 +3702,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     node.append("circle")
       .attr("r", d => d.r + 2)
       .attr("fill", "none")
-      .attr("stroke", d => d.pe != null && d.pe > 0 ? "#1a8a5c" : d.fin?.eps > 0 ? "#1a8a5c" : "#c44040")
+      .attr("stroke", d => d.pe != null && d.pe > 0 ? T.green : d.fin?.eps > 0 ? T.green : T.red)
       .attr("stroke-width", 1)
       .attr("stroke-opacity", 0.35)
       .attr("class", "profit-ring");
@@ -3710,7 +3710,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Main circle: white bg + colored ring
     node.append("circle")
       .attr("r", d => d.r)
-      .attr("fill", "#fff")
+      .attr("fill", T.bg1)
       .attr("fill-opacity", 1)
       .attr("stroke", d => getColor(d))
       .attr("stroke-width", 1.5)
@@ -3719,7 +3719,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Branded initial circle (inside node - moves with simulation, zero lag)
     node.append("circle")
       .attr("r", d => Math.max(5, d.r * 0.7))
-      .attr("fill", d => (BRAND[d.t] || ["#888"])[0])
+      .attr("fill", d => (BRAND[d.t] || [T.textDim])[0])
       .attr("class", "brand-circle");
 
     // Brand initial text
@@ -3727,10 +3727,10 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => (BRAND[d.t] || ["", d.t.slice(0,2)])[1])
       .attr("text-anchor", "middle")
       .attr("dominant-baseline", "central")
-      .attr("fill", "#fff")
+      .attr("fill", T.bg1)
       .attr("font-size", d => Math.max(5, Math.min(9, d.r * 0.55)))
-      .attr("font-weight", 400)
-      .attr("font-family", "var(--ra-font-sans)")
+      .attr("font-weight", FONT_WEIGHTS.regular)
+      .attr("font-family", T.display)
       .attr("pointer-events", "none")
       .attr("class", "brand-text");
 
@@ -3739,18 +3739,18 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => d.t)
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 9)
-      .attr("fill", "#777")
+      .attr("fill", T.textDim)
       .attr("font-size", d => Math.max(8, Math.min(10, d.r * 0.6)))
-      .attr("font-family", "var(--ra-font-sans)").attr("font-weight", 400);
+      .attr("font-family", T.display).attr("font-weight", FONT_WEIGHTS.regular);
 
     // Data sub-label (market cap for large, P/E for medium)
     node.filter(d => d.r >= 13).append("text")
       .text(d => d.r >= 16 ? fmtMC(d._mc) : (d._pe ? d._pe + "x" : ""))
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 17)
-      .attr("fill", "#aaa")
-      .attr("font-size", 7)
-      .attr("font-family", "var(--ra-font-sans)");
+      .attr("fill", T.textMuted)
+      .attr("font-size", fs(7))
+      .attr("font-family", T.display);
 
     // Hover tooltip + connection highlighting
     node.on("mouseenter", (e, d) => {
@@ -3759,20 +3759,20 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       const tip = tipRef.current;
       if (!tip) return;
       const vc = VX[d.v];
-      const br = BRAND[d.t] || ["#888", d.t.slice(0,2)];
+      const br = BRAND[d.t] || [T.textDim, d.t.slice(0,2)];
       const tipPrice = resolveResearchPrice(d, liveData[d.t]);
       // Green dot for live-sourced fields, gray for authored fallback
       const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? '#1a8a5c' : 'rgba(0,0,0,.12)'};margin-left:4px;vertical-align:middle"></span>`;
-      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:#fff;font-size:10px;font-weight: 400;font-family:var(--ra-font-sans);">${br[1]}</span><span style="font-weight: 400;color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: 400;color:#111;font-size:14px;margin-left:auto;font-family:var(--ra-font-sans);">${fmtPrice(tipPrice)}</span></div>` +
-        `<div style="color:#666;font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
+      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:${T.onAccent};font-size:10px;font-weight: ${FONT_WEIGHTS.regular};font-family:${T.display};">${br[1]}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${T.text};font-size:14px;margin-left:auto;font-family:${T.display};">${fmtPrice(tipPrice)}</span></div>` +
+        `<div style="color:${T.textSec};font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
         `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font-size:12px;">` +
-        `<span style="color:#999">Mkt Cap</span><span style="color:#333;font-weight: 400">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
-        `<span style="color:#999">Revenue ${d._revIsLive ? 'TTM' : ''}</span><span style="color:#333;font-weight: 400">${fmtMC(d._rev)}${dot(d._revIsLive)}</span>` +
-        `<span style="color:#999">GM</span><span style="color:#333;font-weight: 400">${d._gm != null ? Math.round(d._gm) + '%' : '\u2014'}${dot(d._gmIsLive)}</span>` +
-        `<span style="color:#999">P/E</span><span style="color:#333;font-weight: 400">${d._pe ? Number(d._pe).toFixed(1) + 'x' : '\u2014'}</span>` +
-        `<span style="color:#999">Growth</span><span style="color:#333;font-weight: 400">${d.fin?.rg?.[4] ? '+' + d.fin.rg[4] + '%' : '\u2014'}</span>` +
+        `<span style="color:${T.textDim}">Mkt Cap</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
+        `<span style="color:${T.textDim}">Revenue ${d._revIsLive ? 'TTM' : ''}</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._rev)}${dot(d._revIsLive)}</span>` +
+        `<span style="color:${T.textDim}">GM</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d._gm != null ? Math.round(d._gm) + '%' : '\u2014'}${dot(d._gmIsLive)}</span>` +
+        `<span style="color:${T.textDim}">P/E</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d._pe ? Number(d._pe).toFixed(1) + 'x' : '\u2014'}</span>` +
+        `<span style="color:${T.textDim}">Growth</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d.fin?.rg?.[4] ? '+' + d.fin.rg[4] + '%' : '\u2014'}</span>` +
         `</div>` +
-        `<div style="color:#666;font-size:11px;margin-top:5px;border-top:1px solid rgba(0,0,0,.06);padding-top:4px;font-style:italic">${d.pr}</div>`;
+        `<div style="color:${T.textSec};font-size:11px;margin-top:5px;border-top:1px solid rgba(0,0,0,.06);padding-top:4px;font-style:italic">${d.pr}</div>`;
       tip.style.display = "block";
     })
     .on("mousemove", (e, d) => {
@@ -3861,7 +3861,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     const hovCo = COMPANIES.find(c => c.t === hovered);
     const active = sel || hovered; // whichever is set
     const activeCo = selCo || hovCo;
-    const ac = activeCo ? VX[activeCo.v].c : "#aaa";
+    const ac = activeCo ? VX[activeCo.v].c : T.textMuted;
     const isClick = !!sel; // stronger effect for clicks
     const sq = (searchQuery || "").toLowerCase();
     const zoneYs = ZONES.map(z => z[1]);
@@ -3873,16 +3873,16 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("fill", d => {
         if (!d || !d.source) return "transparent";
         const hit = (d.source.t === active || d.target.t === active);
-        return hit ? "#666" : "transparent";
+        return hit ? T.textSec : "transparent";
       });
 
     // Edges
     svg.selectAll("path[stroke-dasharray]").transition().duration(200)
       .attr("stroke", d => {
-        if (!d || !d.source) return "#c8c8c0";
+        if (!d || !d.source) return T.borderLight;
         if (d.source.t === active || d.target.t === active) return ac;
         if (hovered && !sel && (d.source.t === hovered || d.target.t === hovered)) return ac;
-        return "#c8c8c0";
+        return T.borderLight;
       })
       .attr("stroke-width", d => {
         if (!d || !d.source) return 0.6;
@@ -3900,7 +3900,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Main circles
 
     svg.selectAll(".main-circle").transition().duration(200)
-      .attr("fill", "#fff")
+      .attr("fill", T.bg1)
       .attr("fill-opacity", d => {
         const matchesSearch = sq && (d.t.toLowerCase().includes(sq) || d.nm.toLowerCase().includes(sq));
         const inZone = zoneHl === null || (POS[d.t] && Math.abs(POS[d.t][1] - zoneYs[zoneHl]) < 35);
@@ -3912,8 +3912,8 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       })
       .attr("stroke", d => {
         const matchesSearch = sq && (d.t.toLowerCase().includes(sq) || d.nm.toLowerCase().includes(sq));
-        if (matchesSearch) return "#111";
-        if (d.t === active) return "#222";
+        if (matchesSearch) return T.text;
+        if (d.t === active) return T.text;
         if (active && isConn(d.t)) return getColor(d);
         return getColor(d);
       })
@@ -3955,8 +3955,8 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       });
 
     // Zone labels
-    svg.selectAll(".zone-text").attr("fill", (d, i) => zoneHl === i ? "#333" : "#aaa")
-      .attr("font-weight", 400)
+    svg.selectAll(".zone-text").attr("fill", (d, i) => zoneHl === i ? T.text : T.textMuted)
+      .attr("font-weight", FONT_WEIGHTS.regular)
       .attr("font-size", (d, i) => zoneHl === i ? 12 : 10);
 
     // Zoom: only on click or zone select (NOT hover)
@@ -4002,7 +4002,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   }, [sel, hovered, zoneHl, searchQuery, getColor]);
 
   return (
-    <div style={{ position: "relative", background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid rgba(0,0,0,.06)", boxShadow: "0 2px 8px rgba(0,0,0,.04)" }}>
+    <div style={{ position: "relative", background: T.bg1, borderRadius: RADII.md, overflow: "hidden", border: "1px solid rgba(0,0,0,.06)", boxShadow: "0 2px 8px rgba(0,0,0,.04)" }}>
       <GraphToolbar colorMode={colorMode} setColorMode={setColorMode} nodesRef={nodesRef} simRef={simRef} />
       <svg ref={ref} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
 
@@ -4010,19 +4010,19 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       <div ref={tipRef} style={{
         ...chartTooltipContentStyle,
         display: "none", position: "absolute",
-        padding: "10px 12px", pointerEvents: "none", zIndex: 10,
+        padding: sp("10px 12px"), pointerEvents: "none", zIndex: 10,
         maxWidth: 220, minWidth: 160,
       }} />
       {/* Legend */}
       <div style={{ position: "absolute", bottom: 4, left: 8, display: "flex", gap: 5, flexWrap: "wrap" }}>
         {Object.entries(theme?.verticals || AI_VERTICALS).map(([k, v]) => (
-          <span key={k} style={{ fontSize: 10, color: !vFilter || vFilter === k ? v.c : "#ccc" }}>
-            <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: "50%", background: v.c, marginRight: 2, opacity: !vFilter || vFilter === k ? 1 : 0.2 }} />
+          <span key={k} style={{ fontSize: fs(10), color: !vFilter || vFilter === k ? v.c : T.textMuted }}>
+            <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: "50%", background: v.c, marginRight: sp(2), opacity: !vFilter || vFilter === k ? 1 : 0.2 }} />
             {v.n}
           </span>
         ))}
         {colorMode !== "vertical" && (
-          <span style={{ fontSize: 10, color: "#aaa", marginLeft: 4 }}>
+          <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: sp(4) }}>
             | ring = {"\u{1F7E2}"} profitable {"\u{1F534}"} unprofitable
           </span>
         )}
@@ -4055,11 +4055,11 @@ function Comps({ cos, sel, onSel }) {
   });
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>{cos.length} companies &middot; sorted by {cols.find(c => c.k === sortKey)?.l}</div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, background: "#fff", borderRadius: 8 }}>
+      <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(4) }}>{cos.length} companies &middot; sorted by {cols.find(c => c.k === sortKey)?.l}</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: fs(10), background: T.bg1, borderRadius: RADII.md }}>
         <thead><tr>
           {cols.map(col => (
-            <th key={col.k} onClick={() => toggleSort(col.k)} style={{ textAlign: "left", padding: "4px 4px", borderBottom: "1px solid rgba(0,0,0,.08)", color: sortKey === col.k ? "#333" : "#aaa", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", width: col.w || "auto" }}>
+            <th key={col.k} onClick={() => toggleSort(col.k)} style={{ textAlign: "left", padding: sp("4px 4px"), borderBottom: "1px solid rgba(0,0,0,.08)", color: sortKey === col.k ? T.text : T.textMuted, fontSize: fs(10), textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", width: col.w || "auto" }}>
               {col.l}{sortKey === col.k ? (sortDir > 0 ? " \u25B2" : " \u25BC") : ""}
             </th>
           ))}
@@ -4071,15 +4071,15 @@ function Comps({ cos, sel, onSel }) {
             <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? "rgba(0,0,0,.05)" : "transparent", borderBottom: "1px solid rgba(0,0,0,.02)", transition: "background 0.1s" }}
               onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = "rgba(0,0,0,.025)"; }}
               onMouseLeave={e => { if (c.t !== sel) e.currentTarget.style.background = "transparent"; }}>
-              <td style={{ padding: "3px 4px", color: c.t === sel ? vc.c : "#333", fontWeight: 400 }}><Logo ticker={c.t} size={14} style={{ marginRight: 4 }} />${c.t}</td>
-              <td style={{ padding: "3px 2px", fontSize: 11 }}>{c.cc}</td>
-              <td style={{ padding: "3px 4px" }}><span style={{ fontSize: 10, color: vc.c, background: vc.bg, padding: "1px 4px", borderRadius: 3 }}>{vc.n}</span></td>
-              <td style={{ padding: "3px 4px", color: "#444" }}>{fmtMC(c.mc)}</td>
-              <td style={{ padding: "3px 4px", color: "#444" }}>{fmtMC(c.r)}</td>
-              <td style={{ padding: "3px 4px", color: "#555" }}>{c.g}%</td>
-              <td style={{ padding: "3px 4px", color: "#555" }}>{c.pe ? c.pe + "x" : "\u2014"}</td>
-              <td style={{ padding: "3px 4px", color: gr > 30 ? "#1a8a5c" : gr < 0 ? "#c44040" : "#555" }}>{gr > 0 ? "+" : ""}{gr}%</td>
-              <td style={{ padding: "3px 4px", color: "#555" }}>{(c.ms?.ai * 100 || 0).toFixed(0)}%</td>
+              <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : T.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
+              <td style={{ padding: sp("3px 2px"), fontSize: fs(11) }}>{c.cc}</td>
+              <td style={{ padding: sp("3px 4px") }}><span style={{ fontSize: fs(10), color: vc.c, background: vc.bg, padding: sp("1px 4px"), borderRadius: RADII.xs }}>{vc.n}</span></td>
+              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{fmtMC(c.mc)}</td>
+              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{fmtMC(c.r)}</td>
+              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{c.g}%</td>
+              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{c.pe ? c.pe + "x" : "\u2014"}</td>
+              <td style={{ padding: sp("3px 4px"), color: gr > 30 ? T.green : gr < 0 ? T.red : T.textSec }}>{gr > 0 ? "+" : ""}{gr}%</td>
+              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{(c.ms?.ai * 100 || 0).toFixed(0)}%</td>
             </tr>
           );
         })}</tbody>
@@ -4114,19 +4114,19 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
   return (
     <div>
       {/* Vertical-level heatmap */}
-      <div style={{ fontSize: 11, fontWeight: 400, color: "#999", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 5 }}>
+      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Macro sensitivity by vertical
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: sp(16) }}>
         <div />
-        {macroKeys.map(mk => <div key={mk} style={{ padding: "3px 0", textAlign: "center", fontSize: 10, color: "#999", fontWeight: 400, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
+        {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
         {vertSummary.map(v => [
-          <div key={v.k + "n"} style={{ padding: "3px 4px", fontSize: 11, color: v.color, fontWeight: 400, display: "flex", alignItems: "center" }}>
-            <span style={{ width: 5, height: 5, borderRadius: "50%", background: v.color, marginRight: 4, flexShrink: 0 }} />
-            {v.name} <span style={{ color: "#bbb", marginLeft: 3, fontWeight: 400 }}>({v.count})</span>
+          <div key={v.k + "n"} style={{ padding: sp("3px 4px"), fontSize: fs(11), color: v.color, fontWeight: FONT_WEIGHTS.regular, display: "flex", alignItems: "center" }}>
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: v.color, marginRight: sp(4), flexShrink: 0 }} />
+            {v.name} <span style={{ color: T.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
           </div>,
           ...macroKeys.map(mk => (
-            <div key={v.k + mk} style={{ background: cellBg(v[mk]), borderRadius: 3, padding: "3px 0", textAlign: "center", fontSize: 10, color: v[mk] > 50 ? "#fff" : "#444", fontWeight: 400 }}>
+            <div key={v.k + mk} style={{ background: cellBg(v[mk]), borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: v[mk] > 50 ? T.bg1 : T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
               {v[mk]}
             </div>
           )),
@@ -4134,20 +4134,20 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
       </div>
 
       {/* Most exposed companies per factor */}
-      <div style={{ fontSize: 11, fontWeight: 400, color: "#999", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 5 }}>
+      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Most exposed companies
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(" + Math.min(4, macroKeys.length) + ", 1fr)", gap: 8 }}>
         {topExposed.map(({ mk, name, companies }) => (
-          <div key={mk} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.05)", borderRadius: 8, padding: 7 }}>
-            <div style={{ fontSize: 11, fontWeight: 400, color: "#999", marginBottom: 4 }}>{name}</div>
+          <div key={mk} style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.05)", borderRadius: RADII.md, padding: sp(7) }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, marginBottom: sp(4) }}>{name}</div>
             {companies.map(c => {
-              const vc = VX[c.v] || { c: "#888" };
+              const vc = VX[c.v] || { c: T.textDim };
               const val = Math.round((c.ms?.[mk] || 0) * 100);
               return (
-                <div key={c.t} onClick={() => onSel(c.t)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0", cursor: "pointer", borderBottom: "1px solid rgba(0,0,0,.02)" }}>
-                  <Logo ticker={c.t} size={11} style={{ marginRight: 2 }} /><span style={{ fontSize: 11, fontWeight: 400, color: c.t === sel ? vc.c : "#555" }}>{c.cc} ${c.t}</span>
-                  <span style={{ fontSize: 11, color: val > 70 ? "#c44040" : val > 40 ? "#b8860b" : "#1a8a5c", fontWeight: 400 }}>{val}</span>
+                <div key={c.t} onClick={() => onSel(c.t)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 0"), cursor: "pointer", borderBottom: "1px solid rgba(0,0,0,.02)" }}>
+                  <Logo ticker={c.t} size={11} style={{ marginRight: sp(2) }} /><span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: c.t === sel ? vc.c : T.textSec }}>{c.cc} ${c.t}</span>
+                  <span style={{ fontSize: fs(11), color: val > 70 ? T.red : val > 40 ? T.amber : T.green, fontWeight: FONT_WEIGHTS.regular }}>{val}</span>
                 </div>
               );
             })}
@@ -4169,21 +4169,21 @@ function ResearchLoadingState({ theme }) {
         {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
       </style>
       <div style={{
-        background: "#fff",
+        background: T.bg1,
         border: "1px solid rgba(0,0,0,.06)",
-        borderRadius: 12,
+        borderRadius: RADII.md,
         boxShadow: "0 2px 10px rgba(0,0,0,.04)",
         overflow: "hidden",
       }}>
         <div style={{
-          padding: "18px 20px 14px",
+          padding: sp("18px 20px 14px"),
           borderBottom: "1px solid rgba(0,0,0,.05)",
           background: `linear-gradient(180deg, ${theme.accent}10 0%, rgba(255,255,255,.96) 100%)`,
         }}>
-          <div style={{ fontSize: 11, color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: 400 }}>
+          <div style={{ fontSize: fs(11), color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
             Research
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: sp(4) }}>
             <span
               data-testid="loading-spinner"
               role="status"
@@ -4199,16 +4199,16 @@ function ResearchLoadingState({ theme }) {
                 flexShrink: 0,
               }}
             />
-            <div style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, color: "#111" }}>
+            <div style={{ fontFamily: T.display, fontSize: fs(28), color: T.text }}>
               Loading research workspace
             </div>
           </div>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6, lineHeight: 1.6, maxWidth: 520 }}>
+          <div style={{ fontSize: fs(12), color: T.textSec, marginTop: sp(6), lineHeight: 1.6, maxWidth: 520 }}>
             The curated universe, graph relationships, and thesis metadata are being loaded into the platform shell. Live market data wiring stays available while the authored research dataset hydrates.
           </div>
         </div>
 
-        <div style={{ padding: 20 }}>
+        <div style={{ padding: sp(20) }}>
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr .8fr", gap: 12 }}>
             {[0, 1].map((column) => (
               <div key={column} style={{ display: "grid", gap: 10 }}>
@@ -4217,7 +4217,7 @@ function ResearchLoadingState({ theme }) {
                     key={row}
                     style={{
                       height: column === 0 && row === 0 ? 180 : 84,
-                      borderRadius: 10,
+                      borderRadius: RADII.md,
                       border: "1px solid rgba(0,0,0,.05)",
                       background: "linear-gradient(90deg, rgba(0,0,0,.025) 0%, rgba(0,0,0,.055) 50%, rgba(0,0,0,.025) 100%)",
                       backgroundSize: "220px 100%",
@@ -4498,9 +4498,9 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div data-testid="research-screen" className="photonics-research-root" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
+    <div data-testid="research-screen" className="photonics-research-root" style={{ background: T.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: T.text, backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
       <style>{`
-        .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
+        .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: sp(0); }
         .photonics-research-root { font-family: var(--ra-font-sans); }
         .photonics-research-root button,
         .photonics-research-root input,
@@ -4531,53 +4531,53 @@ export default function PhotonicsObservatory({
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes edgeFlow { to { stroke-dashoffset: -12; } }
         @keyframes shimmer { from { background-position: -200px 0; } to { background-position: 200px 0; } }
-        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+        @keyframes researchObservatoryPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
       `}</style>
 
       {/* Header */}
-      <div style={{ padding: "14px 14px 0", position: "relative" }}>
+      <div style={{ padding: sp("14px 14px 0"), position: "relative" }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, rgba(94,148,232,.03) 0%, transparent 40%)`, pointerEvents: "none" }} />
 
         {researchMetaReady ? (
           <ThemeSwitcher themeId={themeId} setThemeId={setThemeId} themes={themeMap} themeOrder={themeOrder} />
         ) : (
-          <div style={{ position: "relative", marginBottom: 14, paddingBottom: 10, borderBottom: "1px solid rgba(0,0,0,.05)" }}>
-            <div style={{ fontSize: 9, color: "#bbb", letterSpacing: 2, textTransform: "uppercase", fontWeight: 400, marginBottom: 6 }}>
+          <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: "1px solid rgba(0,0,0,.05)" }}>
+            <div style={{ fontSize: fs(9), color: T.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
               Investment Thesis
             </div>
-            <div style={{ fontSize: 11, color: "#999" }}>Loading curated research themes…</div>
+            <div style={{ fontSize: fs(11), color: T.textDim }}>Loading curated research themes…</div>
           </div>
         )}
 
-        <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8 }}>
+        <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: sp(8) }}>
           <div>
-            <div style={{ fontSize: 11, color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 400 }}>
+            <div style={{ fontSize: fs(11), color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
               {currentTheme.subtitle}
             </div>
-            <h1 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, fontWeight: 400, color: "#111", letterSpacing: 0, lineHeight: 1.05, marginTop: 2 }}>
+            <h1 style={{ fontFamily: T.display, fontSize: fs(28), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(2) }}>
               {currentTheme.title}
             </h1>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 18, fontWeight: 400, color: currentTheme.accent }}>
+            <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color: currentTheme.accent }}>
               {researchDataReady ? fmtMC(themeUniverse.reduce((a, c) => a + c.mc, 0)) : "…"}
             </div>
-            <div style={{ fontSize: 11, color: "#aaa" }}>
+            <div style={{ fontSize: fs(11), color: T.textMuted }}>
               {researchDataReady
                 ? `${themeUniverse.length} cos / ${activeEdges.length} links`
                 : "Loading universe…"}
-              <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, fontWeight: 400, marginLeft: 4,
+              <span style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
                 background: dataStatus === "live" ? "rgba(26,138,92,.1)" : dataStatus === "loading" ? "rgba(184,134,11,.1)" : "rgba(0,0,0,.04)",
-                color: dataStatus === "live" ? "#1a8a5c" : dataStatus === "loading" ? "#b8860b" : "#aaa",
+                color: dataStatus === "live" ? T.green : dataStatus === "loading" ? T.amber : T.textMuted,
               }}>{dataStatus === "live" ? "\u25CF LIVE" : dataStatus === "loading" ? "LOADING..." : "STATIC"}</span>
               {prefetchProgress.total > 0 && (
                 <AppTooltip content={prefetchProgress.active
                     ? `Prefetching TTM fundamentals: ${prefetchProgress.done}/${prefetchProgress.total} done`
                     : `Fundamentals prefetch complete: ${prefetchProgress.done} companies refreshed`}><span
                   style={{
-                    fontSize: 10, padding: "1px 5px", borderRadius: 3, fontWeight: 400, marginLeft: 4,
+                    fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
                     background: prefetchProgress.active ? "rgba(94,148,232,.12)" : "rgba(26,138,92,.08)",
-                    color: prefetchProgress.active ? "#5e94e8" : "#1a8a5c",
+                    color: prefetchProgress.active ? T.blue : T.green,
                 }}>
                   {prefetchProgress.active
                     ? `\u29BF ${prefetchProgress.done}/${prefetchProgress.total}`
@@ -4589,16 +4589,16 @@ export default function PhotonicsObservatory({
                     ? `Prefetching intraday 1-hour bars: ${histPrefetchProgress.done}/${histPrefetchProgress.total} done`
                     : `Intraday history prefetch complete: ${histPrefetchProgress.done} companies with 1H bars cached`}><span
                   style={{
-                    fontSize: 10, padding: "1px 5px", borderRadius: 3, fontWeight: 400, marginLeft: 4,
+                    fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
                     background: histPrefetchProgress.active ? "rgba(142,68,173,.12)" : "rgba(26,138,92,.08)",
-                    color: histPrefetchProgress.active ? "#8e44ad" : "#1a8a5c",
+                    color: histPrefetchProgress.active ? T.purple : T.green,
                 }}>
                   {histPrefetchProgress.active
                     ? `\u29BF ${histPrefetchProgress.done}/${histPrefetchProgress.total} 1H`
                     : `\u2713 ${histPrefetchProgress.done} 1H`}
                 </span></AppTooltip>
               )}
-              <button onClick={() => setShowSettings(s => !s)} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 5, padding: "1px 6px", fontSize: 11, cursor: "pointer", color: "#888", marginLeft: 2 }}>\u2699</button>
+              <button onClick={() => setShowSettings(s => !s)} style={{ background: T.bg1, border: "1px solid rgba(0,0,0,.06)", borderRadius: RADII.sm, padding: sp("1px 6px"), fontSize: fs(11), cursor: "pointer", color: T.textDim, marginLeft: sp(2) }}>\u2699</button>
             </div>
           </div>
         </div>
@@ -4607,25 +4607,25 @@ export default function PhotonicsObservatory({
           <SettingsPanel refreshData={() => void refreshData(true)} dataStatus={dataStatus} liveData={liveData} researchStatus={researchStatus} />
         )}
 
-        <div style={{ position: "relative", marginBottom: 8 }}>
+        <div style={{ position: "relative", marginBottom: sp(8) }}>
           <input data-testid="research-search-input" type="text" value={q} onChange={e => setQ(e.target.value)}
             disabled={!researchDataReady}
             onKeyDown={e => { if (e.key === "Enter" && cos.length === 1) { setSel(cos[0].t); setQ(""); } if (e.key === "Escape") { setQ(""); setSel(null); } }}
             placeholder={researchDataReady ? "Search ticker or company..." : "Loading ticker universe..."}
-            style={{ width: "100%", background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 8, padding: "6px 10px", color: "#333", fontSize: 11, outline: "none", boxShadow: "0 1px 3px rgba(0,0,0,.04)", opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
+            style={{ width: "100%", background: T.bg1, border: "1px solid rgba(0,0,0,.08)", borderRadius: RADII.md, padding: sp("6px 10px"), color: T.text, fontSize: fs(11), outline: "none", boxShadow: "0 1px 3px rgba(0,0,0,.04)", opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
           />
           {q && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, color: "#aaa" }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
-            <button onClick={() => setQ("")} style={{ background: "rgba(0,0,0,.06)", border: "none", borderRadius: "50%", width: 16, height: 16, cursor: "pointer", color: "#888", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 1 }}>✕</button>
+            <span style={{ fontSize: fs(11), color: T.textMuted }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
+            <button onClick={() => setQ("")} style={{ background: "rgba(0,0,0,.06)", border: "none", borderRadius: "50%", width: 16, height: 16, cursor: "pointer", color: T.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
           </span>}
         </div>
 
         {/* Vertical filter pills */}
         {researchMetaReady && (
-        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: 4 }}>
-          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? "#fff" : "transparent", border: !vf ? "1px solid rgba(0,0,0,.1)" : "1px solid transparent", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: !vf ? "#111" : "#888", cursor: "pointer", fontWeight: 400, boxShadow: !vf ? "0 1px 3px rgba(0,0,0,.06)" : "none" }}>ALL</button>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
+          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? T.bg1 : "transparent", border: !vf ? "1px solid rgba(0,0,0,.1)" : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? T.text : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? "0 1px 3px rgba(0,0,0,.06)" : "none" }}>ALL</button>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
-            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? "#fff" : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: 6, padding: "3px 8px", fontSize: 11, boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : "#444", cursor: "pointer", fontWeight: 400, transition: "all 0.15s" }}>
+            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? T.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : T.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "all 0.15s" }}>
               {v.n}
             </button>
           ))}
@@ -4634,10 +4634,10 @@ export default function PhotonicsObservatory({
 
         {/* Sub-layer pills */}
         {subs.length > 0 && (
-          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: 4, animation: "fadeIn 0.2s ease" }}>
-            <button onClick={() => setSf(null)} style={{ background: !sf ? "rgba(0,0,0,.06)" : "rgba(0,0,0,.03)", border: "none", borderRadius: 4, padding: "3px 7px", fontSize: 10, color: !sf ? "#aaa" : "#333", cursor: "pointer" }}>All layers</button>
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4), animation: "fadeIn 0.2s ease" }}>
+            <button onClick={() => setSf(null)} style={{ background: !sf ? "rgba(0,0,0,.06)" : "rgba(0,0,0,.03)", border: "none", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: !sf ? T.textMuted : T.text, cursor: "pointer" }}>All layers</button>
             {subs.map(s => (
-              <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : "rgba(0,0,0,.03)", border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: 4, padding: "3px 7px", fontSize: 10, color: sf === s ? currentTheme.verticals[vf]?.c : "#444", cursor: "pointer" }}>
+              <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : "rgba(0,0,0,.03)", border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: sf === s ? currentTheme.verticals[vf]?.c : T.textSec, cursor: "pointer" }}>
                 {s}
               </button>
             ))}
@@ -4646,9 +4646,9 @@ export default function PhotonicsObservatory({
 
         {/* View tabs */}
         {researchMetaReady && (
-        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid rgba(0,0,0,.06)", marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid rgba(0,0,0,.06)", marginTop: sp(8) }}>
           {[["graph", "Graph"], ["comps", "Comps"], ["macro", "Macro"], ["calendar", "📅 Calendar"]].map(([id, lb]) => (
-            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? "2px solid #CDA24E" : "2px solid transparent", padding: "6px 12px", color: view === id ? "#111" : "#999", fontSize: 10, fontWeight: 400, cursor: "pointer", letterSpacing: 0.3 }}>
+            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? "2px solid #CDA24E" : "2px solid transparent", padding: sp("6px 12px"), color: view === id ? T.text : T.textDim, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3 }}>
               {lb}
             </button>
           ))}
@@ -4657,7 +4657,7 @@ export default function PhotonicsObservatory({
       </div>
 
       {/* Content */}
-      <div style={{ padding: "10px 14px 64px" }}>
+      <div style={{ padding: sp("10px 14px 64px") }}>
         {!researchDataReady ? (
           <ResearchLoadingState theme={currentTheme} />
         ) : view === "calendar" ? (
@@ -4682,20 +4682,20 @@ export default function PhotonicsObservatory({
           />
         ) : themeUniverse.length === 0 ? (
           <div style={{ animation: "fadeIn 0.3s ease", maxWidth: 560, margin: "60px auto", textAlign: "center" }}>
-            <div style={{ fontSize: 48, color: currentTheme.accent, marginBottom: 12, opacity: 0.4 }}>{currentTheme.icon}</div>
-            <h2 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 26, fontWeight: 400, color: "#222", marginBottom: 8, letterSpacing: -0.5 }}>
+            <div style={{ fontSize: fs(48), color: currentTheme.accent, marginBottom: sp(12), opacity: 0.4 }}>{currentTheme.icon}</div>
+            <h2 style={{ fontFamily: T.display, fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: T.text, marginBottom: sp(8), letterSpacing: -0.5 }}>
               {currentTheme.title}
             </h2>
-            <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginBottom: 18 }}>
+            <div style={{ fontSize: fs(12), color: T.textDim, lineHeight: 1.6, marginBottom: sp(18) }}>
               {currentTheme.subtitle}
             </div>
-            <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6, maxWidth: 420, margin: "0 auto 18px" }}>
+            <div style={{ fontSize: fs(12), color: T.textSec, lineHeight: 1.6, maxWidth: 420, margin: "0 auto 18px" }}>
               No covered companies are available for this thesis in the current research dataset.
             </div>
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: sp(16) }}>
               <button onClick={() => setThemeId("ai")} style={{
-                background: "#fff", border: "1px solid rgba(0,0,0,.1)", borderRadius: 8,
-                padding: "6px 18px", fontSize: 11, color: "#666", cursor: "pointer", fontWeight: 400,
+                background: T.bg1, border: "1px solid rgba(0,0,0,.1)", borderRadius: RADII.md,
+                padding: sp("6px 18px"), fontSize: fs(11), color: T.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
               }}>← Back to AI Trade</button>
             </div>
           </div>
@@ -4707,21 +4707,21 @@ export default function PhotonicsObservatory({
               <div ref={detailRef}>
                 {/* Selected company indicator bar */}
                 <div style={{
-                  marginTop: 10, marginBottom: 8, padding: "7px 12px",
-                  background: "#fff", borderRadius: 10, border: "1px solid rgba(0,0,0,.06)",
+                  marginTop: sp(10), marginBottom: sp(8), padding: sp("7px 12px"),
+                  background: T.bg1, borderRadius: RADII.md, border: "1px solid rgba(0,0,0,.06)",
                   boxShadow: "0 2px 8px rgba(0,0,0,.04)",
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   animation: "fadeIn 0.2s ease",
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Logo ticker={selCo.t} size={20} />
-                    <span style={{ fontSize: 11, fontWeight: 400, color: VX[selCo.v].c }}>{selCo.cc} {selCo.t}</span>
-                    <span style={{ fontSize: 11, color: "#888" }}>{selCo.nm}</span>
-                    <span style={{ fontSize: 11, color: "#aaa" }}>&middot; {VX[selCo.v].n}</span>
+                    <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: VX[selCo.v].c }}>{selCo.cc} {selCo.t}</span>
+                    <span style={{ fontSize: fs(11), color: T.textDim }}>{selCo.nm}</span>
+                    <span style={{ fontSize: fs(11), color: T.textMuted }}>&middot; {VX[selCo.v].n}</span>
                   </div>
                   <button onClick={() => setSel(null)} style={{
-                    background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 5,
-                    padding: "3px 8px", fontSize: 11, color: "#888", cursor: "pointer",
+                    background: T.bg1, border: "1px solid rgba(0,0,0,.08)", borderRadius: RADII.sm,
+                    padding: sp("3px 8px"), fontSize: fs(11), color: T.textDim, cursor: "pointer",
                   }}>✕ Close</button>
                 </div>
                 <Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} />
@@ -4735,14 +4735,14 @@ export default function PhotonicsObservatory({
         {view === "comps" && (
           <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
             <Comps cos={cos} sel={sel} onSel={setSel} />
-            {selCo && <div ref={detailRef} style={{ marginTop: 12 }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
+            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
 
         {view === "macro" && (
           <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
             <Heatmap cos={cos} sel={sel} onSel={setSel} onFilterVertical={setVf} theme={currentTheme} />
-            {selCo && <div ref={detailRef} style={{ marginTop: 12 }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
+            {selCo && <div ref={detailRef} style={{ marginTop: sp(12) }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
         </>)}

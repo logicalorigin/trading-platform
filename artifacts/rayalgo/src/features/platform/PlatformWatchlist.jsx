@@ -2,7 +2,7 @@ import { useSearchUniverseTickers } from "@workspace/api-client-react";
 import { ChevronDown, GripVertical, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   fmtCompactNumber,
   formatQuotePrice,
@@ -518,7 +518,7 @@ const WatchlistRow = memo(
                     letterSpacing: "0.06em",
                     lineHeight: 1,
                     padding: sp("2px 3px"),
-                    borderRadius: 0,
+                    borderRadius: RADII.none,
                   }}
                 >
                   {signalDirection.toUpperCase()}
@@ -671,7 +671,7 @@ const WatchlistRow = memo(
             display: "grid",
             placeItems: "center",
             border: "none",
-            borderRadius: 0,
+            borderRadius: RADII.none,
             background: item.monitoredOnly ? `${T.accent}10` : "transparent",
             color: item.monitoredOnly
               ? T.accent
@@ -970,7 +970,7 @@ export const Watchlist = ({
               justifyContent: "space-between",
               gap: sp(6),
               padding: sp("4px 7px"),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: T.bg2,
               border: "none",
               color: T.text,
@@ -1003,7 +1003,7 @@ export const Watchlist = ({
                 zIndex: 20,
                 background: T.bg2,
                 border: "none",
-                borderRadius: 0,
+                borderRadius: RADII.none,
                 boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
                 overflow: "hidden",
               }}
@@ -1081,7 +1081,7 @@ export const Watchlist = ({
               height: dim(26),
               display: "grid",
               placeItems: "center",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: T.bg2,
               border: "none",
               color: T.accent,
@@ -1100,7 +1100,7 @@ export const Watchlist = ({
             disabled={!activeWatchlist || busy}
             style={{
               padding: sp("3px 4px"),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: "transparent",
               border: "none",
               color: T.textDim,
@@ -1118,7 +1118,7 @@ export const Watchlist = ({
             disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
             style={{
               padding: sp("3px 4px"),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: activeWatchlist?.isDefault ? `${T.green}12` : "transparent",
               border: "none",
               color: activeWatchlist?.isDefault ? T.green : T.textDim,
@@ -1139,7 +1139,7 @@ export const Watchlist = ({
             disabled={!activeWatchlist || watchlists.length <= 1 || busy}
             style={{
               padding: sp("3px 4px"),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: "transparent",
               border: "none",
               color: watchlists.length <= 1 ? T.textMuted : T.red,
@@ -1174,7 +1174,7 @@ export const Watchlist = ({
                 onClick={() => handleSelectSortMode(option.id)}
                 style={{
                   padding: sp("3px 2px"),
-                  borderRadius: 0,
+                  borderRadius: RADII.none,
                   background: active ? T.bg3 : "transparent",
                   border: `1px solid ${active ? T.accent : T.border}`,
                   color: active ? T.text : T.textMuted,
@@ -1198,7 +1198,7 @@ export const Watchlist = ({
               alignItems: "center",
               gap: sp(6),
               padding: sp("4px 7px"),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: T.bg2,
               border: "none",
               minWidth: 0,
@@ -1230,7 +1230,7 @@ export const Watchlist = ({
             disabled={!directionEnabled}
             style={{
               width: dim(44),
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: directionEnabled ? T.bg2 : "transparent",
               border: "none",
               color: directionEnabled ? T.textDim : T.textMuted,
@@ -1249,7 +1249,7 @@ export const Watchlist = ({
             data-testid="watchlist-add-panel"
             style={{
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: T.bg2,
               overflow: "hidden",
             }}

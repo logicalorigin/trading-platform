@@ -1,11 +1,13 @@
 import { AppTooltip } from "@/components/ui/tooltip";
+import { FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+
 export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
   return (
-    <div style={{ position: "relative", marginBottom: 14, paddingBottom: 10, borderBottom: "1px solid rgba(0,0,0,.05)" }}>
-      <div style={{ fontSize: 9, color: "#bbb", letterSpacing: 2, textTransform: "uppercase", fontWeight: 400, marginBottom: 6 }}>
+    <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ fontSize: fs(9), color: T.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
         Investment Thesis
       </div>
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
         {themeOrder.map(tid => {
           const t = themes[tid];
           const active = tid === themeId;
@@ -15,19 +17,19 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
               onClick={() => { if (t.available) setThemeId(tid); }}
               disabled={unavailable}
               style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                background: active ? "#fff" : unavailable ? "rgba(0,0,0,.015)" : t.meta ? "rgba(85,107,47,.04)" : "transparent",
-                border: active ? `1px solid ${t.accent}66` : t.meta ? "1px dashed rgba(0,0,0,.08)" : "1px solid transparent",
-                borderRadius: 7, padding: "4px 10px",
-                fontSize: 11, color: active ? t.accent : unavailable ? "#ccc" : "#666",
-                cursor: unavailable ? "not-allowed" : "pointer", fontWeight: 400,
+                display: "inline-flex", alignItems: "center", gap: sp(5),
+                background: active ? T.bg1 : unavailable ? T.bg2 : t.meta ? T.greenBg : "transparent",
+                border: active ? `1px solid ${t.accent}66` : t.meta ? `1px dashed ${T.border}` : "1px solid transparent",
+                borderRadius: RADII.sm, padding: sp("4px 10px"),
+                fontSize: fs(11), color: active ? t.accent : unavailable ? T.textMuted : T.textSec,
+                cursor: unavailable ? "not-allowed" : "pointer", fontWeight: FONT_WEIGHTS.regular,
                 boxShadow: active ? `0 1px 4px ${t.accent}22` : "none",
                 transition: "all 0.12s ease", letterSpacing: 0.2,
                 opacity: unavailable ? 0.6 : 1,
               }}>
-              <span style={{ fontSize: 11, color: active ? t.accent : unavailable ? "#ddd" : "#aaa" }}>{t.icon}</span>
+              <span style={{ fontSize: fs(11), color: active ? t.accent : unavailable ? T.textMuted : T.textDim }}>{t.icon}</span>
               <span>{t.title.replace(/^The /, "")}</span>
-              {unavailable && <span style={{ fontSize: 8, color: "#bbb", fontWeight: 400, marginLeft: 2 }}>soon</span>}
+              {unavailable && <span style={{ fontSize: fs(8), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(2) }}>soon</span>}
             </button></AppTooltip>
           );
         })}

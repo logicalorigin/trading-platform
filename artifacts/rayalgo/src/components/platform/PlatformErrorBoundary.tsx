@@ -9,7 +9,7 @@ import {
   ErrorBoundary,
   type FallbackProps,
 } from "react-error-boundary";
-import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
+import { FONT_CSS_VAR, FONT_WEIGHT, TYPE_CSS_VAR } from "../../lib/typography";
 
 type PlatformErrorBoundaryProps = {
   children: ReactNode;
@@ -136,7 +136,7 @@ function WidgetErrorFallback({
         textAlign: "center",
       }}
     >
-      <div style={{ fontWeight: 700 }}>{label} unavailable</div>
+      <div style={{ fontWeight: FONT_WEIGHT.emphasis }}>{label} unavailable</div>
       <div
         style={{
           maxWidth: 420,

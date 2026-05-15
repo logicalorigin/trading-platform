@@ -9,7 +9,7 @@ import {
   Globe2,
   Landmark,
 } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -415,12 +415,12 @@ export function MarketIdentityMark({
         position: "relative",
         overflow: "hidden",
         background: logoReady ? T.bg0 : identity.fallbackColor,
-        color: "#fff",
+        color: T.onAccent,
         border: "none",
         boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12)",
         fontFamily: T.sans,
         fontSize: fs(size <= 14 ? 6 : size <= 20 ? 8 : 9),
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         lineHeight: 1,
         flexShrink: 0,
         ...style,
@@ -515,7 +515,7 @@ export function MarketIdentityChips({
             background: compact ? "transparent" : T.bg2,
             fontSize: fs(compact ? 7 : 8),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1,
             padding: sp(compact ? "2px 3px" : "2px 4px"),
             textTransform: chip.key === "country" ? "none" : "uppercase",
@@ -561,7 +561,7 @@ export function MarketIdentityInline({
           whiteSpace: "nowrap",
           color: T.text,
           fontFamily: T.sans,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
         }}
       >
         {identity.ticker}
