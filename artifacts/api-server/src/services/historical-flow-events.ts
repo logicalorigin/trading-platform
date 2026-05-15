@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lt } from "drizzle-orm";
 import {
   db,
   flowEventHydrationSessionsTable,
@@ -59,6 +59,12 @@ type HistoricalFlowSession = {
 const HISTORICAL_FLOW_STORE_BATCH_SIZE = 500;
 const HISTORICAL_FLOW_WINDOW_ROW_LIMIT = 50_000;
 const HISTORICAL_FLOW_DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1_000;
+const HISTORICAL_FLOW_STORE_MIN_PREMIUM = 50_000;
+const HISTORICAL_FLOW_STORE_ALWAYS_KEEP_PREMIUM = 250_000;
+const HISTORICAL_FLOW_STORE_BUCKET_MS = 60_000;
+const HISTORICAL_FLOW_STORE_BUCKET_LIMIT = 3;
+const HISTORICAL_FLOW_RETENTION_MS = 45 * 24 * 60 * 60 * 1_000;
+const HISTORICAL_FLOW_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS = 3_000;
 const HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS = 4_000;
 const HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS = 5 * 60_000;
@@ -91,6 +97,7 @@ let historicalFlowStoreReadTimeoutMs =
   HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
 let historicalFlowNonblockingDirectFallbackTimeoutMs =
   HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
+let lastHistoricalFlowPruneMs = 0;
 const hydrationInFlight = new Map<string, Promise<HydrationTotals>>();
 
 type HydrationTotals = {
@@ -178,6 +185,30 @@ const numberFromDb = (value: unknown): number => {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+};
+
+const nullableNumberFromDb = (value: unknown): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = numberFromDb(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const decimalOrNull = (value: unknown): string | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? String(parsed) : null;
+  }
+  return null;
+};
+
+const integerOrNull = (value: unknown): number | null => {
+  const parsed = nullableNumberFromDb(value);
+  return parsed === null ? null : Math.trunc(parsed);
 };
 
 const dateFromDbExpiration = (value: unknown): Date => {
@@ -359,6 +390,93 @@ export function dedupeHistoricalFlowEventsForStore(
   return [...byProviderKey.values()];
 }
 
+const shouldAlwaysStoreHistoricalFlowEvent = (event: ProviderFlowEvent): boolean =>
+  Number(event.premium ?? 0) >= HISTORICAL_FLOW_STORE_MIN_PREMIUM &&
+  (Boolean(event.isUnusual) ||
+    Number(event.premium ?? 0) >= HISTORICAL_FLOW_STORE_ALWAYS_KEEP_PREMIUM);
+
+const shouldStoreHistoricalFlowEvent = (event: ProviderFlowEvent): boolean =>
+  Number(event.premium ?? 0) >= HISTORICAL_FLOW_STORE_MIN_PREMIUM;
+
+const historicalFlowStoreBucketKey = (
+  event: ProviderFlowEvent,
+  underlying: string,
+  provider: HistoricalFlowProviderName,
+): string => {
+  const timeMs = historicalFlowEventTimeMs(event) ?? 0;
+  return [
+    underlying,
+    provider,
+    Math.floor(timeMs / HISTORICAL_FLOW_STORE_BUCKET_MS),
+  ].join(":");
+};
+
+export function compactHistoricalFlowEventsForStore(input: {
+  underlying: string;
+  provider: HistoricalFlowProviderName;
+  events: ProviderFlowEvent[];
+}): ProviderFlowEvent[] {
+  const deduped = dedupeHistoricalFlowEventsForStore(input.events).filter(
+    shouldStoreHistoricalFlowEvent,
+  );
+  const keep = new Map<string, ProviderFlowEvent>();
+  const ordinaryBuckets = new Map<string, ProviderFlowEvent[]>();
+
+  for (const event of deduped) {
+    const key = providerEventKeyFor(event);
+    if (shouldAlwaysStoreHistoricalFlowEvent(event)) {
+      keep.set(key, event);
+      continue;
+    }
+
+    const bucketKey = historicalFlowStoreBucketKey(
+      event,
+      input.underlying,
+      input.provider,
+    );
+    ordinaryBuckets.set(bucketKey, [
+      ...(ordinaryBuckets.get(bucketKey) ?? []),
+      event,
+    ]);
+  }
+
+  for (const bucketEvents of ordinaryBuckets.values()) {
+    bucketEvents
+      .sort((left, right) => {
+        const premiumDelta =
+          Number(right.premium ?? 0) - Number(left.premium ?? 0);
+        if (premiumDelta !== 0) {
+          return premiumDelta;
+        }
+        return (
+          (historicalFlowEventTimeMs(left) ?? 0) -
+          (historicalFlowEventTimeMs(right) ?? 0)
+        );
+      })
+      .slice(0, HISTORICAL_FLOW_STORE_BUCKET_LIMIT)
+      .forEach((event) => {
+        keep.set(providerEventKeyFor(event), event);
+      });
+  }
+
+  return [...keep.values()].sort((left, right) => {
+    const timeDelta =
+      (historicalFlowEventTimeMs(left) ?? 0) -
+      (historicalFlowEventTimeMs(right) ?? 0);
+    if (timeDelta !== 0) {
+      return timeDelta;
+    }
+    return Number(right.premium ?? 0) - Number(left.premium ?? 0);
+  });
+}
+
+const shouldStoreHistoricalFlowRawPayload = (): boolean => {
+  const value = process.env["HISTORICAL_FLOW_STORE_RAW_PAYLOADS"]
+    ?.trim()
+    .toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+};
+
 const toRawPayload = (event: ProviderFlowEvent): Record<string, unknown> =>
   JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
 
@@ -388,16 +506,18 @@ function storedRowToFlowEvent(
     provider: "polygon" as const,
     basis: "trade",
     optionTicker: row.optionTicker,
-    providerContractId: raw.providerContractId ?? null,
+    providerContractId: row.providerContractId ?? raw.providerContractId ?? null,
     strike: numberFromDb(row.strike),
     expirationDate: dateFromDbExpiration(row.expirationDate),
     right: row.right,
     price: numberFromDb(row.price),
     size: numberFromDb(row.size),
     premium: numberFromDb(row.premium),
-    openInterest: numberFromDb(raw.openInterest),
+    openInterest:
+      nullableNumberFromDb(row.openInterest) ?? numberFromDb(raw.openInterest),
     impliedVolatility:
-      typeof raw.impliedVolatility === "number" ? raw.impliedVolatility : null,
+      nullableNumberFromDb(row.impliedVolatility) ??
+      (typeof raw.impliedVolatility === "number" ? raw.impliedVolatility : null),
     exchange: row.exchange,
     side: row.side,
     sentiment: row.sentiment,
@@ -405,20 +525,23 @@ function storedRowToFlowEvent(
       ? row.tradeConditions
       : [],
     occurredAt: row.occurredAt,
-    unusualScore: numberFromDb(raw.unusualScore),
-    isUnusual: Boolean(raw.isUnusual),
-    bid: typeof raw.bid === "number" ? raw.bid : null,
-    ask: typeof raw.ask === "number" ? raw.ask : null,
-    mark: typeof raw.mark === "number" ? raw.mark : null,
-    delta: typeof raw.delta === "number" ? raw.delta : null,
-    gamma: typeof raw.gamma === "number" ? raw.gamma : null,
-    theta: typeof raw.theta === "number" ? raw.theta : null,
-    vega: typeof raw.vega === "number" ? raw.vega : null,
+    unusualScore:
+      nullableNumberFromDb(row.unusualScore) ?? numberFromDb(raw.unusualScore),
+    isUnusual: row.isUnusual || Boolean(raw.isUnusual),
+    bid: nullableNumberFromDb(row.bid) ?? nullableNumberFromDb(raw.bid),
+    ask: nullableNumberFromDb(row.ask) ?? nullableNumberFromDb(raw.ask),
+    mark: nullableNumberFromDb(row.mark) ?? nullableNumberFromDb(raw.mark),
+    delta: nullableNumberFromDb(row.delta) ?? nullableNumberFromDb(raw.delta),
+    gamma: nullableNumberFromDb(row.gamma) ?? nullableNumberFromDb(raw.gamma),
+    theta: nullableNumberFromDb(row.theta) ?? nullableNumberFromDb(raw.theta),
+    vega: nullableNumberFromDb(row.vega) ?? nullableNumberFromDb(raw.vega),
     underlyingPrice:
-      typeof raw.underlyingPrice === "number" ? raw.underlyingPrice : null,
-    moneyness: raw.moneyness ?? null,
+      nullableNumberFromDb(row.underlyingPrice) ??
+      nullableNumberFromDb(raw.underlyingPrice),
+    moneyness: row.moneyness ?? raw.moneyness ?? null,
     distancePercent:
-      typeof raw.distancePercent === "number" ? raw.distancePercent : null,
+      nullableNumberFromDb(row.distancePercent) ??
+      nullableNumberFromDb(raw.distancePercent),
     confidence: "confirmed_trade",
     sourceBasis: "confirmed_trade",
   };
@@ -655,7 +778,8 @@ async function persistHistoricalFlowEvents(input: {
 
   try {
     const now = new Date();
-    const events = dedupeHistoricalFlowEventsForStore(input.events);
+    const storeRawPayload = shouldStoreHistoricalFlowRawPayload();
+    const events = compactHistoricalFlowEventsForStore(input);
     for (
       let offset = 0;
       offset < events.length;
@@ -674,6 +798,7 @@ async function persistHistoricalFlowEvents(input: {
             sourceBasis: event.sourceBasis ?? "confirmed_trade",
             underlyingSymbol: input.underlying,
             optionTicker: event.optionTicker,
+            providerContractId: event.providerContractId ?? null,
             strike: String(event.strike),
             expirationDate:
               event.expirationDate instanceof Date
@@ -683,37 +808,52 @@ async function persistHistoricalFlowEvents(input: {
             price: String(event.price),
             size: String(event.size),
             premium: String(event.premium),
+            openInterest: integerOrNull(event.openInterest),
+            impliedVolatility: decimalOrNull(event.impliedVolatility),
+            bid: decimalOrNull(event.bid),
+            ask: decimalOrNull(event.ask),
+            mark: decimalOrNull(event.mark),
+            delta: decimalOrNull(event.delta),
+            gamma: decimalOrNull(event.gamma),
+            theta: decimalOrNull(event.theta),
+            vega: decimalOrNull(event.vega),
+            underlyingPrice: decimalOrNull(event.underlyingPrice),
+            moneyness: event.moneyness ?? null,
+            distancePercent: decimalOrNull(event.distancePercent),
+            unusualScore: decimalOrNull(event.unusualScore),
+            isUnusual: Boolean(event.isUnusual),
             exchange: event.exchange || "unknown",
             side: event.side || "unknown",
             sentiment: event.sentiment,
             tradeConditions: event.tradeConditions ?? [],
             occurredAt: event.occurredAt,
-            rawProviderPayload: toRawPayload(event),
+            rawProviderPayload: storeRawPayload ? toRawPayload(event) : null,
             updatedAt: now,
           })),
         )
-        .onConflictDoUpdate({
+        .onConflictDoNothing({
           target: [
             flowEventsTable.provider,
             flowEventsTable.providerEventKey,
           ],
-          set: {
-            sourceBasis: sql`excluded.source_basis`,
-            price: sql`excluded.price`,
-            size: sql`excluded.size`,
-            premium: sql`excluded.premium`,
-            exchange: sql`excluded.exchange`,
-            side: sql`excluded.side`,
-            sentiment: sql`excluded.sentiment`,
-            tradeConditions: sql`excluded.trade_conditions`,
-            rawProviderPayload: sql`excluded.raw_provider_payload`,
-            updatedAt: now,
-          },
         });
     }
+    await pruneHistoricalFlowEvents(now);
   } catch (error) {
     disableHistoricalFlowStoreAfterError(error, "persistHistoricalFlowEvents");
   }
+}
+
+async function pruneHistoricalFlowEvents(now = new Date()): Promise<void> {
+  if (now.getTime() - lastHistoricalFlowPruneMs < HISTORICAL_FLOW_PRUNE_INTERVAL_MS) {
+    return;
+  }
+  lastHistoricalFlowPruneMs = now.getTime();
+  const cutoff = new Date(now.getTime() - HISTORICAL_FLOW_RETENTION_MS);
+  await db.delete(flowEventsTable).where(lt(flowEventsTable.occurredAt, cutoff));
+  await db
+    .delete(flowEventHydrationSessionsTable)
+    .where(lt(flowEventHydrationSessionsTable.windowTo, cutoff));
 }
 
 async function loadIncompleteSessions(input: {

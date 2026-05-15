@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  compactHistoricalFlowEventsForStore,
   dedupeHistoricalFlowEventsForStore,
   resolveHistoricalFlowSamplePlan,
 } from "./historical-flow-events";
@@ -46,36 +47,43 @@ test("historical flow nonblocking direct fallback is explicitly bounded", () => 
   assert.match(source, /controller\.abort\(\)/);
 });
 
-test("historical flow upserts refresh classified payload fields", () => {
-  assert.match(source, /side:\s*sql`excluded\.side`/);
-  assert.match(source, /sentiment:\s*sql`excluded\.sentiment`/);
-  assert.match(source, /rawProviderPayload:\s*sql`excluded\.raw_provider_payload`/);
+const makeFlowEvent = (overrides: Partial<FlowEvent> = {}): FlowEvent => ({
+  id: "event-id",
+  underlying: "SPY",
+  provider: "polygon",
+  basis: "trade",
+  optionTicker: "O:SPY260515C00500000",
+  providerContractId: null,
+  strike: 500,
+  expirationDate: new Date("2026-05-15T00:00:00.000Z"),
+  right: "call",
+  price: 1.25,
+  size: 10,
+  premium: 1250,
+  openInterest: 100,
+  impliedVolatility: null,
+  exchange: "CBOE",
+  side: "ask",
+  sentiment: "bullish",
+  tradeConditions: [],
+  occurredAt: new Date("2026-05-12T14:30:00.000Z"),
+  unusualScore: 1,
+  isUnusual: false,
+  ...overrides,
 });
 
-test("historical flow store batches dedupe duplicate provider keys before upsert", () => {
-  const first: FlowEvent = {
-    id: "same-provider-event",
-    underlying: "SPY",
-    provider: "polygon",
-    basis: "trade",
-    optionTicker: "O:SPY260515C00500000",
-    providerContractId: null,
-    strike: 500,
-    expirationDate: new Date("2026-05-15T00:00:00.000Z"),
-    right: "call",
-    price: 1.25,
-    size: 10,
-    premium: 1250,
-    openInterest: 100,
-    impliedVolatility: null,
-    exchange: "CBOE",
-    side: "ask",
-    sentiment: "bullish",
-    tradeConditions: [],
-    occurredAt: new Date("2026-05-12T14:30:00.000Z"),
-    unusualScore: 1,
-    isUnusual: false,
-  };
+test("historical flow durable writes use compact immutable rows", () => {
+  assert.match(source, /compactHistoricalFlowEventsForStore\(input\)/);
+  assert.match(
+    source,
+    /rawProviderPayload:\s*storeRawPayload \? toRawPayload\(event\) : null/,
+  );
+  assert.match(source, /\.onConflictDoNothing\(\{/);
+  assert.doesNotMatch(source, /rawProviderPayload:\s*sql`excluded/);
+});
+
+test("historical flow store batches dedupe duplicate provider keys before compaction", () => {
+  const first = makeFlowEvent({ id: "same-provider-event", premium: 1250 });
   const replacement = {
     ...first,
     price: 1.4,
@@ -101,6 +109,63 @@ test("historical flow store batches dedupe duplicate provider keys before upsert
   );
   assert.equal(deduped[0]?.price, replacement.price);
   assert.match(source, /dedupeHistoricalFlowEventsForStore\(input\.events\)/);
+});
+
+test("historical flow compaction drops low-value events", () => {
+  const compacted = compactHistoricalFlowEventsForStore({
+    underlying: "SPY",
+    provider: "polygon",
+    events: [
+      makeFlowEvent({ id: "small", premium: 49_999, isUnusual: false }),
+      makeFlowEvent({ id: "small-unusual", premium: 1_000, isUnusual: true }),
+      makeFlowEvent({ id: "minimum", premium: 50_000, isUnusual: false }),
+    ],
+  });
+
+  assert.deepEqual(
+    compacted.map((event) => event.id).sort(),
+    ["minimum"],
+  );
+});
+
+test("historical flow compaction caps ordinary rows per minute bucket", () => {
+  const compacted = compactHistoricalFlowEventsForStore({
+    underlying: "SPY",
+    provider: "polygon",
+    events: [60_000, 80_000, 70_000, 100_000, 90_000].map((premium, index) =>
+      makeFlowEvent({
+        id: `ordinary-${index}`,
+        premium,
+        occurredAt: new Date(`2026-05-12T14:30:0${index}.000Z`),
+      }),
+    ),
+  });
+
+  assert.equal(compacted.length, 3);
+  assert.deepEqual(
+    compacted.map((event) => event.premium).sort((left, right) => right - left),
+    [100_000, 90_000, 80_000],
+  );
+});
+
+test("historical flow compaction preserves high-premium and unusual events above the storage floor", () => {
+  const compacted = compactHistoricalFlowEventsForStore({
+    underlying: "SPY",
+    provider: "polygon",
+    events: [60_000, 70_000, 80_000, 90_000, 250_000, 55_000].map(
+      (premium, index) =>
+        makeFlowEvent({
+          id: `preserved-${index}`,
+          premium,
+          isUnusual: index === 5,
+          occurredAt: new Date(`2026-05-12T14:31:0${index}.000Z`),
+        }),
+    ),
+  });
+
+  assert.equal(compacted.length, 5);
+  assert(compacted.some((event) => event.id === "preserved-4"));
+  assert(compacted.some((event) => event.id === "preserved-5"));
 });
 
 test("historical flow sampling budgets markers across regular sessions", () => {
