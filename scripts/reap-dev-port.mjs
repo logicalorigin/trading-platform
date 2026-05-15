@@ -90,9 +90,10 @@ function readCgroup(pid) {
 }
 
 const myCgroup = readCgroup(process.pid);
+const runningInsideReplitWorkflow = process.env.REPLIT_MODE === "workflow";
 
 // Returns pids that share our cgroup (safe to reap) vs pids in a different
-// cgroup (almost certainly a separate supervised service — refuse to kill).
+// cgroup (usually a separate supervised service).
 function partitionByCgroup(pids) {
   const sameCgroup = new Set();
   const foreignCgroup = new Map(); // pid -> cgroup string
@@ -132,6 +133,19 @@ function killPids(pids, signal) {
   }
 }
 
+function waitForPortToFree(timeoutMs) {
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+  while (Date.now() < deadline) {
+    const remaining = inodesListeningOnPort();
+    if (remaining.size === 0) {
+      return Date.now() - start;
+    }
+    execSync("sleep 0.1");
+  }
+  return null;
+}
+
 const initialInodes = inodesListeningOnPort();
 if (initialInodes.size === 0) {
   process.exit(0);
@@ -148,12 +162,46 @@ if (pids.size === 0) {
 const { sameCgroup, foreignCgroup } = partitionByCgroup(pids);
 
 if (foreignCgroup.size > 0) {
+  if (runningInsideReplitWorkflow) {
+    const replaceablePids = new Set(foreignCgroup.keys());
+    console.warn(
+      `${logPrefix} Port ${port} is held by PID(s) from another Replit execution scope: ${[...replaceablePids].map(describePid).join(", ")}. Replacing them because this command is running inside a Replit workflow...`,
+    );
+    killPids(replaceablePids, "SIGTERM");
+
+    const elapsed = waitForPortToFree(2_000);
+    if (elapsed !== null) {
+      console.warn(
+        `${logPrefix} Port ${port} freed after replacing previous Replit execution in ${elapsed}ms.`,
+      );
+      process.exit(0);
+    }
+
+    const remainingReplaceablePids = new Set(
+      [...pidsHoldingInodes(inodesListeningOnPort())].filter((pid) =>
+        replaceablePids.has(pid),
+      ),
+    );
+    if (remainingReplaceablePids.size > 0) {
+      console.warn(
+        `${logPrefix} Port ${port} still held after SIGTERM; sending SIGKILL to previous Replit execution PID(s): ${[...remainingReplaceablePids].join(", ")}.`,
+      );
+      killPids(remainingReplaceablePids, "SIGKILL");
+      execSync("sleep 0.3");
+    }
+
+    if (inodesListeningOnPort().size === 0) {
+      console.warn(`${logPrefix} Port ${port} freed.`);
+      process.exit(0);
+    }
+  }
+
   const lines = [];
   for (const [pid, cg] of foreignCgroup) {
     lines.push(`  ${describePid(pid)} cgroup=${cg}`);
   }
   console.error(
-    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup, which means a separate supervised service (almost certainly the live workflow) owns it. Reaping it would kill that service and cascade-kill anything else in its cgroup (e.g. workspace-local Postgres).\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} If you really meant to restart the live workflow, use the workflow restart action instead of running 'pnpm dev' from a shell. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
+    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup. Shell-launched dev commands must not kill the live Replit workflow; only commands already running inside a Replit workflow may reclaim a foreign execution scope on their pinned port.\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} Current REPLIT_MODE: ${process.env.REPLIT_MODE ?? "<unset>"}\n${logPrefix} If you meant to restart the live app, use the Replit workflow restart action. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
   );
   process.exit(1);
 }
@@ -169,17 +217,12 @@ console.warn(
 
 killPids(sameCgroup, "SIGTERM");
 
-const start = Date.now();
-const deadline = start + 2_000;
-while (Date.now() < deadline) {
-  const remaining = inodesListeningOnPort();
-  if (remaining.size === 0) {
-    console.warn(
-      `${logPrefix} Port ${port} freed after SIGTERM in ${Date.now() - start}ms.`,
-    );
-    process.exit(0);
-  }
-  execSync("sleep 0.1");
+const elapsed = waitForPortToFree(2_000);
+if (elapsed !== null) {
+  console.warn(
+    `${logPrefix} Port ${port} freed after SIGTERM in ${elapsed}ms.`,
+  );
+  process.exit(0);
 }
 
 const stragglerPids = pidsHoldingInodes(inodesListeningOnPort());

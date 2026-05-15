@@ -3,7 +3,10 @@ export type DatabaseRuntimeSource =
   | "replit-internal-dev-db"
   | "external-postgres";
 
-export type DatabaseRuntimeSourceEnv = "DATABASE_URL" | "LOCAL_DATABASE_URL";
+export type DatabaseRuntimeSourceEnv =
+  | "DATABASE_URL"
+  | "LOCAL_DATABASE_URL"
+  | "PGHOST";
 
 export type DatabaseRuntimeConfig = {
   url: string | null;
@@ -34,6 +37,19 @@ function classifyDatabaseRuntimeSource(url: URL): DatabaseRuntimeSource {
   return "external-postgres";
 }
 
+function classifyDatabaseRuntimeSourceFromUrl(
+  url: string | null,
+): DatabaseRuntimeSource | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    return classifyDatabaseRuntimeSource(new URL(url));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeDatabaseSourceOverride(
   value: string | undefined,
 ): "local" | "database_url" | null {
@@ -59,21 +75,65 @@ function normalizeDatabaseSourceOverride(
   return null;
 }
 
+function buildPostgresEnvDatabaseUrl(env: NodeJS.ProcessEnv): string | null {
+  const host = env["PGHOST"];
+  const database = env["PGDATABASE"];
+  const user = env["PGUSER"];
+  if (!host || !database || !user) {
+    return null;
+  }
+
+  const url = new URL("postgres://localhost");
+  url.hostname = host;
+  url.username = user;
+  if (env["PGPASSWORD"]) {
+    url.password = env["PGPASSWORD"];
+  }
+  if (env["PGPORT"]) {
+    url.port = env["PGPORT"];
+  }
+  url.pathname = `/${database}`;
+  if (env["PGSSLMODE"]) {
+    url.searchParams.set("sslmode", env["PGSSLMODE"]);
+  }
+  return url.toString();
+}
+
 export function resolveDatabaseRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): DatabaseRuntimeConfig {
   const databaseUrl = env["DATABASE_URL"] || null;
   const localDatabaseUrl = env["LOCAL_DATABASE_URL"] || null;
+  const postgresEnvDatabaseUrl = buildPostgresEnvDatabaseUrl(env);
   const override = normalizeDatabaseSourceOverride(
     env["RAYALGO_DATABASE_SOURCE"],
   );
   const useLocalOverride = override === "local" && Boolean(localDatabaseUrl);
-  const url = useLocalOverride ? localDatabaseUrl : databaseUrl;
-  const sourceEnv: DatabaseRuntimeSourceEnv | null = useLocalOverride
-    ? "LOCAL_DATABASE_URL"
-    : url
-      ? "DATABASE_URL"
-      : null;
+  const databaseUrlSource = classifyDatabaseRuntimeSourceFromUrl(databaseUrl);
+  const postgresEnvDatabaseUrlSource = classifyDatabaseRuntimeSourceFromUrl(
+    postgresEnvDatabaseUrl,
+  );
+  const useReplitPgEnv =
+    override !== "database_url" &&
+    Boolean(postgresEnvDatabaseUrl) &&
+    postgresEnvDatabaseUrlSource === "replit-internal-dev-db" &&
+    databaseUrlSource === "workspace-local-postgres";
+
+  let url: string | null = null;
+  let sourceEnv: DatabaseRuntimeSourceEnv | null = null;
+  if (useLocalOverride) {
+    url = localDatabaseUrl;
+    sourceEnv = "LOCAL_DATABASE_URL";
+  } else if (useReplitPgEnv) {
+    url = postgresEnvDatabaseUrl;
+    sourceEnv = "PGHOST";
+  } else if (databaseUrl) {
+    url = databaseUrl;
+    sourceEnv = "DATABASE_URL";
+  } else if (postgresEnvDatabaseUrl) {
+    url = postgresEnvDatabaseUrl;
+    sourceEnv = "PGHOST";
+  }
 
   if (!url || !sourceEnv) {
     return {

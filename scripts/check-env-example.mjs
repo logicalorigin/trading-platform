@@ -7,6 +7,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const envExamplePath = path.join(repoRoot, ".env.example");
 const scanRoots = ["artifacts", "lib", "scripts"];
 const sourceExtensions = new Set([".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
+const platformProvidedEnvVars = new Set(["REPLIT_MODE"]);
 const ignoredDirs = new Set([
   ".git",
   ".turbo",
@@ -99,7 +100,10 @@ const collectReferencedEnvVars = () => {
 
 const documented = collectDocumentedEnvVars();
 const references = collectReferencedEnvVars();
-const missing = [...references.keys()].filter((name) => !documented.has(name)).sort();
+const missing = [...references.keys()]
+  .filter((name) => !platformProvidedEnvVars.has(name))
+  .filter((name) => !documented.has(name))
+  .sort();
 
 if (missing.length > 0) {
   console.error(

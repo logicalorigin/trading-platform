@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Lightweight readiness check for the workspace-local Postgres unix socket.
 # Used by one-off checks that only need to verify whether workspace-local
-# Postgres is already reachable. The api-server dev command starts local
-# Postgres via scripts/start-local-postgres.sh because root .replit workflows
-# are intentionally not used for app bring-up in this workspace.
+# Postgres is already reachable. Normal Replit app bring-up should use the
+# managed PG* environment instead of this local fallback.
 #
 # Fail-fast when DATABASE_URL points at the workspace-local socket: exits
 # non-zero with a clear operator message if Postgres is not reachable within

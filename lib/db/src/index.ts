@@ -27,7 +27,7 @@ const resolvedDatabaseUrl = databaseRuntimeConfig.url;
 
 if (!resolvedDatabaseUrl) {
   throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
+    "Database connection env must be set. Did you forget to provision a database?",
   );
 }
 
@@ -48,7 +48,7 @@ const isHeliumDatabase = (): boolean => {
 };
 
 const heliumDatabase = isHeliumDatabase();
-const defaultConnectionTimeoutMillis = heliumDatabase ? 1_000 : undefined;
+const defaultConnectionTimeoutMillis = heliumDatabase ? 10_000 : undefined;
 
 export const pool = new Pool({
   connectionString: resolvedDatabaseUrl,

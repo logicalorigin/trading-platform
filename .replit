@@ -9,6 +9,9 @@ deploymentTarget = "autoscale"
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
+[workflows]
+runButton = "Project"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -97,9 +100,6 @@ externalPort = 3003
 IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
-
-[userenv.development]
-DATABASE_URL = "postgres:///dev?host=/home/runner/workspace/.local/postgres/run&user=runner"
 
 [nix]
 channel = "stable-25_05"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Idempotent: ensures a workspace-local Postgres cluster is initialized,
 # running on a unix socket, and has the `dev` database. Exits 0 on success.
-# Used as a pre-step by the api-server dev script while the Replit-managed
-# Helium dev DB is unavailable.
+# Manual fallback only. Normal Replit app bring-up should use the managed PG*
+# environment and must not start local Postgres from the API artifact.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

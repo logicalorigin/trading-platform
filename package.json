@@ -12,9 +12,10 @@
     "audit:api-codegen": "node scripts/check-api-codegen-drift.mjs",
     "audit:env": "node scripts/check-env-example.mjs",
     "audit:markdown-paths": "node scripts/check-markdown-paths.mjs",
-    "audit:guards": "pnpm run audit:env && pnpm run audit:markdown-paths && pnpm run audit:api-codegen",
+    "audit:replit-startup": "node scripts/check-replit-startup-guards.mjs",
+    "audit:guards": "pnpm run audit:replit-startup && pnpm run audit:env && pnpm run audit:markdown-paths && pnpm run audit:api-codegen",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
   "devDependencies": {

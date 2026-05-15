@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Foreground entry point for the workspace-local Postgres workflow.
-# Runs `postgres` in the foreground so Replit's workflow supervisor owns
-# the postmaster PID. This keeps Postgres in its own workflow cgroup,
-# decoupled from the api-server cgroup, so an api-server restart no
-# longer SIGKILLs the database.
+# Foreground entry point for workspace-local Postgres.
+# Useful for manual diagnosis when you need to inspect Postgres directly.
+# Normal Replit app bring-up should use Replit's managed PG* environment.
 #
 # Idempotent: initdb if needed, evict a stale postmaster.pid, then exec.
 # For one-off use, `scripts/start-local-postgres.sh` still daemonizes via

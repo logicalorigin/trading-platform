@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080} PGROOT=\"${PGROOT:-$(cd ../.. && pwd)/.local/postgres}\"; node ../../scripts/reap-dev-port.mjs && bash ../../scripts/start-local-postgres.sh && export DATABASE_URL=\"${DATABASE_URL:-postgres:///dev?host=${PGROOT}/run&user=runner}\" NODE_ENV=development && pnpm run build && exec node --enable-source-maps ./dist/index.mjs",
+    "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080} NODE_ENV=development; node ../../scripts/reap-dev-port.mjs && pnpm run build && exec node --enable-source-maps ./dist/index.mjs",
     "build": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node ./build.mjs",
     "start": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; exec node --enable-source-maps ./dist/index.mjs",
     "test:unit": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node --import tsx ./scripts/runUnitTests.mjs",

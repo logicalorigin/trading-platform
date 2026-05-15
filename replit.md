@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — use Replit's default **Run Replit App** entry for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflows; `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the API and RayAlgo artifact services.
+- Replit Run button — use the **Project** primary workflow for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflow tasks; its `[workflows] runButton = "Project"` points the workflow service at the artifact parent workflow. `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the API and RayAlgo artifact services.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -43,9 +43,11 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 ## Replit Run
 
 The tracked `.replit` intentionally has no root `run = [...]` line and no
-repo-defined `[workflows]` block. Use Replit's default **Run Replit App** entry
-for full app bring-up; do not pin or recreate the generated **Configure Your
-App** workflow from repo config.
+repo-defined `[[workflows.workflow]]` tasks. It does keep
+`[workflows] runButton = "Project"` so Replit's primary Run button points at
+the existing **Project** parent workflow. Replit may still show its generated
+**Configure Your App** toolchain run option in some dropdowns; do not use that
+generated option for app startup.
 
 Replit's `PNPM_WORKSPACE` artifact app model should start the app services from
 each artifact's `.replit-artifact/artifact.toml` `[services.development] run`
@@ -54,6 +56,11 @@ command:
 - API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
 - RayAlgo Platform — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
 
+The API dev script does not start Postgres. It uses Replit's managed Helium
+database by default, even if an old workspace-local socket `DATABASE_URL` is
+still present in the shell. Do not replace this with a manual terminal
+prerequisite or an API-owned local Postgres process.
+
 The IBKR connection launcher calls `/api/ibkr/bridge/launcher`, so the API must
 already be running from app bring-up before the launcher is used. If that route
 is unreachable after pressing **Run Replit App**, treat it as a Replit app
@@ -61,6 +68,10 @@ startup issue, not a reason to add a repo workflow or root runner.
 
 The artifact TOML files are the development and deployment service metadata
 source of truth.
+
+The **Project** workflow in the Replit Workflow tab is only the parent operator
+for those artifact services. Do not add repo-tracked `[[workflows.workflow]]`
+tasks for Project, API Server, RayAlgo Platform, Postgres, or IBKR Bridge.
 
 Both artifact dev scripts call `scripts/reap-dev-port.mjs` before binding their
 pinned port. Do not add a third root runner that starts both services, because
@@ -242,6 +253,12 @@ PORT=8080 node scripts/reap-dev-port.mjs    # API
 PORT=18747 node scripts/reap-dev-port.mjs   # rayalgo preview
 ```
 
+From a normal shell this command is intentionally conservative: it refuses to
+kill a listener owned by a different Replit cgroup. When Replit runs the same
+script inside an artifact workflow (`REPLIT_MODE=workflow`), it may reclaim the
+pinned port from an older Replit execution scope so the Workflow tab's restart
+action can recover from stale app processes.
+
 `fuser` is unavailable on this NixOS image, and `ps`/`pgrep` may be unavailable
 depending on the shell environment. If the reaper cannot identify the PID, check
 `/proc/net/tcp[6]` directly (look for `:HEX_PORT` where HEX =
@@ -291,49 +308,49 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
    Change/change% prefer IBKR-supplied fields 82/83 before computing from
    prevClose.
 
-## Workspace-local Postgres cgroup decoupling
+## Managed Postgres by default
 
-Workspace-local Postgres must run outside the api-server process tree.
-When it runs as foreground `postgres` from `bash scripts/run-local-postgres.sh`,
-it gets its own `shellexec-*.scope` cgroup, so restarting the api-server
-workflow no longer SIGKILLs the postmaster. That prevents the IDE shells,
-terminals, and the rayalgo preview iframe from dropping their PG client
-connections every time the API restarts.
+Replit's managed Postgres should be the normal development DB. The app resolves
+DB config in this order: explicit `LOCAL_DATABASE_URL` only when
+`RAYALGO_DATABASE_SOURCE=local`; Replit's Helium `PG*` environment when a stale
+workspace-local socket `DATABASE_URL` is also present; otherwise `DATABASE_URL`
+and then Replit's `PG*` environment (`PGHOST`, `PGDATABASE`, `PGUSER`,
+`PGPASSWORD`, `PGPORT`). This keeps **Run Replit App** self-contained without
+starting Postgres inside the API workflow cgroup.
 
-- `scripts/run-local-postgres.sh` — foreground entry. Idempotent: initdb
-  if needed, evict a stale `postmaster.pid`, ensure the `dev` database
-  exists, then `exec postgres -D ...`.
-- `scripts/start-local-postgres.sh` — legacy daemonized starter. Still
-  works for one-off manual use; do not call it from any artifact's `dev`
-  script (it would re-attach Postgres to that artifact's cgroup).
-- `artifacts/api-server/package.json` `dev` no longer launches Postgres.
-  It calls `scripts/wait-for-local-postgres.sh` which waits up to 10s
-  on the unix socket and **fails fast (exit 1) when local PG is the
-  selected DB source but Postgres is unreachable**, so the api-server
-  refuses to come up against a missing local DB and the operator gets
-  a single clear FATAL message instead of a confusing connect-error
-  storm later. When `DATABASE_URL` points at a hosted DB, the wait
-  script skips entirely.
+The workspace-local Postgres scripts remain only as fallback/diagnostic tools:
 
-Repo rule: `.replit` intentionally has no repo-defined `[workflows]`
-block and no root `run = [...]` command. Use Replit's default
-**Run Replit App** entry for API/web bring-up. If local Postgres is
-missing or stopped, start only the database sidecar from a shell with
-`bash scripts/run-local-postgres.sh`; do not press the generated
-**Configure Your App** workflow or add a root workflow coordinator.
+- `scripts/start-local-postgres.sh` — manual fallback starter for the local unix
+  socket.
+- `scripts/wait-for-local-postgres.sh` — one-off readiness check for the local
+  fallback.
+- `scripts/run-local-postgres.sh` — foreground diagnostic entry point.
+
+Repo rule: `.replit` intentionally has no repo-defined
+`[[workflows.workflow]]` tasks and no root `run = [...]` command. Keep
+`[workflows] runButton = "Project"` so the Replit primary Run button targets
+the Project parent workflow. Do not add a root workflow coordinator to hide or
+rename generated **Configure Your App**; that would take startup ownership away
+from the artifacts.
+`pnpm run audit:replit-startup` guards these startup invariants.
 
 ## `reap-dev-port.mjs` is cgroup-aware
 
 `scripts/reap-dev-port.mjs` now reads `/proc/<pid>/cgroup` for itself and
-each port-holder. If the holder is in a different cgroup, the reaper
-**refuses to kill** and exits non-zero with the holder's PID, cmdline,
-and cgroup path. This protects the live artifact-service workflow when
-an agent (or the user) runs `pnpm --filter @workspace/api-server run
-dev` or `... rayalgo run dev` from a shell — the shell is in its own
-`shellexec-*.scope`, so the reaper sees the workflow as foreign and
-aborts before SIGTERM/SIGKILL. Same-cgroup orphans (the original
-"previous service restart left a node behind" case) still get reaped
-normally.
+each port-holder. If the holder is in a different cgroup and the current
+process is a normal shell, the reaper **refuses to kill** and exits non-zero
+with the holder's PID, cmdline, and cgroup path. This protects the live
+artifact-service workflow when an agent (or the user) runs
+`pnpm --filter @workspace/api-server run dev` or `... rayalgo run dev` from a
+shell — the shell is in its own `shellexec-*.scope`, so the reaper sees the
+workflow as foreign and aborts before SIGTERM/SIGKILL.
+
+If the current process is itself a Replit workflow (`REPLIT_MODE=workflow`), the
+reaper treats that as an intentional workflow restart and may reclaim the pinned
+port from a different Replit execution scope. This matters because Replit does
+not always preserve `REPLIT_MODE` in the long-running child server process even
+though the restart task itself has it. Same-cgroup orphans (the original
+"previous service restart left a node behind" case) still get reaped normally.
 
 To intentionally restart the live API or web service, use the workflow
 restart action, not `pnpm dev` from a shell.
