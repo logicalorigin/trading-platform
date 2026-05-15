@@ -13,7 +13,7 @@ export type StorageHealthSource =
 
 export type StorageHealthSnapshot = {
   source: StorageHealthSource | null;
-  sourceEnv: "DATABASE_URL" | "LOCAL_DATABASE_URL" | null;
+  sourceEnv: "DATABASE_URL" | "LOCAL_DATABASE_URL" | "PGHOST" | null;
   overrideActive: boolean;
   configured: boolean;
   status: StorageHealthStatus;
@@ -140,7 +140,7 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
       status: "unavailable",
       reachable: false,
       reason: "database_url_missing",
-      error: "DATABASE_URL is not set.",
+      error: "DATABASE_URL or Replit PG env is not set.",
       pingMs: null,
     });
     return cachedStorageHealth;

@@ -11,15 +11,20 @@
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
     "universe:sync:nasdaq": "tsx ./src/sync-nasdaq-listed-universe.ts",
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
+    "db:storage:audit": "tsx ./src/db-storage.ts audit",
+    "db:storage:cleanup": "tsx ./src/db-storage.ts cleanup",
+    "db:accounts:recover": "tsx ./src/account-data-recovery.ts",
     "test:universe-catalog": "node --import tsx --test ./src/universe-catalog-live.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@workspace/db": "workspace:*",
-    "drizzle-orm": "catalog:"
+    "drizzle-orm": "catalog:",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/pg": "^8.18.0",
     "tsx": "catalog:"
   }
 }

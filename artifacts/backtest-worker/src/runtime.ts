@@ -17,4 +17,6 @@ export const JOB_HEARTBEAT_INTERVAL_MS = 10_000;
 export const JOB_STALE_AFTER_MS = 60_000;
 export const MAX_JOB_ATTEMPTS = 2;
 export const MAX_PARALLEL_SWEEP_RUNS = 4;
-export const BAR_STORAGE_TARGET_BYTES = 10 * 1024 * 1024 * 1024;
+export const BAR_STORAGE_TARGET_BYTES = Number(
+  process.env.BAR_STORAGE_TARGET_BYTES ?? 1024 * 1024 * 1024,
+);

@@ -161,7 +161,14 @@ type FooterMemoryPressureDriver = NonNullable<
   DiagnosticsLatestPayload["footerMemoryPressure"]
 >["dominantDrivers"][number];
 
-const SNAPSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const SNAPSHOT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const SNAPSHOT_RETENTION_DAYS = SNAPSHOT_RETENTION_MS / (24 * 60 * 60 * 1000);
+const STORAGE_WARNING_DATABASE_MB = Number(
+  process.env["STORAGE_WARNING_DATABASE_MB"] ?? "15360",
+);
+const STORAGE_CRITICAL_DATABASE_MB = Number(
+  process.env["STORAGE_CRITICAL_DATABASE_MB"] ?? "18432",
+);
 const DEFAULT_COLLECTION_INTERVAL_MS = 15_000;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
 const API_LATENCY_ALERT_MIN_SAMPLES = 20;
@@ -2068,6 +2075,8 @@ function classifyResourcePressureSnapshot(metrics: JsonRecord): DiagnosticSeveri
 }
 
 const MONITORED_STORAGE_TABLES = [
+  { table: "flow_events", column: "occurred_at" },
+  { table: "flow_event_hydration_sessions", column: "window_to" },
   { table: "bar_cache", column: "starts_at" },
   { table: "quote_cache", column: "as_of" },
   { table: "option_chain_snapshots", column: "as_of" },
@@ -2081,26 +2090,59 @@ async function buildMonitoredStorageTableStats() {
     MONITORED_STORAGE_TABLES.map(async (table) => {
       const result = await pool.query<{
         row_count: string;
+        dead_row_count: string;
         total_bytes: string;
         oldest_at: Date | null;
         newest_at: Date | null;
       }>(
-        `select count(*)::text as row_count,
-                coalesce(pg_total_relation_size($$${table.table}$$::regclass), 0)::text as total_bytes,
-                min(${table.column}) as oldest_at,
-                max(${table.column}) as newest_at
-           from ${table.table}`,
+        `select coalesce(s.n_live_tup, 0)::text as row_count,
+                coalesce(s.n_dead_tup, 0)::text as dead_row_count,
+                coalesce(pg_total_relation_size(c.oid), 0)::text as total_bytes,
+                (select min(${table.column}) from ${table.table}) as oldest_at,
+                (select max(${table.column}) from ${table.table}) as newest_at
+           from pg_class c
+           join pg_namespace n on n.oid = c.relnamespace
+           left join pg_stat_user_tables s on s.relid = c.oid
+          where n.nspname = 'public'
+            and c.relname = $1`,
+        [table.table],
       );
       const row = result.rows[0];
       return {
         table: table.table,
         rowEstimate: Number(row?.row_count ?? 0),
+        deadRowEstimate: Number(row?.dead_row_count ?? 0),
         totalMb: roundMetric(Number(row?.total_bytes ?? 0) / 1024 / 1024),
         oldestAt: row?.oldest_at?.toISOString?.() ?? null,
         newestAt: row?.newest_at?.toISOString?.() ?? null,
       };
     }),
   );
+}
+
+async function buildDatabaseStorageStats(): Promise<JsonRecord> {
+  const result = await pool.query<{ database_bytes: string }>(
+    "select pg_database_size(current_database())::text as database_bytes",
+  );
+  const databaseMb =
+    Number(result.rows[0]?.database_bytes ?? 0) / 1024 / 1024;
+  const warningMb = Number.isFinite(STORAGE_WARNING_DATABASE_MB)
+    ? STORAGE_WARNING_DATABASE_MB
+    : 15360;
+  const criticalMb = Number.isFinite(STORAGE_CRITICAL_DATABASE_MB)
+    ? STORAGE_CRITICAL_DATABASE_MB
+    : 18432;
+  return {
+    databaseMb: roundMetric(databaseMb),
+    warningDatabaseMb: warningMb,
+    criticalDatabaseMb: criticalMb,
+    storagePressureLevel:
+      databaseMb >= criticalMb
+        ? "critical"
+        : databaseMb >= warningMb
+          ? "warning"
+          : "ok",
+  };
 }
 
 async function buildStorageMetrics(): Promise<JsonRecord> {
@@ -2112,16 +2154,20 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
   if (process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] === "1") {
     return {
       ...health,
-      snapshotRetentionDays: 7,
+      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
       monitoredTables: [],
     };
   }
 
   try {
-    const monitoredTables = await buildMonitoredStorageTableStats();
+    const [monitoredTables, databaseStats] = await Promise.all([
+      buildMonitoredStorageTableStats(),
+      buildDatabaseStorageStats(),
+    ]);
     return {
       ...health,
-      snapshotRetentionDays: 7,
+      ...databaseStats,
+      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
       monitoredTables,
     };
   } catch (error) {
@@ -2132,7 +2178,7 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
     );
     return {
       ...degraded,
-      snapshotRetentionDays: 7,
+      snapshotRetentionDays: SNAPSHOT_RETENTION_DAYS,
       monitoredTables: [],
       tableStatsError: summarizeTransientPostgresError(error),
     };
@@ -2142,6 +2188,13 @@ async function buildStorageMetrics(): Promise<JsonRecord> {
 function classifyStorageSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const status = textValue(metrics["status"]);
   if (status === "ok") {
+    const pressure = textValue(metrics["storagePressureLevel"]);
+    if (pressure === "critical") {
+      return "critical";
+    }
+    if (pressure === "warning") {
+      return "warning";
+    }
     return "info";
   }
   if (status === "degraded") {
@@ -2272,7 +2325,7 @@ async function persistSnapshot(snapshot: DiagnosticSnapshotPayload): Promise<voi
         summary: snapshot.summary,
         dimensions: snapshot.dimensions,
         metrics: snapshot.metrics,
-        raw: snapshot.raw,
+        raw: snapshot.severity === "info" ? {} : snapshot.raw,
       });
     },
     undefined,
@@ -2986,26 +3039,43 @@ export async function collectDiagnosticSnapshot(
   if (storageSeverity !== "info") {
     const status = textValue(storageMetrics["status"]) ?? "unavailable";
     const reason = textValue(storageMetrics["reason"]);
-    activeEvents.push({
-      subsystem: "storage",
-      category: "connectivity",
-      code:
-        status === "degraded"
-          ? "postgres_storage_degraded"
-          : "postgres_unavailable",
-      severity: storageSeverity,
-      message:
-        status === "degraded"
-          ? "Configured Postgres storage is reachable, but diagnostics storage is degraded."
-          : "Configured Postgres storage is unreachable; DB-backed services are degraded.",
-      dimensions: {
-        status,
-        reason,
-        host: storageMetrics["host"] ?? null,
-        database: storageMetrics["database"] ?? null,
-      },
-      raw: storageMetrics,
-    });
+    const pressure = textValue(storageMetrics["storagePressureLevel"]);
+    if (status === "ok" && (pressure === "warning" || pressure === "critical")) {
+      activeEvents.push({
+        subsystem: "storage",
+        category: "capacity",
+        code: "postgres_storage_pressure",
+        severity: storageSeverity,
+        message: "Postgres storage usage is approaching the configured limit.",
+        dimensions: {
+          databaseMb: storageMetrics["databaseMb"] ?? null,
+          warningDatabaseMb: storageMetrics["warningDatabaseMb"] ?? null,
+          criticalDatabaseMb: storageMetrics["criticalDatabaseMb"] ?? null,
+        },
+        raw: storageMetrics,
+      });
+    } else {
+      activeEvents.push({
+        subsystem: "storage",
+        category: "connectivity",
+        code:
+          status === "degraded"
+            ? "postgres_storage_degraded"
+            : "postgres_unavailable",
+        severity: storageSeverity,
+        message:
+          status === "degraded"
+            ? "Configured Postgres storage is reachable, but diagnostics storage is degraded."
+            : "Configured Postgres storage is unreachable; DB-backed services are degraded.",
+        dimensions: {
+          status,
+          reason,
+          host: storageMetrics["host"] ?? null,
+          database: storageMetrics["database"] ?? null,
+        },
+        raw: storageMetrics,
+      });
+    }
   }
 
   if ((numeric(automation.metrics["gatewayBlockedCount"]) ?? 0) > 0) {
@@ -3362,6 +3432,11 @@ export async function exportDiagnostics(input: {
 }
 
 const PRUNABLE_CACHE_TABLES: Record<string, { table: string; column: string }> = {
+  flow_events: { table: "flow_events", column: "occurred_at" },
+  flow_event_hydration_sessions: {
+    table: "flow_event_hydration_sessions",
+    column: "window_to",
+  },
   bar_cache: { table: "bar_cache", column: "starts_at" },
   quote_cache: { table: "quote_cache", column: "as_of" },
   option_chain_snapshots: { table: "option_chain_snapshots", column: "as_of" },
