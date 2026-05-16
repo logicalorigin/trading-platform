@@ -117,11 +117,14 @@
   --ra-motion-up: #4FB286;
   --ra-motion-down: #D77470;
   --ra-motion-warn: #D9A864;
-  --ra-tooltip-bg: rgba(46, 44, 50, 0.95);
-  --ra-tooltip-border: transparent;
+  --ra-tooltip-bg: #1E1D22;
+  --ra-tooltip-border: #3A3940;
   --ra-tooltip-text: #F2EFE9;
   --ra-tooltip-muted: #B8B4AC;
-  --ra-tooltip-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --ra-tooltip-shadow: 0 10px 24px rgba(0, 0, 0, 0.36), 0 4px 8px rgba(0, 0, 0, 0.24);
+  --ra-skeleton-base: #2A292F;
+  --ra-skeleton-highlight: #3A3940;
+  --ra-focus-ring: 0 0 0 2px rgba(224, 143, 118, 0.32);
 }
 
 :root[data-rayalgo-theme="light"] {
@@ -139,16 +142,16 @@
   --ra-pink-500: #B8567A;
   --ra-purple-400: #8B6FAE;
   --ra-purple-500: #6B4E8E;
-  --ra-grey-0: #FAFAF7;
+  --ra-grey-0: #FFFFFF;
   --ra-grey-1: #FFFFFF;
-  --ra-grey-2: #F1EFEA;
-  --ra-grey-3: #E8E5DE;
-  --ra-grey-4: #D9D5CD;
-  --ra-grey-5: #E8E5DE;
-  --ra-grey-6: #F0EDE6;
-  --ra-grey-7: #ACA8A0;
-  --ra-grey-8: #86837D;
-  --ra-grey-9: #4E4B4F;
+  --ra-grey-2: #FAFAFB;
+  --ra-grey-3: #F4F4F6;
+  --ra-grey-4: #E8E8EC;
+  --ra-grey-5: #E5E5EA;
+  --ra-grey-6: #F2F2F4;
+  --ra-grey-7: #9999A1;
+  --ra-grey-8: #6B6B73;
+  --ra-grey-9: #3F3F46;
   --ra-surface-0: var(--ra-grey-0);
   --ra-surface-1: var(--ra-grey-1);
   --ra-surface-2: var(--ra-grey-2);
@@ -169,11 +172,14 @@
   --ra-color-status-warn: var(--ra-status-working);
   --ra-color-status-info: var(--ra-stream-checking);
   --ra-table-row-bg-hover: color-mix(in srgb, var(--ra-surface-3) 86%, transparent);
-  --ra-tooltip-bg: rgba(25, 23, 26, 0.94);
-  --ra-tooltip-border: transparent;
-  --ra-tooltip-text: #FAFAF7;
-  --ra-tooltip-muted: #B8B4AC;
-  --ra-tooltip-shadow: 0 8px 20px rgba(25, 23, 26, 0.18);
+  --ra-tooltip-bg: #FFFFFF;
+  --ra-tooltip-border: #EBE9E3;
+  --ra-tooltip-text: #19171A;
+  --ra-tooltip-muted: #4E4B4F;
+  --ra-tooltip-shadow: 0 10px 24px rgba(25, 23, 26, 0.10), 0 4px 8px rgba(25, 23, 26, 0.06);
+  --ra-skeleton-base: #F0F0F2;
+  --ra-skeleton-highlight: #F8F8FA;
+  --ra-focus-ring: 0 0 0 2px rgba(217, 119, 87, 0.30);
 }
 
 :root[data-rayalgo-color-mode="protan"] {
@@ -458,9 +464,8 @@ table {
 .ra-account-overview-grid {
   display: grid;
   grid-template-columns:
-    minmax(220px, 0.78fr)
-    minmax(250px, 0.98fr)
-    minmax(270px, 1.08fr)
+    minmax(240px, 0.95fr)
+    minmax(320px, 1.25fr)
     minmax(390px, 1.42fr);
   gap: 5px;
   align-items: start;
@@ -482,7 +487,7 @@ table {
 }
 
 .ra-account-detail-grid {
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
 }
 
 .ra-account-support-grid {
@@ -635,11 +640,24 @@ table {
     box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
     color var(--ra-motion-fast) var(--ra-motion-ease),
     opacity var(--ra-motion-fast) var(--ra-motion-ease),
-    transform var(--ra-motion-fast) var(--ra-motion-ease);
+    transform var(--ra-motion-micro) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .ra-interactive:hover {
   transform: translateY(-1px);
+}
+
+.ra-interactive:active {
+  transform: translateY(0);
+  transition-duration: 60ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-interactive,
+  .ra-interactive:hover,
+  .ra-interactive:active {
+    transform: none;
+  }
 }
 
 .ra-table-row {
@@ -662,6 +680,81 @@ table {
 .ra-hide-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+@keyframes raSkeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.ra-skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--ra-skeleton-base) 0%,
+    var(--ra-skeleton-highlight) 50%,
+    var(--ra-skeleton-base) 100%
+  );
+  background-size: 200% 100%;
+  animation: raSkeletonShimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-skeleton-shimmer {
+    background: var(--ra-skeleton-base);
+    animation: none;
+  }
+}
+
+.ra-input-focus:focus,
+.ra-input-focus:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+input[type="text"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="tel"]:focus-visible,
+input[type="url"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="password"]:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+}
+
+button[disabled],
+button:disabled,
+input[disabled],
+input:disabled,
+select[disabled],
+select:disabled,
+textarea[disabled],
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+button[disabled]:not([data-ra-keep-opacity]),
+button:disabled:not([data-ra-keep-opacity]) {
+  opacity: 0.5;
+}
+
+input[disabled]:not([data-ra-keep-opacity]),
+input:disabled:not([data-ra-keep-opacity]),
+select[disabled]:not([data-ra-keep-opacity]),
+select:disabled:not([data-ra-keep-opacity]),
+textarea[disabled]:not([data-ra-keep-opacity]),
+textarea:disabled:not([data-ra-keep-opacity]) {
+  opacity: 0.55;
+}
+
 
 .ra-sparkline polyline,
 .ra-sparkline path {
@@ -713,25 +806,24 @@ table {
   z-index: 1200;
   max-width: min(320px, calc(100vw - 24px));
   padding: 8px 12px;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid var(--ra-tooltip-border);
+  border-radius: 6px;
   background: var(--ra-tooltip-bg);
   box-shadow: var(--ra-tooltip-shadow);
   color: var(--ra-tooltip-text);
   font-family: var(--ra-font-sans);
-  font-size: var(--ra-type-body);
+  font-size: var(--ra-type-paragraph-muted, var(--ra-type-body));
   font-weight: 500;
   line-height: 1.4;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.005em;
   overflow-wrap: anywhere;
   pointer-events: none;
-  backdrop-filter: blur(16px);
   animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
 }
 
 .ra-tooltip-arrow {
   fill: var(--ra-tooltip-bg);
-  stroke: transparent;
+  stroke: var(--ra-tooltip-border);
 }
 
 .ra-header-chip:last-child {
@@ -803,7 +895,8 @@ table {
 
   [data-trade-layout="phone"] [data-testid="trade-equity-chart"],
   [data-trade-layout="phone"] [data-testid="trade-contract-chart-panel"] {
-    min-height: min(70vh, 460px) !important;
+    min-height: clamp(320px, 46vh, 460px) !important;
+    max-height: clamp(320px, 46vh, 460px) !important;
   }
 
   [data-trade-layout="phone"] [data-testid="trade-options-chain-panel"],

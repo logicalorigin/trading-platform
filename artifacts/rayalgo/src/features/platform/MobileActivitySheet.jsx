@@ -6,7 +6,7 @@ import {
   formatQuotePrice,
   formatRelativeTimeShort,
 } from "../../lib/formatters";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
@@ -39,7 +39,7 @@ const SegmentButton = ({ active, children, onClick, testId }) => (
       color: active ? T.text : T.textDim,
       cursor: "pointer",
       fontFamily: T.sans,
-      fontSize: fs(9),
+      fontSize: textSize("caption"),
     }}
   >
     {children}
@@ -97,7 +97,7 @@ const ActivityRow = ({
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           color: T.textDim,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           lineHeight: 1.1,
         }}
       >

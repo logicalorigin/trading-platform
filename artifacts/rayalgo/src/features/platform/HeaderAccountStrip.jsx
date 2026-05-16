@@ -1,4 +1,4 @@
-import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -36,31 +36,33 @@ export const HeaderAccountStrip = ({
     },
   ];
   const labelStyle = {
-    fontSize: fs(7),
+    fontSize: textSize("caption"),
     color: T.textMuted,
-    fontWeight: 400,
-    letterSpacing: "0.05em",
+    fontWeight: FONT_WEIGHTS.medium,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
     fontFamily: T.sans,
-    lineHeight: 1.05,
-    whiteSpace: "nowrap",
-  };
-  const valueStyle = {
-    fontSize: fs(9),
-    fontFamily: T.sans,
-    fontWeight: 400,
     lineHeight: 1.1,
     whiteSpace: "nowrap",
   };
+  const valueStyle = {
+    fontSize: textSize("paragraphMuted"),
+    fontFamily: T.sans,
+    fontVariantNumeric: "tabular-nums",
+    fontWeight: FONT_WEIGHTS.medium,
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  };
   const surfaceStyle = {
-    minWidth: dim(270),
-    minHeight: dim(32),
-    padding: sp("3px 7px"),
+    minWidth: dim(280),
+    minHeight: dim(38),
+    padding: sp("6px 14px"),
     background: T.bg1,
     border: `1px solid ${T.border}`,
-    borderRadius: RADII.none,
+    borderRadius: dim(RADII.sm),
     display: "flex",
     alignItems: "center",
-    gap: sp(8),
+    gap: sp(14),
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
 
@@ -71,11 +73,9 @@ export const HeaderAccountStrip = ({
         ...surfaceStyle,
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = T.bg3;
-        event.currentTarget.style.borderColor = T.textMuted;
+        event.currentTarget.style.borderColor = T.accent;
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = T.bg1;
         event.currentTarget.style.borderColor = T.border;
       }}
     >
@@ -88,7 +88,7 @@ export const HeaderAccountStrip = ({
           flex: "0 1 auto",
         }}
       >
-        <span style={labelStyle}>ACCOUNT</span>
+        <span style={labelStyle}>Account</span>
         {accounts.length ? (
           <select
             value={primaryAccountId || ""}
@@ -98,12 +98,12 @@ export const HeaderAccountStrip = ({
               background: "transparent",
               border: "none",
               color: T.text,
-              fontSize: fs(9),
+              fontSize: textSize("paragraphMuted"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.medium,
               outline: "none",
               padding: 0,
-              lineHeight: 1.1,
+              lineHeight: 1.2,
             }}
           >
             {accounts.map((account) => (

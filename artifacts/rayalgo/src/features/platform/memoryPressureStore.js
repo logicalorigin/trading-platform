@@ -16,6 +16,7 @@ const INITIAL_STATE = {
   queryCount: 0,
   heavyQueryCount: 0,
   storeEntryCount: 0,
+  pressureDrivers: [],
   dominantDrivers: [],
   observedAt: null,
   measurement: null,

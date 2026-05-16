@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BarTimeframe } from './barTimeframe';
+import type { ChartBarTimeframe } from './chartBarTimeframe';
 import type { OptionRight } from './optionRight';
 
 export type GetOptionChartBarsParams = {
@@ -18,7 +18,7 @@ right: OptionRight;
  */
 optionTicker?: string | null;
 providerContractId?: string | null;
-timeframe: BarTimeframe;
+timeframe: ChartBarTimeframe;
 /**
  * @minimum 1
  * @maximum 50000

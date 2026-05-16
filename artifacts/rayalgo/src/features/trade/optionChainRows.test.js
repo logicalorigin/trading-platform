@@ -4,6 +4,7 @@ import {
   buildOptionChainRowsFromApi,
   patchOptionChainRowWithQuoteGetter,
 } from "./optionChainRows.js";
+import { buildHeatmapModel } from "./TradeChainPanel.jsx";
 
 const optionContract = (right) => ({
   ticker: `SPY-20260515-${right === "call" ? "C" : "P"}500`,
@@ -143,4 +144,16 @@ test("patchOptionChainRowWithQuoteGetter applies live quote snapshots without re
   assert.equal(patched.cOi, 80);
   assert.equal(patched.cFreshness, "live");
   assert.equal(patched.cQuoteUpdatedAt, "2026-05-06T14:30:00.000Z");
+});
+
+test("option chain heatmap normalizes volume and open-interest cells", () => {
+  const model = buildHeatmapModel([
+    { k: 500, cVol: 10, cOi: 100, pVol: 5, pOi: 20 },
+    { k: 505, cVol: 1000, cOi: 10000, pVol: 50, pOi: 200 },
+  ]);
+
+  assert.equal(model.intensity({ cVol: 0 }, "C", "cVol"), 0);
+  assert.equal(model.intensity({ cVol: 1000 }, "C", "cVol"), 1);
+  assert.equal(model.intensity({ cOi: 10000 }, "C", "cOi"), 1);
+  assert.ok(model.intensity({ pVol: 5 }, "P", "pVol") < model.intensity({ pVol: 50 }, "P", "pVol"));
 });

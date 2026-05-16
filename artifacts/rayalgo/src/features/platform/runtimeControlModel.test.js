@@ -88,6 +88,193 @@ test("adds flow scanner runtime detail when active leases are zero", () => {
   );
 });
 
+test("explains queued flow scanner work without active quote leases", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      deepScanner: {
+        draining: true,
+        activeCount: 3,
+        queuedCount: 7,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "3 metadata scans active; quote leases pending",
+  );
+});
+
+test("reports flow scanner background pauses ahead of queued work", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "options-lane-backoff",
+      deepScanner: {
+        draining: true,
+        queuedCount: 7,
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "paused: options lane backoff");
+});
+
+test("normalizes line pressure and scanner effective cap", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 185,
+    usableRemainingLineCount: 0,
+    budget: {
+      maxLines: 190,
+      budgetSource: "bridge-diagnostics",
+      flowScannerLineCap: 100,
+    },
+    pressure: {
+      state: "protected",
+      policy: "active-ui-first",
+      budgetSource: "bridge-diagnostics",
+      scannerStaticLineCap: 100,
+      scannerEffectiveLineCap: 35,
+      usableRemainingLineCount: 0,
+    },
+    poolUsage: {
+      "account-monitor": {
+        id: "account-monitor",
+        activeLineCount: 0,
+        maxLines: 10,
+      },
+      "flow-scanner": {
+        id: "flow-scanner",
+        activeLineCount: 20,
+        maxLines: 100,
+        effectiveMaxLines: 35,
+        remainingLineCount: 15,
+      },
+    },
+  });
+
+  assert.equal(normalized.pressure.state, "protected");
+  assert.equal(normalized.pressure.budgetSource, "bridge-diagnostics");
+  assert.equal(normalized.flowScanner.cap, 100);
+  assert.equal(normalized.flowScanner.effectiveCap, 35);
+  assert.equal(normalized.flowScanner.free, 15);
+});
+
+test("prefers bridge active summary while retaining API demand summary", () => {
+  const normalized = normalizeAdmissionDiagnostics(
+    {
+      activeLineCount: 143,
+      budget: {
+        maxLines: 190,
+        bridgeLineBudget: 190,
+        flowScannerLineCap: 100,
+      },
+      accountMonitorLineCount: 3,
+      flowScannerLineCount: 10,
+      poolUsage: {
+        "account-monitor": {
+          id: "account-monitor",
+          activeLineCount: 3,
+          maxLines: 10,
+          remainingLineCount: 7,
+        },
+        "flow-scanner": {
+          id: "flow-scanner",
+          activeLineCount: 10,
+          maxLines: 100,
+          effectiveMaxLines: 40,
+          remainingLineCount: 30,
+        },
+      },
+    },
+    {
+      bridge: {
+        activeLineCount: 15,
+        lineBudget: 190,
+        remainingLineCount: 175,
+        diagnostics: {
+          pressure: "stalled",
+          subscriptions: {
+            activeEquitySubscriptions: 14,
+            activeOptionSubscriptions: 1,
+            prewarmSymbolCount: 12,
+          },
+        },
+      },
+      drift: {
+        admissionVsBridgeLineDelta: 128,
+        reconciliation: {
+          status: "api_active_bridge_missing",
+          apiLineCount: 143,
+          bridgeLineCount: 15,
+        },
+      },
+    },
+  );
+
+  assert.equal(normalized.summary, "15 / 190");
+  assert.equal(normalized.demandSummary, "143 / 190");
+  assert.equal(normalized.bridge.summary, "15 / 190");
+  assert.equal(normalized.bridge.activeOptions, 1);
+  assert.equal(normalized.bridge.prewarm, 12);
+  assert.equal(normalized.drift.status, "api_active_bridge_missing");
+  assert.equal(normalized.drift.label, "pending bridge");
+  assert.equal(normalized.flowScanner.effectiveCap, 40);
+});
+
+test("normalizes bridge warm-up coverage from line usage diagnostics", () => {
+  const normalized = normalizeAdmissionDiagnostics(
+    {
+      activeLineCount: 6,
+      budget: { maxLines: 190 },
+      accountMonitorLineCount: 2,
+      poolUsage: {
+        "account-monitor": {
+          id: "account-monitor",
+          activeLineCount: 2,
+          maxLines: 10,
+        },
+      },
+    },
+    {
+      warmup: {
+        state: "pending",
+        targetLineCount: 6,
+        activeBridgeLineCount: 3,
+        pendingLineCount: 3,
+        accountTargetLineCount: 2,
+        accountPendingLineCount: 1,
+        visibleTargetLineCount: 4,
+        visiblePendingLineCount: 2,
+        targetSymbolCount: 6,
+      },
+    },
+  );
+
+  assert.equal(normalized.warmup.available, true);
+  assert.equal(normalized.warmup.state, "pending");
+  assert.equal(normalized.warmup.label, "pending bridge");
+  assert.equal(normalized.warmup.pendingLineCount, 3);
+  assert.equal(normalized.warmup.accountPendingLineCount, 1);
+  assert.equal(normalized.warmup.summary, "3 / 6 covered");
+  assert.equal(normalized.warmup.pendingSummary, "3 pending");
+});
+
 test("recognizes backend flow scanner diagnostics as active", () => {
   assert.equal(
     isOptionsFlowScannerRuntimeActive({

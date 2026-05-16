@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 export const formatLiveBrokerActionError = (error) => {
   const message =
@@ -35,8 +35,8 @@ export const BrokerActionConfirmDialog = ({
         alignItems: "center",
         justifyContent: "center",
         padding: sp(16),
-        background: "rgba(4, 10, 18, 0.72)",
-        backdropFilter: "blur(10px)",
+        background: "rgba(25, 23, 26, 0.55)",
+        backdropFilter: "blur(8px)",
       }}
     >
       <div
@@ -45,42 +45,45 @@ export const BrokerActionConfirmDialog = ({
           width: "min(100%, 520px)",
           background: T.bg1,
           border: `1px solid ${confirmTone}55`,
-          borderRadius: dim(8),
+          borderRadius: dim(RADII.md),
           boxShadow: "0 24px 72px rgba(0,0,0,0.45)",
-          padding: sp("14px 16px"),
+          padding: sp("20px 22px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(10),
+          gap: sp(14),
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(6) }}>
           <span
             style={{
-              fontSize: fs(10),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
               color: confirmTone,
               fontFamily: T.sans,
               letterSpacing: "0.08em",
+              textTransform: "uppercase",
             }}
           >
-            LIVE IBKR CONFIRMATION
+            Live IBKR Confirmation
           </span>
           <span
             style={{
-              fontSize: fs(14),
-              fontWeight: 400,
+              fontSize: fs(20),
+              fontWeight: FONT_WEIGHTS.label,
               color: T.text,
               fontFamily: T.sans,
+              letterSpacing: "-0.015em",
+              lineHeight: 1.2,
             }}
           >
             {title}
           </span>
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: fs(13),
               color: T.textSec,
               fontFamily: T.sans,
-              lineHeight: 1.45,
+              lineHeight: 1.5,
             }}
           >
             {detail}
@@ -91,11 +94,11 @@ export const BrokerActionConfirmDialog = ({
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(0, 1fr) auto",
-              gap: sp(6),
-              padding: sp("8px 10px"),
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
+              gap: sp(8),
+              padding: sp("12px 14px"),
+              background: T.bg0,
+              border: `1px solid ${T.borderLight}`,
+              borderRadius: dim(RADII.sm),
               fontFamily: T.sans,
             }}
           >
@@ -103,18 +106,21 @@ export const BrokerActionConfirmDialog = ({
               <Fragment key={line.label}>
                 <span
                   style={{
-                    fontSize: fs(8),
+                    fontSize: textSize("caption"),
                     color: T.textMuted,
-                    letterSpacing: "0.06em",
+                    letterSpacing: "0.08em",
+                    fontWeight: FONT_WEIGHTS.medium,
+                    textTransform: "uppercase",
                   }}
                 >
                   {line.label}
                 </span>
                 <span
                   style={{
-                    fontSize: fs(8),
+                    fontSize: fs(11),
                     color: line.valueColor || T.text,
-                    fontWeight: 400,
+                    fontVariantNumeric: "tabular-nums",
+                    fontWeight: FONT_WEIGHTS.medium,
                     textAlign: "right",
                   }}
                 >
@@ -126,20 +132,14 @@ export const BrokerActionConfirmDialog = ({
         )}
         <div
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: sp(10),
-            fontSize: fs(8),
-            color: T.textDim,
+            fontSize: fs(12),
+            color: T.textMuted,
             fontFamily: T.sans,
-            lineHeight: 1.4,
+            lineHeight: 1.5,
           }}
         >
-          <span>
-            This sends a live broker instruction. Review the account,
-            instrument, side, size, and price before continuing.
-          </span>
+          This sends a live broker instruction. Review the account,
+          instrument, side, size, and price before continuing.
         </div>
         {error ? (
           <div
@@ -148,53 +148,55 @@ export const BrokerActionConfirmDialog = ({
             style={{
               background: `${T.red}12`,
               border: `1px solid ${T.red}45`,
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               color: T.red,
-              fontSize: fs(9),
+              fontSize: fs(12),
               fontFamily: T.sans,
-              lineHeight: 1.4,
-              padding: sp("8px 10px"),
+              lineHeight: 1.5,
+              padding: sp("10px 14px"),
             }}
           >
             {error}
           </div>
         ) : null}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(10) }}>
           <button
             onClick={onCancel}
             disabled={pending}
             style={{
-              padding: sp("8px 0"),
-              background: T.bg2,
+              padding: sp("12px 0"),
+              background: T.bg1,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               color: T.textSec,
-              fontSize: fs(10),
+              fontSize: fs(13),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "-0.005em",
               cursor: pending ? "not-allowed" : "pointer",
               opacity: pending ? 0.65 : 1,
             }}
           >
-            CANCEL
+            Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={pending}
             style={{
-              padding: sp("8px 0"),
+              padding: sp("12px 0"),
               background: confirmTone,
               border: "none",
-              borderRadius: dim(5),
+              borderRadius: dim(RADII.sm),
               color: T.onAccent,
-              fontSize: fs(10),
+              fontSize: fs(13),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.label,
+              letterSpacing: "-0.005em",
               cursor: pending ? "wait" : "pointer",
               opacity: pending ? 0.75 : 1,
             }}
           >
-            {pending ? "SUBMITTING..." : confirmLabel}
+            {pending ? "Submitting…" : confirmLabel}
           </button>
         </div>
       </div>

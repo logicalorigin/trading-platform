@@ -2,7 +2,7 @@ import { useSearchUniverseTickers } from "@workspace/api-client-react";
 import { ChevronDown, GripVertical, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   fmtCompactNumber,
   formatQuotePrice,
@@ -169,7 +169,7 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
           style={{
             width: dim(7),
             height: dim(7),
-            borderRadius: "50%",
+            borderRadius: dim(RADII.pill),
             border: `1px solid ${hasDirection ? color : T.borderLight}`,
             background: hasDirection ? color : "transparent",
             opacity: hasDirection ? (fresh ? 1 : 0.42) : 0.55,
@@ -282,14 +282,12 @@ const WatchlistRow = memo(
                       : T.red,
             }),
             width: "100%",
-            minHeight: dim(44),
-            display: "grid",
-            gridTemplateColumns: `minmax(${dim(58)}px, 0.9fr) minmax(${dim(64)}px, 1fr) ${dim(54)}px ${dim(38)}px ${dim(48)}px`,
-            alignItems: "center",
-            gap: sp(4),
-            padding: sp("6px 10px"),
+            minHeight: `clamp(${dim(56)}px, 14vw, ${dim(68)}px)`,
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(6),
+            padding: `clamp(${sp(10)}px, 2.5vw, ${sp(14)}px) clamp(${sp(12)}px, 3vw, ${sp(16)}px)`,
             border: "none",
-            borderBottom: `1px solid ${T.borderLight}`,
             background:
               selectedRow || dragOver ? `${T.accent}12` : rowBackground,
             color: T.text,
@@ -299,15 +297,15 @@ const WatchlistRow = memo(
             opacity: dragging ? 0.55 : 1,
           }}
         >
-          <span
+          <div
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              gap: sp(4),
+              gap: sp(10),
               minWidth: 0,
             }}
           >
-            <MarketIdentityMark item={identityItem} size={14} />
+            <MarketIdentityMark item={identityItem} size={22} />
             <span
               className={priceFlashClassName}
               style={{
@@ -317,57 +315,80 @@ const WatchlistRow = memo(
                 whiteSpace: "nowrap",
                 color: T.text,
                 fontFamily: T.sans,
-                fontSize: fs(11),
+                fontSize: textSize("paragraph"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "-0.01em",
               }}
             >
               {item.sym}
             </span>
-          </span>
-          <span
-            className={priceFlashClassName}
+            <WatchlistSignalDots
+              statesByTimeframe={signalStatesByTimeframe}
+              fallbackState={signalState}
+              onSelect={(state) => onSignalAction?.(item.sym, state)}
+            />
+            <span
+              className={priceFlashClassName}
+              style={{
+                marginLeft: "auto",
+                color: T.text,
+                fontFamily: T.sans,
+                fontSize: textSize("paragraph"),
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: FONT_WEIGHTS.medium,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {formatQuotePrice(priceValue)}
+            </span>
+          </div>
+          <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(10),
               minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              color: T.text,
-              fontFamily: T.sans,
-              fontSize: fs(11),
-              textAlign: "right",
             }}
           >
-            {formatQuotePrice(priceValue)}
-          </span>
-          <span
-            style={{
-              color:
-                pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-              fontFamily: T.sans,
-              fontSize: fs(10),
-              textAlign: "right",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {formatSignedPercent(snapshot?.pct)}
-          </span>
-          <WatchlistSignalDots
-            statesByTimeframe={signalStatesByTimeframe}
-            fallbackState={signalState}
-            onSelect={(state) => onSignalAction?.(item.sym, state)}
-          />
-          <span
-            style={{
-              color: T.textMuted,
-              fontFamily: T.sans,
-              fontSize: fs(8),
-              textAlign: "right",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {fmtQuoteVolume(snapshot?.volume)}
-          </span>
+            <span
+              style={{
+                color:
+                  pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
+                fontFamily: T.sans,
+                fontSize: textSize("body"),
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: FONT_WEIGHTS.medium,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {formatSignedPercent(snapshot?.pct)}
+            </span>
+            <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+              <MicroSparkline
+                data={
+                  snapshot?.sparkBars?.length
+                    ? snapshot.sparkBars
+                    : snapshot?.spark || fallback.spark
+                }
+                positive={pctPositive}
+                width={88}
+                height={22}
+              />
+            </span>
+            <span
+              style={{
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {fmtQuoteVolume(snapshot?.volume)}
+            </span>
+          </div>
         </div>
       );
     }
@@ -417,19 +438,18 @@ const WatchlistRow = memo(
                     : T.red,
           }),
           display: "grid",
-          gridTemplateColumns: `minmax(0,1fr) ${dim(54)}px`,
-          gap: sp(6),
-          padding: sp("8px 12px"),
+          gridTemplateColumns: `minmax(0,1fr) ${dim(64)}px`,
+          gap: sp(10),
+          padding: sp("12px 16px"),
           cursor: "pointer",
           alignItems: "center",
           background:
             selectedRow || dragOver ? `${T.accent}12` : rowBackground,
-          borderBottom: `1px solid ${T.borderLight}`,
           opacity: dragging ? 0.55 : 1,
           transition: "background 0.18s ease, opacity 0.12s ease",
         }}
         onMouseEnter={(event) => {
-          if (!selectedRow && !dragOver) event.currentTarget.style.background = T.bg2;
+          if (!selectedRow && !dragOver) event.currentTarget.style.background = T.accentHoverBg;
         }}
         onMouseLeave={(event) => {
           if (!selectedRow && !dragOver) event.currentTarget.style.background = "transparent";
@@ -447,7 +467,7 @@ const WatchlistRow = memo(
             }}
           >
             <GripVertical
-              size={13}
+              size={14}
               strokeWidth={2}
               style={{
                 color: canDrag ? T.textDim : T.textMuted,
@@ -455,21 +475,22 @@ const WatchlistRow = memo(
                 cursor: canDrag ? "grab" : "default",
               }}
             />
-            <MarketIdentityMark item={identityItem} size={16} />
+            <MarketIdentityMark item={identityItem} size={20} />
 	            <span
 	              className={priceFlashClassName}
 	              style={{
 	                display: "inline-flex",
 	                alignItems: "center",
-	                fontSize: fs(12),
-	                fontWeight: 400,
+	                fontSize: textSize("paragraph"),
+	                fontWeight: FONT_WEIGHTS.medium,
 	                fontFamily: T.sans,
 	                color: T.text,
+	                letterSpacing: "-0.005em",
 	                overflow: "hidden",
 	                textOverflow: "ellipsis",
 	                whiteSpace: "nowrap",
 	                padding: sp("1px 3px"),
-	                borderRadius: dim(3),
+	                borderRadius: dim(RADII.xs),
 	              }}
 	            >
 	              {item.sym}
@@ -481,7 +502,7 @@ const WatchlistRow = memo(
                   color: T.textDim,
                   fontFamily: T.sans,
                   fontSize: fs(7),
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   lineHeight: 1,
                   padding: sp("2px 3px"),
                 }}
@@ -514,7 +535,7 @@ const WatchlistRow = memo(
                     cursor: "pointer",
                     fontFamily: T.sans,
                     fontSize: fs(7),
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                     letterSpacing: "0.06em",
                     lineHeight: 1,
                     padding: sp("2px 3px"),
@@ -533,13 +554,14 @@ const WatchlistRow = memo(
 	                justifyContent: "flex-end",
 	                color: T.text,
 	                fontFamily: T.sans,
-	                fontSize: fs(11),
-	                fontWeight: 400,
+	                fontSize: textSize("paragraphMuted"),
+	                fontVariantNumeric: "tabular-nums",
+	                fontWeight: FONT_WEIGHTS.regular,
 	                textAlign: "right",
 	                justifySelf: "end",
-	                minWidth: dim(52),
+	                minWidth: dim(58),
 	                padding: sp("1px 3px"),
-	                borderRadius: dim(3),
+	                borderRadius: dim(RADII.xs),
 	              }}
 	            >
               {formatQuotePrice(priceValue)}
@@ -548,17 +570,17 @@ const WatchlistRow = memo(
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) auto auto auto auto",
+              gridTemplateColumns: "minmax(0,1fr) auto auto auto",
               alignItems: "center",
-              gap: sp(5),
-              marginTop: sp(3),
+              gap: sp(10),
+              marginTop: sp(6),
               minWidth: 0,
             }}
           >
             <AppTooltip content={displayName}><span
               style={{
-                fontSize: fs(9),
-                color: T.textDim,
+                fontSize: textSize("body"),
+                color: T.textSec,
                 fontFamily: T.sans,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -567,68 +589,19 @@ const WatchlistRow = memo(
             >
               {displayName}
             </span></AppTooltip>
-            <MarketIdentityChips
-              item={identityItem}
-              compact
-              maxChips={2}
-              showExchange={false}
-              showMarket
-              showSector={false}
-            />
             <span
               style={{
-                fontSize: fs(9),
+                fontSize: textSize("body"),
                 color:
                   pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
                 fontFamily: T.sans,
-                fontWeight: 400,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {formatSignedPrice(snapshot?.chg, 2)}
-            </span>
-            <span
-              style={{
-                fontSize: fs(9),
-                color:
-                  pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-                fontFamily: T.sans,
-                fontWeight: 400,
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: FONT_WEIGHTS.medium,
                 whiteSpace: "nowrap",
               }}
             >
               {formatSignedPercent(snapshot?.pct)}
             </span>
-            <AppTooltip content="Last quote update"><span
-              style={{
-                fontSize: fs(8),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {quoteAge}
-            </span></AppTooltip>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: sp(8),
-              marginTop: sp(3),
-            }}
-          >
-            <AppTooltip content="Volume"><span
-              style={{
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontSize: fs(8),
-                whiteSpace: "nowrap",
-              }}
-            >
-              Vol {fmtQuoteVolume(snapshot?.volume)}
-            </span></AppTooltip>
             <MicroSparkline
               data={
                 snapshot?.sparkBars?.length
@@ -636,9 +609,22 @@ const WatchlistRow = memo(
                   : snapshot?.spark || fallback.spark
               }
               positive={pctPositive}
-              width={70}
-              height={15}
+              width={92}
+              height={22}
             />
+            <AppTooltip content={`Volume: ${fmtQuoteVolume(snapshot?.volume)} · ${quoteAge}`}><span
+              style={{
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {fmtQuoteVolume(snapshot?.volume)}
+            </span></AppTooltip>
           </div>
         </div>
         <AppTooltip content={
@@ -947,15 +933,15 @@ export const Watchlist = ({
     >
         <div
           style={{
-          padding: sp("6px 7px"),
+          padding: sp("12px 14px"),
           borderBottom: `1px solid ${T.border}`,
           display: "flex",
           flexDirection: "column",
-          gap: sp(4),
+          gap: sp(8),
         }}
       >
         <div
-          style={{ display: "flex", alignItems: "center", gap: sp(6), position: "relative" }}
+          style={{ display: "flex", alignItems: "center", gap: sp(8), position: "relative" }}
         >
           <button
             type="button"
@@ -968,16 +954,24 @@ export const Watchlist = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              gap: sp(6),
-              padding: sp("4px 7px"),
-              borderRadius: RADII.none,
-              background: T.bg2,
-              border: "none",
+              gap: sp(8),
+              padding: sp("8px 12px"),
+              borderRadius: dim(RADII.sm),
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
               color: T.text,
               cursor: "pointer",
               fontFamily: T.sans,
-              fontSize: fs(10),
-              fontWeight: 400,
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "-0.005em",
+              transition: "border-color 0.12s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.borderColor = T.accent;
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.borderColor = T.border;
             }}
           >
             <span
@@ -990,7 +984,7 @@ export const Watchlist = ({
             >
               {activeWatchlist?.name || "Watchlists"}
             </span>
-            <ChevronDown size={13} style={{ color: T.textDim, flexShrink: 0 }} />
+            <ChevronDown size={15} style={{ color: T.textDim, flexShrink: 0 }} />
           </button>
           {watchlistMenuOpen ? (
             <div
@@ -1001,10 +995,10 @@ export const Watchlist = ({
                 left: 0,
                 right: 0,
                 zIndex: 20,
-                background: T.bg2,
-                border: "none",
-                borderRadius: RADII.none,
-                boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
+                background: T.bg1,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
+                boxShadow: ELEVATION.lg,
                 overflow: "hidden",
               }}
             >
@@ -1024,7 +1018,7 @@ export const Watchlist = ({
                     gap: sp(8),
                     padding: sp("8px 10px"),
                     background:
-                      watchlist.id === activeWatchlistId ? T.bg3 : "transparent",
+                      watchlist.id === activeWatchlistId ? `${T.accent}12` : "transparent",
                     border: "none",
                     borderBottom: `1px solid ${T.border}20`,
                     color: T.text,
@@ -1036,10 +1030,11 @@ export const Watchlist = ({
                     <span
                       style={{
                         display: "block",
-                        fontSize: fs(10),
-                        fontWeight: 400,
+                        fontSize: textSize("paragraphMuted"),
+                        fontWeight: FONT_WEIGHTS.medium,
                         fontFamily: T.sans,
                         color: T.text,
+                        letterSpacing: "-0.005em",
                       }}
                     >
                       {watchlist.name}
@@ -1047,10 +1042,10 @@ export const Watchlist = ({
                     <span
                       style={{
                         display: "block",
-                        fontSize: fs(8),
-                        color: T.textDim,
+                        fontSize: textSize("body"),
+                        color: T.textMuted,
                         fontFamily: T.sans,
-                        marginTop: sp(1),
+                        marginTop: sp(2),
                       }}
                     >
                       {countWatchlistSymbols(watchlist)} symbols
@@ -1060,12 +1055,14 @@ export const Watchlist = ({
                     <span
                       style={{
                         color: T.green,
-                        fontSize: fs(8),
+                        fontSize: textSize("caption"),
                         fontFamily: T.sans,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.medium,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
                       }}
                     >
-                      DEFAULT
+                      Default
                     </span>
                   ) : null}
                 </button>
@@ -1077,69 +1074,80 @@ export const Watchlist = ({
             data-testid={mobileDense ? "watchlist-manage-toggle" : undefined}
             onClick={mobileDense ? openManageSheet : handleCreateWatchlist}
             style={{
-              width: dim(26),
-              height: dim(26),
+              width: dim(32),
+              height: dim(32),
               display: "grid",
               placeItems: "center",
-              borderRadius: RADII.none,
-              background: T.bg2,
-              border: "none",
+              borderRadius: dim(RADII.sm),
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
               color: T.accent,
               cursor: "pointer",
+              transition: "border-color 0.12s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.borderColor = T.accent;
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.borderColor = T.border;
             }}
           >
-            {mobileDense ? <SlidersHorizontal size={14} /> : <Plus size={14} />}
+            {mobileDense ? <SlidersHorizontal size={16} /> : <Plus size={16} />}
           </button></AppTooltip>
         </div>
 
         {!mobileDense ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: sp(3) }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: sp(6) }}>
           <button
             type="button"
             onClick={handleRenameWatchlist}
             disabled={!activeWatchlist || busy}
             style={{
-              padding: sp("3px 4px"),
-              borderRadius: RADII.none,
+              padding: sp("6px 8px"),
+              borderRadius: dim(RADII.sm),
               background: "transparent",
               border: "none",
-              color: T.textDim,
+              color: T.textSec,
               cursor: activeWatchlist && !busy ? "pointer" : "default",
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
             }}
           >
-            RENAME
+            Rename
           </button>
           <button
             type="button"
             onClick={() => activeWatchlist && onSetDefaultWatchlist?.(activeWatchlist.id)}
             disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
             style={{
-              padding: sp("3px 4px"),
-              borderRadius: RADII.none,
+              padding: sp("6px 8px"),
+              borderRadius: dim(RADII.sm),
               background: activeWatchlist?.isDefault ? `${T.green}12` : "transparent",
               border: "none",
-              color: activeWatchlist?.isDefault ? T.green : T.textDim,
+              color: activeWatchlist?.isDefault ? T.green : T.textSec,
               cursor:
                 activeWatchlist && !activeWatchlist.isDefault && !busy
                   ? "pointer"
                   : "default",
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
             }}
           >
-            {activeWatchlist?.isDefault ? "DEFAULT" : "DEFAULT"}
+            Default
           </button>
           <button
             type="button"
             onClick={handleDeleteWatchlist}
             disabled={!activeWatchlist || watchlists.length <= 1 || busy}
             style={{
-              padding: sp("3px 4px"),
-              borderRadius: RADII.none,
+              padding: sp("6px 8px"),
+              borderRadius: dim(RADII.sm),
               background: "transparent",
               border: "none",
               color: watchlists.length <= 1 ? T.textMuted : T.red,
@@ -1148,11 +1156,13 @@ export const Watchlist = ({
                   ? "pointer"
                   : "default",
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
             }}
           >
-            DELETE
+            Delete
           </button>
         </div>
         ) : null}
@@ -1161,7 +1171,7 @@ export const Watchlist = ({
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-            gap: sp(2),
+            gap: sp(4),
           }}
         >
           {WATCHLIST_SORT_OPTIONS.map((option) => {
@@ -1173,15 +1183,17 @@ export const Watchlist = ({
                 data-testid={`watchlist-sort-${option.id}`}
                 onClick={() => handleSelectSortMode(option.id)}
                 style={{
-                  padding: sp("3px 2px"),
-                  borderRadius: RADII.none,
-                  background: active ? T.bg3 : "transparent",
-                  border: `1px solid ${active ? T.accent : T.border}`,
-                  color: active ? T.text : T.textMuted,
+                  padding: sp("6px 4px"),
+                  borderRadius: dim(RADII.sm),
+                  background: active ? `${T.accent}14` : "transparent",
+                  border: "none",
+                  color: active ? T.accent : T.textMuted,
                   cursor: "pointer",
                   fontFamily: T.sans,
-                  fontSize: fs(7),
-                  fontWeight: 400,
+                  fontSize: textSize("caption"),
+                  fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
                   whiteSpace: "nowrap",
                 }}
               >
@@ -1191,20 +1203,20 @@ export const Watchlist = ({
           })}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: sp(5) }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: sp(8) }}>
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: sp(6),
-              padding: sp("4px 7px"),
-              borderRadius: RADII.none,
-              background: T.bg2,
-              border: "none",
+              gap: sp(8),
+              padding: sp("8px 12px"),
+              borderRadius: dim(RADII.sm),
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
               minWidth: 0,
             }}
           >
-            <Search size={13} style={{ color: T.textDim, flexShrink: 0 }} />
+            <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1215,7 +1227,7 @@ export const Watchlist = ({
                 background: "transparent",
                 border: "none",
                 outline: "none",
-                fontSize: fs(10),
+                fontSize: textSize("paragraphMuted"),
                 fontFamily: T.sans,
                 color: T.text,
               }}
@@ -1229,18 +1241,20 @@ export const Watchlist = ({
             }
             disabled={!directionEnabled}
             style={{
-              width: dim(44),
-              borderRadius: RADII.none,
-              background: directionEnabled ? T.bg2 : "transparent",
-              border: "none",
-              color: directionEnabled ? T.textDim : T.textMuted,
+              width: dim(48),
+              borderRadius: dim(RADII.sm),
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
+              color: directionEnabled ? T.textSec : T.textMuted,
               cursor: directionEnabled ? "pointer" : "default",
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
             }}
           >
-            {sortDirection === "desc" ? "DESC" : "ASC"}
+            {sortDirection === "desc" ? "Desc" : "Asc"}
           </button></AppTooltip>
         </div>
 
@@ -1248,9 +1262,9 @@ export const Watchlist = ({
           <div
             data-testid="watchlist-add-panel"
             style={{
-              border: "none",
-              borderRadius: RADII.none,
-              background: T.bg2,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.sm),
+              background: T.bg1,
               overflow: "hidden",
             }}
           >
@@ -1258,23 +1272,24 @@ export const Watchlist = ({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: sp(6),
-                padding: sp("6px 8px"),
+                gap: sp(8),
+                padding: sp("10px 12px"),
                 borderBottom: `1px solid ${T.border}`,
               }}
             >
               <input
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
-                placeholder="Add symbol..."
+                placeholder="Add symbol…"
                 style={{
                   flex: 1,
                   background: "transparent",
                   border: "none",
                   outline: "none",
-                  fontSize: fs(10),
+                  fontSize: textSize("paragraphMuted"),
                   fontFamily: T.sans,
                   color: T.text,
+                  letterSpacing: "-0.005em",
                 }}
               />
               <AppTooltip content="Close add symbol"><button
@@ -1283,21 +1298,22 @@ export const Watchlist = ({
                   closeAddMode({ clearQuery: true });
                 }}
                 style={{
-                  width: dim(22),
-                  height: dim(22),
+                  width: dim(28),
+                  height: dim(28),
                   display: "grid",
                   placeItems: "center",
                   border: "none",
                   background: "transparent",
-                  color: T.textDim,
+                  color: T.textSec,
                   cursor: "pointer",
+                  borderRadius: dim(RADII.sm),
                 }}
               >
-                <X size={13} />
+                <X size={15} />
               </button></AppTooltip>
             </div>
 
-            <div style={{ maxHeight: dim(180), overflowY: "auto" }}>
+            <div style={{ maxHeight: dim(220), overflowY: "auto" }}>
               {deferredAddQuery.length > 0
                 ? (addSymbolSearch.data?.results || []).map((result) => (
                     <button
@@ -1310,30 +1326,31 @@ export const Watchlist = ({
                       style={{
                         width: "100%",
                         display: "grid",
-                        gridTemplateColumns: `${dim(56)}px 1fr`,
-                        gap: sp(8),
+                        gridTemplateColumns: `${dim(64)}px 1fr`,
+                        gap: sp(10),
                         alignItems: "center",
-                        padding: sp("7px 8px"),
+                        padding: sp("10px 12px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.border}20`,
+                        borderBottom: `1px solid ${T.borderLight}`,
                         textAlign: "left",
                         cursor: "pointer",
                       }}
                     >
                       <span
                         style={{
-                          fontSize: fs(10),
-                          fontWeight: 400,
+                          fontSize: textSize("paragraphMuted"),
+                          fontWeight: FONT_WEIGHTS.medium,
                           fontFamily: T.sans,
                           color: T.text,
+                          letterSpacing: "-0.005em",
                         }}
                       >
                         {result.ticker}
                       </span>
                       <span
                         style={{
-                          fontSize: fs(9),
+                          fontSize: textSize("body"),
                           color: T.textSec,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
@@ -1354,18 +1371,29 @@ export const Watchlist = ({
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        padding: sp("7px 8px"),
+                        padding: sp("10px 12px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.border}20`,
+                        borderBottom: `1px solid ${T.borderLight}`,
                         cursor: "pointer",
                         fontFamily: T.sans,
-                        fontSize: fs(10),
+                        fontSize: textSize("paragraphMuted"),
+                        fontWeight: FONT_WEIGHTS.medium,
                         color: T.text,
                       }}
                     >
                       <span>{symbol}</span>
-                      <span style={{ color: T.textMuted }}>QUICK ADD</span>
+                      <span
+                        style={{
+                          color: T.textMuted,
+                          fontSize: textSize("caption"),
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                          fontWeight: FONT_WEIGHTS.medium,
+                        }}
+                      >
+                        Quick Add
+                      </span>
                     </button>
                   ))}
               {addMode &&
@@ -1376,7 +1404,7 @@ export const Watchlist = ({
                   style={{
                     padding: sp("10px 8px"),
                     color: T.textDim,
-                    fontSize: fs(9),
+                    fontSize: textSize("caption"),
                     fontFamily: T.sans,
                   }}
                 >
@@ -1426,20 +1454,20 @@ export const Watchlist = ({
 
       <div
         style={{
-          padding: sp("6px 9px"),
+          padding: sp("10px 14px"),
           borderTop: `1px solid ${T.border}`,
-          fontSize: fs(9),
+          fontSize: textSize("body"),
           color: T.textMuted,
           fontFamily: T.sans,
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          gap: sp(8),
+          gap: sp(10),
         }}
       >
-        <span>
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>
           {sorted.length} shown
-          {monitoredOnlyCount ? ` / ${monitoredOnlyCount} monitored` : ""}
+          {monitoredOnlyCount ? ` · ${monitoredOnlyCount} monitored` : ""}
         </span>
         <button
           type="button"
@@ -1448,24 +1476,28 @@ export const Watchlist = ({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: sp(4),
+            gap: sp(6),
+            padding: sp("4px 10px"),
             border: "none",
             background: "transparent",
             color: T.accent,
             cursor: "pointer",
             fontFamily: T.sans,
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            borderRadius: dim(RADII.sm),
           }}
         >
           {mobileDense ? (
-            <SlidersHorizontal size={12} />
+            <SlidersHorizontal size={14} />
           ) : addMode ? (
-            <X size={12} />
+            <X size={14} />
           ) : (
-            <Plus size={12} />
+            <Plus size={14} />
           )}
-          {mobileDense ? "MANAGE" : addMode ? "CLOSE" : "ADD"}
+          {mobileDense ? "Manage" : addMode ? "Close" : "Add"}
         </button>
       </div>
       <BottomSheet
@@ -1487,7 +1519,7 @@ export const Watchlist = ({
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: sp(5),
+              gap: sp(8),
             }}
           >
             <button
@@ -1495,77 +1527,94 @@ export const Watchlist = ({
               onClick={handleCreateWatchlist}
               disabled={busy}
               style={{
-                minHeight: dim(38),
-                border: "none",
+                minHeight: dim(42),
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
                 background: T.bg1,
                 color: T.accent,
                 fontFamily: T.sans,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
                 cursor: busy ? "default" : "pointer",
               }}
             >
-              NEW
+              New
             </button>
             <button
               type="button"
               onClick={handleRenameWatchlist}
               disabled={!activeWatchlist || busy}
               style={{
-                minHeight: dim(38),
-                border: "none",
+                minHeight: dim(42),
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
                 background: T.bg1,
                 color: T.textSec,
                 fontFamily: T.sans,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
                 cursor: activeWatchlist && !busy ? "pointer" : "default",
               }}
             >
-              RENAME
+              Rename
             </button>
             <button
               type="button"
               onClick={() => activeWatchlist && onSetDefaultWatchlist?.(activeWatchlist.id)}
               disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
               style={{
-                minHeight: dim(38),
-                border: "none",
+                minHeight: dim(42),
+                border: `1px solid ${activeWatchlist?.isDefault ? T.green : T.border}`,
+                borderRadius: dim(RADII.sm),
                 background: activeWatchlist?.isDefault ? `${T.green}12` : T.bg1,
                 color: activeWatchlist?.isDefault ? T.green : T.textSec,
                 fontFamily: T.sans,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
                 cursor:
                   activeWatchlist && !activeWatchlist.isDefault && !busy
                     ? "pointer"
                     : "default",
               }}
             >
-              DEFAULT
+              Default
             </button>
             <button
               type="button"
               onClick={handleDeleteWatchlist}
               disabled={!activeWatchlist || watchlists.length <= 1 || busy}
               style={{
-                minHeight: dim(38),
-                border: "none",
+                minHeight: dim(42),
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
                 background: T.bg1,
                 color: watchlists.length <= 1 ? T.textMuted : T.red,
                 fontFamily: T.sans,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
                 cursor:
                   activeWatchlist && watchlists.length > 1 && !busy
                     ? "pointer"
                     : "default",
               }}
             >
-              DELETE
+              Delete
             </button>
           </div>
 
           <div
             data-testid="watchlist-manage-add-panel"
             style={{
-              border: "none",
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.md),
               background: T.bg1,
               overflow: "hidden",
             }}
@@ -1574,16 +1623,16 @@ export const Watchlist = ({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: sp(6),
-                padding: sp("7px 8px"),
-                borderBottom: `1px solid ${T.border}`,
+                gap: sp(8),
+                padding: sp("12px 14px"),
+                borderBottom: `1px solid ${T.borderLight}`,
               }}
             >
-              <Search size={13} style={{ color: T.textDim, flexShrink: 0 }} />
+              <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
               <input
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
-                placeholder="Add symbol..."
+                placeholder="Add symbol…"
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -1592,11 +1641,12 @@ export const Watchlist = ({
                   outline: "none",
                   color: T.text,
                   fontFamily: T.sans,
-                  fontSize: fs(11),
+                  fontSize: textSize("paragraphMuted"),
+                  letterSpacing: "-0.005em",
                 }}
               />
             </div>
-            <div style={{ maxHeight: dim(230), overflowY: "auto" }}>
+            <div style={{ maxHeight: dim(280), overflowY: "auto" }}>
               {deferredAddQuery.length > 0
                 ? (addSymbolSearch.data?.results || []).map((result) => (
                     <button
@@ -1608,21 +1658,28 @@ export const Watchlist = ({
                       }}
                       style={{
                         width: "100%",
-                        minHeight: dim(38),
+                        minHeight: dim(48),
                         display: "grid",
-                        gridTemplateColumns: `${dim(64)}px minmax(0, 1fr)`,
-                        gap: sp(8),
+                        gridTemplateColumns: `${dim(72)}px minmax(0, 1fr)`,
+                        gap: sp(10),
                         alignItems: "center",
-                        padding: sp("0 8px"),
+                        padding: sp("0 14px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.border}20`,
+                        borderBottom: `1px solid ${T.borderLight}`,
                         color: T.text,
                         textAlign: "left",
                         cursor: "pointer",
                       }}
                     >
-                      <span style={{ fontFamily: T.sans, fontSize: fs(11) }}>
+                      <span
+                        style={{
+                          fontFamily: T.sans,
+                          fontSize: textSize("paragraphMuted"),
+                          fontWeight: FONT_WEIGHTS.medium,
+                          letterSpacing: "-0.005em",
+                        }}
+                      >
                         {result.ticker}
                       </span>
                       <span
@@ -1631,8 +1688,8 @@ export const Watchlist = ({
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
-                          color: T.textDim,
-                          fontSize: fs(9),
+                          color: T.textSec,
+                          fontSize: textSize("body"),
                         }}
                       >
                         {result.name || result.primaryExchange || "Equity"}
@@ -1649,22 +1706,33 @@ export const Watchlist = ({
                       }}
                       style={{
                         width: "100%",
-                        minHeight: dim(36),
+                        minHeight: dim(44),
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        padding: sp("0 8px"),
+                        padding: sp("0 14px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.border}20`,
+                        borderBottom: `1px solid ${T.borderLight}`,
                         color: T.text,
                         cursor: "pointer",
                         fontFamily: T.sans,
-                        fontSize: fs(10),
+                        fontSize: textSize("paragraphMuted"),
+                        fontWeight: FONT_WEIGHTS.medium,
                       }}
                     >
                       <span>{symbol}</span>
-                      <span style={{ color: T.textMuted }}>QUICK ADD</span>
+                      <span
+                        style={{
+                          color: T.textMuted,
+                          fontSize: textSize("caption"),
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                          fontWeight: FONT_WEIGHTS.medium,
+                        }}
+                      >
+                        Quick Add
+                      </span>
                     </button>
                   ))}
               {deferredAddQuery.length > 0 &&
@@ -1675,7 +1743,7 @@ export const Watchlist = ({
                     padding: sp("12px 8px"),
                     color: T.textDim,
                     fontFamily: T.sans,
-                    fontSize: fs(9),
+                    fontSize: textSize("caption"),
                   }}
                 >
                   No matching symbols.

@@ -42,6 +42,10 @@ import {
   writeStoredChartViewportSnapshot,
   resolveVisibleRangeSyncAction,
 } from "./ResearchChartSurface";
+import {
+  resolveResearchChartFrameChromeMetrics,
+  resolveResearchChartFrameDensity,
+} from "./ResearchChartFrame";
 
 const readResearchChartSurfaceSource = () =>
   readFileSync(new URL("./ResearchChartSurface.tsx", import.meta.url), "utf8");
@@ -214,22 +218,99 @@ test("ResearchChartSurface wires mobile inspection and touch configuration", () 
   assert.match(source, /mobileTrackingModeRef\.current/);
 });
 
-test("ResearchChartFrame exposes shared placement policies and touch controls", () => {
+test("ResearchChartFrame exposes shared placement policies without visible pan or zoom controls", () => {
   const frameSource = readResearchChartFrameSource();
 
   assert.match(frameSource, /export type ResearchChartFramePlacement/);
+  assert.match(frameSource, /export type ResearchChartFrameDensity/);
   assert.match(frameSource, /resolveResearchChartFramePlacement/);
+  assert.match(frameSource, /resolveResearchChartFrameDensity/);
+  assert.match(frameSource, /data-chart-frame-density=\{frameDensity\}/);
+  assert.match(frameSource, /ChartFrameDensityContext\.Provider/);
   assert.match(frameSource, /"workspace-passive"[\s\S]*mobileInteractionMode: "page-first"/);
   assert.match(frameSource, /"compact-passive"[\s\S]*mobileInteractionMode: "page-first"/);
   assert.match(frameSource, /placementPolicy\.mobileInteractionMode/);
-  assert.match(frameSource, /placementPolicy\.surfaceTopOverlayHeight/);
+  assert.match(frameSource, /resolveResearchChartFrameChromeMetrics/);
   assert.match(frameSource, /mobileInteractionMode\?: MobileChartInteractionMode/);
-  assert.match(frameSource, /data-chart-footer-touch-controls/);
-  assert.match(frameSource, /controls\.zoomIn/);
-  assert.match(frameSource, /controls\.zoomOut/);
-  assert.match(frameSource, /controls\.panLeft/);
-  assert.match(frameSource, /controls\.panRight/);
+  assert.doesNotMatch(frameSource, /data-chart-footer-touch-controls/);
+  assert.doesNotMatch(frameSource, /controls\.zoomIn/);
+  assert.doesNotMatch(frameSource, /controls\.zoomOut/);
+  assert.doesNotMatch(frameSource, /controls\.panLeft/);
+  assert.doesNotMatch(frameSource, /controls\.panRight/);
   assert.match(frameSource, /controls\.realtime/);
+  assert.match(frameSource, /disabled: !controls\.canFollowRealtime/);
+});
+
+test("ResearchChartWidgetHeader exposes a density-gated context slot", () => {
+  const frameSource = readResearchChartFrameSource();
+
+  assert.match(frameSource, /contextSlot\?: ReactNode/);
+  assert.match(frameSource, /const showContextSlot =[\s\S]*!iconOnlyChrome && !minimalChrome/);
+  assert.match(frameSource, /data-testid="chart-header-context-slot"/);
+});
+
+test("ResearchChartFrame resolves chrome density from frame dimensions", () => {
+  assert.equal(resolveResearchChartFrameDensity({ width: 900, height: 300 }), "full");
+  assert.equal(resolveResearchChartFrameDensity({ width: 780, height: 300 }), "compact");
+  assert.equal(resolveResearchChartFrameDensity({ width: 560, height: 300 }), "icon");
+  assert.equal(resolveResearchChartFrameDensity({ width: 420, height: 300 }), "icon");
+  assert.equal(resolveResearchChartFrameDensity({ width: 300, height: 300 }), "icon");
+  assert.equal(resolveResearchChartFrameDensity({ width: 280, height: 300 }), "icon");
+  assert.equal(resolveResearchChartFrameDensity({ width: 240, height: 300 }), "minimal");
+  assert.equal(resolveResearchChartFrameDensity({ width: 900, height: 220 }), "icon");
+  assert.equal(resolveResearchChartFrameDensity({ width: 900, height: 180 }), "minimal");
+  assert.equal(
+    resolveResearchChartFrameDensity({ width: 900, height: 300, compact: true }),
+    "compact",
+  );
+
+  const workspacePolicy = {
+    compact: false,
+    mobileInteractionMode: "hybrid" as const,
+    showSurfaceToolbar: false,
+    surfaceTopOverlayHeight: 40,
+    surfaceLeftOverlayWidth: 40,
+    surfaceBottomOverlayHeight: 22,
+  };
+  assert.deepEqual(
+    resolveResearchChartFrameChromeMetrics(workspacePolicy, "icon"),
+    {
+      compact: true,
+      surfaceTopOverlayHeight: 28,
+      surfaceLeftOverlayWidth: 26,
+      surfaceBottomOverlayHeight: 16,
+    },
+  );
+  assert.deepEqual(
+    resolveResearchChartFrameChromeMetrics(workspacePolicy, "minimal"),
+    {
+      compact: true,
+      surfaceTopOverlayHeight: 28,
+      surfaceLeftOverlayWidth: 0,
+      surfaceBottomOverlayHeight: 0,
+    },
+  );
+});
+
+test("ResearchChartFrame footer renders controls without text clutter", () => {
+  const frameSource = readResearchChartFrameSource();
+
+  assert.doesNotMatch(frameSource, /data-chart-footer-touch-controls/);
+  assert.match(frameSource, /data-chart-footer-scale-controls/);
+  assert.match(frameSource, /frameDensity === "minimal"[\s\S]*return null;/);
+  assert.doesNotMatch(frameSource, /activeLabels/);
+  assert.doesNotMatch(frameSource, /Pan drag/);
+  assert.doesNotMatch(frameSource, /Zoom scroll/);
+});
+
+test("ResearchChartSurface iconizes the responsive overlay toolbar", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const surfaceToolbarDensity =/);
+  assert.match(source, /data-chart-toolbar-density=\{surfaceToolbarDensity\}/);
+  assert.match(source, /surfaceToolbarIconOnly \? null : \(/);
+  assert.match(source, /shortLabel: "C"/);
+  assert.match(source, /control\.shortLabel \|\| control\.label/);
 });
 
 test("Chart wrappers use frame placement instead of chart-specific renderers", () => {
@@ -248,9 +329,29 @@ test("Chart wrappers use frame placement instead of chart-specific renderers", (
   assert.match(tradeSpotSource, /placement=\{resolvedChartFramePlacement\}/);
   assert.match(tradeSpotSource, /dense=\{resolvedChartFrameCompact\}/);
   assert.match(tradeScreenSource, /placement="workspace"/);
-  assert.match(flowInlineSource, /placement="inspection"/);
+  assert.match(flowInlineSource, /placement="workspace"/);
+  assert.doesNotMatch(flowInlineSource, /placement="inspection"/);
   assert.doesNotMatch(miniChartSource, /mobileInteractionMode=/);
   assert.doesNotMatch(tradeSpotSource, /mobileInteractionMode=/);
+});
+
+test("ResearchChartSurface autoscale controls apply to the main price scale immediately", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const applyMainPriceAutoScale = useCallback/);
+  assert.match(
+    source,
+    /chartRef\.current\?\.priceScale\?\.\("right", 0\)\?\.setAutoScale\?\.\(resolved\)/,
+  );
+  assert.match(source, /setAutoScale: applyMainPriceAutoScale/);
+  assert.match(
+    source,
+    /onClick: \(\) => applyMainPriceAutoScale\(\(value\) => !value\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /onClick: \(\) => setAutoScale\(\(value\) => !value\)/,
+  );
 });
 
 test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
@@ -1522,6 +1623,16 @@ test("ResearchChartSurface re-anchors auto hydration ranges to latest bars", () 
 });
 
 test("ResearchChartSurface only follows latest bars while realtime follow is active and near the tail", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /realtimeFollow: realtimeFollowEnabled/);
+  assert.match(source, /canFollowRealtime/);
+  assert.match(source, /data-chart-realtime-follow=\{realtimeFollowEnabled \? "true" : "false"\}/);
+  assert.match(source, /markUserViewportIntent[\s\S]*realtimeFollowRef\.current = false/);
+  assert.match(source, /scrollToRealtime[\s\S]*realtimeFollowRef\.current = true/);
+  assert.doesNotMatch(source, /key: "pan-left"/);
+  assert.doesNotMatch(source, /key: "pan-right"/);
+
   assert.equal(
     shouldAutoFollowLatestBars({
       realtimeFollow: true,

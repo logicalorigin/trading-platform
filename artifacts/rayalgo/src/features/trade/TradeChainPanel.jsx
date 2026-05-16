@@ -33,12 +33,15 @@ import {
 } from "./optionChainVirtualRows";
 import { MarketIdentityInline } from "../platform/marketIdentity";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   joinMotionClasses,
   motionRowStyle,
@@ -186,21 +189,29 @@ const normalizeLogValue = (value, maxValue) => {
 export const buildHeatmapModel = (chain) => {
   const maxima = chain.reduce(
     (next, row) => ({
-      cPrem: Math.max(next.cPrem, row.cPrem || 0),
-      pPrem: Math.max(next.pPrem, row.pPrem || 0),
+      cVol: Math.max(next.cVol, row.cVol || 0),
+      pVol: Math.max(next.pVol, row.pVol || 0),
+      cOi: Math.max(next.cOi, row.cOi || 0),
+      pOi: Math.max(next.pOi, row.pOi || 0),
     }),
     {
-      cPrem: 0,
-      pPrem: 0,
+      cVol: 0,
+      pVol: 0,
+      cOi: 0,
+      pOi: 0,
     },
   );
 
   return {
-    intensity(row, side) {
+    intensity(row, side, key) {
       const prefix = side === "C" ? "c" : "p";
+      const metricKey =
+        key === `${prefix}Oi` || key === `${prefix}Vol`
+          ? key
+          : `${prefix}Vol`;
       return normalizeLogValue(
-        row[`${prefix}Prem`],
-        maxima[`${prefix}Prem`],
+        row[metricKey],
+        maxima[metricKey],
       );
     },
   };
@@ -242,7 +253,7 @@ const ChainStatePanel = ({
         style={{
           width: dim(18),
           height: dim(18),
-          borderRadius: "50%",
+          borderRadius: dim(RADII.pill),
           border: `2px solid ${T.border}`,
           borderTopColor: T.accent,
           animation: "tradeChainSpin 900ms linear infinite",
@@ -254,13 +265,13 @@ const ChainStatePanel = ({
       <span
         style={{
           fontSize: fs(10),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           color: tone,
         }}
       >
         {title}
       </span>
-      <span style={{ fontSize: fs(9), fontFamily: T.sans }}>{detail}</span>
+      <span style={{ fontSize: textSize("caption"), fontFamily: T.sans }}>{detail}</span>
     </span>
     {actionLabel && onAction ? (
       <button
@@ -268,13 +279,13 @@ const ChainStatePanel = ({
         onClick={onAction}
         style={{
           border: `1px solid ${T.border}`,
-          background: T.bg3,
+          background: T.bg1,
           color: T.textSec,
           borderRadius: dim(4),
           padding: sp("4px 8px"),
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           fontFamily: T.sans,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           cursor: "pointer",
         }}
       >
@@ -297,7 +308,7 @@ const ChainRefreshSpinner = () => (
       style={{
         width: dim(12),
         height: dim(12),
-        borderRadius: "50%",
+        borderRadius: dim(RADII.pill),
         border: `2px solid ${T.border}`,
         borderTopColor: T.amber,
         animation: "tradeChainSpin 900ms linear infinite",
@@ -328,7 +339,7 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
           gridTemplateColumns,
           height: dim(HEADER_HEIGHT),
           alignItems: "center",
-          background: T.bg2,
+          background: T.bg1,
           borderBottom: `1px solid ${T.border}`,
           boxShadow: `0 1px 0 ${T.border}`,
         }}
@@ -340,7 +351,7 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
               padding: sp("0 6px"),
               color: T.textMuted,
               fontSize: fs(8),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               textAlign: side === "C" ? "right" : "left",
               whiteSpace: "nowrap",
@@ -393,17 +404,22 @@ const ChainSideRows = forwardRef(function ChainSideRows({
           const isAtmRow = isFiniteNumber(atmStrike)
             ? row.k === atmStrike
             : row.isAtm;
-          const heatIntensity = heatmapEnabled
-            ? heatmapModel.intensity(row, side)
-            : 0;
-          const heatAlpha = heatIntensity > 0 ? 0.04 + heatIntensity * 0.30 : 0;
           const rowBackground = selectedSide
             ? rgba(sideColor, 0.22)
-            : heatmapEnabled && heatAlpha > 0
-              ? rgba(sideColor, heatAlpha)
-              : isAtmRow
+            : isAtmRow
                 ? rgba(T.amber, 0.08)
                 : "transparent";
+          const sideFreshness = getRowSideFreshness(row, side);
+          const staleSide =
+            sideFreshness === "metadata" ||
+            sideFreshness === "unavailable" ||
+            sideFreshness === "stale";
+          const rowShadows = [
+            selectedSide
+              ? `inset ${side === "C" ? -2 : 2}px 0 0 ${sideColor}`
+              : null,
+            held ? `inset 0 0 0 1px ${T.amber}55` : null,
+          ].filter(Boolean);
 
           return (
             <div
@@ -426,24 +442,42 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 cursor: "pointer",
                 background: rowBackground,
                 borderBottom: `1px solid ${T.border}12`,
-                boxShadow: held ? `inset 0 0 0 1px ${T.amber}55` : "none",
+                boxShadow: rowShadows.length ? rowShadows.join(", ") : "none",
               }}
             >
-              {columns.map((column) => (
+              {columns.map((column) => {
+                const cellHeatIntensity =
+                  heatmapEnabled && column.type === "volume"
+                    ? heatmapModel.intensity(row, side, column.key)
+                    : 0;
+                const cellHeatAlpha =
+                  cellHeatIntensity > 0 ? 0.04 + cellHeatIntensity * 0.24 : 0;
+                return (
                 <AppTooltip key={column.key} content={`${column.label} / ${formatFreshnessLabel(
-                    getRowSideFreshness(row, side),
+                    sideFreshness,
                   )}`}><span
                   key={column.key}
                   style={{
                     padding: sp("0 6px"),
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: side === "C" ? "flex-end" : "flex-start",
+                    background:
+                      cellHeatAlpha > 0 ? rgba(sideColor, cellHeatAlpha) : "transparent",
                     color:
-                      column.type === "price"
-                        ? sideColor
-                        : held && column.heldAware
-                          ? T.amber
-                          : T.textSec,
-                    fontSize: fs(9),
-                    fontWeight: 400,
+                      staleSide
+                        ? T.textDim
+                        : column.type === "volume"
+                          ? T.textSec
+                          : column.type === "price"
+                            ? sideColor
+                            : held && column.heldAware
+                              ? T.amber
+                              : T.textSec,
+                    opacity: staleSide ? 0.72 : 1,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.regular,
                     fontFamily: T.sans,
                     textAlign: side === "C" ? "right" : "left",
                     whiteSpace: "nowrap",
@@ -451,7 +485,8 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 >
                   {formatCellValue(row, column, held)}
                 </span></AppTooltip>
-              ))}
+                );
+              })}
             </div>
           );
         })}
@@ -474,11 +509,11 @@ const StrikeHeader = () => (
       borderLeft: `1px solid ${T.border}`,
       borderRight: `1px solid ${T.border}`,
       borderBottom: `1px solid ${T.border}`,
-      background: T.bg2,
+      background: T.bg1,
       color: T.textMuted,
       fontSize: fs(8),
       fontFamily: T.sans,
-      fontWeight: 400,
+      fontWeight: FONT_WEIGHTS.regular,
     }}
   >
     Strike
@@ -520,7 +555,7 @@ const StrikeRows = ({
             color: isAtmRow ? T.amber : T.text,
             fontFamily: T.sans,
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {row.k}
@@ -879,13 +914,14 @@ export const TradeChainPanel = ({
       data-testid="trade-options-chain-panel"
       className="ra-panel-enter"
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.md),
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         height: "100%",
+        fontVariantNumeric: "tabular-nums",
       }}
     >
       <div
@@ -907,7 +943,7 @@ export const TradeChainPanel = ({
         <span
           style={{
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: T.textSec,
           }}
@@ -923,12 +959,12 @@ export const TradeChainPanel = ({
           }}
           disabled={!hasExpirationOptions}
           style={{
-            background: T.bg3,
+            background: T.bg1,
             border: `1px solid ${T.border}`,
             color: hasExpirationOptions ? T.text : T.textDim,
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             cursor: hasExpirationOptions ? "pointer" : "default",
             padding: sp("2px 6px"),
             borderRadius: dim(3),
@@ -946,7 +982,7 @@ export const TradeChainPanel = ({
             display: "inline-flex",
             alignItems: "center",
             gap: sp(4),
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             color: heatmapEnabled ? T.amber : T.textDim,
             fontFamily: T.sans,
             cursor: "pointer",
@@ -965,12 +1001,12 @@ export const TradeChainPanel = ({
           value={String(chainCoverageValue)}
           onChange={(event) => onChangeChainCoverage?.(event.target.value)}
           style={{
-            background: T.bg3,
+            background: T.bg1,
             border: `1px solid ${T.border}`,
             color: T.textSec,
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             cursor: onChangeChainCoverage ? "pointer" : "default",
             padding: sp("2px 6px"),
             borderRadius: dim(3),
@@ -985,16 +1021,16 @@ export const TradeChainPanel = ({
         </select>
         <span style={{ flex: 1 }} />
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
-        <span style={{ fontSize: fs(9), fontFamily: T.sans, color: T.textDim }}>
+        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: T.textDim }}>
           IMP{" "}
-          <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 400 }}>
+          <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>
             {impMove != null ? `+/-$${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
           {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
         </span>
-        <span style={{ fontSize: fs(9), fontFamily: T.sans, color: T.textDim }}>
+        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: T.textDim }}>
           ATM{" "}
-          <span style={{ color: T.accent, fontWeight: 400 }}>
+          <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
             {atmStrike ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </span>
@@ -1004,7 +1040,7 @@ export const TradeChainPanel = ({
             fontSize: fs(8),
             color: statusColor,
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {statusLabel}
@@ -1019,7 +1055,7 @@ export const TradeChainPanel = ({
               display: "flex",
               flexDirection: "column",
               fontFamily: T.sans,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
             }}
           >
             <div

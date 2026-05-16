@@ -37,8 +37,26 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     return `skipped: ${skipReason}`;
   }
   if (Number.isFinite(used) && used === 0) {
+    const blockedReason = scanner.backgroundBlockedReason;
+    if (blockedReason === "live-warmup") {
+      return "paused: warming live watchlist";
+    }
+    if (blockedReason === "options-lane-backoff") {
+      return "paused: options lane backoff";
+    }
+    if (blockedReason === "options-lane-queued") {
+      return "paused: options lane queued";
+    }
+    const activeCount = Number(scanner.deepScanner?.activeCount);
+    if (Number.isFinite(activeCount) && activeCount > 0) {
+      return `${Math.round(activeCount)} metadata scan${Math.round(activeCount) === 1 ? "" : "s"} active; quote leases pending`;
+    }
+    const queuedCount = Number(scanner.deepScanner?.queuedCount);
+    if (Number.isFinite(queuedCount) && queuedCount > 0) {
+      return `${Math.round(queuedCount)} scan${Math.round(queuedCount) === 1 ? "" : "s"} queued`;
+    }
     if (scanner.deepScanner?.draining) {
-      return "deep scan queued";
+      return "deep scan starting";
     }
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
       return "last scan complete; no active quote leases";
@@ -46,6 +64,174 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     return "no active quote leases";
   }
   return null;
+};
+
+const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
+  const bridge =
+    lineUsageSnapshot?.bridge && typeof lineUsageSnapshot.bridge === "object"
+      ? lineUsageSnapshot.bridge
+      : {};
+  const subscriptions =
+    bridge.diagnostics?.subscriptions &&
+    typeof bridge.diagnostics.subscriptions === "object"
+      ? bridge.diagnostics.subscriptions
+      : {};
+  const used = firstFiniteNumber(
+    bridge.activeLineCount,
+    subscriptions.activeQuoteSubscriptions,
+  );
+  const cap = firstFiniteNumber(
+    bridge.lineBudget,
+    subscriptions.marketDataLineBudget,
+    admission?.budget?.bridgeLineBudget,
+  );
+  const free = firstFiniteNumber(
+    bridge.remainingLineCount,
+    subscriptions.marketDataLineBudgetRemaining,
+    Number.isFinite(used) && Number.isFinite(cap) ? cap - used : null,
+  );
+  const pressure =
+    typeof bridge.diagnostics?.pressure === "string"
+      ? bridge.diagnostics.pressure
+      : "unknown";
+  const degraded = pressure === "degraded" || pressure === "backoff" || pressure === "stalled";
+  const available = Number.isFinite(used) || Number.isFinite(cap);
+  const streamState = lineUsageState(used, cap, degraded);
+  return {
+    available,
+    used,
+    cap,
+    free: Number.isFinite(free) ? Math.max(0, free) : null,
+    pressure,
+    summary: available ? `${formatRuntimeCount(used)} / ${formatRuntimeCount(cap)}` : MISSING_VALUE,
+    activeEquity: firstFiniteNumber(subscriptions.activeEquitySubscriptions),
+    activeOptions: firstFiniteNumber(subscriptions.activeOptionSubscriptions),
+    prewarm: firstFiniteNumber(subscriptions.prewarmSymbolCount),
+    streamState,
+    tone: streamStateTokenVar(streamState),
+  };
+};
+
+const normalizeLineDrift = (lineUsageSnapshot) => {
+  const reconciliation =
+    lineUsageSnapshot?.drift?.reconciliation &&
+    typeof lineUsageSnapshot.drift.reconciliation === "object"
+      ? lineUsageSnapshot.drift.reconciliation
+      : {};
+  const status = typeof reconciliation.status === "string"
+    ? reconciliation.status
+    : "unknown";
+  const labels = {
+    matched: "matched",
+    api_active_bridge_missing: "pending bridge",
+    api_released_bridge_active: "bridge stale",
+    mixed: "mixed drift",
+    unknown: "unknown",
+  };
+  const state =
+    status === "matched"
+      ? "healthy"
+      : status === "unknown"
+        ? "no-subscribers"
+        : "capacity-limited";
+  return {
+    ...reconciliation,
+    status,
+    label: labels[status] || status.replace(/_/g, " "),
+    admissionVsBridgeLineDelta: firstFiniteNumber(
+      lineUsageSnapshot?.drift?.admissionVsBridgeLineDelta,
+    ),
+    state,
+    tone: streamStateTokenVar(state),
+  };
+};
+
+const normalizeWarmupCoverage = (lineUsageSnapshot) => {
+  const hasWarmup = Boolean(
+    lineUsageSnapshot?.warmup && typeof lineUsageSnapshot.warmup === "object",
+  );
+  const warmup =
+    hasWarmup
+      ? lineUsageSnapshot.warmup
+      : {};
+  const state = typeof warmup.state === "string" ? warmup.state : "unknown";
+  const targetLineCount = firstFiniteNumber(warmup.targetLineCount, 0);
+  const activeBridgeLineCount = firstFiniteNumber(warmup.activeBridgeLineCount, 0);
+  const pendingLineCount = firstFiniteNumber(warmup.pendingLineCount, 0);
+  const accountTargetLineCount = firstFiniteNumber(warmup.accountTargetLineCount, 0);
+  const accountPendingLineCount = firstFiniteNumber(warmup.accountPendingLineCount, 0);
+  const visibleTargetLineCount = firstFiniteNumber(warmup.visibleTargetLineCount, 0);
+  const visiblePendingLineCount = firstFiniteNumber(warmup.visiblePendingLineCount, 0);
+  const available =
+    hasWarmup &&
+    (state !== "unknown" ||
+      Number.isFinite(targetLineCount) ||
+      Number.isFinite(pendingLineCount));
+  const streamState =
+    state === "covered"
+      ? "healthy"
+      : state === "pending"
+        ? "capacity-limited"
+        : "no-subscribers";
+  const label =
+    state === "covered"
+      ? "covered"
+      : state === "pending"
+        ? "pending bridge"
+        : state === "idle"
+          ? "idle"
+          : "unknown";
+
+  return {
+    ...warmup,
+    available,
+    state,
+    label,
+    targetLineCount,
+    activeBridgeLineCount,
+    pendingLineCount,
+    accountTargetLineCount,
+    accountPendingLineCount,
+    visibleTargetLineCount,
+    visiblePendingLineCount,
+    coverageRatio: firstFiniteNumber(warmup.coverageRatio),
+    targetSymbolCount: firstFiniteNumber(warmup.targetSymbolCount, 0),
+    summary: available
+      ? `${formatRuntimeCount(activeBridgeLineCount)} / ${formatRuntimeCount(targetLineCount)} covered`
+      : MISSING_VALUE,
+    pendingSummary: available
+      ? `${formatRuntimeCount(pendingLineCount)} pending`
+      : MISSING_VALUE,
+    streamState,
+    tone: streamStateTokenVar(streamState),
+  };
+};
+
+const normalizeLinePressure = (admission) => {
+  const pressure =
+    admission?.pressure && typeof admission.pressure === "object"
+      ? admission.pressure
+      : {};
+  return {
+    state: typeof pressure.state === "string" ? pressure.state : "unknown",
+    policy: typeof pressure.policy === "string" ? pressure.policy : "unknown",
+    budgetSource:
+      typeof pressure.budgetSource === "string"
+        ? pressure.budgetSource
+        : admission?.budget?.budgetSource || "unknown",
+    scannerStaticLineCap: firstFiniteNumber(
+      pressure.scannerStaticLineCap,
+      admission?.budget?.flowScannerLineCap,
+    ),
+    scannerEffectiveLineCap: firstFiniteNumber(
+      pressure.scannerEffectiveLineCap,
+      admission?.poolUsage?.["flow-scanner"]?.effectiveMaxLines,
+    ),
+    usableRemainingLineCount: firstFiniteNumber(
+      pressure.usableRemainingLineCount,
+      admission?.usableRemainingLineCount,
+    ),
+  };
 };
 
 export const isOptionsFlowScannerRuntimeActive = (admission) => {
@@ -108,18 +294,27 @@ export const sumAdmissionActions = (admission, actions) => {
   }, 0);
 };
 
-export const normalizeAdmissionDiagnostics = (admission) => {
+export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = null) => {
   if (!admission || typeof admission !== "object") {
+    const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, null);
+    const drift = normalizeLineDrift(lineUsageSnapshot);
+    const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
     return {
       schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
       available: false,
-      summary: MISSING_VALUE,
+      summary: bridge.available ? bridge.summary : MISSING_VALUE,
+      demandSummary: MISSING_VALUE,
+      bridgeSummary: bridge.summary,
       warnings: 0,
       rows: [],
       pools: {},
       accountMonitor: { used: 0, cap: DEFAULT_ACCOUNT_MONITOR_LINE_CAP, free: DEFAULT_ACCOUNT_MONITOR_LINE_CAP },
       flowScanner: { used: null, cap: null, free: null },
       total: { used: null, cap: null, free: null },
+      bridge,
+      drift,
+      warmup,
+      pressure: { state: "unknown", policy: "unknown", budgetSource: "unknown" },
       legacyNormalized: false,
     };
   }
@@ -128,6 +323,10 @@ export const normalizeAdmissionDiagnostics = (admission) => {
   const poolUsage = admission.poolUsage || {};
   const legacyAdmission = !hasAccountMonitorAdmission(admission);
   const warnings = sumAdmissionActions(admission, ["rejected", "demoted"]);
+  const pressure = normalizeLinePressure(admission);
+  const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, admission);
+  const drift = normalizeLineDrift(lineUsageSnapshot);
+  const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -150,7 +349,7 @@ export const normalizeAdmissionDiagnostics = (admission) => {
           ? firstFiniteNumber(pool.maxLines, budget.flowScannerLineCap)
           : id === "automation"
             ? firstFiniteNumber(pool.maxLines, budget.automationLineCap)
-          : firstFiniteNumber(pool.maxLines);
+            : firstFiniteNumber(pool.maxLines);
     const legacyVisibleAdjusted =
       id === "visible" &&
       legacyAdmission &&
@@ -159,18 +358,27 @@ export const normalizeAdmissionDiagnostics = (admission) => {
     const cap = legacyVisibleAdjusted
       ? Math.max(0, rawCap - DEFAULT_ACCOUNT_MONITOR_LINE_CAP)
       : rawCap;
+    const effectiveCap =
+      id === "flow-scanner"
+        ? firstFiniteNumber(pool.effectiveMaxLines, pressure.scannerEffectiveLineCap)
+        : firstFiniteNumber(pool.effectiveMaxLines, cap);
     const free =
       legacyVisibleAdjusted || !Number.isFinite(Number(pool.remainingLineCount))
-        ? Number.isFinite(cap) && Number.isFinite(rawUsed)
-          ? Math.max(0, cap - rawUsed)
+        ? Number.isFinite(effectiveCap ?? cap) && Number.isFinite(rawUsed)
+          ? Math.max(0, (effectiveCap ?? cap) - rawUsed)
           : null
         : Number(pool.remainingLineCount);
-    const streamState = lineUsageState(rawUsed, cap, warnings > 0 && id === "flow-scanner");
+    const streamState = lineUsageState(
+      rawUsed,
+      effectiveCap ?? cap,
+      warnings > 0 && id === "flow-scanner",
+    );
     const row = {
       id,
       label: pool.label || fallbackLabel,
       used: rawUsed,
       cap,
+      effectiveCap,
       free,
       detail:
         id === "flow-scanner"
@@ -203,17 +411,24 @@ export const normalizeAdmissionDiagnostics = (admission) => {
     tone: lineUsageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
   };
   rows.push(total);
+  const demandSummary = `${formatRuntimeCount(total.used)} / ${formatRuntimeCount(total.cap)}`;
 
   return {
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
     available: true,
-    summary: `${formatRuntimeCount(total.used)} / ${formatRuntimeCount(total.cap)}`,
+    summary: bridge.available ? bridge.summary : demandSummary,
+    demandSummary,
+    bridgeSummary: bridge.summary,
     warnings,
     rows,
     pools,
     accountMonitor: pools["account-monitor"],
     flowScanner: pools["flow-scanner"],
     total,
+    bridge,
+    drift,
+    warmup,
+    pressure,
     legacyNormalized: legacyAdmission,
   };
 };
@@ -259,7 +474,7 @@ export const buildRuntimeControlSnapshot = ({
   const freshness = brokerStreamFreshness || {};
   const accountFresh = Boolean(freshness.accountFresh);
   const orderFresh = Boolean(freshness.orderFresh);
-  const lineUsage = normalizeAdmissionDiagnostics(admission);
+  const lineUsage = normalizeAdmissionDiagnostics(admission, lineUsageSnapshot);
   const backendFlowScannerActive = isOptionsFlowScannerRuntimeActive(admission);
   const clientFlowScannerActive = Boolean(flowScannerControl?.ownerActive);
   return {

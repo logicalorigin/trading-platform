@@ -1,6 +1,6 @@
 import { useChartHydrationStats } from "../charting/chartHydrationStats";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
-import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens";
+import { ELEVATION, FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 import { useRuntimeWorkloadStats } from "./workloadStats";
 const formatLatencyMetric = (value) => (
@@ -51,7 +51,7 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         color: T.text,
         fontFamily: T.data,
         fontSize: textSize("bodyStrong"),
-        boxShadow: "0 18px 45px rgba(0,0,0,0.35)",
+        boxShadow: ELEVATION.lg,
         pointerEvents: "none",
       }}
     >

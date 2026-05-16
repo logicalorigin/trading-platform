@@ -1,22 +1,26 @@
+// @ts-expect-error JSX module imported into TypeScript context
+import { RADII, T, dim } from "./uiTokens.jsx";
+
 export const chartTooltipContentStyle = {
   background: "var(--ra-tooltip-bg)",
-  border: "none",
-  borderRadius: "8px",
+  border: "1px solid var(--ra-tooltip-border)",
+  borderRadius: `${dim(RADII.sm)}px`,
+  padding: "8px 12px",
   color: "var(--ra-tooltip-text)",
-  fontFamily: "var(--ra-font-sans)",
+  fontFamily: T.display,
   fontSize: "var(--ra-type-body)",
-  lineHeight: 1.35,
+  lineHeight: 1.4,
   boxShadow: "var(--ra-tooltip-shadow)",
 } as const;
 
 export const chartTooltipLabelStyle = {
   color: "var(--ra-tooltip-muted)",
-  fontFamily: "var(--ra-font-sans)",
+  fontFamily: T.display,
   fontSize: "var(--ra-type-label)",
 } as const;
 
 export const chartTooltipItemStyle = {
   color: "var(--ra-tooltip-text)",
-  fontFamily: "var(--ra-font-sans)",
+  fontFamily: T.display,
   fontSize: "var(--ra-type-body)",
 } as const;

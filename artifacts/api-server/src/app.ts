@@ -1,6 +1,8 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
@@ -121,6 +123,24 @@ app.use(express.json({ type: ["application/json", "application/reports+json"] })
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+if (process.env["RAYALGO_SERVE_WEB"] === "1") {
+  const webPublicDir = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../rayalgo/dist/public",
+  );
+  const indexHtml = path.join(webPublicDir, "index.html");
+
+  app.use(express.static(webPublicDir, { index: false }));
+  app.get(/^(?!\/api(?:\/|$)).*/, (req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+    res.sendFile(indexHtml);
+  });
+}
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (res.headersSent) {
     return;

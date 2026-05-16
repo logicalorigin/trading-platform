@@ -22,6 +22,20 @@ test("historical flow service stays isolated from live IBKR streaming modules", 
   assert.doesNotMatch(source, /fetchBridgeOptionQuoteSnapshots/);
 });
 
+test("historical flow listing bypasses durable flow event storage", () => {
+  const listFunction = source.match(
+    /export async function listHistoricalFlowEvents[\s\S]*?\n}\n\nexport function __resetHistoricalFlowEventsForTests/,
+  )?.[0];
+
+  assert.ok(listFunction);
+  assert.match(listFunction, /loadDirectHistoricalFlowWithin/);
+  assert.doesNotMatch(listFunction, /loadStoredHistoricalFlowEvents/);
+  assert.doesNotMatch(listFunction, /loadIncompleteSessions/);
+  assert.doesNotMatch(listFunction, /hydrateHistoricalFlowSessions/);
+  assert.doesNotMatch(listFunction, /persistHistoricalFlowEvents/);
+  assert.doesNotMatch(listFunction, /markHydrationSession/);
+});
+
 test("historical flow nonblocking store reads have a bounded response budget", () => {
   assert.match(
     source,

@@ -1,4 +1,7 @@
-import { MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens";
+import { useState } from "react";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, getCurrentTheme, sp, textSize } from "../../lib/uiTokens.jsx";
+
+const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -77,10 +80,11 @@ export const toneForValue = (value) => {
   return Number(value) >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
 };
 
-export const cellSubTextStyle = (tone = T.textDim) => ({
+export const cellSubTextStyle = (tone = T.textMuted) => ({
   color: tone,
   fontFamily: T.data,
-  fontSize: textSize("tableHeader"),
+  fontSize: textSize("caption"),
+  fontVariantNumeric: "tabular-nums",
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -102,18 +106,16 @@ export const panelStyle = {
   },
   border: "none",
   get borderRadius() {
-    return dim(12);
+    return dim(RADII.md);
   },
   get boxShadow() {
-    return T.bg0 === "#FAFAF7"
-      ? "0 1px 2px rgba(15,23,42,0.05)"
-      : "0 1px 2px rgba(0,0,0,0.12)";
+    return ELEVATION.sm;
   },
 };
 
 export const sectionTitleStyle = {
   get fontSize() {
-    return textSize("panelTitle");
+    return textSize("displaySmall");
   },
   get color() {
     return T.text;
@@ -121,14 +123,14 @@ export const sectionTitleStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 400,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
+  fontWeight: FONT_WEIGHTS.label,
+  letterSpacing: "-0.015em",
+  lineHeight: 1.2,
 };
 
-export const mutedLabelStyle = {
+export const sectionEyebrowStyle = {
   get fontSize() {
-    return textSize("label");
+    return textSize("caption");
   },
   get color() {
     return T.textMuted;
@@ -136,8 +138,23 @@ export const mutedLabelStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 400,
-  letterSpacing: "0.12em",
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+};
+
+export const mutedLabelStyle = {
+  get fontSize() {
+    return textSize("caption");
+  },
+  get color() {
+    return T.textMuted;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: "0.08em",
   textTransform: "uppercase",
 };
 
@@ -146,7 +163,7 @@ const tokenTone = (tokenName) => {
   return {
     color,
     border: `color-mix(in srgb, ${color} 28%, transparent)`,
-    bg: T.bg1 === "#ffffff"
+    bg: isLightTheme()
       ? T.bg1
       : `color-mix(in srgb, ${color} 13%, transparent)`,
   };
@@ -157,7 +174,7 @@ const colorTone = (color) => ({
   border: color.startsWith("var(")
     ? `color-mix(in srgb, ${color} 28%, transparent)`
     : `${color}44`,
-  bg: T.bg1 === "#ffffff"
+  bg: isLightTheme()
     ? T.bg1
     : color.startsWith("var(")
       ? `color-mix(in srgb, ${color} 13%, transparent)`
@@ -169,37 +186,37 @@ const toneValueMap = () => ({
   accent: {
     color: T.accent,
     border: `${T.accent}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : T.accentDim,
+    bg: isLightTheme() ? T.bg1 : T.accentDim,
   },
   green: {
     color: T.green,
     border: `${T.green}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : T.greenBg,
+    bg: isLightTheme() ? T.bg1 : T.greenBg,
   },
   red: {
     color: T.red,
     border: `${T.red}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : T.redBg,
+    bg: isLightTheme() ? T.bg1 : T.redBg,
   },
   amber: {
     color: T.amber,
     border: `${T.amber}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : T.amberBg,
+    bg: isLightTheme() ? T.bg1 : T.amberBg,
   },
   cyan: {
     color: T.cyan,
     border: `${T.cyan}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.cyan}18`,
+    bg: isLightTheme() ? T.bg1 : `${T.cyan}18`,
   },
   purple: {
     color: T.purple,
     border: `${T.purple}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.purple}18`,
+    bg: isLightTheme() ? T.bg1 : `${T.purple}18`,
   },
   pink: {
     color: T.pink,
     border: `${T.pink}44`,
-    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.pink}18`,
+    bg: isLightTheme() ? T.bg1 : `${T.pink}18`,
   },
   "pnl-positive": tokenTone("--ra-pnl-positive"),
   "pnl-negative": tokenTone("--ra-pnl-negative"),
@@ -225,10 +242,10 @@ export const denseButtonStyle = (active = false) => ({
   border: "none",
   background: active ? T.bg1 : "transparent",
   color: active ? T.text : T.textDim,
-  boxShadow: active ? "0 1px 2px rgba(17, 17, 17, 0.06)" : "none",
+  boxShadow: active ? ELEVATION.sm : "none",
   fontSize: textSize("control"),
   fontFamily: T.sans,
-  fontWeight: active ? 600 : 500,
+  fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
   cursor: "pointer",
   letterSpacing: "0.04em",
   textTransform: "uppercase",
@@ -247,14 +264,16 @@ export const primaryButtonStyle = {
   get background() {
     return T.accent;
   },
-  color: "#ffffff",
+  get color() {
+    return T.onAccent;
+  },
   get fontSize() {
     return textSize("control");
   },
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 600,
+  fontWeight: FONT_WEIGHTS.label,
   cursor: "pointer",
   letterSpacing: "0.04em",
   textTransform: "uppercase",
@@ -281,7 +300,7 @@ export const secondaryButtonStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 500,
+  fontWeight: FONT_WEIGHTS.medium,
   cursor: "pointer",
   letterSpacing: "0.04em",
   textTransform: "uppercase",
@@ -306,7 +325,7 @@ export const ghostButtonStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 500,
+  fontWeight: FONT_WEIGHTS.medium,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -372,18 +391,18 @@ export const tableHeaderStyle = {
   top: 0,
   zIndex: 1,
   get background() {
-    return T.bg2;
+    return T.bg1;
   },
   get color() {
     return T.textMuted;
   },
   get fontSize() {
-    return textSize("tableHeader");
+    return textSize("caption");
   },
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.medium,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   get borderBottom() {
@@ -393,13 +412,13 @@ export const tableHeaderStyle = {
 
 export const tableCellStyle = {
   get padding() {
-    return sp("3px 5px");
+    return sp("6px 8px");
   },
   get borderBottom() {
-    return `1px solid ${T.border}`;
+    return `1px solid ${T.borderLight}`;
   },
   get fontSize() {
-    return textSize("tableCell");
+    return textSize("body");
   },
   get fontFamily() {
     return T.sans;
@@ -407,6 +426,7 @@ export const tableCellStyle = {
   get color() {
     return T.textSec;
   },
+  fontVariantNumeric: "tabular-nums",
   whiteSpace: "nowrap",
   verticalAlign: "top",
 };
@@ -448,7 +468,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         color: palette.color,
         fontSize: textSize("label"),
         fontFamily: T.sans,
-        fontWeight: 500,
+        fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.06em",
         textTransform: "uppercase",
         ...style,
@@ -467,7 +487,7 @@ export const ToggleGroup = ({ options, value, onChange }) => (
       padding: sp(2),
       border: "none",
       borderRadius: dim(RADII.pill),
-      background: T.bg2,
+      background: T.bg1,
       flexWrap: "wrap",
     }}
   >
@@ -523,7 +543,7 @@ export const StatTile = ({
           color: palette.color === T.textDim ? T.text : palette.color,
           fontSize: textSize(compact ? "metric" : "bodyStrong"),
           fontFamily: T.data,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           lineHeight: 1.1,
         }}
       >
@@ -550,22 +570,32 @@ export const EmptyState = ({ title, body, action }) => (
   <div
     className="ra-panel-enter"
     style={{
-      minHeight: dim(72),
+      minHeight: dim(96),
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
-      gap: sp(5),
-      padding: sp(8),
-      color: T.textDim,
+      gap: sp(8),
+      padding: sp("16px 18px"),
+      color: T.textMuted,
       fontSize: textSize("body"),
       fontFamily: T.sans,
       border: `1px dashed ${T.border}`,
-      borderRadius: dim(RADII.sm),
-      background: `${T.bg0}aa`,
+      borderRadius: dim(RADII.md),
+      background: T.bg1,
+      textAlign: "center",
     }}
   >
-    <div style={{ color: T.text, fontWeight: 400 }}>{title}</div>
-    <div style={{ lineHeight: 1.5 }}>{body}</div>
+    <div
+      style={{
+        color: T.text,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {title}
+    </div>
+    <div style={{ lineHeight: 1.5, color: T.textMuted }}>{body}</div>
     {action}
   </div>
 );
@@ -601,8 +631,8 @@ export const Panel = ({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: sp(5),
-        padding: sp("4px 6px 3px"),
+        gap: sp(8),
+        padding: sp("14px 16px 12px"),
         borderBottom: `1px solid ${T.border}`,
         background: T.bg1,
       }}
@@ -627,7 +657,7 @@ export const Panel = ({
                   color: T.textDim,
                   fontSize: textSize("label"),
                   fontFamily: T.data,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {rightRail}
@@ -638,11 +668,126 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(6) }}>
+    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(14) }}>
       {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
 );
+
+export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
+  const interactive = typeof onToggle === "function";
+  const inner = (
+    <>
+      <div style={{ display: "flex", gap: sp(3), alignItems: "center", minWidth: 0 }}>
+        {interactive ? (
+          <span
+            aria-hidden
+            style={{
+              color: T.textDim,
+              fontFamily: T.data,
+              fontSize: textSize("label"),
+              width: 10,
+              display: "inline-block",
+              transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+              transition: "transform 120ms ease",
+            }}
+          >
+            ▾
+          </span>
+        ) : null}
+        <div style={{ ...mutedLabelStyle, fontSize: textSize("caption") }}>{title}</div>
+      </div>
+      {rightSlot ? (
+        <div
+          style={{
+            color: T.textDim,
+            fontFamily: T.data,
+            fontSize: textSize("label"),
+            fontWeight: FONT_WEIGHTS.regular,
+          }}
+        >
+          {rightSlot}
+        </div>
+      ) : null}
+    </>
+  );
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="ra-interactive"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(5),
+          border: "none",
+          borderBottom: `1px solid ${T.border}`,
+          background: "transparent",
+          color: "inherit",
+          textAlign: "left",
+          width: "100%",
+          padding: sp("0 0 4px 0"),
+          cursor: "pointer",
+        }}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: sp(5),
+        paddingBottom: sp(4),
+        borderBottom: `1px solid ${T.border}`,
+      }}
+    >
+      {inner}
+    </div>
+  );
+};
+
+const COLLAPSIBLE_STORAGE_PREFIX = "rayalgo:account:";
+
+const readStoredOpen = (storageKey) => {
+  if (typeof window === "undefined" || !storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredOpen = (storageKey, map) => {
+  if (typeof window === "undefined" || !storageKey) return;
+  try {
+    window.localStorage.setItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+};
+
+export const useCollapsibleSections = (storageKey, defaults = {}) => {
+  const [overrides, setOverrides] = useState(() => readStoredOpen(storageKey) || {});
+  const isOpen = (key) => (key in overrides ? overrides[key] : defaults[key] ?? true);
+  const toggle = (key) => {
+    setOverrides((prev) => {
+      const next = { ...prev, [key]: !isOpen(key) };
+      writeStoredOpen(storageKey, next);
+      return next;
+    });
+  };
+  return { isOpen, toggle };
+};
 
 export const SkeletonRows = ({ rows = 4 }) => (
   <div style={{ display: "grid", gap: sp(6) }}>
@@ -652,8 +797,8 @@ export const SkeletonRows = ({ rows = 4 }) => (
         className="ra-skeleton"
         style={{
           height: dim(index === 0 ? 34 : 24),
-          borderRadius: dim(RADII.xs),
-          background: `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
+          borderRadius: dim(RADII.sm),
+          background: `linear-gradient(90deg, ${T.border}33, ${T.border}66, ${T.border}33)`,
           border: "none",
         }}
       />

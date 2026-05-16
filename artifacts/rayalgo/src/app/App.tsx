@@ -4,6 +4,12 @@ import { AppProviders } from "./AppProviders";
 import { lazyWithRetry } from "../lib/dynamicImport";
 import { FONT_CSS_VAR } from "../lib/typography";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import {
+  RootCrashDiagnosticsFallback,
+  buildRootCrashReportRaw,
+  rememberBrowserDiagnosticEvent,
+  rememberRootCrashDiagnostic,
+} from "./crashDiagnostics";
 
 const PlatformApp = lazyWithRetry(async () => {
   // @ts-expect-error JSX module has no declaration file in this TS config
@@ -41,6 +47,21 @@ const resolveLabMode = (): string | null => {
   return new URLSearchParams(window.location.search).get("lab");
 };
 
+const resolveDevCrashMode = (): string | null => {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return null;
+  }
+
+  return new URLSearchParams(window.location.search).get("crash");
+};
+
+function DevCrashTrigger({ mode }: { mode: string | null }) {
+  if (mode === "render") {
+    throw new Error("RayAlgo dev crash diagnostics trigger");
+  }
+  return null;
+}
+
 function postClientDiagnosticEvent(input: {
   category: string;
   severity: "info" | "warning" | "critical";
@@ -72,9 +93,9 @@ const APP_LOADING_FALLBACK_PALETTES = {
     accent: "#E08F76",
   },
   light: {
-    shellBg: "#FAFAF7",
-    text: "#4E4B4F",
-    border: "#E8E5DE",
+    shellBg: "#FFFFFF",
+    text: "#3F3F46",
+    border: "#E5E5EA",
     accent: "#D97757",
   },
 } as const;
@@ -129,6 +150,7 @@ function AppLoadingFallback() {
 
 function App() {
   const labMode = resolveLabMode();
+  const crashMode = resolveDevCrashMode();
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -136,9 +158,9 @@ function App() {
     }
 
     const onError = (event: ErrorEvent) => {
-      postClientDiagnosticEvent({
+      const diagnosticEvent = {
         category: "window-error",
-        severity: "warning",
+        severity: "warning" as const,
         code: diagnosticErrorCode(event.filename, event.lineno, event.colno),
         message: event.message || "Window error",
         raw: {
@@ -146,6 +168,10 @@ function App() {
           lineno: event.lineno,
           colno: event.colno,
         },
+      };
+      rememberBrowserDiagnosticEvent(diagnosticEvent);
+      postClientDiagnosticEvent({
+        ...diagnosticEvent,
       });
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
@@ -153,16 +179,18 @@ function App() {
         event.reason instanceof Error
           ? event.reason.message
           : String(event.reason);
-      postClientDiagnosticEvent({
+      const diagnosticEvent = {
         category: "unhandled-rejection",
-        severity: "warning",
+        severity: "warning" as const,
         code:
           event.reason instanceof Error && event.reason.name
             ? event.reason.name.slice(0, 96)
             : "unhandled-rejection",
         message: reason || "Unhandled promise rejection",
         raw: { reason },
-      });
+      };
+      rememberBrowserDiagnosticEvent(diagnosticEvent);
+      postClientDiagnosticEvent(diagnosticEvent);
     };
 
     window.addEventListener("error", onError);
@@ -174,7 +202,16 @@ function App() {
   }, []);
 
   return (
-    <PlatformErrorBoundary label="Rayalgo app shell" resetKeys={[labMode]}>
+    <PlatformErrorBoundary
+      label="Rayalgo app shell"
+      resetKeys={[labMode, crashMode]}
+      reportCategory="react-root-crash"
+      reportSeverity="critical"
+      buildReportRaw={buildRootCrashReportRaw}
+      onBoundaryError={rememberRootCrashDiagnostic}
+      fallbackRender={(props) => <RootCrashDiagnosticsFallback {...props} />}
+    >
+      <DevCrashTrigger mode={crashMode} />
       <AppProviders>
         <Suspense fallback={<AppLoadingFallback />}>
           {labMode === "chart-parity" ? (

@@ -14,14 +14,17 @@ export const ACCOUNT_REFRESH_INTERVALS = Object.freeze({
 export const buildAccountRefreshPolicy = ({
   isVisible = false,
   accountPageStreamFresh = false,
+  accountWarmupPending = false,
   accountStreamFresh = false,
   orderStreamFresh = false,
   shadowStreamFresh = false,
   shadowMode = false,
 } = {}) => {
   const visible = Boolean(isVisible);
-  const pageStreamFresh = Boolean(accountPageStreamFresh);
-  const brokerStreamFresh = Boolean(accountStreamFresh && orderStreamFresh);
+  const pageStreamFresh = Boolean(accountPageStreamFresh && !accountWarmupPending);
+  const brokerStreamFresh = Boolean(
+    accountStreamFresh && orderStreamFresh && !accountWarmupPending,
+  );
   const shadowFresh = Boolean(shadowStreamFresh);
 
   if (!visible) {

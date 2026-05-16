@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { Badge } from "../../components/platform/primitives.jsx";
 import { PulseDot } from "../../components/ui/PulseDot.jsx";
 
@@ -14,7 +14,7 @@ const compactButton = ({
   color: active ? T.text : T.textSec,
   fontSize: fs(8),
   fontFamily: T.sans,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   letterSpacing: "0.04em",
   cursor: disabled ? "not-allowed" : "pointer",
   opacity: disabled ? 0.62 : 1,
@@ -63,7 +63,7 @@ export const AlgoStatusBar = ({
       data-testid="algo-status-bar"
       className="ra-panel-enter"
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: "none",
         borderRadius: dim(RADII.sm),
         padding: sp(narrow ? "6px 8px" : "9px 12px"),
@@ -106,13 +106,14 @@ export const AlgoStatusBar = ({
             value={focusedDeployment?.id || ""}
             onChange={(event) => onSelectDeployment?.(event.target.value)}
             style={{
-              background: T.bg3,
-              border: "none",
-              borderRadius: dim(RADII.xs),
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.sm),
               color: T.text,
-              padding: sp("4px 8px"),
+              padding: sp("6px 10px"),
               fontFamily: T.sans,
-              fontSize: fs(9),
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.medium,
               outline: "none",
               maxWidth: dim(260),
             }}
@@ -126,7 +127,7 @@ export const AlgoStatusBar = ({
         ) : (
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
               color: T.textDim,
               border: `1px dashed ${T.border}`,
@@ -137,7 +138,7 @@ export const AlgoStatusBar = ({
             create from a promoted draft
           </span>
         )}
-        {!narrow && <Badge color={T.textMuted}>SHADOW</Badge>}
+        {!narrow && <Badge color={T.textMuted}>Shadow</Badge>}
         <Badge color={gatewayReady ? T.textSec : T.amber}>
           {gatewayReady ? "DATA" : "BLOCKED"}
         </Badge>

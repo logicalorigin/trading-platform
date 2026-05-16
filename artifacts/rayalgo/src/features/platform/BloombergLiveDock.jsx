@@ -22,11 +22,15 @@ import {
   X,
 } from "lucide-react";
 import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -269,7 +273,7 @@ const RoundIconButton = ({
       style={{
         width: dim(size),
         height: dim(size),
-        borderRadius: "999px",
+        borderRadius: dim(RADII.pill),
         border: "none",
         display: "inline-flex",
         alignItems: "center",
@@ -384,7 +388,7 @@ const AudioControlButton = ({
         style={{
           width: dim(size),
           height: dim(size),
-          borderRadius: "999px",
+          borderRadius: dim(RADII.pill),
           border: "none",
           display: "inline-flex",
           alignItems: "center",
@@ -441,7 +445,7 @@ const AudioControlButton = ({
           minWidth: dim(44),
           minHeight: dim(150),
           padding: sp("10px 8px"),
-          borderRadius: dim(22),
+          borderRadius: dim(RADII.xl),
           background: "rgba(8, 11, 18, 0.86)",
           backdropFilter: "blur(18px)",
           boxShadow: "0 16px 36px rgba(0, 0, 0, 0.32)",
@@ -459,7 +463,7 @@ const AudioControlButton = ({
           style={{
             fontSize: fs(7),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             color: muted ? T.amber : T.onAccent,
             minWidth: dim(24),
             textAlign: "center",
@@ -507,7 +511,7 @@ const MenuPanel = ({
       minWidth: dim(252),
       maxHeight: dim(176),
       padding: sp(8),
-      borderRadius: dim(16),
+      borderRadius: dim(RADII.lg),
       border: "1px solid rgba(148, 163, 184, 0.16)",
       background:
         "linear-gradient(180deg, rgba(8, 11, 18, 0.98), rgba(8, 11, 18, 0.94))",
@@ -594,7 +598,7 @@ const MenuActionButton = ({
         gap: 0,
         padding: 0,
         border: "none",
-        borderRadius: dim(14),
+        borderRadius: dim(RADII.lg),
         background: active
           ? accent
             ? `${T.accent}1c`
@@ -631,7 +635,7 @@ const MenuActionButton = ({
             style={{
               width: dim(40),
               height: dim(40),
-              borderRadius: dim(12),
+              borderRadius: dim(RADII.md),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -691,7 +695,7 @@ const MenuSpeedButton = ({
         minWidth: 0,
         minHeight: dim(30),
         border: "none",
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         background: active
           ? `${T.green}22`
           : hovered
@@ -700,7 +704,7 @@ const MenuSpeedButton = ({
         color: disabled ? T.textMuted : active ? T.green : T.textSec,
         fontSize: fs(8),
         fontFamily: T.sans,
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transform: pressed
@@ -734,7 +738,7 @@ const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
     <span
       style={{
         color: tone,
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         maxWidth: dim(142),
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2444,24 +2448,23 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             gap: sp(8),
             padding: sp("8px 12px"),
             border: "none",
-            borderRadius: "999px",
-            background: "rgba(8, 11, 18, 0.82)",
-            boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
+            borderRadius: dim(RADII.pill),
+            background: T.accent,
+            boxShadow: ELEVATION.lg,
             color: T.onAccent,
             cursor: "pointer",
-            backdropFilter: "blur(18px)",
           }}
         >
           <Tv size={dim(14)} />
           <span
             style={{
               padding: sp("2px 6px"),
-              borderRadius: "999px",
+              borderRadius: dim(RADII.pill),
               background: topStatusBackground,
               color: topStatusColor,
               fontSize: fs(7),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {topStatusLabel}
@@ -2470,7 +2473,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             style={{
               fontSize: fs(8),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             Bloomberg
@@ -2528,7 +2531,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   background: "#000",
                   aspectRatio: "16 / 9",
                   minHeight: dim(190),
-                  borderRadius: dim(18),
+                  borderRadius: dim(RADII.xl),
                   overflow: "hidden",
                 }
           }
@@ -2603,7 +2606,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       style={{
                         fontSize: fs(8),
                         fontFamily: T.sans,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         color: T.onAccent,
                       }}
                     >
@@ -2618,7 +2621,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       color: topStatusColor,
                       fontSize: fs(7),
                       fontFamily: T.sans,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       letterSpacing: "0.06em",
                     }}
                   >
@@ -2741,12 +2744,12 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       <span
                         style={{
                           padding: sp("4px 9px"),
-                          borderRadius: "999px",
+                          borderRadius: dim(RADII.pill),
                           background: "rgba(8, 11, 18, 0.72)",
                           color: audioBlocked ? T.amber : T.red,
                           fontSize: fs(8),
                           fontFamily: T.sans,
-                          fontWeight: 400,
+                          fontWeight: FONT_WEIGHTS.regular,
                           letterSpacing: "0.04em",
                           backdropFilter: "blur(16px)",
                         }}
@@ -2856,7 +2859,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       aria-label="Jump to live edge"
                       style={{
                         padding: sp("6px 10px"),
-                        borderRadius: "999px",
+                        borderRadius: dim(RADII.pill),
                         border: "none",
                         background: atLiveEdge
                           ? "rgba(16, 185, 129, 0.22)"
@@ -2864,7 +2867,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         color: atLiveEdge ? T.green : T.onAccent,
                         fontSize: fs(7),
                         fontFamily: T.sans,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         letterSpacing: "0.06em",
                         cursor: hasBufferedWindow ? "pointer" : "default",
                         opacity: hasBufferedWindow ? 1 : 0.45,
@@ -3069,7 +3072,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   border: `1px solid ${playerStatus === "error" ? T.red : T.border}`,
                   background: `${T.bg1}ee`,
                   color: T.textSec,
-                  fontSize: fs(9),
+                  fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   textAlign: "center",
                   maxWidth: dim(460),
@@ -3098,10 +3101,10 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             justifyContent: "space-between",
             gap: sp(8),
             padding: sp("8px 12px"),
-            borderRadius: "999px",
-            background: "rgba(8, 11, 18, 0.82)",
-            boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
-            backdropFilter: "blur(18px)",
+            borderRadius: dim(RADII.pill),
+            background: T.bg1,
+            border: `1px solid ${T.border}`,
+            boxShadow: ELEVATION.lg,
             flexWrap: "wrap",
           }}
         >
@@ -3123,7 +3126,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 alignItems: "center",
                 gap: sp(5),
                 color: T.onAccent,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
               }}
             >
               <Tv size={dim(12)} />
@@ -3132,7 +3135,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             <span
               style={{
                 padding: sp("2px 6px"),
-                borderRadius: "999px",
+                borderRadius: dim(RADII.pill),
                 background: topStatusBackground,
                 color: topStatusColor,
               }}

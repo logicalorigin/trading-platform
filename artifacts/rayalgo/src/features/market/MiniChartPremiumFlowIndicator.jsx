@@ -1,7 +1,7 @@
 import { EMPTY_PREMIUM_FLOW_SUMMARY, resolvePremiumFlowDisplayState } from "../platform/premiumFlowIndicator";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -79,7 +79,7 @@ const PremiumFlowStatusGlyph = ({ state, dense = false, color }) => {
           border: `1px solid ${T.borderLight}`,
           borderTopColor: color,
           borderRightColor: color,
-          borderRadius: "50%",
+          borderRadius: dim(RADII.pill),
           animation: "premiumFlowSpin 760ms linear infinite",
         }}
       />
@@ -96,7 +96,7 @@ const PremiumFlowStatusGlyph = ({ state, dense = false, color }) => {
           height: size,
           flexShrink: 0,
           background: color,
-          borderRadius: "50%",
+          borderRadius: dim(RADII.pill),
           opacity: 0.5,
           animation: "premiumFlowPulse 1200ms ease-in-out infinite",
         }}
@@ -186,7 +186,7 @@ export const MiniChartPremiumFlowIndicator = ({
         height,
         flexShrink: 0,
         borderTop: `1px solid ${T.border}`,
-        background: T.bg2,
+        background: T.bg1,
         display: "grid",
         gridTemplateColumns: compact ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
         gridTemplateRows: dense || compact ? "1fr 5px" : "1fr 6px 1fr",
@@ -205,7 +205,7 @@ export const MiniChartPremiumFlowIndicator = ({
           minWidth: 0,
           color: T.textSec,
           fontSize: fs(dense ? 8 : 9),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -233,7 +233,7 @@ export const MiniChartPremiumFlowIndicator = ({
           aria-label={`${normalizedSymbol} options premium flow ${statusLabel}`}
           style={{
             color: statusTone,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             overflow: "hidden",
             textOverflow: "ellipsis",
             minWidth: 0,

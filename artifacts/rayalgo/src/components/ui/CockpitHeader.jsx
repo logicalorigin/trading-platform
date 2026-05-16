@@ -1,4 +1,4 @@
-import { T, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, T, sp, textSize } from "../../lib/uiTokens.jsx";
 import { PulseDot } from "./PulseDot.jsx";
 
 /**
@@ -60,7 +60,7 @@ export const CockpitHeader = ({
                 color: T.textMuted,
                 letterSpacing: "0.08em",
                 textTransform: "uppercase",
-                fontWeight: 500,
+                fontWeight: FONT_WEIGHTS.medium,
               }}
             >
               {eyebrow}
@@ -88,7 +88,7 @@ export const CockpitHeader = ({
                 color: T.text,
                 fontFamily: T.sans,
                 fontSize: textSize(narrow ? "displayMedium" : "displayLarge"),
-                fontWeight: 600,
+                fontWeight: FONT_WEIGHTS.label,
                 letterSpacing: "-0.02em",
                 lineHeight: 1.1,
                 overflow: "hidden",

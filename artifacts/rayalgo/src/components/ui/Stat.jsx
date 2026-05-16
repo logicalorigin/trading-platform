@@ -1,4 +1,4 @@
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const SIZES = {
   sm: { label: "caption", value: "paragraphMuted", pad: "2px 0", gap: 2 },
@@ -58,7 +58,7 @@ export const Stat = ({
             fontSize: textSize(dims.label),
             letterSpacing: "0.04em",
             textTransform: "uppercase",
-            fontWeight: 500,
+            fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             whiteSpace: "nowrap",
           }}

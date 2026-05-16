@@ -9,7 +9,11 @@ import {
 } from "./bridge-governor";
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
-import { getMarketDataAdmissionDiagnostics } from "./market-data-admission";
+import {
+  getMarketDataAdmissionDiagnostics,
+  setMarketDataAdmissionBridgeLineBudget,
+  type MarketDataLease,
+} from "./market-data-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import { getOptionsFlowScannerDiagnostics } from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
@@ -254,9 +258,105 @@ function buildLineDriftReconciliation(input: {
   };
 }
 
+function liveSurfaceForLease(lease: MarketDataLease): "account" | "visible" | null {
+  if (lease.intent === "account-monitor-live") {
+    return "account";
+  }
+  if (lease.intent === "visible-live") {
+    return "visible";
+  }
+  return null;
+}
+
+function lineSymbol(lineId: string): string {
+  if (lineId.startsWith("equity:")) {
+    return lineId.slice("equity:".length);
+  }
+  if (lineId.startsWith("option:")) {
+    return lineId.slice("option:".length);
+  }
+  return lineId;
+}
+
+function buildWarmupCoverage(input: {
+  admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>;
+  subscriptions: Record<string, unknown>;
+  bridgeDiagnosticsAvailable: boolean;
+}) {
+  const bridgeLineIds = input.bridgeDiagnosticsAvailable
+    ? buildBridgeLineIds(input.subscriptions)
+    : new Set<string>();
+  const targetLineIds = new Set<string>();
+  const accountLineIds = new Set<string>();
+  const visibleLineIds = new Set<string>();
+  const targetSymbols = new Set<string>();
+
+  input.admission.leases.forEach((lease) => {
+    const surface = liveSurfaceForLease(lease);
+    if (!surface) {
+      return;
+    }
+    lease.lineIds.forEach((lineId) => {
+      targetLineIds.add(lineId);
+      if (surface === "account") {
+        accountLineIds.add(lineId);
+      } else {
+        visibleLineIds.add(lineId);
+      }
+      targetSymbols.add(lineSymbol(lineId));
+    });
+  });
+
+  const pendingLineIds = new Set(
+    Array.from(targetLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
+  );
+  const activeLineIds = new Set(
+    Array.from(targetLineIds).filter((lineId) => bridgeLineIds.has(lineId)),
+  );
+  const accountPendingLineIds = new Set(
+    Array.from(accountLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
+  );
+  const visiblePendingLineIds = new Set(
+    Array.from(visibleLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
+  );
+  const coverageRatio =
+    targetLineIds.size > 0 ? activeLineIds.size / targetLineIds.size : null;
+
+  return {
+    state: !input.bridgeDiagnosticsAvailable
+      ? "unknown"
+      : targetLineIds.size === 0
+        ? "idle"
+        : pendingLineIds.size > 0
+          ? "pending"
+          : "covered",
+    targetLineCount: targetLineIds.size,
+    activeBridgeLineCount: activeLineIds.size,
+    pendingLineCount: pendingLineIds.size,
+    accountTargetLineCount: accountLineIds.size,
+    accountPendingLineCount: accountPendingLineIds.size,
+    visibleTargetLineCount: visibleLineIds.size,
+    visiblePendingLineCount: visiblePendingLineIds.size,
+    coverageRatio,
+    targetSymbolCount: targetSymbols.size,
+    pendingLineSample: lineDriftSample(pendingLineIds),
+    accountPendingLineSample: lineDriftSample(accountPendingLineIds),
+    visiblePendingLineSample: lineDriftSample(visiblePendingLineIds),
+  };
+}
+
 export async function getIbkrLineUsageSnapshot() {
   ensureIbkrLaneRuntimeOverridesLoaded();
   const bridge = await getCachedBridgeLaneDiagnostics();
+  const subscriptions =
+    bridge.value && typeof bridge.value.subscriptions === "object"
+      ? (bridge.value.subscriptions as Record<string, unknown>)
+      : {};
+  const bridgeActiveLines = readNumber(subscriptions.activeQuoteSubscriptions);
+  const bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
+  if (bridgeLineBudget !== null) {
+    setMarketDataAdmissionBridgeLineBudget(bridgeLineBudget, bridge.fetchedAt);
+  }
   const admission = {
     ...getMarketDataAdmissionDiagnostics(),
     optionsFlowScanner: getOptionsFlowScannerDiagnostics(),
@@ -264,12 +364,6 @@ export async function getIbkrLineUsageSnapshot() {
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
-  const subscriptions =
-    bridge.value && typeof bridge.value.subscriptions === "object"
-      ? (bridge.value.subscriptions as Record<string, unknown>)
-      : {};
-  const bridgeActiveLines = readNumber(subscriptions.activeQuoteSubscriptions);
-  const bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
 
   return {
     updatedAt: new Date().toISOString(),
@@ -291,6 +385,11 @@ export async function getIbkrLineUsageSnapshot() {
       optionQuoteStreams,
       stockAggregates,
     },
+    warmup: buildWarmupCoverage({
+      admission,
+      subscriptions,
+      bridgeDiagnosticsAvailable: Boolean(bridge.value),
+    }),
     drift: {
       admissionVsBridgeLineDelta:
         bridgeActiveLines === null

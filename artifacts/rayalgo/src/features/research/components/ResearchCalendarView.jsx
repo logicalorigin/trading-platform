@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchEarningsCalendar } from "../lib/researchApi";
 import { Logo } from "./ResearchLogo";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
 
 
 export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
@@ -125,14 +125,14 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* ── FILTERS ── */}
       <div style={{ display: "flex", gap: sp(10), alignItems: "center", marginBottom: sp(12), flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", gap: sp(2), background: T.bg2, borderRadius: RADII.sm, padding: sp(2) }}>
+        <div style={{ display: "inline-flex", gap: sp(2), background: T.bg1, borderRadius: RADII.sm, padding: sp(2) }}>
           {[["7d", "7 days"], ["30d", "30 days"], ["90d", "90 days"]].map(([k, lb]) => (
             <button key={k} onClick={() => setRangeFilter(k)} style={{
               background: rangeFilter === k ? T.bg1 : "transparent",
               border: "none", borderRadius: RADII.sm, padding: sp("5px 12px"),
               fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
               color: rangeFilter === k ? T.text : T.textDim, cursor: "pointer",
-              boxShadow: rangeFilter === k ? "0 1px 3px rgba(0,0,0,.06)" : "none",
+              boxShadow: rangeFilter === k ? ELEVATION.sm : "none",
               transition: "all .12s",
             }}>{lb}</button>
           ))}
@@ -159,7 +159,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                 display: "inline-flex", alignItems: "center", gap: sp(3),
                 boxShadow: active ? `0 1px 3px ${t.accent}22` : "none",
               }}>
-                <span style={{ fontSize: fs(9) }}>{t.icon}</span>
+                <span style={{ fontSize: textSize("caption") }}>{t.icon}</span>
                 {t.title.replace(/^The /, "")}
               </button>
             );
@@ -246,7 +246,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                     {/* Time badge */}
                     <AppTooltip content={tb.title}><span style={{
                       display: "inline-block", padding: sp("2px 5px"), borderRadius: RADII.xs,
-                      background: tb.bg, color: tb.fg, fontSize: fs(9), fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textAlign: "center",
+                      background: tb.bg, color: tb.fg, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textAlign: "center",
                     }}>{tb.label}</span></AppTooltip>
 
                     {/* Ticker + name + theme */}
@@ -272,20 +272,20 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
                     {/* EPS est (or actual if reported) */}
                     <div style={{ textAlign: "right", minWidth: 80 }}>
-                      <div style={{ fontSize: fs(9), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>
+                      <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>
                         {reported ? "EPS Act" : "EPS Est"}
                       </div>
                       <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: reported ? (beat ? T.green : T.red) : T.text }}>
                         {reported ? fmtEPS(epsActual) : fmtEPS(epsEst)}
                       </div>
                       {reported && epsEst != null && (
-                        <div style={{ fontSize: fs(9), color: T.textDim }}>est {fmtEPS(epsEst)}</div>
+                        <div style={{ fontSize: textSize("caption"), color: T.textDim }}>est {fmtEPS(epsEst)}</div>
                       )}
                     </div>
 
                     {/* Rev est */}
                     <div style={{ textAlign: "right", minWidth: 70 }}>
-                      <div style={{ fontSize: fs(9), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>Rev Est</div>
+                      <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>Rev Est</div>
                       <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtRev(revEst)}</div>
                     </div>
 

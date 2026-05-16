@@ -7,7 +7,7 @@ import {
   PlugZap,
   RadioTower,
 } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   STREAM_STATE_LABEL,
   canonicalizeStreamState,
@@ -1118,38 +1118,61 @@ export const IbkrConnectionLane = ({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(7),
-        padding: sp("4px 10px"),
-        minWidth: compact ? dim(112) : dim(150),
-        background: `${tone.color}10`,
-        borderRadius: dim(999),
+        gap: sp(10),
+        padding: sp("8px 14px"),
+        minHeight: dim(40),
+        minWidth: compact ? dim(140) : dim(200),
+        background: T.bg1,
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.md),
         whiteSpace: "nowrap",
       }}
     >
-      <Icon size={dim(13)} strokeWidth={2.2} color={tone.color} />
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: dim(28),
+          height: dim(28),
+          borderRadius: dim(RADII.pill),
+          background: `${tone.color}14`,
+          flexShrink: 0,
+        }}
+      >
+        <Icon size={dim(15)} strokeWidth={2.2} color={tone.color} />
+      </span>
       <span
         style={{
           display: "flex",
-          alignItems: "baseline",
-          gap: sp(5),
+          flexDirection: "column",
+          gap: sp(1),
           minWidth: 0,
-          color: T.text,
-          fontSize: fs(10),
-          fontWeight: 500,
-          fontFamily: T.sans,
-          letterSpacing: "0.02em",
-          whiteSpace: "nowrap",
           flex: 1,
         }}
       >
-        {label}
+        <span
+          style={{
+            color: T.textMuted,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontFamily: T.sans,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
         <span
           style={{
             color: tone.color,
-            fontSize: fs(9),
-            fontWeight: 500,
-            letterSpacing: "0.04em",
-            textTransform: "uppercase",
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontFamily: T.sans,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
           }}
         >
           {tone.label}
@@ -1159,12 +1182,12 @@ export const IbkrConnectionLane = ({
       {!compact ? (
         <span
           style={{
-            color: T.textDim,
-            fontSize: fs(9),
+            color: T.textSec,
+            fontSize: textSize("body"),
             fontFamily: T.sans,
-            fontWeight: 500,
+            fontWeight: FONT_WEIGHTS.medium,
             textAlign: "right",
-            minWidth: dim(34),
+            minWidth: dim(44),
             whiteSpace: "nowrap",
             fontVariantNumeric: "tabular-nums",
           }}

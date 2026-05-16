@@ -158,6 +158,7 @@ export * from './brokerProvider';
 export * from './cancelAccountOrderRequest';
 export * from './cancelOrderRequest';
 export * from './cancelOrderResponse';
+export * from './chartBarTimeframe';
 export * from './connectionStatus';
 export * from './createAccountTradingPatternsSnapshotRequest';
 export * from './createAlgoDeploymentRequest';

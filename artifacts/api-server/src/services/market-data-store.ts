@@ -24,10 +24,14 @@ export type MarketDataStoreTimeframe =
   | "1s"
   | "5s"
   | "15s"
+  | "30s"
   | "1m"
+  | "2m"
   | "5m"
   | "15m"
+  | "30m"
   | "1h"
+  | "4h"
   | "1d";
 
 export type MarketDataStoreRequest = {
@@ -61,10 +65,14 @@ const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
   "1s": 1_000,
   "5s": 5_000,
   "15s": 15_000,
+  "30s": 30_000,
   "1m": 60_000,
+  "2m": 2 * 60_000,
   "5m": 5 * 60_000,
   "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
   "1h": 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 };
 
@@ -299,7 +307,7 @@ export async function loadStoredMarketBars(
           transport: "tws" as const,
           delayed: input.sourceName.includes("massive"),
           freshness,
-          dataUpdatedAt: row.updatedAt ?? row.createdAt ?? row.startsAt,
+          dataUpdatedAt: row.startsAt,
         }))
         .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime()),
       input.timeframe,

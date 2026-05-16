@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { flowEventsToChartEventConversion } from "../charting/chartEvents.ts";
 import { buildOptionChainRowsFromApi } from "../trade/optionChainRows.js";
@@ -7,6 +8,8 @@ import {
   buildPendingFlowChartEventConversion,
 } from "./analyticsClient.js";
 import { analyticsWorkerApi } from "./analyticsWorkerApi.js";
+
+const readSource = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const flowEvent = {
   id: "flow-1",
@@ -162,4 +165,15 @@ test("analytics worker API matches sync option chain row build", () => {
     analyticsWorkerApi.buildOptionChainRows({ contracts, spotPrice: 501 }),
     buildOptionChainRowsFromApi(contracts, 501),
   );
+});
+
+test("analytics worker import graph avoids browser-only React refresh modules", () => {
+  const workerApiSource = readSource("./analyticsWorkerApi.js");
+  const optionChainRowsSource = readSource("../trade/optionChainRows.js");
+
+  assert.doesNotMatch(workerApiSource, /from\s+["']react["']/);
+  assert.doesNotMatch(workerApiSource, /\.jsx["']/);
+  assert.doesNotMatch(workerApiSource, /uiTokens/);
+  assert.doesNotMatch(optionChainRowsSource, /lib\/formatters/);
+  assert.doesNotMatch(optionChainRowsSource, /uiTokens/);
 });

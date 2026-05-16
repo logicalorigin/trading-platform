@@ -1,4 +1,4 @@
-import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
 const HIDE_SCROLLBAR_STYLE = {
@@ -46,11 +46,11 @@ export const TabBar = ({
             className="ra-interactive ra-touch-target"
             style={{
               ...motionVars({ accent }),
-              padding: dense ? sp("5px 12px") : sp("6px 14px"),
-              fontSize: textSize("bodyStrong"),
+              padding: dense ? sp("8px 14px") : sp("10px 16px"),
+              fontSize: textSize("paragraphMuted"),
               fontFamily: T.sans,
-              fontWeight: 500,
-              letterSpacing: "0.02em",
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "-0.005em",
               border: "none",
               borderRadius: dim(RADII.pill),
               background: active ? `${accent}14` : "transparent",
@@ -60,7 +60,7 @@ export const TabBar = ({
               flexShrink: 0,
               display: "inline-flex",
               alignItems: "center",
-              gap: sp(5),
+              gap: sp(6),
               transition: "background 0.18s ease, color 0.18s ease",
             }}
           >
@@ -68,14 +68,14 @@ export const TabBar = ({
             {tab.badge != null && tab.badge !== "" ? (
               <span
                 style={{
-                  padding: sp("0 6px"),
+                  padding: sp("1px 7px"),
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
-                  fontWeight: 500,
-                  background: active ? `${accent}28` : T.bg2,
-                  color: active ? accent : T.textMuted,
+                  fontWeight: FONT_WEIGHTS.medium,
+                  background: active ? `${accent}28` : `${T.textMuted}18`,
+                  color: active ? accent : T.textSec,
                   borderRadius: dim(RADII.pill),
-                  minWidth: dim(16),
+                  minWidth: dim(18),
                   textAlign: "center",
                 }}
               >

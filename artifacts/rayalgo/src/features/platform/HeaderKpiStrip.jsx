@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatQuotePrice,
   formatSignedPercent,
@@ -90,7 +90,7 @@ const MicroSparkline = ({
   );
 };
 
-const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
+const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false }) => {
   const fallback = useMemo(
     () => buildFallbackWatchlistItem(symbol, index, label),
     [index, label, symbol],
@@ -104,14 +104,14 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
       onClick={() => onSelect?.(symbol)}
       className="ra-header-kpi"
       style={{
-        flex: "1 1 96px",
-        minWidth: dim(92),
-        minHeight: dim(34),
-        padding: sp("4px 14px 4px 0"),
-        marginRight: sp(2),
+        flex: compact ? "0 0 auto" : "1 1 110px",
+        minWidth: dim(compact ? 90 : 108),
+        minHeight: dim(compact ? 28 : 38),
+        padding: sp(compact ? "2px 10px 2px 4px" : "4px 14px 4px 4px"),
+        marginRight: sp(compact ? 2 : 4),
         display: "flex",
         alignItems: "center",
-        gap: sp(5),
+        gap: sp(8),
         background: "transparent",
         border: "none",
         borderRight: `1px solid ${T.borderLight}`,
@@ -149,11 +149,11 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(9),
+              fontSize: textSize(compact ? "micro" : "caption"),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 500,
-              letterSpacing: "0.04em",
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.08em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -165,12 +165,12 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(8),
-              fontWeight: 500,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
               color: T.textDim,
               fontFamily: T.sans,
               lineHeight: 1.1,
-              letterSpacing: "0.02em",
+              letterSpacing: "0.04em",
               flexShrink: 0,
             }}
           >
@@ -188,11 +188,11 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(12),
-              fontWeight: 600,
+              fontSize: textSize("paragraph"),
+              fontWeight: FONT_WEIGHTS.label,
               fontFamily: T.sans,
               color: T.text,
-              lineHeight: 1.1,
+              lineHeight: 1.15,
               whiteSpace: "nowrap",
               fontVariantNumeric: "tabular-nums",
               letterSpacing: "-0.01em",
@@ -203,12 +203,12 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(9),
-              fontWeight: 500,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.medium,
               fontFamily: T.sans,
               color:
                 positive == null ? T.textDim : positive ? T.green : T.red,
-              lineHeight: 1.1,
+              lineHeight: 1.15,
               whiteSpace: "nowrap",
               fontVariantNumeric: "tabular-nums",
             }}
@@ -225,21 +225,21 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
               : snapshot?.spark || fallback.spark
           }
           positive={positive}
-          width={34}
-          height={13}
+          width={44}
+          height={18}
         />
       </span>
     </button></AppTooltip>
   );
 });
 
-export const HeaderKpiStrip = memo(({ onSelect }) => (
+export const HeaderKpiStrip = memo(({ onSelect, compact = false }) => (
   <div
     data-testid="platform-header-kpis"
     style={{
       display: "flex",
       alignItems: "stretch",
-      gap: sp(3),
+      gap: sp(compact ? 1 : 3),
       minWidth: 0,
       width: "100%",
       overflow: "hidden",
@@ -252,6 +252,7 @@ export const HeaderKpiStrip = memo(({ onSelect }) => (
         label={label}
         index={index}
         onSelect={onSelect}
+        compact={compact}
       />
     ))}
   </div>

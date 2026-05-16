@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const totalCount = (rows) => {
@@ -36,10 +36,10 @@ export const DiagPanel = ({
           padding: sp("3px 8px"),
           border: "none",
           borderRadius: dim(3),
-          background: T.bg2,
+          background: T.bg1,
           color: healthy ? T.textMuted : color,
           fontFamily: T.sans,
-          fontSize: fs(8),
+          fontSize: textSize("body"),
           letterSpacing: "0.04em",
           cursor: "pointer",
         }}
@@ -65,7 +65,7 @@ export const DiagPanel = ({
       style={{
         border: "none",
         borderRadius: dim(RADII.xs),
-        background: T.bg2,
+        background: T.bg1,
         padding: sp("7px 9px"),
         minWidth: 0,
       }}
@@ -86,7 +86,7 @@ export const DiagPanel = ({
           cursor: "pointer",
           color,
           fontFamily: T.sans,
-          fontSize: fs(7),
+          fontSize: textSize("caption"),
           letterSpacing: "0.08em",
           textAlign: "left",
         }}
@@ -112,7 +112,7 @@ export const DiagPanel = ({
                 style={{
                   color: T.textSec,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -125,7 +125,7 @@ export const DiagPanel = ({
                   color:
                     Number(count) > 0 && !healthy ? color : T.text,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                 }}
               >
                 {count}
@@ -138,7 +138,7 @@ export const DiagPanel = ({
           style={{
             color: T.textDim,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("body"),
           }}
         >
           none

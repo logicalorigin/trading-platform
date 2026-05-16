@@ -87,6 +87,13 @@ test("TradeScreen option price chart lets the chart surface own empty state", ()
   assert.doesNotMatch(source, /aria-label="Contract chart empty state"/);
 });
 
+test("TradeScreen keeps option chart flow badge inside responsive chart chrome", () => {
+  assert.match(source, /rightSlot=\{\(\{ iconOnly \}\) =>/);
+  assert.match(source, /data-testid="trade-contract-option-chart-flow-badge"/);
+  assert.doesNotMatch(source, /TRADE_OPTION_CHART_FRAME_LAYOUT/);
+  assert.doesNotMatch(source, /surfaceTopOverlayHeight \+ 8/);
+});
+
 test("TradeScreen hydrates option charts from complete option identity without waiting for broker id", () => {
   assert.doesNotMatch(source, /requireProviderContractId:\s*true/);
   assert.doesNotMatch(source, /requireMarketIdentifier:\s*true/);

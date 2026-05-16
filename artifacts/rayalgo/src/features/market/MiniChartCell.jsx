@@ -6,12 +6,11 @@ import {
   useGexZeroGammaReferenceLine,
 } from "../gex/useGexZeroGamma.js";
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
-import { MarketIdentityMark } from "../platform/marketIdentity";
 import { MiniChartTickerSearch } from "../platform/tickerSearch/TickerSearch.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
-import { DEFAULT_WATCHLIST_BY_SYMBOL, WATCHLIST } from "./marketReferenceData";
+import { WATCHLIST } from "./marketReferenceData";
 import { MiniChartPremiumFlowIndicator } from "./MiniChartPremiumFlowIndicator.jsx";
-import { T } from "../../lib/uiTokens";
+import { T } from "../../lib/uiTokens.jsx";
 
 const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
 
@@ -81,10 +80,6 @@ export const MiniChartCell = ({
   const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
     ? hydratedTimeframe
     : "5m";
-  const fallbackInfo =
-    DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
-    WATCHLIST.find((item) => item.sym === ticker) ||
-    WATCHLIST[0];
   const gexZeroGamma = useGexZeroGamma(ticker, { enabled: isActive });
   const gexZeroGammaReferenceLine =
     useGexZeroGammaReferenceLine(gexZeroGamma);
@@ -100,26 +95,6 @@ export const MiniChartCell = ({
   const setSearchOpen = useCallback(
     (open) => onTickerSearchOpenChange?.(Boolean(open)),
     [onTickerSearchOpenChange],
-  );
-  const chartIdentityItem = useMemo(
-    () => ({
-      ...(slot?.searchResult || {}),
-      ticker,
-      name: slot?.searchResult?.name || fallbackInfo?.name || ticker,
-      market: slot?.market || "stocks",
-      exchangeDisplay:
-        slot?.exchange ||
-        slot?.searchResult?.exchangeDisplay ||
-        slot?.searchResult?.primaryExchange,
-      normalizedExchangeMic:
-        slot?.searchResult?.normalizedExchangeMic || slot?.exchange || null,
-      logoUrl: slot?.searchResult?.logoUrl || null,
-      countryCode: slot?.searchResult?.countryCode || null,
-      exchangeCountryCode: slot?.searchResult?.exchangeCountryCode || null,
-      sector: slot?.searchResult?.sector || null,
-      industry: slot?.searchResult?.industry || null,
-    }),
-    [fallbackInfo?.name, slot, ticker],
   );
   const rememberTicker = useCallback(
     (nextTickerOrRow) => {
@@ -248,23 +223,6 @@ export const MiniChartCell = ({
       }}
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
-        <div
-          data-chart-control-root
-          style={{
-            position: "absolute",
-            top: dense ? 6 : 8,
-            right: dense ? 6 : 8,
-            zIndex: 30,
-            pointerEvents: "auto",
-          }}
-        >
-          <MarketIdentityMark
-            item={chartIdentityItem}
-            size={dense ? 16 : 20}
-            showMarketIcon
-            style={{ borderColor: isActive ? T.accent : T.border }}
-          />
-        </div>
         <TradeEquityPanel
           ticker={ticker}
           flowEvents={flowEvents}

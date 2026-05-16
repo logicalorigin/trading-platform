@@ -116,6 +116,11 @@ import {
   subscribeMutableStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
 import {
+  recordSseStreamClose,
+  recordSseStreamOpen,
+  type SseStreamCloseReason,
+} from "../services/sse-stream-diagnostics";
+import {
   cancelAccountOrder,
   getAccountAllocation,
   getAccountCashActivity,
@@ -582,10 +587,14 @@ const BARS_REQUEST_MAX_WINDOW_DAYS: Record<string, number> = {
   "1s": 7,
   "5s": 7,
   "15s": 7,
+  "30s": 7,
   "1m": 45,
+  "2m": 45,
   "5m": 180,
   "15m": 365,
+  "30m": 365,
   "1h": 365 * 3,
+  "4h": 365 * 3,
   "1d": 365 * 15,
 };
 
@@ -848,6 +857,7 @@ function coerceBooleanQueryFields<T extends Record<string, unknown>>(
 async function startSse(
   req: Request,
   res: Response,
+  streamName: string,
   setup: (controls: {
     writeEvent: (event: string, payload: unknown) => Promise<void>;
     writeComment: (comment: string) => Promise<void>;
@@ -866,11 +876,13 @@ async function startSse(
   let pendingChunks = 0;
   let unsubscribe: () => void = () => {};
   let heartbeat: NodeJS.Timeout | null = null;
+  let closeReason: SseStreamCloseReason = "server_cleanup";
   const lastEventId =
     typeof req.headers["last-event-id"] === "string" &&
     req.headers["last-event-id"].trim()
       ? req.headers["last-event-id"].trim()
       : null;
+  recordSseStreamOpen(streamName);
 
   const cleanup = () => {
     if (cleanedUp) {
@@ -883,6 +895,7 @@ async function startSse(
       heartbeat = null;
     }
     unsubscribe();
+    recordSseStreamClose(streamName, closeReason);
     if (!res.destroyed) {
       res.end();
     }
@@ -927,6 +940,7 @@ async function startSse(
         }
       })
       .catch(() => {
+        closeReason = "write_backpressure_timeout";
         cleanup();
       })
       .finally(() => {
@@ -956,8 +970,14 @@ async function startSse(
     void writeComment(`ping ${new Date().toISOString()}`);
   }, 15_000);
 
-  res.on("close", cleanup);
-  req.on("aborted", cleanup);
+  res.on("close", () => {
+    closeReason = "client_close";
+    cleanup();
+  });
+  req.on("aborted", () => {
+    closeReason = "request_aborted";
+    cleanup();
+  });
 
   try {
     unsubscribe =
@@ -967,6 +987,7 @@ async function startSse(
         lastEventId,
       })) ?? (() => {});
   } catch (error) {
+    closeReason = "setup_error";
     if (!res.headersSent) {
       res.status(500);
     }
@@ -1298,6 +1319,12 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
         typeof req.body.selectionOverlay === "object" &&
         !Array.isArray(req.body.selectionOverlay)
           ? req.body.selectionOverlay
+          : null,
+      entryGateOverlay:
+        req.body?.entryGateOverlay &&
+        typeof req.body.entryGateOverlay === "object" &&
+        !Array.isArray(req.body.entryGateOverlay)
+          ? req.body.entryGateOverlay
           : null,
       regimeOverlay:
         req.body?.regimeOverlay &&
@@ -1823,7 +1850,7 @@ router.get("/streams/quotes", async (req, res) => {
     return;
   }
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "quotes", async ({ writeEvent }) => {
     await writeEvent("quotes", await fetchQuoteSnapshotPayload(symbols));
     await writeEvent("ready", {
       symbols,
@@ -1859,7 +1886,7 @@ router.get("/streams/options/chains", async (req, res) => {
     return;
   }
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "option-chains", async ({ writeEvent }) => {
     await writeEvent(
       "chains",
       await fetchOptionChainSnapshotPayload(underlyings),
@@ -1909,7 +1936,7 @@ router.get("/streams/options/quotes", async (req, res) => {
       ? req.query.underlying.trim().toUpperCase()
       : null;
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "option-quotes", async ({ writeEvent }) => {
     await writeEvent(
       "quotes",
       await fetchOptionQuoteSnapshotPayload({
@@ -1959,7 +1986,7 @@ router.get("/streams/bars", async (req, res) => {
       ? req.query.providerContractId.trim()
       : null;
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "bars", async ({ writeEvent }) => {
     let lastBarSignature: string | null = null;
     const buildBarSignature = (
       bar: {
@@ -2081,7 +2108,7 @@ router.get("/streams/orders", async (req, res) => {
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const status = typeof req.query.status === "string" ? req.query.status as Parameters<typeof subscribeOrderSnapshots>[0]["status"] : undefined;
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "orders", async ({ writeEvent }) => {
     await writeEvent(
       "orders",
       await fetchOrderSnapshotPayload({ accountId, mode, status }),
@@ -2129,7 +2156,7 @@ router.get("/streams/executions", async (req, res) => {
       ? req.query.providerContractId.trim()
       : null;
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "executions", async ({ writeEvent }) => {
     await writeEvent(
       "executions",
       await fetchExecutionSnapshotPayload({
@@ -2192,7 +2219,7 @@ router.get("/streams/market-depth", async (req, res) => {
       : null;
   const symbol = req.query.symbol.trim().toUpperCase();
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "market-depth", async ({ writeEvent }) => {
     await writeEvent(
       "depth",
       await fetchMarketDepthSnapshotPayload({
@@ -2275,7 +2302,7 @@ router.get("/streams/accounts/page", async (req, res) => {
         : null,
   };
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "account-page", async ({ writeEvent }) => {
     const initialPayload = await fetchAccountPageSnapshotPayload(input);
     await writeEvent("bootstrap", initialPayload);
     await writeEvent("ready", {
@@ -2312,7 +2339,7 @@ router.get("/streams/accounts", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "accounts", async ({ writeEvent }) => {
     await writeEvent(
       "accounts",
       await fetchAccountSnapshotPayload({ accountId, mode }),
@@ -2343,7 +2370,7 @@ router.get("/streams/accounts", async (req, res) => {
 });
 
 router.get("/streams/accounts/shadow", async (req, res) => {
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "shadow-accounts", async ({ writeEvent }) => {
     await writeEvent("accounts", await fetchShadowAccountSnapshotPayload());
     await writeEvent("ready", {
       accountId: SHADOW_ACCOUNT_ID,
@@ -2401,7 +2428,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     return;
   }
 
-  await startSse(req, res, async ({ writeEvent }) => {
+  await startSse(req, res, "stock-aggregates", async ({ writeEvent }) => {
     const writeSnapshotAggregates = async (nextSymbols: string[]) => {
       const snapshotAggregates = getCurrentStockMinuteAggregates(nextSymbols);
       for (const aggregate of snapshotAggregates) {

@@ -1,4 +1,5 @@
-import { isFiniteNumber } from "../../lib/formatters";
+const isFiniteNumber = (value) =>
+  typeof value === "number" && Number.isFinite(value);
 
 const getOptionMark = (bid, ask, last) => {
   if (isFiniteNumber(bid) && bid > 0 && isFiniteNumber(ask) && ask > 0) {

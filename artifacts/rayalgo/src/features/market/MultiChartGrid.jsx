@@ -54,7 +54,7 @@ import {
 import { MiniChartCell } from "./MiniChartCell.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { _initialState, persistState } from "../../lib/workspaceState";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { Card } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -1133,7 +1133,7 @@ export const MultiChartGrid = ({
           <span
             style={{
               fontSize: fs(10),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               color: T.textSec,
               letterSpacing: "0.04em",
@@ -1143,7 +1143,7 @@ export const MultiChartGrid = ({
           </span>
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               color: T.textMuted,
               fontFamily: T.sans,
               overflow: "hidden",
@@ -1172,9 +1172,9 @@ export const MultiChartGrid = ({
             disabled={gridScaleResetDisabled}
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
               color: gridScaleResetDisabled ? T.textMuted : T.text,
               border: "none",
@@ -1192,9 +1192,9 @@ export const MultiChartGrid = ({
             data-testid="market-chart-reset-views"
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: "rgba(255,255,255,0.08)",
               color: T.text,
               border: "none",
@@ -1229,9 +1229,9 @@ export const MultiChartGrid = ({
             }}
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: syncTimeframes ? T.accent : T.bg3,
               color: syncTimeframes ? T.onAccent : T.textDim,
               border: "none",
@@ -1248,9 +1248,9 @@ export const MultiChartGrid = ({
             data-testid="market-chart-sync-crosshair"
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: syncCrosshair ? T.accent : T.bg3,
               color: syncCrosshair ? T.onAccent : T.textDim,
               border: "none",
@@ -1266,7 +1266,7 @@ export const MultiChartGrid = ({
               display: "flex",
               gap: sp(2),
               padding: sp(denseGrid ? 1 : 2),
-              background: T.bg3,
+              background: T.bg1,
               borderRadius: RADII.none,
             }}
           >
@@ -1276,9 +1276,9 @@ export const MultiChartGrid = ({
                 onClick={() => setLayout(key)}
                 style={{
                   padding: sp("3px 8px"),
-                  fontSize: fs(9),
+                  fontSize: textSize("caption"),
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   background: layout === key ? T.accent : "transparent",
                   color: layout === key ? T.onAccent : T.textDim,
                   border: "none",

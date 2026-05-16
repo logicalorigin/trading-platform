@@ -51,6 +51,9 @@ export type OptionsFlowScannerRunResult = {
 export type OptionsFlowScannerDiagnostics = {
   queuedCount: number;
   draining: boolean;
+  activeCount: number;
+  activeSymbols: string[];
+  drainStartedAt: Date | null;
   snapshotCount: number;
   maxConcurrency: number;
   lastRunAt: Date | null;
@@ -306,7 +309,9 @@ export function createOptionsFlowScanner<TEvent>(
 
   const snapshots = new Map<string, StoredSnapshot<TEvent>>();
   const queued = new Map<string, QueuedScan>();
+  const activeSymbols = new Set<string>();
   let drainPromise: Promise<OptionsFlowScannerRunResult> | null = null;
+  let drainStartedAt: Date | null = null;
   let timer: NodeJS.Timeout | null = null;
   let stopRotation: (() => void) | null = null;
   let rotationOffset = 0;
@@ -351,6 +356,7 @@ export function createOptionsFlowScanner<TEvent>(
     transport: OptionsFlowScannerTransport | null,
   ): Promise<{ symbol: string; failed: boolean }> {
     const scanStartedAt = now();
+    activeSymbols.add(symbol);
     try {
       const result = await options.fetchSymbol({
         symbol,
@@ -387,6 +393,8 @@ export function createOptionsFlowScanner<TEvent>(
       options.onError?.(error, { symbol, phase: "fetch" });
       await options.onResult?.({ symbol, failed: true, error: message });
       return { symbol, failed: true };
+    } finally {
+      activeSymbols.delete(symbol);
     }
   }
 
@@ -508,16 +516,9 @@ export function createOptionsFlowScanner<TEvent>(
   }
 
   async function drainQueue(): Promise<OptionsFlowScannerRunResult> {
-    const batch = Array.from(queued.values());
-    queued.clear();
-    const grouped = new Map<string, QueuedScan[]>();
-    for (const item of batch) {
-      const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}:${normalizeLineBudget(item.request.lineBudget) ?? "default"}`;
-      const group = grouped.get(groupKey) ?? [];
-      group.push(item);
-      grouped.set(groupKey, group);
+    if (!drainStartedAt) {
+      drainStartedAt = new Date(now());
     }
-
     const result: OptionsFlowScannerRunResult = {
       scannedSymbols: [],
       skippedSymbols: [],
@@ -526,24 +527,38 @@ export function createOptionsFlowScanner<TEvent>(
       skippedReason: null,
     };
 
-    for (const group of grouped.values()) {
-      const groupResult = await runOnce(
-        group.map((item) => item.symbol),
-        group[0]?.request ?? { limit: 50 },
-      );
-      result.scannedSymbols.push(...groupResult.scannedSymbols);
-      result.skippedSymbols.push(...groupResult.skippedSymbols);
-      result.failedSymbols.push(...groupResult.failedSymbols);
-      result.transport = groupResult.transport;
-      result.skippedReason = groupResult.skippedReason;
-    }
-    drainPromise = null;
+    try {
+      const batch = Array.from(queued.values());
+      queued.clear();
+      const grouped = new Map<string, QueuedScan[]>();
+      for (const item of batch) {
+        const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}:${normalizeLineBudget(item.request.lineBudget) ?? "default"}`;
+        const group = grouped.get(groupKey) ?? [];
+        group.push(item);
+        grouped.set(groupKey, group);
+      }
 
-    if (queued.size > 0) {
-      drainPromise = drainQueue();
-    }
+      for (const group of grouped.values()) {
+        const groupResult = await runOnce(
+          group.map((item) => item.symbol),
+          group[0]?.request ?? { limit: 50 },
+        );
+        result.scannedSymbols.push(...groupResult.scannedSymbols);
+        result.skippedSymbols.push(...groupResult.skippedSymbols);
+        result.failedSymbols.push(...groupResult.failedSymbols);
+        result.transport = groupResult.transport;
+        result.skippedReason = groupResult.skippedReason;
+      }
 
-    return result;
+      return result;
+    } finally {
+      drainPromise = null;
+      if (queued.size > 0) {
+        drainPromise = drainQueue();
+      } else {
+        drainStartedAt = null;
+      }
+    }
   }
 
   function requestScan(
@@ -710,7 +725,9 @@ export function createOptionsFlowScanner<TEvent>(
     stop();
     snapshots.clear();
     queued.clear();
+    activeSymbols.clear();
     drainPromise = null;
+    drainStartedAt = null;
     rotationOffset = 0;
     lastRunAt = null;
     lastBatch = [];
@@ -737,6 +754,9 @@ export function createOptionsFlowScanner<TEvent>(
     return {
       queuedCount: queued.size,
       draining: Boolean(drainPromise),
+      activeCount: activeSymbols.size,
+      activeSymbols: Array.from(activeSymbols).sort(),
+      drainStartedAt,
       snapshotCount: snapshots.size,
       maxConcurrency,
       lastRunAt,

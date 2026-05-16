@@ -1,5 +1,5 @@
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -22,11 +22,11 @@ const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(11), fontFamily: T.sans, fontWeight: 400 }}>
+    <div style={{ color: tone, fontSize: textSize("bodyStrong"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
       {value}
     </div>
     {subvalue ? (
-      <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>{subvalue}</div>
+      <div style={{ color: T.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>{subvalue}</div>
     ) : null}
   </div>
 );
@@ -134,7 +134,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                       <Pill tone={typeTone(activity.type)}>{activity.type}</Pill>
                     </td>
                     <td style={{ ...tableCellStyle, whiteSpace: "normal" }}>
-                      {activity.description || "----"}
+                      {activity.description || "—"}
                     </td>
                     <td style={{ ...tableCellStyle, color: toneForValue(activity.amount), textAlign: "right" }}>
                       {formatAccountMoney(activity.amount, activity.currency, false, maskValues)}
@@ -176,7 +176,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                    <div style={{ color: T.text, fontWeight: 400, minWidth: 0 }}>
+                    <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, minWidth: 0 }}>
                       {dividend.symbol ? (
                         <MarketIdentityInline
                           item={{
@@ -193,20 +193,20 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                         "Cash"
                       )}
                     </div>
-                    <div style={{ color: T.green, fontWeight: 400 }}>
+                    <div style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
                       {formatAccountMoney(dividend.amount, dividend.currency, false, maskValues)}
                     </div>
                   </div>
-                  <div style={{ color: T.textSec, fontSize: fs(8), lineHeight: 1.25 }}>
+                  <div style={{ color: T.textSec, fontSize: textSize("label"), lineHeight: 1.25 }}>
                     {dividend.description || "Dividend"}
                   </div>
-                  <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>
+                  <div style={{ color: T.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>
                     {formatAppDate(dividend.paidDate)}
                   </div>
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textMuted, fontSize: fs(10) }}>No recent dividend rows.</div>
+              <div style={{ color: T.textMuted, fontSize: textSize("body") }}>No recent dividend rows.</div>
             )}
           </div>
         </div>

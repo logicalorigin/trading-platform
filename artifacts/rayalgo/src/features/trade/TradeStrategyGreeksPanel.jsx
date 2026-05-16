@@ -5,12 +5,14 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { isFiniteNumber } from "../../lib/formatters";
 import {
+  FONT_WEIGHTS,
   RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 
 // Strategy templates: delta target informs strike selection.
 const TRADE_STRATEGIES = [
@@ -92,7 +94,7 @@ export const TradeStrategyGreeksPanel = ({
     return (
       <div
         style={{
-          background: T.bg2,
+          background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: dim(6),
           padding: sp("8px 10px"),
@@ -104,8 +106,8 @@ export const TradeStrategyGreeksPanel = ({
       >
         <div
           style={{
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.08em",
@@ -135,7 +137,7 @@ export const TradeStrategyGreeksPanel = ({
     return (
       <div
         style={{
-          background: T.bg2,
+          background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: dim(6),
           padding: sp("8px 10px"),
@@ -147,8 +149,8 @@ export const TradeStrategyGreeksPanel = ({
       >
         <div
           style={{
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.08em",
@@ -182,10 +184,10 @@ export const TradeStrategyGreeksPanel = ({
       >
         <span
           style={{
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             color: T.textSec,
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {label}
@@ -194,7 +196,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             position: "relative",
             height: dim(12),
-            background: T.bg3,
+            background: T.bg1,
             borderRadius: dim(2),
             overflow: "hidden",
           }}
@@ -230,9 +232,9 @@ export const TradeStrategyGreeksPanel = ({
                   ? `${Math.max(0, 50 - pct * 50 - 0.5)}%`
                   : `${Math.min(95, 50 + pct * 50 + 1)}%`,
               transform: value < 0 ? "translateX(-100%)" : "none",
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               color: T.text,
               display: "flex",
               alignItems: "center",
@@ -245,7 +247,7 @@ export const TradeStrategyGreeksPanel = ({
         </div>
         <span
           style={{
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             color: T.textDim,
             fontFamily: T.sans,
             fontStyle: "italic",
@@ -261,7 +263,7 @@ export const TradeStrategyGreeksPanel = ({
   return (
     <div
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: `1px solid ${T.border}`,
         borderRadius: dim(6),
         padding: sp("8px 10px"),
@@ -274,8 +276,8 @@ export const TradeStrategyGreeksPanel = ({
       <div>
         <div
           style={{
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.08em",
@@ -306,21 +308,21 @@ export const TradeStrategyGreeksPanel = ({
                 border: "none",
                 borderRadius: dim(8),
                 color: T.text,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 fontFamily: T.sans,
-                fontWeight: 500,
+                fontWeight: FONT_WEIGHTS.medium,
                 textAlign: "left",
                 cursor: "pointer",
                 lineHeight: 1.2,
               }}
             >
-              <div style={{ color: strategy.color, fontWeight: 400 }}>
+              <div style={{ color: strategy.color, fontWeight: FONT_WEIGHTS.regular }}>
                 {strategy.name}
               </div>
               <div
                 style={{
                   color: T.textDim,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   marginTop: sp(1),
                   fontStyle: "italic",
                 }}
@@ -334,8 +336,8 @@ export const TradeStrategyGreeksPanel = ({
       <div>
         <div
           style={{
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.08em",
@@ -347,7 +349,7 @@ export const TradeStrategyGreeksPanel = ({
           }}
         >
           <span>GREEKS</span>
-          <span style={{ fontSize: fs(7), color: T.textDim, fontWeight: 400 }}>
+          <span style={{ fontSize: textSize("caption"), color: T.textDim, fontWeight: FONT_WEIGHTS.regular }}>
             PER CONTRACT
           </span>
         </div>
@@ -383,7 +385,7 @@ export const TradeStrategyGreeksPanel = ({
         />
       </div>
       <div
-        style={{ padding: sp("4px 6px"), background: T.bg3, borderRadius: RADII.xs }}
+        style={{ padding: sp("4px 6px"), background: T.bg1, borderRadius: RADII.xs }}
       >
         <div
           style={{
@@ -400,31 +402,31 @@ export const TradeStrategyGreeksPanel = ({
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: sp(4),
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             fontFamily: T.sans,
           }}
         >
           <div>
-            <span style={{ color: T.textDim, fontSize: fs(7) }}>Δ </span>
-            <span style={{ color: T.accent, fontWeight: 400 }}>
+            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Δ </span>
+            <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {(delta * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: fs(7) }}>Γ </span>
-            <span style={{ color: T.purple, fontWeight: 400 }}>
+            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Γ </span>
+            <span style={{ color: T.purple, fontWeight: FONT_WEIGHTS.regular }}>
               {(gamma * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: fs(7) }}>Θ </span>
-            <span style={{ color: T.red, fontWeight: 400 }}>
+            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Θ </span>
+            <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
               {(theta * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: fs(7) }}>V </span>
-            <span style={{ color: T.cyan, fontWeight: 400 }}>
+            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>V </span>
+            <span style={{ color: T.cyan, fontWeight: FONT_WEIGHTS.regular }}>
               {(vega * qty).toFixed(2)}
             </span>
           </div>

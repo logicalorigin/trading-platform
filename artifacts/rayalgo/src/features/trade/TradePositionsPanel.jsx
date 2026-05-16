@@ -37,12 +37,15 @@ import {
 } from "../../lib/formatters";
 import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -794,14 +797,15 @@ export const TradePositionsPanel = ({
   return (
     <div
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
-        padding: sp("8px 10px"),
+        borderRadius: dim(RADII.md),
+        padding: sp("12px 14px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(4),
+        gap: sp(8),
         overflow: "hidden",
+        fontVariantNumeric: "tabular-nums",
       }}
     >
       <div
@@ -828,8 +832,8 @@ export const TradePositionsPanel = ({
               background: "transparent",
               border: "none",
               padding: sp(0),
-              fontSize: fs(9),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               color: tab === "open" ? T.text : T.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
@@ -843,7 +847,7 @@ export const TradePositionsPanel = ({
             }}
           >
             OPEN{" "}
-            <span style={{ color: T.textMuted, fontWeight: 400 }}>
+            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {openPositions.length}
             </span>
           </button>
@@ -853,8 +857,8 @@ export const TradePositionsPanel = ({
               background: "transparent",
               border: "none",
               padding: sp(0),
-              fontSize: fs(9),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               color: tab === "history" ? T.text : T.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
@@ -868,7 +872,7 @@ export const TradePositionsPanel = ({
             }}
           >
             HIST{" "}
-            <span style={{ color: T.textMuted, fontWeight: 400 }}>
+            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {historyCount}
             </span>
           </button>
@@ -878,8 +882,8 @@ export const TradePositionsPanel = ({
               background: "transparent",
               border: "none",
               padding: sp(0),
-              fontSize: fs(9),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               color: tab === "orders" ? T.text : T.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
@@ -893,7 +897,7 @@ export const TradePositionsPanel = ({
             }}
           >
             ORDERS{" "}
-            <span style={{ color: T.textMuted, fontWeight: 400 }}>
+            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {brokerConfigured ? liveOrders.length : 0}
             </span>
           </button>
@@ -901,7 +905,7 @@ export const TradePositionsPanel = ({
         <span
           style={{
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: headerSummaryColor,
             whiteSpace: "nowrap",
@@ -919,7 +923,7 @@ export const TradePositionsPanel = ({
             padding: sp("6px 8px"),
             color: T.amber,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             lineHeight: 1.35,
           }}
         >
@@ -994,7 +998,7 @@ export const TradePositionsPanel = ({
                   gridTemplateColumns:
                     "34px 32px 78px 22px 48px 48px 44px 42px 18px",
                   gap: sp(3),
-                  fontSize: fs(7),
+                  fontSize: textSize("caption"),
                   color: T.textMuted,
                   letterSpacing: "0.08em",
                   padding: "0 4px",
@@ -1034,7 +1038,7 @@ export const TradePositionsPanel = ({
                         "34px 32px 78px 22px 48px 48px 44px 42px 18px",
                       gap: sp(3),
                       padding: sp("3px 4px"),
-                      fontSize: fs(9),
+                      fontSize: textSize("caption"),
                       fontFamily: T.sans,
                       borderBottom: `1px solid ${T.border}08`,
                       cursor: isLoadable ? "pointer" : "default",
@@ -1043,7 +1047,7 @@ export const TradePositionsPanel = ({
                       background: p._isUser ? `${T.accent}08` : "transparent",
                     }}
                     onMouseEnter={(e) => {
-                      if (isLoadable) e.currentTarget.style.background = T.bg3;
+                      if (isLoadable) e.currentTarget.style.background = T.accentHoverBg;
                     }}
                     onMouseLeave={(e) =>
                       (e.currentTarget.style.background = p._isUser
@@ -1051,14 +1055,14 @@ export const TradePositionsPanel = ({
                         : "transparent")
                     }
                   >
-                    <span style={{ fontWeight: 400, color: T.text }}>
+                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
                       {p.ticker}
                     </span>
                     <span
                       style={{
                         color: p.side === "LONG" ? T.green : T.red,
-                        fontWeight: 400,
-                        fontSize: fs(7),
+                        fontWeight: FONT_WEIGHTS.regular,
+                        fontSize: textSize("caption"),
                         padding: sp("1px 4px"),
                         background:
                           p.side === "LONG" ? `${T.green}15` : `${T.red}15`,
@@ -1070,7 +1074,7 @@ export const TradePositionsPanel = ({
                     >
                       {p.side}
                     </span>
-                    <span style={{ color: T.textSec, fontSize: fs(8) }}>
+                    <span style={{ color: T.textSec, fontSize: textSize("body") }}>
                       {p.contract}
                     </span>
                     <span style={{ color: T.textDim, textAlign: "right" }}>
@@ -1082,7 +1086,7 @@ export const TradePositionsPanel = ({
                     <span
                       style={{
                         color: T.text,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         textAlign: "right",
                       }}
                     >
@@ -1098,7 +1102,7 @@ export const TradePositionsPanel = ({
                             : p.pnl >= 0
                               ? T.green
                               : T.red,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         textAlign: "right",
                       }}
                     >
@@ -1114,9 +1118,9 @@ export const TradePositionsPanel = ({
                             : p.pct >= 0
                               ? T.green
                               : T.red,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         textAlign: "right",
-                        fontSize: fs(8),
+                        fontSize: textSize("body"),
                       }}
                     >
                       {formatSignedPercent(p.pct, 1)}
@@ -1141,9 +1145,9 @@ export const TradePositionsPanel = ({
                         background: "transparent",
                         border: `1px solid ${T.red}40`,
                         color: T.red,
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         fontFamily: T.sans,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         borderRadius: dim(2),
                         cursor: closeDisabled ? "not-allowed" : "pointer",
                         padding: sp("1px 0"),
@@ -1249,7 +1253,7 @@ export const TradePositionsPanel = ({
                   gridTemplateColumns:
                     "40px 30px minmax(0,1fr) 24px 50px 64px 42px",
                   gap: sp(3),
-                  fontSize: fs(7),
+                  fontSize: textSize("caption"),
                   color: T.textMuted,
                   letterSpacing: "0.08em",
                   padding: "0 4px",
@@ -1272,19 +1276,19 @@ export const TradePositionsPanel = ({
                       "40px 30px minmax(0,1fr) 24px 50px 64px 42px",
                     gap: sp(3),
                     padding: sp("3px 4px"),
-                    fontSize: fs(9),
+                    fontSize: textSize("caption"),
                     fontFamily: T.sans,
                     borderBottom: `1px solid ${T.border}08`,
                     alignItems: "center",
                   }}
                 >
-                  <span style={{ fontWeight: 400, color: T.text }}>
+                  <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
                     {execution.ticker}
                   </span>
                   <span
                     style={{
                       color: execution.side === "BUY" ? T.green : T.red,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                     }}
                   >
                     {execution.side}
@@ -1292,7 +1296,7 @@ export const TradePositionsPanel = ({
                   <AppTooltip content={execution.contract}><span
                     style={{
                       color: T.textSec,
-                      fontSize: fs(8),
+                      fontSize: textSize("body"),
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -1327,7 +1331,7 @@ export const TradePositionsPanel = ({
                     style={{
                       color: T.textDim,
                       textAlign: "right",
-                      fontSize: fs(7),
+                      fontSize: textSize("caption"),
                     }}
                   >
                     {formatAppTimeForPreferences(
@@ -1432,7 +1436,7 @@ export const TradePositionsPanel = ({
                   gridTemplateColumns:
                     "42px 30px 44px 22px 28px 58px 42px 24px",
                   gap: sp(3),
-                  fontSize: fs(7),
+                  fontSize: textSize("caption"),
                   color: T.textMuted,
                   letterSpacing: "0.08em",
                   padding: "0 4px",
@@ -1478,20 +1482,20 @@ export const TradePositionsPanel = ({
                         "42px 30px 44px 22px 28px 58px 42px 24px",
                       gap: sp(3),
                       padding: sp("3px 4px"),
-                      fontSize: fs(9),
+                      fontSize: textSize("caption"),
                       fontFamily: T.sans,
                       borderBottom: `1px solid ${T.border}08`,
                       cursor: isOption ? "pointer" : "default",
                       alignItems: "center",
                     }}
                   >
-                    <span style={{ fontWeight: 400, color: T.text }}>
+                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
                       {order.symbol}
                     </span>
                     <span
                       style={{
                         color: order.side === "buy" ? T.green : T.red,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                       }}
                     >
                       {order.side === "buy" ? "BUY" : "SELL"}
@@ -1509,8 +1513,8 @@ export const TradePositionsPanel = ({
                       style={{
                         color: orderStatusColor(order.status),
                         textAlign: "right",
-                        fontSize: fs(8),
-                        fontWeight: 400,
+                        fontSize: textSize("body"),
+                        fontWeight: FONT_WEIGHTS.regular,
                       }}
                     >
                       {formatEnumLabel(order.status)}
@@ -1519,7 +1523,7 @@ export const TradePositionsPanel = ({
                       style={{
                         color: T.textDim,
                         textAlign: "right",
-                        fontSize: fs(7),
+                        fontSize: textSize("caption"),
                       }}
                     >
                       {formatRelativeTimeShort(order.updatedAt)}
@@ -1540,9 +1544,9 @@ export const TradePositionsPanel = ({
                         background: "transparent",
                         border: `1px solid ${isTerminal ? T.border : T.red}40`,
                         color: isTerminal ? T.textDim : T.red,
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         fontFamily: T.sans,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         borderRadius: dim(2),
                         cursor:
                           cancelDisabled
@@ -1582,9 +1586,9 @@ export const TradePositionsPanel = ({
               border: `1px solid ${T.red}40`,
               borderRadius: dim(3),
               color: T.red,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
               opacity: gatewayActionDisabled ? 0.55 : 1,
             }}
@@ -1601,9 +1605,9 @@ export const TradePositionsPanel = ({
               border: `1px solid ${T.border}`,
               borderRadius: dim(3),
               color: T.textSec,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
               opacity: gatewayActionDisabled ? 0.55 : 1,
             }}
@@ -1620,9 +1624,9 @@ export const TradePositionsPanel = ({
               border: `1px solid ${T.amber}40`,
               borderRadius: dim(3),
               color: T.amber,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               cursor:
                 gatewayActionDisabled ||
                 (brokerConfigured && brokerAuthenticated && accountId)
@@ -1644,7 +1648,7 @@ export const TradePositionsPanel = ({
             borderTop: `1px solid ${T.border}`,
             paddingTop: sp(5),
             marginTop: "auto",
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             color: T.textDim,
             fontFamily: T.sans,
           }}

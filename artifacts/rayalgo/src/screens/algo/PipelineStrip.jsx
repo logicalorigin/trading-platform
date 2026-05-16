@@ -7,7 +7,7 @@ import {
   SlidersHorizontal,
   Target,
 } from "lucide-react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const stageColor = (status) => {
@@ -72,7 +72,7 @@ const Arrow = ({ tone, leak, narrow }) => {
         <div
           style={{
             fontFamily: T.sans,
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             color: tone,
             letterSpacing: "0.04em",
             whiteSpace: "nowrap",
@@ -120,7 +120,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
         style={{
           width: dim(narrow ? 26 : 32),
           height: dim(narrow ? 26 : 32),
-          borderRadius: "50%",
+          borderRadius: dim(RADII.pill),
           background: alarmStatus ? `${color}24` : `${color}14`,
           color,
           display: "flex",
@@ -136,7 +136,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
           style={{
             color: T.textSec,
             fontFamily: T.sans,
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             letterSpacing: "0.08em",
             textTransform: "uppercase",
             overflow: "hidden",
@@ -170,7 +170,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
               style={{
                 color,
                 fontFamily: T.sans,
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 letterSpacing: "0.04em",
                 textTransform: "uppercase",
               }}

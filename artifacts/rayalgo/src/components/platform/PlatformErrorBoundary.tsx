@@ -17,6 +17,26 @@ type PlatformErrorBoundaryProps = {
   resetKeys?: unknown[];
   minHeight?: number | string;
   onReset?: () => void;
+  reportCategory?: string;
+  reportSeverity?: "info" | "warning" | "critical";
+  buildReportRaw?: (details: {
+    label: string;
+    error: Error;
+    info: ErrorInfo;
+  }) => Record<string, unknown>;
+  onBoundaryError?: (details: {
+    label: string;
+    error: Error;
+    info: ErrorInfo;
+  }) => void;
+  fallbackRender?: (
+    props: FallbackProps & {
+      label: string;
+      normalizedError: Error;
+      minHeight?: number | string;
+      componentStack?: string | null;
+    },
+  ) => ReactNode;
   autoResetDelaysMs?: number[];
   onAutoReset?: (details: {
     label: string;
@@ -29,6 +49,11 @@ const reportPlatformBoundaryError = (
   label: string,
   error: Error,
   info: ErrorInfo,
+  options: {
+    category?: string;
+    severity?: "info" | "warning" | "critical";
+    raw?: Record<string, unknown>;
+  } = {},
 ) => {
   console.error("[rayalgo] UI boundary caught render error", {
     label,
@@ -44,11 +69,11 @@ const reportPlatformBoundaryError = (
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
-      category: "react-error-boundary",
-      severity: "warning",
+      category: options.category ?? "react-error-boundary",
+      severity: options.severity ?? "warning",
       code: label.slice(0, 96),
       message: error.message || "Render boundary error",
-      raw: {
+      raw: options.raw ?? {
         label,
         name: error.name,
         componentStack: info.componentStack,
@@ -173,9 +198,15 @@ export function PlatformErrorBoundary({
   onReset,
   autoResetDelaysMs,
   onAutoReset,
+  reportCategory,
+  reportSeverity,
+  buildReportRaw,
+  onBoundaryError,
+  fallbackRender,
 }: PlatformErrorBoundaryProps) {
   const autoResetAttemptRef = useRef(0);
   const nextResetIsAutomaticRef = useRef(false);
+  const lastErrorInfoRef = useRef<ErrorInfo | null>(null);
   const markNextResetAutomatic = () => {
     nextResetIsAutomaticRef.current = true;
   };
@@ -191,21 +222,44 @@ export function PlatformErrorBoundary({
   return (
     <ErrorBoundary
       resetKeys={resetKeys}
-      onError={(error, info) =>
-        reportPlatformBoundaryError(label, normalizeBoundaryError(error), info)
-      }
+      onError={(error, info) => {
+        const normalizedError = normalizeBoundaryError(error);
+        lastErrorInfoRef.current = info;
+        onBoundaryError?.({ label, error: normalizedError, info });
+        let raw: Record<string, unknown> | undefined;
+        try {
+          raw = buildReportRaw?.({ label, error: normalizedError, info });
+        } catch {}
+        reportPlatformBoundaryError(label, normalizedError, info, {
+          category: reportCategory,
+          severity: reportSeverity,
+          raw,
+        });
+      }}
       onReset={handleReset}
-      fallbackRender={(props) => (
-        <WidgetErrorFallback
-          {...props}
-          label={label}
-          minHeight={minHeight}
-          autoResetAttemptRef={autoResetAttemptRef}
-          autoResetDelaysMs={autoResetDelaysMs}
-          onAutoReset={onAutoReset}
-          markNextResetAutomatic={markNextResetAutomatic}
-        />
-      )}
+      fallbackRender={(props) => {
+        const normalizedError = normalizeBoundaryError(props.error);
+        if (fallbackRender) {
+          return fallbackRender({
+            ...props,
+            label,
+            normalizedError,
+            minHeight,
+            componentStack: lastErrorInfoRef.current?.componentStack ?? null,
+          });
+        }
+        return (
+          <WidgetErrorFallback
+            {...props}
+            label={label}
+            minHeight={minHeight}
+            autoResetAttemptRef={autoResetAttemptRef}
+            autoResetDelaysMs={autoResetDelaysMs}
+            onAutoReset={onAutoReset}
+            markNextResetAutomatic={markNextResetAutomatic}
+          />
+        );
+      }}
     >
       {children}
     </ErrorBoundary>

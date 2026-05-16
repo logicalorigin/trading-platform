@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, extname, join, relative } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ELEVATION,
@@ -48,6 +51,18 @@ const REQUIRED_PALETTE_KEYS = [
   "pulseAlert",
   "pulseLoss",
 ];
+
+const SRC_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx"]);
+
+const collectSourceFiles = (dir) =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return collectSourceFiles(fullPath);
+    }
+    return SOURCE_EXTENSIONS.has(extname(entry.name)) ? [fullPath] : [];
+  });
 
 test("THEMES.dark and THEMES.light expose the full warm palette", () => {
   for (const mode of ["dark", "light"]) {
@@ -120,6 +135,25 @@ test("textSize returns a positive number for known and unknown roles", () => {
     assert.ok(value >= 10, `textSize(${role}) should be at least the min 10px`);
   }
   assert.equal(typeof textSize("not-a-real-role"), "number");
+});
+
+test("files using textSize import it from the concrete uiTokens module", () => {
+  const offenders = collectSourceFiles(SRC_DIR)
+    .filter((filePath) => !filePath.endsWith("uiTokens.jsx"))
+    .filter((filePath) => !filePath.endsWith("uiTokens.test.js"))
+    .filter((filePath) => {
+      const source = readFileSync(filePath, "utf8");
+      if (!/\btextSize\s*\(/.test(source)) {
+        return false;
+      }
+      return !/import\s*\{[\s\S]*?\btextSize\b[\s\S]*?\}\s*from\s*["'][^"']*uiTokens\.jsx["']/.test(
+        source,
+      );
+    })
+    .map((filePath) => relative(SRC_DIR, filePath).replaceAll("\\", "/"))
+    .sort();
+
+  assert.deepEqual(offenders, []);
 });
 
 test("MAX_WIDTHS exposes the three documented sizes plus full-width opt-out", () => {

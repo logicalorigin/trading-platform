@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — use the **Project** primary workflow for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflow tasks; its `[workflows] runButton = "Project"` points the workflow service at the artifact parent workflow. `[agent] stack = "PNPM_WORKSPACE"` lets Replit start the API and RayAlgo artifact services.
+- Replit Run button — use the **RayAlgo web** workflow for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflow tasks; its `[workflows] runButton = "artifacts/rayalgo: web"` points the workflow service at the RayAlgo web artifact. `[agent] stack = "PNPM_WORKSPACE"` lets Replit discover that artifact.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -44,17 +44,18 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 The tracked `.replit` intentionally has no root `run = [...]` line and no
 repo-defined `[[workflows.workflow]]` tasks. It does keep
-`[workflows] runButton = "Project"` so Replit's primary Run button points at
-the existing **Project** parent workflow. Replit may still show its generated
+`[workflows] runButton = "artifacts/rayalgo: web"` so Replit's primary Run
+button points at the RayAlgo web workflow. Replit may still show its generated
 **Configure Your App** toolchain run option in some dropdowns; do not use that
 generated option for app startup.
 
-Replit's `PNPM_WORKSPACE` artifact app model should start the app services from
-each artifact's `.replit-artifact/artifact.toml` `[services.development] run`
-command:
+Replit's `PNPM_WORKSPACE` artifact app model should start the app from the
+RayAlgo artifact's `.replit-artifact/artifact.toml` `[services.development] run`
+command. That command runs `pnpm --filter @workspace/rayalgo run dev`, whose
+supervisor starts both dev servers:
 
 - API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
-- RayAlgo Platform — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
+- RayAlgo Platform — `pnpm --filter @workspace/rayalgo run dev:web` on port `18747`.
 
 The API dev script does not start Postgres. It uses Replit's managed Helium
 database by default, even if an old workspace-local socket `DATABASE_URL` is
@@ -66,25 +67,23 @@ already be running from app bring-up before the launcher is used. If that route
 is unreachable after pressing **Run Replit App**, treat it as a Replit app
 startup issue, not a reason to add a repo workflow or root runner.
 
-The artifact TOML files are the development and deployment service metadata
+The RayAlgo artifact TOML is the development and deployment service metadata
 source of truth.
 
-The **Project** workflow in the Replit Workflow tab is only the parent operator
-for those artifact services. Do not add repo-tracked `[[workflows.workflow]]`
-tasks for Project, API Server, RayAlgo Platform, Postgres, or IBKR Bridge.
+Do not add repo-tracked `[[workflows.workflow]]` tasks for Project, API Server,
+RayAlgo Platform, Postgres, or IBKR Bridge.
 
-Both artifact dev scripts call `scripts/reap-dev-port.mjs` before binding their
-pinned port. Do not add a third root runner that starts both services, because
-it competes with Replit's artifact service owners and can stop/reap the
-already-running API and web services.
+The RayAlgo dev supervisor owns both child services. Do not add a third root
+runner or a separate API artifact service, because competing owners for ports
+`8080` and `18747` are what caused prior workflow/reaper conflicts.
 
 Do not add a separate Replit `IBKR Bridge` workflow for TWS mode. The bridge
 runs beside IB Gateway/TWS on the Windows machine and is exposed through the
 activation helper. A generated or stale workflow in the Replit UI is not part
 of the repo config and must not be linked to app startup.
 
-Publishing note: the API artifact production build runs
-`pnpm run build:api-deployment`, which builds the API, builds
+Publishing note: the RayAlgo production build runs
+`pnpm run build:rayalgo-app`, which builds the web app, builds the API, builds
 `@workspace/ibkr-bridge`, and packages
 `artifacts/ibgateway-bridge-windows-current.tar.gz`. The API serves that archive
 from `/api/ibkr/bridge/bundle.tar.gz` so the published app can launch the
@@ -212,25 +211,23 @@ middleware ahead of `pinoHttp`, because `pino-http@10.5.0` does not
 expose `res.responseTime` to `customLogLevel` (and `autoLogging.ignore`
 fires at request start, before status/duration are known).
 
-The API artifact pins dev logging to warn-level via the `LOG_LEVEL=warn`
-prefix on the `[services.development] run` line in
-`artifacts/api-server/.replit-artifact/artifact.toml`
-(`LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`).
+The RayAlgo dev supervisor pins API dev logging to warn-level by starting the
+API child with `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`.
 
 To temporarily restore verbose per-request logging while debugging, drop
-the `LOG_LEVEL=warn` prefix in that artifact.toml and restart the
-API artifact service. Production is unaffected: it runs
-raw JSON pino without `pino-pretty` and the `[services.production.run.env]`
-block does not set `LOG_LEVEL`. Bridge verbosity is controlled by the Windows
-activation helper environment, not by a Replit workflow.
+that env override in `artifacts/rayalgo/scripts/runDevApp.mjs` and restart the
+RayAlgo web workflow. Production is unaffected: it runs raw JSON pino without
+`pino-pretty` and the RayAlgo artifact production env does not set `LOG_LEVEL`.
+Bridge verbosity is controlled by the Windows activation helper environment,
+not by a Replit workflow.
 
-## Dev servers: single instance per artifact service
+## Dev servers: single owner for API and web
 
-Each Replit artifact service should own exactly one listener on its pinned
-dev port: API on `8080` and rayalgo on `18747`. Older restarts could leave an
-orphan node process holding the port, causing the next API start to fail with
-`EADDRINUSE` or vite to bind a fallback port the preview proxy never used.
-Three fixes prevent the recurrence:
+The RayAlgo web workflow owns both dev listeners: API on `8080` and rayalgo on
+`18747`. Older multi-workflow restarts could leave an orphan node process
+holding the port, causing the next API start to fail with `EADDRINUSE` or vite
+to bind a fallback port the preview proxy never used. Three fixes prevent the
+recurrence:
 
 1. **Shared port reaper** in `scripts/reap-dev-port.mjs`, run by both
    `artifacts/api-server/package.json` and `artifacts/rayalgo/package.json`
@@ -239,14 +236,12 @@ Three fixes prevent the recurrence:
 2. **`strictPort: true`** on both `server` and `preview` blocks of
    `artifacts/rayalgo/vite.config.ts` so vite exits with an error instead of
    silently falling back to the next port.
-3. **`exec` in the dev scripts** so SIGTERM from an artifact service restart propagates
-   through the `pnpm` wrapper to the actual node process. Applied to both
-   `artifacts/rayalgo/package.json` (`exec vite ...`) and
-   `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
-   `dev` and `start`).
+3. **Process-group supervision** in `artifacts/rayalgo/scripts/runDevApp.mjs`,
+   plus `exec` in the child dev scripts, so SIGTERM from the RayAlgo workflow
+   stops both API and Vite.
 
 If a service restart still fails with `EADDRINUSE`, run the shared reaper for
-the conflicting pinned port and restart the affected artifact service:
+the conflicting pinned port and restart the RayAlgo web workflow:
 
 ```bash
 PORT=8080 node scripts/reap-dev-port.mjs    # API
@@ -328,10 +323,10 @@ The workspace-local Postgres scripts remain only as fallback/diagnostic tools:
 
 Repo rule: `.replit` intentionally has no repo-defined
 `[[workflows.workflow]]` tasks and no root `run = [...]` command. Keep
-`[workflows] runButton = "Project"` so the Replit primary Run button targets
-the Project parent workflow. Do not add a root workflow coordinator to hide or
-rename generated **Configure Your App**; that would take startup ownership away
-from the artifacts.
+`[workflows] runButton = "artifacts/rayalgo: web"` so the Replit primary Run
+button targets the single RayAlgo web workflow. Do not add a root workflow
+coordinator to hide or rename generated **Configure Your App**; that would take
+startup ownership away from the RayAlgo artifact.
 `pnpm run audit:replit-startup` guards these startup invariants.
 
 ## `reap-dev-port.mjs` is cgroup-aware
@@ -374,6 +369,14 @@ Evidence (audited 2026-05-11): of the last three commits touching `.replit`, two
 - For rayalgo: `pnpm --filter @workspace/rayalgo run typecheck` plus the live Vite HMR; do not restart the rayalgo workflow to "see" a change unless you edited `vite.config.ts` or `package.json`.
 
 If a test genuinely requires a config change, batch all the config edits into a single save and warn the user beforehand that one workspace reload is about to happen.
+
+For routine work, keep the watched startup files read-only:
+
+- `pnpm run replit:config:lock` — chmods `.replit`, `replit.nix`, and the
+  artifact TOMLs to read-only.
+- `pnpm run replit:config:unlock` — makes the same files writable for an
+  intentional startup-config maintenance window. Re-lock immediately after the
+  batched edit and run `pnpm run audit:replit-startup`.
 
 ## Bloomberg live dock — Chrome unresponsiveness fix (2026-04-24)
 

@@ -11,6 +11,10 @@ function createNoopLogger() {
   };
 }
 
+async function emptyMaintenance() {
+  return { closedCount: 0, skippedCount: 0, dueCount: 0, orphanCount: 0 };
+}
+
 function deployment(
   overrides: Partial<AlgoDeployment> = {},
 ): AlgoDeployment {
@@ -48,6 +52,7 @@ test("signal-options worker start is idempotent and stop clears scheduled wakeup
       return [];
     },
     scanDeployment: async () => {},
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
     setTimer: (() => 1) as never,
     clearTimer: (() => {
@@ -67,12 +72,17 @@ test("signal-options worker start is idempotent and stop clears scheduled wakeup
 
 test("signal-options worker skips a tick when advisory lock is unavailable", async () => {
   let listCalls = 0;
+  let maintenanceCalls = 0;
   const worker = createSignalOptionsWorker({
     listDeployments: async () => {
       listCalls += 1;
       return [deployment()];
     },
     scanDeployment: async () => {},
+    runMaintenance: async () => {
+      maintenanceCalls += 1;
+      return emptyMaintenance();
+    },
     acquireTickLock: async () => null,
     logger: createNoopLogger(),
   });
@@ -80,6 +90,36 @@ test("signal-options worker skips a tick when advisory lock is unavailable", asy
   await worker.runOnce();
 
   assert.equal(listCalls, 0);
+  assert.equal(maintenanceCalls, 0);
+});
+
+test("signal-options worker runs shadow option maintenance without deployments", async () => {
+  let maintenanceCalls = 0;
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [],
+    scanDeployment: async () => {},
+    runMaintenance: async () => {
+      maintenanceCalls += 1;
+      return { closedCount: 2, skippedCount: 1, dueCount: 3, orphanCount: 2 };
+    },
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  assert.equal(maintenanceCalls, 1);
+  assert.deepEqual(worker.getRuntimeSnapshot().maintenance, {
+    runCount: 1,
+    totalClosedCount: 2,
+    lastRunAt: worker.getRuntimeSnapshot().maintenance.lastRunAt,
+    lastError: null,
+    lastClosedCount: 2,
+    lastSkippedCount: 1,
+    lastDueCount: 3,
+    lastOrphanCount: 2,
+  });
+  assert.ok(worker.getRuntimeSnapshot().maintenance.lastRunAt);
 });
 
 test("signal-options worker backs off transient database lock failures", async () => {
@@ -89,6 +129,7 @@ test("signal-options worker backs off transient database lock failures", async (
   const worker = createSignalOptionsWorker({
     listDeployments: async () => [deployment()],
     scanDeployment: async () => {},
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => {
       lockCalls += 1;
       throw new Error("timeout exceeded when trying to connect");
@@ -125,6 +166,7 @@ test("signal-options worker interval-gates scans and rescans after config change
     scanDeployment: async () => {
       scanCalls += 1;
     },
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
     now: () => now,
     logger: createNoopLogger(),
@@ -181,6 +223,7 @@ test("signal-options worker records signal freshness from successful scans", asy
         { status: "open", actionStatus: "shadow_filled" },
       ],
     }),
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
     logger: createNoopLogger(),
   });
@@ -207,6 +250,7 @@ test("signal-options worker backs off failed deployment scans", async () => {
       scanCalls += 1;
       throw new Error("Gateway unavailable");
     },
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
     now: () => now,
     logger: createNoopLogger(),
@@ -233,6 +277,7 @@ test("signal-options worker resets consecutive failures after a successful scan"
         throw new Error("Gateway unavailable");
       }
     },
+    runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
     now: () => now,
     logger: createNoopLogger(),

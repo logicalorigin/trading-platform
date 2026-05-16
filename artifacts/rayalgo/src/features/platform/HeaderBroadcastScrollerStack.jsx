@@ -2,7 +2,7 @@ import { RadioTower, Settings } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { useViewport } from "../../lib/responsive";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatOptionContractLabel,
   formatQuotePrice,
@@ -78,18 +78,18 @@ const HeaderBroadcastSegment = ({
         ...motionVars({ accent: tone }),
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(compact ? 5 : 7),
-        height: dim(compact ? 22 : 24),
-        minHeight: dim(compact ? 22 : 24),
-        maxWidth: dim(compact ? 260 : 360),
-        padding: sp(compact ? "0px 10px" : "0px 12px"),
+        gap: sp(compact ? 6 : 8),
+        height: dim(compact ? 28 : 32),
+        minHeight: dim(compact ? 28 : 32),
+        maxWidth: dim(compact ? 280 : 380),
+        padding: sp(compact ? "0px 12px" : "0px 14px"),
         border: "none",
-        borderRadius: dim(999),
+        borderRadius: dim(RADII.pill),
         background: `${tone}14`,
         color: T.textSec,
         fontFamily: T.sans,
-        fontSize: fs(compact ? 10 : 11),
-        fontWeight: 500,
+        fontSize: textSize(compact ? "body" : "paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -126,7 +126,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = fals
       title={title}
       compact={compact}
     >
-      <span style={{ color: tone, fontWeight: 400 }}>{item.directionLabel}</span>
+      <span style={{ color: tone, fontWeight: FONT_WEIGHTS.regular }}>{item.directionLabel}</span>
       <span style={{ color: T.text }}>{item.symbol}</span>
       {item.timeframe ? (
         <span style={{ color: T.textDim, fontFamily: T.code }}>
@@ -210,8 +210,8 @@ const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
           overflowY: "auto",
           background: T.bg1,
           border: "none",
-          borderRadius: dim(10),
-          boxShadow: "0 8px 24px rgba(25, 23, 26, 0.14), 0 2px 6px rgba(25, 23, 26, 0.06)",
+          borderRadius: dim(RADII.md),
+          boxShadow: ELEVATION.lg,
           color: T.text,
           fontFamily: T.sans,
         }}
@@ -234,8 +234,8 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
       style={{
         color: T.textSec,
         fontFamily: T.code,
-        fontSize: fs(9),
-        fontWeight: 400,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
       }}
     >
       {label}
@@ -244,8 +244,8 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
       style={{
         color: tone,
         fontFamily: T.code,
-        fontSize: fs(8),
-        fontWeight: 400,
+        fontSize: textSize("body"),
+        fontWeight: FONT_WEIGHTS.regular,
         whiteSpace: "nowrap",
       }}
     >
@@ -264,8 +264,8 @@ const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
       minHeight: dim(20),
       color: T.textDim,
       fontFamily: T.code,
-      fontSize: fs(8),
-      fontWeight: 400,
+      fontSize: textSize("body"),
+      fontWeight: FONT_WEIGHTS.regular,
     }}
   >
     <span>{label}</span>
@@ -276,13 +276,14 @@ const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
 const HeaderLaneSectionLabel = ({ children }) => (
   <div
     style={{
-      marginTop: sp(8),
-      marginBottom: sp(5),
+      marginTop: sp(10),
+      marginBottom: sp(6),
       color: T.textMuted,
-      fontFamily: T.code,
-      fontSize: fs(7),
-      fontWeight: 400,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      fontWeight: FONT_WEIGHTS.medium,
       letterSpacing: "0.08em",
+      textTransform: "uppercase",
     }}
   >
     {children}
@@ -318,8 +319,8 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
             color: active ? T.accent : T.textDim,
             cursor: "pointer",
             fontFamily: T.code,
-            fontSize: fs(8),
-            fontWeight: 400,
+            fontSize: textSize("body"),
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {config.label}
@@ -357,8 +358,8 @@ const HeaderLaneToggleButton = ({
       color: disabled ? T.textMuted : active ? tone : T.textSec,
       cursor: disabled ? "default" : "pointer",
       fontFamily: T.sans,
-      fontSize: fs(9),
-      fontWeight: 400,
+      fontSize: textSize("caption"),
+      fontWeight: FONT_WEIGHTS.regular,
     }}
   >
     <RadioTower size={dim(12)} strokeWidth={2.3} />
@@ -368,14 +369,16 @@ const HeaderLaneToggleButton = ({
 
 const headerLaneControlInputStyle = {
   width: "100%",
-  minHeight: dim(23),
+  minHeight: dim(30),
   background: T.bg1,
   border: `1px solid ${T.border}`,
-  color: T.textSec,
-  fontFamily: T.code,
-  fontSize: fs(8),
-  fontWeight: 400,
-  padding: sp("3px 5px"),
+  borderRadius: dim(RADII.sm),
+  color: T.text,
+  fontFamily: T.sans,
+  fontSize: textSize("body"),
+  fontWeight: FONT_WEIGHTS.medium,
+  fontVariantNumeric: "tabular-nums",
+  padding: sp("6px 8px"),
   outline: "none",
 };
 
@@ -389,8 +392,8 @@ const HeaderLaneControlRow = ({ label, children }) => (
       minHeight: dim(25),
       color: T.textDim,
       fontFamily: T.code,
-      fontSize: fs(8),
-      fontWeight: 400,
+      fontSize: textSize("body"),
+      fontWeight: FONT_WEIGHTS.regular,
     }}
   >
     <span>{label}</span>
@@ -462,6 +465,7 @@ const HeaderBroadcastLane = ({
   label,
   items,
   emptyLabel,
+  emptyTone = null,
   testId,
   action,
   children,
@@ -480,10 +484,10 @@ const HeaderBroadcastLane = ({
       style={{
         display: "grid",
         gridTemplateColumns: compactSettings
-          ? `${dim(32)}px minmax(0, 1fr) auto`
+          ? `${dim(26)}px minmax(0, 1fr) auto`
           : "72px minmax(0, 1fr) auto",
         alignItems: "center",
-        minHeight: dim(compactSettings ? 23 : 25),
+        minHeight: dim(compactSettings ? 18 : 22),
         minWidth: 0,
         borderBottom: `1px solid ${T.border}`,
       }}
@@ -513,12 +517,12 @@ const HeaderBroadcastLane = ({
             justifyContent: "center",
             padding: sp("0px 8px"),
             border: "none",
-            background: settingsOpen ? T.bg2 : "transparent",
+            background: settingsOpen ? `${T.accent}14` : "transparent",
             color: settingsOpen ? T.accent : T.textDim,
             cursor: "pointer",
             fontFamily: T.code,
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             whiteSpace: "nowrap",
           }}
         >
@@ -570,18 +574,23 @@ const HeaderBroadcastLane = ({
         ) : (
           <span
             role="status"
+            aria-label={emptyLabel}
+            title={emptyLabel}
             style={{
               display: "inline-flex",
               alignItems: "center",
-              height: dim(compactSettings ? 20 : 22),
-              color: T.textMuted,
-              fontFamily: T.code,
-              fontSize: fs(compactSettings ? 9 : 10),
-              fontWeight: 400,
-              whiteSpace: "nowrap",
+              height: dim(compactSettings ? 16 : 22),
+              paddingLeft: sp(4),
             }}
           >
-            {emptyLabel}
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 999,
+                background: emptyTone || T.textMuted,
+              }}
+            />
           </span>
         )}
       </div>
@@ -1041,7 +1050,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             ? "Flow Scan Idle"
             : "Flow Scan Off"}
       </HeaderLaneToggleButton>
-      <HeaderLaneSectionLabel>TAPE FILTERS</HeaderLaneSectionLabel>
+      <HeaderLaneSectionLabel>Tape Filters</HeaderLaneSectionLabel>
       <HeaderLaneTextControl
         label="Include"
         value={flowTapeFilters.includeQuery}
@@ -1089,7 +1098,7 @@ export const HeaderBroadcastScrollerStack = memo(({
           })),
         ]}
       />
-      <HeaderLaneSectionLabel>SCANNER</HeaderLaneSectionLabel>
+      <HeaderLaneSectionLabel>Scanner</HeaderLaneSectionLabel>
       <HeaderLaneInfoRow
         label="Source"
         value="All + universe"
@@ -1209,6 +1218,7 @@ export const HeaderBroadcastScrollerStack = memo(({
         label="SIGNALS"
         items={signalItems}
         emptyLabel={signalEmptyLabel}
+        emptyTone={signalScanTone}
         testId="header-signal-tape"
         durationSeconds={speedDurations.signalDurationSeconds}
         settingsOpen={openSettingsLane === "signals"}
@@ -1257,6 +1267,7 @@ export const HeaderBroadcastScrollerStack = memo(({
         label="FLOW"
         items={unusualItems}
         emptyLabel={unusualEmptyLabel}
+        emptyTone={flowScanTone}
         testId="header-unusual-tape"
         durationSeconds={speedDurations.unusualDurationSeconds}
         settingsOpen={openSettingsLane === "unusual"}

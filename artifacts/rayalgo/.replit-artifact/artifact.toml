@@ -18,13 +18,23 @@ localPort = 18747
 run = "pnpm --filter @workspace/rayalgo run dev"
 
 [services.production]
-build = [ "pnpm", "--filter", "@workspace/rayalgo", "run", "build" ]
-publicDir = "artifacts/rayalgo/dist/public"
-serve = "static"
 
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
+[services.production.build]
+args = ["pnpm", "run", "build:rayalgo-app"]
+
+[services.production.build.env]
+NODE_ENV = "production"
+
+[services.production.run]
+args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+
+[services.production.run.env]
+PORT = "18747"
+NODE_ENV = "production"
+RAYALGO_SERVE_WEB = "1"
+
+[services.production.health.startup]
+path = "/api/healthz"
 
 [services.env]
 PORT = "18747"

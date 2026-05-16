@@ -8,6 +8,7 @@ import {
   listEnabledSignalOptionsDeployments,
   runSignalOptionsShadowScan,
 } from "./signal-options-automation";
+import { runShadowOptionMaintenance } from "./shadow-account";
 import {
   getSignalOptionsWorkerSnapshot,
   registerSignalOptionsWorkerSnapshotGetter,
@@ -27,6 +28,7 @@ type WorkerDependencies = {
     forceEvaluate: boolean;
     source: "worker";
   }) => Promise<unknown>;
+  runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
@@ -56,6 +58,17 @@ type DeploymentRuntime = {
   lastOldestSignalBarAt: string | null;
   lastCandidateCount: number;
   lastBlockedCandidateCount: number;
+};
+
+type MaintenanceRuntime = {
+  runCount: number;
+  totalClosedCount: number;
+  lastRunAt: string | null;
+  lastError: string | null;
+  lastClosedCount: number;
+  lastSkippedCount: number;
+  lastDueCount: number;
+  lastOrphanCount: number;
 };
 
 const activeDeploymentIds = new Set<string>();
@@ -125,6 +138,16 @@ function summarizeScanResult(result: unknown) {
   };
 }
 
+function summarizeMaintenanceResult(result: unknown) {
+  const record = asRecord(result);
+  return {
+    closedCount: Number(record["closedCount"]) || 0,
+    skippedCount: Number(record["skippedCount"]) || 0,
+    dueCount: Number(record["dueCount"]) || 0,
+    orphanCount: Number(record["orphanCount"]) || 0,
+  };
+}
+
 function positiveInteger(value: unknown, fallback: number, min: number, max: number) {
   const resolved = Number(value);
   return Number.isFinite(resolved)
@@ -187,6 +210,7 @@ function defaultDependencies(
     listDeployments:
       options.listDeployments ?? listEnabledSignalOptionsDeployments,
     scanDeployment: options.scanDeployment ?? runSignalOptionsShadowScan,
+    runMaintenance: options.runMaintenance ?? runShadowOptionMaintenance,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
@@ -262,6 +286,16 @@ export function createSignalOptionsWorker(
     3_600_000,
   );
   const deploymentRuntime = new Map<string, DeploymentRuntime>();
+  const maintenanceRuntime: MaintenanceRuntime = {
+    runCount: 0,
+    totalClosedCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    lastClosedCount: 0,
+    lastSkippedCount: 0,
+    lastDueCount: 0,
+    lastOrphanCount: 0,
+  };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
   let tickRunning = false;
@@ -289,6 +323,31 @@ export function createSignalOptionsWorker(
       const nowMs = now.getTime();
       const deployments = await dependencies.listDeployments();
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
+
+      try {
+        const maintenance = summarizeMaintenanceResult(
+          await dependencies.runMaintenance({ source: "worker" }),
+        );
+        maintenanceRuntime.runCount += 1;
+        maintenanceRuntime.totalClosedCount += maintenance.closedCount;
+        maintenanceRuntime.lastRunAt = dependencies.now().toISOString();
+        maintenanceRuntime.lastError = null;
+        maintenanceRuntime.lastClosedCount = maintenance.closedCount;
+        maintenanceRuntime.lastSkippedCount = maintenance.skippedCount;
+        maintenanceRuntime.lastDueCount = maintenance.dueCount;
+        maintenanceRuntime.lastOrphanCount = maintenance.orphanCount;
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Signal-options shadow maintenance failed.";
+        maintenanceRuntime.lastRunAt = dependencies.now().toISOString();
+        maintenanceRuntime.lastError = message;
+        dependencies.logger.warn(
+          { err: error },
+          "Signal-options shadow maintenance failed",
+        );
+      }
 
       Array.from(deploymentRuntime.keys()).forEach((deploymentId) => {
         if (!enabledIds.has(deploymentId)) {
@@ -426,6 +485,7 @@ export function createSignalOptionsWorker(
         tickRunning,
         deploymentCount: deploymentRuntime.size,
         activeDeploymentCount: activeDeploymentIds.size,
+        maintenance: { ...maintenanceRuntime },
         deployments,
       };
     },

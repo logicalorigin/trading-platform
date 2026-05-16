@@ -47,17 +47,72 @@ import {
 } from "../../lib/formatters";
 import { useValueFlash } from "../../lib/motion";
 import { buildSignalOptionsDeviation } from "./automationDeviationModel";
+import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
-import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+  textSize,
+} from "../../lib/uiTokens.jsx";
+import {
+  DataUnavailableState,
+  MetricChip,
+  SeverityRail,
+} from "../../components/platform/primitives.jsx";
 
 import { PayoffDiagram } from "./PayoffDiagram.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+
+const readinessToneColor = (tone) =>
+  tone === "good" ? T.green : tone === "warn" ? T.amber : tone === "bad" ? T.red : T.textDim;
+
+const TicketReadinessStrip = ({ model }) => {
+  const tone = readinessToneColor(model?.tone);
+  return (
+    <div
+      data-testid="trade-ticket-readiness-strip"
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        gap: sp(6),
+        minWidth: 0,
+        border: `1px solid ${tone}38`,
+        background: `${tone}10`,
+        padding: sp("6px 7px"),
+      }}
+    >
+      <SeverityRail tone={tone} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(5),
+          minWidth: 0,
+          flexWrap: "wrap",
+        }}
+      >
+        <MetricChip label="Route" value={model?.label || "Unknown"} tone={tone} />
+        <span
+          style={{
+            minWidth: 0,
+            color: T.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {model?.detail || "waiting"}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export const TradeOrderTicket = ({
   slot,
@@ -458,8 +513,8 @@ export const TradeOrderTicket = ({
               borderRadius: dim(3),
               padding: sp("6px 0"),
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -483,15 +538,15 @@ export const TradeOrderTicket = ({
       >
         <span
           style={{
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             color: selectedExecutionColor,
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {selectedExecutionLabel}
         </span>
-        <span style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
           {selectedExecutionAccount}
         </span>
       </div>
@@ -517,8 +572,8 @@ export const TradeOrderTicket = ({
                 borderRadius: dim(3),
                 padding: sp("5px 0"),
                 fontFamily: T.sans,
-                fontSize: fs(8),
-                fontWeight: 400,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.regular,
                 cursor: "pointer",
                 letterSpacing: "0.04em",
               }}
@@ -535,7 +590,7 @@ export const TradeOrderTicket = ({
             border: `1px solid ${T.amber}35`,
             borderRadius: dim(4),
             padding: sp("6px 8px"),
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             color: T.amber,
             fontFamily: T.sans,
             lineHeight: 1.35,
@@ -576,12 +631,12 @@ export const TradeOrderTicket = ({
             color: T.text,
             fontFamily: T.sans,
             fontSize: fs(11),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
           {ticketInstrumentLabel}
         </span>
-        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8) }}>
+        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
           {ticketInstrumentDetail}
         </span>
       </div>
@@ -614,8 +669,8 @@ export const TradeOrderTicket = ({
               borderRadius: dim(3),
               padding: sp("6px 0"),
               fontFamily: T.sans,
-              fontSize: fs(9),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
             }}
           >
@@ -642,8 +697,8 @@ export const TradeOrderTicket = ({
               borderRadius: dim(3),
               padding: sp("5px 0"),
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
             }}
           >
@@ -661,14 +716,16 @@ export const TradeOrderTicket = ({
         <label
           style={{
             display: "grid",
-            gap: sp(3),
+            gap: sp(5),
             color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(7),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
           }}
         >
-          {ticketIsShares ? "SHARES" : "CONTRACTS"}
+          {ticketIsShares ? "Shares" : "Contracts"}
           <input
             type="number"
             min="1"
@@ -676,13 +733,15 @@ export const TradeOrderTicket = ({
             onChange={(event) => setQty(event.target.value)}
             style={{
               width: "100%",
-              background: T.bg3,
+              background: T.bg1,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.sm),
               color: T.text,
               fontFamily: T.sans,
-              fontSize: fs(10),
-              padding: sp("5px 6px"),
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+              padding: sp("8px 10px"),
             }}
           />
         </label>
@@ -692,11 +751,11 @@ export const TradeOrderTicket = ({
             gap: sp(3),
             color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(7),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
           }}
         >
-          LIMIT
+          Limit
           <input
             type="number"
             step="0.01"
@@ -705,29 +764,33 @@ export const TradeOrderTicket = ({
             onChange={(event) => setLimitPrice(event.target.value)}
             style={{
               width: "100%",
-              background:
-                orderType === "MKT" || orderType === "STP" ? T.bg1 : T.bg3,
+              background: T.bg1,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.sm),
               color:
-                orderType === "MKT" || orderType === "STP" ? T.textDim : T.text,
+                orderType === "MKT" || orderType === "STP" ? T.textMuted : T.text,
               fontFamily: T.sans,
-              fontSize: fs(10),
-              padding: sp("5px 6px"),
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+              padding: sp("8px 10px"),
+              opacity: orderType === "MKT" || orderType === "STP" ? 0.5 : 1,
             }}
           />
         </label>
         <label
           style={{
             display: "grid",
-            gap: sp(3),
+            gap: sp(5),
             color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(7),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
           }}
         >
-          STOP
+          Stop
           <input
             type="number"
             step="0.01"
@@ -736,17 +799,20 @@ export const TradeOrderTicket = ({
             onChange={(event) => setStopPrice(event.target.value)}
             style={{
               width: "100%",
-              background:
-                orderType === "STP" || orderType === "STP_LMT" ? T.bg3 : T.bg1,
+              background: T.bg1,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.sm),
               color:
                 orderType === "STP" || orderType === "STP_LMT"
                   ? T.text
-                  : T.textDim,
+                  : T.textMuted,
               fontFamily: T.sans,
-              fontSize: fs(10),
-              padding: sp("5px 6px"),
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+              padding: sp("8px 10px"),
+              opacity:
+                orderType === "STP" || orderType === "STP_LMT" ? 1 : 0.5,
             }}
           />
         </label>
@@ -765,14 +831,16 @@ export const TradeOrderTicket = ({
             onClick={() => setTif(value)}
             style={{
               border: `1px solid ${tif === value ? T.accent : T.border}`,
-              background: tif === value ? T.accentDim : T.bg1,
-              color: tif === value ? T.accent : T.textDim,
-              borderRadius: dim(3),
-              padding: sp("4px 0"),
+              background: tif === value ? `${T.accent}14` : T.bg1,
+              color: tif === value ? T.accent : T.textSec,
+              borderRadius: dim(RADII.sm),
+              padding: sp("8px 0"),
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.08em",
               cursor: "pointer",
+              transition: "border-color 0.12s ease, background 0.12s ease",
             }}
           >
             {value}
@@ -787,32 +855,34 @@ export const TradeOrderTicket = ({
           disabled
           style={{
             border: `1px solid ${T.border}`,
-            background: T.bg2,
-            color: T.textDim,
-            borderRadius: dim(4),
-            padding: sp("7px 0"),
+            background: T.bg1,
+            color: T.textMuted,
+            borderRadius: dim(RADII.sm),
+            padding: sp("10px 0"),
             fontFamily: T.sans,
-            fontSize: fs(10),
-            fontWeight: 400,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "-0.005em",
           }}
         >
-          PREVIEW LOCKED
+          Preview Locked
         </button>
         <button
           type="button"
           disabled
           style={{
-            border: "none",
-            background: T.bg3,
-            color: T.textDim,
-            borderRadius: dim(4),
-            padding: sp("7px 0"),
+            border: `1px solid ${T.border}`,
+            background: T.bg1,
+            color: T.textMuted,
+            borderRadius: dim(RADII.sm),
+            padding: sp("10px 0"),
             fontFamily: T.sans,
-            fontSize: fs(10),
-            fontWeight: 400,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "-0.005em",
           }}
         >
-          QUOTE REQUIRED
+          Quote Required
         </button>
       </div>
     </div>
@@ -896,6 +966,22 @@ export const TradeOrderTicket = ({
     setLiveConfirmError(null);
     setLiveConfirmState(null);
   };
+  const lockedReadinessModel = buildTicketReadinessModel({
+    executionMode,
+    gatewayTradingReady,
+    brokerConfigured,
+    brokerAuthenticated,
+    accountId,
+    ticketInstrumentReady,
+    quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
+    spreadPct,
+    previewPending:
+      previewOrderMutation.isPending || previewShadowOrderMutation.isPending,
+    submitPending:
+      placeOrderMutation.isPending ||
+      placeShadowOrderMutation.isPending ||
+      submitOrdersMutation.isPending,
+  });
   const runLiveConfirm = async () => {
     if (!liveConfirmState?.onConfirm) {
       return;
@@ -918,19 +1004,19 @@ export const TradeOrderTicket = ({
       <div
         data-testid="trade-order-ticket"
         style={{
-          background: T.bg2,
+          background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp("8px 10px"),
+          borderRadius: dim(RADII.md),
+          padding: sp("16px 18px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(4),
+          gap: sp(10),
         }}
       >
         <div
           style={{
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.08em",
@@ -942,6 +1028,7 @@ export const TradeOrderTicket = ({
         </div>
         {renderTicketAssetModeControls()}
         {renderExecutionModeControls()}
+        <TicketReadinessStrip model={lockedReadinessModel} />
         {renderLockedTicketControls()}
         <DataUnavailableState
           title="No live contract quote"
@@ -1649,6 +1736,21 @@ export const TradeOrderTicket = ({
     ? placeShadowOrderMutation.isPending
     : isSubmittingOrder;
   const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
+  const ticketReadinessModel = buildTicketReadinessModel({
+    executionMode,
+    gatewayTradingReady,
+    brokerConfigured,
+    brokerAuthenticated,
+    accountId,
+    ticketInstrumentReady,
+    quoteReady: ticketIsShares ? equityQuoteReady : optionQuoteReady,
+    spreadPct,
+    previewPending: previewIsPending,
+    submitPending: primarySubmitPending,
+    sellCallBlocked: sellCallSubmitBlocked,
+    shadowExposureWarning: shadowAddExposureWarningActive,
+    automationDeviationCount: liveDeviationFields.length,
+  });
   const primarySubmitDisabled = executionIsShadow
     ? placeShadowOrderMutation.isPending ||
       automationAlreadyShadowFilled ||
@@ -1728,20 +1830,20 @@ export const TradeOrderTicket = ({
         data-testid="trade-order-ticket"
         className="ra-panel-enter"
         style={{
-          background: T.bg2,
+          background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp("8px 10px"),
+          borderRadius: dim(RADII.md),
+          padding: sp("16px 18px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(4),
+          gap: sp(12),
           minWidth: 0,
         }}
       >
       <div
         style={{
-          fontSize: fs(9),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           color: T.textSec,
           fontFamily: T.sans,
           letterSpacing: "0.08em",
@@ -1781,7 +1883,7 @@ export const TradeOrderTicket = ({
                   color: T.text,
                   fontFamily: T.sans,
                   fontSize: fs(10),
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 Signal-options plan
@@ -1790,7 +1892,7 @@ export const TradeOrderTicket = ({
                 style={{
                   color: automationAlreadyShadowFilled ? T.green : T.textDim,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   marginTop: sp(2),
                 }}
               >
@@ -1810,8 +1912,8 @@ export const TradeOrderTicket = ({
                 background: T.bg0,
                 color: T.cyan,
                 fontFamily: T.sans,
-                fontSize: fs(8),
-                fontWeight: 400,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.regular,
                 padding: sp("5px 7px"),
                 cursor: "pointer",
               }}
@@ -1841,8 +1943,8 @@ export const TradeOrderTicket = ({
                   style={{
                     color: row.changed ? T.amber : T.textMuted,
                     fontFamily: T.sans,
-                    fontSize: fs(7),
-                    fontWeight: 400,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   {row.label.toUpperCase()}
@@ -1851,7 +1953,7 @@ export const TradeOrderTicket = ({
                   style={{
                     color: T.text,
                     fontFamily: T.sans,
-                    fontSize: fs(8),
+                    fontSize: textSize("body"),
                     marginTop: sp(2),
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -1881,7 +1983,7 @@ export const TradeOrderTicket = ({
               color: T.amber,
               fontFamily: T.sans,
               fontSize: fs(10),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             Shadow exposure exists
@@ -1890,7 +1992,7 @@ export const TradeOrderTicket = ({
             style={{
               color: T.textSec,
               fontFamily: T.sans,
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               lineHeight: 1.35,
             }}
           >
@@ -1904,11 +2006,12 @@ export const TradeOrderTicket = ({
         </div>
       ) : null}
       {renderExecutionModeControls()}
+      <TicketReadinessStrip model={ticketReadinessModel} />
       <div style={{ display: "flex", alignItems: "baseline", gap: sp(4) }}>
         <span
           style={{
             fontSize: fs(13),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: T.text,
           }}
@@ -1919,7 +2022,7 @@ export const TradeOrderTicket = ({
           <span
             style={{
               fontSize: fs(12),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               color: contractColor,
             }}
@@ -1928,7 +2031,7 @@ export const TradeOrderTicket = ({
             {slot.cp}
           </span>
         ) : null}
-        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
           {ticketInstrumentDetail}
         </span>
       </div>
@@ -1939,7 +2042,7 @@ export const TradeOrderTicket = ({
             gridTemplateColumns: "1fr 1fr 1fr",
             gap: sp(4),
             padding: sp("4px 6px"),
-            background: T.bg3,
+            background: T.bg1,
             borderRadius: dim(3),
             fontFamily: T.sans,
           }}
@@ -1957,7 +2060,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.text,
                 lineHeight: 1,
               }}
@@ -1978,7 +2081,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color:
                   Number(info?.chg) > 0
                     ? T.green
@@ -1992,7 +2095,7 @@ export const TradeOrderTicket = ({
                 ? `${Number(info.chg) >= 0 ? "+" : "-"}${Math.abs(Number(info.chg)).toFixed(2)}`
                 : MISSING_VALUE}
             </div>
-            <div style={{ fontSize: fs(7), color: T.textDim }}>
+            <div style={{ fontSize: textSize("caption"), color: T.textDim }}>
               {Number.isFinite(Number(info?.pct))
                 ? `${Number(info.pct) >= 0 ? "+" : ""}${Number(info.pct).toFixed(2)}%`
                 : MISSING_VALUE}
@@ -2011,7 +2114,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.textSec,
                 lineHeight: 1,
               }}
@@ -2027,7 +2130,7 @@ export const TradeOrderTicket = ({
             gridTemplateColumns: "1fr 1fr 1fr",
             gap: sp(4),
             padding: sp("4px 6px"),
-            background: T.bg3,
+            background: T.bg1,
             borderRadius: dim(3),
             fontFamily: T.sans,
           }}
@@ -2045,7 +2148,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.red,
                 lineHeight: 1,
               }}
@@ -2066,7 +2169,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.text,
                 lineHeight: 1,
               }}
@@ -2075,7 +2178,7 @@ export const TradeOrderTicket = ({
             </div>
             <div
               style={{
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 color: isFiniteNumber(spreadPct) && spreadPct > 3 ? T.amber : T.textDim,
               }}
             >
@@ -2097,7 +2200,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.green,
                 lineHeight: 1,
               }}
@@ -2121,7 +2224,7 @@ export const TradeOrderTicket = ({
               color: isLong ? T.green : T.textDim,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.15,
               cursor: "pointer",
             }}
@@ -2139,7 +2242,7 @@ export const TradeOrderTicket = ({
               color: !isLong ? T.red : T.textDim,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.15,
               cursor: "pointer",
             }}
@@ -2161,7 +2264,7 @@ export const TradeOrderTicket = ({
                 color: orderType === t ? T.accent : T.textDim,
                 fontSize: fs(t === "STP_LMT" ? 7 : 9),
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 cursor: "pointer",
               }}
             >
@@ -2193,13 +2296,13 @@ export const TradeOrderTicket = ({
             <span
               style={{
                 color: sellCallStatusColor,
-                fontSize: fs(8),
-                fontWeight: 400,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.regular,
               }}
             >
               {sellCallIntent.intentLabel}
             </span>
-            <span style={{ color: T.textDim, fontSize: fs(7), fontWeight: 400 }}>
+            <span style={{ color: T.textDim, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
               {sellCallIntent.coverage.underlying || slot.ticker}
             </span>
           </div>
@@ -2216,7 +2319,7 @@ export const TradeOrderTicket = ({
                   style={{
                     color: T.textMuted,
                     fontSize: fs(6),
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   {label}
@@ -2224,8 +2327,8 @@ export const TradeOrderTicket = ({
                 <div
                   style={{
                     color: T.text,
-                    fontSize: fs(8),
-                    fontWeight: 400,
+                    fontSize: textSize("body"),
+                    fontWeight: FONT_WEIGHTS.regular,
                     marginTop: sp(1),
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -2241,7 +2344,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 color: sellCallStatusColor,
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 lineHeight: 1.35,
               }}
             >
@@ -2271,9 +2374,9 @@ export const TradeOrderTicket = ({
                 border: `1px solid ${qtyNum === n ? T.accent : T.border}`,
                 borderRadius: dim(3),
                 color: qtyNum === n ? T.accent : T.textDim,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 cursor: "pointer",
               }}
             >
@@ -2302,14 +2405,14 @@ export const TradeOrderTicket = ({
             }
             style={{
               width: "100%",
-              background: T.bg3,
+              background: T.bg1,
               border: `1px solid ${T.border}`,
               borderRadius: dim(3),
               padding: sp("3px 6px"),
               color: T.text,
               fontSize: fs(11),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           />
         </div>
@@ -2332,14 +2435,14 @@ export const TradeOrderTicket = ({
               onChange={(e) => setStopPrice(e.target.value)}
               style={{
                 width: "100%",
-                background: T.bg3,
+                background: T.bg1,
                 border: `1px solid ${T.border}`,
                 borderRadius: dim(3),
                 padding: sp("3px 6px"),
                 color: T.text,
                 fontSize: fs(11),
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
               }}
             />
           </div>
@@ -2375,7 +2478,7 @@ export const TradeOrderTicket = ({
               color: parentPriceDisabled ? T.textDim : T.text,
               fontSize: fs(11),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           />
         </div>
@@ -2406,8 +2509,8 @@ export const TradeOrderTicket = ({
                 background: attachStopLoss ? `${T.red}16` : "transparent",
                 color: attachStopLoss ? T.red : T.textDim,
                 fontFamily: T.sans,
-                fontSize: fs(7),
-                fontWeight: 400,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
                 padding: sp("1px 5px"),
                 cursor: executionIsShadow ? "not-allowed" : "pointer",
                 opacity: executionIsShadow ? 0.45 : 1,
@@ -2431,7 +2534,7 @@ export const TradeOrderTicket = ({
               color: stopLossExitDisabled ? T.textDim : T.red,
               fontSize: fs(11),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               opacity: stopLossExitDisabled ? 0.65 : 1,
             }}
           />
@@ -2439,8 +2542,8 @@ export const TradeOrderTicket = ({
             style={{
               color: attachStopLoss ? T.red : T.textDim,
               fontFamily: T.sans,
-              fontSize: fs(7),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               marginTop: sp(2),
             }}
           >
@@ -2473,8 +2576,8 @@ export const TradeOrderTicket = ({
                 background: attachTakeProfit ? `${T.green}16` : "transparent",
                 color: attachTakeProfit ? T.green : T.textDim,
                 fontFamily: T.sans,
-                fontSize: fs(7),
-                fontWeight: 400,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
                 padding: sp("1px 5px"),
                 cursor: executionIsShadow ? "not-allowed" : "pointer",
                 opacity: executionIsShadow ? 0.45 : 1,
@@ -2498,7 +2601,7 @@ export const TradeOrderTicket = ({
               color: takeProfitExitDisabled ? T.textDim : T.green,
               fontSize: fs(11),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               opacity: takeProfitExitDisabled ? 0.65 : 1,
             }}
           />
@@ -2506,8 +2609,8 @@ export const TradeOrderTicket = ({
             style={{
               color: attachTakeProfit ? T.green : T.textDim,
               fontFamily: T.sans,
-              fontSize: fs(7),
-              fontWeight: 400,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
               marginTop: sp(2),
             }}
           >
@@ -2530,9 +2633,9 @@ export const TradeOrderTicket = ({
               border: `1px solid ${tif === t ? T.accent : T.border}`,
               borderRadius: dim(2),
               color: tif === t ? T.accent : T.textDim,
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
             }}
           >
@@ -2555,13 +2658,13 @@ export const TradeOrderTicket = ({
               display: "flex",
               justifyContent: "space-between",
               padding: sp("2px 4px"),
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               fontFamily: T.sans,
             }}
           >
             <span style={{ color: T.textMuted }}>
               BE{" "}
-              <span style={{ color: T.text, fontWeight: 400 }}>
+              <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {breakeven.toFixed(2)}
               </span>{" "}
               <span style={{ color: T.textDim }}>
@@ -2572,7 +2675,7 @@ export const TradeOrderTicket = ({
             </span>
             <span style={{ color: T.textMuted }}>
               {isLong ? "Risk" : "Credit"}{" "}
-              <span style={{ color: isLong ? T.red : T.green, fontWeight: 400 }}>
+              <span style={{ color: isLong ? T.red : T.green, fontWeight: FONT_WEIGHTS.regular }}>
                 ${cost.toFixed(0)}
               </span>
             </span>
@@ -2587,7 +2690,7 @@ export const TradeOrderTicket = ({
                       : pop >= 30
                         ? T.amber
                         : T.red,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {isFiniteNumber(pop) ? `${pop.toFixed(0)}%` : MISSING_VALUE}
@@ -2625,8 +2728,8 @@ export const TradeOrderTicket = ({
               <div
                 style={{
                   color: T.textMuted,
-                  fontSize: fs(7),
-                  fontWeight: 400,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {label}
@@ -2635,7 +2738,7 @@ export const TradeOrderTicket = ({
                 style={{
                   color,
                   fontSize: fs(10),
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   marginTop: sp(2),
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -2651,26 +2754,26 @@ export const TradeOrderTicket = ({
       {previewSnapshot && (
         <div
           style={{
-            background: T.bg3,
+            background: T.bg1,
             border: `1px solid ${T.border}`,
             borderRadius: dim(4),
             padding: sp("6px 8px"),
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: sp(4),
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             fontFamily: T.sans,
           }}
         >
           <div>
             <span style={{ color: T.textMuted }}>PREVIEW</span>{" "}
-            <span style={{ color: T.text, fontWeight: 400 }}>
+            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.accountId}
             </span>
           </div>
           <div>
             <span style={{ color: T.textMuted }}>CONID</span>{" "}
-            <span style={{ color: T.accent, fontWeight: 400 }}>
+            <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.resolvedContractId}
             </span>
           </div>
@@ -2725,13 +2828,13 @@ export const TradeOrderTicket = ({
           disabled={previewDisabled}
           style={{
             padding: sp("7px 0"),
-            background: T.bg3,
+            background: T.bg1,
             border: `1px solid ${T.border}`,
             borderRadius: dim(4),
             color: T.textSec,
             fontSize: fs(10),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             cursor: previewIsPending
               ? "wait"
               : previewDisabled
@@ -2760,7 +2863,7 @@ export const TradeOrderTicket = ({
             color: primarySubmitDisabled ? T.textDim : T.onAccent,
             fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1.15,
             minHeight: 34,
             overflowWrap: "anywhere",

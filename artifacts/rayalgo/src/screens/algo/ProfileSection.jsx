@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const ProfileSection = ({
   id,
@@ -47,7 +47,7 @@ export const ProfileSection = ({
             color: T.text,
             fontFamily: T.sans,
             fontSize: fs(11),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             letterSpacing: "0.02em",
             flexShrink: 0,
           }}

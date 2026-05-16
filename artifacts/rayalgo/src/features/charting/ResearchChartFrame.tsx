@@ -1,6 +1,12 @@
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { RADII, T } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartSurface,
   type ChartViewportSnapshot,
@@ -17,8 +23,6 @@ import type { ChartPositionOverlayContext } from "./chartPositionOverlays";
 import {
   Activity,
   AreaChart,
-  ArrowLeft,
-  ArrowRight,
   ArrowUpDown,
   BarChart3,
   Camera,
@@ -32,15 +36,12 @@ import {
   MoveVertical,
   Plus,
   Redo2,
-  Ruler,
   Search,
   Settings,
   Star,
   Square,
   Trash2,
   Undo2,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -64,6 +65,7 @@ import {
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
+import { useElementSize } from "../../lib/responsive";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 type ResearchChartTheme = {
@@ -180,6 +182,86 @@ export const resolveResearchChartFramePlacement = (
 ): ResearchChartFramePlacementPolicy =>
   CHART_FRAME_PLACEMENTS[placement] || CHART_FRAME_PLACEMENTS.workspace;
 
+export type ResearchChartFrameDensity = "full" | "compact" | "icon" | "minimal";
+
+export const resolveResearchChartFrameDensity = ({
+  width,
+  height,
+  compact = false,
+}: {
+  width?: number;
+  height?: number;
+  compact?: boolean;
+}): ResearchChartFrameDensity => {
+  const hasWidth = typeof width === "number" && width > 0;
+  const hasHeight = typeof height === "number" && height > 0;
+
+  if ((hasWidth && width < 260) || (hasHeight && height < 190)) {
+    return "minimal";
+  }
+  if ((hasWidth && width < 640) || (hasHeight && height < 240)) {
+    return "icon";
+  }
+  if (compact || (hasWidth && width < 860) || (hasHeight && height < 260)) {
+    return "compact";
+  }
+  return "full";
+};
+
+export const resolveResearchChartFrameChromeMetrics = (
+  placementPolicy: ResearchChartFramePlacementPolicy,
+  density: ResearchChartFrameDensity,
+): Pick<
+  ResearchChartFramePlacementPolicy,
+  | "compact"
+  | "surfaceTopOverlayHeight"
+  | "surfaceLeftOverlayWidth"
+  | "surfaceBottomOverlayHeight"
+> => {
+  const compressed = density !== "full";
+  const hiddenAuxChrome = density === "minimal";
+  return {
+    compact: compressed,
+    surfaceTopOverlayHeight:
+      placementPolicy.surfaceTopOverlayHeight <= 0
+        ? 0
+        : compressed
+          ? 28
+          : placementPolicy.surfaceTopOverlayHeight,
+    surfaceLeftOverlayWidth:
+      placementPolicy.surfaceLeftOverlayWidth <= 0 || hiddenAuxChrome
+        ? 0
+        : density === "full"
+          ? placementPolicy.surfaceLeftOverlayWidth
+          : density === "compact"
+            ? 30
+            : 26,
+    surfaceBottomOverlayHeight:
+      placementPolicy.surfaceBottomOverlayHeight <= 0 || hiddenAuxChrome
+        ? 0
+        : compressed
+          ? 16
+          : placementPolicy.surfaceBottomOverlayHeight,
+  };
+};
+
+const ChartFrameDensityContext =
+  createContext<ResearchChartFrameDensity | null>(null);
+
+const useResolvedChartFrameDensity = (
+  dense: boolean,
+  density?: ResearchChartFrameDensity,
+): ResearchChartFrameDensity => {
+  const contextDensity = useContext(ChartFrameDensityContext);
+  return density ?? contextDensity ?? (dense ? "compact" : "full");
+};
+
+const isCompressedChartFrameDensity = (density: ResearchChartFrameDensity) =>
+  density !== "full";
+
+const isIconChartFrameDensity = (density: ResearchChartFrameDensity) =>
+  density === "icon" || density === "minimal";
+
 type ResearchChartFrameProps = {
   theme: ResearchChartTheme;
   themeKey: string;
@@ -277,18 +359,33 @@ export const ResearchChartFrame = ({
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
 }: ResearchChartFrameProps) => {
+  const [frameRef, frameSize] = useElementSize<HTMLDivElement>();
   const placementPolicy = resolveResearchChartFramePlacement(placement);
-  const resolvedCompact = compact ?? placementPolicy.compact;
+  const placementCompact = compact ?? placementPolicy.compact;
+  const frameDensity = resolveResearchChartFrameDensity({
+    width: frameSize.width,
+    height: frameSize.height,
+    compact: placementCompact,
+  });
+  const chromeMetrics = resolveResearchChartFrameChromeMetrics(
+    placementPolicy,
+    frameDensity,
+  );
+  const resolvedCompact = chromeMetrics.compact;
   const resolvedMobileInteractionMode =
     mobileInteractionMode ?? placementPolicy.mobileInteractionMode;
   const resolvedShowSurfaceToolbar =
     showSurfaceToolbar ?? placementPolicy.showSurfaceToolbar;
   const resolvedSurfaceTopOverlayHeight =
-    surfaceTopOverlayHeight ?? placementPolicy.surfaceTopOverlayHeight;
+    surfaceTopOverlayHeight ?? chromeMetrics.surfaceTopOverlayHeight;
   const resolvedSurfaceLeftOverlayWidth =
-    surfaceLeftOverlayWidth ?? placementPolicy.surfaceLeftOverlayWidth;
+    surfaceLeftOverlayWidth ?? chromeMetrics.surfaceLeftOverlayWidth;
   const resolvedSurfaceBottomOverlayHeight =
-    surfaceBottomOverlayHeight ?? placementPolicy.surfaceBottomOverlayHeight;
+    surfaceBottomOverlayHeight ?? chromeMetrics.surfaceBottomOverlayHeight;
+  const resolvedSurfaceLeftOverlay =
+    frameDensity === "minimal" ? null : surfaceLeftOverlay;
+  const resolvedSurfaceBottomOverlay =
+    frameDensity === "minimal" ? null : surfaceBottomOverlay;
   const positionOverlayState = useChartPositionOverlays({
     chartContext: positionOverlayContext,
     model,
@@ -305,9 +402,11 @@ export const ResearchChartFrame = ({
 
   return (
     <div
+      ref={frameRef}
       data-testid={dataTestId}
       data-chart-frame-placement={placement}
       data-chart-frame-compact={resolvedCompact ? "true" : "false"}
+      data-chart-frame-density={frameDensity}
       data-signal-direction={signalActive ? frameSignalState?.direction : "none"}
       data-signal-frame-active={signalActive ? "true" : "false"}
       data-signal-frame-color={signalActive ? frameSignalState?.color : undefined}
@@ -330,54 +429,56 @@ export const ResearchChartFrame = ({
         borderColor: signalActive ? frameBorderColor : undefined,
       }}
     >
-      {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
-      {subHeader ? <div style={{ flexShrink: 0 }}>{subHeader}</div> : null}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <ResearchChartSurface
-          dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
-          theme={theme}
-          themeKey={themeKey}
-          uiStateKey={surfaceUiStateKey}
-          rangeIdentityKey={rangeIdentityKey}
-          viewportLayoutKey={viewportLayoutKey}
-          model={model}
-          compact={resolvedCompact}
-          mobileInteractionMode={resolvedMobileInteractionMode}
-          showToolbar={resolvedShowSurfaceToolbar}
-          showLegend={showLegend}
-          legend={legend}
-          hideTimeScale={hideTimeScale}
-          hideCrosshair={hideCrosshair}
-          topOverlay={surfaceTopOverlay}
-          leftOverlay={surfaceLeftOverlay}
-          bottomOverlay={surfaceBottomOverlay}
-          topOverlayHeight={resolvedSurfaceTopOverlayHeight}
-          leftOverlayWidth={resolvedSurfaceLeftOverlayWidth}
-          bottomOverlayHeight={resolvedSurfaceBottomOverlayHeight}
-          drawings={drawings}
-          referenceLines={referenceLines}
-          chartEvents={chartEvents}
-          chartFlowDiagnostics={chartFlowDiagnostics}
-          latestQuotePrice={latestQuotePrice}
-          latestQuoteUpdatedAt={latestQuoteUpdatedAt}
-          emptyState={emptyState}
-          drawMode={drawMode}
-          onAddDrawing={onAddDrawing}
-          onTradeMarkerSelection={onTradeMarkerSelection}
-          onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
-          viewportSnapshot={viewportSnapshot}
-          externalViewportUserTouched={viewportUserTouched}
-          onViewportSnapshotChange={onViewportSnapshotChange}
-          persistScalePrefs={persistScalePrefs}
-          positionOverlays={positionOverlayState.overlays}
-          positionOverlaysAvailable={positionOverlayState.available}
-          positionOverlaysEnabled={positionOverlayState.enabled}
-          onPositionOverlaysEnabledChange={positionOverlayState.setLocalEnabled}
-          crosshairSyncGroupId={crosshairSyncGroupId}
-          crosshairSyncInstanceId={crosshairSyncInstanceId}
-        />
-      </div>
-      {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}
+      <ChartFrameDensityContext.Provider value={frameDensity}>
+        {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
+        {subHeader ? <div style={{ flexShrink: 0 }}>{subHeader}</div> : null}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ResearchChartSurface
+            dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
+            theme={theme}
+            themeKey={themeKey}
+            uiStateKey={surfaceUiStateKey}
+            rangeIdentityKey={rangeIdentityKey}
+            viewportLayoutKey={viewportLayoutKey}
+            model={model}
+            compact={resolvedCompact}
+            mobileInteractionMode={resolvedMobileInteractionMode}
+            showToolbar={resolvedShowSurfaceToolbar}
+            showLegend={showLegend}
+            legend={legend}
+            hideTimeScale={hideTimeScale}
+            hideCrosshair={hideCrosshair}
+            topOverlay={surfaceTopOverlay}
+            leftOverlay={resolvedSurfaceLeftOverlay}
+            bottomOverlay={resolvedSurfaceBottomOverlay}
+            topOverlayHeight={resolvedSurfaceTopOverlayHeight}
+            leftOverlayWidth={resolvedSurfaceLeftOverlayWidth}
+            bottomOverlayHeight={resolvedSurfaceBottomOverlayHeight}
+            drawings={drawings}
+            referenceLines={referenceLines}
+            chartEvents={chartEvents}
+            chartFlowDiagnostics={chartFlowDiagnostics}
+            latestQuotePrice={latestQuotePrice}
+            latestQuoteUpdatedAt={latestQuoteUpdatedAt}
+            emptyState={emptyState}
+            drawMode={drawMode}
+            onAddDrawing={onAddDrawing}
+            onTradeMarkerSelection={onTradeMarkerSelection}
+            onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
+            viewportSnapshot={viewportSnapshot}
+            externalViewportUserTouched={viewportUserTouched}
+            onViewportSnapshotChange={onViewportSnapshotChange}
+            persistScalePrefs={persistScalePrefs}
+            positionOverlays={positionOverlayState.overlays}
+            positionOverlaysAvailable={positionOverlayState.available}
+            positionOverlaysEnabled={positionOverlayState.enabled}
+            onPositionOverlaysEnabledChange={positionOverlayState.setLocalEnabled}
+            crosshairSyncGroupId={crosshairSyncGroupId}
+            crosshairSyncInstanceId={crosshairSyncInstanceId}
+          />
+        </div>
+        {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}
+      </ChartFrameDensityContext.Provider>
     </div>
   );
 };
@@ -446,6 +547,7 @@ type ResearchChartWidgetHeaderProps = {
   onSearchOpenChange?: (open: boolean) => void;
   searchContent?: ReactNode;
   dense?: boolean;
+  density?: ResearchChartFrameDensity;
   meta?: OhlcvMeta | null;
   showInlineLegend?: boolean;
   studies?: StudyOption[];
@@ -465,8 +567,15 @@ type ResearchChartWidgetHeaderProps = {
   focusChartTitle?: string;
   onEnterSoloMode?: () => void;
   soloChartTitle?: string;
-  rightSlot?: ReactNode;
+  rightSlot?:
+    | ReactNode
+    | ((state: {
+        density: ResearchChartFrameDensity;
+        dense: boolean;
+        iconOnly: boolean;
+      }) => ReactNode);
   identitySlot?: ReactNode;
+  contextSlot?: ReactNode;
 };
 
 type ResearchChartWidgetFooterProps = {
@@ -477,6 +586,7 @@ type ResearchChartWidgetFooterProps = {
   studySpecs?: StudySpec[];
   onToggleStudy?: (studyId: string) => void;
   dense?: boolean;
+  density?: ResearchChartFrameDensity;
   statusText?: string | null;
 };
 
@@ -494,6 +604,7 @@ type ResearchChartWidgetSidebarProps = {
   onToggleDrawMode?: (next: DrawMode | null) => void;
   onClearDrawings?: () => void;
   dense?: boolean;
+  density?: ResearchChartFrameDensity;
 };
 
 type PanelPalette = {
@@ -683,9 +794,10 @@ const barButtonStyle = ({
   cursor: disabled ? "default" : "pointer",
   fontFamily: theme.mono,
   fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.bodyStrong,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   opacity: disabled ? 0.6 : 1,
   whiteSpace: "nowrap",
+  flexShrink: 0,
 });
 
 const railButtonStyle = ({
@@ -785,14 +897,14 @@ const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.text,
   fontFamily: theme.display || FONT_CSS_VAR.sans,
   fontSize: TYPE_CSS_VAR.bodyStrong,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
 });
 
 const menuLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.textMuted,
   fontFamily: theme.display || FONT_CSS_VAR.sans,
   fontSize: TYPE_CSS_VAR.body,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   letterSpacing: 0,
   textTransform: "uppercase",
 });
@@ -994,6 +1106,7 @@ const SettingsMenu = ({
       <DropdownMenuItem
         className={chartMenuItemClassName}
         onClick={controls.realtime}
+        disabled={!controls.canFollowRealtime}
         style={menuItemStyle(theme)}
       >
         Jump to realtime
@@ -1023,6 +1136,7 @@ export const ResearchChartWidgetHeader = ({
   onSearchOpenChange,
   searchContent,
   dense = false,
+  density,
   meta = null,
   showInlineLegend = true,
   studies = [],
@@ -1044,10 +1158,15 @@ export const ResearchChartWidgetHeader = ({
   soloChartTitle = "Expand chart",
   rightSlot = null,
   identitySlot = null,
+  contextSlot = null,
 }: ResearchChartWidgetHeaderProps) => {
   const { preferences: userPreferences } = useUserPreferences();
+  const frameDensity = useResolvedChartFrameDensity(dense, density);
+  const chromeDense = isCompressedChartFrameDensity(frameDensity);
+  const iconOnlyChrome = isIconChartFrameDensity(frameDensity);
+  const minimalChrome = frameDensity === "minimal";
   const palette = getPanelPalette(theme);
-  const headerHeight = dense ? 28 : 40;
+  const headerHeight = chromeDense ? 28 : 40;
   const timeframes = commonTimeframes(timeframeOptions);
   const selectTimeframe = (nextTimeframe: string) => {
     if (!nextTimeframe || nextTimeframe === timeframe) {
@@ -1064,6 +1183,14 @@ export const ResearchChartWidgetHeader = ({
     typeof onSearchOpenChange === "function" && searchContent != null;
   const canSearch = typeof onOpenSearch === "function" || hasAnchoredSearch;
   const activeBar = controls.activeBar;
+  const resolvedRightSlot =
+    typeof rightSlot === "function"
+      ? rightSlot({
+          density: frameDensity,
+          dense: chromeDense,
+          iconOnly: iconOnlyChrome,
+        })
+      : rightSlot;
   const resolvedMeta = {
     open: activeBar?.open ?? meta?.open ?? null,
     high: activeBar?.high ?? meta?.high ?? null,
@@ -1104,12 +1231,14 @@ export const ResearchChartWidgetHeader = ({
               ? theme.green
               : theme.textDim || theme.textMuted;
   const showTrailingActions =
-    showSnapshotButton ||
+    (!minimalChrome && showSnapshotButton) ||
     showSettingsButton ||
     showFullscreenButton ||
-    typeof onFocusChart === "function" ||
-    typeof onEnterSoloMode === "function" ||
-    rightSlot != null;
+    (!minimalChrome && typeof onFocusChart === "function") ||
+    (!minimalChrome && typeof onEnterSoloMode === "function") ||
+    (!minimalChrome && rightSlot != null);
+  const showContextSlot =
+    contextSlot != null && !iconOnlyChrome && !minimalChrome;
   const studyLookup = useMemo(
     () => new Map(studies.map((study) => [study.id, study.label])),
     [studies],
@@ -1157,7 +1286,7 @@ export const ResearchChartWidgetHeader = ({
           borderBottom: `1px solid ${theme.border}`,
           display: "flex",
           alignItems: "center",
-          padding: dense ? "0 2px" : "0 4px",
+          padding: chromeDense ? "0 2px" : "0 4px",
           gap: 2,
           overflow: "hidden",
           fontFamily: theme.mono,
@@ -1172,14 +1301,25 @@ export const ResearchChartWidgetHeader = ({
                   type="button"
                   data-testid="chart-symbol-search-button"
                   style={{
-                    ...barButtonStyle({ theme, palette, dense }),
+                    ...barButtonStyle({ theme, palette, dense: chromeDense }),
                     color: theme.text,
                     cursor: "pointer",
+                    maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
+                    minWidth: 0,
                   }}
                 >
-                  {identitySlot ?? <Search style={iconStyle(dense)} />}
-                  <span style={{ fontWeight: 400 }}>{symbol}</span>
-                  <ChevronDown style={iconStyle(dense)} />
+                  {identitySlot ?? <Search style={iconStyle(chromeDense)} />}
+                  <span
+                    style={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      fontWeight: FONT_WEIGHTS.regular,
+                    }}
+                  >
+                    {symbol}
+                  </span>
+                  <ChevronDown style={iconStyle(chromeDense)} />
                 </button>
               </PopoverTrigger>
             </AppTooltip>
@@ -1187,7 +1327,7 @@ export const ResearchChartWidgetHeader = ({
               align="start"
               sideOffset={6}
               style={{
-                width: dense ? 380 : 430,
+                width: chromeDense ? 340 : 430,
                 maxWidth: "calc(100vw - 24px)",
                 padding: 0,
                 borderRadius: RADII.none,
@@ -1205,18 +1345,47 @@ export const ResearchChartWidgetHeader = ({
             data-testid={canSearch ? "chart-symbol-search-button" : undefined}
             onClick={canSearch ? onOpenSearch : undefined}
             style={{
-              ...barButtonStyle({ theme, palette, dense }),
+              ...barButtonStyle({ theme, palette, dense: chromeDense }),
               color: theme.text,
               cursor: canSearch ? "pointer" : "default",
+              maxWidth: minimalChrome ? 116 : iconOnlyChrome ? 160 : 220,
+              minWidth: 0,
             }}
           >
-            {identitySlot ?? (canSearch ? <Search style={iconStyle(dense)} /> : null)}
-            <span style={{ fontWeight: 400 }}>{symbol}</span>
-            {canSearch ? <ChevronDown style={iconStyle(dense)} /> : null}
+            {identitySlot ??
+              (canSearch ? <Search style={iconStyle(chromeDense)} /> : null)}
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                fontWeight: FONT_WEIGHTS.regular,
+              }}
+            >
+              {symbol}
+            </span>
+            {canSearch ? <ChevronDown style={iconStyle(chromeDense)} /> : null}
           </button></AppTooltip>
         )}
 
-        <div style={dividerStyle(theme, dense)} />
+        {showContextSlot ? (
+          <div
+            data-testid="chart-header-context-slot"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              minWidth: 0,
+              maxWidth: chromeDense ? 280 : 420,
+              overflow: "hidden",
+              flex: "0 1 auto",
+            }}
+          >
+            {contextSlot}
+          </div>
+        ) : null}
+
+        <div style={dividerStyle(theme, chromeDense)} />
 
         <DropdownMenu>
           <AppTooltip content="More timeframes">
@@ -1225,10 +1394,10 @@ export const ResearchChartWidgetHeader = ({
                 type="button"
                 data-testid="chart-timeframe-menu-trigger"
                 data-chart-timeframe={timeframe}
-                style={barButtonStyle({ theme, palette, dense })}
+                style={barButtonStyle({ theme, palette, dense: chromeDense })}
               >
                 <span>{timeframe}</span>
-                <ChevronDown style={iconStyle(dense)} />
+                <ChevronDown style={iconStyle(chromeDense)} />
               </button>
             </DropdownMenuTrigger>
           </AppTooltip>
@@ -1263,7 +1432,7 @@ export const ResearchChartWidgetHeader = ({
                     justifyContent: "space-between",
                     gap: 8,
                     background: active ? withAlpha(theme.accent || theme.text, "20") : undefined,
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                     cursor: "pointer",
                   }}
                 >
@@ -1309,117 +1478,127 @@ export const ResearchChartWidgetHeader = ({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <DropdownMenu>
-          <AppTooltip content="Chart type">
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Chart type"
-                style={barButtonStyle({ theme, palette, dense })}
-              >
-                <resolvedChartType.Icon style={iconStyle(dense)} />
-                {dense ? null : <span>{resolvedChartType.label}</span>}
-                <ChevronDown style={iconStyle(dense)} />
-              </button>
-            </DropdownMenuTrigger>
-          </AppTooltip>
-          <DropdownMenuContent
-            align="start"
-            className={chartMenuContentClassName}
-            sideOffset={6}
-            style={menuContentStyle(theme, palette, 210)}
-          >
-            <DropdownMenuLabel
-              className={chartMenuLabelClassName}
-              style={menuLabelStyle(theme)}
-            >
-              Chart type
-            </DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={controls.baseSeriesType}
-              onValueChange={(next) =>
-                controls.setBaseSeriesType(
-                  next as ChartSurfaceControls["baseSeriesType"],
-                )
-              }
-            >
-              {chartTypeOptions.map((option) => (
-                <DropdownMenuRadioItem
-                  className={chartMenuItemClassName}
-                  key={option.value}
-                  value={option.value}
-                  style={menuItemStyle(theme)}
+        {!minimalChrome ? (
+          <DropdownMenu>
+            <AppTooltip content="Chart type">
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Chart type"
+                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
                 >
-                  <option.Icon
-                    style={{ ...iconStyle(dense), marginRight: 6 }}
-                  />
-                  {option.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  <resolvedChartType.Icon style={iconStyle(chromeDense)} />
+                  {iconOnlyChrome ? null : <span>{resolvedChartType.label}</span>}
+                  <ChevronDown style={iconStyle(chromeDense)} />
+                </button>
+              </DropdownMenuTrigger>
+            </AppTooltip>
+            <DropdownMenuContent
+              align="start"
+              className={chartMenuContentClassName}
+              sideOffset={6}
+              style={menuContentStyle(theme, palette, 210)}
+            >
+              <DropdownMenuLabel
+                className={chartMenuLabelClassName}
+                style={menuLabelStyle(theme)}
+              >
+                Chart type
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={controls.baseSeriesType}
+                onValueChange={(next) =>
+                  controls.setBaseSeriesType(
+                    next as ChartSurfaceControls["baseSeriesType"],
+                  )
+                }
+              >
+                {chartTypeOptions.map((option) => (
+                  <DropdownMenuRadioItem
+                    className={chartMenuItemClassName}
+                    key={option.value}
+                    value={option.value}
+                    style={menuItemStyle(theme)}
+                  >
+                    <option.Icon
+                      style={{ ...iconStyle(chromeDense), marginRight: 6 }}
+                    />
+                    {option.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
 
-        <DropdownMenu>
-          <AppTooltip content="Indicators">
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                style={barButtonStyle({ theme, palette, dense })}
-              >
-                <Plus style={iconStyle(dense)} />
-                <span>
-                  {dense
-                    ? selectedStudies.length > 0
-                      ? `Ind ${selectedStudies.length}`
-                      : "Ind"
-                    : `Indicators ${
-                        selectedStudies.length > 0 ? selectedStudies.length : ""
-                      }`.trim()}
-                </span>
-                <ChevronDown style={iconStyle(dense)} />
-              </button>
-            </DropdownMenuTrigger>
-          </AppTooltip>
-          <DropdownMenuContent
-            align="start"
-            className={chartMenuContentClassName}
-            sideOffset={6}
-            style={menuContentStyle(theme, palette, 220)}
-          >
-            <DropdownMenuLabel
-              className={chartMenuLabelClassName}
-              style={menuLabelStyle(theme)}
+        {!minimalChrome ? (
+          <DropdownMenu>
+            <AppTooltip content="Indicators">
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
+                >
+                  <Plus style={iconStyle(chromeDense)} />
+                  {iconOnlyChrome ? (
+                    selectedStudies.length > 0 ? (
+                      <span>{selectedStudies.length}</span>
+                    ) : null
+                  ) : (
+                    <span>
+                      {chromeDense
+                        ? selectedStudies.length > 0
+                          ? `Ind ${selectedStudies.length}`
+                          : "Ind"
+                        : `Indicators ${
+                            selectedStudies.length > 0 ? selectedStudies.length : ""
+                          }`.trim()}
+                    </span>
+                  )}
+                  <ChevronDown style={iconStyle(chromeDense)} />
+                </button>
+              </DropdownMenuTrigger>
+            </AppTooltip>
+            <DropdownMenuContent
+              align="start"
+              className={chartMenuContentClassName}
+              sideOffset={6}
+              style={menuContentStyle(theme, palette, 220)}
             >
-              Indicators
-            </DropdownMenuLabel>
-            {studies.length ? (
-              studies.map((study) => (
-                <DropdownMenuCheckboxItem
+              <DropdownMenuLabel
+                className={chartMenuLabelClassName}
+                style={menuLabelStyle(theme)}
+              >
+                Indicators
+              </DropdownMenuLabel>
+              {studies.length ? (
+                studies.map((study) => (
+                  <DropdownMenuCheckboxItem
+                    className={chartMenuItemClassName}
+                    key={study.id}
+                    checked={selectedStudies.includes(study.id)}
+                    onCheckedChange={() => onToggleStudy?.(study.id)}
+                    style={menuItemStyle(theme)}
+                  >
+                    {study.label}
+                  </DropdownMenuCheckboxItem>
+                ))
+              ) : (
+                <DropdownMenuItem
                   className={chartMenuItemClassName}
-                  key={study.id}
-                  checked={selectedStudies.includes(study.id)}
-                  onCheckedChange={() => onToggleStudy?.(study.id)}
+                  disabled
                   style={menuItemStyle(theme)}
                 >
-                  {study.label}
-                </DropdownMenuCheckboxItem>
-              ))
-            ) : (
-              <DropdownMenuItem
-                className={chartMenuItemClassName}
-                disabled
-                style={menuItemStyle(theme)}
-              >
-                No indicators available
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  No indicators available
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
 
         <div style={{ flex: 1 }} />
 
-        {showUndoRedo ? (
+        {showUndoRedo && !minimalChrome ? (
           <>
             <AppTooltip content="Undo"><button
               type="button"
@@ -1429,11 +1608,11 @@ export const ResearchChartWidgetHeader = ({
               style={barButtonStyle({
                 theme,
                 palette,
-                dense,
+                dense: chromeDense,
                 disabled: !canUndo,
               })}
             >
-              <Undo2 style={iconStyle(dense)} />
+              <Undo2 style={iconStyle(chromeDense)} />
             </button></AppTooltip>
             <AppTooltip content="Redo"><button
               type="button"
@@ -1443,20 +1622,20 @@ export const ResearchChartWidgetHeader = ({
               style={barButtonStyle({
                 theme,
                 palette,
-                dense,
+                dense: chromeDense,
                 disabled: !canRedo,
               })}
             >
-              <Redo2 style={iconStyle(dense)} />
+              <Redo2 style={iconStyle(chromeDense)} />
             </button></AppTooltip>
           </>
         ) : null}
 
         {showTrailingActions ? (
-          <div style={dividerStyle(theme, dense)} />
+          <div style={dividerStyle(theme, chromeDense)} />
         ) : null}
 
-        {typeof onFocusChart === "function" ? (
+        {typeof onFocusChart === "function" && !minimalChrome ? (
           <AppTooltip content={focusChartTitle}><button
             type="button"
             aria-label={focusChartTitle}
@@ -1464,35 +1643,35 @@ export const ResearchChartWidgetHeader = ({
             style={barButtonStyle({
               theme,
               palette,
-              dense,
+              dense: chromeDense,
               active: focusChartActive,
             })}
           >
-            <Crosshair style={iconStyle(dense)} />
-            {dense ? null : <span>Focus</span>}
+            <Crosshair style={iconStyle(chromeDense)} />
+            {iconOnlyChrome ? null : <span>Focus</span>}
           </button></AppTooltip>
         ) : null}
 
-        {typeof onEnterSoloMode === "function" ? (
+        {typeof onEnterSoloMode === "function" && !minimalChrome ? (
           <AppTooltip content={soloChartTitle}><button
             type="button"
             aria-label={soloChartTitle}
             onClick={onEnterSoloMode}
-            style={barButtonStyle({ theme, palette, dense })}
+            style={barButtonStyle({ theme, palette, dense: chromeDense })}
           >
-            <Maximize2 style={iconStyle(dense)} />
-            {dense ? null : <span>Solo</span>}
+            <Maximize2 style={iconStyle(chromeDense)} />
+            {iconOnlyChrome ? null : <span>Solo</span>}
           </button></AppTooltip>
         ) : null}
 
-        {showSnapshotButton ? (
+        {showSnapshotButton && !minimalChrome ? (
           <AppTooltip content="Screenshot"><button
             type="button"
             aria-label="Screenshot"
             onClick={controls.takeSnapshot}
-            style={barButtonStyle({ theme, palette, dense })}
+            style={barButtonStyle({ theme, palette, dense: chromeDense })}
           >
-            <Camera style={iconStyle(dense)} />
+            <Camera style={iconStyle(chromeDense)} />
           </button></AppTooltip>
         ) : null}
 
@@ -1501,7 +1680,7 @@ export const ResearchChartWidgetHeader = ({
             theme={theme}
             palette={palette}
             controls={controls}
-            dense={dense}
+            dense={chromeDense}
           />
         ) : null}
 
@@ -1512,17 +1691,17 @@ export const ResearchChartWidgetHeader = ({
             type="button"
             aria-label={controls.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             onClick={controls.toggleFullscreen}
-            style={barButtonStyle({ theme, palette, dense })}
+            style={barButtonStyle({ theme, palette, dense: chromeDense })}
           >
             {controls.isFullscreen ? (
-              <Minimize2 style={iconStyle(dense)} />
+              <Minimize2 style={iconStyle(chromeDense)} />
             ) : (
-              <Maximize2 style={iconStyle(dense)} />
+              <Maximize2 style={iconStyle(chromeDense)} />
             )}
           </button></AppTooltip>
         ) : null}
 
-        {rightSlot}
+        {minimalChrome ? null : resolvedRightSlot}
       </div>
 
       {showInlineLegend ? (
@@ -1530,11 +1709,11 @@ export const ResearchChartWidgetHeader = ({
           style={{
             position: "absolute",
             top: headerHeight + 6,
-            left: dense ? 8 : 12,
+            left: chromeDense ? 8 : 12,
             right: 12,
             display: "flex",
             flexDirection: "column",
-            gap: dense ? 2 : 3,
+            gap: chromeDense ? 2 : 3,
             pointerEvents: "none",
             maxWidth: "calc(100% - 104px)",
           }}
@@ -1543,7 +1722,7 @@ export const ResearchChartWidgetHeader = ({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: dense ? 6 : 8,
+              gap: chromeDense ? 6 : 8,
             flexWrap: "wrap",
           }}
         >
@@ -1552,11 +1731,11 @@ export const ResearchChartWidgetHeader = ({
               theme,
               palette,
               color: theme.text,
-              dense,
+              dense: chromeDense,
             })}
           >
-            <span style={{ fontWeight: 400 }}>{symbol}</span>
-            {name && !dense ? (
+            <span style={{ fontWeight: FONT_WEIGHTS.regular }}>{symbol}</span>
+            {name && !chromeDense ? (
               <span style={{ color: theme.textMuted }}>{name}</span>
             ) : null}
             <span style={{ color: theme.textMuted }}>{timeframe}</span>
@@ -1570,19 +1749,19 @@ export const ResearchChartWidgetHeader = ({
               theme,
               palette,
               color: theme.text,
-              dense,
+              dense: chromeDense,
             })}
           >
             {priceLabel ? (
               <span style={{ color: theme.textMuted }}>{priceLabel}</span>
             ) : null}
             <span>{formatPrice(displayPrice)}</span>
-            <span style={{ color: changeColor, fontWeight: 400 }}>
+            <span style={{ color: changeColor, fontWeight: FONT_WEIGHTS.regular }}>
               {formatPercent(changePercent)}
             </span>
           </span>
 
-          <span style={legendChipStyle({ theme, palette, dense })}>
+          <span style={legendChipStyle({ theme, palette, dense: chromeDense })}>
             <span style={{ color: theme.textMuted }}>
               {`Bar ${timeframe}`}
             </span>{" "}
@@ -1608,8 +1787,8 @@ export const ResearchChartWidgetHeader = ({
             </span>
           </span>
 
-          {!dense && resolvedMeta.vwap != null ? (
-            <span style={legendChipStyle({ theme, palette, dense })}>
+          {!chromeDense && resolvedMeta.vwap != null ? (
+            <span style={legendChipStyle({ theme, palette, dense: chromeDense })}>
               VWAP{" "}
               <span style={{ color: theme.text }}>
                 {formatPrice(resolvedMeta.vwap)}
@@ -1617,8 +1796,8 @@ export const ResearchChartWidgetHeader = ({
             </span>
           ) : null}
 
-          {!dense && resolvedMeta.sessionVwap != null ? (
-            <span style={legendChipStyle({ theme, palette, dense })}>
+          {!chromeDense && resolvedMeta.sessionVwap != null ? (
+            <span style={legendChipStyle({ theme, palette, dense: chromeDense })}>
               SVWAP{" "}
               <span style={{ color: theme.text }}>
                 {formatPrice(resolvedMeta.sessionVwap)}
@@ -1626,8 +1805,8 @@ export const ResearchChartWidgetHeader = ({
             </span>
           ) : null}
 
-          {!dense && (resolvedMeta.timestamp || resolvedMeta.sourceLabel) ? (
-            <span style={legendChipStyle({ theme, palette, dense })}>
+          {!chromeDense && (resolvedMeta.timestamp || resolvedMeta.sourceLabel) ? (
+            <span style={legendChipStyle({ theme, palette, dense: chromeDense })}>
               {[
                 formatTimestamp(resolvedMeta.timestamp, userPreferences),
                 resolvedMeta.sourceLabel,
@@ -1653,7 +1832,7 @@ export const ResearchChartWidgetHeader = ({
                 style={legendChipStyle({
                   theme,
                   palette,
-                  dense,
+                  dense: chromeDense,
                   color: theme.textMuted,
                 })}
               >
@@ -1663,7 +1842,7 @@ export const ResearchChartWidgetHeader = ({
                     style={{
                       width: 7,
                       height: 7,
-                      borderRadius: "50%",
+                      borderRadius: dim(RADII.pill),
                       background: color,
                       display: "inline-block",
                     }}
@@ -1683,34 +1862,25 @@ export const ResearchChartWidgetHeader = ({
 export const ResearchChartWidgetFooter = ({
   theme,
   controls,
-  studies = [],
-  selectedStudies = [],
-  studySpecs = [],
+  studies: _studies = [],
+  selectedStudies: _selectedStudies = [],
+  studySpecs: _studySpecs = [],
   onToggleStudy: _onToggleStudy,
   dense = false,
-  statusText = null,
+  density,
+  statusText: _statusText = null,
 }: ResearchChartWidgetFooterProps) => {
+  const frameDensity = useResolvedChartFrameDensity(dense, density);
+  if (frameDensity === "minimal") {
+    return null;
+  }
+  const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const palette = getPanelPalette(theme);
-  const footerHeight = dense ? 16 : 22;
-  const studyLookup = useMemo(
-    () => new Map(studies.map((study) => [study.id, study.label])),
-    [studies],
-  );
-  const activeLabels = selectedStudies
-    .filter((studyId) =>
-      studySpecs.some(
-        (spec) =>
-          specBelongsToStudy(spec.key, studyId) &&
-          spec.options?.visible !== false &&
-          spec.data.length > 0,
-      ),
-    )
-    .map((studyId) => studyLookup.get(studyId) || studyId)
-    .slice(0, 4);
+  const footerHeight = chromeDense ? 16 : 22;
   const scaleModes = [
     {
       key: "linear",
-      label: dense ? "Ln" : "Lin",
+      label: chromeDense ? "Ln" : "Lin",
       title: "Linear scale",
       onClick: () => controls.setScaleMode("linear"),
     },
@@ -1733,7 +1903,7 @@ export const ResearchChartWidgetFooter = ({
       onClick: () => controls.setScaleMode("indexed"),
     },
   ];
-  const scaleButtonHeight = dense ? 14 : 18;
+  const scaleButtonHeight = chromeDense ? 14 : 18;
   const scaleButtonStyle = ({
     active = false,
     wide = false,
@@ -1741,7 +1911,7 @@ export const ResearchChartWidgetFooter = ({
     active?: boolean;
     wide?: boolean;
   }): CSSProperties => ({
-    width: wide ? (dense ? 22 : 26) : dense ? 16 : 20,
+    width: wide ? (chromeDense ? 22 : 26) : chromeDense ? 16 : 20,
     height: scaleButtonHeight,
     background: active ? theme.accent || theme.text : "transparent",
     color: active ? T.onAccent : theme.textDim || theme.textMuted,
@@ -1749,56 +1919,10 @@ export const ResearchChartWidgetFooter = ({
     borderRadius: RADII.none,
     cursor: "pointer",
     fontFamily: theme.mono,
-    fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
-    fontWeight: 400,
+    fontSize: chromeDense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
+    fontWeight: FONT_WEIGHTS.regular,
     padding: 0,
   });
-  const touchNavButtonStyle = (active = false): CSSProperties => ({
-    ...scaleButtonStyle({ active }),
-    width: dense ? 18 : 22,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  });
-  const touchNavControls = [
-    {
-      key: "pan-left",
-      title: "Pan left",
-      icon: <ArrowLeft style={iconStyle(true)} />,
-      onClick: controls.panLeft,
-    },
-    {
-      key: "pan-right",
-      title: "Pan right",
-      icon: <ArrowRight style={iconStyle(true)} />,
-      onClick: controls.panRight,
-    },
-    {
-      key: "zoom-out",
-      title: "Zoom out",
-      icon: <ZoomOut style={iconStyle(true)} />,
-      onClick: controls.zoomOut,
-    },
-    {
-      key: "zoom-in",
-      title: "Zoom in",
-      icon: <ZoomIn style={iconStyle(true)} />,
-      onClick: controls.zoomIn,
-    },
-    {
-      key: "fit",
-      title: "Fit content",
-      icon: <Ruler style={iconStyle(true)} />,
-      onClick: controls.fit,
-    },
-    {
-      key: "realtime",
-      title: "Follow realtime",
-      icon: <Activity style={iconStyle(true)} />,
-      onClick: controls.realtime,
-    },
-  ];
-
   return (
     <div
       data-chart-control-root
@@ -1811,74 +1935,21 @@ export const ResearchChartWidgetFooter = ({
           borderTop: `1px solid ${theme.border}`,
           display: "flex",
           alignItems: "center",
-          padding: dense ? "0 8px" : "0 10px",
-          gap: dense ? 6 : 10,
+          padding: chromeDense ? "0 8px" : "0 10px",
+          gap: chromeDense ? 6 : 10,
           fontFamily: theme.mono,
-          fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
+          fontSize: chromeDense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
           color: theme.textMuted,
           pointerEvents: "auto",
           whiteSpace: "nowrap",
           overflow: "hidden",
         }}
       >
-        {activeLabels.length ? (
-          <AppTooltip content={activeLabels.join(" · ")}><span
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {activeLabels.join(" · ")}
-          </span></AppTooltip>
-        ) : (
-          <span style={{ flexShrink: 0 }}>{dense ? "Pan" : "Pan drag"}</span>
-        )}
-        {dense ? null : <span style={{ flexShrink: 0 }}>Zoom scroll</span>}
         <div style={{ flex: 1 }} />
-        {statusText ? (
-          <AppTooltip content={statusText}><span
-            style={{
-              minWidth: 0,
-              maxWidth: dense ? 90 : 180,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              flexShrink: 1,
-            }}
-          >
-            {statusText}
-          </span></AppTooltip>
-        ) : null}
-        <div
-          data-chart-footer-touch-controls
-          style={{
-            height: dense ? 16 : 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            background: palette.panel,
-            border: `1px solid ${theme.border}`,
-            borderRadius: RADII.none,
-            boxSizing: "border-box",
-            padding: 0,
-            pointerEvents: "auto",
-            flexShrink: 0,
-          }}
-        >
-          {touchNavControls.map((control) => (
-            <AppTooltip key={control.key} content={control.title}><button
-              type="button"
-              onClick={control.onClick}
-              style={touchNavButtonStyle()}
-            >
-              {control.icon}
-            </button></AppTooltip>
-          ))}
-        </div>
         <div
           data-chart-footer-scale-controls
           style={{
-            height: dense ? 16 : 20,
+            height: chromeDense ? 16 : 20,
             display: "flex",
             alignItems: "center",
             gap: 1,
@@ -1888,7 +1959,7 @@ export const ResearchChartWidgetFooter = ({
             boxSizing: "border-box",
             padding: 0,
             fontFamily: theme.mono,
-            fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
+            fontSize: chromeDense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
             pointerEvents: "auto",
             flexShrink: 0,
           }}
@@ -1956,14 +2027,21 @@ export const ResearchChartWidgetSidebar = ({
   onToggleDrawMode,
   onClearDrawings,
   dense = false,
+  density,
 }: ResearchChartWidgetSidebarProps) => {
+  const frameDensity = useResolvedChartFrameDensity(dense, density);
+  if (frameDensity === "minimal") {
+    return null;
+  }
+  const chromeDense = isCompressedChartFrameDensity(frameDensity);
+  const railWidth = frameDensity === "icon" ? 26 : chromeDense ? 30 : 40;
   const palette = getPanelPalette(theme);
   const groups = [
     [
       {
         key: "crosshair",
         title: "Crosshair / pan",
-        icon: <Crosshair style={iconStyle(dense)} />,
+        icon: <Crosshair style={iconStyle(chromeDense)} />,
         active: !drawMode,
         onClick: () => onToggleDrawMode?.(null),
       },
@@ -1972,7 +2050,7 @@ export const ResearchChartWidgetSidebar = ({
       {
         key: "horizontal",
         title: "Horizontal line",
-        icon: <Minus style={iconStyle(dense)} />,
+        icon: <Minus style={iconStyle(chromeDense)} />,
         active: drawMode === "horizontal",
         onClick: () =>
           onToggleDrawMode?.(drawMode === "horizontal" ? null : "horizontal"),
@@ -1980,7 +2058,7 @@ export const ResearchChartWidgetSidebar = ({
       {
         key: "vertical",
         title: "Vertical line",
-        icon: <MoveVertical style={iconStyle(dense)} />,
+        icon: <MoveVertical style={iconStyle(chromeDense)} />,
         active: drawMode === "vertical",
         onClick: () =>
           onToggleDrawMode?.(drawMode === "vertical" ? null : "vertical"),
@@ -1988,39 +2066,9 @@ export const ResearchChartWidgetSidebar = ({
       {
         key: "box",
         title: "Rectangle",
-        icon: <Square style={iconStyle(dense)} />,
+        icon: <Square style={iconStyle(chromeDense)} />,
         active: drawMode === "box",
         onClick: () => onToggleDrawMode?.(drawMode === "box" ? null : "box"),
-      },
-    ],
-    [
-      {
-        key: "pan-left",
-        title: "Pan left",
-        icon: <ArrowLeft style={iconStyle(dense)} />,
-        active: false,
-        onClick: controls.panLeft,
-      },
-      {
-        key: "pan-right",
-        title: "Pan right",
-        icon: <ArrowRight style={iconStyle(dense)} />,
-        active: false,
-        onClick: controls.panRight,
-      },
-      {
-        key: "zoom-out",
-        title: "Zoom out",
-        icon: <ZoomOut style={iconStyle(dense)} />,
-        active: false,
-        onClick: controls.zoomOut,
-      },
-      {
-        key: "zoom-in",
-        title: "Zoom in",
-        icon: <ZoomIn style={iconStyle(dense)} />,
-        active: false,
-        onClick: controls.zoomIn,
       },
     ],
     [
@@ -2032,9 +2080,9 @@ export const ResearchChartWidgetSidebar = ({
             : "Magnet crosshair",
         icon:
           controls.crosshairMode === "free" ? (
-            <Crosshair style={iconStyle(dense)} />
+            <Crosshair style={iconStyle(chromeDense)} />
           ) : (
-            <Magnet style={iconStyle(dense)} />
+            <Magnet style={iconStyle(chromeDense)} />
           ),
         active: controls.crosshairMode === "free",
         onClick: () =>
@@ -2043,17 +2091,11 @@ export const ResearchChartWidgetSidebar = ({
           ),
       },
       {
-        key: "fit",
-        title: "Fit content",
-        icon: <Ruler style={iconStyle(dense)} />,
-        active: false,
-        onClick: controls.fit,
-      },
-      {
         key: "realtime",
-        title: "Follow realtime",
-        icon: <Activity style={iconStyle(dense)} />,
-        active: false,
+        title: controls.realtimeFollow ? "Following realtime" : "Follow realtime",
+        icon: <Activity style={iconStyle(chromeDense)} />,
+        active: controls.realtimeFollow,
+        disabled: !controls.canFollowRealtime,
         onClick: controls.realtime,
       },
     ],
@@ -2063,14 +2105,14 @@ export const ResearchChartWidgetSidebar = ({
     <div
       data-chart-control-root
       style={{
-        width: dense ? 30 : 40,
+        width: railWidth,
         height: "100%",
         background: palette.panel,
         borderRight: `1px solid ${theme.border}`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        padding: dense ? "4px 0" : "6px 0",
+        padding: chromeDense ? "4px 0" : "6px 0",
         gap: 2,
         overflowY: "auto",
       }}
@@ -2089,7 +2131,7 @@ export const ResearchChartWidgetSidebar = ({
           {groupIndex > 0 ? (
             <div
               style={{
-                width: dense ? 14 : 20,
+                width: chromeDense ? 14 : 20,
                 height: 1,
                 background: theme.border,
                 margin: "3px 0",
@@ -2102,12 +2144,15 @@ export const ResearchChartWidgetSidebar = ({
               key={button.key}
               type="button"
               aria-pressed={button.active}
+              aria-disabled={button.disabled ? "true" : undefined}
+              disabled={button.disabled}
               onClick={button.onClick}
               style={railButtonStyle({
                 theme,
                 palette,
                 active: button.active,
-                dense,
+                dense: chromeDense,
+                disabled: button.disabled,
               })}
             >
               {button.icon}
@@ -2129,12 +2174,12 @@ export const ResearchChartWidgetSidebar = ({
         style={railButtonStyle({
           theme,
           palette,
-          dense,
+          dense: chromeDense,
           danger: true,
           disabled: !drawingCount,
         })}
       >
-        <Trash2 style={iconStyle(dense)} />
+        <Trash2 style={iconStyle(chromeDense)} />
       </button></AppTooltip>
     </div>
   );

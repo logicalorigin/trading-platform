@@ -5,6 +5,7 @@ import {
   buildSellCallTicketCoverage,
   resolveSellCallTicketIntent,
 } from "./optionSellCallIntent.js";
+import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
 
 const tradeOrderTicketSource = readFileSync(
   new URL("./TradeOrderTicket.jsx", import.meta.url),
@@ -64,6 +65,49 @@ test("TradeOrderTicket passes computed shadow quantity into sell-call intent", (
   );
   assert.doesNotMatch(tradeOrderTicketSource, /\n\s*shadowMatchingQuantity,\n/);
   assert.match(tradeOrderTicketSource, /const date = parseExpirationValue\(value\)/);
+});
+
+test("ticket readiness blocks missing contract and flags wide spreads", () => {
+  const blocked = buildTicketReadinessModel({
+    executionMode: "real",
+    gatewayTradingReady: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    accountId: "DU123",
+    ticketInstrumentReady: false,
+    quoteReady: false,
+  });
+  assert.equal(blocked.tone, "bad");
+  assert.deepEqual(blocked.issues, ["contract", "quote"]);
+
+  const wide = buildTicketReadinessModel({
+    executionMode: "real",
+    gatewayTradingReady: true,
+    brokerConfigured: true,
+    brokerAuthenticated: true,
+    accountId: "DU123",
+    ticketInstrumentReady: true,
+    quoteReady: true,
+    spreadPct: 22,
+  });
+  assert.equal(wide.tone, "warn");
+  assert.deepEqual(wide.warnings, ["wide spread"]);
+});
+
+test("ticket readiness treats shadow route as broker-independent but still gateway-aware", () => {
+  const model = buildTicketReadinessModel({
+    executionMode: "shadow",
+    gatewayTradingReady: false,
+    brokerConfigured: false,
+    brokerAuthenticated: false,
+    accountId: null,
+    ticketInstrumentReady: true,
+    quoteReady: true,
+  });
+
+  assert.equal(model.tone, "warn");
+  assert.deepEqual(model.issues, []);
+  assert.deepEqual(model.warnings, ["gateway"]);
 });
 
 test("resolves real sell calls against matching long option positions first", () => {

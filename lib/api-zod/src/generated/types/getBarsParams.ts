@@ -7,12 +7,12 @@
  */
 import type { AssetClass } from './assetClass';
 import type { BarDataSource } from './barDataSource';
-import type { BarTimeframe } from './barTimeframe';
+import type { ChartBarTimeframe } from './chartBarTimeframe';
 import type { UniverseMarket } from './universeMarket';
 
 export type GetBarsParams = {
 symbol: string;
-timeframe: BarTimeframe;
+timeframe: ChartBarTimeframe;
 /**
  * @minimum 1
  * @maximum 50000

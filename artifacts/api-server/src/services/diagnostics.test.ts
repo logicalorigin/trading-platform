@@ -27,12 +27,26 @@ const {
 } = storageHealthModule;
 const { registerSignalOptionsWorkerSnapshotGetter } = signalOptionsWorkerStateModule;
 
+function emptyWorkerMaintenanceSnapshot() {
+  return {
+    runCount: 0,
+    totalClosedCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    lastClosedCount: 0,
+    lastSkippedCount: 0,
+    lastDueCount: 0,
+    lastOrphanCount: 0,
+  };
+}
+
 function registerEmptySignalOptionsWorkerSnapshot() {
   registerSignalOptionsWorkerSnapshotGetter(() => ({
     started: false,
     tickRunning: false,
     deploymentCount: 0,
     activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
     deployments: [],
   }));
 }
@@ -158,6 +172,7 @@ test("diagnostics treat recovered signal-options worker failures as historical",
     tickRunning: false,
     deploymentCount: 1,
     activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
     deployments: [
       {
         deploymentId: "deployment-1",
@@ -226,6 +241,7 @@ test("diagnostics surface stale signal-options scan inputs", async () => {
     tickRunning: false,
     deploymentCount: 1,
     activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
     deployments: [
       {
         deploymentId: "deployment-1",
@@ -296,6 +312,7 @@ test("diagnostics do not treat inactive but current signals as degraded input", 
     tickRunning: false,
     deploymentCount: 1,
     activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
     deployments: [
       {
         deploymentId: "deployment-1",

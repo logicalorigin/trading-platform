@@ -30,6 +30,7 @@ import {
 import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
 import { useOptionChartBars } from "../charting/useOptionChartBars.js";
 import { resolveOptionChartSourceState } from "../charting/chartApiBars.js";
+import { useFlowChartEventConversion } from "../workers/analyticsClient";
 import {
   normalizeFlowOptionExpirationIso,
   normalizeFlowOptionRight,
@@ -52,13 +53,15 @@ import {
   mapNewsSentimentToScore,
 } from "../../lib/formatters";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
   T,
   dim,
   fs,
   getCurrentTheme,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { flowProviderColor } from "./flowPresentation";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -399,6 +402,12 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       optionProgressiveBars.targetLimit,
     ],
   });
+  const optionChartFlowEvents = useMemo(() => (evt ? [evt] : []), [evt]);
+  const optionChartEventConversion = useFlowChartEventConversion(
+    optionChartFlowEvents,
+    chartSymbol,
+  );
+  const optionChartEvents = optionChartEventConversion.events;
   const optionLatestBar = optionDisplayBars[optionDisplayBars.length - 1] || null;
   const optionPreviousBar =
     optionDisplayBars.length > 1
@@ -536,12 +545,12 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
         justifyContent: "space-between",
         gap: sp(8),
         padding: sp("6px 8px"),
-        background: T.bg3,
+        background: T.bg1,
         borderRadius: dim(3),
       }}
     >
       <span
-        style={{ fontSize: fs(9), color: T.textMuted, fontFamily: T.sans }}
+        style={{ fontSize: textSize("caption"), color: T.textMuted, fontFamily: T.sans }}
       >
         {label}
       </span>
@@ -549,7 +558,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
         style={{
           fontSize: fs(10),
           color,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           fontFamily: mono ? T.mono : T.sans,
           textAlign: "right",
         }}
@@ -568,7 +577,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           gap: sp(8),
           padding: sp("8px 12px"),
           marginBottom: sp(6),
-          background: T.bg2,
+          background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: dim(6),
           flexWrap: "wrap",
@@ -586,7 +595,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             color: T.textSec,
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             cursor: "pointer",
             flexShrink: 0,
@@ -617,7 +626,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           <span
             style={{
               fontSize: fs(16),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               color: T.text,
               letterSpacing: 0,
@@ -641,7 +650,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               fontSize: fs(10),
               fontFamily: T.sans,
               color: evt.dte <= 1 ? T.red : evt.dte <= 7 ? T.amber : T.textDim,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {evt.dte}DTE
@@ -651,9 +660,9 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               fontSize: fs(10),
               fontFamily: T.sans,
               color: typeColor,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               padding: sp("1px 6px"),
-              background: T.bg3,
+              background: T.bg1,
               borderRadius: dim(2),
             }}
           >
@@ -676,7 +685,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           <span
             style={{
               fontSize: fs(18),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               color: T.text,
             }}
@@ -687,7 +696,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           </span>
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
               color: T.textDim,
             }}
@@ -713,7 +722,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             cursor: "pointer",
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             flexShrink: 0,
           }}
@@ -740,7 +749,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             cursor: "pointer",
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             flexShrink: 0,
           }}
@@ -799,7 +808,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             key={item.label}
             style={{
               padding: sp("6px 8px"),
-              background: T.bg2,
+              background: T.bg1,
               border: `1px solid ${T.border}`,
               borderRadius: dim(3),
               minWidth: 0,
@@ -810,7 +819,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 fontSize: fs(8),
                 color: T.textMuted,
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 marginBottom: sp(2),
               }}
             >
@@ -821,7 +830,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 fontSize: fs(10),
                 color: item.color,
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -852,7 +861,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <div
               style={{
                 fontSize: fs(10),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -891,7 +900,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <div
               style={{
                 fontSize: fs(10),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -912,7 +921,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               }}
             >
               <div>
-                <span style={{ color: cpColor, fontWeight: 400 }}>
+                <span style={{ color: cpColor, fontWeight: FONT_WEIGHTS.regular }}>
                   {isCall ? "Call flow" : "Put flow"}
                 </span>{" "}
                 with a provider-reported {evt.side.toLowerCase()} side. This panel
@@ -920,7 +929,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 provider.
               </div>
               <div>
-                <span style={{ color: T.text, fontWeight: 400 }}>{flowRead}</span>
+                <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{flowRead}</span>
                 {" · "}
                 <span
                   style={{
@@ -930,7 +939,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                         : sentimentScore < 0
                           ? T.red
                           : T.textDim,
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   {evt.sentiment || "sentiment unavailable"}
@@ -966,7 +975,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <span
               style={{
                 fontSize: fs(10),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -975,7 +984,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               OPTION CHART
             </span>
             <span
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}
+              style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}
             >
               {optionChartStatusLabel}
             </span>
@@ -996,7 +1005,9 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 rangeIdentityKey={optionChartScopeKey}
                 viewportLayoutKey={optionChartViewportLayoutKey}
                 model={optionChartModel}
-                placement="inspection"
+                chartEvents={optionChartEvents}
+                chartFlowDiagnostics={optionChartEventConversion}
+                placement="workspace"
                 positionOverlayContext={{
                   surfaceKind: "option",
                   symbol: chartSymbol,
@@ -1049,7 +1060,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     onChangeTimeframe={handleOptionChartTimeframeChange}
                     onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
                     onPrewarmTimeframe={prewarmOptionTimeframe}
-                    dense
                     meta={{
                       open: optionLatestBar?.o,
                       high: optionLatestBar?.h,
@@ -1066,7 +1076,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                   <ResearchChartWidgetFooter
                     theme={T}
                     controls={controls}
-                    dense
                     statusText={optionChartStatusLabel}
                   />
                 )}
@@ -1075,9 +1084,9 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 <div
                   style={{
                     position: "absolute",
-                    top: sp(30),
+                    top: sp(42),
                     right: 0,
-                    bottom: sp(22),
+                    bottom: sp(24),
                     left: 0,
                     display: "flex",
                     alignItems: "center",

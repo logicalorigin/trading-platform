@@ -84,6 +84,9 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
+  assert.equal(snapshot.admission.budget.maxLines, 190);
+  assert.equal(snapshot.admission.budget.configuredMaxLines, 200);
+  assert.equal(snapshot.admission.budget.budgetSource, "bridge-diagnostics");
   assert.equal(snapshot.drift.admissionVsBridgeLineDelta, -1);
   assert.equal(snapshot.drift.reconciliation.status, "mixed");
   assert.equal(snapshot.drift.reconciliation.matchedLineCount, 1);
@@ -96,4 +99,48 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
     "equity:MSFT",
     "option:twsopt:test-bridge-only",
   ]);
+});
+
+test("getIbkrLineUsageSnapshot reports account and visible bridge warm-up coverage", async () => {
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 2,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: ["AAPL", "SPY"],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  admitMarketDataLeases({
+    owner: "account-monitor:paper:all",
+    intent: "account-monitor-live",
+    requests: ["AAPL", "MSFT"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "cache",
+  });
+  admitMarketDataLeases({
+    owner: "visible-watchlist",
+    intent: "visible-live",
+    requests: ["SPY", "NVDA"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "cache",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.warmup.state, "pending");
+  assert.equal(snapshot.warmup.targetLineCount, 4);
+  assert.equal(snapshot.warmup.activeBridgeLineCount, 2);
+  assert.equal(snapshot.warmup.pendingLineCount, 2);
+  assert.equal(snapshot.warmup.accountTargetLineCount, 2);
+  assert.equal(snapshot.warmup.accountPendingLineCount, 1);
+  assert.equal(snapshot.warmup.visibleTargetLineCount, 2);
+  assert.equal(snapshot.warmup.visiblePendingLineCount, 1);
+  assert.deepEqual(snapshot.warmup.accountPendingLineSample, ["equity:MSFT"]);
+  assert.deepEqual(snapshot.warmup.visiblePendingLineSample, ["equity:NVDA"]);
 });

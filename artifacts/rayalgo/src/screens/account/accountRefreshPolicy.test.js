@@ -41,6 +41,21 @@ test("disables all visible account polling while the account page stream is fres
   assert.equal(policy.streamBacked, true);
 });
 
+test("keeps account fallback polling active while account line warm-up is pending", () => {
+  const policy = buildAccountRefreshPolicy({
+    isVisible: true,
+    accountPageStreamFresh: true,
+    accountWarmupPending: true,
+    accountStreamFresh: true,
+    orderStreamFresh: true,
+  });
+
+  assert.equal(policy.primary, 10_000);
+  assert.equal(policy.secondary, 30_000);
+  assert.equal(policy.trades, 60_000);
+  assert.equal(policy.streamBacked, false);
+});
+
 test("uses slower fallback polling for shadow account ledger views", () => {
   const policy = buildAccountRefreshPolicy({
     isVisible: true,

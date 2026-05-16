@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { MISSING_VALUE, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
@@ -232,19 +232,32 @@ const HeaderIbkrStatusChip = ({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(3),
+        gap: sp(8),
         minWidth: 0,
-        color: tone.color,
         animation: pulse ? "ibkrStatusPulse 1.8s ease-in-out infinite" : "none",
       }}
     >
-      <Icon size={dim(11)} strokeWidth={2.3} color={tone.color} />
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: dim(20),
+          height: dim(20),
+          borderRadius: dim(RADII.pill),
+          background: `${tone.color}14`,
+          flexShrink: 0,
+        }}
+      >
+        <Icon size={dim(12)} strokeWidth={2.3} color={tone.color} />
+      </span>
       {label ? (
         <span
           style={{
-            fontSize: fs(7),
-            fontWeight: 400,
+            fontSize: textSize("body"),
+            fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
+            color: tone.color,
             letterSpacing: "0.04em",
             whiteSpace: "nowrap",
           }}
@@ -256,14 +269,16 @@ const HeaderIbkrStatusChip = ({
         <span
           key={badge.label}
           style={{
-            border: `1px solid ${badge.color}66`,
+            borderRadius: dim(RADII.pill),
             background: badge.background,
             color: badge.color,
-            fontSize: fs(7),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
             lineHeight: 1,
-            padding: sp("2px 4px"),
+            padding: sp("3px 8px"),
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
             whiteSpace: "nowrap",
           }}
         >
@@ -273,11 +288,12 @@ const HeaderIbkrStatusChip = ({
       <IbkrPingWavelength connection={connection} tone={tone} />
       <span
         style={{
-          color: T.textDim,
-          fontSize: fs(7),
-          fontWeight: 400,
+          color: T.textSec,
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
           fontFamily: T.sans,
-          minWidth: dim(30),
+          fontVariantNumeric: "tabular-nums",
+          minWidth: dim(38),
           textAlign: "right",
           whiteSpace: "nowrap",
         }}
@@ -291,27 +307,39 @@ const HeaderIbkrStatusChip = ({
 const HeaderIbkrDetailRow = ({
   label,
   value,
-  tone = T.textSec,
+  tone = T.text,
   wrap = false,
 }) => (
   <div
     style={{
       display: "grid",
-      gridTemplateColumns: `minmax(${dim(72)}px, 0.78fr) minmax(0, 1.22fr)`,
-      gap: sp(8),
+      gridTemplateColumns: `minmax(${dim(96)}px, 0.78fr) minmax(0, 1.22fr)`,
+      gap: sp(12),
       alignItems: "baseline",
       minWidth: 0,
-      padding: sp("2px 0"),
-      borderBottom: `1px solid ${T.border}55`,
+      padding: sp("8px 0"),
+      borderBottom: `1px solid ${T.borderLight}`,
       fontFamily: T.sans,
-      fontSize: fs(8),
     }}
   >
-    <span style={{ color: T.textDim, whiteSpace: "nowrap" }}>{label}</span>
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
     <span
       style={{
         color: tone,
-        fontWeight: 400,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
+        fontVariantNumeric: "tabular-nums",
         minWidth: 0,
         overflow: "hidden",
         textOverflow: wrap ? "clip" : "ellipsis",
@@ -345,23 +373,37 @@ const HeaderIbkrMetricTile = ({ tile }) => {
         display: "grid",
         gridTemplateColumns: "auto minmax(0, 1fr)",
         alignItems: "center",
-        gap: sp(6),
+        gap: sp(10),
         minWidth: 0,
-        padding: sp("6px 7px"),
+        padding: sp("10px 12px"),
         background: T.bg1,
-        border: "none",
+        border: `1px solid ${T.borderLight}`,
+        borderRadius: dim(RADII.sm),
       }}
     >
-      <Icon size={dim(13)} strokeWidth={2.2} color={tile.tone} />
-      <div style={{ minWidth: 0 }}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: dim(28),
+          height: dim(28),
+          borderRadius: dim(RADII.pill),
+          background: `${tile.tone}14`,
+          flexShrink: 0,
+        }}
+      >
+        <Icon size={dim(15)} strokeWidth={2.2} color={tile.tone} />
+      </span>
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: sp(1) }}>
         <div
           style={{
-            color: T.textDim,
+            color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(7),
-            fontWeight: 400,
-            letterSpacing: "0.04em",
-            lineHeight: 1.1,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.08em",
+            lineHeight: 1,
             textTransform: "uppercase",
           }}
         >
@@ -371,9 +413,10 @@ const HeaderIbkrMetricTile = ({ tile }) => {
           style={{
             color: tile.tone,
             fontFamily: T.sans,
-            fontSize: fs(10),
-            fontWeight: 400,
-            lineHeight: 1.15,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -384,10 +427,10 @@ const HeaderIbkrMetricTile = ({ tile }) => {
         {tile.detail ? (
           <div
             style={{
-              color: T.textDim,
+              color: T.textMuted,
               fontFamily: T.sans,
-              fontSize: fs(7),
-              lineHeight: 1.1,
+              fontSize: textSize("caption"),
+              lineHeight: 1.2,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -405,20 +448,21 @@ const HeaderProviderRows = ({ rows = [] }) => (
   <div
     style={{
       display: "grid",
-      gap: sp(4),
-      marginBottom: sp(8),
-      padding: sp("6px 7px"),
+      gap: sp(8),
+      marginBottom: sp(12),
+      padding: sp("12px 14px"),
       background: T.bg1,
-      border: "none",
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.sm),
     }}
   >
     <div
       style={{
         color: T.textMuted,
         fontFamily: T.sans,
-        fontSize: fs(8),
-        fontWeight: 400,
-        letterSpacing: "0.05em",
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.08em",
         textTransform: "uppercase",
       }}
     >
@@ -429,16 +473,16 @@ const HeaderProviderRows = ({ rows = [] }) => (
         key={row.label}
         style={{
           display: "grid",
-          gridTemplateColumns: `minmax(${dim(56)}px, 0.5fr) minmax(0, 0.9fr) minmax(0, 1.3fr)`,
-          gap: sp(6),
+          gridTemplateColumns: `minmax(${dim(72)}px, 0.5fr) minmax(0, 0.9fr) minmax(0, 1.3fr)`,
+          gap: sp(10),
           alignItems: "baseline",
           minWidth: 0,
           fontFamily: T.sans,
-          fontSize: fs(8),
+          fontSize: textSize("body"),
         }}
       >
-        <span style={{ color: T.textDim }}>{row.label}</span>
-        <span style={{ color: row.tone, fontWeight: 400 }}>{row.value}</span>
+        <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.medium }}>{row.label}</span>
+        <span style={{ color: row.tone, fontWeight: FONT_WEIGHTS.medium }}>{row.value}</span>
         <span
           style={{
             color: T.textMuted,
@@ -462,15 +506,40 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
     return null;
   }
 
+  const warmup = lineUsage.warmup || {};
+  const warmupPending = Number(warmup.pendingLineCount) > 0;
+
+  const summaryChips = [
+    lineUsage.bridge?.available
+      ? { label: "Bridge", value: lineUsage.bridge.summary, tone: lineUsage.bridge.tone }
+      : null,
+    {
+      label: "API demand",
+      value: lineUsage.demandSummary || lineUsage.summary,
+      tone: T.text,
+    },
+    lineUsage.drift?.status && lineUsage.drift.status !== "unknown"
+      ? { label: "Drift", value: lineUsage.drift.label, tone: lineUsage.drift.tone }
+      : null,
+    warmup.available && warmup.state !== "idle"
+      ? {
+          label: "Warm-up",
+          value: warmupPending ? warmup.pendingSummary : warmup.label,
+          tone: warmup.tone,
+        }
+      : null,
+  ].filter(Boolean);
+
   return (
     <div
       style={{
         display: "grid",
-        gap: sp(4),
-        marginBottom: sp(8),
-        padding: sp("6px 7px"),
+        gap: sp(12),
+        marginBottom: sp(12),
+        padding: sp("14px 16px"),
         background: T.bg1,
-        border: "none",
+        border: `1px solid ${T.borderLight}`,
+        borderRadius: dim(RADII.md),
         fontFamily: T.sans,
       }}
     >
@@ -479,90 +548,158 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "baseline",
-          gap: sp(8),
+          gap: sp(10),
         }}
       >
         <span
           style={{
             color: T.textMuted,
-            fontSize: fs(8),
-            fontWeight: 400,
-            letterSpacing: "0.05em",
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.08em",
             textTransform: "uppercase",
           }}
         >
-          Market data lines
+          IBKR Line Usage
         </span>
-        <span style={{ color: T.textSec, fontSize: fs(8), fontWeight: 400 }}>
+        <span
+          style={{
+            color: T.text,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {lineUsage.summary}
         </span>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `minmax(${dim(96)}px, 1fr) repeat(3, minmax(${dim(34)}px, auto))`,
-          gap: sp(5),
-          color: T.textMuted,
-          fontSize: fs(7),
-          fontWeight: 400,
-          textTransform: "uppercase",
-          borderBottom: `1px solid ${T.border}66`,
-          paddingBottom: sp(2),
-        }}
-      >
-        <span>Pool</span>
-        <span style={{ textAlign: "right" }}>Used</span>
-        <span style={{ textAlign: "right" }}>Cap</span>
-        <span style={{ textAlign: "right" }}>Free</span>
-      </div>
-      {lineUsage.rows.map((row) => (
-        <div
-          key={row.id}
-          data-testid={`header-market-data-line-row-${row.id}`}
-          style={{
-            display: "grid",
-            gridTemplateColumns: `minmax(${dim(96)}px, 1fr) repeat(3, minmax(${dim(34)}px, auto))`,
-            gap: sp(5),
-            alignItems: "baseline",
-            color: row.tone,
-            fontSize: fs(8),
-            borderBottom: `1px solid ${T.border}33`,
-            padding: sp("1px 0"),
-          }}
-        >
-          <span
-            style={{
-              color: row.id === "total" ? T.textSec : T.textDim,
-              minWidth: 0,
-            }}
-          >
-            <span>{row.label}</span>
-            {row.detail ? (
+      {summaryChips.length ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
+          {summaryChips.map((chip) => (
+            <span
+              key={chip.label}
+              style={{
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: sp(6),
+                padding: sp("4px 10px"),
+                borderRadius: dim(RADII.pill),
+                background: `${chip.tone}10`,
+                color: chip.tone,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                whiteSpace: "nowrap",
+              }}
+            >
               <span
                 style={{
-                  display: "block",
-                  marginTop: sp(1),
-                  color: row.tone,
-                  fontSize: fs(7),
-                  lineHeight: 1.1,
-                  overflowWrap: "anywhere",
+                  color: T.textMuted,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
                 }}
               >
-                {row.detail}
+                {chip.label}
               </span>
-            ) : null}
-          </span>
-          <span style={{ textAlign: "right", fontWeight: 400 }}>
-            {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
-          </span>
-          <span style={{ textAlign: "right" }}>
-            {Number.isFinite(row.cap) ? Math.round(row.cap) : MISSING_VALUE}
-          </span>
-          <span style={{ textAlign: "right" }}>
-            {Number.isFinite(row.free) ? Math.round(row.free) : MISSING_VALUE}
-          </span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{chip.value}</span>
+            </span>
+          ))}
         </div>
-      ))}
+      ) : null}
+      <div style={{ display: "grid", gap: 0 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
+            gap: sp(10),
+            color: T.textMuted,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            paddingBottom: sp(6),
+            borderBottom: `1px solid ${T.borderLight}`,
+          }}
+        >
+          <span>API Pool</span>
+          <span style={{ textAlign: "right" }}>Used</span>
+          <span style={{ textAlign: "right" }}>Cap</span>
+          <span style={{ textAlign: "right" }}>Free</span>
+        </div>
+        {lineUsage.rows.map((row, index) => (
+          <div
+            key={row.id}
+            data-testid={`header-market-data-line-row-${row.id}`}
+            style={{
+              display: "grid",
+              gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
+              gap: sp(10),
+              alignItems: "baseline",
+              fontSize: textSize("paragraphMuted"),
+              padding: sp("8px 0"),
+              borderBottom:
+                index < lineUsage.rows.length - 1
+                  ? `1px solid ${T.borderLight}`
+                  : "none",
+            }}
+          >
+            <span
+              style={{
+                color: row.id === "total" ? T.text : T.textSec,
+                minWidth: 0,
+                fontWeight:
+                  row.id === "total" ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+              }}
+            >
+              <span>{row.label}</span>
+              {row.detail ? (
+                <span
+                  style={{
+                    display: "block",
+                    marginTop: sp(3),
+                    color: row.tone,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.regular,
+                    lineHeight: 1.4,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {row.detail}
+                </span>
+              ) : null}
+            </span>
+            <span
+              style={{
+                textAlign: "right",
+                color: row.tone,
+                fontWeight: FONT_WEIGHTS.medium,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
+            </span>
+            <span
+              style={{
+                textAlign: "right",
+                color: T.textSec,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Number.isFinite(row.effectiveCap ?? row.cap)
+                ? Math.round(row.effectiveCap ?? row.cap)
+                : MISSING_VALUE}
+            </span>
+            <span
+              style={{
+                textAlign: "right",
+                color: T.textSec,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Number.isFinite(row.free) ? Math.round(row.free) : MISSING_VALUE}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -573,11 +710,22 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
   }
 
   const totalRow = lineUsage.rows?.find((row) => row.id === "total");
-  const state = totalRow?.streamState || "no-subscribers";
+  const warmup = lineUsage.warmup || {};
+  const warmupPending = Number(warmup.pendingLineCount) > 0;
+  const state = lineUsage.bridge?.available
+    ? lineUsage.bridge.streamState
+    : totalRow?.streamState || "no-subscribers";
   const tone = streamStateTokenVar(state);
+  const label = lineUsage.bridge?.available ? "BRIDGE" : "LINES";
+  const baseTooltip = lineUsage.bridge?.available
+    ? `Bridge active ${lineUsage.bridge.summary}; API demand ${lineUsage.demandSummary || lineUsage.summary}`
+    : `Market data lines ${lineUsage.summary}`;
+  const tooltip = warmupPending
+    ? `${baseTooltip}; bridge pending ${Math.round(warmup.pendingLineCount).toLocaleString()} live line${Math.round(warmup.pendingLineCount) === 1 ? "" : "s"}`
+    : baseTooltip;
 
   return (
-    <AppTooltip content={`Market data lines ${lineUsage.summary}`}><span
+    <AppTooltip content={tooltip}><span
       data-testid="header-market-data-line-usage"
       style={{
         display: "inline-flex",
@@ -589,13 +737,13 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
         color: tone,
         fontFamily: T.sans,
         fontSize: fs(7),
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         lineHeight: 1,
         padding: sp("2px 4px"),
         whiteSpace: "nowrap",
       }}
     >
-      <span style={{ color: T.textMuted }}>LINES</span>
+      <span style={{ color: T.textMuted }}>{label}</span>
       <span>{lineUsage.summary}</span>
     </span></AppTooltip>
   );
@@ -625,20 +773,22 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: sp(6),
+            gap: sp(8),
             minWidth: 0,
             color: model.health.color,
             fontFamily: T.sans,
-            fontSize: fs(10),
-            fontWeight: 400,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
           }}
         >
           <span
             style={{
               width: dim(8),
               height: dim(8),
+              borderRadius: dim(RADII.pill),
               background: model.health.color,
-              boxShadow: `0 0 10px ${model.health.color}66`,
+              boxShadow: `0 0 8px ${model.health.color}44`,
+              flexShrink: 0,
             }}
           />
           <span>{model.health.label}</span>
@@ -648,21 +798,24 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
             display: "flex",
             alignItems: "center",
             justifyContent: "flex-end",
-            gap: sp(4),
+            gap: sp(6),
             minWidth: 0,
+            flexWrap: "wrap",
           }}
         >
           {model.badges.map((badge) => (
             <span
               key={badge.label}
               style={{
-                border: `1px solid ${badge.color}66`,
+                borderRadius: dim(RADII.pill),
                 background: badge.background,
                 color: badge.color,
                 fontFamily: T.sans,
-                fontSize: fs(7),
-                fontWeight: 400,
-                padding: sp("2px 4px"),
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                padding: sp("3px 8px"),
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
                 whiteSpace: "nowrap",
               }}
             >
@@ -676,18 +829,19 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
         style={{
           display: "grid",
           gridTemplateColumns: "auto minmax(0, 1fr)",
-          gap: sp(6),
+          gap: sp(10),
           alignItems: "start",
-          padding: sp("6px 7px"),
+          padding: sp("10px 12px"),
           background: T.bg1,
           border: `1px solid ${model.issue.tone}55`,
+          borderRadius: dim(RADII.sm),
           color: model.issue.tone,
           fontFamily: T.sans,
-          fontSize: fs(8),
-          lineHeight: 1.3,
+          fontSize: textSize("paragraphMuted"),
+          lineHeight: 1.4,
         }}
       >
-        <IssueIcon size={dim(12)} strokeWidth={2.2} color={model.issue.tone} />
+        <IssueIcon size={dim(15)} strokeWidth={2.2} color={model.issue.tone} />
         <span
           style={{
             minWidth: 0,
@@ -762,7 +916,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
           cursor: "pointer",
           fontFamily: T.sans,
           fontSize: fs(8),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
           textTransform: "uppercase",
         }}
@@ -795,7 +949,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
                   color: T.textMuted,
                   fontFamily: T.sans,
                   fontSize: fs(8),
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   letterSpacing: "0.05em",
                   textTransform: "uppercase",
                 }}
@@ -981,20 +1135,21 @@ export const HeaderStatusCluster = ({
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
-    gap: sp(2),
-    minHeight: dim(32),
-    padding: sp("3px 7px"),
+    gap: sp(compact ? 4 : 6),
+    minHeight: dim(compact ? 28 : 38),
+    padding: sp(compact ? "3px 8px" : "6px 12px"),
     background: T.bg1,
-    border: "none",
-    borderRadius: RADII.none,
+    border: `1px solid ${T.border}`,
+    borderRadius: dim(RADII.sm),
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
   const microLabelStyle = {
-    fontSize: fs(7),
-    fontWeight: 400,
+    fontSize: textSize(compact ? "micro" : "caption"),
+    fontWeight: FONT_WEIGHTS.medium,
     fontFamily: T.sans,
     color: T.textMuted,
-    letterSpacing: "0.06em",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
     whiteSpace: "nowrap",
   };
 
@@ -1203,11 +1358,9 @@ export const HeaderStatusCluster = ({
             cursor: "pointer",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.background = T.bg3;
-            event.currentTarget.style.borderColor = T.textMuted;
+            event.currentTarget.style.borderColor = T.accent;
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.background = T.bg1;
             event.currentTarget.style.borderColor = T.border;
           }}
         >
@@ -1247,7 +1400,7 @@ export const HeaderStatusCluster = ({
               padding: sp(10),
               background: T.bg0,
               border: "none",
-              boxShadow: "0 12px 32px rgba(0,0,0,0.34)",
+              boxShadow: ELEVATION.lg,
               color: T.text,
               fontFamily: T.sans,
             }}
@@ -1265,55 +1418,78 @@ export const HeaderStatusCluster = ({
                 style={{
                   minWidth: 0,
                   display: "flex",
-                  alignItems: "baseline",
-                  gap: sp(7),
+                  flexDirection: "column",
+                  gap: sp(2),
                 }}
               >
-                <span style={{ ...microLabelStyle, color: T.textSec }}>
-                  IB GATEWAY
+                <span
+                  style={{
+                    color: T.textMuted,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    fontFamily: T.sans,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    lineHeight: 1,
+                  }}
+                >
+                  IB Gateway
                 </span>
                 <span
                   style={{
-                    ...microLabelStyle,
                     color: bridgeTone.color,
+                    fontSize: textSize("displaySmall"),
+                    fontWeight: FONT_WEIGHTS.label,
+                    fontFamily: T.sans,
+                    letterSpacing: "-0.015em",
+                    lineHeight: 1.1,
                   }}
                 >
-                  {bridgeTone.label.toUpperCase()}
+                  {bridgeTone.label}
                 </span>
               </div>
               <AppTooltip content="Close"><button
                 type="button"
                 onClick={() => setBridgePopoverOpen(false)}
                 style={{
-                  width: dim(24),
-                  height: dim(24),
+                  width: dim(32),
+                  height: dim(32),
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  border: "none",
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(RADII.sm),
                   background: T.bg1,
-                  color: T.textDim,
+                  color: T.textSec,
                   cursor: "pointer",
+                  transition: "border-color 0.12s ease",
+                }}
+                onMouseEnter={(event) => {
+                  event.currentTarget.style.borderColor = T.accent;
+                }}
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.borderColor = T.border;
                 }}
               >
-                <X size={dim(13)} strokeWidth={2.2} />
+                <X size={dim(15)} strokeWidth={2.2} />
               </button></AppTooltip>
             </div>
 
             <div
               style={{
-                minHeight: dim(28),
-                marginBottom: sp(8),
-                padding: sp("6px 8px"),
+                minHeight: dim(32),
+                marginBottom: sp(12),
+                padding: sp("10px 12px"),
                 background: T.bg1,
-                border: "none",
+                border: `1px solid ${T.borderLight}`,
+                borderRadius: dim(RADII.sm),
                 color: bridgeLauncherError
                   ? T.red
                   : gatewayBlockingIssueMessage
                     ? gatewayPopoverModel.issue.tone
                     : T.textSec,
-                fontSize: fs(9),
-                lineHeight: 1.25,
+                fontSize: textSize("paragraphMuted"),
+                lineHeight: 1.4,
                 fontFamily: T.sans,
                 whiteSpace: "normal",
                 overflowWrap: "anywhere",
@@ -1339,19 +1515,21 @@ export const HeaderStatusCluster = ({
                 disabled={bridgeActionDisabled}
                 aria-disabled={bridgeActionDisabled}
                 style={{
-                  minHeight: dim(30),
+                  minHeight: dim(38),
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: sp(6),
+                  gap: sp(8),
+                  padding: sp("8px 14px"),
                   border: `1px solid ${bridgeActionColor}`,
+                  borderRadius: dim(RADII.sm),
                   background: `${bridgeActionColor}18`,
                   color: bridgeActionColor,
                   cursor: bridgeActionDisabled ? "default" : "pointer",
-                  fontSize: fs(9),
-                  fontWeight: 400,
+                  fontSize: textSize("paragraphMuted"),
+                  fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
-                  letterSpacing: "0.04em",
+                  letterSpacing: "-0.005em",
                 }}
               >
                 {bridgeLauncherBusy ? (
@@ -1379,22 +1557,24 @@ export const HeaderStatusCluster = ({
                   onClick={handleDeactivate}
                   disabled={bridgeLauncherBusy}
                   style={{
-                    minHeight: dim(30),
+                    minHeight: dim(38),
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: sp(6),
-                    border: "none",
+                    gap: sp(8),
+                    padding: sp("8px 14px"),
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(RADII.sm),
                     background: T.bg1,
                     color: T.textSec,
                     cursor: bridgeLauncherBusy ? "default" : "pointer",
-                    fontSize: fs(9),
-                    fontWeight: 400,
+                    fontSize: textSize("paragraphMuted"),
+                    fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
-                    letterSpacing: "0.04em",
+                    letterSpacing: "-0.005em",
                   }}
                 >
-                  <X size={dim(13)} strokeWidth={2.2} />
+                  <X size={dim(15)} strokeWidth={2.2} />
                   Deactivate
                 </button>
               ) : null}
@@ -1416,11 +1596,9 @@ export const HeaderStatusCluster = ({
           gap: 0,
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.background = T.bg3;
-          event.currentTarget.style.borderColor = T.textMuted;
+          event.currentTarget.style.borderColor = T.accent;
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.background = T.bg1;
           event.currentTarget.style.borderColor = T.border;
         }}
       >
@@ -1432,14 +1610,15 @@ export const HeaderStatusCluster = ({
             minWidth: 0,
           }}
         >
-          <span style={microLabelStyle}>MARKET</span>
+          <span style={microLabelStyle}>Market</span>
           <span
             style={{
-              fontSize: fs(10),
-              fontWeight: 400,
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
               fontFamily: T.sans,
+              fontVariantNumeric: "tabular-nums",
               color: T.text,
-              lineHeight: 1.1,
+              lineHeight: 1.2,
               whiteSpace: "nowrap",
             }}
           >
@@ -1448,15 +1627,15 @@ export const HeaderStatusCluster = ({
         </div>
         <div
           style={{
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             color: marketClock.color,
             fontFamily: T.sans,
-            fontWeight: 400,
-            lineHeight: 1.1,
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.2,
             whiteSpace: "nowrap",
           }}
         >
-          {marketClock.label.toUpperCase()} {marketClock.timerLabel}
+          {marketClock.label} {marketClock.timerLabel}
         </div>
       </div></AppTooltip>
       )}
@@ -1468,26 +1647,24 @@ export const HeaderStatusCluster = ({
         type="button"
         onClick={onToggleTheme}
         style={{
-          width: dim(30),
-          minHeight: dim(32),
+          width: dim(38),
+          minHeight: dim(38),
           padding: 0,
           background: T.bg1,
-          border: "none",
-          borderRadius: RADII.none,
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(RADII.sm),
           color: T.textSec,
           cursor: "pointer",
-          fontSize: fs(12),
+          fontSize: fs(13),
           lineHeight: 1,
           fontFamily: T.sans,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           transition: "background 0.12s ease, border-color 0.12s ease",
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.background = T.bg3;
-          event.currentTarget.style.borderColor = T.textMuted;
+          event.currentTarget.style.borderColor = T.accent;
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.background = T.bg1;
           event.currentTarget.style.borderColor = T.border;
         }}
       >

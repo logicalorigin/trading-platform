@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
+  DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS,
   evaluateRayReplicaSignals,
   RAY_REPLICA_SIGNAL_WARMUP_BARS,
   resolveRayReplicaSignalSettings,
@@ -11,6 +12,7 @@ import {
 } from "@workspace/rayreplica-core";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
+  algoDeploymentsTable,
   db,
   executionEventsTable,
   shadowAccountsTable,
@@ -127,6 +129,19 @@ type ShadowOrderInput = Omit<PlaceOrderInput, "accountId" | "mode"> & {
   placedAt?: Date | null;
 };
 
+export type ShadowOptionMaintenanceSummary = {
+  checkedCount: number;
+  dueCount: number;
+  closedCount: number;
+  skippedCount: number;
+  orphanCount: number;
+  errors: Array<{
+    positionId: string;
+    symbol: string;
+    reason: string;
+  }>;
+};
+
 type ShadowPositionRow = typeof shadowPositionsTable.$inferSelect;
 type ShadowPositionMarkRow = typeof shadowPositionMarksTable.$inferSelect;
 type ShadowAccountRow = typeof shadowAccountsTable.$inferSelect;
@@ -223,6 +238,16 @@ type WatchlistBacktestSelectionOverlay = {
   label: string;
   mode: WatchlistBacktestSelectionMode;
   minScoreEdge: number;
+};
+
+type WatchlistBacktestEntryGateOverlay = {
+  label: string;
+  emaFastWindow: number;
+  emaSlowWindow: number;
+  minConfirmations: number;
+  adxMin: number;
+  volatilityScoreMin: number;
+  volatilityScoreMax: number;
 };
 
 const DEFAULT_WATCHLIST_BACKTEST_SIZING: WatchlistBacktestSizingOverlay = {
@@ -482,6 +507,38 @@ function marketMultiplier(input: {
 function optionDateKey(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+}
+
+function marketDateParts(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return {
+    key: `${part("year")}-${part("month")}-${part("day")}`,
+    hour: Number(part("hour")),
+    minute: Number(part("minute")),
+  };
+}
+
+function isMarketCloseOrLater(value: Date) {
+  const parts = marketDateParts(value);
+  return parts.hour > 16 || (parts.hour === 16 && parts.minute >= 0);
+}
+
+function shouldCloseOptionForShadowMaintenance(
+  contract: ShadowOptionContract,
+  now = new Date(),
+) {
+  const expiration = optionDateKey(contract.expirationDate);
+  const marketDate = marketDateParts(now).key;
+  return expiration < marketDate || (expiration === marketDate && isMarketCloseOrLater(now));
 }
 
 function shadowDateWindowUtc(value: string | Date): {
@@ -1536,6 +1593,16 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       return orderRowToResponse(existing);
     }
   }
+  if (normalized.clientOrderId) {
+    const [existing] = await db
+      .select()
+      .from(shadowOrdersTable)
+      .where(eq(shadowOrdersTable.clientOrderId, normalized.clientOrderId))
+      .limit(1);
+    if (existing) {
+      return orderRowToResponse(existing);
+    }
+  }
 
   const plan = await buildShadowFillPlan(normalized);
   const now = normalized.placedAt ?? new Date();
@@ -1622,6 +1689,202 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     .where(eq(shadowOrdersTable.id, orderId))
     .limit(1);
   return orderRowToResponse(order);
+}
+
+function isSignalOptionsShadowSource(source: string | null | undefined) {
+  return source === "automation" || source === SIGNAL_OPTIONS_REPLAY_SOURCE;
+}
+
+function shadowMaintenanceOrderSource(
+  order: ShadowOrderRow | null,
+): ShadowOrderSource {
+  return order?.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+    ? SIGNAL_OPTIONS_REPLAY_SOURCE
+    : "automation";
+}
+
+function sourceDeploymentIdFromShadowOrder(order: ShadowOrderRow | null) {
+  const payload = readRecord(order?.payload) ?? {};
+  const metadata = readRecord(payload.metadata) ?? {};
+  const replay = readRecord(payload.replay) ?? {};
+  const candidate = readRecord(payload.candidate) ?? {};
+  return (
+    readString(metadata.deploymentId) ??
+    readString(replay.deploymentId) ??
+    readString(candidate.deploymentId)
+  );
+}
+
+async function findSignalOptionsEntryOrderForPosition(
+  position: ShadowPositionRow,
+) {
+  const orders = await db
+    .select()
+    .from(shadowOrdersTable)
+    .where(
+      and(
+        eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowOrdersTable.assetClass, "option"),
+        eq(shadowOrdersTable.side, "buy"),
+        eq(shadowOrdersTable.symbol, position.symbol),
+      ),
+    )
+    .orderBy(desc(shadowOrdersTable.placedAt))
+    .limit(100);
+
+  return (
+    orders.find(
+      (order) =>
+        isSignalOptionsShadowSource(order.source) &&
+        shadowPositionKeyForOrder(order) === position.positionKey,
+    ) ?? null
+  );
+}
+
+async function resolveMaintenanceOptionExitPrice(input: {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+  now: Date;
+}): Promise<{ price: number; source: string }> {
+  const quote = await resolveOptionMark(input.contract).catch(() => null);
+  const quotePrice = toNumber(quote?.bid) ?? toNumber(quote?.price);
+  if (quotePrice != null && quotePrice > 0) {
+    return { price: cents(quotePrice), source: quote?.source ?? "option_quote" };
+  }
+
+  const rowMark = toNumber(input.position.mark);
+  if (rowMark != null && rowMark > 0) {
+    return { price: cents(rowMark), source: "shadow_position_mark" };
+  }
+
+  const underlying = await resolveEquityMark(input.contract.underlying).catch(() => null);
+  const underlyingPrice = toNumber(underlying?.price);
+  if (underlyingPrice != null && underlyingPrice > 0) {
+    const intrinsic =
+      input.contract.right === "call"
+        ? Math.max(0, underlyingPrice - input.contract.strike)
+        : Math.max(0, input.contract.strike - underlyingPrice);
+    return {
+      price: cents(intrinsic),
+      source: intrinsic > 0 ? "expiration_intrinsic" : "expiration_otm_zero",
+    };
+  }
+
+  return { price: 0, source: "expiration_unpriced_zero" };
+}
+
+export async function runShadowOptionMaintenance(input: {
+  source?: "worker";
+  now?: Date;
+} = {}): Promise<ShadowOptionMaintenanceSummary> {
+  const now = input.now ?? new Date();
+  const openPositions = await db
+    .select()
+    .from(shadowPositionsTable)
+    .where(
+      and(
+        eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowPositionsTable.assetClass, "option"),
+        eq(shadowPositionsTable.status, "open"),
+      ),
+    )
+    .orderBy(desc(shadowPositionsTable.updatedAt));
+  const deployments = await db
+    .select({ id: algoDeploymentsTable.id })
+    .from(algoDeploymentsTable);
+  const deploymentIds = new Set(deployments.map((deployment) => deployment.id));
+  const summary: ShadowOptionMaintenanceSummary = {
+    checkedCount: openPositions.length,
+    dueCount: 0,
+    closedCount: 0,
+    skippedCount: 0,
+    orphanCount: 0,
+    errors: [],
+  };
+
+  for (const position of openPositions) {
+    const contract = asOptionContract(position.optionContract);
+    if (!contract || !shouldCloseOptionForShadowMaintenance(contract, now)) {
+      continue;
+    }
+    summary.dueCount += 1;
+
+    const sourceOrder = await findSignalOptionsEntryOrderForPosition(position);
+    if (!sourceOrder) {
+      summary.skippedCount += 1;
+      continue;
+    }
+    const deploymentId = sourceDeploymentIdFromShadowOrder(sourceOrder);
+    const sourceEventMissing =
+      sourceOrder.sourceEventId != null &&
+      !(await db
+        .select({ id: executionEventsTable.id })
+        .from(executionEventsTable)
+        .where(eq(executionEventsTable.id, sourceOrder.sourceEventId))
+        .limit(1))[0];
+    if ((deploymentId && !deploymentIds.has(deploymentId)) || sourceEventMissing) {
+      summary.orphanCount += 1;
+    }
+
+    try {
+      const quantity = toNumber(position.quantity) ?? 0;
+      if (quantity <= 0) {
+        summary.skippedCount += 1;
+        continue;
+      }
+      const exit = await resolveMaintenanceOptionExitPrice({
+        position,
+        contract,
+        now,
+      });
+      const source = shadowMaintenanceOrderSource(sourceOrder);
+      const dateKey = marketDateParts(now).key;
+      await placeShadowOrder({
+        accountId: SHADOW_ACCOUNT_ID,
+        mode: "paper",
+        symbol: position.symbol,
+        assetClass: "option",
+        side: "sell",
+        type: "limit",
+        quantity,
+        limitPrice: exit.price,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: contract,
+        source,
+        clientOrderId: `shadow-expiry-maintenance-${position.id}-${dateKey}`,
+        positionKey: position.positionKey,
+        requestedFillPrice: exit.price > 0 ? exit.price : null,
+        payload: {
+          maintenance: true,
+          maintenanceReason: "option_expiration",
+          exitReason: "expiration",
+          priceSource: exit.source,
+          sourceOrderId: sourceOrder.id,
+          sourceEventId: sourceOrder.sourceEventId,
+          sourceEventMissing,
+          sourceDeploymentId: deploymentId,
+          orphanedDeployment:
+            sourceEventMissing || (deploymentId ? !deploymentIds.has(deploymentId) : false),
+          positionId: position.id,
+          positionKey: position.positionKey,
+          previousMark: toNumber(position.mark),
+          optionContract: optionPayload(contract),
+        },
+        placedAt: now,
+      });
+      summary.closedCount += 1;
+    } catch (error) {
+      summary.skippedCount += 1;
+      summary.errors.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return summary;
 }
 
 async function upsertPositionForFill(
@@ -4795,6 +5058,71 @@ function normalizeWatchlistBacktestSelectionOverlay(
   };
 }
 
+function normalizeWatchlistBacktestEntryGateOverlay(
+  value: unknown,
+): WatchlistBacktestEntryGateOverlay | null {
+  const record = readRecord(value);
+  if (!record || record.enabled === false) {
+    return null;
+  }
+  const fastWindowInput =
+    readNumber(record.emaFastWindow) ??
+    readNumber(record.fastWindow) ??
+    readNumber(record.emaFast);
+  const fastWindow =
+    Number.isFinite(fastWindowInput) && fastWindowInput !== null
+      ? clampNumber(Math.floor(fastWindowInput), 2, 200)
+      : 21;
+  const slowWindowInput =
+    readNumber(record.emaSlowWindow) ??
+    readNumber(record.slowWindow) ??
+    readNumber(record.emaSlow);
+  const slowWindow =
+    Number.isFinite(slowWindowInput) && slowWindowInput !== null
+      ? clampNumber(Math.floor(slowWindowInput), fastWindow + 1, 400)
+      : Math.max(55, fastWindow + 1);
+  const minConfirmationsInput =
+    readNumber(record.minConfirmations) ?? readNumber(record.minCount);
+  const minConfirmations =
+    Number.isFinite(minConfirmationsInput) && minConfirmationsInput !== null
+      ? clampNumber(Math.floor(minConfirmationsInput), 1, 5)
+      : 2;
+  const adxMinInput = readNumber(record.adxMin);
+  const adxMin =
+    Number.isFinite(adxMinInput) && adxMinInput !== null
+      ? clampNumber(adxMinInput, 0, 100)
+      : DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.adxMin;
+  const rawVolatilityScoreMin =
+    readNumber(record.volatilityScoreMin) ??
+    readNumber(record.volScoreMin) ??
+    DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.volScoreMin;
+  const rawVolatilityScoreMax =
+    readNumber(record.volatilityScoreMax) ??
+    readNumber(record.volScoreMax) ??
+    DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.volScoreMax;
+  const volatilityScoreMin = clampNumber(
+    Math.min(rawVolatilityScoreMin, rawVolatilityScoreMax),
+    0,
+    100,
+  );
+  const volatilityScoreMax = clampNumber(
+    Math.max(rawVolatilityScoreMin, rawVolatilityScoreMax),
+    0,
+    100,
+  );
+  return {
+    label:
+      readString(record.label) ||
+      `EMA${fastWindow}_${slowWindow}_C${minConfirmations}`,
+    emaFastWindow: fastWindow,
+    emaSlowWindow: slowWindow,
+    minConfirmations,
+    adxMin,
+    volatilityScoreMin,
+    volatilityScoreMax,
+  };
+}
+
 function normalizeWatchlistBacktestDrawdownLimitPercent(value: unknown) {
   const parsed = readNumber(value);
   if (!Number.isFinite(parsed) || parsed === null || parsed <= 0) {
@@ -5306,6 +5634,176 @@ function scoreWatchlistBacktestSignal(input: {
         Number(value.toFixed(6)),
       ]),
     ),
+  };
+}
+
+function computeWatchlistBacktestEma(values: number[], window: number) {
+  const multiplier = 2 / (window + 1);
+  const result = new Array<number>(values.length).fill(Number.NaN);
+  let ema: number | null = null;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    ema = ema === null ? value : value * multiplier + ema * (1 - multiplier);
+    result[index] = ema;
+  }
+  return result;
+}
+
+function roundedWatchlistBacktestDetail(value: number) {
+  return Number.isFinite(value) ? Number(value.toFixed(6)) : 0;
+}
+
+function evaluateWatchlistBacktestEntryGate(input: {
+  candidate: WatchlistBacktestSignalCandidate;
+  bars: RayReplicaBar[];
+  emaFast: number[];
+  emaSlow: number[];
+  overlay: WatchlistBacktestEntryGateOverlay;
+}): {
+  passed: boolean;
+  reason: string | null;
+  detail: string | null;
+  signalScoreDetails: Record<string, number>;
+} {
+  if (input.candidate.side !== "buy") {
+    return { passed: true, reason: null, detail: null, signalScoreDetails: {} };
+  }
+  const index = input.candidate.signal.barIndex;
+  const current = input.bars[index];
+  const close = readNumber(current?.c);
+  const emaFast = readNumber(input.emaFast[index]);
+  const emaSlow = readNumber(input.emaSlow[index]);
+  if (
+    !current ||
+    index < input.overlay.emaSlowWindow - 1 ||
+    close === null ||
+    emaFast === null ||
+    emaSlow === null
+  ) {
+    return {
+      passed: false,
+      reason: "entry_gate_missing_ema",
+      detail: `EMA${input.overlay.emaFastWindow}/${input.overlay.emaSlowWindow} was not available at the signal bar.`,
+      signalScoreDetails: {},
+    };
+  }
+
+  const emaTrendPass = close > emaFast && emaFast > emaSlow;
+  const filterState = input.candidate.signal.filterState;
+  const mtfDirections = Array.isArray(filterState?.mtfDirections)
+    ? filterState.mtfDirections
+    : [];
+  const mtfPasses = [0, 1, 2].map((mtfIndex) => {
+    const direction = readNumber(mtfDirections[mtfIndex]);
+    return direction !== null && Math.sign(direction) === 1;
+  });
+  const adx = readNumber(filterState?.adx);
+  const volatilityScore = readNumber(filterState?.volatilityScore);
+  const adxPass = adx !== null && adx >= input.overlay.adxMin;
+  const volatilityPass =
+    volatilityScore !== null &&
+    volatilityScore >= input.overlay.volatilityScoreMin &&
+    volatilityScore <= input.overlay.volatilityScoreMax;
+  const confirmationCount = [
+    ...mtfPasses,
+    adxPass,
+    volatilityPass,
+  ].filter(Boolean).length;
+  const confirmationPass = confirmationCount >= input.overlay.minConfirmations;
+  const details = {
+    entryGateEmaFast: roundedWatchlistBacktestDetail(emaFast),
+    entryGateEmaSlow: roundedWatchlistBacktestDetail(emaSlow),
+    entryGateEmaTrendPass: emaTrendPass ? 1 : 0,
+    entryGateConfirmationCount: confirmationCount,
+    entryGateMtf1Pass: mtfPasses[0] ? 1 : 0,
+    entryGateMtf2Pass: mtfPasses[1] ? 1 : 0,
+    entryGateMtf3Pass: mtfPasses[2] ? 1 : 0,
+    entryGateAdx: roundedWatchlistBacktestDetail(adx ?? 0),
+    entryGateAdxPass: adxPass ? 1 : 0,
+    entryGateVolatilityScore: roundedWatchlistBacktestDetail(volatilityScore ?? 0),
+    entryGateVolatilityPass: volatilityPass ? 1 : 0,
+  };
+
+  if (!emaTrendPass) {
+    return {
+      passed: false,
+      reason: "entry_gate_ema_trend",
+      detail: `Close ${close.toFixed(2)} did not satisfy close > EMA${input.overlay.emaFastWindow} ${emaFast.toFixed(2)} > EMA${input.overlay.emaSlowWindow} ${emaSlow.toFixed(2)}.`,
+      signalScoreDetails: details,
+    };
+  }
+  if (!confirmationPass) {
+    return {
+      passed: false,
+      reason: "entry_gate_confirmation_quorum",
+      detail: `Only ${confirmationCount}/5 confirmations passed; ${input.overlay.label} requires ${input.overlay.minConfirmations}/5.`,
+      signalScoreDetails: details,
+    };
+  }
+  return { passed: true, reason: null, detail: null, signalScoreDetails: details };
+}
+
+function applyWatchlistBacktestEntryGate(input: {
+  signalScan: Awaited<ReturnType<typeof collectWatchlistBacktestSignals>>;
+  entryGateOverlay: WatchlistBacktestEntryGateOverlay | null;
+}) {
+  if (!input.entryGateOverlay) {
+    return input.signalScan;
+  }
+  const emaBySymbol = new Map<string, { fast: number[]; slow: number[] }>();
+  const candidates: WatchlistBacktestSignalCandidate[] = [];
+  const skipped: WatchlistBacktestSkip[] = [];
+
+  for (const candidate of input.signalScan.candidates) {
+    const bars = input.signalScan.barsBySymbol.get(candidate.symbol) ?? [];
+    let ema = emaBySymbol.get(candidate.symbol);
+    if (!ema) {
+      const closes = bars.map((bar) => readNumber(bar.c) ?? Number.NaN);
+      ema = {
+        fast: computeWatchlistBacktestEma(
+          closes,
+          input.entryGateOverlay.emaFastWindow,
+        ),
+        slow: computeWatchlistBacktestEma(
+          closes,
+          input.entryGateOverlay.emaSlowWindow,
+        ),
+      };
+      emaBySymbol.set(candidate.symbol, ema);
+    }
+    const evaluation = evaluateWatchlistBacktestEntryGate({
+      candidate,
+      bars,
+      emaFast: ema.fast,
+      emaSlow: ema.slow,
+      overlay: input.entryGateOverlay,
+    });
+    if (!evaluation.passed) {
+      skipped.push({
+        symbol: candidate.symbol,
+        reason: evaluation.reason ?? "entry_gate",
+        detail: evaluation.detail ?? `${input.entryGateOverlay.label} rejected the signal.`,
+        signalAt: candidate.signalAt,
+        watchlists: candidate.watchlists,
+      });
+      continue;
+    }
+    candidates.push({
+      ...candidate,
+      signalScoreDetails: {
+        ...candidate.signalScoreDetails,
+        ...evaluation.signalScoreDetails,
+      },
+    });
+  }
+
+  return {
+    ...input.signalScan,
+    candidates,
+    skipped: [...input.signalScan.skipped, ...skipped],
   };
 }
 
@@ -6636,6 +7134,7 @@ async function insertWatchlistBacktestFills(input: {
   riskOverlay?: WatchlistBacktestRiskOverlay | null;
   sizingOverlay?: WatchlistBacktestSizingOverlay | null;
   selectionOverlay?: WatchlistBacktestSelectionOverlay | null;
+  entryGateOverlay?: WatchlistBacktestEntryGateOverlay | null;
   fills: WatchlistBacktestFill[];
   snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
 }) {
@@ -6660,6 +7159,7 @@ async function insertWatchlistBacktestFills(input: {
           sizingOverlay: input.sizingOverlay ?? DEFAULT_WATCHLIST_BACKTEST_SIZING,
           selectionOverlay:
             input.selectionOverlay ?? DEFAULT_WATCHLIST_BACKTEST_SELECTION,
+          entryGateOverlay: input.entryGateOverlay ?? null,
           positionKey: fill.positionKey,
           signalAt: fill.signalAt.toISOString(),
           signalPrice: fill.signalPrice,
@@ -6760,6 +7260,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   isSimulationShadowOrderSource,
   isLiveShadowOrder,
   isLiveShadowPosition,
+  shouldCloseOptionForShadowMaintenance,
   shadowPositionKeyForOrder,
   shadowPositionKeysForOrders,
   shadowMarkSnapshotSourceForPosition,
@@ -6781,6 +7282,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   summarizeWatchlistBacktestClosedTrades,
   summarizeWatchlistBacktestBuyHoldBenchmark,
   buildWatchlistBacktestSweepVariants,
+  normalizeWatchlistBacktestEntryGateOverlay,
+  applyWatchlistBacktestEntryGate,
 };
 
 function watchlistBacktestOpenSymbols(fills: WatchlistBacktestFill[]) {
@@ -7041,6 +7544,7 @@ function buildWatchlistBacktestRunResponse(input: {
   riskOverlay: WatchlistBacktestRiskOverlay | null;
   sizingOverlay: WatchlistBacktestSizingOverlay;
   selectionOverlay: WatchlistBacktestSelectionOverlay;
+  entryGateOverlay: WatchlistBacktestEntryGateOverlay | null;
   regimeOverlay: WatchlistBacktestRegimeOverlay | null;
   targetOutperformanceMultiple: number;
   startingTotals: ShadowTotals;
@@ -7077,6 +7581,7 @@ function buildWatchlistBacktestRunResponse(input: {
     riskOverlay: input.riskOverlay,
     sizingOverlay: input.sizingOverlay,
     selectionOverlay: input.selectionOverlay,
+    entryGateOverlay: input.entryGateOverlay,
     regimeOverlay: input.regimeOverlay,
     window: {
       start: input.window.start,
@@ -7099,6 +7604,7 @@ function buildWatchlistBacktestRunResponse(input: {
       mode: input.selectionOverlay.mode,
       minScoreEdge: input.selectionOverlay.minScoreEdge,
     },
+    entryGate: input.entryGateOverlay,
     universe: {
       watchlistCount: input.watchlists.length,
       symbolCount: input.universe.length,
@@ -7427,6 +7933,7 @@ export async function runShadowWatchlistBacktest(input: {
   riskOverlay?: unknown;
   sizingOverlay?: unknown;
   selectionOverlay?: unknown;
+  entryGateOverlay?: unknown;
   regimeOverlay?: unknown;
   proxySymbols?: unknown;
   excludedSymbols?: unknown;
@@ -7443,6 +7950,9 @@ export async function runShadowWatchlistBacktest(input: {
   const sizingOverlay = normalizeWatchlistBacktestSizingOverlay(input.sizingOverlay);
   const selectionOverlay = normalizeWatchlistBacktestSelectionOverlay(
     input.selectionOverlay,
+  );
+  const entryGateOverlay = normalizeWatchlistBacktestEntryGateOverlay(
+    input.entryGateOverlay,
   );
   const regimeOverlay = normalizeWatchlistBacktestRegimeOverlay(input.regimeOverlay);
   const proxySymbols = normalizeWatchlistBacktestProxySymbols(input.proxySymbols);
@@ -7480,14 +7990,20 @@ export async function runShadowWatchlistBacktest(input: {
     timeframe,
     window,
   });
+  const effectiveSignalScan = applyWatchlistBacktestEntryGate({
+    signalScan,
+    entryGateOverlay,
+  });
   logger.info(
     {
       runId,
       timeframe,
       rangeKey: window.rangeKey,
       symbolCount: universe.length,
-      signals: signalScan.candidates.length,
-      skipped: signalScan.skipped.length,
+      rawSignals: signalScan.candidates.length,
+      signals: effectiveSignalScan.candidates.length,
+      skipped: effectiveSignalScan.skipped.length,
+      entryGateOverlay,
       elapsedMs: Date.now() - signalScanStartedAt,
     },
     "Shadow watchlist backtest signal hydration completed",
@@ -7543,9 +8059,9 @@ export async function runShadowWatchlistBacktest(input: {
         : [];
       const simulation = buildWatchlistBacktestFills({
         runId: variantRunId,
-        candidates: signalScan.candidates,
+        candidates: effectiveSignalScan.candidates,
         regimeCandidates,
-        barsBySymbol: signalScan.barsBySymbol,
+        barsBySymbol: effectiveSignalScan.barsBySymbol,
         riskOverlay: variant.riskOverlay,
         sizingOverlay: variant.sizingOverlay,
         selectionOverlay: variant.selectionOverlay,
@@ -7560,8 +8076,8 @@ export async function runShadowWatchlistBacktest(input: {
       const summary = summarizeWatchlistBacktestSimulation({
         simulation,
         startingTotals,
-        commonSkippedCount: signalScan.skipped.length,
-        barsBySymbol: signalScan.barsBySymbol,
+        commonSkippedCount: effectiveSignalScan.skipped.length,
+        barsBySymbol: effectiveSignalScan.barsBySymbol,
         windowStart: window.start,
         windowEnd: window.end,
         targetOutperformanceMultiple,
@@ -7612,6 +8128,7 @@ export async function runShadowWatchlistBacktest(input: {
         riskOverlay: winner.riskOverlay,
         sizingOverlay: winner.sizingOverlay,
         selectionOverlay: winner.selectionOverlay,
+        entryGateOverlay,
         fills: winner.simulation.fills,
         snapshots: winner.simulation.snapshots,
       });
@@ -7633,13 +8150,14 @@ export async function runShadowWatchlistBacktest(input: {
       riskOverlay: winner.riskOverlay,
       sizingOverlay: winner.sizingOverlay,
       selectionOverlay: winner.selectionOverlay,
+      entryGateOverlay,
       regimeOverlay: winner.regimeOverlay,
       targetOutperformanceMultiple,
       startingTotals,
       startingBook,
       watchlists,
       universe,
-      signalScan,
+      signalScan: effectiveSignalScan,
       simulation: winner.simulation,
       finalTotals,
       sweep: {
@@ -7698,9 +8216,9 @@ export async function runShadowWatchlistBacktest(input: {
   const baseMarketValue = startingBook.baseMarketValue;
   const simulation = buildWatchlistBacktestFills({
     runId,
-    candidates: signalScan.candidates,
+    candidates: effectiveSignalScan.candidates,
     regimeCandidates,
-    barsBySymbol: signalScan.barsBySymbol,
+    barsBySymbol: effectiveSignalScan.barsBySymbol,
     riskOverlay,
     sizingOverlay,
     selectionOverlay,
@@ -7726,6 +8244,7 @@ export async function runShadowWatchlistBacktest(input: {
       riskOverlay,
       sizingOverlay,
       selectionOverlay,
+      entryGateOverlay,
       fills: simulation.fills,
       snapshots: simulation.snapshots,
     });
@@ -7748,13 +8267,14 @@ export async function runShadowWatchlistBacktest(input: {
     riskOverlay,
     sizingOverlay,
     selectionOverlay,
+    entryGateOverlay,
     regimeOverlay,
     targetOutperformanceMultiple,
     startingTotals,
     startingBook,
     watchlists,
     universe,
-    signalScan,
+    signalScan: effectiveSignalScan,
     simulation,
     finalTotals,
   });

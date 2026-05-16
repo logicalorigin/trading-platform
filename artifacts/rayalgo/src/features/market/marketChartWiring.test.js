@@ -172,6 +172,22 @@ test("Research chart frames expose signal frame state as first-class attributes"
   assert.match(frameSource, /border:\s*signalActive/);
 });
 
+test("Shared chart frames own responsive chrome density", () => {
+  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
+  const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
+  const contractDetailSource = readLocalSource("../flow/ContractDetailInline.jsx");
+  const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");
+
+  assert.match(frameSource, /data-chart-frame-density=\{frameDensity\}/);
+  assert.match(frameSource, /resolveResearchChartFrameDensity/);
+  assert.match(frameSource, /ChartFrameDensityContext\.Provider/);
+  assert.match(cellSource, /chartFramePlacement=\{/);
+  assert.match(tradeSpotSource, /<ResearchChartFrame/);
+  assert.match(tradeScreenSource, /dataTestId="trade-contract-option-chart"/);
+  assert.match(contractDetailSource, /dataTestId="flow-inspection-option-chart"/);
+});
+
 test("Market chart flow events publish to the shared Trade spot chart path", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MiniChartCell.jsx");
@@ -234,6 +250,7 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
+  const contractDetailSource = readLocalSource("../flow/ContractDetailInline.jsx");
 
   assert.match(gridSource, /useFlowTapeFilterState\(\{ subscribe:\s*isVisible \}\)/);
   assert.match(
@@ -277,7 +294,33 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
     tradeScreenSource,
     /useFlowChartEventConversion\(\s*selectedContractChartWindowFlowEvents,\s*ticker,\s*\)/,
   );
+  assert.match(
+    contractDetailSource,
+    /useFlowChartEventConversion\(\s*optionChartFlowEvents,\s*chartSymbol,\s*\)/,
+  );
+  assert.match(contractDetailSource, /chartEvents=\{optionChartEvents\}/);
+  assert.match(
+    contractDetailSource,
+    /chartFlowDiagnostics=\{optionChartEventConversion\}/,
+  );
+  assert.match(contractDetailSource, /placement="workspace"/);
+  assert.doesNotMatch(contractDetailSource, /placement="inspection"/);
   assert.doesNotMatch(tradeScreenSource, /retainedFlowState/);
+});
+
+test("Trade option chart exposes the same workspace chart controls as spot", () => {
+  const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
+
+  assert.match(tradeScreenSource, /dataTestId="trade-contract-option-chart"/);
+  assert.match(tradeScreenSource, /placement="workspace"/);
+  assert.match(tradeScreenSource, /surfaceLeftOverlay=\{\(controls\) => \(/);
+  assert.match(tradeScreenSource, /surfaceBottomOverlay=\{\(controls\) => \(/);
+  assert.match(tradeScreenSource, /onUndo=\{undo\}/);
+  assert.match(tradeScreenSource, /onRedo=\{redo\}/);
+  assert.match(tradeScreenSource, /canUndo=\{canUndo\}/);
+  assert.match(tradeScreenSource, /canRedo=\{canRedo\}/);
+  assert.match(tradeScreenSource, /showUndoRedo/);
+  assert.doesNotMatch(tradeScreenSource, /showSnapshotButton=\{false\}/);
 });
 
 test("Market chart frames leave viewport ownership inside the Trade spot chart", () => {

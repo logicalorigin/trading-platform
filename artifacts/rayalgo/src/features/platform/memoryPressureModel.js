@@ -5,10 +5,40 @@ const PRESSURE_RANK = {
   critical: 3,
 };
 
-const BROWSER_THRESHOLDS_MB = {
-  measureUserAgentSpecificMemory: { watch: 320, high: 520, critical: 820 },
-  "performance.memory": { watch: 180, high: 280, critical: 420 },
-  heuristic: { watch: Number.POSITIVE_INFINITY, high: Number.POSITIVE_INFINITY, critical: Number.POSITIVE_INFINITY },
+export const MEMORY_PRESSURE_THRESHOLDS = {
+  browserMemoryMb: {
+    measureUserAgentSpecificMemory: { watch: 320, high: 520, critical: 820 },
+    "performance.memory": { watch: 180, high: 280, critical: 420 },
+    heuristic: { watch: null, high: null, critical: null },
+  },
+  apiHeapUsedPercent: { watch: 70, high: 78, critical: 85 },
+  workload: {
+    activeWorkloadCount: { watch: 7, high: 11, critical: 16 },
+    pollCount: { watch: 3, high: 5, critical: 7 },
+    streamCount: { watch: 3, high: 5, critical: 8 },
+  },
+  chartHydration: {
+    chartScopeCount: { watch: 7, high: 12, critical: null },
+    prependScopeCount: { watch: 1, high: 4, critical: null },
+  },
+  queryCache: {
+    queryCount: { watch: 60, high: 110, critical: 180 },
+    heavyQueryCount: { watch: 12, high: 30, critical: 50 },
+  },
+  runtimeStores: {
+    storeEntryCount: { watch: 60, high: 120, critical: 180 },
+  },
+};
+
+const BROWSER_THRESHOLDS_MB = MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb;
+
+const DRIVER_WEIGHTS = {
+  "browser-memory": 48,
+  "api-heap": 24,
+  workload: 12,
+  "chart-hydration": 8,
+  "query-cache": 5,
+  "runtime-stores": 3,
 };
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -27,11 +57,23 @@ const levelFromThresholds = (value, thresholds) => {
   if (!Number.isFinite(value)) {
     return "normal";
   }
-  if (value >= thresholds.critical) return "critical";
-  if (value >= thresholds.high) return "high";
-  if (value >= thresholds.watch) return "watch";
+  if (Number.isFinite(thresholds?.critical) && value >= thresholds.critical) {
+    return "critical";
+  }
+  if (Number.isFinite(thresholds?.high) && value >= thresholds.high) {
+    return "high";
+  }
+  if (Number.isFinite(thresholds?.watch) && value >= thresholds.watch) {
+    return "watch";
+  }
   return "normal";
 };
+
+const levelFromThresholdGroup = (metrics, thresholdGroup) =>
+  Object.entries(thresholdGroup || {}).reduce((level, [key, thresholds]) => {
+    const metricLevel = levelFromThresholds(Number(metrics?.[key]), thresholds);
+    return maxLevel(level, metricLevel);
+  }, "normal");
 
 const maxLevel = (...levels) =>
   levels.reduce((current, next) =>
@@ -56,18 +98,40 @@ const scoreFromLevel = (level, weight) => {
   }
 };
 
-const pushDriver = (drivers, input) => {
-  if (!input || !levelAtLeast(input.level, "watch")) {
-    return;
-  }
-  drivers.push(input);
-};
-
 const formatDriverDetail = (value, suffix = "") =>
   Number.isFinite(value) ? `${Math.round(value)}${suffix}` : null;
 
+const buildDriverMetric = ({ key, label, value, unit = "", thresholds, source = null }) => {
+  const numericValue = Number(value);
+  return {
+    key,
+    label,
+    value: Number.isFinite(numericValue) ? round(numericValue) : null,
+    unit,
+    level: levelFromThresholds(numericValue, thresholds),
+    thresholds: thresholds || null,
+    source,
+  };
+};
+
+const buildPressureDriver = ({ kind, label, level, detail, score, metrics }) => {
+  const normalizedLevel = normalizeLevel(level);
+  const numericScore = Number(score);
+  return {
+    kind,
+    label,
+    level: normalizedLevel,
+    detail: detail || null,
+    score: Number.isFinite(numericScore) ? round(numericScore) : null,
+    contribution: round(scoreFromLevel(normalizedLevel, DRIVER_WEIGHTS[kind] || 0)),
+    metrics: Array.isArray(metrics) ? metrics : [],
+  };
+};
+
 const resolveDominantDrivers = (drivers) =>
   drivers
+    .filter((driver) => levelAtLeast(driver.level, "watch"))
+    .slice()
     .sort((left, right) => {
       const rankDelta =
         PRESSURE_RANK[normalizeLevel(right.level)] -
@@ -82,6 +146,7 @@ const resolveDominantDrivers = (drivers) =>
       level: normalizeLevel(driver.level),
       detail: driver.detail || null,
       score: round(driver.score ?? 0),
+      contribution: round(driver.contribution ?? 0),
     }));
 
 const resolveTrend = (history, score) => {
@@ -122,15 +187,10 @@ export const buildMemoryPressureState = (
     BROWSER_THRESHOLDS_MB[browserSource] || BROWSER_THRESHOLDS_MB.heuristic;
   const browserLevel = levelFromThresholds(browserMemoryMb, browserThresholds);
   const apiHeapUsedPercent = Number(input.apiHeapUsedPercent);
-  const apiLevel = !Number.isFinite(apiHeapUsedPercent)
-    ? "normal"
-    : apiHeapUsedPercent >= 85
-      ? "critical"
-      : apiHeapUsedPercent >= 78
-        ? "high"
-        : apiHeapUsedPercent >= 70
-          ? "watch"
-          : "normal";
+  const apiLevel = levelFromThresholds(
+    apiHeapUsedPercent,
+    MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
+  );
   const activeWorkloadCount = Number(input.activeWorkloadCount);
   const pollCount = Number(input.pollCount);
   const streamCount = Number(input.streamCount);
@@ -140,98 +200,156 @@ export const buildMemoryPressureState = (
   const heavyQueryCount = Number(input.heavyQueryCount);
   const storeEntryCount = Number(input.storeEntryCount);
 
-  const workloadLevel =
-    activeWorkloadCount >= 16 ||
-    pollCount >= 7 ||
-    streamCount >= 8
-      ? "critical"
-      : activeWorkloadCount >= 11 ||
-          pollCount >= 5 ||
-          streamCount >= 5
-        ? "high"
-        : activeWorkloadCount >= 7 ||
-            pollCount >= 3 ||
-            streamCount >= 3
-          ? "watch"
-          : "normal";
+  const workloadMetrics = { activeWorkloadCount, pollCount, streamCount };
+  const chartMetrics = { chartScopeCount, prependScopeCount };
+  const queryMetrics = { queryCount, heavyQueryCount };
+  const storeMetrics = { storeEntryCount };
 
-  const chartLevel =
-    chartScopeCount >= 12 || prependScopeCount >= 4
-      ? "high"
-      : chartScopeCount >= 7 || prependScopeCount >= 1
-        ? "watch"
-        : "normal";
+  const workloadLevel = levelFromThresholdGroup(
+    workloadMetrics,
+    MEMORY_PRESSURE_THRESHOLDS.workload,
+  );
+  const chartLevel = levelFromThresholdGroup(
+    chartMetrics,
+    MEMORY_PRESSURE_THRESHOLDS.chartHydration,
+  );
+  const queryLevel = levelFromThresholdGroup(
+    queryMetrics,
+    MEMORY_PRESSURE_THRESHOLDS.queryCache,
+  );
+  const storeLevel = levelFromThresholdGroup(
+    storeMetrics,
+    MEMORY_PRESSURE_THRESHOLDS.runtimeStores,
+  );
 
-  const queryLevel =
-    queryCount >= 180 || heavyQueryCount >= 50
-      ? "critical"
-      : queryCount >= 110 || heavyQueryCount >= 30
-        ? "high"
-        : queryCount >= 60 || heavyQueryCount >= 12
-          ? "watch"
-          : "normal";
+  const pressureDrivers = [
+    buildPressureDriver({
+      kind: "browser-memory",
+      label: "Browser memory",
+      level: browserLevel,
+      detail: formatDriverDetail(browserMemoryMb, " MB"),
+      score: browserMemoryMb,
+      metrics: [
+        buildDriverMetric({
+          key: "browserMemoryMb",
+          label: "Browser estimate",
+          value: browserMemoryMb,
+          unit: "MB",
+          thresholds: browserThresholds,
+          source: browserSource,
+        }),
+      ],
+    }),
+    buildPressureDriver({
+      kind: "api-heap",
+      label: "API heap",
+      level: apiLevel,
+      detail: formatDriverDetail(apiHeapUsedPercent, "%"),
+      score: apiHeapUsedPercent,
+      metrics: [
+        buildDriverMetric({
+          key: "apiHeapUsedPercent",
+          label: "Heap used",
+          value: apiHeapUsedPercent,
+          unit: "%",
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
+        }),
+      ],
+    }),
+    buildPressureDriver({
+      kind: "workload",
+      label: "Active workload",
+      level: workloadLevel,
+      detail: formatDriverDetail(activeWorkloadCount),
+      score: activeWorkloadCount,
+      metrics: [
+        buildDriverMetric({
+          key: "activeWorkloadCount",
+          label: "Active",
+          value: activeWorkloadCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.activeWorkloadCount,
+        }),
+        buildDriverMetric({
+          key: "pollCount",
+          label: "Polls",
+          value: pollCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.pollCount,
+        }),
+        buildDriverMetric({
+          key: "streamCount",
+          label: "Streams",
+          value: streamCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.streamCount,
+        }),
+      ],
+    }),
+    buildPressureDriver({
+      kind: "chart-hydration",
+      label: "Chart hydration",
+      level: chartLevel,
+      detail: formatDriverDetail(chartScopeCount),
+      score: chartScopeCount,
+      metrics: [
+        buildDriverMetric({
+          key: "chartScopeCount",
+          label: "Chart scopes",
+          value: chartScopeCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.chartHydration.chartScopeCount,
+        }),
+        buildDriverMetric({
+          key: "prependScopeCount",
+          label: "Prepend scopes",
+          value: prependScopeCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.chartHydration.prependScopeCount,
+        }),
+      ],
+    }),
+    buildPressureDriver({
+      kind: "query-cache",
+      label: "Query cache",
+      level: queryLevel,
+      detail: formatDriverDetail(queryCount),
+      score: queryCount,
+      metrics: [
+        buildDriverMetric({
+          key: "queryCount",
+          label: "Queries",
+          value: queryCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.queryCache.queryCount,
+        }),
+        buildDriverMetric({
+          key: "heavyQueryCount",
+          label: "Heavy queries",
+          value: heavyQueryCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.queryCache.heavyQueryCount,
+        }),
+      ],
+    }),
+    buildPressureDriver({
+      kind: "runtime-stores",
+      label: "Runtime stores",
+      level: storeLevel,
+      detail: formatDriverDetail(storeEntryCount),
+      score: storeEntryCount,
+      metrics: [
+        buildDriverMetric({
+          key: "storeEntryCount",
+          label: "Store entries",
+          value: storeEntryCount,
+          thresholds: MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
+        }),
+      ],
+    }),
+  ];
 
-  const storeLevel =
-    storeEntryCount >= 180
-      ? "critical"
-      : storeEntryCount >= 120
-        ? "high"
-        : storeEntryCount >= 60
-          ? "watch"
-          : "normal";
-
-  const drivers = [];
-  pushDriver(drivers, {
-    kind: "browser-memory",
-    label: "Browser memory",
-    level: browserLevel,
-    detail: formatDriverDetail(browserMemoryMb, " MB"),
-    score: browserMemoryMb,
-  });
-  pushDriver(drivers, {
-    kind: "api-heap",
-    label: "API heap",
-    level: apiLevel,
-    detail: formatDriverDetail(apiHeapUsedPercent, "%"),
-    score: apiHeapUsedPercent,
-  });
-  pushDriver(drivers, {
-    kind: "workload",
-    label: "Active workload",
-    level: workloadLevel,
-    detail: formatDriverDetail(activeWorkloadCount),
-    score: activeWorkloadCount,
-  });
-  pushDriver(drivers, {
-    kind: "chart-hydration",
-    label: "Chart hydration",
-    level: chartLevel,
-    detail: formatDriverDetail(chartScopeCount),
-    score: chartScopeCount,
-  });
-  pushDriver(drivers, {
-    kind: "query-cache",
-    label: "Query cache",
-    level: queryLevel,
-    detail: formatDriverDetail(queryCount),
-    score: queryCount,
-  });
-  pushDriver(drivers, {
-    kind: "runtime-stores",
-    label: "Runtime stores",
-    level: storeLevel,
-    detail: formatDriverDetail(storeEntryCount),
-    score: storeEntryCount,
-  });
-
-  const dominantDrivers = resolveDominantDrivers(drivers);
+  const dominantDrivers = resolveDominantDrivers(pressureDrivers);
   const rawScore =
-    scoreFromLevel(browserLevel, 48) +
-    scoreFromLevel(apiLevel, 24) +
-    scoreFromLevel(workloadLevel, 12) +
-    scoreFromLevel(chartLevel, 8) +
-    scoreFromLevel(queryLevel, 5) +
-    scoreFromLevel(storeLevel, 3);
+    scoreFromLevel(browserLevel, DRIVER_WEIGHTS["browser-memory"]) +
+    scoreFromLevel(apiLevel, DRIVER_WEIGHTS["api-heap"]) +
+    scoreFromLevel(workloadLevel, DRIVER_WEIGHTS.workload) +
+    scoreFromLevel(chartLevel, DRIVER_WEIGHTS["chart-hydration"]) +
+    scoreFromLevel(queryLevel, DRIVER_WEIGHTS["query-cache"]) +
+    scoreFromLevel(storeLevel, DRIVER_WEIGHTS["runtime-stores"]);
   const score = round(clamp(rawScore, 0, 100));
   const baseLevel = maxLevel(
     browserLevel,
@@ -279,6 +397,7 @@ export const buildMemoryPressureState = (
     queryCount: Number.isFinite(queryCount) ? queryCount : 0,
     heavyQueryCount: Number.isFinite(heavyQueryCount) ? heavyQueryCount : 0,
     storeEntryCount: Number.isFinite(storeEntryCount) ? storeEntryCount : 0,
+    pressureDrivers,
     dominantDrivers,
     observedAt: input.observedAt || new Date().toISOString(),
   };

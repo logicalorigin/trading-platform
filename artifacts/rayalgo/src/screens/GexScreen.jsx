@@ -44,7 +44,6 @@ import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
-import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 import { Button } from "../components/ui/Button.jsx";
 
 const fetchGexData = async ({ ticker, signal }) => {
@@ -52,7 +51,7 @@ const fetchGexData = async ({ ticker, signal }) => {
 };
 
 const fmtCurrency = (value) => {
-  if (!isFiniteNumber(value)) return "----";
+  if (!isFiniteNumber(value)) return "—";
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
@@ -64,15 +63,15 @@ const fmtCurrency = (value) => {
 const fmtNumber = (value) =>
   isFiniteNumber(value)
     ? Math.round(value).toLocaleString("en-US")
-    : "----";
+    : "—";
 
 const fmtPrice = (value) =>
-  isFiniteNumber(value) ? `$${value.toFixed(value >= 100 ? 2 : 3)}` : "----";
+  isFiniteNumber(value) ? `$${value.toFixed(value >= 100 ? 2 : 3)}` : "—";
 
 const fmtPercent = (value, digits = 1) =>
   isFiniteNumber(value)
     ? `${value >= 0 ? "+" : ""}${(value * 100).toFixed(digits)}%`
-    : "----";
+    : "—";
 
 const pct = (numerator, denominator) =>
   denominator > 0 ? numerator / denominator : 0;
@@ -144,7 +143,7 @@ const SectionTitle = ({ children, right }) => (
           color: T.text,
           fontFamily: T.sans,
           fontSize: textSize("displaySmall"),
-          fontWeight: 600,
+          fontWeight: FONT_WEIGHTS.label,
           letterSpacing: "-0.01em",
         }}
       >
@@ -192,7 +191,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
         color,
         fontFamily: T.sans,
         fontSize: fs(16),
-        fontWeight: 700,
+        fontWeight: FONT_WEIGHTS.emphasis,
         lineHeight: 1,
       }}
     >
@@ -218,7 +217,7 @@ const MetaLine = ({ label, value }) => (
         color: T.text,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
-        fontWeight: 700,
+        fontWeight: FONT_WEIGHTS.emphasis,
         textAlign: "right",
       }}
     >
@@ -237,15 +236,15 @@ const TickerMetaSummary = ({ data }) => {
           color: T.text,
           fontFamily: T.sans,
           fontSize: textSize("bodyStrong"),
-          fontWeight: 700,
+          fontWeight: FONT_WEIGHTS.emphasis,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
         }}
       >
-        {details.name || data?.ticker || "----"}
+        {details.name || data?.ticker || "—"}
       </div>
-      <MetaLine label="Sector" value={details.sector || details.industry || "----"} />
+      <MetaLine label="Sector" value={details.sector || details.industry || "—"} />
       <MetaLine label="Mkt Cap" value={fmtCurrency(profile.mktCap)} />
       <MetaLine
         label="Day Range"
@@ -284,7 +283,7 @@ const SectionHeading = ({ title }) => (
         color: T.text,
         fontFamily: T.sans,
         fontSize: fs(15),
-        fontWeight: 700,
+        fontWeight: FONT_WEIGHTS.emphasis,
         margin: 0,
       }}
     >
@@ -300,7 +299,7 @@ const GexTooltip = ({ active, payload, spot }) => {
   return (
     <div
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: `1px solid ${T.borderLight}`,
         padding: sp(8),
         color: T.text,
@@ -309,7 +308,7 @@ const GexTooltip = ({ active, payload, spot }) => {
         boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
       }}
     >
-      <div style={{ color: T.text, fontWeight: 700, marginBottom: sp(5) }}>
+      <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
         ${row.strike} · {fmtPercent((row.strike - spot) / spot)}
       </div>
       <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
@@ -364,7 +363,7 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
             axisLine={false}
             tickLine={false}
           />
-          <Tooltip cursor={{ fill: "rgba(148,163,184,0.08)" }} content={<GexTooltip spot={spot} />} />
+          <Tooltip cursor={{ fill: `${T.textMuted}14` }} content={<GexTooltip spot={spot} />} />
           <ReferenceLine
             x={Math.round(spot)}
             stroke={T.cyan}
@@ -421,7 +420,7 @@ const ExpiryChart = ({ rows, spot }) => {
             tickLine={false}
           />
           <Tooltip
-            cursor={{ fill: "rgba(148,163,184,0.08)" }}
+            cursor={{ fill: `${T.textMuted}14` }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload;
@@ -446,7 +445,7 @@ const ExpiryChart = ({ rows, spot }) => {
 };
 
 const tooltipBoxStyle = {
-  background: T.bg2,
+  background: T.bg1,
   border: `1px solid ${T.borderLight}`,
   padding: sp(8),
   color: T.text,
@@ -496,7 +495,7 @@ const GammaPriceChart = ({ rows, spot }) => {
             tickLine={false}
           />
           <Tooltip
-            cursor={{ fill: "rgba(148,163,184,0.08)" }}
+            cursor={{ fill: `${T.textMuted}14` }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload;
@@ -579,7 +578,7 @@ const OiChart = ({ rows, spot }) => {
           />
           <ReferenceLine x={Math.round(spot)} stroke={T.cyan} strokeDasharray="4 4" />
           <Tooltip
-            cursor={{ fill: "rgba(148,163,184,0.08)" }}
+            cursor={{ fill: `${T.textMuted}14` }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload;
@@ -881,7 +880,7 @@ const SqueezeCard = ({ squeeze, source }) => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(7) }}>
           <Zap size={15} color={T.amber} />
-          <span style={{ color, fontSize: fs(18), fontWeight: 700 }}>
+          <span style={{ color, fontSize: fs(18), fontWeight: FONT_WEIGHTS.emphasis }}>
             {squeeze.score || 0}
           </span>
           <span style={{ color: T.textDim, fontSize: textSize("caption") }}>/100</span>
@@ -1043,7 +1042,7 @@ const tableHeaderStyle = {
   borderBottom: `1px solid ${T.border}`,
   textAlign: "right",
   fontFamily: T.sans,
-  fontWeight: 700,
+  fontWeight: FONT_WEIGHTS.emphasis,
 };
 
 const tableCellStyle = {
@@ -1225,7 +1224,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
           background: "transparent",
           color: T.text,
           fontFamily: T.sans,
-          fontWeight: 700,
+          fontWeight: FONT_WEIGHTS.emphasis,
           fontSize: textSize("bodyStrong"),
         }}
       />
@@ -1289,35 +1288,31 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
           width: "100%",
         }}
       >
-        <CockpitHeader
-          eyebrow="Live"
-          title="GEX"
-          subtitle={`${ticker} · ${selectedExpirationCount || 0} expiration${
-            selectedExpirationCount === 1 ? "" : "s"
-          } · ${backgroundLoading ? "refreshing" : "Massive API"}`}
-          pulse={{
-            state: backgroundLoading ? "slow" : "live",
-            label: backgroundLoading ? "Refreshing GEX data" : "GEX live",
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: sp(8),
+            flexWrap: "wrap",
+            minWidth: 0,
           }}
-          actions={
-            <>
-              {tickerSearchControl}
-              {isPhone ? (
-                <Button
-                  dataTestId="gex-mobile-filter-trigger"
-                  variant="secondary"
-                  size="md"
-                  leftIcon={SlidersHorizontal}
-                  onClick={() => setMobileFiltersOpen(true)}
-                >
-                  Filters
-                </Button>
-              ) : (
-                filtersControl
-              )}
-            </>
-          }
-        />
+        >
+          {tickerSearchControl}
+          {isPhone ? (
+            <Button
+              dataTestId="gex-mobile-filter-trigger"
+              variant="secondary"
+              size="md"
+              leftIcon={SlidersHorizontal}
+              onClick={() => setMobileFiltersOpen(true)}
+            >
+              Filters
+            </Button>
+          ) : (
+            filtersControl
+          )}
+        </div>
 
         {isPhone ? (
           <>
@@ -1386,7 +1381,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
         >
           <div>
             <div style={{ color: T.textDim, fontSize: textSize("caption") }}>Spot</div>
-            <div style={{ color: T.text, fontSize: fs(24), fontWeight: 700 }}>
+            <div style={{ color: T.text, fontSize: fs(24), fontWeight: FONT_WEIGHTS.emphasis }}>
               {fmtPrice(spot)}
             </div>
             <div
@@ -1396,7 +1391,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
                 fontSize: textSize("caption"),
               }}
             >
-              {quoteChange == null ? "----" : fmtCurrency(quoteChange)}
+              {quoteChange == null ? "—" : fmtCurrency(quoteChange)}
             </div>
           </div>
           <div
@@ -1433,7 +1428,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
                 IV simulation
                 <InfoTooltipIcon entry={getGexGlossaryEntry("ivSimulation")} />
               </span>
-              <span style={{ marginLeft: "auto", color: T.amber, fontWeight: 700 }}>
+              <span style={{ marginLeft: "auto", color: T.amber, fontWeight: FONT_WEIGHTS.emphasis }}>
                 {ivAdjustment >= 0 ? "+" : ""}
                 {(ivAdjustment * 100).toFixed(0)}%
               </span>
@@ -1490,7 +1485,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
               <MetricTile
                 label="Net GEX"
                 value={fmtCurrency(metrics.netGex)}
-                sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "----"}`}
+                sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "—"}`}
                 color={metrics.netGex >= 0 ? T.green : T.red}
                 glossaryKey="netGex"
               />
@@ -1532,7 +1527,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
               <MetricTile
                 label="Zero Gamma"
                 value={fmtPrice(metrics.zeroGamma)}
-                sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "----"}
+                sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "—"}
                 color={T.cyan}
                 glossaryKey="zeroGamma"
               />
@@ -1608,7 +1603,7 @@ const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
         <InfoTooltipIcon entry={getGexGlossaryEntry(glossaryKey)} />
       ) : null}
     </div>
-    <div style={{ color, fontSize: fs(17), fontWeight: 700 }}>
+    <div style={{ color, fontSize: fs(17), fontWeight: FONT_WEIGHTS.emphasis }}>
       {(value * 100).toFixed(1)}%
     </div>
   </div>
@@ -1619,7 +1614,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
     value == null ? T.textDim : value >= 0 ? T.green : T.red;
   const formatted =
     value == null
-      ? "----"
+      ? "—"
       : `${value >= 0 ? "+" : ""}${fmtCurrency(value)}`;
   return (
     <div
@@ -1645,7 +1640,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
       >
         {label}
       </div>
-      <div style={{ color: tone, fontSize: fs(16), fontWeight: 700 }}>
+      <div style={{ color: tone, fontSize: fs(16), fontWeight: FONT_WEIGHTS.emphasis }}>
         {formatted}
       </div>
     </div>
@@ -1672,7 +1667,7 @@ const IntradayChartTooltip = ({ active, payload }) => {
       <div
         style={{
           color: point?.netGex >= 0 ? T.green : T.red,
-          fontWeight: 700,
+          fontWeight: FONT_WEIGHTS.emphasis,
         }}
       >
         Net GEX: {fmtCurrency(point?.netGex)}

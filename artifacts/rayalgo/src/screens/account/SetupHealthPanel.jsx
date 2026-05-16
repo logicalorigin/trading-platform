@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   IbkrConnectionLane,
@@ -37,12 +37,12 @@ const StatusRow = ({ label, ok, detail }) => (
       }}
     />
     <div style={{ minWidth: 0 }}>
-      <div style={{ color: T.text, fontSize: fs(8), fontWeight: 400 }}>{label}</div>
+      <div style={{ color: T.text, fontSize: textSize("label"), fontWeight: FONT_WEIGHTS.regular }}>{label}</div>
       <div
         style={{
           marginTop: sp(2),
           color: T.textDim,
-          fontSize: fs(8),
+          fontSize: textSize("label"),
           fontFamily: T.sans,
           lineHeight: 1.4,
           whiteSpace: "normal",
@@ -226,7 +226,7 @@ export const SetupHealthPanel = ({
                 display: "grid",
                 gap: sp(3),
                 color: T.textSec,
-                fontSize: fs(10),
+                fontSize: textSize("body"),
                 lineHeight: 1.35,
               }}
             >
@@ -255,7 +255,7 @@ export const SetupHealthPanel = ({
                   Attempt {formatAppDateTime(health.lastAttemptAt)}
                 </Pill>
                 <Pill tone={health.lastStatus === "completed" ? "status-filled" : "status-working"}>
-                  Status {health.lastStatus || "----"}
+                  Status {health.lastStatus || "—"}
                 </Pill>
                 {health.lastError ? <Pill tone="status-rejected">{health.lastError}</Pill> : null}
                 {testResult ? (

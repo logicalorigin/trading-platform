@@ -27,12 +27,15 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -243,8 +246,8 @@ export const TradeL2Panel = ({
         background: "transparent",
         border: "none",
         padding: 0,
-        fontSize: fs(9),
-        fontWeight: 400,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
         color: tab === id ? T.text : T.textMuted,
         fontFamily: T.sans,
         letterSpacing: "0.08em",
@@ -354,42 +357,42 @@ export const TradeL2Panel = ({
           <div>
             <div
               style={{
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 color: T.textMuted,
                 letterSpacing: "0.08em",
               }}
             >
               BEST BID
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.green }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.green }}>
               {formatQuotePrice(bestBidLevel?.price ?? bid)}
             </div>
           </div>
           <div style={{ textAlign: "center" }}>
             <div
               style={{
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 color: T.textMuted,
                 letterSpacing: "0.08em",
               }}
             >
               LEVELS
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.text }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
               {depthLevels.length}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div
               style={{
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 color: T.textMuted,
                 letterSpacing: "0.08em",
               }}
             >
               BEST ASK
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.red }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.red }}>
               {formatQuotePrice(bestAskLevel?.price ?? ask)}
             </div>
           </div>
@@ -400,7 +403,7 @@ export const TradeL2Panel = ({
             gridTemplateColumns: `${dim(42)}px ${dim(58)}px ${dim(42)}px ${dim(34)}px`,
             gap: sp(4),
             padding: sp("4px 0"),
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             color: T.textMuted,
             letterSpacing: "0.08em",
             fontFamily: T.sans,
@@ -430,7 +433,7 @@ export const TradeL2Panel = ({
                 gap: sp(4),
                 alignItems: "center",
                 padding: sp("3px 0"),
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 borderBottom: `1px solid ${T.border}08`,
                 background: level.isLastTrade ? `${T.accent}10` : "transparent",
@@ -443,7 +446,7 @@ export const TradeL2Panel = ({
                       ? T.green
                       : T.textDim,
                   textAlign: "right",
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {level.bidSize != null ? level.bidSize.toFixed(0) : MISSING_VALUE}
@@ -452,7 +455,7 @@ export const TradeL2Panel = ({
                 style={{
                   color: level.isLastTrade ? T.accent : T.text,
                   textAlign: "right",
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {formatQuotePrice(level.price)}
@@ -464,7 +467,7 @@ export const TradeL2Panel = ({
                       ? T.red
                       : T.textDim,
                   textAlign: "right",
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
                 {level.askSize != null ? level.askSize.toFixed(0) : MISSING_VALUE}
@@ -473,7 +476,7 @@ export const TradeL2Panel = ({
                 style={{
                   color: T.textDim,
                   textAlign: "right",
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                 }}
               >
                 {level.isLastTrade && level.totalSize != null
@@ -558,7 +561,7 @@ export const TradeL2Panel = ({
             gridTemplateColumns: `${dim(28)}px ${dim(24)}px ${dim(52)}px ${dim(56)}px ${dim(44)}px`,
             gap: sp(4),
             padding: sp("4px 0"),
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             color: T.textMuted,
             letterSpacing: "0.08em",
             fontFamily: T.sans,
@@ -579,7 +582,7 @@ export const TradeL2Panel = ({
               gap: sp(4),
               alignItems: "center",
               padding: sp("4px 0"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
               borderBottom: `1px solid ${T.border}08`,
             }}
@@ -587,7 +590,7 @@ export const TradeL2Panel = ({
             <span
               style={{
                 color: execution.side === "buy" ? T.green : T.red,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
               }}
             >
               {execution.side === "buy" ? "BUY" : "SELL"}
@@ -597,7 +600,7 @@ export const TradeL2Panel = ({
                 ? execution.quantity.toFixed(0)
                 : MISSING_VALUE}
             </span>
-            <span style={{ color: T.text, textAlign: "right", fontWeight: 400 }}>
+            <span style={{ color: T.text, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
               {formatQuotePrice(execution.price)}
             </span>
             <span
@@ -621,7 +624,7 @@ export const TradeL2Panel = ({
               style={{
                 color: T.textDim,
                 textAlign: "right",
-                fontSize: fs(8),
+                fontSize: textSize("body"),
               }}
             >
               {formatRelativeTimeShort(execution.executedAt)}
@@ -635,14 +638,15 @@ export const TradeL2Panel = ({
   return (
     <div
       style={{
-        background: T.bg2,
+        background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
-        padding: sp("8px 10px"),
+        borderRadius: dim(RADII.md),
+        padding: sp("12px 14px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(4),
+        gap: sp(8),
         overflow: "hidden",
+        fontVariantNumeric: "tabular-nums",
       }}
     >
       <div
@@ -662,7 +666,7 @@ export const TradeL2Panel = ({
         <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
           <span
             style={{
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color:
                 tab === "flow"
                   ? effectiveFlowEvents.length
@@ -678,16 +682,16 @@ export const TradeL2Panel = ({
           </span>
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
               color: contractColor,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {contractLabel}
           </span>
           <span
-            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}
+            style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}
           >
             {spread.toFixed(2)} sprd
           </span>
@@ -727,7 +731,7 @@ export const TradeL2Panel = ({
               >
                 <div
                   style={{
-                    fontSize: fs(8),
+                    fontSize: textSize("body"),
                     color: T.textMuted,
                     letterSpacing: "0.08em",
                   }}
@@ -742,7 +746,7 @@ export const TradeL2Panel = ({
                     fontSize: fs(10),
                   }}
                 >
-                  <span style={{ color: T.green, fontWeight: 400 }}>
+                  <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
                     $
                     {(
                       tickerFlow.buyXL +
@@ -752,7 +756,7 @@ export const TradeL2Panel = ({
                     ).toFixed(0)}
                     M
                   </span>
-                  <span style={{ color: T.red, fontWeight: 400 }}>
+                  <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
                     $
                     {(
                       tickerFlow.sellXL +
@@ -783,7 +787,7 @@ export const TradeL2Panel = ({
                           height: dim(4),
                           borderRadius: dim(2),
                           overflow: "hidden",
-                          background: T.bg3,
+                          background: T.bg1,
                         }}
                       >
                         <div
@@ -803,7 +807,7 @@ export const TradeL2Panel = ({
                       </div>
                       <div
                         style={{
-                          fontSize: fs(8),
+                          fontSize: textSize("body"),
                           color: T.textDim,
                           fontFamily: T.sans,
                         }}
@@ -820,7 +824,7 @@ export const TradeL2Panel = ({
             >
               <div
                 style={{
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   color: T.textMuted,
                   letterSpacing: "0.08em",
                   marginBottom: sp(2),

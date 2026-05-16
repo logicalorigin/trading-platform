@@ -8,13 +8,13 @@
 import type { Bar } from './bar';
 import type { BarsHistoryPage } from './barsHistoryPage';
 import type { BarsResponseMarketDataMode } from './barsResponseMarketDataMode';
-import type { BarTimeframe } from './barTimeframe';
+import type { ChartBarTimeframe } from './chartBarTimeframe';
 import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
 import type { MarketDataFreshness } from './marketDataFreshness';
 
 export interface BarsResponse {
   symbol: string;
-  timeframe: BarTimeframe;
+  timeframe: ChartBarTimeframe;
   bars: Bar[];
   transport: IbkrBridgeHealthTransport | null;
   delayed: boolean;

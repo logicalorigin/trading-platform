@@ -1568,7 +1568,7 @@ paths:
           in: query
           required: true
           schema:
-            $ref: "#/components/schemas/BarTimeframe"
+            $ref: "#/components/schemas/ChartBarTimeframe"
         - name: limit
           in: query
           required: false
@@ -1828,7 +1828,7 @@ paths:
           in: query
           required: true
           schema:
-            $ref: "#/components/schemas/BarTimeframe"
+            $ref: "#/components/schemas/ChartBarTimeframe"
         - name: limit
           in: query
           required: false
@@ -3700,6 +3700,10 @@ components:
     BarTimeframe:
       type: string
       enum: [1s, 5s, 15s, 1m, 5m, 15m, 1h, 1d]
+
+    ChartBarTimeframe:
+      type: string
+      enum: [1s, 5s, 15s, 30s, 1m, 2m, 5m, 15m, 30m, 1h, 4h, 1d]
 
     SignalMonitorTimeframe:
       type: string
@@ -8356,7 +8360,7 @@ components:
         symbol:
           type: string
         timeframe:
-          $ref: "#/components/schemas/BarTimeframe"
+          $ref: "#/components/schemas/ChartBarTimeframe"
         bars:
           type: array
           items:

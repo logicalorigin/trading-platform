@@ -117,6 +117,7 @@ export const TradeEquityPanel = ({
   flowEventsSourceMode = "merge-store",
   chartHydrationRole = "primary",
   chartFramePlacement,
+  frameStyle,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
 }) => {
@@ -885,6 +886,7 @@ export const TradeEquityPanel = ({
         model={chartModel}
         compact={resolvedChartFrameCompact}
         placement={resolvedChartFramePlacement}
+        style={frameStyle}
         crosshairSyncGroupId={crosshairSyncGroupId}
         crosshairSyncInstanceId={crosshairSyncInstanceId}
         frameSignalState={showSignalFrameBorder ? signalFrameState : null}
@@ -966,14 +968,15 @@ export const TradeEquityPanel = ({
             selectedStudies={selectedIndicators}
             studySpecs={chartModel.studySpecs}
             onToggleStudy={toggleIndicator}
-            rightSlot={
+            rightSlot={({ iconOnly }) => (
               <RayReplicaSettingsMenu
                 theme={T}
                 settings={rayReplicaSettings}
                 onChange={setRayReplicaSettings}
+                dense={iconOnly}
                 disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
               />
-            }
+            )}
             meta={{
               open: latestBar?.o,
               high: latestBar?.h,

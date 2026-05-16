@@ -4,7 +4,7 @@ import { Check, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
 
 const contentSurfaceStyle: React.CSSProperties = {
   zIndex: 1000,
@@ -30,7 +30,7 @@ const labelStyle: React.CSSProperties = {
   fontSize: textSize("caption"),
   letterSpacing: "0.04em",
   textTransform: "uppercase",
-  fontWeight: 500,
+  fontWeight: FONT_WEIGHTS.medium,
   padding: sp("4px 8px"),
 }
 
@@ -71,7 +71,7 @@ const DropdownMenuSubTrigger = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: T.bg2,
+      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
       ["--ra-dropdown-hover-fg" as any]: T.text,
       ...style,
     }}
@@ -137,7 +137,7 @@ const DropdownMenuItem = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: T.bg2,
+      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
       ["--ra-dropdown-hover-fg" as any]: T.text,
       ...style,
     }}
@@ -160,7 +160,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
     checked={checked}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: T.bg2,
+      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
       ["--ra-dropdown-hover-fg" as any]: T.text,
       ...style,
     }}
@@ -190,7 +190,7 @@ const DropdownMenuRadioItem = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: T.bg2,
+      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
       ["--ra-dropdown-hover-fg" as any]: T.text,
       ...style,
     }}

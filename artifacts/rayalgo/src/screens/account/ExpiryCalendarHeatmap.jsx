@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAccountMoney, mutedLabelStyle } from "./accountUtils";
 
 const TRADING_DAYS_FORWARD = 45;
@@ -120,7 +120,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
     <div
       style={{
         padding: sp(8),
-        background: T.bg2,
+        background: T.bg1,
         border: "none",
         borderRadius: dim(RADII.xs),
         display: "grid",
@@ -129,16 +129,16 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: sp(8) }}>
         <span style={mutedLabelStyle}>Options Expiry · Next 45 Trading Days</span>
-        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
           {activeCount} expiry day{activeCount === 1 ? "" : "s"} ·{" "}
-          <span style={{ color: T.text, fontWeight: 400 }}>
+          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
             {formatAccountMoney(total, currency, true, maskValues)}
           </span>{" "}
           notional
         </span>
       </div>
       {activeCount === 0 ? (
-        <div style={{ color: T.textMuted, fontSize: fs(10), padding: sp(6) }}>
+        <div style={{ color: T.textMuted, fontSize: textSize("body"), padding: sp(6) }}>
           No option positions in book.
         </div>
       ) : (
@@ -156,10 +156,10 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
               <div
                 key={`${label}-${idx}`}
                 style={{
-                  fontSize: fs(8),
+                  fontSize: textSize("label"),
                   color: T.textMuted,
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   height: dim(14),
                   lineHeight: `${dim(14)}px`,
                 }}
@@ -182,7 +182,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
               >
                 <div
                   style={{
-                    fontSize: fs(7),
+                    fontSize: textSize("micro"),
                     color: T.textDim,
                     fontFamily: T.sans,
                     height: dim(10),
@@ -199,7 +199,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                         key={di}
                         style={{
                           height: dim(14),
-                          background: T.bg3,
+                          background: T.bg1,
                           borderRadius: 2,
                           opacity: 0.25,
                         }}
@@ -231,7 +231,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                       style={{
                         height: dim(14),
                         borderRadius: 2,
-                        background: day.notional > 0 ? baseColor : T.bg3,
+                        background: day.notional > 0 ? baseColor : `${T.border}66`,
                         opacity,
                         border: day.isThirdFri ? `1px solid ${T.red}` : "none",
                         boxSizing: "border-box",
@@ -249,7 +249,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         style={{
           display: "flex",
           justifyContent: "space-between",
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           fontFamily: T.sans,
           color: T.textDim,
           gap: sp(8),
@@ -306,8 +306,8 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         {peak ? (
           <span>
             next peak:{" "}
-            <span style={{ color: T.text, fontWeight: 400 }}>{peak.iso}</span> ·{" "}
-            <span style={{ color: T.amber, fontWeight: 400 }}>
+            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{peak.iso}</span> ·{" "}
+            <span style={{ color: T.amber, fontWeight: FONT_WEIGHTS.regular }}>
               {formatAccountMoney(peak.notional, currency, true, maskValues)}
             </span>
           </span>

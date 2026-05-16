@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { useGetBars } from "@workspace/api-client-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -41,7 +41,7 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.sans, fontWeight: 400 }}>
+    <div style={{ color: tone, fontSize: textSize("body"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
       {value}
     </div>
   </div>
@@ -80,7 +80,7 @@ const mobileHeaderStyle = (gridTemplateColumns) => ({
   padding: sp("0 5px"),
   color: T.textDim,
   fontFamily: T.sans,
-  fontSize: fs(7),
+  fontSize: textSize("caption"),
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 });
@@ -132,8 +132,9 @@ const mobileScanRowStyle = (gridTemplateColumns) => ({
 const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
   color: tone,
   fontFamily: T.data,
-  fontSize: fs(9),
-  fontWeight: 400,
+  fontSize: textSize("body"),
+  fontWeight: FONT_WEIGHTS.medium,
+  fontVariantNumeric: "tabular-nums",
   textAlign: align,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -155,7 +156,7 @@ const mobileIconButtonStyle = {
   padding: 0,
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: T.bg2,
+  background: T.bg1,
   color: T.textSec,
   display: "inline-grid",
   placeItems: "center",
@@ -272,7 +273,7 @@ const MobileOrderRow = memo(({
           : "MKT"
       : order.averageFillPrice != null
         ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
-        : "----";
+        : "—";
 
   return (
     <article style={mobileScanShellStyle(expanded)}>
@@ -319,7 +320,7 @@ const MobileOrderRow = memo(({
             label={tab === "working" ? "Limit / Stop" : "Avg Fill"}
             value={
               tab === "working"
-                ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "----"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "----"}`
+                ? `${order.limitPrice != null ? formatAccountPrice(order.limitPrice, 2, maskValues) : "—"} / ${order.stopPrice != null ? formatAccountPrice(order.stopPrice, 2, maskValues) : "—"}`
                 : priceLabel
             }
           />
@@ -327,7 +328,7 @@ const MobileOrderRow = memo(({
           <MobileDetailMetric label="Placed" value={formatAppDateTime(order.placedAt)} />
           <MobileDetailMetric
             label="Commission"
-            value={order.commission != null ? formatAccountMoney(order.commission, currency, false, maskValues) : "----"}
+            value={order.commission != null ? formatAccountMoney(order.commission, currency, false, maskValues) : "—"}
           />
           <div style={mobileDetailWideFlexStyle}>
             {order.sourceType ? (
@@ -400,7 +401,7 @@ const MobileTradeRow = memo(({
       </div>
       <div style={mobileCellTextStyle(T.textSec)}>{formatAppDate(trade.closeDate)}</div>
       <div style={mobileCellTextStyle(T.textSec)}>
-        {trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "----"}
+        {trade.holdDurationMinutes != null ? `${Math.round(trade.holdDurationMinutes / 60)}h` : "—"}
       </div>
       <MobileIconButton
         label={rowSelected ? `Collapse ${trade.symbol} trade details` : `Expand ${trade.symbol} trade details`}
@@ -420,17 +421,17 @@ const MobileTradeRow = memo(({
       <div data-testid="account-trade-expanded-details" style={mobileDetailStyle}>
         <MobileDetailMetric
           label="Realized %"
-          value={trade.realizedPnlPercent != null ? formatAccountPercent(trade.realizedPnlPercent, 2, maskValues) : "----"}
+          value={trade.realizedPnlPercent != null ? formatAccountPercent(trade.realizedPnlPercent, 2, maskValues) : "—"}
           tone={toneForValue(trade.realizedPnlPercent)}
         />
         <MobileDetailMetric label="Open" value={formatAppDate(trade.openDate)} />
         <MobileDetailMetric
           label="Avg In / Out"
-          value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "----"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "----"}`}
+          value={`${trade.avgOpen != null ? formatAccountPrice(trade.avgOpen, 2, maskValues) : "—"} / ${trade.avgClose != null ? formatAccountPrice(trade.avgClose, 2, maskValues) : "—"}`}
         />
         <MobileDetailMetric
           label="Fees"
-          value={trade.commissions != null ? formatAccountMoney(trade.commissions, currency, false, maskValues) : "----"}
+          value={trade.commissions != null ? formatAccountMoney(trade.commissions, currency, false, maskValues) : "—"}
         />
         <div style={mobileDetailPillWrapStyle}>
           <Pill tone={trade.source === "FLEX" ? "accent" : "stream-healthy"}>
@@ -703,7 +704,7 @@ export const OrdersPanel = ({
                 tabIndex={0}
                 onKeyDown={moveTableFocus}
               >
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 400 }}>
+                <td style={{ ...tableCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                   <MarketIdentityInline
                     item={{
                       ticker: order.symbol,
@@ -727,11 +728,11 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.limitPrice != null
                         ? formatAccountPrice(order.limitPrice, 2, maskValues)
-                        : "----"}{" "}
+                        : "—"}{" "}
                       /{" "}
                       {order.stopPrice != null
                         ? formatAccountPrice(order.stopPrice, 2, maskValues)
-                        : "----"}
+                        : "—"}
                     </td>
                     <td style={tableCellStyle}>{order.timeInForce}</td>
                     <td style={tableCellStyle}>
@@ -745,7 +746,7 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.averageFillPrice != null
                         ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
-                        : "----"}
+                        : "—"}
                     </td>
                     <td style={tableCellStyle}>
                       <AppTooltip content={cancelDisabled ? cancelDisabledReason : "Cancel order"}><button
@@ -780,12 +781,12 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.averageFillPrice != null
                         ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
-                        : "----"}
+                        : "—"}
                     </td>
                     <td style={tableCellStyle}>
                       {order.commission != null
                         ? formatAccountMoney(order.commission, currency, false, maskValues)
-                        : "----"}
+                        : "—"}
                     </td>
                     <td style={tableCellStyle}>
                       <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
@@ -800,7 +801,7 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.strategyLabel || order.source}
                       {order.candidateId ? (
-                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: sp(2) }}>
+                        <div style={{ color: T.textDim, fontSize: textSize("body"), marginTop: sp(2) }}>
                           {order.deploymentName || order.candidateId}
                         </div>
                       ) : null}
@@ -1096,7 +1097,7 @@ export const ClosedTradesPanel = ({
                         cursor: onTradeSelect ? "pointer" : "default",
                       }}
                     >
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 400 }}>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                         <MarketIdentityInline
                           item={{
                             ticker: trade.symbol,
@@ -1121,11 +1122,11 @@ export const ClosedTradesPanel = ({
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         {trade.avgOpen != null
                           ? formatAccountPrice(trade.avgOpen, 2, maskValues)
-                          : "----"}
+                          : "—"}
                         {" / "}
                         {trade.avgClose != null
                           ? formatAccountPrice(trade.avgClose, 2, maskValues)
-                          : "----"}
+                          : "—"}
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl) }}>
                         {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
@@ -1142,7 +1143,7 @@ export const ClosedTradesPanel = ({
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         {trade.holdDurationMinutes != null
                           ? `${Math.round(trade.holdDurationMinutes / 60)}h`
-                          : "----"}
+                          : "—"}
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
@@ -1156,7 +1157,7 @@ export const ClosedTradesPanel = ({
                           ) : null}
                         </div>
                         {trade.candidateId ? (
-                          <div style={{ color: T.textDim, fontSize: fs(8), marginTop: sp(2) }}>
+                          <div style={{ color: T.textDim, fontSize: textSize("body"), marginTop: sp(2) }}>
                             {trade.deploymentName || trade.candidateId}
                           </div>
                         ) : null}
@@ -1188,14 +1189,14 @@ const DetailRow = ({ label, value, tone = T.textSec }) => (
       style={{
         color: tone,
         fontFamily: T.data,
-        fontSize: fs(9),
-        fontWeight: 400,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
       }}
     >
-      {value ?? "----"}
+      {value ?? "—"}
     </div>
   </div>
 );
@@ -1272,7 +1273,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
         }}
@@ -1290,7 +1291,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
         }}
@@ -1318,7 +1319,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           display: "grid",
           placeItems: "center",
           fontFamily: T.data,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
         }}
       >
         Loading bars…
@@ -1356,7 +1357,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           background: T.bg0,
           color: T.textMuted,
           fontFamily: T.data,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
         }}
@@ -1398,7 +1399,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
         <div style={mutedLabelStyle}>
           {symbol} · {timeframe} BARS
         </div>
-        <div style={{ fontSize: fs(8), fontFamily: T.data, color: T.textDim }}>
+        <div style={{ fontSize: textSize("body"), fontFamily: T.data, color: T.textDim }}>
           {bars.length} bars
         </div>
       </div>
@@ -1555,14 +1556,14 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               padding: sp("4px 5px"),
               alignItems: "center",
               fontFamily: T.data,
-              fontSize: fs(8),
+              fontSize: textSize("body"),
             }}
           >
-            <span style={{ color: T.text, fontWeight: 400 }}>{row.label}</span>
+            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{row.label}</span>
             <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.detail}
             </span>
-            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: 400 }}>
+            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: FONT_WEIGHTS.regular }}>
               {row.value == null
                 ? row.at
                   ? formatAppDate(row.at)
@@ -1675,10 +1676,11 @@ export const SelectedTradeAnalysisPanel = ({
   const detail = analysis?.selectedTradeDetail;
   const trade = detail?.trade;
   const lifecycleRows = analysis?.lifecycleRows || [];
+  if (!trade) return null;
   return (
     <Panel
       title="Selected Trade"
-      rightRail={trade ? getAccountTradeId(trade) : "No trade selected"}
+      rightRail={getAccountTradeId(trade)}
       minHeight={170}
       action={
         trade?.symbol && onJumpToChart ? (
@@ -1693,122 +1695,115 @@ export const SelectedTradeAnalysisPanel = ({
         ) : null
       }
     >
-      {!trade ? (
-        <EmptyState
-          title="No selected trade"
-          body="Select a closed trade or pattern card to inspect account impact."
-        />
-      ) : (
-        <div style={{ display: "grid", gap: sp(7) }}>
-          <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-            <Pill tone="cyan">{trade.symbol || "----"}</Pill>
-            <Pill tone={/sell|short/i.test(trade.side) ? "side-sell" : "side-buy"}>
-              {trade.side || "side"}
-            </Pill>
-            <Pill tone={sourceTone(trade.sourceType)}>
-              {trade.strategyLabel || trade.sourceType || trade.source || "source"}
-            </Pill>
-            {trade.assetClass ? <Pill tone="purple">{trade.assetClass}</Pill> : null}
-          </div>
-
-          <TradePriceChart trade={trade} currency={currency} maskValues={maskValues} />
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`,
-              gap: sp(5),
-            }}
-          >
-            <DetailRow
-              label="Realized"
-              value={formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
-              tone={toneForValue(trade.realizedPnl)}
-            />
-            <DetailRow
-              label="Commissions"
-              value={formatAccountMoney(trade.commissions, currency, true, maskValues)}
-            />
-            <DetailRow label="Quantity" value={formatNumber(trade.quantity, 3)} />
-            <DetailRow
-              label="Hold"
-              value={
-                trade.holdDurationMinutes == null
-                  ? "----"
-                  : `${formatNumber(trade.holdDurationMinutes / 60, 1)}h`
-              }
-            />
-            <DetailRow
-              label="Entry"
-              value={
-                trade.avgOpen == null
-                  ? "----"
-                  : formatAccountPrice(trade.avgOpen, 2, maskValues)
-              }
-            />
-            <DetailRow
-              label="Exit"
-              value={
-                trade.avgClose == null
-                  ? "----"
-                  : formatAccountPrice(trade.avgClose, 2, maskValues)
-              }
-            />
-            <DetailRow label="Opened" value={formatAppDateTime(trade.openDate)} />
-            <DetailRow label="Closed" value={formatAppDateTime(trade.closeDate)} />
-            <DetailRow
-              label="Exit Reason"
-              value={trade.exitReason ? String(trade.exitReason).replaceAll("_", " ") : "----"}
-            />
-            <DetailRow
-              label="Contract"
-              value={
-                trade.optionRight || trade.strike || trade.expirationDate
-                  ? `${String(trade.optionRight || trade.selectedContract?.right || "option").toUpperCase()} ${
-                      trade.strike ?? trade.selectedContract?.strike ?? "strike"
-                    } ${trade.expirationDate || trade.selectedContract?.expirationDate || ""}`.trim()
-                  : "----"
-              }
-            />
-            <DetailRow
-              label="DTE / Slot"
-              value={`${trade.dte == null ? "----" : formatNumber(trade.dte, 0)} / ${
-                trade.strikeSlot == null ? "----" : formatNumber(trade.strikeSlot, 0)
-              }`}
-            />
-            <DetailRow
-              label="MFE / Giveback"
-              value={`${trade.mfePercent == null ? "----" : formatAccountPercent(trade.mfePercent, 0, maskValues)} / ${
-                trade.givebackPercent == null
-                  ? "----"
-                  : formatAccountPercent(trade.givebackPercent, 0, maskValues)
-              }`}
-            />
-            <DetailRow
-              label="Regime"
-              value={
-                trade.adx == null && !Array.isArray(trade.mtfDirections)
-                  ? "----"
-                  : `ADX ${trade.adx == null ? "----" : formatNumber(trade.adx, 1)} · MTF ${
-                      Array.isArray(trade.mtfDirections) ? trade.mtfDirections.join("/") : "----"
-                    }`
-              }
-            />
-          </div>
-
-          <LifecycleTimeline
-            rows={lifecycleRows}
-            currency={currency}
-            maskValues={maskValues}
-          />
-
-          <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: fs(8), fontFamily: T.data }}>
-            <span>{detail.relatedOrders?.length || 0} related orders</span>
-            <span>{detail.relatedPositions?.length || 0} related open positions</span>
-            {trade.candidateId ? <span>candidate {trade.candidateId}</span> : null}
-          </div>
+      <div style={{ display: "grid", gap: sp(7) }}>
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }}>
+          <Pill tone="cyan">{trade.symbol || "—"}</Pill>
+          <Pill tone={/sell|short/i.test(trade.side) ? "side-sell" : "side-buy"}>
+            {trade.side || "side"}
+          </Pill>
+          <Pill tone={sourceTone(trade.sourceType)}>
+            {trade.strategyLabel || trade.sourceType || trade.source || "source"}
+          </Pill>
+          {trade.assetClass ? <Pill tone="purple">{trade.assetClass}</Pill> : null}
         </div>
-      )}
+
+        <TradePriceChart trade={trade} currency={currency} maskValues={maskValues} />
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`,
+          gap: sp(5),
+        }}
+      >
+        <DetailRow
+          label="Realized"
+          value={formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
+          tone={toneForValue(trade.realizedPnl)}
+        />
+        <DetailRow
+          label="Commissions"
+          value={formatAccountMoney(trade.commissions, currency, true, maskValues)}
+        />
+        <DetailRow label="Quantity" value={formatNumber(trade.quantity, 3)} />
+        <DetailRow
+          label="Hold"
+          value={
+            trade.holdDurationMinutes == null
+              ? "—"
+              : `${formatNumber(trade.holdDurationMinutes / 60, 1)}h`
+          }
+        />
+        <DetailRow
+          label="Entry"
+          value={
+            trade.avgOpen == null
+              ? "—"
+              : formatAccountPrice(trade.avgOpen, 2, maskValues)
+          }
+        />
+        <DetailRow
+          label="Exit"
+          value={
+            trade.avgClose == null
+              ? "—"
+              : formatAccountPrice(trade.avgClose, 2, maskValues)
+          }
+        />
+        <DetailRow label="Opened" value={formatAppDateTime(trade.openDate)} />
+        <DetailRow label="Closed" value={formatAppDateTime(trade.closeDate)} />
+        <DetailRow
+          label="Exit Reason"
+          value={trade.exitReason ? String(trade.exitReason).replaceAll("_", " ") : "—"}
+        />
+        <DetailRow
+          label="Contract"
+          value={
+            trade.optionRight || trade.strike || trade.expirationDate
+              ? `${String(trade.optionRight || trade.selectedContract?.right || "option").toUpperCase()} ${
+                  trade.strike ?? trade.selectedContract?.strike ?? "strike"
+                } ${trade.expirationDate || trade.selectedContract?.expirationDate || ""}`.trim()
+              : "—"
+          }
+        />
+        <DetailRow
+          label="DTE / Slot"
+          value={`${trade.dte == null ? "—" : formatNumber(trade.dte, 0)} / ${
+            trade.strikeSlot == null ? "—" : formatNumber(trade.strikeSlot, 0)
+          }`}
+        />
+        <DetailRow
+          label="MFE / Giveback"
+          value={`${trade.mfePercent == null ? "—" : formatAccountPercent(trade.mfePercent, 0, maskValues)} / ${
+            trade.givebackPercent == null
+              ? "—"
+              : formatAccountPercent(trade.givebackPercent, 0, maskValues)
+          }`}
+        />
+        <DetailRow
+          label="Regime"
+          value={
+            trade.adx == null && !Array.isArray(trade.mtfDirections)
+              ? "—"
+              : `ADX ${trade.adx == null ? "—" : formatNumber(trade.adx, 1)} · MTF ${
+                  Array.isArray(trade.mtfDirections) ? trade.mtfDirections.join("/") : "—"
+                }`
+          }
+        />
+      </div>
+
+      <LifecycleTimeline
+        rows={lifecycleRows}
+        currency={currency}
+        maskValues={maskValues}
+      />
+
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: textSize("body"), fontFamily: T.data }}>
+          <span>{detail.relatedOrders?.length || 0} related orders</span>
+          <span>{detail.relatedPositions?.length || 0} related open positions</span>
+          {trade.candidateId ? <span>candidate {trade.candidateId}</span> : null}
+        </div>
+      </div>
     </Panel>
   );
 };

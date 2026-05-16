@@ -340,6 +340,71 @@ test("getBarsWithDebug does not clip spot broker history without a synthesis pro
   }
 });
 
+test("getBarsWithDebug rolls derived 2m requests from broker-safe 1m history", async () => {
+  const seenRequests: Array<{ timeframe?: string; limit?: number }> = [];
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: {
+          timeframe?: string;
+          limit?: number;
+        }) => {
+          seenRequests.push(input);
+          const limit = input.limit ?? 0;
+          return Array.from({ length: limit }, (_, index) => {
+            const timestamp = new Date(
+              Date.parse("2026-04-27T14:30:00.000Z") + index * 60_000,
+            );
+            return {
+              timestamp,
+              open: 100 + index,
+              high: 101 + index,
+              low: 99 + index,
+              close: 100.5 + index,
+              volume: 10 + index,
+              source: "ibkr-history",
+              providerContractId: null,
+              outsideRth: true,
+              partial: false,
+              transport: "tws",
+              delayed: false,
+              freshness: "live",
+              marketDataMode: "live",
+              dataUpdatedAt: timestamp,
+              ageMs: null,
+            } satisfies BrokerBarSnapshot;
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = await getBarsWithDebug({
+    symbol: "SPY",
+    timeframe: "2m",
+    limit: 2,
+    assetClass: "equity",
+    outsideRth: false,
+    allowHistoricalSynthesis: false,
+  });
+
+  assert.equal(seenRequests.length, 1);
+  assert.equal(seenRequests[0]?.timeframe, "1m");
+  assert.equal(seenRequests[0]?.limit, 4);
+  assert.equal(result.timeframe, "2m");
+  assert.deepEqual(
+    result.bars.map((bar) => bar.timestamp.toISOString()),
+    ["2026-04-27T14:30:00.000Z", "2026-04-27T14:32:00.000Z"],
+  );
+  assert.equal(result.bars[0].open, 100);
+  assert.equal(result.bars[0].close, 101.5);
+  assert.equal(result.bars[0].volume, 21);
+});
+
 test("getBarsWithDebug falls back to full spot broker history when synthesis underfills", async () => {
   process.env["POLYGON_API_KEY"] = "test";
   process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
@@ -1166,6 +1231,49 @@ test("getBarsWithDebug does not serve cached synthesis-only bars for broker-back
   }
 });
 
+test("recent live-edge gaps force Polygon synthesis even when stored history meets count", () => {
+  const now = new Date("2026-05-15T16:20:00.000Z");
+  const storedHistoricalBars = [
+    {
+      timestamp: new Date("2026-05-14T16:20:00.000Z"),
+      open: 500,
+      high: 501,
+      low: 499,
+      close: 500.5,
+      volume: 100_000,
+      source: "massive-history",
+      providerContractId: null,
+      outsideRth: true,
+      partial: false,
+      transport: "tws",
+      delayed: true,
+      freshness: "delayed",
+      marketDataMode: "delayed",
+      dataUpdatedAt: new Date("2026-05-14T16:20:00.000Z"),
+      ageMs: null,
+    },
+  ] satisfies BrokerBarSnapshot[];
+
+  assert.equal(
+    __platformBarsCacheTestInternals.shouldFetchHistoricalSynthesisForRecentCoverage({
+      request: {
+        symbol: "SPY",
+        timeframe: "5m",
+        limit: 360,
+        assetClass: "equity",
+        outsideRth: true,
+        allowHistoricalSynthesis: true,
+        brokerRecentWindowMinutes: 1_440,
+      },
+      storedHistoricalBars,
+      brokerBars: [],
+      now,
+      enabled: true,
+    }),
+    true,
+  );
+});
+
 test("getBarsWithDebug refreshes after durable bar writes invalidate cache", async () => {
   let historyCalls = 0;
   __setIbkrBridgeClientFactoryForTests(
@@ -1803,6 +1911,211 @@ test("getOptionChartBarsWithDebug preserves IBKR bars cache metadata", async () 
   assert.equal(second.dataSource, "ibkr-history");
   assert.equal(second.debug.cacheStatus, "hit");
   assert.equal(historicalCalls, 1);
+});
+
+test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Polygon aggregates", async () => {
+  const expirationDate = new Date("2026-12-18T00:00:00.000Z");
+  const firstTimestamp = new Date("2026-04-27T19:59:00.000Z");
+  const secondTimestamp = new Date("2026-04-27T20:00:00.000Z");
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  let polygonTicker: string | null = null;
+  let polygonLimit: number | undefined;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: { providerContractId?: string | null }) => [
+          {
+            ...brokerBar(input.providerContractId ?? null, 2.15),
+            timestamp: firstTimestamp,
+            volume: 0,
+          },
+          {
+            ...brokerBar(input.providerContractId ?? null, 2.2),
+            timestamp: secondTimestamp,
+            volume: 0,
+          },
+        ],
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getOptionAggregateBarsPage: async (input: {
+          optionTicker: string;
+          limit?: number;
+        }) => {
+          polygonTicker = input.optionTicker;
+          polygonLimit = input.limit;
+          return {
+            bars: [
+              {
+                timestamp: firstTimestamp,
+                open: 9,
+                high: 9,
+                low: 9,
+                close: 9,
+                volume: 120,
+              },
+              {
+                timestamp: secondTimestamp,
+                open: 10,
+                high: 10,
+                low: 10,
+                close: 10,
+                volume: 140,
+              },
+            ],
+            nextUrl: null,
+            pageCount: 1,
+            pageLimitReached: false,
+            requestedFrom: null,
+            requestedTo: null,
+          };
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getOptionChartBarsWithDebug({
+    underlying: "SPY",
+    expirationDate,
+    strike: 971,
+    right: "call",
+    providerContractId: "event-conid-zero-volume-enriched",
+    timeframe: "1m",
+    limit: 2,
+    outsideRth: false,
+  });
+
+  assert.equal(polygonTicker, "O:SPY261218C00971000");
+  assert.equal(polygonLimit, 2);
+  assert.equal(result.dataSource, "ibkr-history");
+  assert.equal(result.historySource, "ibkr-history");
+  assert.equal(result.feedIssue, false);
+  assert.equal(result.emptyReason, null);
+  assert.equal(result.bars.length, 2);
+  assert.equal(result.bars[0].source, "ibkr-history");
+  assert.equal(result.bars[0].close, 2.15);
+  assert.equal(result.bars[0].volume, 120);
+  assert.equal(result.bars[1].close, 2.2);
+  assert.equal(result.bars[1].volume, 140);
+});
+
+test("getOptionChartBarsWithDebug rolls 2m option chart bars from 1m IBKR history", async () => {
+  const expirationDate = new Date("2026-12-18T00:00:00.000Z");
+  const seenRequests: Array<{ timeframe?: string; limit?: number }> = [];
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: {
+          providerContractId?: string | null;
+          timeframe?: string;
+          limit?: number;
+        }) => {
+          seenRequests.push(input);
+          const limit = input.limit ?? 0;
+          return Array.from({ length: limit }, (_, index) => {
+            const timestamp = new Date(
+              Date.parse("2026-04-27T14:30:00.000Z") + index * 60_000,
+            );
+            return {
+              ...brokerBar(input.providerContractId ?? null, 2 + index * 0.1),
+              timestamp,
+              open: 2 + index * 0.1,
+              high: 2.15 + index * 0.1,
+              low: 1.95 + index * 0.1,
+              volume: 100 + index,
+              dataUpdatedAt: timestamp,
+            };
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = await getOptionChartBarsWithDebug({
+    underlying: "SPY",
+    expirationDate,
+    strike: 972,
+    right: "call",
+    providerContractId: "event-conid-2m-rollup",
+    timeframe: "2m",
+    limit: 2,
+    outsideRth: false,
+  });
+
+  assert.equal(seenRequests.length, 1);
+  assert.equal(seenRequests[0]?.timeframe, "1m");
+  assert.equal(seenRequests[0]?.limit, 4);
+  assert.equal(result.timeframe, "2m");
+  assert.equal(result.dataSource, "ibkr-history");
+  assert.deepEqual(
+    result.bars.map((bar) => bar.timestamp.toISOString()),
+    ["2026-04-27T14:30:00.000Z", "2026-04-27T14:32:00.000Z"],
+  );
+  assert.equal(result.bars[0].volume, 201);
+  assert.equal(result.bars[1].close, 2.3);
+});
+
+test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Polygon enrichment is unavailable", async () => {
+  const expirationDate = new Date("2026-12-18T00:00:00.000Z");
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  let polygonCalls = 0;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: { providerContractId?: string | null }) => [
+          {
+            ...brokerBar(input.providerContractId ?? null, 2.35),
+            volume: 0,
+          },
+        ],
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getOptionAggregateBarsPage: async () => {
+          polygonCalls += 1;
+          throw new Error("Polygon unavailable");
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getOptionChartBarsWithDebug({
+    underlying: "SPY",
+    expirationDate,
+    strike: 972,
+    right: "call",
+    providerContractId: "event-conid-zero-volume-polygon-down",
+    timeframe: "1m",
+    limit: 5,
+    outsideRth: false,
+  });
+
+  assert.equal(polygonCalls, 1);
+  assert.equal(result.dataSource, "ibkr-history");
+  assert.equal(result.feedIssue, false);
+  assert.equal(result.emptyReason, null);
+  assert.equal(result.bars.length, 1);
+  assert.equal(result.bars[0].source, "ibkr-history");
+  assert.equal(result.bars[0].close, 2.35);
+  assert.equal(result.bars[0].volume, 0);
 });
 
 test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when IBKR history is empty", async () => {

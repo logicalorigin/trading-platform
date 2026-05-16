@@ -67,6 +67,7 @@ const HISTORICAL_FLOW_RETENTION_MS = 45 * 24 * 60 * 60 * 1_000;
 const HISTORICAL_FLOW_PRUNE_INTERVAL_MS = 60 * 60 * 1_000;
 const HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS = 3_000;
 const HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS = 4_000;
+const HISTORICAL_FLOW_BLOCKING_DIRECT_TIMEOUT_MS = 8_000;
 const HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS = 5 * 60_000;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT = 40;
 const HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT = 1;
@@ -97,6 +98,8 @@ let historicalFlowStoreReadTimeoutMs =
   HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
 let historicalFlowNonblockingDirectFallbackTimeoutMs =
   HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
+let historicalFlowBlockingDirectTimeoutMs =
+  HISTORICAL_FLOW_BLOCKING_DIRECT_TIMEOUT_MS;
 let lastHistoricalFlowPruneMs = 0;
 const hydrationInFlight = new Map<string, Promise<HydrationTotals>>();
 
@@ -117,6 +120,10 @@ type NewYorkSessionParts = {
 type StoreReadResult<T> = {
   value: T;
   timedOut: boolean;
+};
+
+type DirectReadResult<T> = StoreReadResult<T> & {
+  error: string | null;
 };
 
 const settleHistoricalFlowStoreRead = async <T>(
@@ -186,6 +193,9 @@ const numberFromDb = (value: unknown): number => {
   }
   return 0;
 };
+
+const errorMessageFromUnknown = (error: unknown): string =>
+  error instanceof Error && error.message ? error.message : String(error);
 
 const nullableNumberFromDb = (value: unknown): number | null => {
   if (value === null || value === undefined) {
@@ -1066,6 +1076,7 @@ async function loadDirectHistoricalFlowEvents(input: {
   maxDte?: number | null;
   fallbackMaxDte?: number;
   preferDerived?: boolean;
+  preferSnapshotFirst?: boolean;
   tradeConcurrency?: number;
   snapshotPageLimit?: number;
   contractPageLimit?: number;
@@ -1074,6 +1085,32 @@ async function loadDirectHistoricalFlowEvents(input: {
   tradeLimit?: number;
   signal?: AbortSignal;
 }): Promise<ProviderFlowEvent[]> {
+  if (input.preferSnapshotFirst && input.client.getDerivedFlowEvents) {
+    try {
+      const snapshotEvents = await input.client.getDerivedFlowEvents({
+        underlying: input.underlying,
+        limit: Math.max(1, Math.min(input.limit ?? 250, 250)),
+        unusualThreshold: input.unusualThreshold,
+        snapshotPageLimit: input.snapshotPageLimit,
+        signal: input.signal,
+      });
+      const fromMs = input.from.getTime();
+      const toMs = input.to.getTime();
+      const windowEvents = snapshotEvents.filter((event) => {
+        const timeMs = event.occurredAt.getTime();
+        return timeMs >= fromMs && timeMs <= toMs;
+      });
+      if (windowEvents.length > 0) {
+        return windowEvents;
+      }
+    } catch (error) {
+      logger.debug(
+        { err: error, underlying: input.underlying },
+        "historical flow snapshot-first direct read failed; trying trade hydration",
+      );
+    }
+  }
+
   if (input.preferDerived && input.client.getDerivedFlowEvents) {
     try {
       return await input.client.getDerivedFlowEvents({
@@ -1160,6 +1197,73 @@ async function loadNonblockingDirectHistoricalFlowFallback(input: {
   return directRead;
 }
 
+async function loadDirectHistoricalFlowWithin(input: {
+  underlying: string;
+  client: HistoricalFlowProviderClient;
+  from: Date;
+  to: Date;
+  limit: number;
+  filters: FlowEventsFilters;
+  unusualThreshold?: number;
+  timeoutMs: number;
+}): Promise<DirectReadResult<ProviderFlowEvent[]>> {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, Math.floor(input.timeoutMs));
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const directRead = loadDirectHistoricalFlowEvents({
+    underlying: input.underlying,
+    client: input.client,
+    from: input.from,
+    to: input.to,
+    limit: input.limit,
+    unusualThreshold: input.unusualThreshold,
+    maxDte: input.filters.maxDte,
+    fallbackMaxDte: HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE,
+    preferDerived: true,
+    preferSnapshotFirst: true,
+    snapshotPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT,
+    contractPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT,
+    contractLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT,
+    tradePageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT,
+    tradeLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT,
+    tradeConcurrency: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY,
+    signal: controller.signal,
+  });
+  const timeoutRead = new Promise<ProviderFlowEvent[]>((resolve) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      resolve([]);
+      controller.abort();
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+
+  try {
+    const value = await Promise.race([directRead, timeoutRead]);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (timedOut) {
+      directRead.catch(() => {});
+    }
+    return {
+      value,
+      timedOut,
+      error: null,
+    };
+  } catch (error) {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    return {
+      value: [],
+      timedOut: false,
+      error: errorMessageFromUnknown(error),
+    };
+  }
+}
+
 export async function listHistoricalFlowEvents(input: {
   underlying: string;
   providerName: string;
@@ -1173,7 +1277,6 @@ export async function listHistoricalFlowEvents(input: {
   historicalBucketSeconds?: number;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying);
-  const provider = normalizeProviderName(input.providerName);
   const to = input.to ?? new Date();
   const from =
     input.from ?? new Date(to.getTime() - HISTORICAL_FLOW_DEFAULT_LOOKBACK_MS);
@@ -1198,268 +1301,57 @@ export async function listHistoricalFlowEvents(input: {
     };
   }
 
-  const sessions = resolveHistoricalFlowSessions({ from, to });
-  let storedEvents: ProviderFlowEvent[] = [];
-  let directFallbackEvents: ProviderFlowEvent[] = [];
-  let directFallbackTimedOut = false;
-  let incompleteSessions: HistoricalFlowSession[] = sessions;
-
-  if (input.blocking === false) {
-    const storedRead = await settleHistoricalFlowStoreRead(
-      "loadStoredHistoricalFlowEvents",
-      () =>
-        loadStoredHistoricalFlowEvents({
-          underlying,
-          provider,
-          from,
-          to,
-          limit: input.limit,
-          bucketSeconds: input.historicalBucketSeconds,
-        }),
-      [],
-    );
-    storedEvents = storedRead.value;
-
-    if (storedRead.timedOut) {
-      disableHistoricalFlowStoreAfterError(
-        new Error("historical flow store read timed out"),
-        "loadStoredHistoricalFlowEvents",
-      );
-    } else {
-      const incompleteRead = await settleHistoricalFlowStoreRead(
-        "loadIncompleteSessions",
-        () =>
-          loadIncompleteSessions({
-            underlying,
-            provider,
-            sessions,
-          }),
-        sessions,
-      );
-      incompleteSessions = incompleteRead.value;
-
-      if (incompleteRead.timedOut) {
-        disableHistoricalFlowStoreAfterError(
-          new Error("historical flow incomplete-session read timed out"),
-          "loadIncompleteSessions",
-        );
-      }
-    }
-  } else {
-    storedEvents = await loadStoredHistoricalFlowEvents({
-      underlying,
-      provider,
-      from,
-      to,
-      limit: input.limit,
-      bucketSeconds: input.historicalBucketSeconds,
-    });
-    incompleteSessions = await loadIncompleteSessions({
-      underlying,
-      provider,
-      sessions,
-    });
-  }
-
-  if (isHistoricalFlowStoreDisabled()) {
-    if (input.blocking === false) {
-      const directRead = await loadNonblockingDirectHistoricalFlowFallback({
-        underlying,
-        client: input.client,
-        from,
-        to,
-        limit: input.limit,
-        filters: input.filters,
-        unusualThreshold: input.unusualThreshold,
-      });
-      const filteredCandidates = filterFlowEventsForRequest(
-        directRead.value,
-        input.filters,
-        input.unusualThreshold,
-        HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
-      ) as ProviderFlowEvent[];
-      const filteredEvents = sampleHistoricalFlowEventsForWindow({
-        events: filteredCandidates,
-        from,
-        to,
-        limit: input.limit,
-        bucketSeconds: input.historicalBucketSeconds,
-      });
-      return {
-        events: filteredEvents,
-        source: flowSource({
-          provider: "polygon",
-          status: filteredEvents.length ? "fallback" : "empty",
-          attemptedProviders,
-          unusualThreshold: input.unusualThreshold ?? 1,
-          ibkrStatus: "empty",
-          ibkrReason: filteredEvents.length
-            ? "options_flow_historical_direct"
-            : directRead.timedOut
-              ? "options_flow_historical_provider_timeout"
-              : "options_flow_historical_store_unavailable",
-        }),
-      };
-    }
-
-    try {
-      storedEvents = await loadDirectHistoricalFlowEvents({
-        underlying,
-        client: input.client,
-        from,
-        to,
-        unusualThreshold: input.unusualThreshold,
-        maxDte: input.filters.maxDte,
-      });
-    } catch (error) {
-      return {
-        events: [],
-        source: flowSource({
-          provider: "polygon",
-          status: "error",
-          attemptedProviders,
-          errorMessage:
-            error instanceof Error && error.message ? error.message : String(error),
-          unusualThreshold: input.unusualThreshold ?? 1,
-          ibkrStatus: "empty",
-          ibkrReason: "options_flow_historical_provider_error",
-        }),
-      };
-    }
-  } else if (incompleteSessions.length > 0) {
-    const hydrate = hydrateHistoricalFlowSessions({
-      underlying,
-      provider,
-      client: input.client,
-      sessions: incompleteSessions,
-      unusualThreshold: input.unusualThreshold,
-      maxDte: input.filters.maxDte,
-    });
-    if (input.blocking === false) {
-      hydrate.catch(() => {});
-      const directRead = await loadNonblockingDirectHistoricalFlowFallback({
-        underlying,
-        client: input.client,
-        from,
-        to,
-        limit: input.limit,
-        filters: input.filters,
-        unusualThreshold: input.unusualThreshold,
-      });
-      directFallbackTimedOut = directRead.timedOut;
-      directFallbackEvents = filterFlowEventsForRequest(
-        directRead.value,
-        input.filters,
-        input.unusualThreshold,
-        HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
-      ) as ProviderFlowEvent[];
-      if (directFallbackEvents.length) {
-        void persistHistoricalFlowEvents({
-          underlying,
-          provider,
-          events: directFallbackEvents,
-        }).catch((error) => {
-          logger.debug(
-            { err: error, underlying },
-            "historical flow direct fallback persist failed",
-          );
-        });
-      }
-    } else {
-      try {
-        await hydrate;
-        storedEvents = isHistoricalFlowStoreDisabled()
-          ? await loadDirectHistoricalFlowEvents({
-              underlying,
-              client: input.client,
-              from,
-              to,
-              unusualThreshold: input.unusualThreshold,
-              maxDte: input.filters.maxDte,
-            })
-          : await loadStoredHistoricalFlowEvents({
-              underlying,
-              provider,
-              from,
-              to,
-              limit: input.limit,
-              bucketSeconds: input.historicalBucketSeconds,
-            });
-      } catch (error) {
-        if (storedEvents.length === 0 || isHistoricalFlowStoreDisabled()) {
-          try {
-            storedEvents = await loadDirectHistoricalFlowEvents({
-              underlying,
-              client: input.client,
-              from,
-              to,
-              unusualThreshold: input.unusualThreshold,
-              maxDte: input.filters.maxDte,
-            });
-          } catch (directError) {
-            return {
-              events: [],
-              source: flowSource({
-                provider: "polygon",
-                status: "error",
-                attemptedProviders,
-                errorMessage:
-                  directError instanceof Error && directError.message
-                    ? directError.message
-                    : String(directError),
-                unusualThreshold: input.unusualThreshold ?? 1,
-                ibkrStatus: "empty",
-                ibkrReason: "options_flow_historical_provider_error",
-              }),
-            };
-          }
-        } else {
-          logger.debug(
-            { err: error, underlying },
-            "historical flow hydration failed; serving stored partial events",
-          );
-        }
-      }
-    }
-  }
-
-  const candidateEvents = directFallbackEvents.length
-    ? sampleHistoricalFlowEventsForWindow({
-        events: mergeHistoricalFlowEvents(storedEvents, directFallbackEvents),
-        from,
-        to,
-        limit: input.limit,
-        bucketSeconds: input.historicalBucketSeconds,
-      })
-    : storedEvents;
+  const directRead = await loadDirectHistoricalFlowWithin({
+    underlying,
+    client: input.client,
+    from,
+    to,
+    limit: input.limit,
+    filters: input.filters,
+    unusualThreshold: input.unusualThreshold,
+    timeoutMs:
+      input.blocking === false
+        ? historicalFlowNonblockingDirectFallbackTimeoutMs
+        : historicalFlowBlockingDirectTimeoutMs,
+  });
+  const candidateEvents = sampleHistoricalFlowEventsForWindow({
+    events: filterFlowEventsForRequest(
+      directRead.value,
+      input.filters,
+      input.unusualThreshold,
+      HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
+    ) as ProviderFlowEvent[],
+    from,
+    to,
+    limit: input.limit,
+    bucketSeconds: input.historicalBucketSeconds,
+  });
   const filteredEvents = filterFlowEventsForRequest(
     candidateEvents,
     input.filters,
     input.unusualThreshold,
     input.limit,
   );
-  const refreshing = incompleteSessions.length > 0 && input.blocking === false;
 
   return {
     events: filteredEvents,
     source: flowSource({
       provider: "polygon",
-      status: filteredEvents.length ? "fallback" : "empty",
+      status: directRead.error
+        ? "error"
+        : filteredEvents.length
+          ? "fallback"
+          : "empty",
       attemptedProviders,
+      errorMessage: directRead.error,
       unusualThreshold: input.unusualThreshold ?? 1,
       ibkrStatus: "empty",
       ibkrReason: filteredEvents.length
-        ? directFallbackEvents.length
-          ? refreshing
-            ? "options_flow_historical_direct_refreshing"
-            : "options_flow_historical_direct"
-          : refreshing
-          ? "options_flow_historical_partial_refreshing"
-          : "options_flow_historical_persisted"
-        : directFallbackTimedOut
+        ? "options_flow_historical_direct"
+        : directRead.timedOut
           ? "options_flow_historical_provider_timeout"
-          : refreshing
-          ? "options_flow_historical_refreshing"
+          : directRead.error
+          ? "options_flow_historical_provider_error"
           : "options_flow_historical_empty",
     }),
   };
@@ -1472,6 +1364,8 @@ export function __resetHistoricalFlowEventsForTests(): void {
     HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
   historicalFlowNonblockingDirectFallbackTimeoutMs =
     HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
+  historicalFlowBlockingDirectTimeoutMs =
+    HISTORICAL_FLOW_BLOCKING_DIRECT_TIMEOUT_MS;
   hydrationInFlight.clear();
 }
 
@@ -1494,4 +1388,12 @@ export function __setHistoricalFlowDirectFallbackTimeoutMsForTests(
   historicalFlowNonblockingDirectFallbackTimeoutMs = Number.isFinite(timeoutMs)
     ? Math.max(1, Math.floor(timeoutMs))
     : HISTORICAL_FLOW_NONBLOCKING_DIRECT_FALLBACK_TIMEOUT_MS;
+}
+
+export function __setHistoricalFlowBlockingDirectTimeoutMsForTests(
+  timeoutMs: number,
+): void {
+  historicalFlowBlockingDirectTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.max(1, Math.floor(timeoutMs))
+    : HISTORICAL_FLOW_BLOCKING_DIRECT_TIMEOUT_MS;
 }

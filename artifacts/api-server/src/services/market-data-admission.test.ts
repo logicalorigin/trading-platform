@@ -3,8 +3,10 @@ import { afterEach, test } from "node:test";
 import {
   __resetMarketDataAdmissionForTests,
   admitMarketDataLeases,
+  getMarketDataLeasesSnapshot,
   getMarketDataAdmissionBudget,
   getMarketDataAdmissionDiagnostics,
+  setMarketDataAdmissionBridgeLineBudget,
   setMarketDataAdmissionRuntimeDefaults,
 } from "./market-data-admission";
 
@@ -56,6 +58,26 @@ test("uses a 200-line IBKR budget with a 15-line reserve by default", () => {
     execution: 12,
     "account-monitor": 10,
     visible: 58,
+    automation: 5,
+    "flow-scanner": 100,
+    convenience: 0,
+  });
+});
+
+test("uses the bridge-reported line budget when it is lower than the app cap", () => {
+  setEnv({});
+  setMarketDataAdmissionBridgeLineBudget(190, Date.now());
+
+  const budget = getMarketDataAdmissionBudget();
+  assert.equal(budget.configuredMaxLines, 200);
+  assert.equal(budget.maxLines, 190);
+  assert.equal(budget.bridgeLineBudget, 190);
+  assert.equal(budget.budgetSource, "bridge-diagnostics");
+  assert.equal(budget.usableLines, 175);
+  assert.deepEqual(budget.poolLineCaps, {
+    execution: 12,
+    "account-monitor": 10,
+    visible: 48,
     automation: 5,
     "flow-scanner": 100,
     convenience: 0,
@@ -200,6 +222,89 @@ test("enforces the flow scanner live-line cap", () => {
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 10);
 });
 
+test("shrinks scanner headroom when active visible demand borrows idle lines", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "20",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "10",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "10",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "active-chart-grid",
+    intent: "visible-live",
+    requests: Array.from({ length: 15 }, (_, index) => ({
+      assetClass: "equity" as const,
+      symbol: `VIS${index}`,
+    })),
+  });
+
+  const beforeScanner = getMarketDataAdmissionDiagnostics();
+  assert.equal(beforeScanner.pressure.state, "constrained");
+  assert.equal(beforeScanner.pressure.scannerStaticLineCap, 10);
+  assert.equal(beforeScanner.pressure.scannerEffectiveLineCap, 5);
+
+  const result = admitMarketDataLeases({
+    owner: "flow-scanner",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 10 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `OPT${index}`,
+      underlying: "SPY",
+    })),
+  });
+
+  assert.equal(result.admitted.length, 5);
+  assert.equal(result.rejected.length, 5);
+  assert.equal(result.rejected[0].reason, "pool-cap");
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.poolUsage["flow-scanner"].maxLines, 10);
+  assert.equal(diagnostics.poolUsage["flow-scanner"].effectiveMaxLines, 5);
+  assert.equal(diagnostics.pressure.state, "protected");
+});
+
+test("active visible requests reclaim lines from scanner leases under pressure", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "5",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "5",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "flow-scanner",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 5 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `OPT${index}`,
+      underlying: "SPY",
+    })),
+  });
+
+  const result = admitMarketDataLeases({
+    owner: "active-chart",
+    intent: "visible-live",
+    requests: ["AAA", "BBB", "CCC"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  assert.equal(result.admitted.length, 3);
+  assert.equal(result.demoted.length, 3);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.intentUsage["visible-live"], 3);
+  assert.equal(diagnostics.intentUsage["flow-scanner-live"], 2);
+});
+
 test("higher-priority execution requests demote lower-priority convenience leases", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "3",
@@ -276,6 +381,39 @@ test("account monitor requests demote visible requests but not execution request
   assert.equal(diagnostics.intentUsage["execution-live"], 2);
   assert.equal(diagnostics.intentUsage["account-monitor-live"], 2);
   assert.equal(diagnostics.intentUsage["visible-live"], 0);
+});
+
+test("returns a lease snapshot for live bridge warm-up without exposing mutable state", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "visible-watchlist",
+    intent: "visible-live",
+    requests: ["SPY", "NVDA"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  const snapshot = getMarketDataLeasesSnapshot();
+
+  assert.equal(snapshot.length, 2);
+  assert.deepEqual(
+    snapshot.map((lease) => lease.lineIds[0]).sort(),
+    ["equity:NVDA", "equity:SPY"],
+  );
+  snapshot[0]?.lineIds.push("equity:BAD");
+  snapshot.length = 0;
+  assert.equal(getMarketDataLeasesSnapshot().length, 2);
+  assert.equal(
+    getMarketDataLeasesSnapshot().some((lease) =>
+      lease.lineIds.includes("equity:BAD"),
+    ),
+    false,
+  );
 });
 
 test("rejects same-priority requests when the live-line budget is full", () => {

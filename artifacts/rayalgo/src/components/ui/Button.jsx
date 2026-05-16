@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const SIZES = {
   sm: { padding: "5px 12px", font: "caption", icon: 12, gap: 5 },
@@ -30,7 +30,7 @@ const resolveVariant = (variant, color) => {
       return {
         background: "transparent",
         color: T.textSec,
-        hoverBackground: T.bg2,
+        hoverBackground: `${T.accent}10`,
         hoverColor: T.text,
         border: "none",
         boxShadow: ELEVATION.none,
@@ -38,10 +38,10 @@ const resolveVariant = (variant, color) => {
     case "secondary":
     default:
       return {
-        background: T.bg2,
+        background: T.bg1,
         color: T.text,
-        hoverBackground: T.bg3,
-        border: "none",
+        hoverBackground: `${T.accent}08`,
+        border: `1px solid ${T.border}`,
         boxShadow: ELEVATION.none,
       };
   }
@@ -55,7 +55,7 @@ const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
       display: "inline-block",
       width: dim(size),
       height: dim(size),
-      borderRadius: "50%",
+      borderRadius: dim(RADII.pill),
       border: `2px solid ${color}40`,
       borderTopColor: color,
       animation: "rayalgoBtnSpin 720ms linear infinite",
@@ -138,7 +138,7 @@ export const Button = forwardRef(function Button(
           boxShadow: v.boxShadow,
           fontFamily: T.sans,
           fontSize: textSize(dims.font),
-          fontWeight: 500,
+          fontWeight: FONT_WEIGHTS.medium,
           letterSpacing: "0.01em",
           cursor: isDisabled ? "not-allowed" : "pointer",
           opacity: isDisabled && !loading ? 0.55 : 1,

@@ -23,6 +23,7 @@ import {
   useActiveChartBarState,
 } from "./activeChartBarStore";
 import {
+  getChartBaseTimeframe,
   getChartBarLimit,
   getChartTimeframeStepMs,
   normalizeChartTimeframe,
@@ -155,7 +156,7 @@ type LiveFrameScheduler<T> = {
 };
 
 const HISTORICAL_BAR_STREAM_TIMEFRAMES = new Set(["5s", "1m", "5m", "15m", "1h", "1d"]);
-const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
+const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d"]);
 const LIVE_BAR_STREAM_STALE_MS = 45_000;
 const LIVE_BAR_STREAM_RECONNECT_MS = 5_000;
 const LIVE_BAR_FALLBACK_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
@@ -330,6 +331,17 @@ const resolveTimestampMs = (value: MarketBar["timestamp"] | MarketBar["time"]): 
   return null;
 };
 
+const resolveFiniteNumber = (
+  ...values: Array<number | null | undefined>
+): number | null => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+};
+
 const resolveHistoryPageTimeMs = (
   value: ChartBarsHistoryPage[keyof ChartBarsHistoryPage] | undefined,
 ): number | null => {
@@ -436,14 +448,6 @@ const resolveLiveQuotePrice = (quote: LiveOptionQuoteLike | null): number | null
   return null;
 };
 
-const resolveLiveQuoteVolume = (quote: LiveOptionQuoteLike | null): number | null => {
-  if (typeof quote?.volume === "number" && Number.isFinite(quote.volume) && quote.volume >= 0) {
-    return quote.volume;
-  }
-
-  return null;
-};
-
 const buildLiveQuotePatchSignature = (
   quote: LiveOptionQuoteLike | null,
 ): string => [
@@ -451,7 +455,6 @@ const buildLiveQuotePatchSignature = (
   quote?.price ?? "",
   quote?.bid ?? "",
   quote?.ask ?? "",
-  resolveLiveQuoteVolume(quote) ?? "",
 ].join("|");
 
 const normalizeBaseBars = (
@@ -495,17 +498,18 @@ const buildHistoricalBarStreamUrl = (input: {
   source?: "trades" | "midpoint" | "bid_ask";
 }): string | null => {
   const normalizedTimeframe = normalizeChartTimeframe(input.timeframe);
+  const streamTimeframe = getChartBaseTimeframe(normalizedTimeframe);
   if (
     !input.symbol ||
-    !normalizedTimeframe ||
-    !HISTORICAL_BAR_STREAM_TIMEFRAMES.has(normalizedTimeframe)
+    !streamTimeframe ||
+    !HISTORICAL_BAR_STREAM_TIMEFRAMES.has(streamTimeframe)
   ) {
     return null;
   }
 
   const params = new URLSearchParams({
     symbol: input.symbol.trim().toUpperCase(),
-    timeframe: normalizedTimeframe,
+    timeframe: streamTimeframe,
   });
 
   if (input.assetClass) {
@@ -925,10 +929,10 @@ const mergeBarsWithMinuteAggregateList = (
     const ordered = bucket.slice().sort((left, right) => left.startMs - right.startMs);
     const first = ordered[0];
     const last = ordered[ordered.length - 1];
-    const volume = ordered.reduce((sum, minute) => sum + minute.volume, 0);
-    const open = first.open;
-    const high = ordered.reduce((max, minute) => Math.max(max, minute.high), first.high);
-    const low = ordered.reduce((min, minute) => Math.min(min, minute.low), first.low);
+    const liveVolume = ordered.reduce((sum, minute) => sum + minute.volume, 0);
+    const liveOpen = first.open;
+    const liveHigh = ordered.reduce((max, minute) => Math.max(max, minute.high), first.high);
+    const liveLow = ordered.reduce((min, minute) => Math.min(min, minute.low), first.low);
     const close = last.close;
     const vwap = weightedAverage(
       ordered.map((minute) => ({
@@ -942,15 +946,36 @@ const mergeBarsWithMinuteAggregateList = (
         weight: minute.volume,
       })),
     );
+    const existingBar = mergedByStart.get(bucketStartMs);
+    const existingOpen = resolveFiniteNumber(existingBar?.open, existingBar?.o);
+    const existingHigh = resolveFiniteNumber(existingBar?.high, existingBar?.h);
+    const existingLow = resolveFiniteNumber(existingBar?.low, existingBar?.l);
+    const existingVolume = resolveFiniteNumber(existingBar?.volume, existingBar?.v);
+    const open =
+      first.startMs <= bucketStartMs || existingOpen == null
+        ? liveOpen
+        : existingOpen;
+    const high =
+      existingHigh == null ? liveHigh : Math.max(existingHigh, liveHigh);
+    const low = existingLow == null ? liveLow : Math.min(existingLow, liveLow);
+    const volume =
+      existingVolume == null ? liveVolume : Math.max(existingVolume, liveVolume);
 
     mergedByStart.set(bucketStartMs, {
+      ...(existingBar || {}),
       timestamp: new Date(bucketStartMs),
+      time: bucketStartMs,
       ts: new Date(bucketStartMs).toISOString(),
       open,
       high,
       low,
       close,
       volume,
+      o: open,
+      h: high,
+      l: low,
+      c: close,
+      v: volume,
       vwap,
       sessionVwap: last.sessionVwap ?? undefined,
       accumulatedVolume: last.accumulatedVolume ?? undefined,
@@ -1160,8 +1185,6 @@ const patchBarsWithLiveQuote = (
   const normalizedBars = normalizeBaseBars(bars, timeframe);
   const quotePrice = resolveLiveQuotePrice(quote);
   const quoteUpdatedAtMs = resolveQuoteUpdatedAtMs(quote?.updatedAt);
-  const quoteVolume =
-    source === "ibkr-option-quote-derived" ? resolveLiveQuoteVolume(quote) : null;
   const stepMs = timeframeToStepMs(timeframe);
 
   if (!normalizedBars.length || quotePrice == null || quoteUpdatedAtMs == null || !stepMs) {
@@ -1189,21 +1212,12 @@ const patchBarsWithLiveQuote = (
       : Math.floor(quoteUpdatedAtMs / stepMs) * stepMs;
 
   if (nextBarStartMs <= lastBarStartMs) {
-    const lastBarVolume = lastBar.volume ?? lastBar.v ?? 0;
-    const patchedVolume =
-      quoteVolume == null ? lastBarVolume : Math.max(lastBarVolume, quoteVolume);
     nextBars[nextBars.length - 1] = {
       ...lastBar,
       high: Math.max(lastBar.high ?? lastBar.h ?? quotePrice, quotePrice),
       low: Math.min(lastBar.low ?? lastBar.l ?? quotePrice, quotePrice),
       close: quotePrice,
       c: quotePrice,
-      ...(quoteVolume == null
-        ? {}
-        : {
-            volume: patchedVolume,
-            v: patchedVolume,
-          }),
       source,
       freshness: quote?.freshness ?? lastBar.freshness,
       marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
@@ -1223,8 +1237,8 @@ const patchBarsWithLiveQuote = (
     high: Math.max(previousClose, quotePrice),
     low: Math.min(previousClose, quotePrice),
     close: quotePrice,
-    volume: quoteVolume ?? lastBar.volume ?? lastBar.v ?? 0,
-    v: quoteVolume ?? lastBar.volume ?? lastBar.v ?? 0,
+    volume: 0,
+    v: 0,
     source,
     freshness: quote?.freshness ?? lastBar.freshness,
     marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
@@ -2133,6 +2147,7 @@ export const __chartStreamingTestInternals = {
   buildPatchedBarFromHistoricalBarStream,
   buildHistoricalBarStreamSignature,
   buildLiveQuotePatchSignature,
+  buildHistoricalBarStreamUrl,
   resolveHistoricalBarStreamBucketKey,
   createLiveBarFrameScheduler,
   isHistoricalBarStreamPayloadForUrl,

@@ -80,6 +80,10 @@ export type MarketDataAdmissionResult = {
     maxLines: number;
     reserveLines: number;
     usableLines: number;
+    configuredMaxLines: number;
+    bridgeLineBudget: number | null;
+    bridgeLineBudgetObservedAt: string | null;
+    budgetSource: "app-config" | "bridge-diagnostics";
     automationLineCap: number;
     accountMonitorLineCap: number;
     flowScannerLineCap: number;
@@ -151,6 +155,7 @@ const DEFAULT_AUTOMATION_LINES = 5;
 const DEFAULT_FLOW_SCANNER_LINES = 10;
 const DEFAULT_FLOW_SCANNER_CONCURRENCY = 10;
 const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = 100;
+const BRIDGE_LINE_BUDGET_TTL_MS = 30_000;
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV = "OPTIONS_FLOW_SCANNER_LINE_BUDGET";
 const OPTIONS_FLOW_SCANNER_CONCURRENCY_ENV = "OPTIONS_FLOW_SCANNER_CONCURRENCY";
 
@@ -169,6 +174,12 @@ const recentEvents: AdmissionEvent[] = [];
 let nextLeaseId = 1;
 let runtimeFlowScannerLineBudget: number | null = null;
 let runtimeFlowScannerConcurrency: number | null = null;
+let runtimeBridgeLineBudget:
+  | {
+      value: number;
+      observedAt: number;
+    }
+  | null = null;
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -295,11 +306,42 @@ export function setMarketDataAdmissionRuntimeDefaults(input: {
       : null;
 }
 
+export function setMarketDataAdmissionBridgeLineBudget(
+  value: number | null | undefined,
+  observedAt = Date.now(),
+): void {
+  runtimeBridgeLineBudget =
+    typeof value === "number" && Number.isFinite(value) && value > 0
+      ? { value: Math.floor(value), observedAt }
+      : null;
+}
+
+function resolveRuntimeBridgeLineBudget(now = Date.now()):
+  | {
+      value: number;
+      observedAt: number;
+    }
+  | null {
+  if (!runtimeBridgeLineBudget) {
+    return null;
+  }
+  if (now - runtimeBridgeLineBudget.observedAt > BRIDGE_LINE_BUDGET_TTL_MS) {
+    runtimeBridgeLineBudget = null;
+    return null;
+  }
+  return runtimeBridgeLineBudget;
+}
+
 export function getMarketDataAdmissionBudget() {
-  const maxLines = readPositiveIntegerEnv(
+  const configuredMaxLines = readPositiveIntegerEnv(
     "IBKR_MARKET_DATA_APP_MAX_LINES",
     DEFAULT_MAX_LINES,
   );
+  const bridgeLineBudget = resolveRuntimeBridgeLineBudget();
+  const maxLines =
+    bridgeLineBudget === null
+      ? configuredMaxLines
+      : Math.min(configuredMaxLines, bridgeLineBudget.value);
   const reserveLines = Math.min(
     maxLines - 1,
     readNonNegativeIntegerEnv(
@@ -312,11 +354,21 @@ export function getMarketDataAdmissionBudget() {
   const automationLineCap = poolLineCaps.automation;
   const accountMonitorLineCap = poolLineCaps["account-monitor"];
   const flowScannerLineCap = poolLineCaps["flow-scanner"];
+  const budgetSource: "app-config" | "bridge-diagnostics" =
+    bridgeLineBudget && bridgeLineBudget.value < configuredMaxLines
+      ? "bridge-diagnostics"
+      : "app-config";
 
   return {
     maxLines,
     reserveLines,
     usableLines,
+    configuredMaxLines,
+    bridgeLineBudget: bridgeLineBudget?.value ?? null,
+    bridgeLineBudgetObservedAt: bridgeLineBudget
+      ? new Date(bridgeLineBudget.observedAt).toISOString()
+      : null,
+    budgetSource,
     automationLineCap,
     accountMonitorLineCap,
     flowScannerLineCap,
@@ -418,6 +470,7 @@ function activeLineIds(
   options: {
     intent?: MarketDataIntent;
     pool?: MarketDataPoolId;
+    excludePool?: MarketDataPoolId;
     excludeOwner?: string;
   } = {},
 ): Set<string> {
@@ -431,6 +484,9 @@ function activeLineIds(
       return;
     }
     if (options.pool && lease.pool !== options.pool) {
+      return;
+    }
+    if (options.excludePool && lease.pool === options.excludePool) {
       return;
     }
     lease.lineIds.forEach((id) => result.add(id));
@@ -506,6 +562,69 @@ function demoteLowerPriorityLeases(input: {
   }
 
   return demoted;
+}
+
+export function getMarketDataPoolEffectiveLineCap(
+  pool: MarketDataPoolId,
+  budget = getMarketDataAdmissionBudget(),
+): number {
+  const staticCap = budget.poolLineCaps[pool];
+  if (pool !== "flow-scanner") {
+    return staticCap;
+  }
+
+  const nonScannerLineCount = activeLineIds({
+    excludePool: "flow-scanner",
+  }).size;
+  return Math.max(0, Math.min(staticCap, budget.usableLines - nonScannerLineCount));
+}
+
+export function getMarketDataLinePressureSnapshot() {
+  const budget = getMarketDataAdmissionBudget();
+  const activeLines = activeLineIds();
+  const flowScannerLines = activeLineIds({ pool: "flow-scanner" });
+  const visibleLines = activeLineIds({ intent: "visible-live" });
+  const executionLines = activeLineIds({ intent: "execution-live" });
+  const accountMonitorLines = activeLineIds({ intent: "account-monitor-live" });
+  const automationLines = activeLineIds({ intent: "automation-live" });
+  const usableRemainingLineCount = Math.max(0, budget.usableLines - activeLines.size);
+  const utilization =
+    budget.usableLines > 0 ? activeLines.size / budget.usableLines : 1;
+  const scannerStaticLineCap = budget.flowScannerLineCap;
+  const scannerEffectiveLineCap = getMarketDataPoolEffectiveLineCap(
+    "flow-scanner",
+    budget,
+  );
+  const constrainedByActiveDemand = scannerEffectiveLineCap < scannerStaticLineCap;
+  const state =
+    usableRemainingLineCount <= 0
+      ? "protected"
+      : utilization >= 0.75 || constrainedByActiveDemand
+        ? "constrained"
+        : "normal";
+
+  return {
+    state,
+    policy: "active-ui-first",
+    budgetSource: budget.budgetSource,
+    configuredMaxLines: budget.configuredMaxLines,
+    bridgeLineBudget: budget.bridgeLineBudget,
+    activeLineCount: activeLines.size,
+    usableLineCount: budget.usableLines,
+    usableRemainingLineCount,
+    utilization,
+    visibleLineCount: visibleLines.size,
+    protectedLineCount:
+      executionLines.size + accountMonitorLines.size + automationLines.size,
+    scannerStaticLineCap,
+    scannerEffectiveLineCap,
+    scannerActiveLineCount: flowScannerLines.size,
+    scannerRemainingLineCount: Math.max(
+      0,
+      scannerEffectiveLineCap - flowScannerLines.size,
+    ),
+    scannerConstrainedByActiveDemand: constrainedByActiveDemand,
+  };
 }
 
 function sameInstrumentSet(
@@ -597,7 +716,7 @@ export function admitMarketDataLeases(input: {
     if (STRICT_POOL_IDS.has(pool) && neededLineCount > 0) {
       const poolLines = activeLineIds({ pool });
       const newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
-      const poolCap = budget.poolLineCaps[pool];
+      const poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       if (poolLines.size + newPoolLineIds.length > poolCap) {
         const reason = pool === "automation" ? "automation-cap" : "pool-cap";
         rejected.push({ request, reason, fallbackProvider });
@@ -722,9 +841,18 @@ export function isMarketDataLeaseActive(input: {
   );
 }
 
+export function getMarketDataLeasesSnapshot(): MarketDataLease[] {
+  expireMarketDataLeases();
+  return Array.from(leases.values()).map((lease) => ({
+    ...lease,
+    lineIds: [...lease.lineIds],
+  }));
+}
+
 export function getMarketDataAdmissionDiagnostics() {
   expireMarketDataLeases();
   const budget = getMarketDataAdmissionBudget();
+  const pressure = getMarketDataLinePressureSnapshot();
   const uniqueLines = activeLineIds();
   const equityLines = Array.from(uniqueLines).filter((id) =>
     id.startsWith("equity:"),
@@ -751,6 +879,7 @@ export function getMarketDataAdmissionDiagnostics() {
     (Object.keys(budget.poolLineCaps) as MarketDataPoolId[]).map((pool) => {
       const lines = activeLineIds({ pool });
       const maxLines = budget.poolLineCaps[pool];
+      const effectiveMaxLines = getMarketDataPoolEffectiveLineCap(pool, budget);
       return [
         pool,
         {
@@ -758,7 +887,8 @@ export function getMarketDataAdmissionDiagnostics() {
           label: POOL_LABELS[pool],
           activeLineCount: lines.size,
           maxLines,
-          remainingLineCount: Math.max(0, maxLines - lines.size),
+          effectiveMaxLines,
+          remainingLineCount: Math.max(0, effectiveMaxLines - lines.size),
           strict: STRICT_POOL_IDS.has(pool),
           intents: POOL_INTENTS[pool],
         },
@@ -771,6 +901,7 @@ export function getMarketDataAdmissionDiagnostics() {
       label: string;
       activeLineCount: number;
       maxLines: number;
+      effectiveMaxLines: number;
       remainingLineCount: number;
       strict: boolean;
       intents: MarketDataIntent[];
@@ -781,6 +912,7 @@ export function getMarketDataAdmissionDiagnostics() {
     schemaVersion: MARKET_DATA_ADMISSION_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     budget,
+    pressure,
     activeLineCount: uniqueLines.size,
     reserveLineCount: Math.max(0, budget.maxLines - uniqueLines.size),
     usableRemainingLineCount: Math.max(0, budget.usableLines - uniqueLines.size),
@@ -817,4 +949,5 @@ export function __resetMarketDataAdmissionForTests(): void {
   nextLeaseId = 1;
   runtimeFlowScannerLineBudget = null;
   runtimeFlowScannerConcurrency = null;
+  runtimeBridgeLineBudget = null;
 }

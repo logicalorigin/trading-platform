@@ -49,13 +49,15 @@ import {
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
   T,
   dim,
   fs,
   sp,
-} from "../lib/uiTokens";
+  textSize,
+} from "../lib/uiTokens.jsx";
 import {
   joinMotionClasses,
   motionRowStyle,
@@ -1134,7 +1136,7 @@ export const AlgoScreen = ({
     border: "none",
     background: active ? `${color}18` : T.bg2,
     color: active ? color : T.text,
-    fontSize: fs(9),
+    fontSize: textSize("caption"),
     fontFamily: T.sans,
     fontWeight: active ? 600 : 500,
     letterSpacing: "0.02em",
@@ -1369,7 +1371,7 @@ export const AlgoScreen = ({
             <span
               style={{
                 fontSize: fs(11),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.amber,
                 letterSpacing: "0.05em",
@@ -1379,7 +1381,7 @@ export const AlgoScreen = ({
             </span>
             <span
               style={{
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 color: T.textSec,
                 fontFamily: T.sans,
                 lineHeight: 1.45,
@@ -1399,7 +1401,7 @@ export const AlgoScreen = ({
           >
             <div
               style={{
-                fontSize: fs(8),
+                fontSize: textSize("body"),
                 color: T.textDim,
                 fontFamily: T.sans,
                 textAlign: "right",
@@ -1420,8 +1422,8 @@ export const AlgoScreen = ({
                 background: `${T.amber}18`,
                 color: T.amber,
                 fontFamily: T.sans,
-                fontSize: fs(8),
-                fontWeight: 400,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.regular,
                 cursor:
                   gatewayBridgeLaunching ? "wait" : "pointer",
                 opacity: gatewayBridgeLaunching ? 0.72 : 1,
@@ -1435,7 +1437,7 @@ export const AlgoScreen = ({
               style={{
                 gridColumn: "1 / -1",
                 width: "100%",
-                fontSize: fs(8),
+                fontSize: textSize("body"),
                 color: bridgeLauncherError ? T.red : T.textDim,
                 fontFamily: T.sans,
                 lineHeight: 1.45,
@@ -1532,9 +1534,9 @@ export const AlgoScreen = ({
             return (
               <div
                 style={{
-                  border: "none",
+                  border: `1px solid ${T.border}`,
                   borderRadius: dim(RADII.md),
-                  background: T.bg2,
+                  background: T.bg1,
                   padding: sp("12px 14px"),
                   minWidth: 0,
                 }}
@@ -1606,7 +1608,7 @@ export const AlgoScreen = ({
                         }),
                         border: "none",
                         background: T.accent,
-                        color: "#fff",
+                        color: T.onAccent,
                       }}
                     >
                       {createDeploymentMutation.isPending
@@ -1764,12 +1766,12 @@ export const AlgoScreen = ({
                       }
                       style={{
                         padding: sp("4px 10px"),
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         fontFamily: T.sans,
-                        fontWeight: 500,
+                        fontWeight: FONT_WEIGHTS.medium,
                         color: T.textSec,
-                        background: T.bg2,
-                        border: "none",
+                        background: T.bg1,
+                        border: `1px solid ${T.border}`,
                         borderRadius: dim(RADII.pill),
                         cursor: "pointer",
                         letterSpacing: "0.02em",
@@ -1787,12 +1789,12 @@ export const AlgoScreen = ({
                       }
                       style={{
                         padding: sp("4px 10px"),
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         fontFamily: T.sans,
-                        fontWeight: 500,
+                        fontWeight: FONT_WEIGHTS.medium,
                         color: T.textSec,
-                        background: T.bg2,
-                        border: "none",
+                        background: T.bg1,
+                        border: `1px solid ${T.border}`,
                         borderRadius: dim(RADII.pill),
                         cursor: "pointer",
                         letterSpacing: "0.02em",
@@ -1835,7 +1837,7 @@ export const AlgoScreen = ({
                         style={{
                           color: T.textMuted,
                           fontFamily: T.sans,
-                          fontSize: fs(7),
+                          fontSize: textSize("caption"),
                           letterSpacing: "0.08em",
                         }}
                       >
@@ -1904,7 +1906,7 @@ export const AlgoScreen = ({
                   <span
                     style={{
                       fontFamily: T.sans,
-                      fontSize: fs(7),
+                      fontSize: textSize("caption"),
                       color: T.textMuted,
                       letterSpacing: "0.08em",
                       alignSelf: "center",
@@ -2046,7 +2048,7 @@ export const AlgoScreen = ({
                               style={{
                                 color: T.textMuted,
                                 fontFamily: T.sans,
-                                fontSize: fs(7),
+                                fontSize: textSize("caption"),
                                 letterSpacing: "0.08em",
                               }}
                             >
@@ -2056,8 +2058,8 @@ export const AlgoScreen = ({
                               style={{
                                 color: label === "Action" ? tone : T.text,
                                 fontFamily: T.sans,
-                                fontSize: fs(9),
-                                fontWeight: 400,
+                                fontSize: textSize("caption"),
+                                fontWeight: FONT_WEIGHTS.regular,
                                 marginTop: sp(3),
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
@@ -2116,10 +2118,10 @@ export const AlgoScreen = ({
                   <div
                     key={label}
                     style={{
-                      border: "none",
+                      border: `1px solid ${T.border}`,
                       borderRadius: dim(RADII.md),
-                      background: T.bg2,
-                      padding: sp("7px 8px"),
+                      background: T.bg1,
+                      padding: sp("8px 10px"),
                       minWidth: 0,
                     }}
                   >
@@ -2127,7 +2129,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.textMuted,
                         fontFamily: T.sans,
-                        fontSize: fs(7),
+                        fontSize: textSize("caption"),
                         letterSpacing: "0.08em",
                       }}
                     >
@@ -2137,7 +2139,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.text,
                         fontFamily: T.sans,
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         marginTop: sp(3),
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -2226,7 +2228,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.textMuted,
                         fontFamily: T.sans,
-                        fontSize: fs(9),
+                        fontSize: textSize("caption"),
                         letterSpacing: "0.04em",
                       }}
                     >
@@ -2243,10 +2245,10 @@ export const AlgoScreen = ({
                 <div
                   style={{
                     marginTop: sp(8),
-                    border: "none",
+                    border: `1px solid ${T.border}`,
                     borderRadius: dim(RADII.md),
-                    background: T.bg2,
-                    padding: sp("7px 9px"),
+                    background: T.bg1,
+                    padding: sp("8px 10px"),
                     minWidth: 0,
                   }}
                 >
@@ -2254,7 +2256,7 @@ export const AlgoScreen = ({
                     style={{
                       color: T.textMuted,
                       fontFamily: T.sans,
-                      fontSize: fs(7),
+                      fontSize: textSize("caption"),
                       letterSpacing: "0.08em",
                     }}
                   >
@@ -2274,7 +2276,7 @@ export const AlgoScreen = ({
                     style={{
                       color: T.textDim,
                       fontFamily: T.sans,
-                      fontSize: fs(8),
+                      fontSize: textSize("body"),
                       lineHeight: 1.35,
                       marginTop: sp(2),
                     }}
@@ -2340,9 +2342,9 @@ export const AlgoScreen = ({
                     onClick={() => setPrimaryTab("signals")}
                     style={{
                       padding: sp("3px 8px"),
-                      fontSize: fs(9),
+                      fontSize: textSize("caption"),
                       fontFamily: T.sans,
-                      fontWeight: 500,
+                      fontWeight: FONT_WEIGHTS.medium,
                       color: T.accent,
                       background: "transparent",
                       border: "none",
@@ -2403,7 +2405,7 @@ export const AlgoScreen = ({
                           style={{
                             color: T.textMuted,
                             fontFamily: T.sans,
-                            fontSize: fs(8),
+                            fontSize: textSize("body"),
                           }}
                         >
                           {symbol}
@@ -2413,7 +2415,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.textSec,
                               fontFamily: T.sans,
-                              fontSize: fs(8),
+                              fontSize: textSize("body"),
                               letterSpacing: "0.04em",
                             }}
                           >
@@ -2426,7 +2428,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.text,
                               fontFamily: T.sans,
-                              fontSize: fs(8),
+                              fontSize: textSize("body"),
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -2439,7 +2441,7 @@ export const AlgoScreen = ({
                           style={{
                             color: tone,
                             fontFamily: T.sans,
-                            fontSize: fs(8),
+                            fontSize: textSize("body"),
                             letterSpacing: "0.04em",
                             textAlign: "right",
                           }}
@@ -2455,7 +2457,7 @@ export const AlgoScreen = ({
                   style={{
                     color: T.textDim,
                     fontFamily: T.sans,
-                    fontSize: fs(9),
+                    fontSize: textSize("caption"),
                     padding: sp("8px 0"),
                   }}
                 >
@@ -2544,7 +2546,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.text,
                               fontFamily: T.sans,
-                              fontSize: fs(9),
+                              fontSize: textSize("caption"),
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -2563,7 +2565,7 @@ export const AlgoScreen = ({
                           style={{
                             color: T.textDim,
                             fontFamily: T.sans,
-                            fontSize: fs(8),
+                            fontSize: textSize("body"),
                             marginTop: sp(3),
                           }}
                         >
@@ -2579,9 +2581,9 @@ export const AlgoScreen = ({
 
               <div
                 style={{
-                  border: "none",
+                  border: `1px solid ${T.border}`,
                   borderRadius: dim(RADII.md),
-                  background: T.bg2,
+                  background: T.bg1,
                   padding: sp("8px 9px"),
                   minWidth: 0,
                 }}
@@ -2593,7 +2595,7 @@ export const AlgoScreen = ({
                         color: T.text,
                         fontFamily: T.sans,
                         fontSize: fs(12),
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                       }}
                     >
                       {selectedCandidate.symbol}{" "}
@@ -2603,7 +2605,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.textDim,
                         fontFamily: T.sans,
-                        fontSize: fs(8),
+                        fontSize: textSize("body"),
                         lineHeight: 1.35,
                       }}
                     >
@@ -2641,7 +2643,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.textMuted,
                               fontFamily: T.sans,
-                              fontSize: fs(7),
+                              fontSize: textSize("caption"),
                               letterSpacing: "0.08em",
                             }}
                           >
@@ -2651,7 +2653,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.text,
                               fontFamily: T.sans,
-                              fontSize: fs(9),
+                              fontSize: textSize("caption"),
                               marginTop: sp(2),
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -2668,7 +2670,7 @@ export const AlgoScreen = ({
                         style={{
                           color: T.amber,
                           fontFamily: T.sans,
-                          fontSize: fs(9),
+                          fontSize: textSize("caption"),
                           lineHeight: 1.4,
                         }}
                       >
@@ -2733,10 +2735,10 @@ export const AlgoScreen = ({
                           : "minmax(160px, 1fr) repeat(4, minmax(82px, 0.7fr))",
                         gap: sp(8),
                         alignItems: "center",
-                        border: "none",
+                        border: `1px solid ${T.border}`,
                         borderRadius: dim(RADII.md),
-                        background: T.bg2,
-                        padding: sp("8px 9px"),
+                        background: T.bg1,
+                        padding: sp("8px 10px"),
                         minWidth: 0,
                       }}
                     >
@@ -2745,7 +2747,7 @@ export const AlgoScreen = ({
                           style={{
                             color: T.text,
                             fontFamily: T.sans,
-                            fontSize: fs(9),
+                            fontSize: textSize("caption"),
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
@@ -2757,7 +2759,7 @@ export const AlgoScreen = ({
                           style={{
                             color: T.textDim,
                             fontFamily: T.sans,
-                            fontSize: fs(8),
+                            fontSize: textSize("body"),
                             marginTop: sp(2),
                           }}
                         >
@@ -2776,7 +2778,7 @@ export const AlgoScreen = ({
                             style={{
                               color: T.textMuted,
                               fontFamily: T.sans,
-                              fontSize: fs(7),
+                              fontSize: textSize("caption"),
                               letterSpacing: "0.08em",
                             }}
                           >
@@ -2791,7 +2793,7 @@ export const AlgoScreen = ({
                                     ? T.green
                                     : T.text,
                               fontFamily: T.sans,
-                              fontSize: fs(9),
+                              fontSize: textSize("caption"),
                               marginTop: sp(2),
                             }}
                           >
@@ -2808,10 +2810,10 @@ export const AlgoScreen = ({
 
           {primaryTab === "profile" && (() => {
             const numberFieldStyle = {
-              border: "none",
+              border: `1px solid ${T.border}`,
               borderRadius: dim(RADII.md),
-              background: T.bg2,
-              padding: sp("7px 9px"),
+              background: T.bg1,
+              padding: sp("8px 10px"),
               display: "flex",
               flexDirection: "column",
               gap: sp(4),
@@ -2819,17 +2821,17 @@ export const AlgoScreen = ({
             const labelTextStyle = {
               color: T.textMuted,
               fontFamily: T.sans,
-              fontSize: fs(7),
+              fontSize: textSize("caption"),
               letterSpacing: "0.08em",
             };
             const inputStyle = {
-              background: T.bg3,
+              background: T.bg1,
               border: "none",
               borderRadius: dim(3),
               color: T.text,
               padding: sp("5px 7px"),
               fontFamily: T.sans,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               outline: "none",
             };
             const renderNumberField = (section, key, label, step) => (
@@ -2854,9 +2856,9 @@ export const AlgoScreen = ({
               <label
                 key={key}
                 style={{
-                  border: "none",
+                  border: `1px solid ${T.border}`,
                   borderRadius: dim(RADII.md),
-                  background: T.bg2,
+                  background: T.bg1,
                   padding: sp("7px 9px"),
                   display: "flex",
                   alignItems: "center",
@@ -2868,7 +2870,7 @@ export const AlgoScreen = ({
                   style={{
                     color: T.textSec,
                     fontFamily: T.sans,
-                    fontSize: fs(8),
+                    fontSize: textSize("body"),
                   }}
                 >
                   {label.toUpperCase()}
@@ -2934,7 +2936,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.amber,
                         fontFamily: T.sans,
-                        fontSize: fs(8),
+                        fontSize: textSize("body"),
                         letterSpacing: "0.08em",
                       }}
                     >
@@ -2944,7 +2946,7 @@ export const AlgoScreen = ({
                       style={{
                         color: T.textDim,
                         fontFamily: T.sans,
-                        fontSize: fs(8),
+                        fontSize: textSize("body"),
                         marginTop: sp(2),
                       }}
                     >
@@ -3215,7 +3217,7 @@ export const AlgoScreen = ({
                     style={{
                       color: T.textDim,
                       fontFamily: T.sans,
-                      fontSize: fs(8),
+                      fontSize: textSize("body"),
                     }}
                   >
                     Premium {formatMoney(signalOptionsProfile.riskCaps.maxPremiumPerEntry)} ·
@@ -3235,7 +3237,7 @@ export const AlgoScreen = ({
                       }),
                       border: "none",
                       background: T.green,
-                      color: "#fff",
+                      color: T.onAccent,
                     }}
                   >
                     {updateProfileMutation.isPending
@@ -3254,10 +3256,10 @@ export const AlgoScreen = ({
       {primaryTab === "events" && (
       <div
         style={{
-          background: T.bg2,
-          border: "none",
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
           borderRadius: dim(RADII.sm),
-          padding: sp("8px 10px"),
+          padding: sp("10px 12px"),
           flex: "0 1 auto",
         }}
       >
@@ -3274,7 +3276,7 @@ export const AlgoScreen = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.text,
               }}
@@ -3282,7 +3284,7 @@ export const AlgoScreen = ({
               Execution Events
             </div>
             <div
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}
+              style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}
             >
               {focusedDeployment
                 ? `filtered to ${focusedDeployment.name}`
@@ -3290,7 +3292,7 @@ export const AlgoScreen = ({
             </div>
           </div>
           <span
-            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}
+            style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}
           >
             {events.length} rows
           </span>
@@ -3323,14 +3325,14 @@ export const AlgoScreen = ({
                 alignItems: "start",
                 padding: sp("8px 0"),
                 borderBottom: `1px solid ${T.border}08`,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
               }}
             >
               <span style={{ color: T.textDim, fontFamily: T.sans }}>
                 {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
               </span>
               <span
-                style={{ color: T.accent, fontFamily: T.sans, fontWeight: 400 }}
+                style={{ color: T.accent, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}
               >
                 {formatEnumLabel(event.eventType)}
               </span>

@@ -8,6 +8,7 @@ import {
   MarketIdentityChips,
   MarketIdentityMark,
 } from "../platform/marketIdentity";
+import { useViewport } from "../../lib/responsive";
 import {
   useSignalMonitorStateForSymbol,
 } from "../platform/signalMonitorStore";
@@ -29,12 +30,14 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -65,15 +68,21 @@ const TickerTabStripItem = ({
   const pos = isFiniteNumber(info?.pct) ? info.pct >= 0 : null;
   const isActive = ticker === active;
   const badges = [
-    workspace?.selectedContract?.strike ? "OPT" : null,
-    signalState?.fresh ? "SIG" : null,
-    (flow?.events || []).length ? "FLOW" : null,
+    workspace?.selectedContract?.strike
+      ? { label: "OPT", color: T.accent }
+      : null,
+    signalState?.fresh
+      ? { label: "SIG", color: T.green }
+      : null,
+    (flow?.events || []).length
+      ? { label: "FLOW", color: T.cyan }
+      : null,
   ].filter(Boolean).slice(0, 3);
 
   return (
     <AppTooltip content={[
         ticker,
-        badges.length ? `Badges: ${badges.join(", ")}` : null,
+        badges.length ? `Badges: ${badges.map((badge) => badge.label).join(", ")}` : null,
       ].filter(Boolean).join(" · ")}><div
       onClick={() => onSelect(ticker)}
       onPointerDown={(event) => onPointerDown?.(ticker, event)}
@@ -120,7 +129,7 @@ const TickerTabStripItem = ({
       <span
         style={{
           fontSize: fs(11),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           fontFamily: T.sans,
           color: isActive ? T.text : T.textSec,
         }}
@@ -129,11 +138,11 @@ const TickerTabStripItem = ({
       </span>
       <span
         style={{
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           fontFamily: T.sans,
           color: isActive ? "var(--ra-text-primary)" : "var(--ra-text-secondary)",
           fontVariantNumeric: "tabular-nums",
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
         }}
       >
         {formatQuotePrice(info?.price)}
@@ -141,7 +150,7 @@ const TickerTabStripItem = ({
       <span
         className="ra-trade-tab-pct"
         style={{
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           fontFamily: T.sans,
           color:
             pos == null
@@ -150,33 +159,25 @@ const TickerTabStripItem = ({
                 ? "var(--ra-pnl-positive)"
                 : "var(--ra-pnl-negative)",
           fontVariantNumeric: "tabular-nums",
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
         }}
       >
         {formatSignedPercent(info?.pct)}
       </span>
       {badges.map((badge) => (
         <span
-          key={badge}
+          key={badge.label}
+          aria-label={badge.label}
           style={{
-            border: `1px solid ${T.border}`,
-            color:
-              badge === "ERR"
-                ? T.red
-                : badge === "SIG"
-                  ? T.green
-                  : badge === "FLOW"
-                    ? T.cyan
-                    : T.textDim,
-            fontFamily: T.sans,
-            fontSize: fs(7),
-            fontWeight: 400,
-            lineHeight: 1,
-            padding: sp("2px 3px"),
+            width: dim(7),
+            height: dim(7),
+            borderRadius: dim(999),
+            border: `1px solid ${badge.color}55`,
+            background: `${badge.color}22`,
+            boxShadow: isActive ? `0 0 0 1px ${T.bg1}` : "none",
+            flexShrink: 0,
           }}
-        >
-          {badge}
-        </span>
+        />
       ))}
       {showClose ? (
         <AppTooltip content="Close"><button
@@ -297,6 +298,7 @@ export const TickerTabStrip = ({
   return (
     <div
       data-testid="trade-tab-strip"
+      className="ra-hide-scrollbar"
       style={{
         display: "flex",
         alignItems: "stretch",
@@ -305,6 +307,7 @@ export const TickerTabStrip = ({
         background: T.bg1,
         borderBottom: `1px solid ${T.border}`,
         overflowX: "auto",
+        overflowY: "hidden",
         flexShrink: 0,
       }}
     >
@@ -334,7 +337,7 @@ export const TickerTabStrip = ({
           cursor: "pointer",
           fontSize: fs(13),
           padding: sp("3px 8px"),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           lineHeight: 1,
         }}
       >
@@ -351,6 +354,8 @@ export const TradeTickerHeader = ({
   expirationValue = "",
   chainStatus = "empty",
 }) => {
+  const viewport = useViewport();
+  const compactHeader = viewport.flags.isPhone;
   const fallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
     [ticker],
@@ -389,12 +394,14 @@ export const TradeTickerHeader = ({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: sp(16),
-        background: T.bg2,
+        flexWrap: compactHeader ? "wrap" : "nowrap",
+        gap: compactHeader ? sp("6px 8px") : sp(16),
+        background: T.bg1,
         border: `1px solid ${T.border}`,
         borderRadius: dim(6),
-        padding: sp("8px 14px"),
+        padding: sp(compactHeader ? "8px 10px" : "8px 14px"),
         flexShrink: 0,
+        minWidth: 0,
       }}
     >
       <MarketIdentityMark
@@ -406,23 +413,26 @@ export const TradeTickerHeader = ({
         style={{
           display: "flex",
           alignItems: "baseline",
-          gap: sp(8),
+          gap: compactHeader ? sp(5) : sp(8),
+          flex: compactHeader ? "1 1 auto" : "0 1 auto",
           minWidth: 0,
         }}
       >
         <span
           style={{
             fontSize: fs(20),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: T.text,
             letterSpacing: 0,
+            whiteSpace: "nowrap",
           }}
         >
           {ticker}
         </span>
         <span
           style={{
+            display: compactHeader ? "none" : undefined,
             fontSize: fs(11),
             color: T.textDim,
             fontFamily: T.sans,
@@ -433,21 +443,32 @@ export const TradeTickerHeader = ({
         >
           {info?.name || ticker}
         </span>
-        <MarketIdentityChips
-          item={{ ticker, name: info?.name || ticker }}
-          compact
-          maxChips={2}
-          showExchange={false}
-          showSector
-        />
+        {compactHeader ? null : (
+          <MarketIdentityChips
+            item={{ ticker, name: info?.name || ticker }}
+            compact
+            maxChips={2}
+            showExchange={false}
+            showSector
+          />
+        )}
       </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: sp(8) }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: compactHeader ? sp(6) : sp(8),
+          flex: compactHeader ? "0 1 auto" : "0 0 auto",
+          minWidth: 0,
+        }}
+      >
         <span
           style={{
-            fontSize: fs(22),
-            fontWeight: 400,
+            fontSize: fs(compactHeader ? 20 : 22),
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: T.text,
+            whiteSpace: "nowrap",
           }}
         >
           {formatQuotePrice(info?.price)}
@@ -455,9 +476,10 @@ export const TradeTickerHeader = ({
         <span
           style={{
             fontSize: fs(12),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
+            whiteSpace: "nowrap",
           }}
         >
           {isFiniteNumber(info?.chg)
@@ -467,9 +489,10 @@ export const TradeTickerHeader = ({
         <span
           style={{
             fontSize: fs(12),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
+            whiteSpace: "nowrap",
           }}
         >
           {isFiniteNumber(info?.pct)
@@ -477,24 +500,27 @@ export const TradeTickerHeader = ({
             : MISSING_VALUE}
         </span>
       </div>
-      <span style={{ flex: 1 }} />
+      <span style={{ flex: 1, display: compactHeader ? "none" : undefined }} />
       <div
         style={{
           display: "flex",
-          gap: sp(14),
+          flex: compactHeader ? "1 1 100%" : "0 1 auto",
+          minWidth: 0,
+          gap: compactHeader ? sp("5px 10px") : sp(14),
+          flexWrap: "wrap",
           fontSize: fs(10),
           fontFamily: T.sans,
         }}
       >
         <div>
           <span style={{ color: T.textMuted }}>VOL </span>
-          <span style={{ color: T.text, fontWeight: 400 }}>
+          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
             {fmtQuoteVolume(info?.volume)}
           </span>
         </div>
         <div>
           <span style={{ color: T.textMuted }}>IV </span>
-          <span style={{ color: T.text, fontWeight: 400 }}>
+          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
             {isFiniteNumber(info?.iv)
               ? `${(info.iv * 100).toFixed(1)}%`
               : MISSING_VALUE}
@@ -505,7 +531,7 @@ export const TradeTickerHeader = ({
           <span
             style={{
               color: impMove != null ? T.cyan : T.textDim,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {impMove != null ? `±${impMove.toFixed(2)}` : MISSING_VALUE}
@@ -516,7 +542,7 @@ export const TradeTickerHeader = ({
         </div>
         <div>
           <span style={{ color: T.textMuted }}>ATM </span>
-          <span style={{ color: T.accent, fontWeight: 400 }}>
+          <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
             {atmRow?.k ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </div>
@@ -525,7 +551,7 @@ export const TradeTickerHeader = ({
           <span
             style={{
               color: resolvedChainStatus === "live" ? T.accent : T.textDim,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {resolvedChainStatus}

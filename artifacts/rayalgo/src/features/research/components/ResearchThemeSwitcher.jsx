@@ -1,10 +1,10 @@
 import { AppTooltip } from "@/components/ui/tooltip";
-import { FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
 
 export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
   return (
     <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: `1px solid ${T.border}` }}>
-      <div style={{ fontSize: fs(9), color: T.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
+      <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
         Investment Thesis
       </div>
       <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>

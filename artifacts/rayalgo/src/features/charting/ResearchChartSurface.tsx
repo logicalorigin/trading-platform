@@ -95,7 +95,7 @@ import {
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { RADII, T } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
   recordChartHydrationCounter,
@@ -1400,6 +1400,8 @@ export type ChartSurfaceControls = {
   ) => void;
   autoScale: boolean;
   setAutoScale: (next: boolean | ((value: boolean) => boolean)) => void;
+  realtimeFollow: boolean;
+  canFollowRealtime: boolean;
   invertScale: boolean;
   setInvertScale: (next: boolean | ((value: boolean) => boolean)) => void;
   cycleScaleMode: () => void;
@@ -5367,6 +5369,16 @@ export const ResearchChartSurface = ({
     autoScale,
     invertScale,
   };
+  const applyMainPriceAutoScale = useCallback((next: SetStateAction<boolean>) => {
+    const resolved =
+      typeof next === "function" ? next(scalePrefsRef.current.autoScale) : next;
+    scalePrefsRef.current = {
+      ...scalePrefsRef.current,
+      autoScale: resolved,
+    };
+    chartRef.current?.priceScale?.("right", 0)?.setAutoScale?.(resolved);
+    setAutoScale(resolved);
+  }, []);
   useEffect(() => {
     const chartPreferences = userPreferences.chart;
     setShowVolume(defaultShowVolume && chartPreferences.showVolume);
@@ -8428,8 +8440,7 @@ export const ResearchChartSurface = ({
     realtimeFollowRef.current = true;
     visibleLogicalRangeRef.current = nextDefaultRange;
     pendingStoredRangeSyncRef.current = true;
-    setAutoScale(true);
-    chartRef.current?.priceScale?.("right", 0)?.setAutoScale?.(true);
+    applyMainPriceAutoScale(true);
     if (nextDefaultRange) {
       setProgrammaticVisibleLogicalRange(nextDefaultRange, {
         markInitialized: true,
@@ -8727,8 +8738,7 @@ export const ResearchChartSurface = ({
     }
 
     realtimeFollowRef.current = false;
-    priceScale?.setAutoScale?.(false);
-    setAutoScale(false);
+    applyMainPriceAutoScale(false);
   };
   const handleRootPointerMoveCapture = (
     event: PointerEvent<HTMLDivElement>,
@@ -8932,6 +8942,24 @@ export const ResearchChartSurface = ({
   const toggleFullscreen = () => {
     setIsFullscreen((current) => !current);
   };
+  const currentViewportUserTouched = Boolean(
+    externalViewportUserTouched ||
+      viewportUserTouchedRef.current ||
+      viewportUserTouched ||
+      (effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
+        effectiveViewportSnapshot.userTouched),
+  );
+  const visibleRangeNearRealtime = isVisibleRangeNearRealtime({
+    visibleRange: visibleLogicalRangeRef.current,
+    barCount: model.chartBars.length,
+  });
+  const realtimeFollowEnabled = Boolean(
+    hasChartBars &&
+      !currentViewportUserTouched &&
+      realtimeFollowRef.current &&
+      (autoHydrationViewportRef.current || visibleRangeNearRealtime),
+  );
+  const canFollowRealtime = Boolean(hasChartBars && !realtimeFollowEnabled);
   const surfaceControls = useMemo<ChartSurfaceControls>(
     () => ({
       baseSeriesType,
@@ -8956,7 +8984,9 @@ export const ResearchChartSurface = ({
       setPositionOverlaysEnabled:
         onPositionOverlaysEnabledChange || (() => undefined),
       autoScale,
-      setAutoScale,
+      setAutoScale: applyMainPriceAutoScale,
+      realtimeFollow: realtimeFollowEnabled,
+      canFollowRealtime,
       invertScale,
       setInvertScale,
       cycleScaleMode,
@@ -8973,7 +9003,9 @@ export const ResearchChartSurface = ({
     }),
     [
       autoScale,
+      applyMainPriceAutoScale,
       baseSeriesType,
+      canFollowRealtime,
       crosshairMode,
       displayBar,
       hideCrosshair,
@@ -8982,6 +9014,7 @@ export const ResearchChartSurface = ({
       onPositionOverlaysEnabledChange,
       positionOverlaysAvailable,
       positionOverlaysEnabled,
+      realtimeFollowEnabled,
       scaleMode,
       showGrid,
       showFlowEvents,
@@ -9001,6 +9034,18 @@ export const ResearchChartSurface = ({
       ? bottomOverlay(surfaceControls)
       : bottomOverlay;
   const isNarrowFrame = rootWidth > 0 && rootWidth < 920;
+  const surfaceToolbarDensity =
+    (rootWidth > 0 && rootWidth < 440) ||
+    (plotSize.height > 0 && plotSize.height < 190)
+      ? "minimal"
+      : (rootWidth > 0 && rootWidth < 640) ||
+          (plotSize.height > 0 && plotSize.height < 240)
+        ? "icon"
+        : isNarrowFrame || (plotSize.height > 0 && plotSize.height < 260)
+          ? "compact"
+          : "full";
+  const surfaceToolbarIconOnly =
+    surfaceToolbarDensity === "icon" || surfaceToolbarDensity === "minimal";
   const chromeGap = isNarrowFrame ? 6 : 8;
   const topChromeBase = topOverlayHeight + 6;
   const effectiveToolbarHeight =
@@ -9102,30 +9147,35 @@ export const ResearchChartSurface = ({
         {
           key: "candles",
           label: "Candles",
+          shortLabel: "C",
           active: baseSeriesType === "candles",
           onClick: () => setBaseSeriesType("candles"),
         },
         {
           key: "bars",
           label: "Bars",
+          shortLabel: "B",
           active: baseSeriesType === "bars",
           onClick: () => setBaseSeriesType("bars"),
         },
         {
           key: "line",
           label: "Line",
+          shortLabel: "L",
           active: baseSeriesType === "line",
           onClick: () => setBaseSeriesType("line"),
         },
         {
           key: "area",
           label: "Area",
+          shortLabel: "A",
           active: baseSeriesType === "area",
           onClick: () => setBaseSeriesType("area"),
         },
         {
           key: "baseline",
           label: "Baseline",
+          shortLabel: "BL",
           active: baseSeriesType === "baseline",
           onClick: () => setBaseSeriesType("baseline"),
         },
@@ -9138,30 +9188,35 @@ export const ResearchChartSurface = ({
         {
           key: "volume",
           label: "Volume",
+          shortLabel: "Vol",
           active: showVolume,
           onClick: () => setShowVolume((value) => !value),
         },
         {
           key: "flow-events",
           label: "Flow",
+          shortLabel: "Fl",
           active: showFlowEvents,
           onClick: () => setShowFlowEvents((value) => !value),
         },
         {
           key: "grid",
           label: "Grid",
+          shortLabel: "G",
           active: showGrid,
           onClick: () => setShowGrid((value) => !value),
         },
         {
           key: "time-axis",
           label: "Time",
+          shortLabel: "T",
           active: showTimeScaleState,
           onClick: () => setShowTimeScaleState((value) => !value),
         },
         {
           key: "price-line",
           label: "Price",
+          shortLabel: "Px",
           active: showPriceLine,
           onClick: () => setShowPriceLine((value) => !value),
         },
@@ -9170,6 +9225,7 @@ export const ResearchChartSurface = ({
               {
                 key: "positions",
                 label: "Positions",
+                shortLabel: "Pos",
                 active: positionOverlaysEnabled,
                 onClick: () =>
                   onPositionOverlaysEnabledChange?.((value) => !value),
@@ -9192,12 +9248,14 @@ export const ResearchChartSurface = ({
                 : scaleMode === "indexed"
                   ? "Base 100"
                   : "Linear",
+          shortLabel: "Sc",
           active: scaleMode !== "linear",
           onClick: cycleScaleMode,
         },
         {
           key: "crosshair",
           label: crosshairMode === "free" ? "Free" : "Magnet",
+          shortLabel: crosshairMode === "free" ? "Fr" : "Mg",
           active: crosshairMode === "free",
           onClick: () =>
             setCrosshairMode((value) => (value === "free" ? "magnet" : "free")),
@@ -9205,12 +9263,14 @@ export const ResearchChartSurface = ({
         {
           key: "auto-scale",
           label: "Auto",
+          shortLabel: "Au",
           active: autoScale,
-          onClick: () => setAutoScale((value) => !value),
+          onClick: () => applyMainPriceAutoScale((value) => !value),
         },
         {
           key: "invert-scale",
           label: "Invert",
+          shortLabel: "Inv",
           active: invertScale,
           onClick: () => setInvertScale((value) => !value),
         },
@@ -9221,33 +9281,25 @@ export const ResearchChartSurface = ({
       label: "nav",
       controls: [
         {
-          key: "pan-left",
-          label: "Left",
-          active: false,
-          onClick: surfaceControls.panLeft,
-        },
-        {
-          key: "pan-right",
-          label: "Right",
-          active: false,
-          onClick: surfaceControls.panRight,
-        },
-        {
           key: "reset",
           label: "Reset",
+          shortLabel: "R",
           active: false,
           onClick: surfaceControls.reset,
         },
         {
           key: "fit",
           label: "Fit",
+          shortLabel: "Fit",
           active: false,
           onClick: surfaceControls.fit,
         },
         {
           key: "realtime",
           label: "Live",
-          active: false,
+          shortLabel: "Live",
+          active: surfaceControls.realtimeFollow,
+          disabled: !surfaceControls.canFollowRealtime,
           onClick: surfaceControls.realtime,
         },
       ],
@@ -9418,7 +9470,8 @@ export const ResearchChartSurface = ({
       data-chart-pre-bar-count={marketSessionBarCounts.pre}
       data-chart-rth-bar-count={marketSessionBarCounts.rth}
       data-chart-after-bar-count={marketSessionBarCounts.after}
-      data-chart-realtime-follow={realtimeFollowRef.current ? "true" : "false"}
+      data-chart-realtime-follow={realtimeFollowEnabled ? "true" : "false"}
+      data-chart-can-follow-realtime={canFollowRealtime ? "true" : "false"}
       data-chart-auto-hydration={autoHydrationViewportRef.current ? "true" : "false"}
       data-chart-instance-create-count={surfaceDiagnostics.chartInstanceCreates}
       data-chart-instance-dispose-count={surfaceDiagnostics.chartInstanceDisposes}
@@ -9499,6 +9552,7 @@ export const ResearchChartSurface = ({
         <div
           ref={toolbarRef}
           data-testid={dataTestId ? `${dataTestId}-toolbar` : undefined}
+          data-chart-toolbar-density={surfaceToolbarDensity}
           style={{
             position: "absolute",
             top: topChromeBase,
@@ -9506,8 +9560,8 @@ export const ResearchChartSurface = ({
             right: 8,
             zIndex: 21,
             display: "flex",
-            gap: 8,
-            rowGap: 8,
+            gap: surfaceToolbarIconOnly ? 5 : 8,
+            rowGap: surfaceToolbarIconOnly ? 5 : 8,
             flexWrap: "wrap",
             justifyContent: isNarrowFrame ? "flex-start" : "flex-end",
             maxWidth: `calc(100% - ${chartInsetLeft + 16}px)`,
@@ -9519,8 +9573,8 @@ export const ResearchChartSurface = ({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 6,
-                padding: "5px 7px",
+                gap: surfaceToolbarIconOnly ? 3 : 6,
+                padding: surfaceToolbarIconOnly ? "4px 5px" : "5px 7px",
                 border: `1px solid ${withAlpha(theme.border, "b8")}`,
                 background: withAlpha(theme.bg2, "dc"),
                 backdropFilter: "blur(14px)",
@@ -9528,23 +9582,25 @@ export const ResearchChartSurface = ({
                 maxWidth: isNarrowFrame ? "100%" : undefined,
               }}
             >
-              <div
-                style={{
-                  paddingRight: 2,
-                  color: withAlpha(theme.textMuted, "8c"),
-                  fontSize: TYPE_CSS_VAR.label,
-                  fontFamily: theme.mono,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {group.label}
-              </div>
+              {surfaceToolbarIconOnly ? null : (
+                <div
+                  style={{
+                    paddingRight: 2,
+                    color: withAlpha(theme.textMuted, "8c"),
+                    fontSize: TYPE_CSS_VAR.label,
+                    fontFamily: theme.mono,
+                    letterSpacing: "0.14em",
+                    textTransform: "uppercase",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {group.label}
+                </div>
+              )}
               <div
                 style={{
                   display: "flex",
-                  gap: 4,
+                  gap: surfaceToolbarIconOnly ? 3 : 4,
                   flexWrap: "wrap",
                   justifyContent: isNarrowFrame ? "flex-start" : "flex-end",
                 }}
@@ -9554,6 +9610,8 @@ export const ResearchChartSurface = ({
                     key={control.key}
                     type="button"
                     aria-pressed={control.active}
+                    aria-disabled={control.disabled ? "true" : undefined}
+                    disabled={control.disabled}
                     onClick={control.onClick}
                     style={{
                       border: `1px solid ${control.active ? withAlpha(theme.accent || theme.text, "88") : withAlpha(theme.border, "70")}`,
@@ -9563,20 +9621,26 @@ export const ResearchChartSurface = ({
                       color: control.active
                         ? theme.text
                         : withAlpha(theme.textMuted, "d2"),
+                      opacity: control.disabled ? 0.56 : 1,
                       borderRadius: RADII.pill,
-                      padding: "4px 10px",
-                      fontSize: TYPE_CSS_VAR.body,
+                      minWidth: surfaceToolbarIconOnly ? 24 : undefined,
+                      padding: surfaceToolbarIconOnly ? "4px 6px" : "4px 10px",
+                      fontSize: surfaceToolbarIconOnly
+                        ? TYPE_CSS_VAR.label
+                        : TYPE_CSS_VAR.body,
                       lineHeight: 1,
                       fontFamily: theme.mono,
                       letterSpacing: "0.03em",
-                      cursor: "pointer",
+                      cursor: control.disabled ? "default" : "pointer",
                       whiteSpace: "nowrap",
                       boxShadow: control.active
                         ? `inset 0 0 0 1px ${withAlpha(theme.accent || theme.text, "18")}`
                         : "none",
                     }}
                   >
-                    {control.label}
+                    {surfaceToolbarIconOnly
+                      ? control.shortLabel || control.label
+                      : control.label}
                   </button>
                 ))}
               </div>
@@ -9698,7 +9762,7 @@ export const ResearchChartSurface = ({
                     style={{
                       fontSize: TYPE_CSS_VAR.bodyStrong,
                       lineHeight: 1.1,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -10144,7 +10208,7 @@ export const ResearchChartSurface = ({
                       color,
                       fontFamily: theme.mono,
                       fontSize: TYPE_CSS_VAR.label,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       lineHeight: 1,
                       boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
                       pointerEvents: "auto",
@@ -10237,7 +10301,7 @@ export const ResearchChartSurface = ({
                           color,
                           fontFamily: theme.mono,
                           fontSize: resolveGlyphFontSize(premiumLabel),
-                          fontWeight: 500,
+                          fontWeight: FONT_WEIGHTS.medium,
                           letterSpacing: "-0.02em",
                           lineHeight: 1,
                           boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
@@ -10342,7 +10406,7 @@ export const ResearchChartSurface = ({
                               color,
                               fontFamily: theme.mono,
                               fontSize: resolveGlyphFontSize(cluster.aggregatePremiumLabel),
-                              fontWeight: 600,
+                              fontWeight: FONT_WEIGHTS.label,
                               letterSpacing: "-0.02em",
                               lineHeight: 1,
                               boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
@@ -10442,7 +10506,7 @@ export const ResearchChartSurface = ({
                             style={{
                               minWidth: 0,
                               fontSize: TYPE_CSS_VAR.bodyStrong,
-                              fontWeight: 500,
+                              fontWeight: FONT_WEIGHTS.medium,
                               lineHeight: 1.1,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -10467,7 +10531,7 @@ export const ResearchChartSurface = ({
                             style={{
                               fontSize: TYPE_CSS_VAR.bodyStrong,
                               fontFamily: theme.mono,
-                              fontWeight: 600,
+                              fontWeight: FONT_WEIGHTS.label,
                               color: toneColor,
                               whiteSpace: "nowrap",
                             }}
@@ -10718,7 +10782,7 @@ export const ResearchChartSurface = ({
                             : overlay.textColor,
                         fontSize: isTriangle ? TYPE_CSS_VAR.bodyStrong : isSignal || isSwing ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         whiteSpace: "nowrap",
                         boxShadow: isSwing || isTriangle
                           ? "none"
@@ -10772,7 +10836,7 @@ export const ResearchChartSurface = ({
                       color: theme.text,
                       fontSize: TYPE_CSS_VAR.body,
                       fontFamily: theme.mono,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       whiteSpace: "nowrap",
                       boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
                     }}
@@ -10804,7 +10868,7 @@ export const ResearchChartSurface = ({
                     color: target.borderColor,
                     fontSize: TYPE_CSS_VAR.body,
                     fontFamily: theme.mono,
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -10952,7 +11016,7 @@ export const ResearchChartSurface = ({
                     : isSubtitle
                       ? dashboardDensity.subtitleSize
                       : dashboardDensity.bodySize,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   lineHeight: 1,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
@@ -10965,7 +11029,7 @@ export const ResearchChartSurface = ({
                     style={{
                       flexShrink: 0,
                       color: "#86837D",
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
@@ -10989,7 +11053,7 @@ export const ResearchChartSurface = ({
                       minWidth: 0,
                       color: "#86837D",
                       fontSize: dashboardDensity.detailSize,
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
@@ -11036,7 +11100,7 @@ export const ResearchChartSurface = ({
             }}
           >
             {legend?.symbol ? (
-              <span style={{ color: theme.text, fontWeight: 400 }}>
+              <span style={{ color: theme.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {legend.symbol}
               </span>
             ) : null}

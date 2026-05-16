@@ -16,6 +16,8 @@ export const THEMES = {
     textMuted: "#605C57",
     accent: "#E08F76",
     accentDim: "#3F2A22",
+    accentHoverBg: "rgba(224, 143, 118, 0.10)",
+    accentActiveBg: "rgba(224, 143, 118, 0.20)",
     green: "#4FB286",
     greenDim: "#1F3A2C",
     greenBg: "rgba(79,178,134,0.10)",
@@ -35,20 +37,22 @@ export const THEMES = {
     pulseLoss: "#D77470",
   },
   light: {
-    bg0: "#FAFAF7",
+    bg0: "#FFFFFF",
     bg1: "#FFFFFF",
-    bg2: "#F1EFEA",
-    bg3: "#E8E5DE",
-    bg4: "#D9D5CD",
-    border: "#E8E5DE",
-    borderLight: "#F0EDE6",
+    bg2: "#FAFAFB",
+    bg3: "#F4F4F6",
+    bg4: "#E8E8EC",
+    border: "#E5E5EA",
+    borderLight: "#F2F2F4",
     borderFocus: "#D97757",
-    text: "#19171A",
-    textSec: "#4E4B4F",
-    textDim: "#86837D",
-    textMuted: "#ACA8A0",
+    text: "#15151A",
+    textSec: "#3F3F46",
+    textDim: "#6B6B73",
+    textMuted: "#9999A1",
     accent: "#D97757",
     accentDim: "#F2DDD2",
+    accentHoverBg: "rgba(217, 119, 87, 0.08)",
+    accentActiveBg: "rgba(217, 119, 87, 0.14)",
     green: "#0F6E51",
     greenDim: "#CFE3D9",
     greenBg: "rgba(15,110,81,0.08)",
@@ -343,4 +347,4 @@ export const getToken = (name, fallback = "") => {
 export const resolveTokenColor = (name, fallback = "") =>
   getToken(name, fallback);
 
-export const MISSING_VALUE = "----";
+export const MISSING_VALUE = "—";

@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime, formatAppTime } from "../../lib/timeZone";
 import {
   ACCOUNT_RANGES,
@@ -105,15 +105,15 @@ const FlatToggle = ({ options, value, onChange, compact = false }) => (
           onClick={() => onChange(item.value)}
           style={{
             border: "none",
-            borderRadius: dim(3),
+            borderRadius: dim(RADII.sm),
             background: active ? T.accent : "transparent",
-            color: active ? "#ffffff" : T.textMuted,
+            color: active ? T.onAccent : T.textMuted,
             height: dim(compact ? 18 : 20),
             minWidth: dim(compact ? 25 : 30),
             padding: sp(compact ? "0 5px" : "0 7px"),
-            fontSize: fs(compact ? 7 : 8),
+            fontSize: textSize(compact ? "micro" : "label"),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             cursor: "pointer",
             letterSpacing: 0,
             whiteSpace: "nowrap",
@@ -148,9 +148,9 @@ const FlatChip = ({
       color: disabled ? T.textDim : active ? color : T.textMuted,
       minWidth: dim(24),
       padding: sp("0 6px"),
-      fontSize: fs(8),
+      fontSize: textSize("label"),
       fontFamily: T.sans,
-      fontWeight: 400,
+      fontWeight: FONT_WEIGHTS.regular,
       cursor: disabled ? "default" : "pointer",
       opacity: disabled ? 0.45 : 1,
       letterSpacing: 0,
@@ -203,7 +203,7 @@ const ChartTooltip = ({
         borderRadius: dim(RADII.sm),
         padding: sp(8),
         color: T.text,
-        fontSize: fs(10),
+        fontSize: textSize("body"),
         fontFamily: T.sans,
       }}
     >
@@ -212,7 +212,7 @@ const ChartTooltip = ({
           ? formatAxisTick(tooltipTimestamp, range)
           : formatAppDateTime(tooltipTimestamp)}
       </div>
-      <div style={{ marginTop: sp(4), fontWeight: 400 }}>
+      <div style={{ marginTop: sp(4), fontWeight: FONT_WEIGHTS.regular }}>
         {chartMode === "pnl"
           ? formatAccountSignedMoney(pnl, currency, false, maskValues)
           : formatAccountMoney(nav, currency, false, maskValues)}
@@ -344,7 +344,7 @@ const EquityCurveChartSurface = memo(({
           type="number"
           scale="time"
           domain={["dataMin", "dataMax"]}
-          tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
+          tick={{ fill: T.textMuted, fontSize: textSize(compact ? "label" : "caption") }}
           tickFormatter={(value) => formatAxisTick(value, displayRange)}
           minTickGap={compact ? 42 : 28}
           stroke="none"
@@ -354,7 +354,7 @@ const EquityCurveChartSurface = memo(({
         <YAxis
           yAxisId="left"
           domain={leftAxisDomain}
-          tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
+          tick={{ fill: T.textMuted, fontSize: textSize(compact ? "label" : "caption") }}
           tickFormatter={(value) =>
             chartMode === "pnl"
               ? formatAccountSignedMoney(value, currency, true, maskValues)
@@ -369,7 +369,7 @@ const EquityCurveChartSurface = memo(({
           yAxisId="right"
           orientation="right"
           domain={rightAxisDomain}
-          tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
+          tick={{ fill: T.textMuted, fontSize: textSize(compact ? "label" : "caption") }}
           tickFormatter={(value) => `${value.toFixed(0)}%`}
           width={compact ? 28 : 42}
           stroke="none"
@@ -778,7 +778,7 @@ export const EquityCurvePanel = ({
                   color: T.text,
                   fontSize: fs(compact ? 16 : 15),
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   letterSpacing: 0,
                   lineHeight: 1,
                   whiteSpace: "nowrap",
@@ -793,9 +793,9 @@ export const EquityCurvePanel = ({
               <div
                 style={{
                   color: toneColor(deltaPercent ?? delta),
-                  fontSize: fs(compact ? 8 : 9),
+                  fontSize: textSize(compact ? "label" : "caption"),
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   lineHeight: 1.25,
                   whiteSpace: "nowrap",
                 }}
@@ -910,7 +910,7 @@ export const EquityCurvePanel = ({
               visibility: activeEvent ? "visible" : "hidden",
               color: T.textSec,
               fontFamily: T.sans,
-              fontSize: fs(compact ? 7 : 8),
+              fontSize: textSize(compact ? "micro" : "label"),
               lineHeight: 1.25,
               borderTop: `1px solid ${T.border}`,
               paddingTop: sp(3),
@@ -918,7 +918,7 @@ export const EquityCurvePanel = ({
           >
             {activeEvent ? (
               <>
-                <span style={{ color: equityEventColor(activeEvent), fontWeight: 400 }}>
+                <span style={{ color: equityEventColor(activeEvent), fontWeight: FONT_WEIGHTS.regular }}>
                   {equityEventTitle(activeEvent)}
                 </span>
                 <span>{formatAppDateTime(activeEvent.timestamp)}</span>
@@ -929,7 +929,7 @@ export const EquityCurvePanel = ({
                   <span>@ {formatAccountPrice(activeEvent.price, 2, maskValues)}</span>
                 ) : null}
                 {activeEvent.realizedPnl != null ? (
-                  <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: 400 }}>
+                  <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: FONT_WEIGHTS.regular }}>
                     P&L{" "}
                     {formatAccountSignedMoney(
                       activeEvent.realizedPnl,
@@ -939,7 +939,7 @@ export const EquityCurvePanel = ({
                     )}
                   </span>
                 ) : activeEvent.amount != null ? (
-                  <span style={{ color: toneColor(activeEvent.amount), fontWeight: 400 }}>
+                  <span style={{ color: toneColor(activeEvent.amount), fontWeight: FONT_WEIGHTS.regular }}>
                     {formatAccountSignedMoney(activeEvent.amount, currency, true, maskValues)}
                   </span>
                 ) : null}
@@ -955,7 +955,7 @@ export const EquityCurvePanel = ({
               gap: sp(compact ? 3 : 6),
               flexWrap: "wrap",
               color: T.textDim,
-              fontSize: fs(compact ? 7 : 8),
+              fontSize: textSize(compact ? "micro" : "label"),
               fontFamily: T.sans,
               lineHeight: 1.25,
             }}
@@ -982,7 +982,7 @@ export const EquityCurvePanel = ({
               {sourceLabel}{" "}
               {chartData?.lastFlexRefreshAt
                 ? formatAppDate(chartData.lastFlexRefreshAt)
-                : "----"}
+                : "—"}
             </span>
             <span>
               Benchmarks{" "}

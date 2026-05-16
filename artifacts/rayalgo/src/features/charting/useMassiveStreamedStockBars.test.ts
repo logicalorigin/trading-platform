@@ -114,7 +114,7 @@ test("stock quote patch appends the next 5s candle without waiting for aggregate
   assert.equal(patched[1]?.close, 102);
 });
 
-test("option quote patch carries live volume into the current candle", () => {
+test("option quote patch preserves candle volume in the current candle", () => {
   const start = Date.parse("2026-05-04T14:30:00.000Z");
   const baseBars = [
     {
@@ -146,11 +146,11 @@ test("option quote patch carries live volume into the current candle", () => {
 
   assert.equal(patched.length, 1);
   assert.equal(patched[0]?.close, 1.2);
-  assert.equal(patched[0]?.volume, 80);
-  assert.equal(patched[0]?.v, 80);
+  assert.equal(patched[0]?.volume, 12);
+  assert.equal(patched[0]?.v, undefined);
 });
 
-test("option quote patch carries live volume into appended candles", () => {
+test("option quote patch appends quote-only candles with zero volume", () => {
   const start = Date.parse("2026-05-04T14:30:00.000Z");
   const baseBars = [
     {
@@ -179,11 +179,11 @@ test("option quote patch carries live volume into appended candles", () => {
 
   assert.equal(patched.length, 2);
   assert.equal(patched[1]?.time, start + 60_000);
-  assert.equal(patched[1]?.volume, 95);
-  assert.equal(patched[1]?.v, 95);
+  assert.equal(patched[1]?.volume, 0);
+  assert.equal(patched[1]?.v, 0);
 });
 
-test("option quote patch signature changes when only volume changes", () => {
+test("option quote patch signature ignores day-volume-only changes", () => {
   const baseQuote = {
     price: 1.2,
     bid: 1.15,
@@ -191,7 +191,7 @@ test("option quote patch signature changes when only volume changes", () => {
     updatedAt: "2026-05-04T14:31:05.000Z",
   };
 
-  assert.notEqual(
+  assert.equal(
     __chartStreamingTestInternals.buildLiveQuotePatchSignature({
       ...baseQuote,
       volume: 80,
@@ -300,6 +300,63 @@ test("5m patched bar merging dedupes timestamps within the same interval", () =>
   assert.equal(patched.length, 1);
   assert.equal(patched[0]?.time, bucketStart);
   assert.equal(patched[0]?.close, 101);
+});
+
+test("5m minute aggregate patches preserve hydrated candle range", () => {
+  const bucketStart = Date.parse("2026-04-27T13:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(bucketStart),
+      time: bucketStart,
+      ts: new Date(bucketStart).toISOString(),
+      open: 100,
+      high: 105,
+      low: 99,
+      close: 104,
+      volume: 5_000,
+      source: "ibkr-history",
+    },
+  ];
+  const minuteAggregates = [
+    {
+      eventType: "A",
+      symbol: "SPY",
+      open: 102,
+      high: 103,
+      low: 101,
+      close: 102.5,
+      volume: 800,
+      accumulatedVolume: null,
+      vwap: 102.2,
+      sessionVwap: null,
+      officialOpen: null,
+      averageTradeSize: null,
+      startMs: bucketStart + 3 * 60_000,
+      endMs: bucketStart + 4 * 60_000,
+      delayed: false,
+      source: "ibkr-websocket-derived" as const,
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.mergeBarsWithMinuteAggregateList(
+    "5m",
+    baseBars,
+    minuteAggregates,
+  );
+
+  assert.equal(patched.length, 1);
+  assert.equal(patched[0]?.time, bucketStart);
+  assert.equal(patched[0]?.open, 100);
+  assert.equal(patched[0]?.high, 105);
+  assert.equal(patched[0]?.low, 99);
+  assert.equal(patched[0]?.close, 102.5);
+  assert.equal(patched[0]?.volume, 5_000);
+  assert.equal(patched[0]?.source, "ibkr-websocket-derived");
+  assert.equal(patched[0]?.o, 100);
+  assert.equal(patched[0]?.h, 105);
+  assert.equal(patched[0]?.l, 99);
+  assert.equal(patched[0]?.c, 102.5);
+  assert.equal(patched[0]?.v, 5_000);
 });
 
 test("historical live patch scheduler coalesces one frame to latest bar per bucket", () => {
@@ -469,6 +526,16 @@ test("historical bar streams reject stale payloads for prior symbols or interval
     }),
     false,
   );
+});
+
+test("historical bar stream URLs subscribe derived intervals through base candles", () => {
+  const url = __chartStreamingTestInternals.buildHistoricalBarStreamUrl({
+    symbol: "SPY",
+    timeframe: "2m",
+    source: "trades",
+  });
+
+  assert.equal(url, "/api/streams/bars?symbol=SPY&timeframe=1m&source=trades");
 });
 
 test("prepend lookback spans sparse intraday calendar gaps", () => {

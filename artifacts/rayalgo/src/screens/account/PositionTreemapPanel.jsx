@@ -1,12 +1,12 @@
 import { useContext, useMemo, useState } from "react";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { ThemeContext } from "../../features/platform/platformContexts";
 import {
   EmptyState,
-  Panel,
   ToggleGroup,
   formatAccountMoney,
   formatAccountPercent,
+  mutedLabelStyle,
 } from "./accountUtils";
 
 const hexToRgb = (value) => {
@@ -89,13 +89,10 @@ export const buildTreemapItems = (positions) =>
     .filter(Boolean)
     .sort((a, b) => b.value - a.value);
 
-export const PositionTreemapPanel = ({
+export const PositionTreemapContent = ({
   positions,
   currency = "USD",
   maskValues = false,
-  loading = false,
-  error = null,
-  onRetry,
   emptyBody = "Treemap renders once open positions are streamed from the bridge.",
 }) => {
   const [mode, setMode] = useState("DAY");
@@ -117,121 +114,119 @@ export const PositionTreemapPanel = ({
 
   const { theme } = useContext(ThemeContext);
   const isDarkTheme = theme !== "light";
-  const labelFill = isDarkTheme ? "#F2EFE9" : "#19171A";
-  const subLabelFill = isDarkTheme ? "rgba(255,255,255,0.85)" : "rgba(15,23,42,0.85)";
+  const labelFill = T.text;
+  const subLabelFill = isDarkTheme ? "rgba(242,239,233,0.85)" : "rgba(25,23,26,0.85)";
+
+  if (!items.length) {
+    return <EmptyState title="No positions" body={emptyBody} />;
+  }
 
   return (
-    <Panel
-      title="Position Heatmap"
-      subtitle={`Sized by |market value| · colored by ${mode === "DAY" ? "day %" : "unrealized %"}`}
-      action={
-        <ToggleGroup options={TREEMAP_MODES} value={mode} onChange={setMode} />
-      }
-      loading={loading}
-      error={error}
-      onRetry={onRetry}
-      minHeight={300}
-    >
-      {!items.length ? (
-        <EmptyState
-          title="No positions"
-          body={emptyBody}
-        />
-      ) : (
-        <div style={{ display: "grid", gap: sp(4) }}>
-          <svg
-            width="100%"
-            viewBox={`0 0 ${TREEMAP_W} ${TREEMAP_H}`}
-            preserveAspectRatio="none"
-            style={{ display: "block" }}
-          >
-            {rects.map((rect) => {
-              const pct = pctFor(rect);
-              const area = rect.w * rect.h;
-              const showLabel = area > 4000;
-              const showPct = area > 18000;
-              const labelSize = Math.min(22, Math.sqrt(area) * 0.18);
-              return (
-                <g key={rect.id}>
-                  <rect
-                    x={rect.x + 0.5}
-                    y={rect.y + 0.5}
-                    width={Math.max(0, rect.w - 1)}
-                    height={Math.max(0, rect.h - 1)}
-                    fill={colorFor(pct)}
-                    stroke={T.bg0}
-                    strokeWidth={1}
-                  >
-                    <title>{`${rect.symbol} · ${formatAccountMoney(
-                      rect.marketValue,
-                      currency,
-                      true,
-                      maskValues,
-                    )} · day ${formatAccountPercent(rect.dayChangePercent, 2, maskValues)} · unreal ${formatAccountPercent(rect.unrealizedPnlPercent, 2, maskValues)}`}</title>
-                  </rect>
-                  {showLabel ? (
-                    <text
-                      x={rect.x + rect.w / 2}
-                      y={rect.y + rect.h / 2 - (showPct ? 6 : 2)}
-                      textAnchor="middle"
-                      fontSize={labelSize}
-                      fontFamily={T.sans}
-                      fontWeight={400}
-                      fill={labelFill}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {rect.symbol.length > 16
-                        ? `${rect.symbol.slice(0, 14)}…`
-                        : rect.symbol}
-                    </text>
-                  ) : null}
-                  {showPct ? (
-                    <text
-                      x={rect.x + rect.w / 2}
-                      y={rect.y + rect.h / 2 + 12}
-                      textAnchor="middle"
-                      fontSize={11}
-                      fontFamily={T.mono}
-                      fontWeight={400}
-                      fill={subLabelFill}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {formatAccountPercent(pct, 2, maskValues)}
-                    </text>
-                  ) : null}
-                </g>
-              );
-            })}
-          </svg>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: sp(4),
-              fontSize: fs(9),
-              fontFamily: T.sans,
-              color: T.textDim,
-            }}
-          >
-            <span>{`-${PCT_CLIP}%`}</span>
-            {[-5, -3, -1, 0, 1, 3, 5].map((p) => (
-              <div
-                key={p}
-                style={{
-                  width: dim(22),
-                  height: dim(10),
-                  background: colorFor(p),
-                  borderRadius: 1,
-                }}
-              />
-            ))}
-            <span>{`+${PCT_CLIP}%`}</span>
-          </div>
+    <div style={{ display: "grid", gap: sp(4) }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(5),
+        }}
+      >
+        <div style={mutedLabelStyle}>
+          Sized by |market value| · colored by {mode === "DAY" ? "day %" : "unrealized %"}
         </div>
-      )}
-    </Panel>
+        <ToggleGroup options={TREEMAP_MODES} value={mode} onChange={setMode} />
+      </div>
+      <svg
+        width="100%"
+        viewBox={`0 0 ${TREEMAP_W} ${TREEMAP_H}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        {rects.map((rect) => {
+          const pct = pctFor(rect);
+          const area = rect.w * rect.h;
+          const showLabel = area > 4000;
+          const showPct = area > 18000;
+          const labelSize = Math.min(22, Math.sqrt(area) * 0.18);
+          return (
+            <g key={rect.id}>
+              <rect
+                x={rect.x + 0.5}
+                y={rect.y + 0.5}
+                width={Math.max(0, rect.w - 1)}
+                height={Math.max(0, rect.h - 1)}
+                fill={colorFor(pct)}
+                stroke={T.bg0}
+                strokeWidth={1}
+              >
+                <title>{`${rect.symbol} · ${formatAccountMoney(
+                  rect.marketValue,
+                  currency,
+                  true,
+                  maskValues,
+                )} · day ${formatAccountPercent(rect.dayChangePercent, 2, maskValues)} · unreal ${formatAccountPercent(rect.unrealizedPnlPercent, 2, maskValues)}`}</title>
+              </rect>
+              {showLabel ? (
+                <text
+                  x={rect.x + rect.w / 2}
+                  y={rect.y + rect.h / 2 - (showPct ? 6 : 2)}
+                  textAnchor="middle"
+                  fontSize={labelSize}
+                  fontFamily={T.sans}
+                  fontWeight={400}
+                  fill={labelFill}
+                  style={{ pointerEvents: "none" }}
+                >
+                  {rect.symbol.length > 16
+                    ? `${rect.symbol.slice(0, 14)}…`
+                    : rect.symbol}
+                </text>
+              ) : null}
+              {showPct ? (
+                <text
+                  x={rect.x + rect.w / 2}
+                  y={rect.y + rect.h / 2 + 12}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontFamily={T.mono}
+                  fontWeight={400}
+                  fill={subLabelFill}
+                  style={{ pointerEvents: "none" }}
+                >
+                  {formatAccountPercent(pct, 2, maskValues)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(4),
+          fontSize: textSize("caption"),
+          fontFamily: T.sans,
+          color: T.textDim,
+        }}
+      >
+        <span>{`-${PCT_CLIP}%`}</span>
+        {[-5, -3, -1, 0, 1, 3, 5].map((p) => (
+          <div
+            key={p}
+            style={{
+              width: dim(22),
+              height: dim(10),
+              background: colorFor(p),
+              borderRadius: 1,
+            }}
+          />
+        ))}
+        <span>{`+${PCT_CLIP}%`}</span>
+      </div>
+    </div>
   );
 };
 
-export default PositionTreemapPanel;
+export default PositionTreemapContent;

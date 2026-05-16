@@ -5,7 +5,7 @@ import {
   Power,
   RadioTower,
 } from "lucide-react";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { Badge, Card, Pill } from "../../components/platform/primitives.jsx";
 import {
@@ -81,7 +81,7 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
       style={{
         height,
         width: "100%",
-        background: T.bg3,
+        background: T.bg1,
         borderRadius: dim(999),
         border: "none",
         overflow: "hidden",
@@ -105,7 +105,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
     style={{
       minWidth: 0,
       padding: sp("8px 10px"),
-      background: T.bg2,
+      background: T.bg1,
       border: "none",
       borderRadius: dim(8),
       transition:
@@ -116,8 +116,8 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
       style={{
         color: T.textMuted,
         fontFamily: T.sans,
-        fontSize: fs(9),
-        fontWeight: 500,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.04em",
         textTransform: "uppercase",
         lineHeight: 1,
@@ -134,7 +134,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
         color: tone,
         fontFamily: T.sans,
         fontSize: fs(13),
-        fontWeight: 600,
+        fontWeight: FONT_WEIGHTS.label,
         letterSpacing: "-0.01em",
         lineHeight: 1.1,
         overflow: "hidden",
@@ -147,7 +147,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
           style={{
             width: dim(6),
             height: dim(6),
-            borderRadius: "50%",
+            borderRadius: dim(RADII.pill),
             background: dotColor,
             flexShrink: 0,
           }}
@@ -197,7 +197,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
         color: tone,
         fontFamily: T.sans,
         fontSize: fs(10),
-        fontWeight: 500,
+        fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.02em",
         whiteSpace: "nowrap",
         transition: "background-color 0.18s ease",
@@ -349,7 +349,7 @@ export const FlowScannerStatusPanel = ({
               color: T.textSec,
               fontFamily: T.sans,
               fontSize: fs(11),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.03em",
               whiteSpace: "nowrap",
             }}
@@ -362,7 +362,7 @@ export const FlowScannerStatusPanel = ({
               color: sourceTone,
               fontFamily: T.sans,
               fontSize: fs(8),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.04em",
               minWidth: 0,
               overflow: "hidden",
@@ -386,7 +386,7 @@ export const FlowScannerStatusPanel = ({
         >
           <span>
             Cycle{" "}
-            <span style={{ color: T.text, fontWeight: 400 }}>
+            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
               {formatCount(scannedCoverageSymbols)}/{formatCount(totalCoverageSymbols || scannedCoverageSymbols)}
             </span>
           </span>

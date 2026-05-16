@@ -37,7 +37,6 @@ import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-  resolveResearchChartFramePlacement,
 } from "../features/charting/ResearchChartFrame";
 import {
   filterFlowEventsForChartLookbackWindow,
@@ -115,6 +114,7 @@ import {
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
   daysToExpiration,
+  fmtCompactNumber,
   formatExpirationLabel,
   formatOptionContractLabel,
   formatRelativeTimeShort,
@@ -162,12 +162,14 @@ import {
 } from "../features/platform/runtimeCache";
 import { useFlowChartEventConversion } from "../features/workers/analyticsClient";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { MetricChip } from "../components/platform/primitives.jsx";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
 } from "../features/platform/marketFlowStore";
 import { normalizeFlowOptionExpirationIso } from "../features/platform/flowOptionChartIdentity";
 import {
+  FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
   T,
@@ -175,7 +177,8 @@ import {
   fs,
   getCurrentTheme,
   sp,
-} from "../lib/uiTokens";
+  textSize,
+} from "../lib/uiTokens.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import {
   motionRowStyle,
@@ -185,7 +188,6 @@ import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { Drawer } from "../components/platform/Drawer.jsx";
-import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
 
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
@@ -216,11 +218,141 @@ const isTimeframeValidForEquity = (value) =>
 const isTimeframeValidForOption = (value) =>
   TRADE_OPTION_CHART_TIMEFRAME_OPTIONS.some((option) => option.value === value);
 const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
-const TRADE_OPTION_CHART_FRAME_LAYOUT =
-  resolveResearchChartFramePlacement("workspace");
 const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 export const TRADE_RECENT_TICKER_LIMIT = 16;
 export const TRADE_TRACKED_TICKER_LIMIT = 8;
+
+const formatContextPrice = (value, digits = 2) =>
+  isFiniteNumber(value) ? Number(value).toFixed(digits) : MISSING_VALUE;
+
+const formatContextCompact = (value) =>
+  isFiniteNumber(value) ? fmtCompactNumber(value) : MISSING_VALUE;
+
+const TradeContractContextStrip = ({
+  contractLabel,
+  statusLabel,
+  statusTone,
+  bid,
+  ask,
+  spread,
+  mark,
+  delta,
+  volume,
+  openInterest,
+  quoteFreshness,
+  quoteUpdatedAt,
+  barFreshness,
+  barUpdatedAt,
+  flowBadge,
+}) => {
+  const sourceTone =
+    statusTone === "good"
+      ? T.green
+      : statusTone === "warn"
+        ? T.amber
+        : statusTone === "bad"
+          ? T.red
+          : T.textSec;
+  const spreadPct =
+    isFiniteNumber(spread) && isFiniteNumber(mark) && mark > 0
+      ? (spread / mark) * 100
+      : null;
+  const spreadTone =
+    !isFiniteNumber(spreadPct)
+      ? T.textDim
+      : spreadPct >= 18
+        ? T.red
+        : spreadPct >= 8
+          ? T.amber
+          : T.green;
+  const freshnessTitle = [
+    quoteUpdatedAt ? `Quote ${formatRelativeTimeShort(quoteUpdatedAt)}` : null,
+    barUpdatedAt ? `Bars ${formatRelativeTimeShort(barUpdatedAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return (
+    <div
+      data-testid="trade-contract-context-strip"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(3),
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      <MetricChip
+        label="Ctr"
+        value={contractLabel}
+        tone={T.textSec}
+        title={contractLabel}
+        style={{ maxWidth: dim(116) }}
+      />
+      <MetricChip
+        label="Src"
+        value={statusLabel}
+        tone={sourceTone}
+        title={freshnessTitle || statusLabel}
+        dot
+        style={{ maxWidth: dim(94) }}
+      />
+      <MetricChip
+        label="B/A"
+        value={`${formatContextPrice(bid)} / ${formatContextPrice(ask)}`}
+        tone={T.textSec}
+        title={`Quote freshness: ${quoteFreshness || "unknown"}`}
+        style={{ maxWidth: dim(112) }}
+      />
+      <MetricChip
+        label="Spr"
+        value={
+          isFiniteNumber(spread)
+            ? `${formatContextPrice(spread)}${
+                isFiniteNumber(spreadPct) ? ` ${spreadPct.toFixed(0)}%` : ""
+              }`
+            : MISSING_VALUE
+        }
+        tone={spreadTone}
+        style={{ maxWidth: dim(86) }}
+      />
+      <MetricChip
+        label="Δ"
+        value={isFiniteNumber(delta) ? Math.abs(delta).toFixed(2) : MISSING_VALUE}
+        tone={T.accent}
+        style={{ maxWidth: dim(58) }}
+      />
+      <MetricChip
+        label="Vol/OI"
+        value={`${formatContextCompact(volume)} / ${formatContextCompact(openInterest)}`}
+        tone={T.textSec}
+        style={{ maxWidth: dim(102) }}
+      />
+      <MetricChip
+        label="Bars"
+        value={barFreshness || "unknown"}
+        tone={
+          barFreshness === "live"
+            ? T.green
+            : barFreshness === "unavailable"
+              ? T.textDim
+              : T.amber
+        }
+        style={{ maxWidth: dim(74) }}
+      />
+      {flowBadge ? (
+        <MetricChip
+          label="Flow"
+          value={flowBadge.label}
+          tone={flowBadge.color}
+          title={flowBadge.tooltip}
+          style={{ maxWidth: dim(96) }}
+        />
+      ) : null}
+    </div>
+  );
+};
 
 const normalizeIndicatorSelection = (value, fallback = []) => {
   const source = Array.isArray(value) ? value : fallback;
@@ -641,7 +773,7 @@ const TradePanelShell = ({
           style={{
             color: T.text,
             fontSize: fs(10),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             letterSpacing: "0.05em",
           }}
         >
@@ -651,7 +783,7 @@ const TradePanelShell = ({
           <span
             style={{
               color: T.textDim,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               whiteSpace: "nowrap",
             }}
           >
@@ -683,6 +815,7 @@ const TradeContractDetailPanel = ({
   historicalDataEnabled = liveDataEnabled,
   optionChartTimeframeOverride = null,
   onOptionChartTimeframeChange,
+  chartFrameStyle,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
 }) => {
@@ -762,7 +895,15 @@ const TradeContractDetailPanel = ({
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
   );
-  const { drawings, addDrawing, clearDrawings } = useDrawingHistory();
+  const {
+    drawings,
+    addDrawing,
+    clearDrawings,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useDrawingHistory();
   const optionProgressiveScopeKey = useMemo(() => {
     return buildChartBarScopeKey(
       "trade-contract-option-bars",
@@ -1059,6 +1200,17 @@ const TradeContractDetailPanel = ({
   const ask = isFiniteNumber(liveQuote?.ask) ? liveQuote.ask : rowAsk;
   const last = isFiniteNumber(liveQuote?.price) ? liveQuote.price : rowMark;
   const mark = getOptionMark(bid, ask, last) ?? rowMark;
+  const spread =
+    isFiniteNumber(ask) && isFiniteNumber(bid) ? Math.max(0, ask - bid) : null;
+  const delta = isFiniteNumber(liveQuote?.delta)
+    ? liveQuote.delta
+    : selectedRow?.[`${sidePrefix}Delta`] ?? null;
+  const optionVolume = isFiniteNumber(liveQuote?.volume)
+    ? liveQuote.volume
+    : selectedRow?.[`${sidePrefix}Vol`] ?? null;
+  const optionOpenInterest = isFiniteNumber(liveQuote?.openInterest)
+    ? liveQuote.openInterest
+    : selectedRow?.[`${sidePrefix}Oi`] ?? null;
   const latestBar = displayBars[displayBars.length - 1] || null;
   const quoteFreshness = normalizeMarketFreshness(
     liveQuote?.freshness ?? rowFreshness,
@@ -1356,7 +1508,7 @@ const TradeContractDetailPanel = ({
                 studies: availableStudies,
                 selectedStudies: selectedIndicators,
               }}
-              style={{ minHeight: 0, width: "100%" }}
+              style={{ minHeight: 0, width: "100%", ...chartFrameStyle }}
               surfaceTopOverlay={(controls) => (
                 <ResearchChartWidgetHeader
                   theme={T}
@@ -1379,6 +1531,11 @@ const TradeContractDetailPanel = ({
                   selectedStudies={selectedIndicators}
                   studySpecs={chartModel.studySpecs}
                   onToggleStudy={toggleIndicator}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                  showUndoRedo
                   meta={{
                     open: latestBar?.o,
                     high: latestBar?.h,
@@ -1388,15 +1545,67 @@ const TradeContractDetailPanel = ({
                     timestamp: latestBar?.ts,
                     sourceLabel: statusLabel,
                   }}
-                  showSnapshotButton={false}
-                  rightSlot={
-                    <RayReplicaSettingsMenu
-                      theme={T}
-                      settings={rayReplicaSettings}
-                      onChange={setRayReplicaSettings}
-                      disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+                  contextSlot={
+                    <TradeContractContextStrip
+                      contractLabel={contractLabel}
+                      statusLabel={statusLabel}
+                      statusTone={optionChartSourceState.tone}
+                      bid={bid}
+                      ask={ask}
+                      spread={spread}
+                      mark={mark}
+                      delta={delta}
+                      volume={optionVolume}
+                      openInterest={optionOpenInterest}
+                      quoteFreshness={quoteFreshness}
+                      quoteUpdatedAt={quoteUpdatedAt}
+                      barFreshness={barFreshness}
+                      barUpdatedAt={barUpdatedAt}
+                      flowBadge={displayBars.length ? chartFlowBadge : null}
                     />
                   }
+                  rightSlot={({ iconOnly }) => (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: dim(4),
+                        minWidth: 0,
+                      }}
+                    >
+                      {displayBars.length && chartFlowBadge ? (
+                        <AppTooltip content={chartFlowBadge.tooltip}><div
+                          data-testid="trade-contract-option-chart-flow-badge"
+                          style={{
+                            border: `1px solid ${chartFlowBadge.color}66`,
+                            background: `${chartFlowBadge.color}18`,
+                            color: chartFlowBadge.color,
+                            borderRadius: dim(3),
+                            padding: sp(iconOnly ? "3px 4px" : "4px 6px"),
+                            fontFamily: T.sans,
+                            fontSize: textSize("control"),
+                            fontWeight: FONT_WEIGHTS.regular,
+                            lineHeight: 1,
+                            maxWidth: dim(iconOnly ? 44 : 104),
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            pointerEvents: "auto",
+                            boxShadow: `0 0 0 1px ${T.bg4}cc`,
+                          }}
+                        >
+                          {iconOnly ? "Flow" : chartFlowBadge.label}
+                        </div></AppTooltip>
+                      ) : null}
+                      <RayReplicaSettingsMenu
+                        theme={T}
+                        settings={rayReplicaSettings}
+                        onChange={setRayReplicaSettings}
+                        dense={iconOnly}
+                        disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+                      />
+                    </div>
+                  )}
                 />
               )}
               surfaceLeftOverlay={(controls) => (
@@ -1426,37 +1635,12 @@ const TradeContractDetailPanel = ({
               onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
             />
           </PlatformErrorBoundary>
-          {displayBars.length && chartFlowBadge ? (
-            <AppTooltip content={chartFlowBadge.tooltip}><div
-              data-testid="trade-contract-option-chart-flow-badge"
-              style={{
-                position: "absolute",
-                right: dim(10),
-                top: dim(
-                  TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceTopOverlayHeight + 8,
-                ),
-                zIndex: 8,
-                border: `1px solid ${chartFlowBadge.color}66`,
-                background: `${chartFlowBadge.color}18`,
-                color: chartFlowBadge.color,
-                borderRadius: dim(3),
-                padding: sp("4px 6px"),
-                fontFamily: T.sans,
-                fontSize: fs(8),
-                fontWeight: 400,
-                pointerEvents: "auto",
-                boxShadow: `0 0 0 1px ${T.bg4}cc`,
-              }}
-            >
-              {chartFlowBadge.label}
-            </div></AppTooltip>
-          ) : null}
         </div>
         <div
           style={{
             color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -1525,7 +1709,7 @@ const TradeSpotFlowPanel = ({ ticker }) => {
         >
           {latest ? (
             <div>
-              <div style={{ color: T.text, fontWeight: 400 }}>
+              <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {latest.side || "flow"}{" "}
                 {latest.contract || latest.ticker || ticker}
               </div>
@@ -1572,11 +1756,11 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
                 gridTemplateColumns: "minmax(0, 1fr) auto",
                 gap: sp(8),
                 border: "none",
-                background: T.bg2,
+                background: T.bg1,
                 borderRadius: dim(RADII.md),
                 padding: sp("8px 10px"),
                 fontFamily: T.sans,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
               }}
             >
               <span
@@ -3550,7 +3734,7 @@ export const TradeScreen = ({
     color: active ? T.text : T.textSec,
     fontFamily: T.sans,
     fontSize: fs(10),
-    fontWeight: 400,
+    fontWeight: FONT_WEIGHTS.regular,
     cursor: "pointer",
     whiteSpace: "nowrap",
   });
@@ -3558,17 +3742,23 @@ export const TradeScreen = ({
     minHeight: dim(38),
     border: "none",
     borderRadius: dim(RADII.xs),
-    background: T.bg2,
+    background: T.bg1,
     color: T.textSec,
     fontFamily: T.sans,
     fontSize: fs(10),
-    fontWeight: 400,
+    fontWeight: FONT_WEIGHTS.regular,
     cursor: "pointer",
     padding: sp("0 10px"),
   };
   const tradeMobileSectionStyle = {
     display: "grid",
     gap: sp(6),
+    minWidth: 0,
+  };
+  const tradeMobileChartFrameStyle = {
+    height: "clamp(320px, 46vh, 460px)",
+    maxHeight: "clamp(320px, 46vh, 460px)",
+    minHeight: 0,
     minWidth: 0,
   };
 
@@ -3596,6 +3786,7 @@ export const TradeScreen = ({
       referenceLines={equityReferenceLines}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-equity" : null}
+      frameStyle={tradeIsPhone ? tradeMobileChartFrameStyle : undefined}
     />
   );
   const equityTimeframeForOptionSync =
@@ -3627,6 +3818,7 @@ export const TradeScreen = ({
           });
         }
       }}
+      chartFrameStyle={tradeIsPhone ? tradeMobileChartFrameStyle : undefined}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-option" : null}
     />
@@ -3734,15 +3926,6 @@ export const TradeScreen = ({
         minWidth: 0,
       }}
     >
-      <div style={{ padding: sp(tradeIsPhone ? "10px 12px 0" : "16px 20px 0"), flexShrink: 0 }}>
-        <CockpitHeader
-          eyebrow="Live"
-          title="Trade"
-          subtitle="Execute orders, monitor positions and option chains"
-          pulse={{ state: tradePulseState, label: tradePulseLabel }}
-          narrow={tradeIsPhone}
-        />
-      </div>
       {/* Tab strip */}
       <div style={{ position: "relative", flexShrink: 0, overflow: "visible" }}>
         <TickerTabStrip
@@ -3856,7 +4039,7 @@ export const TradeScreen = ({
                     color: T.text,
                     fontFamily: T.sans,
                     fontSize: fs(11),
-                    fontWeight: 400,
+                    fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   Signal-options context
@@ -3865,8 +4048,8 @@ export const TradeScreen = ({
                   style={{
                     color: automationContractMatches ? T.cyan : T.amber,
                     fontFamily: T.sans,
-                    fontSize: fs(8),
-                    fontWeight: 400,
+                    fontSize: textSize("body"),
+                    fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   {automationContractMatches ? "MATCHED" : "MANUAL OVERRIDE"}
@@ -3876,7 +4059,7 @@ export const TradeScreen = ({
                 style={{
                   color: T.textSec,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   marginTop: 3,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -3913,8 +4096,8 @@ export const TradeScreen = ({
                 background: T.bg0,
                 color: T.textDim,
                 fontFamily: T.sans,
-                fontSize: fs(8),
-                fontWeight: 400,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.regular,
                 cursor: "pointer",
               }}
             >
@@ -3953,9 +4136,9 @@ export const TradeScreen = ({
                 data-testid="trade-top-zone"
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
-              >
+            >
                 {renderPrimaryTradePanel ? (
-                  equityPanel
+                  <div style={tradeMobileChartFrameStyle}>{equityPanel}</div>
                 ) : (
                   <TradeDeferredPanel title="Chart" minHeight={260} />
                 )}
@@ -3976,7 +4159,9 @@ export const TradeScreen = ({
                   </button>
                 </div>
                 {renderTradePanels ? (
-                  contractDetailPanel
+                  <div style={tradeMobileChartFrameStyle}>
+                    {contractDetailPanel}
+                  </div>
                 ) : (
                   <TradeDeferredPanel title="Contract" minHeight={260} />
                 )}
@@ -4095,7 +4280,7 @@ export const TradeScreen = ({
         >
           <span
             style={{
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               color: T.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
@@ -4110,13 +4295,13 @@ export const TradeScreen = ({
             data-testid="trade-chart-sync-timeframe"
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: tradeTimeframeSync ? T.accent : T.bg3,
-              color: tradeTimeframeSync ? "#fff" : T.textDim,
+              color: tradeTimeframeSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -4129,13 +4314,13 @@ export const TradeScreen = ({
             data-testid="trade-chart-sync-crosshair"
             style={{
               padding: sp("3px 8px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               background: tradeCrosshairSync ? T.accent : T.bg3,
-              color: tradeCrosshairSync ? "#fff" : T.textDim,
+              color: tradeCrosshairSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: 0,
+              borderRadius: RADII.none,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}

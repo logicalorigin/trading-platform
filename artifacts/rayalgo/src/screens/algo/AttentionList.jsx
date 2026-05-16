@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const severityWeight = (severity) => {
   if (severity === "critical") return 0;
@@ -29,7 +29,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
         style={{
           color: T.textDim,
           fontFamily: T.sans,
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           lineHeight: 1.45,
           padding: sp("8px 4px"),
         }}

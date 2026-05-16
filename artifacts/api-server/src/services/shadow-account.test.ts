@@ -202,6 +202,25 @@ test("expired option shadow closes can use an explicit stale mark", () => {
   );
 });
 
+test("shadow option maintenance waits until expiration close", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.shouldCloseOptionForShadowMaintenance;
+  const contract = {
+    ticker: "TQQQ20260515C75",
+    underlying: "TQQQ",
+    expirationDate: new Date("2026-05-15T00:00:00.000Z"),
+    strike: 75,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: null,
+  } as const;
+
+  assert.equal(helper(contract, new Date("2026-05-15T18:00:00.000Z")), false);
+  assert.equal(helper(contract, new Date("2026-05-15T20:00:00.000Z")), true);
+  assert.equal(helper(contract, new Date("2026-05-16T14:00:00.000Z")), true);
+});
+
 test("buildShadowPositionDayChange uses daily baseline instead of total unrealized pnl", () => {
   const helper =
     __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChange;
@@ -739,6 +758,105 @@ test("watchlist sweep can restrict defensive proxy variants to inverse ETFs", ()
   assert.equal(
     Array.from(ids).some((id) => id.startsWith("VXX:")),
     false,
+  );
+});
+
+test("watchlist entry gate filters buys by EMA trend and confirmation quorum", () => {
+  const bars = Array.from({ length: 80 }, (_, index) => {
+    const close = 100 + index;
+    const time = Math.floor(
+      new Date("2026-05-01T13:30:00.000Z").getTime() / 1000,
+    ) + index * 60;
+    return {
+      time,
+      ts: new Date(time * 1000).toISOString(),
+      o: close - 0.2,
+      h: close + 0.5,
+      l: close - 0.5,
+      c: close,
+      v: 10_000,
+    };
+  });
+  const signal = (filterState: Record<string, unknown>) => ({
+    id: "signal",
+    eventType: "buy_signal",
+    direction: "long",
+    barIndex: 70,
+    time: bars[70]!.time,
+    ts: bars[70]!.ts,
+    price: bars[70]!.c,
+    close: bars[70]!.c,
+    actionable: true,
+    filtered: false,
+    filterState,
+  });
+  const overlay =
+    __shadowWatchlistBacktestInternalsForTests.normalizeWatchlistBacktestEntryGateOverlay({
+      emaFastWindow: 21,
+      emaSlowWindow: 55,
+      minConfirmations: 3,
+      adxMin: 20,
+      volScoreMin: 2,
+      volScoreMax: 10,
+    });
+
+  assert.ok(overlay);
+
+  const result =
+    __shadowWatchlistBacktestInternalsForTests.applyWatchlistBacktestEntryGate({
+      signalScan: {
+        candidates: [
+          candidate({
+            symbol: "AAPL",
+            signal: signal({
+              mtfDirections: [1, -1, -1],
+              adx: 25,
+              volatilityScore: 6,
+            }),
+            signalScoreDetails: { base: 1 },
+          }),
+          candidate({
+            symbol: "MSFT",
+            signal: signal({
+              mtfDirections: [1, -1, -1],
+              adx: 10,
+              volatilityScore: 20,
+            }),
+            signalScoreDetails: {},
+          }),
+          candidate({
+            symbol: "TSLA",
+            side: "sell",
+            signal: {
+              ...signal({
+                mtfDirections: [-1, -1, -1],
+                adx: 10,
+                volatilityScore: 20,
+              }),
+              eventType: "sell_signal",
+              direction: "short",
+            },
+            signalScoreDetails: {},
+          }),
+        ] as never,
+        barsBySymbol: new Map([
+          ["AAPL", bars],
+          ["MSFT", bars],
+          ["TSLA", bars],
+        ]),
+        skipped: [],
+      } as never,
+      entryGateOverlay: overlay,
+    });
+
+  assert.deepEqual(
+    result.candidates.map((entry) => `${entry.side}:${entry.symbol}`),
+    ["buy:AAPL", "sell:TSLA"],
+  );
+  assert.equal(result.skipped[0]?.reason, "entry_gate_confirmation_quorum");
+  assert.equal(
+    result.candidates[0]?.signalScoreDetails.entryGateConfirmationCount,
+    3,
   );
 });
 

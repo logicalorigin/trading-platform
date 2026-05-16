@@ -5866,11 +5866,23 @@ async function resolveDefaultSignalOptionsSymbols() {
     watchlists.find((item) => item.isDefault) ??
     watchlists[0] ??
     null;
-  const symbols =
-    watchlist?.items
-      .map((item) => normalizeSymbol(item.symbol).toUpperCase())
-      .filter(Boolean) ?? [];
+  const preferredSymbols =
+    watchlist?.items.map((item) => item.symbol) ?? [];
+  const symbols = [
+    ...preferredSymbols,
+    ...watchlists.flatMap((item) =>
+      item === watchlist ? [] : item.items.map((watchlistItem) => watchlistItem.symbol),
+    ),
+  ]
+    .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+    .filter(Boolean);
   return Array.from(new Set(symbols));
+}
+
+function sameSymbolUniverse(left: readonly unknown[], right: readonly unknown[]) {
+  const normalize = (symbols: readonly unknown[]) =>
+    normalizeSignalOptionsUniverseSymbols(symbols).join("\n");
+  return normalize(left) === normalize(right);
 }
 
 function normalizeSignalOptionsUniverseSymbols(symbols: readonly unknown[]) {
@@ -5928,6 +5940,7 @@ function isDefaultSignalOptionsSeedConfig(value: unknown): boolean {
 
 export async function ensureDefaultSignalOptionsPaperDeployment(input: {
   enabled?: boolean;
+  preserveExistingPaused?: boolean;
 } = {}) {
   const symbols = await resolveDefaultSignalOptionsSymbols();
   if (!symbols.length) {
@@ -6008,7 +6021,11 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
         source: "default_signal_options_seed",
       },
     });
-  } else if (enabled && !deployment.enabled) {
+  } else if (
+    enabled &&
+    !deployment.enabled &&
+    input.preserveExistingPaused !== true
+  ) {
     const [updated] = await db
       .update(algoDeploymentsTable)
       .set({
@@ -6030,6 +6047,20 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
         source: "default_signal_options_seed",
       },
     });
+  } else if (
+    deployment.enabled &&
+    !sameSymbolUniverse(deployment.symbolUniverse, symbols)
+  ) {
+    const [updated] = await db
+      .update(algoDeploymentsTable)
+      .set({
+        symbolUniverse: symbols,
+        updatedAt: new Date(),
+        lastError: null,
+      })
+      .where(eq(algoDeploymentsTable.id, deployment.id))
+      .returning();
+    deployment = updated ?? deployment;
   }
 
   deployment = await normalizeSignalOptionsDeploymentAccount(deployment);

@@ -15,6 +15,7 @@ import {
   Card,
   CardTitle,
   DataUnavailableState,
+  SeverityRail,
 } from "../../components/platform/primitives.jsx";
 import {
   fmtM,
@@ -22,12 +23,14 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import {
+  FONT_WEIGHTS,
   RADII,
   T,
   dim,
   fs,
   sp,
-} from "../../lib/uiTokens";
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   joinMotionClasses,
   motionRowStyle,
@@ -99,7 +102,7 @@ const MarketActivityLaneSection = ({
             color: T.text,
             fontFamily: T.sans,
             fontSize: fs(compact ? 10 : 11),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1.15,
           }}
         >
@@ -111,8 +114,8 @@ const MarketActivityLaneSection = ({
               marginTop: sp(1),
               color: T.textDim,
               fontFamily: T.sans,
-              fontSize: fs(8),
-              fontWeight: 400,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.04em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
@@ -254,12 +257,12 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
         onKeyDown={handleKeyDown}
         style={{
           width: "100%",
-          background: T.bg2,
+          background: T.bg1,
           border: "none",
           color: T.textSec,
           fontFamily: T.sans,
-          fontSize: fs(9),
-          fontWeight: 500,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
           padding: sp("6px 20px 6px 10px"),
           borderRadius: dim(6),
           outline: "none",
@@ -324,8 +327,8 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
                   color: selectedOption ? T.accent : T.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
-                  fontSize: fs(8),
-                  fontWeight: 400,
+                  fontSize: textSize("body"),
+                  fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("5px 6px"),
                   textAlign: "left",
                 }}
@@ -437,13 +440,13 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
         ...motionVars({ accent: tone.color }),
         width: "100%",
         display: "grid",
-        gridTemplateColumns: "auto minmax(0, 1fr) auto",
+        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
         alignItems: "center",
         gap: sp(6),
         minWidth: 0,
-        padding: sp("8px 10px"),
-        border: "none",
-        borderRadius: dim(8),
+        padding: sp("7px 8px"),
+        border: `1px solid ${tone.color}33`,
+        borderRadius: dim(4),
         background: tone.background,
         textAlign: "left",
         cursor: "pointer",
@@ -455,14 +458,15 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
         event.currentTarget.style.background = tone.background;
       }}
     >
+      <SeverityRail tone={tone.color} />
       <span
         style={{
           color: tone.color,
           border: `1px solid ${tone.color}55`,
           background: `${tone.color}14`,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
           lineHeight: 1,
           padding: sp("3px 4px"),
@@ -478,8 +482,8 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
             display: "block",
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -493,7 +497,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
             display: "block",
             color: T.textSec,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             lineHeight: 1.2,
             marginTop: sp(1),
             overflow: "hidden",
@@ -508,8 +512,8 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
         style={{
           color: T.textMuted,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           whiteSpace: "nowrap",
         }}
       >
@@ -567,13 +571,13 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
         ...motionVars({ accent: tone.color }),
         width: "100%",
         display: "grid",
-        gridTemplateColumns: "auto minmax(0, 1fr) auto",
+        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
         alignItems: "center",
         gap: sp(6),
         minWidth: 0,
-        padding: sp("8px 10px"),
-        border: "none",
-        borderRadius: dim(8),
+        padding: sp("7px 8px"),
+        border: `1px solid ${tone.color}33`,
+        borderRadius: dim(4),
         background: tone.background,
         textAlign: "left",
         cursor: "pointer",
@@ -585,14 +589,15 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
         event.currentTarget.style.background = tone.background;
       }}
     >
+      <SeverityRail tone={tone.color} />
       <span
         style={{
           color: tone.color,
           border: `1px solid ${tone.color}55`,
           background: `${tone.color}14`,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
           lineHeight: 1,
           padding: sp("3px 4px"),
@@ -608,8 +613,8 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
             display: "block",
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -623,7 +628,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
             display: "block",
             color: T.textSec,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             lineHeight: 1.2,
             marginTop: sp(1),
             overflow: "hidden",
@@ -638,8 +643,8 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
         style={{
           color: T.textMuted,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           whiteSpace: "nowrap",
         }}
       >
@@ -668,13 +673,14 @@ const MarketNotificationRow = ({
         ...motionVars({ accent: tone.color }),
         width: "100%",
         display: "grid",
-        gridTemplateColumns: "auto minmax(0, 1fr) auto",
+        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
         alignItems: "center",
         gap: sp(6),
         minWidth: 0,
         padding: sp("5px 6px"),
         border: `1px solid ${tone.color}33`,
         background: tone.background,
+        borderRadius: dim(4),
         textAlign: "left",
         cursor,
       }}
@@ -685,14 +691,15 @@ const MarketNotificationRow = ({
         event.currentTarget.style.background = tone.background;
       }}
     >
+      <SeverityRail tone={tone.color} />
       <span
         style={{
           color: tone.color,
           border: `1px solid ${tone.color}55`,
           background: `${tone.color}12`,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
           lineHeight: 1,
           padding: sp("3px 4px"),
@@ -708,8 +715,8 @@ const MarketNotificationRow = ({
             display: "block",
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(9),
-            fontWeight: 400,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -723,7 +730,7 @@ const MarketNotificationRow = ({
             display: "block",
             color: T.textSec,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("body"),
             lineHeight: 1.2,
             marginTop: sp(1),
             overflow: "hidden",
@@ -738,8 +745,8 @@ const MarketNotificationRow = ({
         style={{
           color: T.textMuted,
           fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: 400,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.regular,
           whiteSpace: "nowrap",
         }}
       >
@@ -916,10 +923,10 @@ export const MarketActivityPanel = ({
         right={
           <span
             style={{
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: signalMonitorPending ? T.amber : T.textDim,
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.08em",
             }}
           >
@@ -999,12 +1006,12 @@ export const MarketActivityPanel = ({
                   minWidth: 0,
                   flex: "1 1 auto",
                   width: "100%",
-                  background: T.bg2,
+                  background: T.bg1,
                   border: `1px solid ${T.border}`,
                   color: T.textSec,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
-                  fontWeight: 400,
+                  fontSize: textSize("body"),
+                  fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
                   borderRadius: RADII.none,
                   outline: "none",
@@ -1079,12 +1086,12 @@ export const MarketActivityPanel = ({
                 style={{
                   width: dim(76),
                   flex: "0 0 auto",
-                  background: T.bg2,
+                  background: T.bg1,
                   border: `1px solid ${T.border}`,
                   color: T.textSec,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
-                  fontWeight: 400,
+                  fontSize: textSize("body"),
+                  fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
                   borderRadius: RADII.none,
                   outline: "none",
@@ -1111,8 +1118,8 @@ export const MarketActivityPanel = ({
                     textOverflow: "ellipsis",
                     color: thresholdMatches ? T.textDim : T.amber,
                     fontFamily: T.sans,
-                    fontSize: fs(8),
-                    fontWeight: 400,
+                    fontSize: textSize("body"),
+                    fontWeight: FONT_WEIGHTS.regular,
                     border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}40`,
                     background: `${thresholdMatches ? T.textDim : T.amber}12`,
                     padding: sp("6px 5px"),
@@ -1174,8 +1181,8 @@ export const MarketActivityPanel = ({
                     border: `1px solid ${color}44`,
                     background: `${color}12`,
                     fontFamily: T.sans,
-                    fontSize: fs(7),
-                    fontWeight: 400,
+                    fontSize: textSize("caption"),
+                    fontWeight: FONT_WEIGHTS.regular,
                     lineHeight: 1,
                     padding: sp("3px 4px"),
                     whiteSpace: "nowrap",

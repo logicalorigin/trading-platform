@@ -22,24 +22,23 @@ import {
   useAccountPageSnapshotStream,
   useBrokerStreamFreshnessSnapshot,
 } from "../features/platform/live-streams";
+import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
 import AccountHeroBlock from "./account/AccountHeroBlock";
 import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
-import AllocationPanel from "./account/AllocationPanel";
+import PortfolioExposurePanel from "./account/PortfolioExposurePanel";
 import PositionsPanel, { PositionsAtDateInspector } from "./account/PositionsPanel";
 import TradingPatternsPanel from "./account/TradingPatternsPanel";
-import RiskDashboardPanel from "./account/RiskDashboardPanel";
 import CashFundingPanel from "./account/CashFundingPanel";
 import SetupHealthPanel from "./account/SetupHealthPanel";
-import PositionTreemapPanel from "./account/PositionTreemapPanel";
-import IntradayPnlPanel from "./account/IntradayPnlPanel";
+import TodaySnapshotPanel from "./account/TodaySnapshotPanel";
 import {
   ClosedTradesPanel,
   OrdersPanel,
@@ -52,14 +51,12 @@ import {
   clearPatternLensFromTradeFilters,
   emptyAccountPatternLens,
 } from "./account/accountPatternLens";
-import {
-  buildAccountRiskDisplayModel,
-  getOpenPositionRows,
-} from "../features/account/accountPositionRows.js";
+import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
 import {
   ACCOUNT_RANGES,
   Panel,
   Pill,
+  denseButtonStyle,
   formatAccountMoney,
   formatAccountPercent,
   formatNumber,
@@ -131,15 +128,16 @@ const ShadowWatchlistBacktestPanel = ({
       ? `${run.marketDateFrom} -> ${run.marketDateTo}`
       : run?.marketDate || "One-off ledger run";
   const runButtonStyle = {
-    minHeight: dim(24),
-    padding: sp("3px 8px"),
+    minHeight: dim(32),
+    padding: sp("6px 14px"),
     border: `1px solid ${running ? T.textMuted : T.pink}`,
-    borderRadius: dim(RADII.xs),
-    background: running ? T.bg2 : `${T.pink}22`,
+    borderRadius: dim(RADII.sm),
+    background: running ? T.bg1 : `${T.pink}22`,
     color: running ? T.textMuted : T.pink,
-    fontSize: fs(8),
+    fontSize: fs(10),
     fontFamily: T.sans,
-    fontWeight: 400,
+    fontWeight: FONT_WEIGHTS.medium,
+    letterSpacing: "0.06em",
     cursor: running ? "wait" : "pointer",
     textTransform: "uppercase",
   };
@@ -212,7 +210,7 @@ const ShadowWatchlistBacktestPanel = ({
           {run?.sweep ? <Pill tone="purple">Regime Sweep</Pill> : null}
           <Pill tone="purple">Ledger Synthetic</Pill>
         </div>
-        <div style={{ color: T.textSec, fontSize: fs(9), lineHeight: 1.35 }}>
+        <div style={{ color: T.textSec, fontSize: textSize("caption"), lineHeight: 1.35 }}>
           Runs all saved watchlists from the New York regular-session open through
           the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
           activity, isolated from prior backtest rows, and sized around current Shadow exposure.
@@ -241,10 +239,10 @@ const ShadowWatchlistBacktestPanel = ({
                     padding: sp("4px 5px"),
                   }}
                 >
-                  <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.sans }}>
+                  <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
                     {label.toUpperCase()}
                   </div>
-                  <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: 400 }}>
+                  <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
                     {formatNumber(value || 0, 0)}
                   </div>
                 </div>
@@ -256,13 +254,13 @@ const ShadowWatchlistBacktestPanel = ({
                 gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                 gap: sp(4),
                 color: T.textSec,
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 fontFamily: T.sans,
               }}
             >
               <div>
                 P&L{" "}
-                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: 400 }}>
+                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
                 </span>
               </div>
@@ -277,20 +275,20 @@ const ShadowWatchlistBacktestPanel = ({
               </div>
               <div>
                 Exp{" "}
-                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: 400 }}>
+                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
                 </span>
               </div>
               <div>Closed {formatNumber(summary.closedTrades || 0, 0)}</div>
               <div>
                 NAV{" "}
-                <span style={{ color: T.green, fontWeight: 400 }}>
+                <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
                 </span>
               </div>
               <div>
                 Max DD{" "}
-                <span style={{ color: T.red, fontWeight: 400 }}>
+                <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
                 </span>
               </div>
@@ -307,7 +305,7 @@ const ShadowWatchlistBacktestPanel = ({
                   gap: sp(4),
                 }}
               >
-                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.sans, fontWeight: 400 }}>
+                <div style={{ color: T.text, fontSize: textSize("caption"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
                   Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
                 </div>
                 {(run.sweep.variants || []).slice(0, 3).map((variant) => (
@@ -318,7 +316,7 @@ const ShadowWatchlistBacktestPanel = ({
                       gridTemplateColumns: "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
                       gap: sp(4),
                       color: variant.rank === 1 ? T.green : T.textSec,
-                      fontSize: fs(8),
+                      fontSize: textSize("body"),
                       fontFamily: T.sans,
                     }}
                   >
@@ -333,7 +331,7 @@ const ShadowWatchlistBacktestPanel = ({
                 ))}
               </div>
             ) : null}
-            <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.sans }}>
+            <div style={{ color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
               {formatAppDateTime(run.window?.start)}
               {" -> "}
               {formatAppDateTime(run.window?.end)}
@@ -343,7 +341,7 @@ const ShadowWatchlistBacktestPanel = ({
             </div>
           </>
         ) : (
-          <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.sans }}>
+          <div style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
             No run has been executed in this browser session.
           </div>
         )}
@@ -405,11 +403,6 @@ export const AccountScreen = ({
   const accountLayoutFlags = responsiveFlags(accountLayoutSize.width);
   const accountIsPhone = accountLayoutFlags.isPhone;
   const accountIsNarrow = accountLayoutFlags.isNarrow;
-  const accountTreemapGridTemplate = accountIsPhone
-    ? "minmax(0, 1fr)"
-    : accountIsNarrow
-      ? "minmax(0, 1.35fr) minmax(240px, 0.85fr)"
-      : "minmax(0, 2fr) minmax(0, 1fr)";
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
@@ -525,16 +518,28 @@ export const AccountScreen = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: accountPageStreamEnabled,
   });
+  const accountRuntimeControl = useRuntimeControlSnapshot({
+    enabled: accountPageStreamEnabled && !shadowMode,
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: true,
+    lineUsageStreamEnabled: true,
+    lineUsagePollInterval: 2_000,
+  });
+  const accountWarmupPending = Boolean(
+    accountRuntimeControl.lineUsage?.warmup?.accountPendingLineCount > 0,
+  );
   const refreshPolicy = useMemo(
     () =>
       buildAccountRefreshPolicy({
         isVisible,
         accountPageStreamFresh: accountPageStreamFreshness.accountFresh,
+        accountWarmupPending,
         accountStreamFresh: brokerStreamFreshness.accountFresh,
         orderStreamFresh: brokerStreamFreshness.orderFresh,
         shadowMode,
       }),
     [
+      accountWarmupPending,
       accountPageStreamFreshness.accountFresh,
       brokerStreamFreshness.accountFresh,
       brokerStreamFreshness.orderFresh,
@@ -911,25 +916,10 @@ export const AccountScreen = ({
     accounts[0]?.currency ||
     "USD";
   const displaySummaryData = summaryQuery.data;
-  const headerAccounts = shadowMode
-    ? [
-        {
-          id: SHADOW_ACCOUNT_ID,
-          displayName: "Shadow",
-          currency,
-          accountType: "Shadow",
-          live: false,
-        },
-      ]
-    : accounts;
   const openAccountPositions = useMemo(
     () => getOpenPositionRows(positionsQuery.data?.positions || []),
     [positionsQuery.data],
   );
-  const allocationConcentration = useMemo(() => {
-    const model = buildAccountRiskDisplayModel(riskQuery.data, positionsQuery.data);
-    return model?.concentration || null;
-  }, [riskQuery.data, positionsQuery.data]);
   const accountTradingAnalysis = useMemo(
     () =>
       buildAccountTradingAnalysisModel({
@@ -1061,12 +1051,6 @@ export const AccountScreen = ({
     ],
   );
 
-  const handleAccountViewChange = (nextId) => {
-    setAccountViewId(nextId);
-    if (nextId !== "combined") {
-      onSelectTradingAccount?.(nextId);
-    }
-  };
   const handleCancelOrder = async (order) => {
     if (!gatewayTradingReady) {
       window.alert(gatewayTradingMessage);
@@ -1130,16 +1114,15 @@ export const AccountScreen = ({
     <div
       style={{
         display: "inline-flex",
-        gap: sp(1),
-        padding: 2,
-        border: "none",
-        borderRadius: dim(RADII.xs),
-        background: T.bg2,
+        gap: sp(2),
+        padding: sp(2),
+        borderRadius: dim(RADII.pill),
+        background: T.bg1,
+        marginLeft: "auto",
       }}
     >
       {ACCOUNT_SECTIONS.map((section) => {
         const active = accountSection === section.value;
-        const accent = section.value === "shadow" ? T.pink : T.accent;
         return (
           <button
             key={section.value}
@@ -1148,20 +1131,7 @@ export const AccountScreen = ({
             aria-pressed={active}
             className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
             onClick={() => setAccountSection(section.value)}
-            style={{
-              height: dim(19),
-              padding: sp("0 5px"),
-              borderRadius: dim(3),
-              border: `1px solid ${active ? accent : "transparent"}`,
-              background: active ? `${accent}22` : "transparent",
-              color: active ? accent : T.textSec,
-              fontSize: fs(7),
-              fontFamily: T.sans,
-              fontWeight: 400,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
+            style={denseButtonStyle(active)}
           >
             {section.label}
           </button>
@@ -1208,6 +1178,7 @@ export const AccountScreen = ({
           maskValues={maskAccountValues}
           shadowMode={shadowMode}
           isPhone={accountIsPhone}
+          sectionControl={headerSectionControl}
         />
 
         <div
@@ -1222,14 +1193,10 @@ export const AccountScreen = ({
           }}
         >
           <AccountHeaderStrip
-            accounts={headerAccounts}
-            accountId={accountRequestId}
-            onAccountIdChange={shadowMode ? () => undefined : handleAccountViewChange}
             summary={displaySummaryData}
-            brokerAuthenticated={shadowMode || brokerAuthenticated}
-            showCombined={!shadowMode}
             maskValues={maskAccountValues}
-            sectionControl={headerSectionControl}
+            brokerAuthenticated={shadowMode || brokerAuthenticated}
+            accountFreshness={accountPageStreamFreshness}
           />
         </div>
 
@@ -1248,28 +1215,19 @@ export const AccountScreen = ({
               isPhone={accountIsPhone}
             />
           </div>
-          <div className="ra-account-overview-cell ra-account-overview-allocation">
-            <AllocationPanel
-              query={allocationQuery}
-              currency={currency}
-              maskValues={maskAccountValues}
-              concentration={allocationConcentration}
-              compact
-            />
-          </div>
-          <div className="ra-account-overview-cell ra-account-overview-risk">
-            <RiskDashboardPanel
-              query={riskQuery}
+          <div className="ra-account-overview-cell ra-account-overview-exposure">
+            <PortfolioExposurePanel
+              allocationQuery={allocationQuery}
+              riskQuery={riskQuery}
               positionsResponse={positionsQuery.data}
               currency={currency}
               subtitle={
                 shadowMode
-                  ? `${shadowSourceLabel} exposure, concentration, and realized Shadow performance`
+                  ? `${shadowSourceLabel} holdings, risk, and concentration`
                   : undefined
               }
               rightRail={shadowMode ? shadowSourceLabel : undefined}
               maskValues={maskAccountValues}
-              compact
             />
           </div>
           <div className="ra-account-overview-cell ra-account-overview-equity">
@@ -1303,36 +1261,20 @@ export const AccountScreen = ({
         </div>
 
         <DeferredRender
-          minHeight={accountIsPhone ? 340 : 230}
-          testId="account-deferred-treemap-intraday"
+          minHeight={accountIsPhone ? 340 : 300}
+          testId="account-deferred-today"
         >
-          <div
-            className="ra-panel-enter"
-            style={{
-              display: "grid",
-              gridTemplateColumns: accountTreemapGridTemplate,
-              gap: sp(8),
-            }}
-          >
-            <PositionTreemapPanel
-              positions={positionsQuery.data?.positions || []}
-              currency={currency}
-              maskValues={maskAccountValues}
-              loading={positionsQuery.isLoading}
-              error={positionsQuery.error}
-              onRetry={positionsQuery.refetch}
-              emptyBody={
-                shadowMode
-                  ? "Treemap renders once Shadow ledger positions are opened or marked."
-                  : undefined
-              }
-            />
-            <IntradayPnlPanel
-              query={intradayPnlQuery}
-              currency={currency}
-              maskValues={maskAccountValues}
-            />
-          </div>
+          <TodaySnapshotPanel
+            positionsQuery={positionsQuery}
+            intradayQuery={intradayPnlQuery}
+            currency={currency}
+            maskValues={maskAccountValues}
+            emptyHeatmapBody={
+              shadowMode
+                ? "Treemap renders once Shadow ledger positions are opened or marked."
+                : undefined
+            }
+          />
         </DeferredRender>
 
         <DeferredRender
@@ -1384,6 +1326,7 @@ export const AccountScreen = ({
             analysis={accountTradingAnalysis}
             onTradeSelect={setSelectedAccountTradeId}
             lensFilteredTrades={tradesQuery.data?.trades || []}
+            isPhone={accountIsPhone}
           />
         </DeferredRender>
 
@@ -1398,16 +1341,16 @@ export const AccountScreen = ({
               flexWrap: "wrap",
               border: "none",
               borderRadius: dim(RADII.sm),
-              background: T.bg2,
+              background: T.bg1,
               padding: sp("5px 7px"),
               color: T.textSec,
               fontFamily: T.data,
-              fontSize: fs(8),
+              fontSize: textSize("body"),
             }}
           >
             <div style={{ display: "flex", gap: sp(4), alignItems: "center", flexWrap: "wrap" }}>
               <Pill tone="pink">Lens</Pill>
-              <span style={{ color: T.text, fontWeight: 400 }}>
+              <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {selectedPatternLens.label}
               </span>
               {selectedPatternLens.closeHour ? (
@@ -1423,13 +1366,13 @@ export const AccountScreen = ({
               style={{
                 border: "none",
                 borderRadius: dim(RADII.pill),
-                background: T.bg2,
+                background: T.bg1,
                 color: T.text,
                 height: dim(22),
                 padding: sp("0 12px"),
                 fontFamily: T.sans,
-                fontSize: fs(9),
-                fontWeight: 500,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
                 letterSpacing: "0.04em",
                 cursor: "pointer",
                 textTransform: "uppercase",
@@ -1438,6 +1381,15 @@ export const AccountScreen = ({
               Clear
             </button>
           </div>
+        ) : null}
+
+        {accountTradingAnalysis.selectedTradeDetail?.trade ? (
+          <SelectedTradeAnalysisPanel
+            analysis={accountTradingAnalysis}
+            currency={currency}
+            maskValues={maskAccountValues}
+            onJumpToChart={onJumpToTrade}
+          />
         ) : null}
 
         <DeferredRender
@@ -1466,12 +1418,6 @@ export const AccountScreen = ({
               }
               maskValues={maskAccountValues}
               isPhone={accountIsPhone}
-            />
-            <SelectedTradeAnalysisPanel
-              analysis={accountTradingAnalysis}
-              currency={currency}
-              maskValues={maskAccountValues}
-              onJumpToChart={onJumpToTrade}
             />
             <OrdersPanel
               query={ordersQuery}
@@ -1524,7 +1470,7 @@ export const AccountScreen = ({
                 <div
                   style={{
                     color: T.textSec,
-                    fontSize: fs(9),
+                    fontSize: textSize("caption"),
                     lineHeight: 1.35,
                   }}
                 >
@@ -1557,10 +1503,10 @@ export const AccountScreen = ({
                         padding: sp("4px 5px"),
                       }}
                     >
-                      <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.sans }}>
+                      <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
                         {label.toUpperCase()}
                       </div>
-                      <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: 400 }}>
+                      <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
                         {value}
                       </div>
                     </div>

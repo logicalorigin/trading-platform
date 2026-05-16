@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const BottomSheet = ({
   open,
@@ -76,9 +76,9 @@ export const BottomSheet = ({
           background: T.bg0,
           color: T.text,
           borderTop: "none",
-          borderTopLeftRadius: dim(16),
-          borderTopRightRadius: dim(16),
-          boxShadow: "0 -12px 36px rgba(25, 23, 26, 0.14)",
+          borderTopLeftRadius: dim(RADII.lg),
+          borderTopRightRadius: dim(RADII.lg),
+          boxShadow: ELEVATION.lg,
           fontFamily: T.sans,
         }}
       >
@@ -92,8 +92,8 @@ export const BottomSheet = ({
             padding: sp("10px 16px 12px"),
             borderBottom: "none",
             background: T.bg0,
-            borderTopLeftRadius: dim(16),
-            borderTopRightRadius: dim(16),
+            borderTopLeftRadius: dim(RADII.lg),
+            borderTopRightRadius: dim(RADII.lg),
           }}
         >
           <span
@@ -101,8 +101,9 @@ export const BottomSheet = ({
             style={{
               width: dim(38),
               height: dim(4),
-              borderRadius: dim(999),
-              background: T.bg3,
+              borderRadius: dim(RADII.pill),
+              background: T.textMuted,
+              opacity: 0.4,
             }}
           />
           <div
@@ -123,7 +124,7 @@ export const BottomSheet = ({
                 color: T.text,
                 fontFamily: T.sans,
                 fontSize: fs(15),
-                fontWeight: 600,
+                fontWeight: FONT_WEIGHTS.label,
                 letterSpacing: "-0.01em",
               }}
             >
@@ -140,9 +141,9 @@ export const BottomSheet = ({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                border: "none",
-                borderRadius: "50%",
-                background: T.bg2,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.pill),
+                background: T.bg1,
                 color: T.textSec,
                 cursor: "pointer",
                 flexShrink: 0,

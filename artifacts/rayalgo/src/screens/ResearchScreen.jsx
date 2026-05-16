@@ -2,6 +2,8 @@ import {
   Suspense,
 } from "react";
 import {
+  FONT_WEIGHTS,
+  RADII,
   T,
   dim,
   fs,
@@ -35,7 +37,7 @@ const ResearchLoadingFallback = () => (
       style={{
         width: dim(20),
         height: dim(20),
-        borderRadius: "50%",
+        borderRadius: dim(RADII.pill),
         border: `2px solid ${T.border}`,
         borderTopColor: T.accent,
         animation: "researchScreenSpin 900ms linear infinite",
@@ -44,7 +46,7 @@ const ResearchLoadingFallback = () => (
     <span
       style={{
         fontSize: fs(11),
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         color: T.textSec,
       }}
     >

@@ -3,6 +3,16 @@ export type SignalOptionsWorkerSnapshot = {
   tickRunning: boolean;
   deploymentCount: number;
   activeDeploymentCount: number;
+  maintenance: {
+    runCount: number;
+    totalClosedCount: number;
+    lastRunAt: string | null;
+    lastError: string | null;
+    lastClosedCount: number;
+    lastSkippedCount: number;
+    lastDueCount: number;
+    lastOrphanCount: number;
+  };
   deployments: Array<{
     deploymentId: string;
     lastCheckedAtMs: number;
@@ -29,6 +39,16 @@ const EMPTY_SNAPSHOT: SignalOptionsWorkerSnapshot = {
   tickRunning: false,
   deploymentCount: 0,
   activeDeploymentCount: 0,
+  maintenance: {
+    runCount: 0,
+    totalClosedCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    lastClosedCount: 0,
+    lastSkippedCount: 0,
+    lastDueCount: 0,
+    lastOrphanCount: 0,
+  },
   deployments: [],
 };
 

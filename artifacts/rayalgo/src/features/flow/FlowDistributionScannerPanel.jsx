@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Card, DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { useViewportBelow } from "../../lib/responsive";
-import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { FlowScannerStatusPanel } from "./FlowScannerStatusPanel.jsx";
 
 const RAIL_BREAKPOINT_PX = 1100;
@@ -29,7 +29,7 @@ const SegmentedToggle = ({
       padding: sp(2),
       border: `1px solid ${T.border}`,
       borderRadius: dim(4),
-      background: T.bg2,
+      background: T.bg1,
     }}
   >
     {options.map(([optionValue, label]) => {
@@ -42,13 +42,13 @@ const SegmentedToggle = ({
           onClick={() => onChange?.(optionValue)}
           style={{
             border: "none",
-            borderRadius: dim(3),
-            background: active ? T.bg3 : "transparent",
-            color: active ? T.text : T.textMuted,
+            borderRadius: dim(RADII.sm),
+            background: active ? `${T.accent}14` : "transparent",
+            color: active ? T.accent : T.textMuted,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: fs(8),
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             padding: "3px 7px",
           }}
         >
@@ -74,7 +74,7 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
           color: sourceTone,
           fontFamily: T.sans,
           fontSize: fs(7),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -90,7 +90,7 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
           color: warningTone || T.amber,
           fontFamily: T.sans,
           fontSize: fs(7),
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",

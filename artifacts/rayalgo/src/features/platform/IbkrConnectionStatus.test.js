@@ -1454,6 +1454,86 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
   );
 });
 
+test("buildHeaderIbkrPopoverModel distinguishes bridge active lines from API demand", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    lineUsageSnapshot: {
+      admission: {
+        activeLineCount: 143,
+        accountMonitorLineCount: 3,
+        flowScannerLineCount: 10,
+        budget: {
+          maxLines: 190,
+          flowScannerLineCap: 100,
+        },
+        poolUsage: {
+          "account-monitor": {
+            activeLineCount: 3,
+            maxLines: 10,
+            remainingLineCount: 7,
+            strict: true,
+          },
+          "flow-scanner": {
+            activeLineCount: 10,
+            maxLines: 100,
+            effectiveMaxLines: 40,
+            remainingLineCount: 30,
+            strict: true,
+          },
+        },
+        counters: {},
+      },
+      bridge: {
+        activeLineCount: 15,
+        lineBudget: 190,
+        remainingLineCount: 175,
+        diagnostics: {
+          pressure: "stalled",
+          subscriptions: {
+            activeEquitySubscriptions: 14,
+            activeOptionSubscriptions: 1,
+          },
+        },
+      },
+      drift: {
+        admissionVsBridgeLineDelta: 128,
+        reconciliation: {
+          status: "api_active_bridge_missing",
+          apiLineCount: 143,
+          bridgeLineCount: 15,
+        },
+      },
+      warmup: {
+        state: "pending",
+        targetLineCount: 90,
+        activeBridgeLineCount: 63,
+        pendingLineCount: 27,
+        accountTargetLineCount: 4,
+        accountPendingLineCount: 1,
+        visibleTargetLineCount: 86,
+        visiblePendingLineCount: 26,
+      },
+    },
+  });
+
+  assert.equal(model.lineUsage.summary, "15 / 190");
+  assert.equal(model.lineUsage.demandSummary, "143 / 190");
+  assert.equal(model.lineUsage.bridge.summary, "15 / 190");
+  assert.equal(model.lineUsage.drift.label, "pending bridge");
+  assert.equal(model.lineUsage.warmup.pendingLineCount, 27);
+  assert.equal(model.lineUsage.warmup.accountPendingLineCount, 1);
+});
+
 test("buildHeaderIbkrPopoverModel fills account monitor line usage for legacy diagnostics", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

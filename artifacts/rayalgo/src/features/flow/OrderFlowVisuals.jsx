@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const totalBuy = flow.buyXL + flow.buyL + flow.buyM + flow.buyS;
@@ -92,10 +92,10 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         alignItems: "center",
         padding: sp("2px 0"),
         fontFamily: T.sans,
-        fontSize: fs(9),
+        fontSize: textSize("caption"),
       }}
     >
-      <span style={{ color: T.green, fontWeight: 400, textAlign: "right" }}>
+      <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
         {Number.isFinite(buy) ? `$${buy.toFixed(1)}M` : MISSING_VALUE}
       </span>
       <div
@@ -111,7 +111,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           }}
         />
       </div>
-      <span style={{ textAlign: "center", color: T.textSec, fontWeight: 400 }}>
+      <span style={{ textAlign: "center", color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
         {label}
       </span>
       <div
@@ -131,7 +131,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           }}
         />
       </div>
-      <span style={{ color: T.red, fontWeight: 400 }}>
+      <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
         {Number.isFinite(sell) ? `$${sell.toFixed(1)}M` : MISSING_VALUE}
       </span>
     </div>

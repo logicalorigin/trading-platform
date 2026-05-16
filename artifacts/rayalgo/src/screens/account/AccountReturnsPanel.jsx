@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ThemeContext } from "../../features/platform/platformContexts";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   ToggleGroup,
   formatAccountMoney,
@@ -20,20 +20,19 @@ import {
   findLatestCalendarActivityDate,
   formatCalendarPnlValue,
 } from "./accountPnlCalendarModel.js";
-import { buildTradeOutcomeHistogramModel } from "./tradeOutcomeHistogramModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
 const formatSignedPercent = (value, digits = 2, maskValues = false) => {
   if (maskValues) return "****";
-  if (value == null || Number.isNaN(Number(value))) return "----";
+  if (value == null || Number.isNaN(Number(value))) return "—";
   const numeric = Number(value);
   return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(digits)}%`;
 };
 
 const formatRatio = (value, digits = 2, maskValues = false) => {
   if (maskValues) return "****";
-  if (value == null || Number.isNaN(Number(value))) return "----";
+  if (value == null || Number.isNaN(Number(value))) return "—";
   return `${Number(value).toFixed(digits)}x`;
 };
 
@@ -42,9 +41,9 @@ const metricTone = (value, fallback = T.textDim) =>
 
 const labelCapsStyle = {
   color: T.textMuted,
-  fontSize: fs(7),
+  fontSize: textSize("caption"),
   fontFamily: T.sans,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   lineHeight: 1.25,
@@ -76,9 +75,9 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
       style={{
         minWidth: 0,
         color: tone,
-        fontSize: fs(8),
+        fontSize: textSize("body"),
         fontFamily: T.sans,
-        fontWeight: 400,
+        fontWeight: FONT_WEIGHTS.regular,
         lineHeight: 1.25,
         textAlign: "right",
         fontVariantNumeric: "tabular-nums",
@@ -91,124 +90,6 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
     </span>
   </div></AppTooltip>
 );
-
-const bucketColor = (side) => (side === "loss" ? T.red : side === "win" ? T.green : T.textMuted);
-
-const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
-  const model = useMemo(
-    () => buildTradeOutcomeHistogramModel({ trades, metric: "pnl" }),
-    [trades],
-  );
-  const buckets = model.buckets || [];
-  if (!buckets.length || !model.summary?.totalTrades) {
-    return null;
-  }
-  const maxCount = buckets.reduce((m, b) => (b.count > m ? b.count : m), 0) || 1;
-  const summary = model.summary;
-  return (
-    <AppTooltip content="$ P&L bucket distribution across all closed trades in the recent window.">
-      <div
-        style={{
-          display: "grid",
-          gap: sp(3),
-          paddingTop: sp(4),
-          borderTop: `1px solid ${T.border}`,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: sp(6),
-          }}
-        >
-          <span style={mutedLabelStyle}>Outcome Distribution</span>
-          <span style={{ fontSize: fs(7), fontFamily: T.sans, color: T.textDim }}>
-            {formatNumber(summary.totalTrades, 0)} trades
-          </span>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
-            gap: sp(1),
-            height: dim(28),
-            alignItems: "end",
-          }}
-        >
-          {buckets.map((bucket) => {
-            const heightPct = (bucket.count / maxCount) * 100;
-            return (
-              <div
-                key={bucket.id}
-                title={`${bucket.label} · ${formatNumber(bucket.count, 0)} trades · total ${formatAccountSignedMoney(
-                  bucket.total,
-                  currency,
-                  true,
-                  maskValues,
-                )}`}
-                style={{
-                  height: `${Math.max(2, heightPct)}%`,
-                  background: bucketColor(bucket.side),
-                  opacity: bucket.count ? 0.85 : 0.2,
-                  borderRadius: 1,
-                }}
-              />
-            );
-          })}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: fs(7),
-            fontFamily: T.sans,
-            color: T.textMuted,
-            gap: sp(3),
-            flexWrap: "wrap",
-          }}
-        >
-          <span>
-            <span style={{ color: T.green, fontWeight: 400 }}>{summary.winners}W</span>
-            <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
-            <span style={{ color: T.red, fontWeight: 400 }}>{summary.losers}L</span>
-          </span>
-          <span>
-            μW{" "}
-            <span style={{ color: T.green, fontWeight: 400 }}>
-              {formatAccountSignedMoney(summary.averageWin, currency, true, maskValues)}
-            </span>
-          </span>
-          <span>
-            μL{" "}
-            <span style={{ color: T.red, fontWeight: 400 }}>
-              {formatAccountSignedMoney(summary.averageLoss, currency, true, maskValues)}
-            </span>
-          </span>
-          <span>
-            PF{" "}
-            <span
-              style={{
-                color:
-                  summary.profitFactor == null
-                    ? T.textDim
-                    : summary.profitFactor >= 1
-                      ? T.green
-                      : T.red,
-                fontWeight: 400,
-              }}
-            >
-              {summary.profitFactor == null
-                ? "----"
-                : `${summary.profitFactor.toFixed(2)}x`}
-            </span>
-          </span>
-        </div>
-      </div>
-    </AppTooltip>
-  );
-};
 
 const CALENDAR_VIEW_OPTIONS = [
   { value: "month", label: "Month" },
@@ -246,47 +127,20 @@ const useLocalToday = () => {
   return today;
 };
 
-const CALENDAR_PROFIT_BG = "#d7f7df";
-const CALENDAR_LOSS_BG = "#ffd6d6";
-const CALENDAR_ACTIVE_TEXT = "#0b0f14";
-const CALENDAR_PROFIT_TEXT = "#0F6E51";
-const CALENDAR_LOSS_TEXT = "#B5403B";
-
-const calendarThemeStyle = (theme) => {
-  const isLight = theme === "light" || T.bg1 === "#ffffff";
-  if (isLight) {
-    return {
-      gridLine: "#eef2f6",
-      neutralBg: "#f6f8fa",
-      mutedNeutralBg: "#fbfcfd",
-      dayText: "#667085",
-      mutedDayText: "#c2cad4",
-      zeroValueText: "transparent",
-      positive: CALENDAR_PROFIT_BG,
-      negative: CALENDAR_LOSS_BG,
-      positiveText: CALENDAR_PROFIT_TEXT,
-      negativeText: CALENDAR_LOSS_TEXT,
-      activeText: CALENDAR_ACTIVE_TEXT,
-      activeDayText: CALENDAR_ACTIVE_TEXT,
-      shadow: "none",
-      border: "#eef2f6",
-      navBg: "#ffffff",
-      navText: "#605C57",
-    };
-  }
+const calendarThemeStyle = () => {
   return {
     gridLine: T.border,
-    neutralBg: T.bg3,
-    mutedNeutralBg: T.bg2,
+    neutralBg: T.bg1,
+    mutedNeutralBg: `${T.border}66`,
     dayText: T.textSec,
     mutedDayText: T.textMuted,
     zeroValueText: "transparent",
-    positive: CALENDAR_PROFIT_BG,
-    negative: CALENDAR_LOSS_BG,
-    positiveText: CALENDAR_PROFIT_TEXT,
-    negativeText: CALENDAR_LOSS_TEXT,
-    activeText: CALENDAR_ACTIVE_TEXT,
-    activeDayText: CALENDAR_ACTIVE_TEXT,
+    positive: T.greenBg,
+    negative: T.redBg,
+    positiveText: T.green,
+    negativeText: T.red,
+    activeText: T.text,
+    activeDayText: T.text,
     shadow: "none",
     border: T.border,
     navBg: T.bg2,
@@ -343,7 +197,7 @@ const calendarCellTone = (value, muted = false, style = calendarThemeStyle()) =>
 };
 
 const calendarMoneyOrDash = (value, currency, maskValues) =>
-  value == null ? "----" : formatAccountSignedMoney(value, currency, true, maskValues);
+  value == null ? "—" : formatAccountSignedMoney(value, currency, true, maskValues);
 
 const dayTooltip = (day, currency, maskValues) => {
   const pnlFmt = formatAccountSignedMoney(day.pnl || 0, currency, true, maskValues);
@@ -391,7 +245,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
             color: T.textMuted,
             fontSize: fs(isPhone ? 6 : 7),
             fontFamily: T.sans,
-            fontWeight: 400,
+            fontWeight: FONT_WEIGHTS.regular,
             lineHeight: 1,
             textAlign: "center",
             padding: sp("1px 0 3px"),
@@ -432,9 +286,10 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
                 gap: sp(isPhone ? 1 : 2),
                 padding: sp(isPhone ? "3px 2px 2px" : "4px 4px 3px"),
                 border: `1px solid ${tone.borderColor}`,
-                borderRadius: 0,
+                borderRadius: dim(RADII.xs),
                 background: tone.background,
                 boxShadow: tone.boxShadow,
+                opacity: day.inMonth ? 1 : 0.5,
                 overflow: "hidden",
               }}
             >
@@ -443,7 +298,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
                   color: tone.dayColor,
                   fontSize: fs(isPhone ? 6 : 7),
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.medium,
                   lineHeight: 1,
                   textAlign: "left",
                   whiteSpace: "nowrap",
@@ -458,7 +313,7 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
                   color: tone.color,
                   fontSize: fs(isPhone ? 7 : 8),
                   fontFamily: T.sans,
-                  fontWeight: 400,
+                  fontWeight: FONT_WEIGHTS.regular,
                   lineHeight: 1,
                   textAlign: "center",
                   alignSelf: "end",
@@ -509,7 +364,7 @@ const YearCalendarGrid = ({
       const value =
         summary.trades || summary.pnl !== 0
           ? formatAccountSignedMoney(summary.pnl, currency, true, maskValues)
-          : "----";
+          : "—";
       const realizedValue = formatAccountSignedMoney(
         summary.realized,
         currency,
@@ -542,7 +397,7 @@ const YearCalendarGrid = ({
               border: `1px solid ${
                 month.isCurrentMonth ? calendarStyle.border : tone.borderColor
               }`,
-              borderRadius: 0,
+              borderRadius: RADII.none,
               background: tone.background,
               color: T.textSec,
               boxShadow: tone.boxShadow,
@@ -575,7 +430,7 @@ const YearCalendarGrid = ({
                 color: tone.color,
                 fontSize: fs(isPhone ? 7 : 8),
                 fontFamily: T.sans,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 lineHeight: 1,
                 fontVariantNumeric: "tabular-nums",
                 whiteSpace: "nowrap",
@@ -589,7 +444,7 @@ const YearCalendarGrid = ({
               style={{
                 minWidth: 0,
                 color: T.textMuted,
-                fontSize: fs(7),
+                fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
@@ -610,7 +465,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle }) => {
   const total =
     summary.trades || summary.pnl !== 0
       ? formatAccountSignedMoney(summary.pnl, currency, true, maskValues)
-      : "----";
+      : "—";
   const totalTone =
     summary.trades || summary.pnl !== 0
       ? summary.pnl >= 0
@@ -624,7 +479,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle }) => {
         justifyContent: "space-between",
         alignItems: "center",
         paddingTop: sp(1),
-        fontSize: fs(7),
+        fontSize: textSize("caption"),
         fontFamily: T.sans,
         color: calendarStyle.dayText,
         gap: sp(4),
@@ -633,31 +488,31 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle }) => {
     >
       <span>
         P&L{" "}
-        <span style={{ color: totalTone, fontWeight: 400 }}>
+        <span style={{ color: totalTone, fontWeight: FONT_WEIGHTS.regular }}>
           {total}
         </span>
       </span>
       <span>
-        <span style={{ color: calendarStyle.positiveText, fontWeight: 400 }}>{summary.wins}W</span>
+        <span style={{ color: calendarStyle.positiveText, fontWeight: FONT_WEIGHTS.regular }}>{summary.wins}W</span>
         <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
-        <span style={{ color: calendarStyle.negativeText, fontWeight: 400 }}>
+        <span style={{ color: calendarStyle.negativeText, fontWeight: FONT_WEIGHTS.regular }}>
           {summary.losses}L
         </span>
       </span>
       <span>
         BEST{" "}
-        <span style={{ color: calendarStyle.positiveText, fontWeight: 400 }}>
+        <span style={{ color: calendarStyle.positiveText, fontWeight: FONT_WEIGHTS.regular }}>
           {summary.best
             ? formatAccountSignedMoney(summary.best.pnl, currency, true, maskValues)
-            : "----"}
+            : "—"}
         </span>
       </span>
       <span>
         WORST{" "}
-        <span style={{ color: calendarStyle.negativeText, fontWeight: 400 }}>
+        <span style={{ color: calendarStyle.negativeText, fontWeight: FONT_WEIGHTS.regular }}>
           {summary.worst
             ? formatAccountSignedMoney(summary.worst.pnl, currency, true, maskValues)
-            : "----"}
+            : "—"}
         </span>
       </span>
     </div>
@@ -672,7 +527,7 @@ const DailyPnlCalendar = ({
   isPhone = false,
 }) => {
   const { theme } = useContext(ThemeContext);
-  const calendarStyle = useMemo(() => calendarThemeStyle(theme), [theme]);
+  const calendarStyle = useMemo(() => calendarThemeStyle(), [theme]);
   const today = useLocalToday();
   const [view, setView] = useState("month");
   const [visibleMonth, setVisibleMonth] = useState(
@@ -749,7 +604,7 @@ const DailyPnlCalendar = ({
   };
 
   return (
-    <div data-testid="account-pnl-calendar" style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+    <div data-testid="account-pnl-calendar" style={{ display: "grid", gap: sp(2), minWidth: 0 }}>
       <div
         style={{
           display: "flex",
@@ -767,7 +622,7 @@ const DailyPnlCalendar = ({
               color: T.text,
               fontSize: fs(10),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
@@ -988,8 +843,8 @@ export const AccountReturnsPanel = ({
         ...panelStyle,
         minHeight: dim(54),
         display: "grid",
-        gap: sp(compact ? 4 : 5),
-        padding: compact ? sp("6px 7px") : sp("8px 9px"),
+        gap: sp(compact ? 2 : 3),
+        padding: compact ? sp("4px 7px") : sp("5px 9px"),
         overflow: "hidden",
         outline: "none",
       }}
@@ -1012,7 +867,7 @@ export const AccountReturnsPanel = ({
               color: metricTone(equity.returnPercent),
               fontSize: fs(compact ? 15 : 17),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
@@ -1032,7 +887,7 @@ export const AccountReturnsPanel = ({
               color: metricTone(transferAdjustedPnl),
               fontSize: fs(compact ? 10 : 11),
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               lineHeight: 1.2,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
@@ -1049,12 +904,6 @@ export const AccountReturnsPanel = ({
         currency={currency}
         maskValues={maskValues}
         isPhone={isPhone}
-      />
-
-      <TradeOutcomeBuckets
-        trades={tradesData?.trades || []}
-        currency={currency}
-        maskValues={maskValues}
       />
 
       <div

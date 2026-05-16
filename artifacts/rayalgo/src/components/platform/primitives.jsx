@@ -1,4 +1,4 @@
-import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
 export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
@@ -13,7 +13,7 @@ export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
         padding: sp("4px 10px"),
         fontSize: textSize("bodyStrong"),
         fontFamily: T.sans,
-        fontWeight: 500,
+        fontWeight: FONT_WEIGHTS.medium,
         border: "none",
         borderRadius: dim(RADII.pill),
         cursor: onClick ? "pointer" : "default",
@@ -31,12 +31,13 @@ export const Badge = ({ children, color = T.textDim }) => (
   <span
     style={{
       display: "inline-block",
-      padding: sp("2px 8px"),
+      padding: sp("3px 9px"),
       borderRadius: dim(RADII.pill),
       fontSize: textSize("caption"),
-      fontWeight: 500,
+      fontWeight: FONT_WEIGHTS.medium,
       fontFamily: T.sans,
-      letterSpacing: "0.02em",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
       background: `${color}14`,
       color,
       border: "none",
@@ -44,6 +45,127 @@ export const Badge = ({ children, color = T.textDim }) => (
   >
     {children}
   </span>
+);
+
+/**
+ * StatusPill — sentence-case sibling of Badge for live/runtime status indicators.
+ * Use for status text like "Live", "Stale", "Delayed", "Connected" where eyebrow-caps
+ * feels wrong. Pairs a small colored dot with the status text.
+ */
+export const StatusPill = ({ children, color = T.textMuted, dot = true }) => (
+  <span
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(6),
+      padding: sp("4px 10px"),
+      borderRadius: dim(RADII.pill),
+      fontSize: textSize("body"),
+      fontWeight: FONT_WEIGHTS.medium,
+      fontFamily: T.sans,
+      letterSpacing: "-0.005em",
+      background: `${color}12`,
+      color,
+      border: "none",
+      whiteSpace: "nowrap",
+    }}
+  >
+    {dot ? (
+      <span
+        aria-hidden="true"
+        style={{
+          width: dim(6),
+          height: dim(6),
+          borderRadius: dim(RADII.pill),
+          background: color,
+          flexShrink: 0,
+        }}
+      />
+    ) : null}
+    {children}
+  </span>
+);
+
+export const MetricChip = ({
+  label,
+  value,
+  tone = T.textSec,
+  title,
+  dot = false,
+  style = {},
+}) => (
+  <AppMetricTooltip content={title}>
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "baseline",
+        gap: sp(4),
+        minWidth: 0,
+        padding: sp("3px 5px"),
+        border: `1px solid ${tone}36`,
+        background: `${tone}10`,
+        color: tone,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        ...style,
+      }}
+    >
+      {dot ? (
+        <span
+          aria-hidden="true"
+          style={{
+            width: dim(5),
+            height: dim(5),
+            borderRadius: dim(RADII.pill),
+            background: tone,
+            flexShrink: 0,
+          }}
+        />
+      ) : null}
+      {label ? (
+        <span
+          style={{
+            color: T.textMuted,
+            fontSize: textSize("caption"),
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            flexShrink: 0,
+          }}
+        >
+          {label}
+        </span>
+      ) : null}
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          color: tone,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </span>
+    </span>
+  </AppMetricTooltip>
+);
+
+export const SeverityRail = ({ tone = T.textDim, style = {} }) => (
+  <span
+    aria-hidden="true"
+    style={{
+      alignSelf: "stretch",
+      width: dim(3),
+      minHeight: dim(16),
+      background: tone,
+      flexShrink: 0,
+      ...style,
+    }}
+  />
 );
 
 export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
@@ -54,7 +176,7 @@ export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
     style={{
       width: dim(size),
       height: dim(size),
-      borderRadius: "50%",
+      borderRadius: dim(RADII.pill),
       border: `2px solid ${T.border}`,
       borderTopColor: color,
       animation: "premiumFlowSpin 820ms linear infinite",
@@ -62,6 +184,17 @@ export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
     }}
   />
 );
+
+const AppMetricTooltip = ({ content, children }) => {
+  if (!content) {
+    return children;
+  }
+  return (
+    <span title={content} style={{ display: "inline-flex", minWidth: 0 }}>
+      {children}
+    </span>
+  );
+};
 
 export const DataUnavailableState = ({
   title = "No live data",
@@ -80,22 +213,22 @@ export const DataUnavailableState = ({
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      padding: sp("8px 10px"),
+      padding: sp("16px 18px"),
       textAlign: "center",
-      background: T.bg0,
+      background: T.bg1,
       border: `1px dashed ${T.border}`,
-      borderRadius: dim(4),
-      color: T.textDim,
+      borderRadius: dim(RADII.md),
+      color: T.textMuted,
       fontFamily: T.sans,
     }}
   >
-    <div style={{ maxWidth: dim(260) }}>
+    <div style={{ maxWidth: dim(320), display: "flex", flexDirection: "column", gap: sp(6) }}>
       {loading ? (
         <div
           style={{
             display: "flex",
             justifyContent: "center",
-            marginBottom: sp(8),
+            marginBottom: sp(4),
           }}
         >
           <LoadingSpinner color={tone || T.accent} />
@@ -103,20 +236,20 @@ export const DataUnavailableState = ({
       ) : null}
       <div
         style={{
-          fontSize: textSize("body"),
-          fontWeight: 400,
-          color: tone || T.textSec,
-          letterSpacing: "0.04em",
+          fontSize: textSize("paragraphMuted"),
+          fontWeight: FONT_WEIGHTS.medium,
+          color: tone || T.text,
+          letterSpacing: "-0.005em",
         }}
       >
         {title}
       </div>
       <div
         style={{
-          marginTop: sp(4),
-          fontSize: textSize("caption"),
-          lineHeight: 1.45,
-          fontFamily: T.data,
+          fontSize: textSize("body"),
+          lineHeight: 1.5,
+          color: T.textMuted,
+          fontFamily: T.sans,
         }}
       >
         {detail}
@@ -136,10 +269,10 @@ export const Card = ({
   <div
     {...props}
     style={{
-      background: dataZone ? T.bg2 : T.bg1,
-      border: dataZone ? `1px solid ${T.border}` : "none",
+      background: T.bg1,
+      border: `1px solid ${dataZone ? T.borderLight : T.border}`,
       borderRadius: dim(dataZone ? RADII.sm : RADII.md),
-      padding: noPad ? 0 : sp(dataZone ? "10px 12px" : "14px 16px"),
+      padding: noPad ? 0 : sp(dataZone ? "12px 14px" : "16px 18px"),
       overflow: "hidden",
       boxShadow: elevated ? ELEVATION.sm : ELEVATION.none,
       transition:
@@ -163,7 +296,7 @@ export const CardTitle = ({ children, right }) => (
     <span
       style={{
         fontSize: textSize("displaySmall"),
-        fontWeight: 500,
+        fontWeight: FONT_WEIGHTS.medium,
         fontFamily: T.sans,
         color: T.text,
         letterSpacing: "-0.01em",

@@ -53,8 +53,7 @@ import {
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
-import { MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
-import { CockpitHeader } from "../components/ui/CockpitHeader.jsx";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
@@ -240,10 +239,10 @@ function smallButton({ active = false, danger = false } = {}) {
 
 function inputStyle() {
   return {
-    border: "none",
-    background: T.bg2,
+    border: `1px solid ${T.border}`,
+    background: T.bg1,
     color: T.text,
-    borderRadius: dim(RADII.md),
+    borderRadius: dim(RADII.sm),
     padding: sp("8px 10px"),
     fontFamily: T.sans,
     fontSize: fs(11),
@@ -260,8 +259,8 @@ function labelStyle() {
     gap: sp(4),
     color: T.textDim,
     fontFamily: T.sans,
-    fontSize: fs(9),
-    fontWeight: 400,
+    fontSize: textSize("caption"),
+    fontWeight: FONT_WEIGHTS.regular,
     minWidth: 0,
   };
 }
@@ -277,7 +276,7 @@ function Panel({ title, action, children }) {
         padding: sp("14px 16px"),
         minWidth: 0,
         alignSelf: "start",
-        boxShadow: "0 1px 2px rgba(17, 17, 17, 0.04)",
+        boxShadow: ELEVATION.sm,
       }}
     >
       <div
@@ -289,7 +288,7 @@ function Panel({ title, action, children }) {
           marginBottom: sp(10),
         }}
       >
-        <div style={{ fontSize: fs(14), fontWeight: 600, letterSpacing: "-0.01em" }}>{title}</div>
+        <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.label, letterSpacing: "-0.01em" }}>{title}</div>
         {action}
       </div>
       {children}
@@ -315,7 +314,7 @@ function StateRow({ label, value, tone = T.textSec }) {
       <span
         style={{
           color: tone,
-          fontWeight: 400,
+          fontWeight: FONT_WEIGHTS.regular,
           textAlign: "right",
           minWidth: 0,
           overflowWrap: "anywhere",
@@ -395,7 +394,7 @@ function JsonBlock({ value }) {
         maxHeight: dim(300),
         overflow: "auto",
         fontFamily: T.sans,
-        fontSize: fs(9),
+        fontSize: textSize("caption"),
         color: T.textSec,
         whiteSpace: "pre-wrap",
         lineHeight: 1.45,
@@ -421,12 +420,13 @@ function SourceBadge({ setting }) {
       style={{
         border: `1px solid ${color}66`,
         color,
-        background: T.bg2,
-        borderRadius: dim(RADII.xs),
-        padding: sp("2px 5px"),
+        background: `${color}10`,
+        borderRadius: dim(RADII.pill),
+        padding: sp("2px 8px"),
         fontFamily: T.sans,
-        fontSize: fs(8),
-        fontWeight: 400,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.06em",
         textTransform: "uppercase",
       }}
     >
@@ -442,22 +442,22 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
   return (
     <div
       style={{
-        border: "none",
+        border: `1px solid ${T.border}`,
         borderRadius: dim(RADII.md),
-        background: T.bg2,
-        padding: sp("8px 10px"),
+        background: T.bg1,
+        padding: sp("10px 12px"),
         display: "grid",
-        gap: sp(5),
+        gap: sp(6),
         alignSelf: "start",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(8) }}>
-        <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11) }}>
+        <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11) }}>
           {setting.label}
         </div>
         <SourceBadge setting={setting} />
       </div>
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), lineHeight: 1.45 }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), lineHeight: 1.45 }}>
         {setting.description}
       </div>
       {editable ? (
@@ -478,12 +478,12 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
         </div>
       )}
       {setting.pendingValue !== undefined && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption") }}>
           Pending restart: {String(setting.pendingValue)}
         </div>
       )}
       {setting.requiresRestart && (
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), textTransform: "uppercase" }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), textTransform: "uppercase" }}>
           restart required
         </div>
       )}
@@ -1077,8 +1077,10 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const admission = safeRecord(snapshot?.admission);
   const budget = safeRecord(admission.budget);
   const bridge = safeRecord(snapshot?.bridge);
+  const bridgeDiagnostics = safeRecord(bridge.diagnostics);
   const governor = safeRecord(snapshot?.governor || bridge.governor);
   const drift = safeRecord(snapshot?.drift);
+  const driftReconciliation = safeRecord(drift.reconciliation);
   const streams = safeRecord(snapshot?.streams);
   const quoteStreams = safeRecord(streams.quoteStreams);
   const optionQuoteStreams = safeRecord(streams.optionQuoteStreams);
@@ -1086,6 +1088,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const accountMonitor = lineUsage.accountMonitor || {};
   const flowScanner = lineUsage.flowScanner || {};
   const automation = lineUsage.pools.automation || {};
+  const pressure = lineUsage.pressure || {};
+  const warmup = lineUsage.warmup || {};
   const governorRows = Object.entries(governor).filter(
     ([, lane]) => lane && typeof lane === "object",
   );
@@ -1100,7 +1104,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       }
     >
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
@@ -1108,19 +1112,76 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         <div>
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
-          <StateRow label="API active lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow label="API demand lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow
+            label="Line pressure"
+            value={String(pressure.state || "unknown").toUpperCase()}
+            tone={
+              pressure.state === "protected"
+                ? T.red
+                : pressure.state === "constrained"
+                  ? T.amber
+                  : T.green
+            }
+          />
+          <StateRow label="Budget source" value={String(pressure.budgetSource || MISSING_VALUE)} />
           <StateRow label="Line reserve" value={formatCount(budget.reserveLines)} />
           <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? T.amber : T.green} />
           <StateRow label="Bridge live cap" value={formatCount(bridge.lineBudget)} />
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
+          <StateRow
+            label="Bridge pressure"
+            value={String(bridgeDiagnostics.pressure || MISSING_VALUE)}
+            tone={
+              bridgeDiagnostics.pressure === "stalled"
+                ? T.red
+                : bridgeDiagnostics.pressure === "degraded" ||
+                    bridgeDiagnostics.pressure === "backoff"
+                  ? T.amber
+                  : T.green
+            }
+          />
         </div>
         <div>
-          <StateRow label="Flow scanner" value={`${formatCount(flowScanner.used)} / ${formatCount(flowScanner.cap)}`} />
+          <StateRow label="Flow scanner demand" value={`${formatCount(flowScanner.used)} / ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)}`} />
+          <StateRow label="Scanner effective cap" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow label="Account monitor" value={`${formatCount(accountMonitor.used)} / ${formatCount(accountMonitor.cap)}`} />
           <StateRow label="Automation" value={`${formatCount(automation.used)} / ${formatCount(automation.cap)}`} />
           <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />
+          <StateRow
+            label="Bridge warm-up"
+            value={warmup.available ? String(warmup.label || "unknown") : MISSING_VALUE}
+            tone={
+              warmup.state === "covered"
+                ? T.green
+                : warmup.state === "pending"
+                  ? T.amber
+                  : T.textDim
+            }
+          />
+          <StateRow
+            label="Warm-up pending"
+            value={`${formatCount(warmup.pendingLineCount)} / ${formatCount(warmup.targetLineCount)}`}
+            tone={Number(warmup.pendingLineCount) > 0 ? T.amber : T.green}
+          />
+          <StateRow
+            label="Account pending"
+            value={`${formatCount(warmup.accountPendingLineCount)} / ${formatCount(warmup.accountTargetLineCount)}`}
+            tone={Number(warmup.accountPendingLineCount) > 0 ? T.amber : T.green}
+          />
+          <StateRow
+            label="Drift status"
+            value={String(driftReconciliation.status || MISSING_VALUE).replace(/_/g, " ")}
+            tone={
+              driftReconciliation.status === "matched"
+                ? T.green
+                : driftReconciliation.status
+                  ? T.amber
+                  : T.textDim
+            }
+          />
           <StateRow
             label="Account stream"
             value={brokerStreamFreshness.account.fresh ? "fresh" : "pending"}
@@ -1144,12 +1205,12 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {lineUsage.rows.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {lineUsage.rows.map((pool) => (
-            <div key={pool.id} style={{ border: "none", borderRadius: dim(RADII.md), padding: sp(10), background: T.bg2 }}>
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{pool.label}</div>
-              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: 400, marginTop: sp(4) }}>
-                {formatCount(pool.used)} / {formatCount(pool.cap)}
+            <div key={pool.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), padding: sp(12), background: T.bg1 }}>
+              <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{pool.label}</div>
+              <div style={{ color: Number(pool.used) > Number(pool.effectiveCap ?? pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
+                {formatCount(pool.used)} / {formatCount(pool.effectiveCap ?? pool.cap)}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(3) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
                 {pool.strict ? "hard cap" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
@@ -1160,12 +1221,12 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {governorRows.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
           {governorRows.map(([id, lane]) => (
-            <div key={id} style={{ border: "none", borderRadius: dim(RADII.md), padding: sp(10), background: T.bg2 }}>
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{id}</div>
-              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400, marginTop: sp(4) }}>
+            <div key={id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), padding: sp(12), background: T.bg1 }}>
+              <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{id}</div>
+              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(3) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
                 {lane.circuitOpen ? `backoff ${formatCount(lane.backoffRemainingMs)}ms` : lane.lastFailure || "ready"}
               </div>
             </div>
@@ -1222,7 +1283,7 @@ function StoragePrunePanel() {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(160)}px, ${dim(220)}px) 1fr`, gap: sp(10), alignItems: "end" }}>
-        <label style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
+        <label style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
           Older Than Days
           <input
             type="number"
@@ -1241,7 +1302,7 @@ function StoragePrunePanel() {
           Dry-run only
         </label>
       </div>
-      {error && <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginTop: sp(10) }}>{error}</div>}
+      {error && <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(10) }}>{error}</div>}
       {result && (
         <div style={{ marginTop: sp(12) }}>
           <JsonBlock value={result} />
@@ -1279,7 +1340,7 @@ function BrowserStorageFootprintPanel() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(12) }}>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
             Largest Local Keys
           </div>
           {localEntries.map((entry) => (
@@ -1288,7 +1349,7 @@ function BrowserStorageFootprintPanel() {
           {!localEntries.length && <StateRow label="No local storage keys" value="empty" />}
         </div>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
             Largest Session Keys
           </div>
           {sessionEntries.map((entry) => (
@@ -1333,13 +1394,13 @@ function AppPreferencesPanel({
   return (
     <Panel title="App Preferences">
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(10) }}>
-        <div style={{ border: "none", background: T.bg2, borderRadius: dim(RADII.md), padding: sp(10) }}>
+        <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Theme" value={theme} />
           <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
             Switch to {theme === "dark" ? "light" : "dark"}
           </button>
         </div>
-        <div style={{ border: "none", background: T.bg2, borderRadius: dim(RADII.md), padding: sp(10) }}>
+        <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Sidebar" value={sidebarCollapsed ? "collapsed" : "expanded"} />
           <button type="button" onClick={onToggleSidebar} style={smallButton()}>
             {sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -1376,7 +1437,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         }
       >
         {userPreferences.error && (
-          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {userPreferences.error}
           </div>
         )}
@@ -1718,7 +1779,7 @@ function ChartTimeframeFavoritesPanel() {
 
   return (
     <Panel title="Chart Timeframe Favorites">
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the quick-pick timeframe buttons used by the primary chart, market grid charts, and option charts.
       </div>
       <div style={{ display: "grid", gap: sp(12) }}>
@@ -1729,16 +1790,16 @@ function ChartTimeframeFavoritesPanel() {
             <div
               key={role.value}
               style={{
-                border: "none",
-                background: T.bg2,
+                border: `1px solid ${T.border}`,
+                background: T.bg1,
                 borderRadius: dim(RADII.md),
-                padding: sp(10),
+                padding: sp(12),
                 display: "grid",
                 gap: sp(8),
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(10) }}>
-                <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11) }}>{role.label}</div>
+                <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.medium, fontSize: textSize("paragraphMuted") }}>{role.label}</div>
                 <button type="button" onClick={() => resetRole(role.value)} style={smallButton()}>
                   Reset
                 </button>
@@ -1786,7 +1847,7 @@ function DiagnosticAlertPreferencesPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the local browser alert state used by Diagnostics for crash-risk, cache, and memory warnings.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
@@ -1885,7 +1946,7 @@ function WorkspaceDefaultsPanel() {
           </button>
         }
       >
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           These settings update the same workspace state read by the app. Mounted screens may need a revisit or reload to pick up default-only values.
         </div>
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
@@ -2104,7 +2165,7 @@ function FlowScannerSettingsPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Shared with the header flow scan controls and persisted in the app workspace state.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(10) }}>
@@ -2167,7 +2228,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
         }
       >
         {monitor.error && (
-          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {monitor.error}
           </div>
         )}
@@ -2257,10 +2318,10 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
             minWidth: 0,
           }}
         >
-          <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), fontWeight: 400 }}>
+          <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
             {item.label}
           </span>
-          <span style={{ color: item.tone, fontFamily: T.sans, fontSize: fs(11), fontWeight: 400 }}>
+          <span style={{ color: item.tone, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>
             {item.value}
           </span>
         </div>
@@ -2275,7 +2336,7 @@ function ResearchProviderPanel({ backendSnapshot }) {
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {research.error}
         </div>
       )}
@@ -2349,7 +2410,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
         />
       </div>
       {error ? (
-        <div style={{ marginTop: sp(8), color: T.red, fontFamily: T.sans, fontSize: fs(9) }}>
+        <div style={{ marginTop: sp(8), color: T.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
           {error}
         </div>
       ) : null}
@@ -2385,7 +2446,7 @@ function SettingsInventoryPanel() {
               borderBottom: `1px solid ${T.border}55`,
               padding: sp("8px 0"),
               fontFamily: T.sans,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
             }}
           >
             <strong style={{ color: T.text }}>{area}</strong>
@@ -2575,46 +2636,48 @@ export default function SettingsScreen({
         minWidth: 0,
       }}
     >
-      <CockpitHeader
-        eyebrow="System"
-        title="Settings"
-        subtitle="Backend controls with guarded applies and restart tracking"
-        actions={
-          <>
-            <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: 400 }}>
-              {summary.pendingRestartCount || 0} pending restart
-            </span>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={backend.reload}
-              disabled={backend.loading}
-            >
-              Refresh
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={backend.discard}
-              disabled={backend.dirtyCount === 0 || backend.saving}
-            >
-              Discard
-            </Button>
-            <Button
-              variant={backend.dirtyCount > 0 ? "primary" : "secondary"}
-              size="sm"
-              onClick={backend.apply}
-              disabled={backend.dirtyCount === 0 || backend.saving}
-              loading={backend.saving}
-            >
-              {backend.saving ? "Applying" : `Apply ${backend.dirtyCount || ""}`.trim()}
-            </Button>
-          </>
-        }
-      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(8),
+          flexWrap: "wrap",
+          minWidth: 0,
+        }}
+      >
+        <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
+          {summary.pendingRestartCount || 0} pending restart
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={backend.reload}
+          disabled={backend.loading}
+        >
+          Refresh
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={backend.discard}
+          disabled={backend.dirtyCount === 0 || backend.saving}
+        >
+          Discard
+        </Button>
+        <Button
+          variant={backend.dirtyCount > 0 ? "primary" : "secondary"}
+          size="sm"
+          onClick={backend.apply}
+          disabled={backend.dirtyCount === 0 || backend.saving}
+          loading={backend.saving}
+        >
+          {backend.saving ? "Applying" : `Apply ${backend.dirtyCount || ""}`.trim()}
+        </Button>
+      </div>
 
       {backend.error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: fs(9), marginBottom: sp(10) }}>
+        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {backend.error}
         </div>
       )}
@@ -2638,7 +2701,7 @@ export default function SettingsScreen({
             padding: sp(12),
             display: "grid",
             gap: sp(8),
-            boxShadow: "0 1px 2px rgba(17, 17, 17, 0.04)",
+            boxShadow: ELEVATION.sm,
             position: settingsIsPhone ? "relative" : "sticky",
             top: settingsIsPhone ? undefined : sp(10),
             minWidth: 0,
@@ -2670,16 +2733,16 @@ export default function SettingsScreen({
                 fontFamily: T.sans,
               }}
             >
-              <div style={{ fontFamily: T.sans, fontSize: fs(9), fontWeight: 400 }}>
+              <div style={{ fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
                 {tab.label}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(8), marginTop: sp(2) }}>
+              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(2) }}>
                 {tab.description}
               </div>
             </button>
           ))}
           {!visibleTabs.length && (
-            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), padding: sp(8) }}>
+            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), padding: sp(8) }}>
               No matching sections
             </div>
           )}
@@ -2804,7 +2867,7 @@ export default function SettingsScreen({
                       cursor: "pointer",
                       fontFamily: T.sans,
                       fontSize: fs(10),
-                      fontWeight: 400,
+                      fontWeight: FONT_WEIGHTS.regular,
                     }}
                   >
                     View raw backend payload

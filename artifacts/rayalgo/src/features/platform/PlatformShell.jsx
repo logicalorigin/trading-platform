@@ -15,7 +15,7 @@ import {
   Tv,
   WalletCards,
 } from "lucide-react";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
 import { MobileMoreSheet } from "./MobileMoreSheet.jsx";
@@ -100,12 +100,11 @@ const BloombergLiveDockLauncher = () => {
             alignItems: "center",
             justifyContent: "center",
             border: "none",
-            borderRadius: "999px",
-            background: "rgba(8, 11, 18, 0.82)",
-            boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
+            borderRadius: dim(RADII.pill),
+            background: T.accent,
+            boxShadow: ELEVATION.lg,
             color: T.onAccent,
             cursor: "pointer",
-            backdropFilter: "blur(18px)",
           }}
         >
           <Tv size={dim(16)} />
@@ -129,26 +128,27 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
     className="ra-header-chip"
     style={{
       minWidth: 0,
+      flexShrink: 0,
       display: "inline-flex",
       alignItems: "baseline",
-      gap: sp(5),
-      paddingRight: sp(12),
-      marginRight: sp(2),
+      gap: sp(3),
+      paddingRight: sp(8),
+      marginRight: sp(1),
       borderRight: `1px solid ${T.borderLight}`,
       color: tone,
       fontFamily: T.sans,
-      fontSize: fs(11),
-      fontWeight: 600,
+      fontSize: textSize("caption"),
+      fontWeight: FONT_WEIGHTS.label,
       whiteSpace: "nowrap",
       overflow: "hidden",
-      letterSpacing: "-0.01em",
+      letterSpacing: 0,
     }}
   >
     <span
       style={{
         color: T.textMuted,
-        fontSize: fs(9),
-        fontWeight: 500,
+        fontSize: textSize("micro"),
+        fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.06em",
         textTransform: "uppercase",
       }}
@@ -184,10 +184,10 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        border: "none",
-        background: active ? `${T.accent}18` : T.bg2,
+        border: `1px solid ${active ? T.accent : T.border}`,
+        background: active ? `${T.accent}18` : T.bg1,
         color: active ? T.accent : T.textSec,
-        borderRadius: "50%",
+        borderRadius: dim(RADII.pill),
         cursor: "pointer",
       }}
     >
@@ -239,11 +239,11 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
             justifyContent: "center",
             gap: sp(2),
             border: `1px solid ${active ? T.accent : "transparent"}`,
-            background: active ? T.bg3 : "transparent",
-            color: active ? T.text : T.textDim,
+            background: active ? `${T.accent}14` : "transparent",
+            color: active ? T.accent : T.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             position: "relative",
           }}
         >
@@ -304,18 +304,92 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
           !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : "transparent"
         }`,
         background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
-          ? T.bg3
+          ? `${T.accent}14`
           : "transparent",
-        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.text : T.textDim,
+        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : T.textDim,
         cursor: "pointer",
         fontFamily: T.sans,
-        fontSize: fs(9),
+        fontSize: textSize("caption"),
       }}
     >
       <Ellipsis size={17} strokeWidth={2.1} />
       <span>More</span>
     </button>
   </nav>
+);
+
+const FooterField = ({ label, value, valueColor }) => (
+  <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: valueColor || T.textSec,
+        fontSize: textSize("body"),
+        fontWeight: FONT_WEIGHTS.medium,
+        fontVariantNumeric: "tabular-nums",
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {value}
+    </span>
+  </span>
+);
+
+const FooterStatusField = ({ label, value, ok }) => (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+    <span
+      style={{
+        width: dim(6),
+        height: dim(6),
+        borderRadius: dim(RADII.pill),
+        background: ok ? T.green : T.red,
+        flexShrink: 0,
+      }}
+    />
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: T.text,
+        fontSize: textSize("body"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {value}
+    </span>
+  </span>
+);
+
+const FooterDivider = () => (
+  <span
+    aria-hidden="true"
+    style={{
+      width: 1,
+      height: dim(14),
+      background: T.border,
+      flexShrink: 0,
+    }}
+  />
 );
 
 export const PlatformShell = ({
@@ -474,8 +548,8 @@ export const PlatformShell = ({
         display: "grid",
         gridTemplateColumns: headerGridTemplate,
         alignItems: "center",
-        gap: sp(isPhone ? 4 : 6),
-        padding: sp(isPhone ? "5px 8px" : "6px 14px"),
+        gap: sp(isPhone ? 2 : 6),
+        padding: sp(isPhone ? "3px 6px" : "6px 14px"),
         minWidth: 0,
         background: T.bg1,
         borderBottom: "none",
@@ -489,19 +563,21 @@ export const PlatformShell = ({
             data-testid="mobile-top-chrome"
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) auto",
+              gridTemplateColumns: "minmax(0, 1fr)",
               alignItems: "center",
-              gap: sp(5),
+              gap: sp(2),
               minWidth: 0,
             }}
           >
             <div
               className="ra-hide-scrollbar"
               style={{
+                order: 2,
                 display: "flex",
                 alignItems: "center",
                 gap: sp(4),
                 minWidth: 0,
+                maxWidth: "100%",
                 overflowX: "auto",
               }}
             >
@@ -515,15 +591,27 @@ export const PlatformShell = ({
               <MobileHeaderChip label="SYM" value={selectedSymbol} tone={T.text} />
               <MobileHeaderChip label="WL" value={compactWatchlist} />
             </div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
-              <HeaderStatusClusterComponent
-                session={session}
-                environment={environment}
-                bridgeTone={bridgeTone}
-                theme={theme}
-                onToggleTheme={onToggleTheme}
-                compact
-              />
+            <div
+              style={{
+                order: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(4),
+                minWidth: 0,
+                width: "100%",
+              }}
+            >
+              <div style={{ minWidth: 0, overflow: "hidden" }}>
+                <HeaderStatusClusterComponent
+                  session={session}
+                  environment={environment}
+                  bridgeTone={bridgeTone}
+                  theme={theme}
+                  onToggleTheme={onToggleTheme}
+                  compact
+                />
+              </div>
               <MobileIconButton
                 Icon={Activity}
                 label="Open activity and notifications"
@@ -550,7 +638,7 @@ export const PlatformShell = ({
               overflowX: "auto",
             }}
           >
-            <HeaderKpiStripComponent onSelect={onSelectSymbol} />
+            <HeaderKpiStripComponent onSelect={onSelectSymbol} compact />
           </div>
         </>
       ) : (
@@ -595,15 +683,15 @@ export const PlatformShell = ({
                     ...motionVars({
                       accent: hasAlerts ? alertColor : T.accent,
                     }),
-                    padding: sp("5px 12px"),
-                    minHeight: dim(30),
-                    fontSize: fs(10),
-                    fontWeight: 500,
+                    padding: sp("8px 14px"),
+                    minHeight: dim(38),
+                    fontSize: textSize("paragraphMuted"),
+                    fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
                     background:
                       activeScreen === screen.id ? `${T.accent}14` : "transparent",
                     border: "none",
-                    borderRadius: dim(999),
+                    borderRadius: dim(RADII.pill),
                     cursor: "pointer",
                     color: activeScreen === screen.id ? T.accent : T.textSec,
                     transition: "background 0.18s ease, color 0.18s ease",
@@ -614,7 +702,7 @@ export const PlatformShell = ({
                   onMouseEnter={(event) => {
                     if (activeScreen === screen.id) return;
                     event.currentTarget.style.color = T.text;
-                    event.currentTarget.style.background = T.bg2;
+                    event.currentTarget.style.background = T.accentHoverBg;
                   }}
                   onMouseLeave={(event) => {
                     if (activeScreen === screen.id) return;
@@ -628,11 +716,11 @@ export const PlatformShell = ({
                       style={{
                         marginLeft: sp(3),
                         padding: sp("0px 4px"),
-                        borderRadius: 0,
+                        borderRadius: RADII.none,
                         background: alertColor,
                         color: T.onAccent,
                         fontSize: fs(8),
-                        fontWeight: 400,
+                        fontWeight: FONT_WEIGHTS.regular,
                         fontFamily: T.sans,
                         letterSpacing: "0.04em",
                         verticalAlign: "middle",
@@ -788,10 +876,10 @@ export const PlatformShell = ({
               style={{
                 width: dim(28),
                 height: dim(28),
-                border: "none",
-                borderRadius: 0,
-                background: T.bg2,
-                color: T.textDim,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
+                background: T.bg1,
+                color: T.textSec,
                 cursor: "pointer",
                 fontSize: fs(12),
               }}
@@ -809,14 +897,14 @@ export const PlatformShell = ({
                 top: isPhone ? 10 : 8,
                 right: 6,
                 zIndex: 2,
-                width: dim(isPhone ? 28 : 18),
-                height: dim(isPhone ? 28 : 18),
-                border: "none",
-                borderRadius: 0,
-                background: T.bg3,
-                color: T.textDim,
+                width: dim(isPhone ? 28 : 22),
+                height: dim(isPhone ? 28 : 22),
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.sm),
+                background: T.bg1,
+                color: T.textSec,
                 cursor: "pointer",
-                fontSize: fs(isPhone ? 13 : 9),
+                fontSize: fs(isPhone ? 13 : 10),
               }}
             >
               {isPhone ? "×" : "◂"}
@@ -903,31 +991,48 @@ export const PlatformShell = ({
         style={{
           display: "flex",
           alignItems: "center",
-          height: dim(26),
-          padding: sp("0 14px"),
+          height: dim(34),
+          padding: sp("0 16px"),
           background: T.bg1,
           borderTop: "none",
           boxShadow: `0 -1px 0 ${T.border}`,
           flexShrink: 0,
-          fontSize: fs(9),
           fontFamily: T.sans,
-          gap: sp(12),
+          gap: sp(14),
           overflowX: "auto",
+          overflowY: "hidden",
           whiteSpace: "nowrap",
         }}
       >
-        <span style={{ color: T.textMuted }}>
-          WL {(activeWatchlist?.name || "Core").toUpperCase()}
+        <FooterField label="Watchlist" value={activeWatchlist?.name || "Core"} />
+        <FooterDivider />
+        <FooterField label="Symbol" value={selectedSymbol} valueColor={T.text} />
+        <FooterDivider />
+        <FooterStatusField
+          label="Historical"
+          value={session?.marketDataProviders?.historical || MISSING_VALUE}
+          ok={Boolean(session?.configured?.ibkr)}
+        />
+        <FooterDivider />
+        <FooterStatusField
+          label="Research"
+          value={session?.marketDataProviders?.research || MISSING_VALUE}
+          ok={Boolean(session?.configured?.research)}
+        />
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: sp(12) }}>
+          <span
+            style={{
+              color: T.textMuted,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            v0.1.0
+          </span>
+          <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
         </span>
-        <span style={{ color: T.textMuted }}>SYM {selectedSymbol}</span>
-        <span style={{ color: session?.configured?.ibkr ? T.green : T.red }}>
-          HIST {(session?.marketDataProviders?.historical || MISSING_VALUE).toUpperCase()}
-        </span>
-        <span style={{ color: session?.configured?.research ? T.green : T.red }}>
-          RSCH {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
-        </span>
-        <span style={{ marginLeft: "auto", color: T.textMuted }}>v0.1.0</span>
-        <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
       </div>
     )}
     {!isPhone ? <BloombergLiveDockLauncher /> : null}
@@ -972,25 +1077,25 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
           onClick={() => onDismiss?.(toast.id)}
           style={{
             background: T.bg1,
-            border: "none",
-            borderRadius: dim(10),
-            padding: sp("10px 14px"),
-            minWidth: dim(260),
-            maxWidth: dim(340),
-            boxShadow: "0 8px 24px rgba(25, 23, 26, 0.14), 0 2px 6px rgba(25, 23, 26, 0.06)",
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(RADII.md),
+            padding: sp("12px 16px"),
+            minWidth: dim(280),
+            maxWidth: dim(360),
+            boxShadow: ELEVATION.lg,
             animation: toast.leaving
               ? "toastSlideOut 0.2s ease-in forwards"
               : "toastSlideIn 0.22s ease-out",
             pointerEvents: "auto",
             cursor: "pointer",
-            transition: "transform 0.1s, background 0.1s",
+            transition: "transform 0.12s ease, border-color 0.12s ease",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.background = T.bg3;
+            event.currentTarget.style.borderColor = T.accent;
             event.currentTarget.style.transform = "translateX(-2px)";
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.background = T.bg2;
+            event.currentTarget.style.borderColor = T.border;
             event.currentTarget.style.transform = "translateX(0)";
           }}
         >
@@ -1003,11 +1108,18 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
           >
             <span
               style={{
-                fontSize: fs(14),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: dim(24),
+                height: dim(24),
+                borderRadius: dim(RADII.pill),
+                background: `${color}14`,
                 color,
-                fontWeight: 400,
+                fontSize: fs(13),
+                fontWeight: FONT_WEIGHTS.label,
                 lineHeight: 1,
-                marginTop: sp(1),
+                flexShrink: 0,
               }}
             >
               {icon}
@@ -1015,10 +1127,11 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: fs(11),
-                  fontWeight: 400,
+                  fontSize: textSize("paragraphMuted"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  letterSpacing: "-0.005em",
                   color: T.text,
-                  marginBottom: toast.body ? sp(2) : 0,
+                  marginBottom: toast.body ? sp(3) : 0,
                 }}
               >
                 {toast.title}
@@ -1026,7 +1139,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
               {toast.body ? (
                 <div
                   style={{
-                    fontSize: fs(10),
+                    fontSize: textSize("body"),
                     color: T.textSec,
                     fontFamily: T.sans,
                     lineHeight: 1.4,
@@ -1038,12 +1151,12 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
             </div>
             <span
               style={{
-                fontSize: fs(11),
+                fontSize: textSize("caption"),
                 color: T.textMuted,
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 opacity: 0.6,
                 marginLeft: sp(4),
-                marginTop: sp(1),
+                marginTop: sp(2),
               }}
             >
               ✕

@@ -1,5 +1,5 @@
 import { TrendingDown, TrendingUp } from "lucide-react";
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, T, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAccountMoney, formatAccountPercent } from "./accountUtils";
 
 const MASKED = "•••••";
@@ -20,8 +20,9 @@ export const AccountHeroBlock = ({
   summary,
   currency = "USD",
   maskValues = false,
-  shadowMode = false,
+  shadowMode: _shadowMode = false,
   isPhone = false,
+  sectionControl = null,
 }) => {
   const metrics = summary?.metrics || {};
   const netLiquidation = metrics.netLiquidation?.value;
@@ -44,133 +45,88 @@ export const AccountHeroBlock = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(isPhone ? 8 : 14),
-        padding: sp(isPhone ? "16px 4px 4px" : "20px 4px 8px"),
+        gap: sp(isPhone ? 3 : 4),
+        padding: sp(isPhone ? "6px 4px 4px" : "10px 4px 6px"),
         minWidth: 0,
       }}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: sp(8),
-          minWidth: 0,
-        }}
-      >
-        <span
-          style={{
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            color: T.textMuted,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-          }}
-        >
-          {shadowMode ? "Shadow Portfolio" : "Portfolio"}
-        </span>
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: isPhone ? "1fr" : "auto 1fr",
-          alignItems: "flex-end",
-          gap: sp(isPhone ? 10 : 24),
-          minWidth: 0,
+          alignItems: "baseline",
+          flexWrap: "wrap",
+          gap: sp(isPhone ? 8 : 12),
         }}
       >
         <div
           style={{
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(isPhone ? 28 : 38),
+            fontSize: fs(isPhone ? 22 : 38),
             fontVariantNumeric: "tabular-nums",
             letterSpacing: "-0.025em",
             lineHeight: 1,
-            fontWeight: 600,
+            fontWeight: FONT_WEIGHTS.label,
             whiteSpace: "nowrap",
           }}
         >
           {formatMoney(netLiquidation, currency, maskValues)}
         </div>
+        {sectionControl}
+      </div>
+      {dayPositive !== null || (totalPositive !== null && !isPhone) ? (
         <div
           style={{
             display: "flex",
-            flexWrap: "wrap",
             alignItems: "center",
-            gap: sp(isPhone ? 8 : 16),
-            paddingBottom: sp(isPhone ? 0 : 6),
+            flexWrap: "wrap",
+            gap: sp(isPhone ? 6 : 10),
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontVariantNumeric: "tabular-nums",
           }}
         >
           {dayPositive !== null ? (
-            <div
+            <span
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: sp(5),
-                padding: sp("4px 10px"),
-                background: `${dayTone}12`,
-                borderRadius: dim(RADII.pill),
+                gap: sp(3),
                 color: dayTone,
-                fontFamily: T.sans,
-                fontSize: textSize("paragraph"),
-                fontWeight: 500,
               }}
             >
-              <DayIcon size={14} />
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                {formatMoney(dayPnl, currency, maskValues)}
-              </span>
+              <DayIcon size={11} />
+              <span>{formatMoney(dayPnl, currency, maskValues)}</span>
               {formatPercent(dayPnlPercent, maskValues) ? (
-                <span
-                  style={{
-                    color: dayTone,
-                    opacity: 0.75,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
+                <span style={{ opacity: 0.75 }}>
                   {formatPercent(dayPnlPercent, maskValues)}
                 </span>
               ) : null}
-              <span style={{ color: T.textMuted, fontWeight: 400 }}>today</span>
-            </div>
+              <span style={{ color: T.textMuted }}>today</span>
+            </span>
           ) : null}
           {totalPositive !== null && !isPhone ? (
-            <div
+            <span
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: sp(5),
+                gap: sp(3),
                 color: T.textSec,
-                fontFamily: T.sans,
-                fontSize: textSize("paragraphMuted"),
               }}
             >
               <span style={{ color: T.textMuted }}>All-time</span>
-              <span
-                style={{
-                  color: totalTone,
-                  fontVariantNumeric: "tabular-nums",
-                  fontWeight: 500,
-                }}
-              >
+              <span style={{ color: totalTone }}>
                 {formatMoney(totalPnl, currency, maskValues)}
               </span>
               {formatPercent(totalPnlPercent, maskValues) ? (
-                <span
-                  style={{
-                    color: totalTone,
-                    opacity: 0.75,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
+                <span style={{ color: totalTone, opacity: 0.75 }}>
                   {formatPercent(totalPnlPercent, maskValues)}
                 </span>
               ) : null}
-            </div>
+            </span>
           ) : null}
         </div>
-      </div>
+      ) : null}
     </section>
   );
 };

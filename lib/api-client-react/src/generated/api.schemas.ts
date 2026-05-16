@@ -194,6 +194,24 @@ export const BarTimeframe = {
   '1d': '1d',
 } as const;
 
+export type ChartBarTimeframe = typeof ChartBarTimeframe[keyof typeof ChartBarTimeframe];
+
+
+export const ChartBarTimeframe = {
+  '1s': '1s',
+  '5s': '5s',
+  '15s': '15s',
+  '30s': '30s',
+  '1m': '1m',
+  '2m': '2m',
+  '5m': '5m',
+  '15m': '15m',
+  '30m': '30m',
+  '1h': '1h',
+  '4h': '4h',
+  '1d': '1d',
+} as const;
+
 export type SignalMonitorTimeframe = typeof SignalMonitorTimeframe[keyof typeof SignalMonitorTimeframe];
 
 
@@ -2943,7 +2961,7 @@ export interface BarsHistoryPage {
 
 export interface BarsResponse {
   symbol: string;
-  timeframe: BarTimeframe;
+  timeframe: ChartBarTimeframe;
   bars: Bar[];
   transport: IbkrBridgeHealthTransport | null;
   delayed: boolean;
@@ -4678,7 +4696,7 @@ url: string;
 
 export type GetBarsParams = {
 symbol: string;
-timeframe: BarTimeframe;
+timeframe: ChartBarTimeframe;
 /**
  * @minimum 1
  * @maximum 50000
@@ -4763,7 +4781,7 @@ right: OptionRight;
  */
 optionTicker?: string | null;
 providerContractId?: string | null;
-timeframe: BarTimeframe;
+timeframe: ChartBarTimeframe;
 /**
  * @minimum 1
  * @maximum 50000

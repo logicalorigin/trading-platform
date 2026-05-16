@@ -1,4 +1,4 @@
-import { T, dim } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim } from "../../lib/uiTokens.jsx";
 
 const PULSE_CSS = `
 @keyframes rayalgoPulse {
@@ -38,7 +38,7 @@ export const PulseDot = ({ active = true, tone, color, size = 6, label }) => {
           display: "inline-block",
           width: dim(size),
           height: dim(size),
-          borderRadius: "50%",
+          borderRadius: dim(RADII.pill),
           background: resolvedColor,
           flexShrink: 0,
         }}

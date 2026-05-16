@@ -55,6 +55,7 @@ const orderSnapshotCache = new Map<
   string,
   { payload: OrderSnapshotPayload; cachedAt: number }
 >();
+const accountMonitorPrewarmSignatures = new Map<string, string>();
 const accountMonitorSnapshots = new Map<
   string,
   {
@@ -156,6 +157,42 @@ function marketDataRequestFromInstrument(input: {
   return symbol ? { assetClass: "equity", symbol } : null;
 }
 
+function prewarmAccountMonitorQuotes(
+  owner: string,
+  requests: MarketDataLineRequest[],
+): void {
+  const symbols = Array.from(
+    new Set(
+      requests
+        .map((request) =>
+          normalizeSymbol(
+            request.assetClass === "equity"
+              ? request.symbol ?? ""
+              : request.underlying ?? request.symbol ?? "",
+          ).toUpperCase(),
+        )
+        .filter(Boolean),
+    ),
+  ).sort();
+  const signature = symbols.join(",");
+  if (!signature || accountMonitorPrewarmSignatures.get(owner) === signature) {
+    return;
+  }
+  accountMonitorPrewarmSignatures.set(owner, signature);
+
+  void runBridgeWork(
+    "quotes",
+    () => bridgeClient.prewarmQuoteSubscriptions(symbols),
+    { recordFailure: false },
+  ).catch((error) => {
+    accountMonitorPrewarmSignatures.delete(owner);
+    logger.warn(
+      { err: error, symbols, owner },
+      "IBKR account monitor quote prewarm failed",
+    );
+  });
+}
+
 function refreshAccountMonitorLeases(input: {
   mode: "paper" | "live";
   accountId?: string;
@@ -198,6 +235,7 @@ function refreshAccountMonitorLeases(input: {
   const requests = Array.from(requestsByKey.values());
   if (!requests.length) {
     releaseMarketDataLeases(key, "account_monitor_empty");
+    accountMonitorPrewarmSignatures.delete(key);
     return;
   }
 
@@ -208,6 +246,7 @@ function refreshAccountMonitorLeases(input: {
     ttlMs: ACCOUNT_MONITOR_LEASE_TTL_MS,
     fallbackProvider: "polygon",
   });
+  prewarmAccountMonitorQuotes(key, requests);
 }
 
 function updateAccountMonitorPositions(input: {

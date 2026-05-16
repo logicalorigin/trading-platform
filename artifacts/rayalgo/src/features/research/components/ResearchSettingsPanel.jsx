@@ -1,8 +1,8 @@
-import { FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp } from "../../../lib/uiTokens.jsx";
 
 export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatus }) {
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(12), marginBottom: sp(10), animation: "fadeIn 0.2s ease", boxShadow: "0 2px 8px rgba(0,0,0,.04)" }}>
+    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(12), marginBottom: sp(10), animation: "fadeIn 0.2s ease", boxShadow: ELEVATION.sm }}>
       <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(8) }}>Platform Wiring</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: sp(8), alignItems: "center" }}>
         <div>

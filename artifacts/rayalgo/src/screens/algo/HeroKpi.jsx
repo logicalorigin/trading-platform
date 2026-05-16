@@ -6,7 +6,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const WL_DOTS = 16;
 
@@ -48,8 +48,8 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
         style={{
           width: dim(30),
           height: dim(30),
-          borderRadius: "50%",
-          background: T.bg2,
+          borderRadius: dim(RADII.pill),
+          background: T.bg1,
           color: accent,
           display: "flex",
           alignItems: "center",
@@ -64,10 +64,10 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
           style={{
             color: T.textMuted,
             fontFamily: T.sans,
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             letterSpacing: "0.04em",
             textTransform: "uppercase",
-            fontWeight: 500,
+            fontWeight: FONT_WEIGHTS.medium,
           }}
         >
           {label}
@@ -194,7 +194,7 @@ export const HeroKpi = ({
               fontSize: fs(10),
               letterSpacing: "0.06em",
               textTransform: "uppercase",
-              fontWeight: 500,
+              fontWeight: FONT_WEIGHTS.medium,
             }}
           >
             Today
@@ -206,7 +206,7 @@ export const HeroKpi = ({
               gap: sp(4),
               color: pnlTone,
               fontFamily: T.sans,
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               letterSpacing: "0.04em",
             }}
           >
@@ -250,7 +250,7 @@ export const HeroKpi = ({
                 style={{
                   width: dim(8),
                   height: dim(8),
-                  borderRadius: "50%",
+                  borderRadius: dim(RADII.pill),
                   background:
                     kind === "win"
                       ? T.green

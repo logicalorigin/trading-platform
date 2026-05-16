@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const Drawer = ({
   open,
@@ -84,9 +84,7 @@ export const Drawer = ({
           color: T.text,
           borderRight: "none",
           borderLeft: "none",
-          boxShadow: isRight
-            ? `-12px 0 36px rgba(25, 23, 26, 0.12)`
-            : `12px 0 36px rgba(25, 23, 26, 0.12)`,
+          boxShadow: ELEVATION.lg,
           fontFamily: T.sans,
         }}
       >
@@ -112,7 +110,7 @@ export const Drawer = ({
               color: T.text,
               fontFamily: T.sans,
               fontSize: fs(15),
-              fontWeight: 600,
+              fontWeight: FONT_WEIGHTS.label,
               letterSpacing: "-0.01em",
             }}
           >
@@ -129,9 +127,9 @@ export const Drawer = ({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: "none",
-              borderRadius: "50%",
-              background: T.bg2,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.pill),
+              background: T.bg1,
               color: T.textSec,
               cursor: "pointer",
               flexShrink: 0,

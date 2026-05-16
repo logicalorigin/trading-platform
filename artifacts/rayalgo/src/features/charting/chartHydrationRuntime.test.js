@@ -28,12 +28,19 @@ test("chart hydration policy preserves role-specific candle windows", () => {
 });
 
 test("chart hydration request policy expands rolled intervals by base timeframe", () => {
+  const twoMinutePolicy = resolveChartHydrationRequestPolicy({
+    timeframe: "2m",
+    role: "primary",
+    requestedLimit: 720,
+  });
   const requestPolicy = resolveChartHydrationRequestPolicy({
     timeframe: "30m",
     role: "primary",
     requestedLimit: 1500,
   });
 
+  assert.equal(twoMinutePolicy.baseTimeframe, "1m");
+  assert.equal(twoMinutePolicy.baseLimit, 1440);
   assert.equal(requestPolicy.baseTimeframe, "15m");
   assert.equal(requestPolicy.baseLimit, 3000);
   assert.equal(requestPolicy.brokerRecentWindowMinutes, 2880);

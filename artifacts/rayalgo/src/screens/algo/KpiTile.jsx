@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 export const KpiTile = ({
   label,
@@ -27,7 +27,7 @@ export const KpiTile = ({
         style={{
           color: T.textMuted,
           fontFamily: T.sans,
-          fontSize: fs(7),
+          fontSize: textSize("caption"),
           letterSpacing: "0.08em",
           textTransform: "uppercase",
           overflow: "hidden",
@@ -63,7 +63,7 @@ export const KpiTile = ({
             style={{
               color: accent,
               fontFamily: T.sans,
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               opacity: 0.85,
             }}
           >
@@ -76,7 +76,7 @@ export const KpiTile = ({
           style={{
             color: T.textDim,
             fontFamily: T.sans,
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             letterSpacing: "0.04em",
             overflow: "hidden",
             textOverflow: "ellipsis",

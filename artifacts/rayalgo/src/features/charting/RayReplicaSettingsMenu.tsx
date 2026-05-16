@@ -13,7 +13,7 @@ import {
 } from "./rayReplicaPineAdapter";
 import { TYPE_CSS_VAR } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { RADII } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -112,12 +112,14 @@ const triggerStyle = (
   color: disabled ? theme.textMuted : theme.text,
   fontFamily: theme.mono,
   fontSize: dense ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.bodyStrong,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   letterSpacing: "0.04em",
   padding: dense ? "0 7px" : "0 9px",
+  minWidth: dense ? 24 : undefined,
   cursor: disabled ? "default" : "pointer",
   display: "inline-flex",
   alignItems: "center",
+  justifyContent: "center",
 });
 
 const panelStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -131,7 +133,7 @@ const panelStyle = (theme: WidgetTheme): CSSProperties => ({
   background: theme.bg4,
   color: theme.text,
   padding: 0,
-  boxShadow: "0 16px 48px rgba(0, 0, 0, 0.36)",
+  boxShadow: ELEVATION.lg,
 });
 
 const headerStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -150,7 +152,7 @@ const titleKickerStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.label,
   color: theme.textMuted,
   fontFamily: theme.mono,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 });
@@ -169,7 +171,7 @@ const resetButtonStyle = (theme: WidgetTheme): CSSProperties => ({
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   cursor: "pointer",
 });
 
@@ -188,7 +190,7 @@ const tabButtonStyle = (
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
   cursor: "pointer",
 });
 
@@ -203,7 +205,7 @@ const sectionTitleStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
 });
 
 const sectionDescriptionStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -231,7 +233,7 @@ const rowLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
-  fontWeight: 400,
+  fontWeight: FONT_WEIGHTS.regular,
 });
 
 const rowHelperStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -575,7 +577,7 @@ export function RayReplicaSettingsMenu({
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 4 }}>
               <div style={titleKickerStyle(theme)}>RayReplica Settings</div>
-              <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontFamily: theme.mono, fontWeight: 400 }}>
+              <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontFamily: theme.mono, fontWeight: FONT_WEIGHTS.regular }}>
                 {activeBandProfile?.label || "Custom"} profile
               </div>
               <div style={headerMetaStyle(theme)}>

@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T } from "../../lib/uiTokens";
+import { MISSING_VALUE, T } from "../../lib/uiTokens.jsx";
 import {
   formatIbkrPingMs,
   getIbkrGatewayBadges,
@@ -94,13 +94,19 @@ const formatHeaderTimeAgo = (value) => {
   return `${Math.round(ageMs / 3_600_000)}h ago`;
 };
 
-const buildLineUsageRows = (admission) => {
-  const normalized = normalizeAdmissionDiagnostics(admission);
+const buildLineUsageRows = (admission, lineUsageSnapshot) => {
+  const normalized = normalizeAdmissionDiagnostics(admission, lineUsageSnapshot);
   return {
     available: normalized.available,
     summary: normalized.summary,
+    demandSummary: normalized.demandSummary,
+    bridgeSummary: normalized.bridgeSummary,
     warnings: normalized.warnings,
     rows: normalized.rows,
+    bridge: normalized.bridge,
+    drift: normalized.drift,
+    warmup: normalized.warmup,
+    pressure: normalized.pressure,
   };
 };
 
@@ -336,6 +342,7 @@ export const buildHeaderIbkrPopoverModel = ({
     normalizedLineUsage ||
     buildLineUsageRows(
       selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
+      lineUsageSnapshot,
     );
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);

@@ -11,7 +11,7 @@ import {
   Tv,
 } from "lucide-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
@@ -112,7 +112,7 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
       style={{
         marginTop: sp(2),
         color: tone,
-        fontSize: fs(9),
+        fontSize: textSize("caption"),
         lineHeight: 1.1,
         overflow: "hidden",
         textOverflow: "ellipsis",

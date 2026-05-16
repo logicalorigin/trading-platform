@@ -14,6 +14,7 @@ import {
 } from "./services/platform";
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
+import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
 import { getBridgeQuoteStreamDiagnostics } from "./services/bridge-quote-stream";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./services/ibkr-lanes";
@@ -154,6 +155,18 @@ server.listen(port, () => {
   startAccountFlexRefreshScheduler();
   startOptionsFlowScanner();
   startTradeMonitorWorker();
-  startSignalOptionsWorker();
+  void ensureDefaultSignalOptionsPaperDeployment({
+    enabled: true,
+    preserveExistingPaused: true,
+  })
+    .catch((err) => {
+      logger.warn(
+        { err },
+        "Failed to ensure default signal-options shadow deployment",
+      );
+    })
+    .finally(() => {
+      startSignalOptionsWorker();
+    });
   startDiagnosticsCollector(collectDiagnosticsInput);
 });

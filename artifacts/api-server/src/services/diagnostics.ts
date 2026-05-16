@@ -11,12 +11,14 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  algoDeploymentsTable,
   db,
   diagnosticEventsTable,
   diagnosticSnapshotsTable,
   diagnosticThresholdOverridesTable,
   executionEventsTable,
   pool,
+  shadowPositionsTable,
   type DiagnosticEvent,
   type DiagnosticSnapshot,
 } from "@workspace/db";
@@ -517,6 +519,28 @@ function timestampMs(value: unknown): number | null {
   }
 
   return null;
+}
+
+function optionExpirationKey(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function marketDateKey(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function percentile(values: number[], percentileValue: number): number | null {
@@ -1630,6 +1654,58 @@ async function buildAutomationMetrics(): Promise<{
   const automationEvents = recentEvents.filter((event) =>
     event.eventType.startsWith(SIGNAL_OPTIONS_EVENT_PREFIX),
   );
+  const automationDeployments = await safeDb(
+    "list automation deployments",
+    async () =>
+      db
+        .select({
+          enabled: algoDeploymentsTable.enabled,
+          config: algoDeploymentsTable.config,
+        })
+        .from(algoDeploymentsTable),
+    [],
+  );
+  const signalOptionsDeploymentRows = automationDeployments.filter((deployment) => {
+    const config = asJsonRecord(deployment.config);
+    const parameters = asJsonRecord(config["parameters"]);
+    return Boolean(config["signalOptions"]) || parameters["executionMode"] === "signal_options";
+  });
+  const signalOptionsDeploymentCount = signalOptionsDeploymentRows.length;
+  const enabledSignalOptionsDeploymentCount = signalOptionsDeploymentRows.filter(
+    (deployment) => deployment.enabled === true,
+  ).length;
+  const legacyEquityForwardEnabledCount = automationDeployments.filter((deployment) => {
+    const config = asJsonRecord(deployment.config);
+    const parameters = asJsonRecord(config["parameters"]);
+    return (
+      deployment.enabled === true &&
+      parameters["executionMode"] === "signal_equity_shadow"
+    );
+  }).length;
+  const openShadowOptionRows = await safeDb(
+    "list open shadow option positions",
+    async () =>
+      db
+        .select({
+          optionContract: shadowPositionsTable.optionContract,
+        })
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, "shadow"),
+            eq(shadowPositionsTable.assetClass, "option"),
+            eq(shadowPositionsTable.status, "open"),
+          ),
+        ),
+    [],
+  );
+  const todayMarketDate = marketDateKey();
+  const expiringOpenShadowOptionCount = openShadowOptionRows.filter((position) => {
+    const expiration = optionExpirationKey(
+      asJsonRecord(position.optionContract)["expirationDate"],
+    );
+    return expiration !== null && expiration <= todayMarketDate;
+  }).length;
   const deployments = Array.isArray(worker.deployments)
     ? worker.deployments
     : [];
@@ -1746,14 +1822,35 @@ async function buildAutomationMetrics(): Promise<{
       (numeric(asJsonRecord(deployment)["lastBlockedCandidateCount"]) ?? 0),
     0,
   );
+  const maintenance = asJsonRecord(worker.maintenance);
+  const workerDeploymentCount = numeric(worker.deploymentCount) ?? deployments.length;
+  const enabledDeploymentCount =
+    enabledSignalOptionsDeploymentCount > 0
+      ? enabledSignalOptionsDeploymentCount
+      : workerDeploymentCount;
+  const orphanOpenOptionCount =
+    signalOptionsDeploymentCount === 0 ? openShadowOptionRows.length : 0;
 
   return {
     metrics: {
       workerRunning: worker.started === true,
       tickRunning: worker.tickRunning === true,
-      deploymentCount: numeric(worker.deploymentCount) ?? deployments.length,
-      enabledDeployments: numeric(worker.deploymentCount) ?? deployments.length,
+      deploymentCount: workerDeploymentCount,
+      signalOptionsDeploymentCount,
+      enabledDeployments: enabledDeploymentCount,
+      enabledSignalOptionsDeploymentCount,
+      legacyEquityForwardEnabledCount,
       activeDeploymentCount: numeric(worker.activeDeploymentCount) ?? 0,
+      openShadowOptionCount: openShadowOptionRows.length,
+      orphanOpenOptionCount,
+      expiringOpenShadowOptionCount,
+      maintenanceRunCount: numeric(maintenance["runCount"]) ?? 0,
+      maintenanceClosedCount: numeric(maintenance["lastClosedCount"]) ?? 0,
+      maintenanceTotalClosedCount: numeric(maintenance["totalClosedCount"]) ?? 0,
+      maintenanceDueCount: numeric(maintenance["lastDueCount"]) ?? 0,
+      maintenanceOrphanCount: numeric(maintenance["lastOrphanCount"]) ?? 0,
+      maintenanceLastRunAt: textValue(maintenance["lastRunAt"]),
+      maintenanceLastError: textValue(maintenance["lastError"]),
       latestScanAgeMs,
       latest_scan_age_ms: latestScanAgeMs,
       staleScanCount,
@@ -1790,6 +1887,10 @@ async function buildAutomationMetrics(): Promise<{
     },
     raw: {
       worker,
+      signalOptionsDeploymentCount,
+      legacyEquityForwardEnabledCount,
+      openShadowOptionCount: openShadowOptionRows.length,
+      expiringOpenShadowOptionCount,
       recentEventCount: automationEvents.length,
       recentEvents: automationEvents.slice(0, 20).map((event) => ({
         eventType: event.eventType,
@@ -1802,6 +1903,13 @@ async function buildAutomationMetrics(): Promise<{
 
 function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const enabledDeployments = numeric(metrics["enabledDeployments"]) ?? 0;
+  const signalOptionsDeploymentCount =
+    numeric(metrics["signalOptionsDeploymentCount"]) ?? enabledDeployments;
+  const orphanOpenOptionCount = numeric(metrics["orphanOpenOptionCount"]) ?? 0;
+  const expiringOpenShadowOptionCount =
+    numeric(metrics["expiringOpenShadowOptionCount"]) ?? 0;
+  const legacyEquityForwardEnabledCount =
+    numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
@@ -1812,6 +1920,13 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const degradedSignalInputCount = staleSignalCount + unavailableSignalCount;
   const degradedSignalInputRatio =
     signalCount > 0 ? degradedSignalInputCount / signalCount : 0;
+
+  if (
+    orphanOpenOptionCount > 0 ||
+    (signalOptionsDeploymentCount === 0 && expiringOpenShadowOptionCount > 0)
+  ) {
+    return "critical";
+  }
 
   if (
     gatewayBlockedCount >= 3 ||
@@ -1835,6 +1950,10 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       gatewayBlockedCount > 0 ||
       failureCount > 0)
   ) {
+    return "warning";
+  }
+
+  if (legacyEquityForwardEnabledCount > 0) {
     return "warning";
   }
 
@@ -3128,6 +3247,74 @@ export async function collectDiagnosticSnapshot(
       dimensions: {
         staleScanCount: automation.metrics["staleScanCount"],
         latestScanAgeMs: automation.metrics["latestScanAgeMs"],
+      },
+      raw: automation.raw,
+    });
+  }
+
+  if (
+    (numeric(automation.metrics["signalOptionsDeploymentCount"]) ?? 0) === 0 &&
+    (numeric(automation.metrics["openShadowOptionCount"]) ?? 0) > 0
+  ) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "deployment",
+      code: "signal_options_deployment_missing",
+      severity: "critical",
+      message:
+        "Open shadow option positions exist, but no signal-options deployment is present to manage entries and exits.",
+      dimensions: {
+        openShadowOptionCount: automation.metrics["openShadowOptionCount"],
+      },
+      raw: automation.raw,
+    });
+  }
+
+  if ((numeric(automation.metrics["orphanOpenOptionCount"]) ?? 0) > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "ledger-maintenance",
+      code: "signal_options_orphan_shadow_options",
+      severity: "critical",
+      message:
+        "Open shadow option positions are orphaned from their signal-options deployment.",
+      dimensions: {
+        orphanOpenOptionCount: automation.metrics["orphanOpenOptionCount"],
+        maintenanceOrphanCount: automation.metrics["maintenanceOrphanCount"],
+      },
+      raw: automation.raw,
+    });
+  }
+
+  if ((numeric(automation.metrics["expiringOpenShadowOptionCount"]) ?? 0) > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "ledger-maintenance",
+      code: "shadow_option_expiry_pending",
+      severity: automationSeverity === "critical" ? "critical" : "warning",
+      message: "Open shadow option positions are at or past expiration.",
+      dimensions: {
+        expiringOpenShadowOptionCount:
+          automation.metrics["expiringOpenShadowOptionCount"],
+        maintenanceLastRunAt: automation.metrics["maintenanceLastRunAt"],
+        maintenanceClosedCount: automation.metrics["maintenanceClosedCount"],
+        maintenanceLastError: automation.metrics["maintenanceLastError"],
+      },
+      raw: automation.raw,
+    });
+  }
+
+  if ((numeric(automation.metrics["legacyEquityForwardEnabledCount"]) ?? 0) > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "deployment",
+      code: "legacy_shadow_equity_forward_enabled",
+      severity: "warning",
+      message:
+        "Legacy shadow equity-forward deployment is enabled; signal-options shadow automation is the supported worker path.",
+      dimensions: {
+        legacyEquityForwardEnabledCount:
+          automation.metrics["legacyEquityForwardEnabledCount"],
       },
       raw: automation.raw,
     });

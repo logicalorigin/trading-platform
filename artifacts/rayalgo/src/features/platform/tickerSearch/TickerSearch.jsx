@@ -18,7 +18,7 @@ import {
   MarketIdentityMark,
   resolveMarketIdentity,
 } from "../marketIdentity";
-import { T, dim, fs, sp } from "../../../lib/uiTokens";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../../lib/motion";
 import { _initialState, persistState } from "../../../lib/workspaceState";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -546,7 +546,7 @@ const TickerSearchRow = ({
         gap: sp(8),
         alignItems: "center",
         padding: sp("8px 10px"),
-        background: active ? T.bg3 : "transparent",
+        background: active ? `${T.accent}12` : "transparent",
         border: "none",
         borderBottom: `1px solid ${T.border}20`,
         textAlign: "left",
@@ -567,7 +567,7 @@ const TickerSearchRow = ({
           <span
             style={{
               fontSize: fs(10),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
               color: T.text,
             }}
@@ -585,7 +585,7 @@ const TickerSearchRow = ({
         <span
           style={{
             display: "block",
-            fontSize: fs(9),
+            fontSize: textSize("caption"),
             color: T.textSec,
             fontFamily: T.sans,
             whiteSpace: "nowrap",
@@ -599,7 +599,7 @@ const TickerSearchRow = ({
           <span
             style={{
               display: "block",
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: T.textDim,
               fontFamily: T.sans,
               whiteSpace: "nowrap",
@@ -626,7 +626,7 @@ const TickerSearchRow = ({
                 style={{
                   border: `1px solid ${T.border}80`,
                   color: T.textMuted,
-                  fontSize: fs(7),
+                  fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   lineHeight: 1.15,
                   padding: sp("1px 4px"),
@@ -649,7 +649,7 @@ const TickerSearchRow = ({
       >
         <span
           style={{
-            fontSize: fs(7),
+            fontSize: textSize("caption"),
             color: disabled ? T.amber : T.textMuted,
             fontFamily: T.sans,
             textTransform: "uppercase",
@@ -695,33 +695,35 @@ const TickerSearchSkeletonRows = () => (
         }}
       >
         <span
+          className="ra-skeleton-shimmer"
           style={{
             width: dim(24),
             height: dim(24),
-            borderRadius: 999,
-            background: T.bg3,
+            borderRadius: dim(RADII.pill),
           }}
         />
         <span>
           <span
+            className="ra-skeleton-shimmer"
             style={{
               display: "block",
-              height: dim(8),
+              height: dim(10),
               width: `${58 + index * 10}%`,
-              background: T.bg3,
-              marginBottom: sp(5),
+              borderRadius: dim(RADII.xs),
+              marginBottom: sp(6),
             }}
           />
           <span
+            className="ra-skeleton-shimmer"
             style={{
               display: "block",
-              height: dim(7),
+              height: dim(8),
               width: `${72 - index * 8}%`,
-              background: T.bg2,
+              borderRadius: dim(RADII.xs),
             }}
           />
         </span>
-        <span style={{ width: dim(42), height: dim(8), background: T.bg3 }} />
+        <span className="ra-skeleton-shimmer" style={{ width: dim(48), height: dim(10), borderRadius: dim(RADII.xs) }} />
       </div>
     ))}
   </div>
@@ -1304,10 +1306,10 @@ export const MiniChartTickerSearch = ({
           <div
             style={{
               padding: sp("7px 10px 3px"),
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1346,20 +1348,20 @@ export const MiniChartTickerSearch = ({
     <div
       className="ra-popover-enter"
       style={{
-        background: T.bg2,
-        border: "none",
-        borderRadius: 0,
-        boxShadow: "0 18px 36px rgba(0,0,0,0.32)",
+        background: T.bg1,
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.md),
+        boxShadow: ELEVATION.lg,
         overflow: "hidden",
       }}
       >
       <div
         style={{
           display: "flex",
-          gap: sp(4),
-          padding: sp("7px 8px 0"),
+          gap: sp(6),
+          padding: sp("10px 12px 0"),
           flexWrap: "wrap",
-          background: T.bg2,
+          background: T.bg1,
         }}
       >
         {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {
@@ -1378,7 +1380,7 @@ export const MiniChartTickerSearch = ({
                 background: active ? `${T.accent}20` : T.bg1,
                 color: active ? T.accent : T.textDim,
                 fontFamily: T.sans,
-                fontSize: fs(8),
+                fontSize: textSize("body"),
                 padding: sp("2px 6px"),
                 cursor: "pointer",
                 textTransform: "uppercase",
@@ -1418,7 +1420,7 @@ export const MiniChartTickerSearch = ({
             width: "100%",
             background: T.bg3,
             border: "none",
-            borderRadius: 0,
+            borderRadius: RADII.none,
             padding: sp("6px 8px"),
             color: T.text,
             fontSize: fs(10),
@@ -1459,7 +1461,7 @@ export const MiniChartTickerSearch = ({
           <div
             style={{
               padding: sp("6px 10px 0"),
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: T.textDim,
               fontFamily: T.sans,
               textTransform: "uppercase",
@@ -1477,7 +1479,7 @@ export const MiniChartTickerSearch = ({
               alignItems: "center",
               gap: sp(8),
               padding: sp("10px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               color: T.amber,
               fontFamily: T.sans,
               background: `${T.amber}10`,
@@ -1493,7 +1495,7 @@ export const MiniChartTickerSearch = ({
                 background: "transparent",
                 color: T.amber,
                 fontFamily: T.sans,
-                fontSize: fs(8),
+                fontSize: textSize("body"),
                 cursor: "pointer",
                 padding: sp("2px 6px"),
               }}
@@ -1510,7 +1512,7 @@ export const MiniChartTickerSearch = ({
           <div
             style={{
               padding: sp("12px 10px"),
-              fontSize: fs(9),
+              fontSize: textSize("caption"),
               color: T.textDim,
               fontFamily: T.sans,
             }}
@@ -1522,10 +1524,10 @@ export const MiniChartTickerSearch = ({
           <div
             style={{
               padding: sp("6px 10px 4px"),
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1566,12 +1568,14 @@ export const MiniChartTickerSearch = ({
               width: "100%",
               border: "none",
               borderTop: `1px solid ${T.border}`,
-              background: T.bg2,
+              background: T.bg1,
               color: T.accent,
               cursor: "pointer",
               fontFamily: T.sans,
-              fontSize: fs(8),
-              padding: sp("8px 10px"),
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.08em",
+              padding: sp("10px 12px"),
               textTransform: "uppercase",
             }}
           >
@@ -1641,7 +1645,7 @@ export function TickerSearchLab() {
           position: "relative",
           background: T.bg1,
           border: "none",
-          boxShadow: "0 18px 45px rgba(0,0,0,0.22)",
+          boxShadow: ELEVATION.lg,
           padding: sp(16),
           overflow: "hidden",
         }}
@@ -1657,7 +1661,7 @@ export function TickerSearchLab() {
           <div
             style={{
               fontSize: fs(13),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1686,7 +1690,7 @@ export function TickerSearchLab() {
           <div>
             <div
               style={{
-                fontSize: fs(9),
+                fontSize: textSize("caption"),
                 color: T.textMuted,
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
@@ -1699,7 +1703,7 @@ export function TickerSearchLab() {
               data-testid="ticker-search-selected"
               style={{
                 fontSize: fs(16),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 color: T.text,
                 fontFamily: T.sans,
               }}
@@ -1710,7 +1714,7 @@ export function TickerSearchLab() {
               <div
                 style={{
                   marginTop: sp(4),
-                  fontSize: fs(9),
+                  fontSize: textSize("caption"),
                   color: T.textDim,
                   fontFamily: T.sans,
                 }}
@@ -1730,7 +1734,7 @@ export function TickerSearchLab() {
               color: T.accent,
               padding: sp("8px 12px"),
               fontSize: fs(10),
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -1943,10 +1947,10 @@ export const TickerUniverseSearchPanel = ({
           <div
             style={{
               padding: sp("7px 10px 3px"),
-              fontSize: fs(8),
+              fontSize: textSize("body"),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 400,
+              fontWeight: FONT_WEIGHTS.regular,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1988,13 +1992,13 @@ export const TickerUniverseSearchPanel = ({
     >
       <div
         style={{
-          background: T.bg2,
-          border: "none",
-          borderRadius: dim(6),
-          padding: sp("8px 10px"),
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(RADII.sm),
+          padding: sp("10px 12px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(6),
+          gap: sp(8),
         }}
       >
         <div
@@ -2009,7 +2013,7 @@ export const TickerUniverseSearchPanel = ({
             <span
               style={{
                 fontSize: fs(10),
-                fontWeight: 400,
+                fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.textSec,
                 letterSpacing: "0.06em",
@@ -2018,7 +2022,7 @@ export const TickerUniverseSearchPanel = ({
               SEARCH UNIVERSE
             </span>
             <span
-              style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.sans }}
+              style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}
             >
               Provider-backed ticker search · multi-market
             </span>
@@ -2053,7 +2057,7 @@ export const TickerUniverseSearchPanel = ({
                   background: active ? `${T.accent}20` : T.bg1,
                   color: active ? T.accent : T.textDim,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   padding: sp("2px 6px"),
                   cursor: "pointer",
                   textTransform: "uppercase",
@@ -2129,7 +2133,7 @@ export const TickerUniverseSearchPanel = ({
             <div
               style={{
                 padding: sp("6px 10px 0"),
-                fontSize: fs(8),
+                fontSize: textSize("body"),
                 color: T.textDim,
                 fontFamily: T.sans,
                 textTransform: "uppercase",
@@ -2162,7 +2166,7 @@ export const TickerUniverseSearchPanel = ({
                   background: "transparent",
                   color: T.amber,
                   fontFamily: T.sans,
-                  fontSize: fs(8),
+                  fontSize: textSize("body"),
                   cursor: "pointer",
                   padding: sp("2px 6px"),
                 }}
@@ -2214,11 +2218,11 @@ export const TickerUniverseSearchPanel = ({
                 width: "100%",
                 border: "none",
                 borderTop: `1px solid ${T.border}`,
-                background: T.bg2,
+                background: T.bg1,
                 color: T.accent,
                 cursor: "pointer",
                 fontFamily: T.sans,
-                fontSize: fs(8),
+                fontSize: textSize("caption"),
                 padding: sp("8px 10px"),
                 textTransform: "uppercase",
               }}

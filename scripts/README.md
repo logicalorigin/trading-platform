@@ -1,8 +1,8 @@
 # Utility Scripts
 
-These scripts are developer/operator utilities. Artifact dev startup remains owned by
-`artifacts/*/.replit-artifact/artifact.toml`; do not use this directory to define
-Replit app runners.
+These scripts are developer/operator utilities. Replit app startup remains owned
+by `artifacts/rayalgo/.replit-artifact/artifact.toml`; do not use this
+directory to define separate Replit app runners.
 
 ## Backtesting Utilities
 
@@ -19,8 +19,12 @@ Replit app runners.
   documented in `.env.example`.
 - `check-replit-startup-guards.mjs` verifies that `.replit` stays in
   `PNPM_WORKSPACE` artifact mode, RayAlgo keeps its artifact identity, and the
-  API dev script does not start or require workspace-local Postgres. It also
-  guards the Replit-workflow replacement path in `reap-dev-port.mjs`.
+  RayAlgo web artifact owns full app bring-up. It also guards the
+  Replit-workflow replacement path in `reap-dev-port.mjs`.
+- `protect-replit-config.mjs` locks or unlocks Replit startup config files
+  (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
+  Keep them locked during routine work; unlock only for an intentional
+  startup-config maintenance window.
 - `check-api-codegen-drift.mjs` regenerates the OpenAPI clients and fails if the
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.
