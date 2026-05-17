@@ -58,7 +58,7 @@ export const CockpitHeader = ({
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 fontWeight: FONT_WEIGHTS.medium,
               }}

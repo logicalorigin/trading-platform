@@ -44,7 +44,7 @@ const labelCapsStyle = {
   fontSize: textSize("caption"),
   fontFamily: T.sans,
   fontWeight: FONT_WEIGHTS.regular,
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
   lineHeight: 1.25,
 };

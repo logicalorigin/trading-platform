@@ -1000,7 +1000,7 @@ export const TradePositionsPanel = ({
                   gap: sp(3),
                   fontSize: textSize("caption"),
                   color: T.textMuted,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
               >
@@ -1255,7 +1255,7 @@ export const TradePositionsPanel = ({
                   gap: sp(3),
                   fontSize: textSize("caption"),
                   color: T.textMuted,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
               >
@@ -1438,7 +1438,7 @@ export const TradePositionsPanel = ({
                   gap: sp(3),
                   fontSize: textSize("caption"),
                   color: T.textMuted,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
               >

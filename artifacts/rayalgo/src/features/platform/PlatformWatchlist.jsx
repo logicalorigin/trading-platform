@@ -1064,7 +1064,7 @@ export const Watchlist = ({
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.medium,
-                        letterSpacing: "0.08em",
+                        letterSpacing: "0.04em",
                         textTransform: "uppercase",
                       }}
                     >
@@ -1393,7 +1393,7 @@ export const Watchlist = ({
                         style={{
                           color: T.textMuted,
                           fontSize: textSize("caption"),
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.04em",
                           textTransform: "uppercase",
                           fontWeight: FONT_WEIGHTS.medium,
                         }}
@@ -1541,7 +1541,7 @@ export const Watchlist = ({
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 cursor: busy ? "default" : "pointer",
               }}
@@ -1561,7 +1561,7 @@ export const Watchlist = ({
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 cursor: activeWatchlist && !busy ? "pointer" : "default",
               }}
@@ -1581,7 +1581,7 @@ export const Watchlist = ({
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 cursor:
                   activeWatchlist && !activeWatchlist.isDefault && !busy
@@ -1604,7 +1604,7 @@ export const Watchlist = ({
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 cursor:
                   activeWatchlist && watchlists.length > 1 && !busy
@@ -1732,7 +1732,7 @@ export const Watchlist = ({
                         style={{
                           color: T.textMuted,
                           fontSize: textSize("caption"),
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.04em",
                           textTransform: "uppercase",
                           fontWeight: FONT_WEIGHTS.medium,
                         }}

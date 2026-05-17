@@ -110,7 +110,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -153,7 +153,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -280,7 +280,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
@@ -340,7 +340,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
@@ -391,7 +391,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: fs(6),
             color: T.textMuted,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             marginBottom: sp(2),
           }}
         >

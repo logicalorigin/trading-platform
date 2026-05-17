@@ -282,7 +282,7 @@ const HeaderLaneSectionLabel = ({ children }) => (
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.medium,
-      letterSpacing: "0.08em",
+      letterSpacing: "0.04em",
       textTransform: "uppercase",
     }}
   >

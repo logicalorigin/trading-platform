@@ -137,7 +137,7 @@ const ShadowWatchlistBacktestPanel = ({
     fontSize: fs(10),
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.06em",
+    letterSpacing: "0.04em",
     cursor: running ? "wait" : "pointer",
     textTransform: "uppercase",
   };

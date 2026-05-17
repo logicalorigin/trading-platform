@@ -100,7 +100,7 @@ const sectionHeaderStyle = {
   color: T.textMuted,
   fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
@@ -327,7 +327,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
               color: T.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}

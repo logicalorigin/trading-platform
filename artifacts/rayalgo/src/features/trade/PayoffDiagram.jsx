@@ -120,7 +120,7 @@ export const PayoffDiagram = ({
           fontSize: fs(7),
           fontFamily: T.sans,
           color: T.textMuted,
-          letterSpacing: "0.06em",
+          letterSpacing: "0.04em",
         }}
       >
         <span>P&L AT EXPIRATION</span>

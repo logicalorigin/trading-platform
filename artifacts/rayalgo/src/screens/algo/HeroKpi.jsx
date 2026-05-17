@@ -226,7 +226,7 @@ export const HeroKpi = ({
               color: T.textMuted,
               fontFamily: T.sans,
               fontSize: fs(10),
-              letterSpacing: "0.06em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
               fontWeight: FONT_WEIGHTS.medium,
             }}

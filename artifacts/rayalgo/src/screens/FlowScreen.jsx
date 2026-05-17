@@ -3017,7 +3017,7 @@ const FlowOverviewPanel = ({
     color: T.textMuted,
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.08em",
+    letterSpacing: "0.04em",
     textTransform: "uppercase",
   };
 
@@ -3068,7 +3068,7 @@ const FlowOverviewPanel = ({
       cursor: sortable ? "pointer" : "default",
       font: "inherit",
       fontWeight: FONT_WEIGHTS.regular,
-      letterSpacing: "0.08em",
+      letterSpacing: "0.04em",
     };
   };
 
@@ -4435,7 +4435,7 @@ const FlowOverviewPanel = ({
                           fontSize: textSize("body"),
                           fontWeight: FONT_WEIGHTS.regular,
                           color: T.textMuted,
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.04em",
                           borderBottom: `1px solid ${T.border}`,
                           columnGap: sp(2),
                           fontFamily: T.sans,
@@ -5083,7 +5083,7 @@ const FlowOverviewPanel = ({
                       fontSize: textSize("caption"),
                       fontWeight: FONT_WEIGHTS.regular,
                       color: T.textDim,
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                       fontVariant: "all-small-caps",
                       whiteSpace: "nowrap",
                       overflow: "hidden",

@@ -153,7 +153,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
               color: T.textMuted,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               overflow: "hidden",

@@ -139,7 +139,7 @@ export const sectionEyebrowStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
@@ -326,7 +326,7 @@ export const ghostButtonStyle = {
   },
   fontWeight: FONT_WEIGHTS.medium,
   cursor: "pointer",
-  letterSpacing: "0.06em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
@@ -468,7 +468,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         fontSize: textSize("label"),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
         ...style,
       }}

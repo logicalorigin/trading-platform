@@ -36,7 +36,7 @@ export const Badge = ({ children, color = T.textDim }) => (
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.medium,
       fontFamily: T.sans,
-      letterSpacing: "0.08em",
+      letterSpacing: "0.04em",
       textTransform: "uppercase",
       background: `${color}14`,
       color,
@@ -131,7 +131,7 @@ export const MetricChip = ({
           style={{
             color: T.textMuted,
             fontSize: textSize("caption"),
-            letterSpacing: "0.06em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
             flexShrink: 0,
           }}

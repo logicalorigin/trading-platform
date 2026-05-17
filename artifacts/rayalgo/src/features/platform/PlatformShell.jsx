@@ -149,7 +149,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
         color: T.textMuted,
         fontSize: textSize("micro"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -325,7 +325,7 @@ const FooterField = ({ label, value, valueColor }) => (
         color: T.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -361,7 +361,7 @@ const FooterStatusField = ({ label, value, ok }) => (
         color: T.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -1025,7 +1025,7 @@ export const PlatformShell = ({
               color: T.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >

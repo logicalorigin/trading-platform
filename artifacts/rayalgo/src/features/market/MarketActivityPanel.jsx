@@ -927,7 +927,7 @@ export const MarketActivityPanel = ({
               color: signalMonitorPending ? T.amber : T.textDim,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
             }}
           >
             {monitorMeta}

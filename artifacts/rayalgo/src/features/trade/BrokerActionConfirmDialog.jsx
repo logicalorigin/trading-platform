@@ -60,7 +60,7 @@ export const BrokerActionConfirmDialog = ({
               fontWeight: FONT_WEIGHTS.medium,
               color: confirmTone,
               fontFamily: T.sans,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -108,7 +108,7 @@ export const BrokerActionConfirmDialog = ({
                   style={{
                     fontSize: textSize("caption"),
                     color: T.textMuted,
-                    letterSpacing: "0.08em",
+                    letterSpacing: "0.04em",
                     fontWeight: FONT_WEIGHTS.medium,
                     textTransform: "uppercase",
                   }}

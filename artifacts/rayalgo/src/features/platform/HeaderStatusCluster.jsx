@@ -277,7 +277,7 @@ const HeaderIbkrStatusChip = ({
             fontFamily: T.sans,
             lineHeight: 1,
             padding: sp("3px 8px"),
-            letterSpacing: "0.06em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
             whiteSpace: "nowrap",
           }}
@@ -327,7 +327,7 @@ const HeaderIbkrDetailRow = ({
         color: T.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
         whiteSpace: "nowrap",
       }}
@@ -402,7 +402,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             lineHeight: 1,
             textTransform: "uppercase",
           }}
@@ -462,7 +462,7 @@ const HeaderProviderRows = ({ rows = [] }) => (
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -556,7 +556,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
             color: T.textMuted,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
           }}
         >
@@ -594,7 +594,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
               <span
                 style={{
                   color: T.textMuted,
-                  letterSpacing: "0.06em",
+                  letterSpacing: "0.04em",
                   textTransform: "uppercase",
                 }}
               >
@@ -614,7 +614,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
             color: T.textMuted,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
             paddingBottom: sp(6),
             borderBottom: `1px solid ${T.borderLight}`,
@@ -814,7 +814,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
                 padding: sp("3px 8px"),
-                letterSpacing: "0.06em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 whiteSpace: "nowrap",
               }}
@@ -1148,7 +1148,7 @@ export const HeaderStatusCluster = ({
     fontWeight: FONT_WEIGHTS.medium,
     fontFamily: T.sans,
     color: T.textMuted,
-    letterSpacing: "0.08em",
+    letterSpacing: "0.04em",
     textTransform: "uppercase",
     whiteSpace: "nowrap",
   };
@@ -1428,7 +1428,7 @@ export const HeaderStatusCluster = ({
                     fontSize: textSize("caption"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
-                    letterSpacing: "0.08em",
+                    letterSpacing: "0.04em",
                     textTransform: "uppercase",
                     lineHeight: 1,
                   }}

@@ -3027,7 +3027,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           textAnchor={isLeft ? "start" : isRight ? "end" : "middle"}
                           fontSize={9.5} fill={T.textDim} fontWeight={FONT_WEIGHTS.regular}
                           fontFamily={T.display}
-                          style={{ letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                          style={{ letterSpacing: "0.04em", textTransform: "uppercase" }}>
                           {isLeft ? (
                             <tspan x={colX[i]}>{st.label.toUpperCase()}</tspan>
                           ) : isRight ? (

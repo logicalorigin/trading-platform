@@ -250,7 +250,7 @@ export const TradeL2Panel = ({
         fontWeight: FONT_WEIGHTS.regular,
         color: tab === id ? T.text : T.textMuted,
         fontFamily: T.sans,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         cursor: "pointer",
         borderBottom:
           tab === id ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -359,7 +359,7 @@ export const TradeL2Panel = ({
               style={{
                 fontSize: textSize("caption"),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               BEST BID
@@ -373,7 +373,7 @@ export const TradeL2Panel = ({
               style={{
                 fontSize: textSize("caption"),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               LEVELS
@@ -387,7 +387,7 @@ export const TradeL2Panel = ({
               style={{
                 fontSize: textSize("caption"),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               BEST ASK
@@ -405,7 +405,7 @@ export const TradeL2Panel = ({
             padding: sp("4px 0"),
             fontSize: textSize("caption"),
             color: T.textMuted,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             fontFamily: T.sans,
           }}
         >
@@ -563,7 +563,7 @@ export const TradeL2Panel = ({
             padding: sp("4px 0"),
             fontSize: textSize("caption"),
             color: T.textMuted,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             fontFamily: T.sans,
           }}
         >
@@ -733,7 +733,7 @@ export const TradeL2Panel = ({
                   style={{
                     fontSize: textSize("body"),
                     color: T.textMuted,
-                    letterSpacing: "0.08em",
+                    letterSpacing: "0.04em",
                   }}
                 >
                   {slot.ticker} BUY / SELL
@@ -826,7 +826,7 @@ export const TradeL2Panel = ({
                 style={{
                   fontSize: textSize("body"),
                   color: T.textMuted,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.04em",
                   marginBottom: sp(2),
                 }}
               >

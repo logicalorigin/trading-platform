@@ -28,7 +28,7 @@ export const KpiTile = ({
           color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
-          letterSpacing: "0.08em",
+          letterSpacing: "0.04em",
           textTransform: "uppercase",
           overflow: "hidden",
           textOverflow: "ellipsis",

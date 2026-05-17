@@ -94,7 +94,7 @@ const mobileHeaderStyle = (gridTemplateColumns) => ({
   color: T.textDim,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 });
 

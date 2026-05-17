@@ -1838,7 +1838,7 @@ export const AlgoScreen = ({
                           color: T.textMuted,
                           fontFamily: T.sans,
                           fontSize: textSize("caption"),
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.04em",
                         }}
                       >
                         {String(label).toUpperCase()}
@@ -1908,7 +1908,7 @@ export const AlgoScreen = ({
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
                       color: T.textMuted,
-                      letterSpacing: "0.08em",
+                      letterSpacing: "0.04em",
                       alignSelf: "center",
                       marginRight: sp(2),
                     }}
@@ -2057,7 +2057,7 @@ export const AlgoScreen = ({
                                 color: T.textMuted,
                                 fontFamily: T.sans,
                                 fontSize: textSize("caption"),
-                                letterSpacing: "0.08em",
+                                letterSpacing: "0.04em",
                               }}
                             >
                               {label.toUpperCase()}
@@ -2142,7 +2142,7 @@ export const AlgoScreen = ({
                         color: T.textMuted,
                         fontFamily: T.sans,
                         fontSize: textSize("caption"),
-                        letterSpacing: "0.08em",
+                        letterSpacing: "0.04em",
                       }}
                     >
                       {String(label).toUpperCase()}
@@ -2271,7 +2271,7 @@ export const AlgoScreen = ({
                       color: T.textMuted,
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
-                      letterSpacing: "0.08em",
+                      letterSpacing: "0.04em",
                     }}
                   >
                     SELECTED STAGE
@@ -2660,7 +2660,7 @@ export const AlgoScreen = ({
                               color: T.textMuted,
                               fontFamily: T.sans,
                               fontSize: textSize("caption"),
-                              letterSpacing: "0.08em",
+                              letterSpacing: "0.04em",
                             }}
                           >
                             {String(label).toUpperCase()}
@@ -2799,7 +2799,7 @@ export const AlgoScreen = ({
                               color: T.textMuted,
                               fontFamily: T.sans,
                               fontSize: textSize("caption"),
-                              letterSpacing: "0.08em",
+                              letterSpacing: "0.04em",
                             }}
                           >
                             {label.toUpperCase()}
@@ -2840,7 +2840,7 @@ export const AlgoScreen = ({
               color: T.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
             };
             const inputStyle = {
               background: T.bg1,
@@ -2955,7 +2955,7 @@ export const AlgoScreen = ({
                         color: T.amber,
                         fontFamily: T.sans,
                         fontSize: textSize("body"),
-                        letterSpacing: "0.08em",
+                        letterSpacing: "0.04em",
                       }}
                     >
                       EXPANDED CAPACITY

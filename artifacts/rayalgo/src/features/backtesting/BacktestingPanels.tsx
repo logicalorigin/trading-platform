@@ -979,7 +979,7 @@ function fieldLabelStyle(
     fontSize: scale.fs(9),
     fontWeight: 400,
     color: theme.textMuted,
-    letterSpacing: "0.06em",
+    letterSpacing: "0.04em",
     marginBottom: scale.sp(4),
     textTransform: "uppercase",
   };
@@ -3566,7 +3566,7 @@ export function BacktestWorkspace({
                               fontSize: scale.fs(9),
                               color: theme.textMuted,
                               textTransform: "uppercase",
-                              letterSpacing: "0.06em",
+                              letterSpacing: "0.04em",
                             }}
                           >
                             Overlapping Trades
@@ -4187,7 +4187,7 @@ export function BacktestWorkspace({
                       fontSize: scale.fs(8),
                       color: theme.textMuted,
                       textTransform: "uppercase",
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                       marginBottom: scale.sp(4),
                     }}
                   >
@@ -4346,7 +4346,7 @@ export function BacktestWorkspace({
                               fontSize: scale.fs(9),
                               color: theme.textMuted,
                               textTransform: "uppercase",
-                              letterSpacing: "0.06em",
+                              letterSpacing: "0.04em",
                             }}
                           >
                             {issue.label}
@@ -4781,7 +4781,7 @@ export function BacktestWorkspace({
                               fontSize: scale.fs(9),
                               color: theme.textMuted,
                               textTransform: "uppercase",
-                              letterSpacing: "0.06em",
+                              letterSpacing: "0.04em",
                               marginBottom: scale.sp(6),
                             }}
                           >
@@ -4915,7 +4915,7 @@ export function BacktestWorkspace({
                               fontSize: scale.fs(9),
                               color: theme.textMuted,
                               textTransform: "uppercase",
-                              letterSpacing: "0.06em",
+                              letterSpacing: "0.04em",
                               marginBottom: scale.sp(6),
                             }}
                           >
@@ -5578,7 +5578,7 @@ export function BacktestWorkspace({
                         background: theme.bg2,
                         color: theme.textMuted,
                         textTransform: "uppercase",
-                        letterSpacing: "0.06em",
+                        letterSpacing: "0.04em",
                         fontSize: scale.fs(8),
                       }}
                     >
@@ -6083,7 +6083,7 @@ export function BacktestWorkspace({
                       fontSize: scale.fs(9),
                       color: theme.textMuted,
                       textTransform: "uppercase",
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                     }}
                   >
                     {label}

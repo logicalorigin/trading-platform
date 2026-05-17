@@ -426,7 +426,7 @@ function SourceBadge({ setting }) {
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >

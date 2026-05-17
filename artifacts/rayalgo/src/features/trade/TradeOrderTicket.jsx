@@ -721,7 +721,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
           }}
         >
@@ -786,7 +786,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
           }}
         >
@@ -838,7 +838,7 @@ export const TradeOrderTicket = ({
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               cursor: "pointer",
               transition: "border-color 0.12s ease, background 0.12s ease",
             }}
@@ -1019,7 +1019,7 @@ export const TradeOrderTicket = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -1846,7 +1846,7 @@ export const TradeOrderTicket = ({
           fontWeight: FONT_WEIGHTS.regular,
           color: T.textSec,
           fontFamily: T.sans,
-          letterSpacing: "0.08em",
+          letterSpacing: "0.04em",
           borderBottom: `1px solid ${T.border}`,
           paddingBottom: sp(4),
         }}
@@ -2057,7 +2057,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               LAST
@@ -2078,7 +2078,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               CHG
@@ -2111,7 +2111,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               VOL
@@ -2145,7 +2145,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               BID
@@ -2166,7 +2166,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               MID
@@ -2197,7 +2197,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               ASK
@@ -2407,7 +2407,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
           >
@@ -2440,7 +2440,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 marginBottom: sp(1),
               }}
             >
@@ -2470,7 +2470,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
           >
@@ -2508,7 +2508,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
               justifyContent: "space-between",
@@ -2575,7 +2575,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
               justifyContent: "space-between",
