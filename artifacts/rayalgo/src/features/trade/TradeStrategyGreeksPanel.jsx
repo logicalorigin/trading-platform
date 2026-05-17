@@ -304,8 +304,8 @@ export const TradeStrategyGreeksPanel = ({
               }}
               style={{
                 padding: sp("6px 10px"),
-                background: `${strategy.color}10`,
-                border: "none",
+                background: `${strategy.color}1a`,
+                border: `1px solid ${strategy.color}66`,
                 borderRadius: dim(RADII.sm),
                 color: T.text,
                 fontSize: textSize("caption"),
