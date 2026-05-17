@@ -787,7 +787,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
               height: dim(8),
               borderRadius: dim(RADII.pill),
               background: model.health.color,
-              boxShadow: `0 0 8px ${model.health.color}44`,
+              boxShadow: `0 0 0 3px ${model.health.color}24`,
               flexShrink: 0,
             }}
           />
