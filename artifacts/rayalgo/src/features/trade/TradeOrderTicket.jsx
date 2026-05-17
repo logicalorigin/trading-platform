@@ -507,10 +507,10 @@ export const TradeOrderTicket = ({
             onClick={() => setTicketAssetMode(mode)}
             data-testid={`trade-ticket-asset-mode-${mode}`}
             style={{
-              border: `1px solid ${active ? `${color}66` : T.border}`,
-              background: active ? `${color}18` : T.bg1,
-              color: active ? color : T.textDim,
-              borderRadius: dim(3),
+              border: `1px solid ${active ? color : T.border}`,
+              background: active ? color : "transparent",
+              color: active ? T.onAccent : T.textSec,
+              borderRadius: dim(RADII.xs),
               padding: sp("6px 0"),
               fontFamily: T.sans,
               fontSize: textSize("body"),
@@ -566,10 +566,10 @@ export const TradeOrderTicket = ({
               type="button"
               onClick={() => setExecutionMode(mode)}
               style={{
-                border: `1px solid ${active ? `${color}66` : T.border}`,
-                background: active ? `${color}18` : T.bg1,
-                color: active ? color : T.textDim,
-                borderRadius: dim(3),
+                border: `1px solid ${active ? color : T.border}`,
+                background: active ? color : "transparent",
+                color: active ? T.onAccent : T.textSec,
+                borderRadius: dim(RADII.xs),
                 padding: sp("5px 0"),
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
@@ -614,7 +614,7 @@ export const TradeOrderTicket = ({
         gap: sp(6),
         border: `1px solid ${T.border}`,
         background: T.bg0,
-        borderRadius: dim(5),
+        borderRadius: dim(RADII.sm),
         padding: sp(8),
       }}
     >
@@ -658,15 +658,12 @@ export const TradeOrderTicket = ({
               }`,
               background:
                 side === value
-                  ? `${value === "BUY" ? T.green : T.red}18`
-                  : T.bg1,
-              color:
-                side === value
                   ? value === "BUY"
                     ? T.green
                     : T.red
-                  : T.textDim,
-              borderRadius: dim(3),
+                  : "transparent",
+              color: side === value ? T.onAccent : T.textSec,
+              borderRadius: dim(RADII.xs),
               padding: sp("6px 0"),
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -692,9 +689,9 @@ export const TradeOrderTicket = ({
             onClick={() => setOrderType(value)}
             style={{
               border: `1px solid ${orderType === value ? T.accent : T.border}`,
-              background: orderType === value ? T.accentDim : T.bg1,
-              color: orderType === value ? T.accent : T.textDim,
-              borderRadius: dim(3),
+              background: orderType === value ? T.accent : "transparent",
+              color: orderType === value ? T.onAccent : T.textSec,
+              borderRadius: dim(RADII.xs),
               padding: sp("5px 0"),
               fontFamily: T.sans,
               fontSize: textSize("body"),
@@ -831,8 +828,8 @@ export const TradeOrderTicket = ({
             onClick={() => setTif(value)}
             style={{
               border: `1px solid ${tif === value ? T.accent : T.border}`,
-              background: tif === value ? `${T.accent}14` : T.bg1,
-              color: tif === value ? T.accent : T.textSec,
+              background: tif === value ? T.accent : "transparent",
+              color: tif === value ? T.onAccent : T.textSec,
               borderRadius: dim(RADII.sm),
               padding: sp("8px 0"),
               fontFamily: T.sans,
@@ -1863,7 +1860,7 @@ export const TradeOrderTicket = ({
             background: automationAlreadyShadowFilled
               ? `${T.green}10`
               : `${T.cyan}10`,
-            borderRadius: dim(5),
+            borderRadius: dim(RADII.sm),
             padding: sp("7px 8px"),
             display: "grid",
             gap: sp(6),
@@ -1977,7 +1974,7 @@ export const TradeOrderTicket = ({
           style={{
             border: `1px solid ${T.amber}55`,
             background: `${T.amber}12`,
-            borderRadius: dim(5),
+            borderRadius: dim(RADII.sm),
             padding: sp("6px 8px"),
             display: "grid",
             gap: sp(3),
@@ -2048,7 +2045,7 @@ export const TradeOrderTicket = ({
             gap: sp(4),
             padding: sp("4px 6px"),
             background: T.bg1,
-            borderRadius: dim(3),
+            borderRadius: dim(RADII.xs),
             fontFamily: T.sans,
           }}
         >
@@ -2136,7 +2133,7 @@ export const TradeOrderTicket = ({
             gap: sp(4),
             padding: sp("4px 6px"),
             background: T.bg1,
-            borderRadius: dim(3),
+            borderRadius: dim(RADII.xs),
             fontFamily: T.sans,
           }}
         >
@@ -2223,10 +2220,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("4px 0"),
-              background: isLong ? `${T.green}20` : "transparent",
-              border: `1px solid ${isLong ? T.green + "60" : T.border}`,
-              borderRadius: dim(3),
-              color: isLong ? T.green : T.textDim,
+              background: isLong ? T.green : "transparent",
+              border: `1px solid ${isLong ? T.green : T.border}`,
+              borderRadius: dim(RADII.xs),
+              color: isLong ? T.onAccent : T.textSec,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2241,10 +2238,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("4px 0"),
-              background: !isLong ? `${T.red}20` : "transparent",
-              border: `1px solid ${!isLong ? T.red + "60" : T.border}`,
-              borderRadius: dim(3),
-              color: !isLong ? T.red : T.textDim,
+              background: !isLong ? T.red : "transparent",
+              border: `1px solid ${!isLong ? T.red : T.border}`,
+              borderRadius: dim(RADII.xs),
+              color: !isLong ? T.onAccent : T.textSec,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2263,10 +2260,10 @@ export const TradeOrderTicket = ({
               style={{
                 flex: 1,
                 padding: sp("4px 0"),
-                background: orderType === t ? T.accentDim : "transparent",
+                background: orderType === t ? T.accent : "transparent",
                 border: `1px solid ${orderType === t ? T.accent : T.border}`,
-                borderRadius: dim(3),
-                color: orderType === t ? T.accent : T.textDim,
+                borderRadius: dim(RADII.xs),
+                color: orderType === t ? T.onAccent : T.textSec,
                 fontSize: fs(t === "STP_LMT" ? 7 : 9),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2388,10 +2385,10 @@ export const TradeOrderTicket = ({
               onClick={() => setQty(n)}
               style={{
                 padding: sp("4px 7px"),
-                background: qtyNum === n ? T.accentDim : "transparent",
+                background: qtyNum === n ? T.accent : "transparent",
                 border: `1px solid ${qtyNum === n ? T.accent : T.border}`,
-                borderRadius: dim(3),
-                color: qtyNum === n ? T.accent : T.textDim,
+                borderRadius: dim(RADII.xs),
+                color: qtyNum === n ? T.onAccent : T.textSec,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2425,7 +2422,7 @@ export const TradeOrderTicket = ({
               width: "100%",
               background: T.bg1,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
               color: T.text,
               fontSize: fs(11),
@@ -2455,7 +2452,7 @@ export const TradeOrderTicket = ({
                 width: "100%",
                 background: T.bg1,
                 border: `1px solid ${T.border}`,
-                borderRadius: dim(3),
+                borderRadius: dim(RADII.xs),
                 padding: sp("3px 6px"),
                 color: T.text,
                 fontSize: fs(11),
@@ -2491,7 +2488,7 @@ export const TradeOrderTicket = ({
               width: "100%",
               background: parentPriceDisabled ? T.bg2 : T.bg3,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
               color: parentPriceDisabled ? T.textDim : T.text,
               fontSize: fs(11),
@@ -2522,10 +2519,10 @@ export const TradeOrderTicket = ({
               disabled={executionIsShadow}
               onClick={() => setAttachStopLoss((value) => !value)}
               style={{
-                border: `1px solid ${attachStopLoss ? `${T.red}55` : T.border}`,
-                borderRadius: dim(3),
-                background: attachStopLoss ? `${T.red}16` : "transparent",
-                color: attachStopLoss ? T.red : T.textDim,
+                border: `1px solid ${attachStopLoss ? T.red : T.border}`,
+                borderRadius: dim(RADII.xs),
+                background: attachStopLoss ? T.red : "transparent",
+                color: attachStopLoss ? T.onAccent : T.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2547,7 +2544,7 @@ export const TradeOrderTicket = ({
               width: "100%",
               background: stopLossExitDisabled ? T.bg2 : T.bg3,
               border: `1px solid ${attachStopLoss ? `${T.red}45` : T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
               color: stopLossExitDisabled ? T.textDim : T.red,
               fontSize: fs(11),
@@ -2589,10 +2586,10 @@ export const TradeOrderTicket = ({
               disabled={executionIsShadow}
               onClick={() => setAttachTakeProfit((value) => !value)}
               style={{
-                border: `1px solid ${attachTakeProfit ? `${T.green}55` : T.border}`,
-                borderRadius: dim(3),
-                background: attachTakeProfit ? `${T.green}16` : "transparent",
-                color: attachTakeProfit ? T.green : T.textDim,
+                border: `1px solid ${attachTakeProfit ? T.green : T.border}`,
+                borderRadius: dim(RADII.xs),
+                background: attachTakeProfit ? T.green : "transparent",
+                color: attachTakeProfit ? T.onAccent : T.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2614,7 +2611,7 @@ export const TradeOrderTicket = ({
               width: "100%",
               background: takeProfitExitDisabled ? T.bg2 : T.bg3,
               border: `1px solid ${attachTakeProfit ? `${T.green}45` : T.border}`,
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
               color: takeProfitExitDisabled ? T.textDim : T.green,
               fontSize: fs(11),
@@ -2647,10 +2644,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("3px 0"),
-              background: tif === t ? T.accentDim : "transparent",
+              background: tif === t ? T.accent : "transparent",
               border: `1px solid ${tif === t ? T.accent : T.border}`,
-              borderRadius: dim(2),
-              color: tif === t ? T.accent : T.textDim,
+              borderRadius: dim(RADII.xs),
+              color: tif === t ? T.onAccent : T.textSec,
               fontSize: textSize("body"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
