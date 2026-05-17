@@ -119,6 +119,7 @@ export const AccountHeaderStrip = ({
 
   return (
     <section
+      className="ra-hide-scrollbar"
       style={{
         borderBottom: `1px solid ${T.border}`,
         padding: sp("0 0 2px"),
@@ -126,7 +127,9 @@ export const AccountHeaderStrip = ({
         alignItems: "center",
         justifyContent: "flex-end",
         gap: 0,
-        flexWrap: "wrap",
+        flexWrap: "nowrap",
+        overflowX: "auto",
+        minWidth: 0,
       }}
     >
       <StatusDot tone={status.tone} title={status.title} />

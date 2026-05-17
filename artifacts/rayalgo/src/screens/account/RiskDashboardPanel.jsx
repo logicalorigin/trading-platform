@@ -14,11 +14,14 @@ const marginCushionPercent = (value, maskValues = false) =>
     ? "—"
     : formatAccountPercent(Number(value), 1, maskValues);
 
-const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
+const MetricCard = ({ label, value, title, tone = T.text, subvalue, isFirst = false }) => (
   <AppTooltip content={title}>
     <div
       style={{
-        padding: sp("3px 0"),
+        flex: "1 1 auto",
+        minWidth: dim(72),
+        padding: sp("3px 10px"),
+        borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
         display: "grid",
         gap: sp(1),
       }}
@@ -30,6 +33,9 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
           fontSize: textSize("body"),
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
         {value}
@@ -112,12 +118,14 @@ export const RiskCompactContent = ({
       <MarginGauge value={margin.maintenanceCushionPercent} maskValues={maskValues} />
 
       <div
+        className="ra-hide-scrollbar"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: sp("3px 8px"),
+          display: "flex",
+          flexWrap: "nowrap",
+          overflowX: "auto",
           paddingTop: sp(4),
           borderTop: `1px solid ${T.border}`,
+          minWidth: 0,
         }}
       >
         <MetricCard
@@ -127,6 +135,7 @@ export const RiskCompactContent = ({
               ? "—"
               : `${formatNumber(margin.leverageRatio, 2)}x`
           }
+          isFirst
         />
         <MetricCard
           label="Margin Used"
@@ -146,18 +155,21 @@ export const RiskCompactContent = ({
       </div>
 
       <div
+        className="ra-hide-scrollbar"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: sp("3px 8px"),
+          display: "flex",
+          flexWrap: "nowrap",
+          overflowX: "auto",
           paddingTop: sp(4),
           borderTop: `1px solid ${T.border}`,
+          minWidth: 0,
         }}
       >
         <MetricCard
           label="Delta"
           value={formatNumber(greeks.delta, 2)}
           tone={toneForValue(greeks.delta)}
+          isFirst
         />
         <MetricCard
           label="Beta Δ"

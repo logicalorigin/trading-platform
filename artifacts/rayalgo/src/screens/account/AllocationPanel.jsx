@@ -92,12 +92,13 @@ const Donut = ({ title, data, currency, maskValues = false }) => (
   </div>
 );
 
-const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false }) => (
+const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false, isFirst = false }) => (
   <div
     style={{
-      minWidth: 0,
-      borderTop: `1px solid ${T.border}`,
-      padding: sp("3px 0"),
+      flex: "1 1 auto",
+      minWidth: dim(72),
+      padding: sp("3px 10px"),
+      borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
     }}
   >
     <div style={{ ...mutedLabelStyle, fontSize: textSize("caption"), lineHeight: 1 }}>
@@ -161,11 +162,14 @@ export const AllocationCompactContent = ({
         <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
           <div style={{ ...sectionTitleStyle, fontSize: textSize("body") }}>Exposure</div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              columnGap: sp(8),
-              rowGap: 0,
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              background: T.bg1,
+              borderRadius: dim(RADII.sm),
+              minWidth: 0,
             }}
           >
             <ExposureMetric
@@ -173,6 +177,7 @@ export const AllocationCompactContent = ({
               value={grossTotal}
               currency={currency}
               maskValues={maskValues}
+              isFirst
             />
             <ExposureMetric
               label="Net"
