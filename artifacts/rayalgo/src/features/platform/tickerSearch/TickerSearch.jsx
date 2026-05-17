@@ -1420,7 +1420,7 @@ export const MiniChartTickerSearch = ({
             width: "100%",
             background: T.bg3,
             border: "none",
-            borderRadius: RADII.none,
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             color: T.text,
             fontSize: fs(10),

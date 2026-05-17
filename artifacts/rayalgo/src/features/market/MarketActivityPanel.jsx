@@ -384,7 +384,7 @@ const MarketIconToolButton = ({
       color: active ? tone : T.textDim,
       cursor: disabled ? "wait" : "pointer",
       opacity: disabled ? 0.78 : 1,
-      borderRadius: RADII.none,
+      borderRadius: dim(RADII.xs),
       padding: 0,
     }}
   >
@@ -1013,7 +1013,7 @@ export const MarketActivityPanel = ({
                   fontSize: textSize("body"),
                   fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
-                  borderRadius: RADII.none,
+                  borderRadius: dim(RADII.xs),
                   outline: "none",
                 }}
               >
@@ -1093,7 +1093,7 @@ export const MarketActivityPanel = ({
                   fontSize: textSize("body"),
                   fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
-                  borderRadius: RADII.none,
+                  borderRadius: dim(RADII.xs),
                   outline: "none",
                 }}
               >
@@ -1123,7 +1123,7 @@ export const MarketActivityPanel = ({
                     border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}40`,
                     background: `${thresholdMatches ? T.textDim : T.amber}12`,
                     padding: sp("6px 5px"),
-                    borderRadius: RADII.none,
+                    borderRadius: dim(RADII.xs),
                     whiteSpace: "nowrap",
                     textAlign: "center",
                   }}

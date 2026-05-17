@@ -4300,7 +4300,7 @@ export const TradeScreen = ({
               background: tradeTimeframeSync ? T.accent : T.bg3,
               color: tradeTimeframeSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -4319,7 +4319,7 @@ export const TradeScreen = ({
               background: tradeCrosshairSync ? T.accent : T.bg3,
               color: tradeCrosshairSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}

@@ -397,7 +397,7 @@ const YearCalendarGrid = ({
               border: `1px solid ${
                 month.isCurrentMonth ? calendarStyle.border : tone.borderColor
               }`,
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               background: tone.background,
               color: T.textSec,
               boxShadow: tone.boxShadow,

@@ -716,7 +716,7 @@ export const PlatformShell = ({
                       style={{
                         marginLeft: sp(3),
                         padding: sp("0px 4px"),
-                        borderRadius: RADII.none,
+                        borderRadius: dim(RADII.xs),
                         background: alertColor,
                         color: T.onAccent,
                         fontSize: fs(8),

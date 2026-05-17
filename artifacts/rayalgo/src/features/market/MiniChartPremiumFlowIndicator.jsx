@@ -255,7 +255,7 @@ export const MiniChartPremiumFlowIndicator = ({
           display: "flex",
           height: dense ? 5 : 6,
           background: T.bg0,
-          borderRadius: RADII.none,
+          borderRadius: dim(RADII.xs),
           overflow: "hidden",
         }}
       >
