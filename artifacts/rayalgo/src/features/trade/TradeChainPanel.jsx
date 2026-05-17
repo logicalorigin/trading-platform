@@ -341,7 +341,6 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
           alignItems: "center",
           background: T.bg1,
           borderBottom: `1px solid ${T.border}`,
-          boxShadow: `0 1px 0 ${T.border}`,
         }}
       >
         {columns.map((column) => (
@@ -349,7 +348,7 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
             key={column.key}
             style={{
               padding: sp("0 6px"),
-              color: T.textMuted,
+              color: T.textSec,
               fontSize: fs(8),
               fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
@@ -506,11 +505,11 @@ const StrikeHeader = () => (
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      borderLeft: `1px solid ${T.border}`,
-      borderRight: `1px solid ${T.border}`,
+      borderLeft: `1px solid ${T.borderLight}`,
+      borderRight: `1px solid ${T.borderLight}`,
       borderBottom: `1px solid ${T.border}`,
       background: T.bg1,
-      color: T.textMuted,
+      color: T.textSec,
       fontSize: fs(8),
       fontFamily: T.sans,
       fontWeight: FONT_WEIGHTS.regular,
@@ -529,8 +528,8 @@ const StrikeRows = ({
   <div
     style={{
       width: dim(STRIKE_WIDTH),
-      borderLeft: `1px solid ${T.border}`,
-      borderRight: `1px solid ${T.border}`,
+      borderLeft: `1px solid ${T.borderLight}`,
+      borderRight: `1px solid ${T.borderLight}`,
       background: T.bg1,
       flexShrink: 0,
     }}
