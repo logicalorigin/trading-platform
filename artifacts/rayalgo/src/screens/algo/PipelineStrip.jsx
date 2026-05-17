@@ -197,21 +197,71 @@ export const PipelineStrip = ({
     return (
       <div
         data-testid="algo-pipeline-strip"
+        className="ra-hide-scrollbar"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: sp(6),
+          display: "flex",
+          alignItems: "stretch",
+          gap: 0,
+          overflowX: "auto",
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(RADII.sm),
+          background: T.bg1,
         }}
       >
-        {stages.map((stage) => (
-          <StageNode
-            key={stage.id}
-            stage={stage}
-            selected={selectedStageId === stage.id}
-            onSelect={onSelectStage}
-            narrow
-          />
-        ))}
+        {stages.map((stage, index) => {
+          const color = stageColor(stage.status);
+          const Icon = resolveIcon(stage);
+          const selected = selectedStageId === stage.id;
+          const alarmStatus =
+            stage.status === "blocked" ||
+            stage.status === "attention" ||
+            stage.status === "stale";
+          return (
+            <button
+              key={stage.id}
+              type="button"
+              onClick={() => onSelectStage?.(stage.id)}
+              data-testid={`algo-pipeline-stage-${stage.id}`}
+              style={{
+                flex: "0 0 auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(4),
+                padding: sp("6px 9px"),
+                border: "none",
+                borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                background: selected ? `${color}14` : "transparent",
+                color: alarmStatus ? color : T.textSec,
+                cursor: "pointer",
+                fontFamily: T.sans,
+                fontSize: fs(11),
+                lineHeight: 1.1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Icon size={11} color={color} />
+              <span
+                style={{
+                  color: T.textMuted,
+                  fontSize: textSize("caption"),
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {stage.label}
+              </span>
+              <span
+                style={{
+                  color: alarmStatus ? color : T.text,
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: 600,
+                }}
+              >
+                {stage.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
     );
   }

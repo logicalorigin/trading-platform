@@ -113,6 +113,40 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
   );
 };
 
+const InlineIndicator = ({ icon: Icon, label, value, tone }) => {
+  const accent = tone || T.text;
+  return (
+    <div
+      data-testid={`algo-hero-inline-${String(label).toLowerCase()}`}
+      title={label}
+      style={{
+        display: "inline-flex",
+        alignItems: "baseline",
+        gap: sp(3),
+        padding: sp("4px 8px"),
+        background: T.bg1,
+        borderRadius: dim(RADII.pill),
+        flexShrink: 0,
+        minWidth: 0,
+      }}
+    >
+      <Icon size={12} color={accent} aria-label={label} style={{ alignSelf: "center" }} />
+      <span
+        style={{
+          color: accent,
+          fontFamily: T.sans,
+          fontSize: fs(12),
+          fontVariantNumeric: "tabular-nums",
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+};
+
 export const HeroKpi = ({
   pnlValue,
   pnlValueDisplay,
@@ -280,39 +314,73 @@ export const HeroKpi = ({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: narrow
-            ? "repeat(2, minmax(0, 1fr))"
-            : "minmax(0, 1fr)",
-          gridAutoRows: narrow ? undefined : "minmax(0, 1fr)",
-          gap: sp(7),
-          minWidth: 0,
-        }}
-      >
-        <SidebarTile
-          icon={Activity}
-          label="Active"
-          value={activePositions ?? 0}
-          detail={unrealizedDisplay ? unrealizedDisplay : null}
-          tone={activePositions > 0 ? T.cyan : T.textDim}
-        />
-        <SidebarTile
-          icon={Sparkles}
-          label="Fresh"
-          value={freshSignals ?? 0}
-          detail={freshSignalsDetail}
-          tone={freshSignals > 0 ? T.green : T.textDim}
-        />
-        <SidebarTile
-          icon={RulesIcon}
-          label="Rules"
-          value={rulesState}
-          detail={rulesDetail}
-          tone={rulesTone}
-        />
-        {narrow ? null : (
+      {narrow ? (
+        <div
+          className="ra-hide-scrollbar"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(3),
+            overflowX: "auto",
+            minWidth: 0,
+          }}
+        >
+          <InlineIndicator
+            icon={Activity}
+            label="Active"
+            value={activePositions ?? 0}
+            tone={activePositions > 0 ? T.cyan : T.textDim}
+          />
+          <InlineIndicator
+            icon={Sparkles}
+            label="Fresh"
+            value={freshSignals ?? 0}
+            tone={freshSignals > 0 ? T.green : T.textDim}
+          />
+          <InlineIndicator
+            icon={RulesIcon}
+            label="Rules"
+            value={rulesState}
+            tone={rulesTone}
+          />
+          <InlineIndicator
+            icon={Activity}
+            label="Candidates"
+            value={candidates ?? 0}
+            tone={candidates > 0 ? T.cyan : T.textDim}
+          />
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr)",
+            gridAutoRows: "minmax(0, 1fr)",
+            gap: sp(7),
+            minWidth: 0,
+          }}
+        >
+          <SidebarTile
+            icon={Activity}
+            label="Active"
+            value={activePositions ?? 0}
+            detail={unrealizedDisplay ? unrealizedDisplay : null}
+            tone={activePositions > 0 ? T.cyan : T.textDim}
+          />
+          <SidebarTile
+            icon={Sparkles}
+            label="Fresh"
+            value={freshSignals ?? 0}
+            detail={freshSignalsDetail}
+            tone={freshSignals > 0 ? T.green : T.textDim}
+          />
+          <SidebarTile
+            icon={RulesIcon}
+            label="Rules"
+            value={rulesState}
+            detail={rulesDetail}
+            tone={rulesTone}
+          />
           <SidebarTile
             icon={Activity}
             label="Candidates"
@@ -320,8 +388,8 @@ export const HeroKpi = ({
             detail={candidatesDetail}
             tone={candidates > 0 ? T.cyan : T.textDim}
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
