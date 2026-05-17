@@ -163,7 +163,7 @@ const tokenTone = (tokenName) => {
     color,
     border: `color-mix(in srgb, ${color} 28%, transparent)`,
     bg: isLightTheme()
-      ? T.bg1
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
       : `color-mix(in srgb, ${color} 13%, transparent)`,
   };
 };
@@ -174,7 +174,9 @@ const colorTone = (color) => ({
     ? `color-mix(in srgb, ${color} 28%, transparent)`
     : `${color}44`,
   bg: isLightTheme()
-    ? T.bg1
+    ? color.startsWith("var(")
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
+      : `${color}14`
     : color.startsWith("var(")
       ? `color-mix(in srgb, ${color} 13%, transparent)`
       : `${color}18`,
@@ -185,37 +187,37 @@ const toneValueMap = () => ({
   accent: {
     color: T.accent,
     border: `${T.accent}44`,
-    bg: isLightTheme() ? T.bg1 : T.accentDim,
+    bg: isLightTheme() ? `${T.accent}14` : T.accentDim,
   },
   green: {
     color: T.green,
     border: `${T.green}44`,
-    bg: isLightTheme() ? T.bg1 : T.greenBg,
+    bg: isLightTheme() ? `${T.green}14` : T.greenBg,
   },
   red: {
     color: T.red,
     border: `${T.red}44`,
-    bg: isLightTheme() ? T.bg1 : T.redBg,
+    bg: isLightTheme() ? `${T.red}14` : T.redBg,
   },
   amber: {
     color: T.amber,
     border: `${T.amber}44`,
-    bg: isLightTheme() ? T.bg1 : T.amberBg,
+    bg: isLightTheme() ? `${T.amber}14` : T.amberBg,
   },
   cyan: {
     color: T.cyan,
     border: `${T.cyan}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.cyan}18`,
+    bg: isLightTheme() ? `${T.cyan}14` : `${T.cyan}18`,
   },
   purple: {
     color: T.purple,
     border: `${T.purple}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.purple}18`,
+    bg: isLightTheme() ? `${T.purple}14` : `${T.purple}18`,
   },
   pink: {
     color: T.pink,
     border: `${T.pink}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.pink}18`,
+    bg: isLightTheme() ? `${T.pink}14` : `${T.pink}18`,
   },
   "pnl-positive": tokenTone("--ra-pnl-positive"),
   "pnl-negative": tokenTone("--ra-pnl-negative"),
