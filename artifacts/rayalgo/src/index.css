@@ -730,6 +730,11 @@ button:focus-visible {
   box-shadow: var(--ra-focus-ring);
 }
 
+[tabindex]:focus-visible:not(button):not(input):not(select):not(textarea) {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+}
+
 button[disabled],
 button:disabled,
 input[disabled],
