@@ -171,7 +171,7 @@ const TickerTabStripItem = ({
           style={{
             width: dim(7),
             height: dim(7),
-            borderRadius: dim(999),
+            borderRadius: dim(RADII.pill),
             border: `1px solid ${badge.color}55`,
             background: `${badge.color}22`,
             boxShadow: isActive ? `0 0 0 1px ${T.bg1}` : "none",
@@ -398,7 +398,7 @@ export const TradeTickerHeader = ({
         gap: compactHeader ? sp("6px 8px") : sp(16),
         background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp(compactHeader ? "8px 10px" : "8px 14px"),
         flexShrink: 0,
         minWidth: 0,

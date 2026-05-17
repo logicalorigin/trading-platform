@@ -919,7 +919,7 @@ export const TradePositionsPanel = ({
           style={{
             background: `${T.amber}12`,
             border: `1px solid ${T.amber}35`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             color: T.amber,
             fontFamily: T.sans,

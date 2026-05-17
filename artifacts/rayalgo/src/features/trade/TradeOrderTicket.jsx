@@ -588,7 +588,7 @@ export const TradeOrderTicket = ({
           style={{
             background: `${T.amber}12`,
             border: `1px solid ${T.amber}35`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             fontSize: textSize("body"),
             color: T.amber,
@@ -1908,7 +1908,7 @@ export const TradeOrderTicket = ({
               onClick={restoreAutomationPlan}
               style={{
                 border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
+                borderRadius: dim(RADII.xs),
                 background: T.bg0,
                 color: T.cyan,
                 fontFamily: T.sans,
@@ -1929,7 +1929,7 @@ export const TradeOrderTicket = ({
               overflowX: "auto",
               border: `1px solid ${T.border}`,
               background: T.bg0,
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               minWidth: 0,
             }}
           >
@@ -2283,7 +2283,7 @@ export const TradeOrderTicket = ({
           style={{
             border: `1px solid ${sellCallStatusColor}55`,
             background: `${sellCallStatusColor}12`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             display: "grid",
             gap: sp(5),
@@ -2319,7 +2319,7 @@ export const TradeOrderTicket = ({
               overflowX: "auto",
               border: `1px solid ${T.border}`,
               background: T.bg0,
-              borderRadius: dim(4),
+              borderRadius: dim(RADII.xs),
               minWidth: 0,
             }}
           >
@@ -2724,7 +2724,7 @@ export const TradeOrderTicket = ({
             gap: sp(4),
             border: `1px solid ${T.border}`,
             background: T.bg0,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             fontFamily: T.sans,
           }}
@@ -2774,7 +2774,7 @@ export const TradeOrderTicket = ({
           style={{
             background: T.bg1,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
@@ -2848,7 +2848,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             background: T.bg1,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             color: T.textSec,
             fontSize: fs(10),
             fontFamily: T.sans,
@@ -2877,7 +2877,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             background: primarySubmitDisabled ? T.bg3 : primarySubmitColor,
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             color: primarySubmitDisabled ? T.textDim : T.onAccent,
             fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,

@@ -340,7 +340,7 @@ export const controlInputStyle = {
     return sp("0 10px");
   },
   get borderRadius() {
-    return dim(8);
+    return dim(RADII.sm);
   },
   border: "none",
   get background() {
@@ -366,7 +366,7 @@ export const controlSelectStyle = {
     return sp("0 7px");
   },
   get borderRadius() {
-    return dim(4);
+    return dim(RADII.xs);
   },
   get border() {
     return `1px solid ${T.border}`;

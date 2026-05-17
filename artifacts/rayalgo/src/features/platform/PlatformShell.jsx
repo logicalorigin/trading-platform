@@ -269,7 +269,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: dim(999),
+                borderRadius: dim(RADII.pill),
                 background: alertColor,
                 color: T.onAccent,
                 fontFamily: T.sans,

@@ -2088,7 +2088,7 @@ export const TickerUniverseSearchPanel = ({
             width: "100%",
             background: T.bg3,
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("7px 10px"),
             color: T.text,
             fontSize: fs(11),
@@ -2104,7 +2104,7 @@ export const TickerUniverseSearchPanel = ({
             maxHeight: dim(220),
             overflowY: "auto",
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             background: T.bg1,
           }}
         >

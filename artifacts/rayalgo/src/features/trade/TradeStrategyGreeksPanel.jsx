@@ -96,7 +96,7 @@ export const TradeStrategyGreeksPanel = ({
         style={{
           background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
           flexDirection: "column",
@@ -139,7 +139,7 @@ export const TradeStrategyGreeksPanel = ({
         style={{
           background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
           flexDirection: "column",
@@ -265,7 +265,7 @@ export const TradeStrategyGreeksPanel = ({
       style={{
         background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp("8px 10px"),
         display: "flex",
         flexDirection: "column",

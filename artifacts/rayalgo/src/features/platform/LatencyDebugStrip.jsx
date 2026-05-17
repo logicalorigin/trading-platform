@@ -45,7 +45,7 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         gap: sp(8),
         alignItems: "center",
         padding: sp("8px 10px"),
-        borderRadius: dim(10),
+        borderRadius: dim(RADII.md),
         border: `1px solid ${T.border}`,
         background: T.bg0,
         color: T.text,
