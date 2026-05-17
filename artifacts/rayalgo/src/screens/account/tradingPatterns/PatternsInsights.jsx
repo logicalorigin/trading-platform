@@ -97,25 +97,30 @@ const AnalysisReadinessStrip = ({ readiness = [] }) => {
   if (!rows.length) return null;
   return (
     <div
+      className="ra-hide-scrollbar"
       style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(132)}px, 1fr))`,
-        gap: sp(4),
+        display: "flex",
+        flexWrap: "nowrap",
+        overflowX: "auto",
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.xs),
+        minWidth: 0,
       }}
     >
-      {rows.map((row) => {
+      {rows.map((row, index) => {
         const color = readinessTone(row.state);
         return (
           <div
             key={row.key}
             style={{
-              border: `1px solid ${color}44`,
-              borderRadius: dim(RADII.xs),
+              flex: "1 1 auto",
+              minWidth: dim(132),
+              padding: sp("4px 8px"),
+              borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
               background: `${color}0f`,
-              padding: sp("4px 5px"),
               display: "grid",
               gap: sp(1),
-              minWidth: 0,
+              minHeight: 0,
             }}
           >
             <div

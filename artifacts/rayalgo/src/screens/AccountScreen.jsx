@@ -253,50 +253,61 @@ const ShadowWatchlistBacktestPanel = ({
               ))}
             </div>
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: sp(4),
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                gap: sp(8),
                 color: T.textSec,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
+                minWidth: 0,
               }}
             >
-              <div>
+              <span style={{ flexShrink: 0 }}>
                 P&L{" "}
                 <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Fees {formatAccountMoney(summary.fees, currency, true, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Win {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Exp{" "}
                 <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>Closed {formatNumber(summary.closedTrades || 0, 0)}</div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Closed {formatNumber(summary.closedTrades || 0, 0)}</span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 NAV{" "}
                 <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Max DD{" "}
                 <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
                 </span>
-              </div>
-              <div>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</span>
             </div>
             {run.sweep ? (
               <div
