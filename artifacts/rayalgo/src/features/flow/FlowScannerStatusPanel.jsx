@@ -107,7 +107,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
       padding: sp("8px 10px"),
       background: T.bg1,
       border: "none",
-      borderRadius: dim(8),
+      borderRadius: dim(RADII.sm),
       transition:
         "background-color var(--ra-motion-fast) var(--ra-motion-ease)",
     }}

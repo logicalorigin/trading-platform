@@ -294,7 +294,7 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
             top: "calc(100% + 4px)",
             background: T.bg1,
             border: "none",
-            borderRadius: dim(8),
+            borderRadius: dim(RADII.sm),
             boxShadow: "0 6px 20px rgba(25, 23, 26, 0.12), 0 2px 4px rgba(25, 23, 26, 0.06)",
             maxHeight: dim(200),
             overflowY: "auto",
