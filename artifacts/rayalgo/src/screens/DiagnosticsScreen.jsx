@@ -311,7 +311,8 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
       display: "flex",
       flexDirection: "column",
       gap: sp(4),
-      minWidth: 0,
+      flex: "1 0 auto",
+      minWidth: dim(140),
       alignSelf: "start",
       cursor: onClick ? "pointer" : "default",
       textAlign: "left",
@@ -1172,7 +1173,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
       {activeTab === "Overview" && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`, gap: sp(8), margin: sp("10px 0"), alignItems: "start" }}>
+          <div className="ra-hide-scrollbar" style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", gap: sp(8), margin: sp("10px 0"), minWidth: 0 }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
             <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
             <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
