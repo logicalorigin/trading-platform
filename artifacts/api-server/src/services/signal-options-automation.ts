@@ -31,6 +31,7 @@ import {
   evaluateSignalMonitor,
   getSignalMonitorProfileRow,
   getSignalMonitorState,
+  resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
@@ -4641,6 +4642,82 @@ type SignalOptionsBackfillUniverse = {
   truncated: boolean;
 };
 
+const RAY_REPLICA_SETTINGS_PATCH_GROUPS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  marketStructure: [
+    "timeHorizon",
+    "bosConfirmation",
+    "chochAtrBuffer",
+    "atrBuffer",
+    "chochBodyExpansionAtr",
+    "bodyExpansionAtr",
+    "bodyExpansion",
+    "chochVolumeGate",
+    "volumeGate",
+  ],
+  bands: [
+    "basisLength",
+    "atrLength",
+    "atrSmoothing",
+    "volatilityMultiplier",
+  ],
+  overlays: ["shadowLength", "shadowStdDev"],
+  confirmation: [
+    "adxLength",
+    "volumeMaLength",
+    "mtf1",
+    "mtf2",
+    "mtf3",
+    "signalFiltersEnabled",
+    "filtersEnabled",
+    "requireMtf1",
+    "requireMtf2",
+    "requireMtf3",
+    "requireAdx",
+    "adxMin",
+    "requireVolScoreRange",
+    "volScoreMin",
+    "volScoreMax",
+    "restrictToSelectedSessions",
+    "sessions",
+  ],
+  appearance: ["waitForBarClose"],
+  risk: ["signalOffsetAtr"],
+};
+
+function mergeRayReplicaSettingsPatch(
+  current: Record<string, unknown>,
+  patchInput: unknown,
+): Record<string, unknown> {
+  const patch = asRecord(patchInput);
+  const merged: Record<string, unknown> = {
+    ...current,
+    ...patch,
+  };
+
+  for (const [group, keys] of Object.entries(RAY_REPLICA_SETTINGS_PATCH_GROUPS)) {
+    const currentGroup = asRecord(current[group]);
+    const patchGroup = asRecord(patch[group]);
+    const nextGroup: Record<string, unknown> = {
+      ...currentGroup,
+      ...patchGroup,
+    };
+
+    for (const key of keys) {
+      if (Object.hasOwn(patch, key)) {
+        nextGroup[key] = patch[key];
+      }
+    }
+
+    if (Object.keys(nextGroup).length > 0) {
+      merged[group] = nextGroup;
+    }
+  }
+
+  return merged;
+}
+
 type HistoricalBackfillSignal = {
   symbol: string;
   signal: RayReplicaSignalEvent;
@@ -6087,6 +6164,8 @@ export async function runSignalOptionsShadowBackfill(input: {
   session?: unknown;
   commit?: boolean;
   profilePatch?: unknown;
+  rayReplicaSettingsPatch?: unknown;
+  signalTimeframe?: unknown;
   forceDeploymentUniverse?: boolean;
   replay?: SignalOptionsReplayMetadata | boolean | null;
   replaceReplayRows?: boolean;
@@ -6154,6 +6233,13 @@ export async function runSignalOptionsShadowBackfill(input: {
     });
     const signalUniverse =
       await resolveSignalMonitorProfileUniverse(signalProfile);
+    const rayReplicaProfileSettings = asRecord(signalProfile.rayReplicaSettings);
+    const rayReplicaSettings = mergeRayReplicaSettingsPatch(
+      rayReplicaProfileSettings,
+      input.rayReplicaSettingsPatch,
+    );
+    const resolvedRayReplicaSettings =
+      resolveRayReplicaSignalSettings(rayReplicaSettings);
     const backfillUniverse = buildSignalOptionsBackfillUniverse({
       deploymentSymbols: deployment.symbolUniverse,
       signalMonitorSymbols: input.forceDeploymentUniverse
@@ -6165,9 +6251,13 @@ export async function runSignalOptionsShadowBackfill(input: {
         : signalUniverse.skippedSymbols,
       truncated: input.forceDeploymentUniverse ? false : signalUniverse.truncated,
     });
-    const timeframe = String(
-      signalUniverse.profile.timeframe || "15m",
-    ) as SignalMonitorTimeframe;
+    const signalProfileTimeframe = resolveSignalMonitorTimeframe(
+      signalUniverse.profile.timeframe,
+    );
+    const timeframe = resolveSignalMonitorTimeframe(
+      input.signalTimeframe,
+      signalProfileTimeframe,
+    );
     const summary: SignalOptionsBackfillSummary = {
       symbolsEvaluated: backfillUniverse.symbols.length,
       symbolUniverse: backfillUniverse,
@@ -6196,7 +6286,7 @@ export async function runSignalOptionsShadowBackfill(input: {
     const realizedByDay = new Map<string, number>();
     const { signals, errors } = await loadHistoricalBackfillSignals({
       profileId: signalProfile.id,
-      profileSettings: asRecord(signalProfile.rayReplicaSettings),
+      profileSettings: rayReplicaSettings,
       symbols: backfillUniverse.symbols,
       timeframe,
       window,
@@ -6528,6 +6618,8 @@ export async function runSignalOptionsShadowBackfill(input: {
         to: window.to.toISOString(),
       },
       timeframe,
+      rayReplicaSettings: resolvedRayReplicaSettings,
+      rayReplicaSettingsPatch: asRecord(input.rayReplicaSettingsPatch),
       commit,
       summary,
       openPositions:
@@ -6888,6 +6980,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildHistoricalPolygonOptionTicker,
   buildHistoricalOrderPlan,
   buildSignalOptionsBackfillUniverse,
+  mergeRayReplicaSettingsPatch,
   backfillEventKey,
   historicalEventPayload,
   replayPositionKey,

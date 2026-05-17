@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { JsonObject } from './jsonObject';
+import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
 
 export type RunSignalOptionsShadowBackfillBody = {
   start?: string;
@@ -13,4 +14,9 @@ export type RunSignalOptionsShadowBackfillBody = {
   session?: string;
   commit?: boolean;
   profilePatch?: JsonObject;
+  rayReplicaSettingsPatch?: JsonObject;
+  signalTimeframe?: SignalMonitorTimeframe;
+  forceDeploymentUniverse?: boolean;
+  replay?: boolean | JsonObject;
+  replaceReplayRows?: boolean;
 };

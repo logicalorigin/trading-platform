@@ -15,7 +15,8 @@ import {
 } from "./signal-options-worker-state";
 
 const WORKER_WAKEUP_MS = 5_000;
-const ADVISORY_LOCK_KEY = 1_930_514_022;
+export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
+const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
 
 type ReleaseLock = () => Promise<void>;

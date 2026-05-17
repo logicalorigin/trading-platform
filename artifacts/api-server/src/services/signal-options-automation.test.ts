@@ -5,6 +5,7 @@ import {
   defaultSignalOptionsExecutionProfile,
   resolveSignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
+import { resolveRayReplicaSignalSettings } from "@workspace/rayreplica-core";
 import {
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
@@ -551,6 +552,67 @@ test("historical backfill defaults to April 1 through the latest completed tradi
   assert.equal(
     eventKey,
     "signal_options_backfill:1:deployment:SPY:entry",
+  );
+});
+
+test("RayReplica backfill settings patch overrides time horizon without dropping nested profile settings", () => {
+  const baseSettings = {
+    marketStructure: {
+      timeHorizon: 10,
+      bosConfirmation: "close",
+      chochVolumeGate: 1,
+    },
+    confirmation: {
+      requireAdx: true,
+      adxMin: 24,
+    },
+    bands: {
+      basisLength: 80,
+    },
+  };
+  const merged =
+    __signalOptionsAutomationInternalsForTests.mergeRayReplicaSettingsPatch(
+      baseSettings,
+      { timeHorizon: 4, chochAtrBuffer: 0.25 },
+    );
+  const resolved = resolveRayReplicaSignalSettings(merged);
+
+  assert.equal(resolved.timeHorizon, 4);
+  assert.equal(resolved.bosConfirmation, "close");
+  assert.equal(resolved.chochAtrBuffer, 0.25);
+  assert.equal(resolved.chochVolumeGate, 1);
+  assert.equal(resolved.requireAdx, true);
+  assert.equal(resolved.adxMin, 24);
+  assert.equal(resolved.basisLength, 80);
+  assert.equal(
+    (baseSettings.marketStructure as Record<string, unknown>).timeHorizon,
+    10,
+  );
+});
+
+test("signal-options backfill API forwards run-local RayReplica overrides", () => {
+  const routeSource = readFileSync(
+    new URL("../routes/automation.ts", import.meta.url),
+    "utf8",
+  );
+  const serviceSource = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    routeSource,
+    /rayReplicaSettingsPatch:\s*body\.rayReplicaSettingsPatch/,
+  );
+  assert.match(routeSource, /signalTimeframe:\s*body\.signalTimeframe/);
+  assert.match(
+    routeSource,
+    /forceDeploymentUniverse:\s*body\.forceDeploymentUniverse/,
+  );
+  assert.match(serviceSource, /profileSettings:\s*rayReplicaSettings/);
+  assert.doesNotMatch(
+    serviceSource,
+    /update\(signalMonitorProfilesTable\)[\s\S]*rayReplicaSettings/,
   );
 });
 

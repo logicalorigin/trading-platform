@@ -4387,7 +4387,12 @@ export const RunSignalOptionsShadowBackfillBody = zod.object({
   "end": zod.string().optional(),
   "session": zod.string().optional(),
   "commit": zod.boolean().optional(),
-  "profilePatch": zod.record(zod.string(), zod.unknown()).optional()
+  "profilePatch": zod.record(zod.string(), zod.unknown()).optional(),
+  "rayReplicaSettingsPatch": zod.record(zod.string(), zod.unknown()).optional(),
+  "signalTimeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']).optional(),
+  "forceDeploymentUniverse": zod.boolean().optional(),
+  "replay": zod.union([zod.boolean(),zod.record(zod.string(), zod.unknown())]).optional(),
+  "replaceReplayRows": zod.boolean().optional()
 })
 
 

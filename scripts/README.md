@@ -10,6 +10,10 @@ directory to define separate Replit app runners.
   currently enabled shadow signal-options deployment. It requires database access
   via `DATABASE_URL`, and talks to the API using `BACKTEST_API_BASE_URL` or
   `API_BASE_URL`.
+- `rayreplica:signal-options-sweep` runs the RayReplica signal-options
+  `timeHorizon`/structure sensitivity sweep through the existing shadow backfill
+  path, holds the signal-options worker advisory lock, writes JSON/CSV/Markdown
+  reports, and can replay the top eligible variant into the shadow ledger.
 - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` is a manual
   Polygon sampling utility for inspecting premium-distribution aggregation.
 

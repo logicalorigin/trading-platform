@@ -3127,6 +3127,18 @@ paths:
                   type: boolean
                 profilePatch:
                   $ref: "#/components/schemas/JsonObject"
+                rayReplicaSettingsPatch:
+                  $ref: "#/components/schemas/JsonObject"
+                signalTimeframe:
+                  $ref: "#/components/schemas/SignalMonitorTimeframe"
+                forceDeploymentUniverse:
+                  type: boolean
+                replay:
+                  oneOf:
+                    - type: boolean
+                    - $ref: "#/components/schemas/JsonObject"
+                replaceReplayRows:
+                  type: boolean
       responses:
         "201":
           description: Signal-options shadow backfill result

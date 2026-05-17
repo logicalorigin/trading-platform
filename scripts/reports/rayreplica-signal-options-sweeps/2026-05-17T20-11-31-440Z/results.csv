@@ -1,0 +1,3 @@
+variantId,stage,status,eligible,ineligibleReason,patch,realizedPnl,winRate,profitFactor,closedTrades,maxDrawdownAbs,openPositions,riskAdjustedScore,symbolsEvaluated,signalsEvaluated,entriesOpened,exitsClosed,error
+stage-a-h4,A,succeeded,false,closed trades below 20,"{""timeHorizon"":4}",944,0.8,17.857142857142858,15,0,3,1.888,90,385,18,15,
+stage-a-h6,A,succeeded,false,closed trades below 20,"{""timeHorizon"":6}",1018,0.6666666666666666,11.946236559139784,12,0,4,2.036,90,270,16,12,

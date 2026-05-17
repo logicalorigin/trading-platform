@@ -5186,6 +5186,11 @@ export type RunSignalOptionsShadowBackfillBody = {
   session?: string;
   commit?: boolean;
   profilePatch?: JsonObject;
+  rayReplicaSettingsPatch?: JsonObject;
+  signalTimeframe?: SignalMonitorTimeframe;
+  forceDeploymentUniverse?: boolean;
+  replay?: boolean | JsonObject;
+  replaceReplayRows?: boolean;
 };
 
 export type ListExecutionEventsParams = {
