@@ -230,8 +230,8 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                       }
                       style={{
                         height: dim(14),
-                        borderRadius: 2,
-                        background: day.notional > 0 ? baseColor : `${T.border}66`,
+                        borderRadius: dim(RADII.xs),
+                        background: day.notional > 0 ? baseColor : `${T.border}44`,
                         opacity,
                         border: day.isThirdFri ? `1px solid ${T.red}` : "none",
                         boxSizing: "border-box",
@@ -261,10 +261,10 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
             <span
               style={{
                 display: "inline-block",
-                width: 8,
-                height: 8,
+                width: dim(9),
+                height: dim(9),
                 background: T.accent,
-                borderRadius: 1,
+                borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
                 opacity: 0.7,
@@ -276,10 +276,10 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
             <span
               style={{
                 display: "inline-block",
-                width: 8,
-                height: 8,
+                width: dim(9),
+                height: dim(9),
                 background: T.amber,
-                borderRadius: 1,
+                borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
                 opacity: 0.9,
@@ -291,10 +291,10 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
             <span
               style={{
                 display: "inline-block",
-                width: 8,
-                height: 8,
+                width: dim(9),
+                height: dim(9),
                 background: T.red,
-                borderRadius: 1,
+                borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
                 border: `1px solid ${T.red}`,
