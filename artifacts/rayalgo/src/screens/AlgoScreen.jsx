@@ -1979,7 +1979,15 @@ export const AlgoScreen = ({
                 No RayReplica signal states are available for this deployment yet.
               </div>
             ) : (
-              <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 0,
+                  minWidth: 0,
+                  borderTop: `1px solid ${T.border}`,
+                  marginTop: sp(4),
+                }}
+              >
                 {visibleSignalRows.map((signal, index) => {
                   const signalRecord = asRecord(signal);
                   const linkedCandidate = signalOptionsCandidates.find(
@@ -2004,10 +2012,10 @@ export const AlgoScreen = ({
                       className="ra-row-enter"
                       style={{
                         ...motionRowStyle(index, 9, 60),
-                        border: `1px solid ${tone}35`,
-                        borderRadius: dim(RADII.sm),
-                        background: `${tone}10`,
-                        padding: sp("8px 9px"),
+                        borderLeft: `3px solid ${tone}`,
+                        borderBottom: `1px solid ${T.border}`,
+                        background: `${tone}08`,
+                        padding: sp("5px 9px"),
                         minWidth: 0,
                       }}
                     >
@@ -2017,7 +2025,7 @@ export const AlgoScreen = ({
                           gridTemplateColumns: algoIsPhone
                             ? "minmax(0, 1fr)"
                             : "minmax(90px, 0.7fr) minmax(110px, 0.85fr) minmax(110px, 0.85fr) minmax(130px, 1fr)",
-                          gap: sp(7),
+                          gap: sp(5),
                           alignItems: "center",
                         }}
                       >
@@ -2095,7 +2103,9 @@ export const AlgoScreen = ({
                   gridTemplateColumns: algoIsPhone
                     ? "minmax(0, 1fr)"
                     : "repeat(2, minmax(0, 1fr))",
-                  gap: sp(6),
+                  columnGap: sp(8),
+                  marginTop: sp(4),
+                  borderTop: `1px solid ${T.border}`,
                 }}
               >
                 {[
@@ -2118,14 +2128,16 @@ export const AlgoScreen = ({
                   <div
                     key={label}
                     style={{
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(RADII.md),
-                      background: T.bg1,
-                      padding: sp("8px 10px"),
+                      display: "grid",
+                      gridTemplateColumns: `${dim(76)}px minmax(0, 1fr)`,
+                      gap: sp(5),
+                      alignItems: "baseline",
+                      padding: sp("4px 0"),
+                      borderBottom: `1px solid ${T.border}`,
                       minWidth: 0,
                     }}
                   >
-                    <div
+                    <span
                       style={{
                         color: T.textMuted,
                         fontFamily: T.sans,
@@ -2134,20 +2146,19 @@ export const AlgoScreen = ({
                       }}
                     >
                       {String(label).toUpperCase()}
-                    </div>
-                    <div
+                    </span>
+                    <span
                       style={{
                         color: T.text,
                         fontFamily: T.sans,
                         fontSize: textSize("caption"),
-                        marginTop: sp(3),
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
                     >
                       {value}
-                    </div>
+                    </span>
                   </div>
                 ))}
                 <button
@@ -2244,15 +2255,18 @@ export const AlgoScreen = ({
                 />
                 <div
                   style={{
-                    marginTop: sp(8),
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(RADII.md),
-                    background: T.bg1,
-                    padding: sp("8px 10px"),
+                    marginTop: sp(5),
+                    paddingTop: sp(5),
+                    borderTop: `1px solid ${T.border}`,
+                    display: "grid",
+                    gridTemplateColumns: `${dim(110)}px minmax(0, 1fr)`,
+                    columnGap: sp(6),
+                    rowGap: sp(1),
+                    alignItems: "baseline",
                     minWidth: 0,
                   }}
                 >
-                  <div
+                  <span
                     style={{
                       color: T.textMuted,
                       fontFamily: T.sans,
@@ -2261,28 +2275,30 @@ export const AlgoScreen = ({
                     }}
                   >
                     SELECTED STAGE
-                  </div>
-                  <div
+                  </span>
+                  <span
                     style={{
                       color: T.text,
                       fontFamily: T.sans,
                       fontSize: fs(10),
-                      marginTop: sp(3),
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {selectedStage?.label || "No stage"}
-                  </div>
-                  <div
+                  </span>
+                  <span />
+                  <span
                     style={{
                       color: T.textDim,
                       fontFamily: T.sans,
                       fontSize: textSize("body"),
                       lineHeight: 1.35,
-                      marginTop: sp(2),
                     }}
                   >
                     {selectedStage?.detail || "No timestamp"}
-                  </div>
+                  </span>
                 </div>
               </div>
 
@@ -2696,7 +2712,13 @@ export const AlgoScreen = ({
           )}
 
           {primaryTab === "positions" && (
-            <div style={{ display: "grid", gap: sp(7) }}>
+            <div
+              style={{
+                display: "grid",
+                gap: 0,
+                borderTop: `1px solid ${T.border}`,
+              }}
+            >
               {!signalOptionsPositions.length ? (
                 <div
                   style={{
@@ -2735,10 +2757,8 @@ export const AlgoScreen = ({
                           : "minmax(160px, 1fr) repeat(4, minmax(82px, 0.7fr))",
                         gap: sp(8),
                         alignItems: "center",
-                        border: `1px solid ${T.border}`,
-                        borderRadius: dim(RADII.md),
-                        background: T.bg1,
-                        padding: sp("8px 10px"),
+                        borderBottom: `1px solid ${T.border}`,
+                        padding: sp("6px 0"),
                         minWidth: 0,
                       }}
                     >
@@ -2810,13 +2830,11 @@ export const AlgoScreen = ({
 
           {primaryTab === "profile" && (() => {
             const numberFieldStyle = {
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(RADII.md),
-              background: T.bg1,
-              padding: sp("8px 10px"),
               display: "flex",
               flexDirection: "column",
-              gap: sp(4),
+              gap: sp(3),
+              padding: sp("4px 6px"),
+              minWidth: 0,
             };
             const labelTextStyle = {
               color: T.textMuted,
@@ -2914,7 +2932,7 @@ export const AlgoScreen = ({
                 style={{
                   display: "flex",
                   flexDirection: "column",
-                  gap: sp(7),
+                  gap: sp(5),
                 }}
               >
                 <div
