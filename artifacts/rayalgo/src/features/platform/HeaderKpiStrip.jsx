@@ -90,7 +90,7 @@ const MicroSparkline = ({
   );
 };
 
-const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false }) => {
+const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false, isFirst = false }) => {
   const fallback = useMemo(
     () => buildFallbackWatchlistItem(symbol, index, label),
     [index, label, symbol],
@@ -104,26 +104,26 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
       onClick={() => onSelect?.(symbol)}
       className="ra-header-kpi"
       style={{
-        flex: compact ? "0 0 auto" : "1 1 110px",
+        flex: compact ? "0 0 auto" : `1 1 ${dim(110)}px`,
         minWidth: dim(compact ? 90 : 108),
         minHeight: dim(compact ? 28 : 38),
-        padding: sp(compact ? "2px 10px 2px 4px" : "4px 14px 4px 4px"),
-        marginRight: sp(compact ? 2 : 4),
+        padding: sp(compact ? "2px 10px 2px 8px" : "4px 14px 4px 10px"),
         display: "flex",
         alignItems: "center",
         gap: sp(8),
         background: "transparent",
         border: "none",
-        borderRight: `1px solid ${T.borderLight}`,
-        borderRadius: RADII.none,
+        borderLeft: isFirst ? "none" : `1px solid ${T.borderLight}`,
         color: T.text,
         cursor: "pointer",
-        transition: "color 0.18s ease",
+        transition: "background 0.18s ease, color 0.18s ease",
       }}
       onMouseEnter={(event) => {
+        event.currentTarget.style.background = T.bg2;
         event.currentTarget.style.color = T.accent;
       }}
       onMouseLeave={(event) => {
+        event.currentTarget.style.background = "transparent";
         event.currentTarget.style.color = T.text;
       }}
     >
@@ -167,7 +167,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
               display: "block",
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              color: T.textDim,
+              color: T.textSec,
               fontFamily: T.sans,
               lineHeight: 1.1,
               letterSpacing: "0.04em",
@@ -239,9 +239,12 @@ export const HeaderKpiStrip = memo(({ onSelect, compact = false }) => (
     style={{
       display: "flex",
       alignItems: "stretch",
-      gap: sp(compact ? 1 : 3),
+      gap: 0,
       minWidth: 0,
       width: "100%",
+      background: T.bg1,
+      border: `1px solid ${T.border}`,
+      borderRadius: dim(RADII.sm),
       overflow: "hidden",
     }}
   >
@@ -253,6 +256,7 @@ export const HeaderKpiStrip = memo(({ onSelect, compact = false }) => (
         index={index}
         onSelect={onSelect}
         compact={compact}
+        isFirst={index === 0}
       />
     ))}
   </div>
