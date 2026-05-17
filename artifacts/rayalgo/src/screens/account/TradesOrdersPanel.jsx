@@ -32,16 +32,29 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
-const SummaryCard = ({ label, value, tone = T.text }) => (
+const SummaryCard = ({ label, value, tone = T.text, isFirst = false }) => (
   <div
     style={{
-      padding: sp("3px 0"),
+      flex: "1 1 auto",
+      minWidth: dim(68),
+      padding: sp("3px 10px"),
+      borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
       display: "grid",
       gap: sp(1),
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: textSize("body"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
+    <div
+      style={{
+        color: tone,
+        fontSize: textSize("body"),
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.regular,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
       {value}
     </div>
   </div>
@@ -981,19 +994,22 @@ export const ClosedTradesPanel = ({
               }}
             />
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: sp("3px 8px"),
-                paddingLeft: isPhone ? 0 : sp(5),
-                borderLeft: isPhone ? "none" : `1px solid ${T.border}`,
-                flex: isPhone ? "0 0 220px" : undefined,
-                minWidth: isPhone ? dim(220) : undefined,
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                background: T.bg1,
+                borderRadius: dim(RADII.sm),
+                marginLeft: isPhone ? 0 : sp(2),
+                flex: isPhone ? "1 1 auto" : "1 1 auto",
+                minWidth: 0,
               }}
             >
               <SummaryCard
                 label="Trades"
                 value={formatNumber(query.data?.summary?.count || 0, 0)}
+                isFirst
               />
               <SummaryCard
                 label="W / L"

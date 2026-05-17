@@ -218,10 +218,14 @@ const ShadowWatchlistBacktestPanel = ({
         {run ? (
           <>
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: sp(4),
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                background: T.bg0,
+                borderRadius: dim(RADII.xs),
+                minWidth: 0,
               }}
             >
               {[
@@ -229,14 +233,14 @@ const ShadowWatchlistBacktestPanel = ({
                 ["Orders", summary.ordersCreated, T.text],
                 ["Open", summary.openSyntheticPositions, T.purple],
                 ["Skipped", summary.skippedSignals, T.amber],
-              ].map(([label, value, color]) => (
+              ].map(([label, value, color], index) => (
                 <div
                   key={label}
                   style={{
-                    border: "none",
-                    borderRadius: dim(RADII.xs),
-                    background: T.bg0,
-                    padding: sp("4px 5px"),
+                    flex: "1 1 auto",
+                    minWidth: dim(64),
+                    padding: sp("4px 9px"),
+                    borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
                   }}
                 >
                   <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
@@ -1477,13 +1481,15 @@ export const AccountScreen = ({
                   Starting balance is tracked at $30,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
                 </div>
                 <div
+                  className="ra-hide-scrollbar"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: accountIsPhone
-                      ? "repeat(2, minmax(0, 1fr))"
-                      : "repeat(4, minmax(0, 1fr))",
-                    gap: sp(4),
-                    paddingTop: sp(2),
+                    display: "flex",
+                    flexWrap: "nowrap",
+                    overflowX: "auto",
+                    background: T.bg0,
+                    borderRadius: dim(RADII.xs),
+                    marginTop: sp(2),
+                    minWidth: 0,
                   }}
                 >
                   {[
@@ -1493,14 +1499,14 @@ export const AccountScreen = ({
                     ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
                     ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
                     ["Options BT Orders", shadowAutomationAudit.replayOrders, T.green],
-                  ].map(([label, value, color]) => (
+                  ].map(([label, value, color], index) => (
                     <div
                       key={label}
                       style={{
-                        border: "none",
-                        borderRadius: dim(RADII.xs),
-                        background: T.bg0,
-                        padding: sp("4px 5px"),
+                        flex: "1 1 auto",
+                        minWidth: dim(80),
+                        padding: sp("4px 9px"),
+                        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
                       }}
                     >
                       <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
