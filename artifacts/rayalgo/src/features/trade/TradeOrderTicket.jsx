@@ -1922,21 +1922,26 @@ export const TradeOrderTicket = ({
             </button>
           </div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: sp(5),
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              border: `1px solid ${T.border}`,
+              background: T.bg0,
+              borderRadius: dim(4),
+              minWidth: 0,
             }}
           >
-            {comparisonRows.map((row) => (
+            {comparisonRows.map((row, index) => (
               <div
                 key={row.label}
                 style={{
-                  border: `1px solid ${row.changed ? `${T.amber}55` : T.border}`,
-                  background: row.changed ? `${T.amber}10` : T.bg0,
-                  borderRadius: dim(4),
-                  padding: sp("5px 6px"),
-                  minWidth: 0,
+                  flex: "1 1 auto",
+                  minWidth: dim(78),
+                  padding: sp("5px 8px"),
+                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                  background: row.changed ? `${T.amber}10` : "transparent",
                 }}
               >
                 <div
@@ -2307,14 +2312,27 @@ export const TradeOrderTicket = ({
             </span>
           </div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: sp(4),
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              border: `1px solid ${T.border}`,
+              background: T.bg0,
+              borderRadius: dim(4),
+              minWidth: 0,
             }}
           >
-            {sellCallCoverageRows.map(([label, value]) => (
-              <div key={label} style={{ minWidth: 0 }}>
+            {sellCallCoverageRows.map(([label, value], index) => (
+              <div
+                key={label}
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: dim(70),
+                  padding: sp("4px 8px"),
+                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                }}
+              >
                 <div
                   style={{
                     color: T.textMuted,
