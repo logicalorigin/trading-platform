@@ -1,6 +1,6 @@
 import { useChartHydrationStats } from "../charting/chartHydrationStats";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
-import { ELEVATION, FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 import { useRuntimeWorkloadStats } from "./workloadStats";
 const formatLatencyMetric = (value) => (

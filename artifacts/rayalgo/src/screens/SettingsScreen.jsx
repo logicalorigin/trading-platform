@@ -53,7 +53,7 @@ import {
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
