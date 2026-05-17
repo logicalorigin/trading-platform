@@ -200,7 +200,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                         style={{
                           height: dim(14),
                           background: T.bg1,
-                          borderRadius: 2,
+                          borderRadius: dim(RADII.xs),
                           opacity: 0.25,
                         }}
                       />

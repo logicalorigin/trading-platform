@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { FONT_WEIGHTS, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { EmptyState, formatAccountSignedMoney } from "./accountUtils";
 
 const SVG_W = 320;
@@ -236,7 +236,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
         style={{
           height: dim(3),
           background: T.bg1,
-          borderRadius: 2,
+          borderRadius: dim(RADII.pill),
           overflow: "hidden",
         }}
       >
