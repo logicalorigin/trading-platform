@@ -1174,7 +1174,9 @@ export const AccountScreen = ({
       style={{
         flex: 1,
         width: "100%",
-        overflow: "auto",
+        maxWidth: "100%",
+        overflowX: "hidden",
+        overflowY: "auto",
         background: T.bg0,
         minWidth: 0,
       }}

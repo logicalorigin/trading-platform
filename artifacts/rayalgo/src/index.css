@@ -919,6 +919,8 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
   [data-testid="account-screen"] {
     min-width: 0;
+    max-width: 100vw;
+    overflow-x: hidden !important;
   }
 
   [data-testid="account-screen"] > div {
