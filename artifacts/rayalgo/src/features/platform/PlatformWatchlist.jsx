@@ -957,7 +957,7 @@ export const Watchlist = ({
               gap: sp(8),
               padding: sp("8px 12px"),
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: "transparent",
               border: `1px solid ${T.border}`,
               color: T.text,
               cursor: "pointer",
@@ -1079,7 +1079,7 @@ export const Watchlist = ({
               display: "grid",
               placeItems: "center",
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: "transparent",
               border: `1px solid ${T.border}`,
               color: T.accent,
               cursor: "pointer",
@@ -1211,7 +1211,7 @@ export const Watchlist = ({
               gap: sp(8),
               padding: sp("8px 12px"),
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: "transparent",
               border: `1px solid ${T.border}`,
               minWidth: 0,
             }}
@@ -1243,7 +1243,7 @@ export const Watchlist = ({
             style={{
               width: dim(48),
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: "transparent",
               border: `1px solid ${T.border}`,
               color: directionEnabled ? T.textSec : T.textMuted,
               cursor: directionEnabled ? "pointer" : "default",
@@ -1264,7 +1264,7 @@ export const Watchlist = ({
             style={{
               border: `1px solid ${T.border}`,
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: "transparent",
               overflow: "hidden",
             }}
           >

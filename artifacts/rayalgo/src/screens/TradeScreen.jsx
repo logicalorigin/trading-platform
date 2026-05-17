@@ -1755,10 +1755,9 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
                 display: "grid",
                 gridTemplateColumns: "minmax(0, 1fr) auto",
                 gap: sp(8),
-                border: "none",
-                background: T.bg1,
-                borderRadius: dim(RADII.md),
-                padding: sp("8px 10px"),
+                background: "transparent",
+                borderBottom: `1px solid ${T.border}`,
+                padding: sp("4px 0"),
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
               }}

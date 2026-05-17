@@ -963,10 +963,6 @@ export const MarketScreen = ({
                 fontFamily: T.sans,
                 color: T.textSec,
                 lineHeight: 1.45,
-                padding: sp("10px 12px"),
-                background: T.bg1,
-                border: "none",
-                borderRadius: dim(RADII.md),
               }}
             >
               <span style={{ color: marketPulseItems[0].tone }}>▸</span>{" "}
