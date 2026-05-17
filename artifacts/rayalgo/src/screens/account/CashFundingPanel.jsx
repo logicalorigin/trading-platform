@@ -103,6 +103,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
         </div>
 
         <div
+          data-account-sidebar-grid
           style={{
             display: "grid",
             gridTemplateColumns: `minmax(0, 1.1fr) minmax(${dim(230)}px, 0.9fr)`,

@@ -606,6 +606,7 @@ export const PositionsAtDateInspector = ({
           ) : null}
 
           <div
+            data-account-sidebar-grid
             style={{
               display: "grid",
               gridTemplateColumns: `minmax(0, 1fr) minmax(${dim(280)}px, 0.8fr)`,

@@ -927,7 +927,8 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
   [data-testid="account-screen"] .ra-account-overview-grid,
   [data-testid="account-screen"] .ra-account-detail-grid,
-  [data-testid="account-screen"] .ra-account-support-grid {
+  [data-testid="account-screen"] .ra-account-support-grid,
+  [data-testid="account-screen"] [data-account-sidebar-grid] {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
@@ -935,6 +936,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   [data-testid="settings-screen"][data-layout="phone"] [style*="min-width"],
   [data-testid="diagnostics-screen"][data-layout="phone"] [style*="min-width"],
   [data-testid="backtest-workspace"][data-layout="phone"] [style*="min-width"],
+  [data-testid="account-screen"] [style*="min-width"],
   .photonics-research-root [style*="min-width"] {
     min-width: 0 !important;
   }
