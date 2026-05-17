@@ -32,6 +32,7 @@ import {
 import {
   FONT_WEIGHTS,
   MISSING_VALUE,
+  RADII,
   T,
   dim,
   fs,
@@ -110,8 +111,8 @@ const TickerTabStripItem = ({
           dropSide === "after"
             ? `3px solid ${T.accent}`
             : `1px solid ${isActive ? T.border : "transparent"}`,
-        borderTopLeftRadius: dim(4),
-        borderTopRightRadius: dim(4),
+        borderTopLeftRadius: dim(RADII.xs),
+        borderTopRightRadius: dim(RADII.xs),
         cursor: dragging ? "grabbing" : "grab",
         flexShrink: 0,
         opacity: dragging ? 0.62 : 1,
