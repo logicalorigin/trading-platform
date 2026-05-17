@@ -177,7 +177,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
         color: T.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
-        letterSpacing: "0.05em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -950,7 +950,7 @@ const SqueezeCard = ({ squeeze, source }) => {
                 color: T.textDim,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
-                letterSpacing: "0.05em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
               }}
             >
@@ -989,7 +989,7 @@ const SqueezeCard = ({ squeeze, source }) => {
                 color: T.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
-                letterSpacing: "0.05em",
+                letterSpacing: "0.04em",
                 textTransform: "uppercase",
                 marginBottom: sp(3),
               }}
@@ -1634,7 +1634,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
           color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
-          letterSpacing: "0.05em",
+          letterSpacing: "0.04em",
           textTransform: "uppercase",
         }}
       >

@@ -1374,7 +1374,7 @@ export const AlgoScreen = ({
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.amber,
-                letterSpacing: "0.05em",
+                letterSpacing: "0.04em",
               }}
             >
               SHADOW SCANS WAITING FOR DATA

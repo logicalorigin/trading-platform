@@ -774,7 +774,7 @@ const TradePanelShell = ({
             color: T.text,
             fontSize: fs(10),
             fontWeight: FONT_WEIGHTS.regular,
-            letterSpacing: "0.05em",
+            letterSpacing: "0.04em",
           }}
         >
           {title}

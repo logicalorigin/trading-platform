@@ -950,7 +950,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
                   fontFamily: T.sans,
                   fontSize: fs(8),
                   fontWeight: FONT_WEIGHTS.regular,
-                  letterSpacing: "0.05em",
+                  letterSpacing: "0.04em",
                   textTransform: "uppercase",
                 }}
               >
