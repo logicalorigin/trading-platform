@@ -18,11 +18,10 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
       style={{
         display: "inline-flex",
         alignItems: "baseline",
-        gap: sp(3),
+        gap: sp(4),
         minHeight: dim(20),
         minWidth: 0,
-        padding: sp("0 4px"),
-        borderLeft: `1px solid ${T.border}`,
+        padding: sp("0 10px"),
         whiteSpace: "nowrap",
         overflow: "hidden",
       }}
@@ -32,8 +31,8 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
           color: T.textMuted,
           fontSize: fs(6),
           fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.regular,
-          letterSpacing: "0.08em",
+          fontWeight: FONT_WEIGHTS.medium,
+          letterSpacing: "0.04em",
           textTransform: "uppercase",
           flexShrink: 0,
         }}
@@ -43,9 +42,10 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
       <span
         style={{
           color: tone,
-          fontSize: fs(strong ? 10 : 9),
+          fontSize: fs(strong ? 11 : 9),
           fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.regular,
+          fontWeight: strong ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+          fontVariantNumeric: "tabular-nums",
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}

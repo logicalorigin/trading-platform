@@ -1144,13 +1144,13 @@ export const ClosedTradesPanel = ({
                           ? formatAccountPrice(trade.avgClose, 2, maskValues)
                           : "—"}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl) }}>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl), fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>
                         {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
                         {trade.realizedPnlPercent != null
                           ? `/ ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}`
                           : ""}
                         {trade.commissions != null ? (
-                          <span style={{ color: T.textDim }}>
+                          <span style={{ color: T.textDim, fontWeight: FONT_WEIGHTS.regular }}>
                             {" · "}
                             {formatAccountMoney(trade.commissions, currency, false, maskValues)}
                           </span>

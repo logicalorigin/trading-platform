@@ -85,7 +85,7 @@ const positionSourceAttributionKey = (rowId, source, index) =>
 const headerCellStyle = (active) => ({
   ...tableCellStyle,
   ...tableHeaderStyle,
-  color: active ? T.accent : T.textMuted,
+  color: active ? T.accent : T.textSec,
 });
 
 const SortButton = ({ id, label, sort, setSort, align = "right" }) => (

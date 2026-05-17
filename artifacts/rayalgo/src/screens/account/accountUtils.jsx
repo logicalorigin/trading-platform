@@ -145,7 +145,7 @@ export const sectionEyebrowStyle = {
 
 export const mutedLabelStyle = {
   get fontSize() {
-    return textSize("caption");
+    return textSize("body");
   },
   get color() {
     return T.textMuted;
@@ -154,8 +154,7 @@ export const mutedLabelStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
+  letterSpacing: "0.02em",
 };
 
 const tokenTone = (tokenName) => {
@@ -394,17 +393,17 @@ export const tableHeaderStyle = {
     return T.bg1;
   },
   get color() {
-    return T.textMuted;
+    return T.textSec;
   },
   get fontSize() {
-    return textSize("caption");
+    return textSize("body");
   },
   get fontFamily() {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
+  letterSpacing: "0.02em",
+  textTransform: "none",
   get borderBottom() {
     return `1px solid ${T.border}`;
   },

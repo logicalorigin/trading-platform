@@ -63,21 +63,22 @@ const MarginGauge = ({ value, maskValues = false }) => {
       <div
         style={{
           color: tone,
-          fontSize: textSize("paragraph"),
+          fontSize: textSize("displaySmall"),
           fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.label,
+          fontWeight: FONT_WEIGHTS.medium,
           fontVariantNumeric: "tabular-nums",
-          letterSpacing: "-0.01em",
+          letterSpacing: "-0.015em",
+          lineHeight: 1.1,
         }}
       >
         {marginCushionPercent(value, maskValues)}
       </div>
       <div
         style={{
-          height: dim(8),
-          borderRadius: dim(RADII.sm),
+          height: dim(12),
+          borderRadius: dim(RADII.pill),
           overflow: "hidden",
-          background: T.bg1,
+          background: T.bg2,
           border: "none",
         }}
       >
@@ -86,6 +87,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
             width: `${pct}%`,
             height: "100%",
             background: tone,
+            transition: "width 0.4s ease",
           }}
         />
       </div>
