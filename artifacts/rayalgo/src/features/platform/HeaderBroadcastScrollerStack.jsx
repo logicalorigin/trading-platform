@@ -129,16 +129,16 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = fals
       <span style={{ color: tone, fontWeight: FONT_WEIGHTS.regular }}>{item.directionLabel}</span>
       <span style={{ color: T.text }}>{item.symbol}</span>
       {item.timeframe ? (
-        <span style={{ color: T.textDim, fontFamily: T.code }}>
+        <span style={{ color: T.textSec, fontFamily: T.sans }}>
           {item.timeframe}
         </span>
       ) : null}
       {priceLabel ? (
-        <span style={{ color: T.textSec, fontFamily: T.code }}>
+        <span style={{ color: T.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
           {priceLabel}
         </span>
       ) : null}
-      <span style={{ color: T.textMuted, fontFamily: T.code }}>
+      <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
       </span>
     </HeaderBroadcastSegment>
@@ -172,15 +172,15 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
     >
       <span style={{ color: T.text }}>{item.symbol}</span>
       {contractLabel ? (
-        <span style={{ color: tone, fontFamily: T.code }}>{contractLabel}</span>
+        <span style={{ color: tone, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>{contractLabel}</span>
       ) : null}
-      <span style={{ color: T.textSec, fontFamily: T.code }}>
+      <span style={{ color: T.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {fmtCompactCurrency(item.premium)}
       </span>
       {scoreLabel ? (
-        <span style={{ color: T.amber, fontFamily: T.code }}>{scoreLabel}</span>
+        <span style={{ color: T.amber, fontFamily: T.sans, fontVariantNumeric: "tabular-nums", fontWeight: FONT_WEIGHTS.medium }}>{scoreLabel}</span>
       ) : null}
-      <span style={{ color: T.textMuted, fontFamily: T.code }}>
+      <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
       </span>
     </HeaderBroadcastSegment>
@@ -233,7 +233,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
     <span
       style={{
         color: T.textSec,
-        fontFamily: T.code,
+        fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.regular,
       }}
@@ -243,7 +243,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
     <span
       style={{
         color: tone,
-        fontFamily: T.code,
+        fontFamily: T.sans,
         fontSize: textSize("body"),
         fontWeight: FONT_WEIGHTS.regular,
         whiteSpace: "nowrap",
@@ -263,7 +263,7 @@ const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
       gap: sp(8),
       minHeight: dim(20),
       color: T.textDim,
-      fontFamily: T.code,
+      fontFamily: T.sans,
       fontSize: textSize("body"),
       fontWeight: FONT_WEIGHTS.regular,
     }}
@@ -318,7 +318,7 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
             background: active ? `${T.accent}18` : T.bg1,
             color: active ? T.accent : T.textDim,
             cursor: "pointer",
-            fontFamily: T.code,
+            fontFamily: T.sans,
             fontSize: textSize("body"),
             fontWeight: FONT_WEIGHTS.regular,
           }}
@@ -391,7 +391,7 @@ const HeaderLaneControlRow = ({ label, children }) => (
       gap: sp(6),
       minHeight: dim(25),
       color: T.textDim,
-      fontFamily: T.code,
+      fontFamily: T.sans,
       fontSize: textSize("body"),
       fontWeight: FONT_WEIGHTS.regular,
     }}
@@ -520,7 +520,7 @@ const HeaderBroadcastLane = ({
             background: settingsOpen ? `${T.accent}14` : "transparent",
             color: settingsOpen ? T.accent : T.textDim,
             cursor: "pointer",
-            fontFamily: T.code,
+            fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
             whiteSpace: "nowrap",
@@ -585,10 +585,13 @@ const HeaderBroadcastLane = ({
           >
             <span
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
+                width: dim(8),
+                height: dim(8),
+                borderRadius: dim(RADII.pill),
                 background: emptyTone || T.textMuted,
+                boxShadow: emptyTone
+                  ? `0 0 0 3px ${emptyTone}24`
+                  : "none",
               }}
             />
           </span>
