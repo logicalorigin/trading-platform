@@ -268,7 +268,7 @@ function sourceBadge(sourceId) {
     border: `1px solid ${tone}66`,
     background: T.bg0,
     color: tone,
-    borderRadius: dim(3),
+    borderRadius: dim(RADII.xs),
     padding: sp("1px 3px"),
     fontFamily: T.sans,
     fontSize: textSize("caption"),
@@ -505,7 +505,7 @@ function LaneMembershipCard({
         </div>
       </div>
 
-      <div style={{ height: dim(6), borderRadius: dim(3), background: T.bg0, overflow: "hidden", border: `1px solid ${T.border}` }}>
+      <div style={{ height: dim(6), borderRadius: dim(RADII.xs), background: T.bg0, overflow: "hidden", border: `1px solid ${T.border}` }}>
         <div style={{ height: "100%", width: `${Math.round(usage * 100)}%`, background: tone }} />
       </div>
 
