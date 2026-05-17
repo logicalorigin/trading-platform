@@ -530,7 +530,7 @@ export const StatTile = ({
       style={{
         minWidth: dim(flat ? 0 : compact ? 86 : 108),
         padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "4px 6px" : "6px 8px"),
-        borderRadius: flat ? 0 : dim(8),
+        borderRadius: flat ? 0 : dim(RADII.sm),
         border: "none",
         background: "transparent",
         textAlign: align,
@@ -634,7 +634,7 @@ export const Panel = ({
         justifyContent: "space-between",
         gap: sp(8),
         padding: sp("8px 12px 6px"),
-        borderBottom: `1px solid ${T.border}`,
+        borderBottom: `1px solid ${T.borderLight}`,
         background: T.bg1,
       }}
     >
