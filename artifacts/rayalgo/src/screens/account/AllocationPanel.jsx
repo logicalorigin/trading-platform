@@ -15,7 +15,7 @@ const nonZeroBuckets = (rows = []) =>
   rows.filter((row) => Math.abs(Number(row?.value) || 0) > EPSILON);
 
 const DonutLegend = ({ data, maskValues = false }) => (
-  <div style={{ display: "grid", gap: sp(2) }}>
+  <div style={{ display: "grid", gap: sp(3), marginTop: sp(3) }}>
     {data.slice(0, 4).map((item, index) => (
       <div
         key={item.label}
@@ -24,23 +24,23 @@ const DonutLegend = ({ data, maskValues = false }) => (
           gridTemplateColumns: "1fr auto",
           gap: sp(4),
           color: T.textSec,
-          fontSize: textSize("micro"),
+          fontSize: textSize("body"),
           fontFamily: T.sans,
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
           <span
             style={{
-              width: 7,
-              height: 7,
-              borderRadius: 2,
+              width: dim(10),
+              height: dim(10),
+              borderRadius: dim(RADII.xs),
               background: getColors()[index % getColors().length],
               flexShrink: 0,
             }}
           />
           <span
             style={{
-              color: T.textSec,
+              color: T.text,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -49,7 +49,7 @@ const DonutLegend = ({ data, maskValues = false }) => (
             {item.label}
           </span>
         </span>
-        <span style={{ color: T.textDim }}>
+        <span style={{ color: T.textSec, fontVariantNumeric: "tabular-nums" }}>
           {formatAccountPercent(item.weightPercent, 1, maskValues)}
         </span>
       </div>
@@ -60,7 +60,7 @@ const DonutLegend = ({ data, maskValues = false }) => (
 const Donut = ({ title, data, currency, maskValues = false }) => (
   <div style={{ minWidth: 0 }}>
     <div style={{ ...sectionTitleStyle, fontSize: textSize("body"), marginBottom: sp(3) }}>{title}</div>
-    <div style={{ height: dim(70) }}>
+    <div style={{ height: dim(96) }}>
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -92,12 +92,13 @@ const Donut = ({ title, data, currency, maskValues = false }) => (
   </div>
 );
 
-const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false }) => (
+const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false, isFirst = false }) => (
   <div
     style={{
-      minWidth: 0,
-      borderTop: `1px solid ${T.border}`,
-      padding: sp("3px 0"),
+      flex: "1 1 auto",
+      minWidth: dim(72),
+      padding: sp("3px 10px"),
+      borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
     }}
   >
     <div style={{ ...mutedLabelStyle, fontSize: textSize("caption"), lineHeight: 1 }}>
@@ -161,11 +162,14 @@ export const AllocationCompactContent = ({
         <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
           <div style={{ ...sectionTitleStyle, fontSize: textSize("body") }}>Exposure</div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              columnGap: sp(8),
-              rowGap: 0,
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              background: T.bg1,
+              borderRadius: dim(RADII.sm),
+              minWidth: 0,
             }}
           >
             <ExposureMetric
@@ -173,6 +177,7 @@ export const AllocationCompactContent = ({
               value={grossTotal}
               currency={currency}
               maskValues={maskValues}
+              isFirst
             />
             <ExposureMetric
               label="Net"

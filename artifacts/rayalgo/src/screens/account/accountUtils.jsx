@@ -139,13 +139,13 @@ export const sectionEyebrowStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
 export const mutedLabelStyle = {
   get fontSize() {
-    return textSize("caption");
+    return textSize("body");
   },
   get color() {
     return T.textMuted;
@@ -154,8 +154,7 @@ export const mutedLabelStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
+  letterSpacing: "0.02em",
 };
 
 const tokenTone = (tokenName) => {
@@ -164,7 +163,7 @@ const tokenTone = (tokenName) => {
     color,
     border: `color-mix(in srgb, ${color} 28%, transparent)`,
     bg: isLightTheme()
-      ? T.bg1
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
       : `color-mix(in srgb, ${color} 13%, transparent)`,
   };
 };
@@ -175,7 +174,9 @@ const colorTone = (color) => ({
     ? `color-mix(in srgb, ${color} 28%, transparent)`
     : `${color}44`,
   bg: isLightTheme()
-    ? T.bg1
+    ? color.startsWith("var(")
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
+      : `${color}14`
     : color.startsWith("var(")
       ? `color-mix(in srgb, ${color} 13%, transparent)`
       : `${color}18`,
@@ -186,37 +187,37 @@ const toneValueMap = () => ({
   accent: {
     color: T.accent,
     border: `${T.accent}44`,
-    bg: isLightTheme() ? T.bg1 : T.accentDim,
+    bg: isLightTheme() ? `${T.accent}14` : T.accentDim,
   },
   green: {
     color: T.green,
     border: `${T.green}44`,
-    bg: isLightTheme() ? T.bg1 : T.greenBg,
+    bg: isLightTheme() ? `${T.green}14` : T.greenBg,
   },
   red: {
     color: T.red,
     border: `${T.red}44`,
-    bg: isLightTheme() ? T.bg1 : T.redBg,
+    bg: isLightTheme() ? `${T.red}14` : T.redBg,
   },
   amber: {
     color: T.amber,
     border: `${T.amber}44`,
-    bg: isLightTheme() ? T.bg1 : T.amberBg,
+    bg: isLightTheme() ? `${T.amber}14` : T.amberBg,
   },
   cyan: {
     color: T.cyan,
     border: `${T.cyan}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.cyan}18`,
+    bg: isLightTheme() ? `${T.cyan}14` : `${T.cyan}18`,
   },
   purple: {
     color: T.purple,
     border: `${T.purple}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.purple}18`,
+    bg: isLightTheme() ? `${T.purple}14` : `${T.purple}18`,
   },
   pink: {
     color: T.pink,
     border: `${T.pink}44`,
-    bg: isLightTheme() ? T.bg1 : `${T.pink}18`,
+    bg: isLightTheme() ? `${T.pink}14` : `${T.pink}18`,
   },
   "pnl-positive": tokenTone("--ra-pnl-positive"),
   "pnl-negative": tokenTone("--ra-pnl-negative"),
@@ -327,7 +328,7 @@ export const ghostButtonStyle = {
   },
   fontWeight: FONT_WEIGHTS.medium,
   cursor: "pointer",
-  letterSpacing: "0.06em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
@@ -339,7 +340,7 @@ export const controlInputStyle = {
     return sp("0 10px");
   },
   get borderRadius() {
-    return dim(8);
+    return dim(RADII.sm);
   },
   border: "none",
   get background() {
@@ -365,7 +366,7 @@ export const controlSelectStyle = {
     return sp("0 7px");
   },
   get borderRadius() {
-    return dim(4);
+    return dim(RADII.xs);
   },
   get border() {
     return `1px solid ${T.border}`;
@@ -394,17 +395,17 @@ export const tableHeaderStyle = {
     return T.bg1;
   },
   get color() {
-    return T.textMuted;
+    return T.textSec;
   },
   get fontSize() {
-    return textSize("caption");
+    return textSize("body");
   },
   get fontFamily() {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
+  letterSpacing: "0.02em",
+  textTransform: "none",
   get borderBottom() {
     return `1px solid ${T.border}`;
   },
@@ -469,7 +470,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         fontSize: textSize("label"),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
         ...style,
       }}
@@ -529,7 +530,7 @@ export const StatTile = ({
       style={{
         minWidth: dim(flat ? 0 : compact ? 86 : 108),
         padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "4px 6px" : "6px 8px"),
-        borderRadius: flat ? 0 : dim(8),
+        borderRadius: flat ? 0 : dim(RADII.sm),
         border: "none",
         background: "transparent",
         textAlign: align,
@@ -632,8 +633,8 @@ export const Panel = ({
         alignItems: "center",
         justifyContent: "space-between",
         gap: sp(8),
-        padding: sp("14px 16px 12px"),
-        borderBottom: `1px solid ${T.border}`,
+        padding: sp("8px 12px 6px"),
+        borderBottom: `1px solid ${T.borderLight}`,
         background: T.bg1,
       }}
     >
@@ -668,7 +669,7 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(14) }}>
+    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(8) }}>
       {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>

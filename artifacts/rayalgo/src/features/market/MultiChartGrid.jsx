@@ -1178,7 +1178,7 @@ export const MultiChartGrid = ({
               background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
               color: gridScaleResetDisabled ? T.textMuted : T.text,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: gridScaleResetDisabled ? "default" : "pointer",
               letterSpacing: "0.04em",
               opacity: gridScaleResetDisabled ? 0.55 : 1,
@@ -1198,7 +1198,7 @@ export const MultiChartGrid = ({
               background: "rgba(255,255,255,0.08)",
               color: T.text,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1235,7 +1235,7 @@ export const MultiChartGrid = ({
               background: syncTimeframes ? T.accent : T.bg3,
               color: syncTimeframes ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1254,7 +1254,7 @@ export const MultiChartGrid = ({
               background: syncCrosshair ? T.accent : T.bg3,
               color: syncCrosshair ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -1267,7 +1267,7 @@ export const MultiChartGrid = ({
               gap: sp(2),
               padding: sp(denseGrid ? 1 : 2),
               background: T.bg1,
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
             }}
           >
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
@@ -1282,7 +1282,7 @@ export const MultiChartGrid = ({
                   background: layout === key ? T.accent : "transparent",
                   color: layout === key ? T.onAccent : T.textDim,
                   border: "none",
-                  borderRadius: RADII.none,
+                  borderRadius: dim(RADII.xs),
                   cursor: "pointer",
                   letterSpacing: "0.04em",
                 }}

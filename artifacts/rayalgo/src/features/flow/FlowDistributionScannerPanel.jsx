@@ -28,7 +28,7 @@ const SegmentedToggle = ({
       gap: sp(2),
       padding: sp(2),
       border: `1px solid ${T.border}`,
-      borderRadius: dim(4),
+      borderRadius: dim(RADII.xs),
       background: T.bg1,
     }}
   >

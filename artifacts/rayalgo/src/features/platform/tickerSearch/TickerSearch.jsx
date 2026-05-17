@@ -1310,7 +1310,7 @@ export const MiniChartTickerSearch = ({
               color: T.textMuted,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -1420,7 +1420,7 @@ export const MiniChartTickerSearch = ({
             width: "100%",
             background: T.bg3,
             border: "none",
-            borderRadius: RADII.none,
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             color: T.text,
             fontSize: fs(10),
@@ -1465,7 +1465,7 @@ export const MiniChartTickerSearch = ({
               color: T.textDim,
               fontFamily: T.sans,
               textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
             }}
           >
             Updating…
@@ -1528,7 +1528,7 @@ export const MiniChartTickerSearch = ({
               color: T.textMuted,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -1574,7 +1574,7 @@ export const MiniChartTickerSearch = ({
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               padding: sp("10px 12px"),
               textTransform: "uppercase",
             }}
@@ -1662,7 +1662,7 @@ export function TickerSearchLab() {
             style={{
               fontSize: fs(13),
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -1693,7 +1693,7 @@ export function TickerSearchLab() {
                 fontSize: textSize("caption"),
                 color: T.textMuted,
                 textTransform: "uppercase",
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 marginBottom: sp(3),
               }}
             >
@@ -1737,7 +1737,7 @@ export function TickerSearchLab() {
               fontWeight: FONT_WEIGHTS.regular,
               cursor: "pointer",
               textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
             }}
           >
             Search Symbol
@@ -1951,7 +1951,7 @@ export const TickerUniverseSearchPanel = ({
               color: T.textMuted,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >
@@ -2016,7 +2016,7 @@ export const TickerUniverseSearchPanel = ({
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
                 color: T.textSec,
-                letterSpacing: "0.06em",
+                letterSpacing: "0.04em",
               }}
             >
               SEARCH UNIVERSE
@@ -2088,7 +2088,7 @@ export const TickerUniverseSearchPanel = ({
             width: "100%",
             background: T.bg3,
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("7px 10px"),
             color: T.text,
             fontSize: fs(11),
@@ -2104,7 +2104,7 @@ export const TickerUniverseSearchPanel = ({
             maxHeight: dim(220),
             overflowY: "auto",
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             background: T.bg1,
           }}
         >
@@ -2137,7 +2137,7 @@ export const TickerUniverseSearchPanel = ({
                 color: T.textDim,
                 fontFamily: T.sans,
                 textTransform: "uppercase",
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               Updating…

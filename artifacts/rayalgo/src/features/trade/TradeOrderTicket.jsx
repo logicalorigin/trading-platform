@@ -588,7 +588,7 @@ export const TradeOrderTicket = ({
           style={{
             background: `${T.amber}12`,
             border: `1px solid ${T.amber}35`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             fontSize: textSize("body"),
             color: T.amber,
@@ -721,7 +721,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
           }}
         >
@@ -786,7 +786,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
           }}
         >
@@ -838,7 +838,7 @@ export const TradeOrderTicket = ({
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               cursor: "pointer",
               transition: "border-color 0.12s ease, background 0.12s ease",
             }}
@@ -1019,7 +1019,7 @@ export const TradeOrderTicket = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -1846,7 +1846,7 @@ export const TradeOrderTicket = ({
           fontWeight: FONT_WEIGHTS.regular,
           color: T.textSec,
           fontFamily: T.sans,
-          letterSpacing: "0.08em",
+          letterSpacing: "0.04em",
           borderBottom: `1px solid ${T.border}`,
           paddingBottom: sp(4),
         }}
@@ -1908,7 +1908,7 @@ export const TradeOrderTicket = ({
               onClick={restoreAutomationPlan}
               style={{
                 border: `1px solid ${T.border}`,
-                borderRadius: dim(4),
+                borderRadius: dim(RADII.xs),
                 background: T.bg0,
                 color: T.cyan,
                 fontFamily: T.sans,
@@ -1922,21 +1922,26 @@ export const TradeOrderTicket = ({
             </button>
           </div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: sp(5),
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              border: `1px solid ${T.border}`,
+              background: T.bg0,
+              borderRadius: dim(RADII.xs),
+              minWidth: 0,
             }}
           >
-            {comparisonRows.map((row) => (
+            {comparisonRows.map((row, index) => (
               <div
                 key={row.label}
                 style={{
-                  border: `1px solid ${row.changed ? `${T.amber}55` : T.border}`,
-                  background: row.changed ? `${T.amber}10` : T.bg0,
-                  borderRadius: dim(4),
-                  padding: sp("5px 6px"),
-                  minWidth: 0,
+                  flex: "1 1 auto",
+                  minWidth: dim(78),
+                  padding: sp("5px 8px"),
+                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                  background: row.changed ? `${T.amber}10` : "transparent",
                 }}
               >
                 <div
@@ -2052,7 +2057,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               LAST
@@ -2073,7 +2078,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               CHG
@@ -2106,7 +2111,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               VOL
@@ -2140,7 +2145,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               BID
@@ -2161,7 +2166,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               MID
@@ -2192,7 +2197,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
               }}
             >
               ASK
@@ -2278,7 +2283,7 @@ export const TradeOrderTicket = ({
           style={{
             border: `1px solid ${sellCallStatusColor}55`,
             background: `${sellCallStatusColor}12`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             display: "grid",
             gap: sp(5),
@@ -2307,14 +2312,27 @@ export const TradeOrderTicket = ({
             </span>
           </div>
           <div
+            className="ra-hide-scrollbar"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: sp(4),
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              border: `1px solid ${T.border}`,
+              background: T.bg0,
+              borderRadius: dim(RADII.xs),
+              minWidth: 0,
             }}
           >
-            {sellCallCoverageRows.map(([label, value]) => (
-              <div key={label} style={{ minWidth: 0 }}>
+            {sellCallCoverageRows.map(([label, value], index) => (
+              <div
+                key={label}
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: dim(70),
+                  padding: sp("4px 8px"),
+                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                }}
+              >
                 <div
                   style={{
                     color: T.textMuted,
@@ -2389,7 +2407,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
           >
@@ -2422,7 +2440,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(6),
                 color: T.textMuted,
-                letterSpacing: "0.08em",
+                letterSpacing: "0.04em",
                 marginBottom: sp(1),
               }}
             >
@@ -2452,7 +2470,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
           >
@@ -2490,7 +2508,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
               justifyContent: "space-between",
@@ -2557,7 +2575,7 @@ export const TradeOrderTicket = ({
             style={{
               fontSize: fs(6),
               color: T.textMuted,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
               justifyContent: "space-between",
@@ -2706,7 +2724,7 @@ export const TradeOrderTicket = ({
             gap: sp(4),
             border: `1px solid ${T.border}`,
             background: T.bg0,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             fontFamily: T.sans,
           }}
@@ -2756,7 +2774,7 @@ export const TradeOrderTicket = ({
           style={{
             background: T.bg1,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
@@ -2830,7 +2848,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             background: T.bg1,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             color: T.textSec,
             fontSize: fs(10),
             fontFamily: T.sans,
@@ -2859,7 +2877,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             background: primarySubmitDisabled ? T.bg3 : primarySubmitColor,
             border: "none",
-            borderRadius: dim(4),
+            borderRadius: dim(RADII.xs),
             color: primarySubmitDisabled ? T.textDim : T.onAccent,
             fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,

@@ -1,5 +1,5 @@
 import { useContext, useMemo, useState } from "react";
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { ThemeContext } from "../../features/platform/platformContexts";
 import {
   EmptyState,
@@ -219,7 +219,7 @@ export const PositionTreemapContent = ({
               width: dim(22),
               height: dim(10),
               background: colorFor(p),
-              borderRadius: 1,
+              borderRadius: dim(RADII.xs),
             }}
           />
         ))}

@@ -774,7 +774,7 @@ const TradePanelShell = ({
             color: T.text,
             fontSize: fs(10),
             fontWeight: FONT_WEIGHTS.regular,
-            letterSpacing: "0.05em",
+            letterSpacing: "0.04em",
           }}
         >
           {title}
@@ -1755,10 +1755,9 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
                 display: "grid",
                 gridTemplateColumns: "minmax(0, 1fr) auto",
                 gap: sp(8),
-                border: "none",
-                background: T.bg1,
-                borderRadius: dim(RADII.md),
-                padding: sp("8px 10px"),
+                background: "transparent",
+                borderBottom: `1px solid ${T.border}`,
+                padding: sp("4px 0"),
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
               }}
@@ -4301,7 +4300,7 @@ export const TradeScreen = ({
               background: tradeTimeframeSync ? T.accent : T.bg3,
               color: tradeTimeframeSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -4320,7 +4319,7 @@ export const TradeScreen = ({
               background: tradeCrosshairSync ? T.accent : T.bg3,
               color: tradeCrosshairSync ? T.onAccent : T.textDim,
               border: "none",
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}

@@ -149,7 +149,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
         color: T.textMuted,
         fontSize: textSize("micro"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -269,7 +269,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: dim(999),
+                borderRadius: dim(RADII.pill),
                 background: alertColor,
                 color: T.onAccent,
                 fontFamily: T.sans,
@@ -325,7 +325,7 @@ const FooterField = ({ label, value, valueColor }) => (
         color: T.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -361,7 +361,7 @@ const FooterStatusField = ({ label, value, ok }) => (
         color: T.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.08em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -716,7 +716,7 @@ export const PlatformShell = ({
                       style={{
                         marginLeft: sp(3),
                         padding: sp("0px 4px"),
-                        borderRadius: RADII.none,
+                        borderRadius: dim(RADII.xs),
                         background: alertColor,
                         color: T.onAccent,
                         fontSize: fs(8),
@@ -1025,7 +1025,7 @@ export const PlatformShell = ({
               color: T.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
           >

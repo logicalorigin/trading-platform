@@ -39,7 +39,7 @@ export const HeaderAccountStrip = ({
     fontSize: textSize("caption"),
     color: T.textMuted,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.08em",
+    letterSpacing: "0.04em",
     textTransform: "uppercase",
     fontFamily: T.sans,
     lineHeight: 1.1,

@@ -96,13 +96,13 @@ export const AccountHeroBlock = ({
               }}
             >
               <DayIcon size={11} />
-              <span>{formatMoney(dayPnl, currency, maskValues)}</span>
+              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(dayPnl, currency, maskValues)}</span>
               {formatPercent(dayPnlPercent, maskValues) ? (
-                <span style={{ opacity: 0.75 }}>
+                <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
                   {formatPercent(dayPnlPercent, maskValues)}
                 </span>
               ) : null}
-              <span style={{ color: T.textMuted }}>today</span>
+              <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
             </span>
           ) : null}
           {totalPositive !== null && !isPhone ? (

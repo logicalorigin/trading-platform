@@ -14,11 +14,14 @@ const marginCushionPercent = (value, maskValues = false) =>
     ? "—"
     : formatAccountPercent(Number(value), 1, maskValues);
 
-const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
+const MetricCard = ({ label, value, title, tone = T.text, subvalue, isFirst = false }) => (
   <AppTooltip content={title}>
     <div
       style={{
-        padding: sp("3px 0"),
+        flex: "1 1 auto",
+        minWidth: dim(72),
+        padding: sp("3px 10px"),
+        borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
         display: "grid",
         gap: sp(1),
       }}
@@ -30,6 +33,9 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
           fontSize: textSize("body"),
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
         {value}
@@ -57,21 +63,22 @@ const MarginGauge = ({ value, maskValues = false }) => {
       <div
         style={{
           color: tone,
-          fontSize: textSize("paragraph"),
+          fontSize: textSize("displaySmall"),
           fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.label,
+          fontWeight: FONT_WEIGHTS.medium,
           fontVariantNumeric: "tabular-nums",
-          letterSpacing: "-0.01em",
+          letterSpacing: "-0.015em",
+          lineHeight: 1.1,
         }}
       >
         {marginCushionPercent(value, maskValues)}
       </div>
       <div
         style={{
-          height: dim(8),
-          borderRadius: dim(RADII.sm),
+          height: dim(12),
+          borderRadius: dim(RADII.pill),
           overflow: "hidden",
-          background: T.bg1,
+          background: T.bg2,
           border: "none",
         }}
       >
@@ -80,6 +87,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
             width: `${pct}%`,
             height: "100%",
             background: tone,
+            transition: "width 0.4s ease",
           }}
         />
       </div>
@@ -112,12 +120,14 @@ export const RiskCompactContent = ({
       <MarginGauge value={margin.maintenanceCushionPercent} maskValues={maskValues} />
 
       <div
+        className="ra-hide-scrollbar"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: sp("3px 8px"),
+          display: "flex",
+          flexWrap: "nowrap",
+          overflowX: "auto",
           paddingTop: sp(4),
           borderTop: `1px solid ${T.border}`,
+          minWidth: 0,
         }}
       >
         <MetricCard
@@ -127,6 +137,7 @@ export const RiskCompactContent = ({
               ? "—"
               : `${formatNumber(margin.leverageRatio, 2)}x`
           }
+          isFirst
         />
         <MetricCard
           label="Margin Used"
@@ -146,18 +157,21 @@ export const RiskCompactContent = ({
       </div>
 
       <div
+        className="ra-hide-scrollbar"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: sp("3px 8px"),
+          display: "flex",
+          flexWrap: "nowrap",
+          overflowX: "auto",
           paddingTop: sp(4),
           borderTop: `1px solid ${T.border}`,
+          minWidth: 0,
         }}
       >
         <MetricCard
           label="Delta"
           value={formatNumber(greeks.delta, 2)}
           tone={toneForValue(greeks.delta)}
+          isFirst
         />
         <MetricCard
           label="Beta Δ"

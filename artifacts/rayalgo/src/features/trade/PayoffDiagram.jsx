@@ -110,7 +110,7 @@ export const PayoffDiagram = ({
     v >= 1000 ? `$${(v / 1000).toFixed(1)}K` : `$${Math.round(v)}`;
 
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp(8) }}>
+    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: dim(RADII.sm), padding: sp(8) }}>
       <div
         style={{
           display: "flex",
@@ -120,7 +120,7 @@ export const PayoffDiagram = ({
           fontSize: fs(7),
           fontFamily: T.sans,
           color: T.textMuted,
-          letterSpacing: "0.06em",
+          letterSpacing: "0.04em",
         }}
       >
         <span>P&L AT EXPIRATION</span>

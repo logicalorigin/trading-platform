@@ -3017,7 +3017,7 @@ const FlowOverviewPanel = ({
     color: T.textMuted,
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.08em",
+    letterSpacing: "0.04em",
     textTransform: "uppercase",
   };
 
@@ -3068,7 +3068,7 @@ const FlowOverviewPanel = ({
       cursor: sortable ? "pointer" : "default",
       font: "inherit",
       fontWeight: FONT_WEIGHTS.regular,
-      letterSpacing: "0.08em",
+      letterSpacing: "0.04em",
     };
   };
 
@@ -4435,7 +4435,7 @@ const FlowOverviewPanel = ({
                           fontSize: textSize("body"),
                           fontWeight: FONT_WEIGHTS.regular,
                           color: T.textMuted,
-                          letterSpacing: "0.08em",
+                          letterSpacing: "0.04em",
                           borderBottom: `1px solid ${T.border}`,
                           columnGap: sp(2),
                           fontFamily: T.sans,
@@ -4630,10 +4630,12 @@ const FlowOverviewPanel = ({
                     Ticker Flow Lens
                   </CardTitle>
                   <div
+                    className="ra-hide-scrollbar"
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: sp(6),
+                      display: "flex",
+                      flexWrap: "nowrap",
+                      overflowX: "auto",
+                      minWidth: 0,
                     }}
                   >
                     {[
@@ -4661,14 +4663,14 @@ const FlowOverviewPanel = ({
                         sub: `${selectedTickerEvents.filter((event) => event.cp === "P").length} puts`,
                         color: T.red,
                       },
-                    ].map((metric) => (
+                    ].map((metric, index) => (
                       <div
                         key={metric.label}
                         style={{
-                          padding: sp("8px 10px"),
-                          background: T.bg1,
-                          border: "none",
-                          borderRadius: dim(RADII.md),
+                          flex: "1 1 auto",
+                          minWidth: dim(90),
+                          padding: sp("3px 8px"),
+                          borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
                         }}
                       >
                         <div style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.04em", textTransform: "uppercase" }}>
@@ -4713,10 +4715,10 @@ const FlowOverviewPanel = ({
                               gridTemplateColumns: `${dim(54)}px minmax(0, 1fr) auto`,
                               gap: sp(6),
                               alignItems: "center",
-                              background: T.bg1,
+                              background: "transparent",
                               border: "none",
-                              borderRadius: dim(RADII.sm),
-                              padding: sp("6px 8px"),
+                              borderBottom: `1px solid ${T.border}`,
+                              padding: sp("3px 0"),
                               cursor: "pointer",
                             }}
                           >
@@ -4800,41 +4802,37 @@ const FlowOverviewPanel = ({
                   </div>
                 </Card>
 
-                <Card style={{ display: "flex", flexDirection: "column", gap: sp(10) }}>
+                <Card style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
               <CardTitle>Execution Stats</CardTitle>
-              <div style={{ display: "grid", gridTemplateColumns: metricGridTemplate, gap: sp(10) }}>
+              <div
+                className="ra-hide-scrollbar"
+                style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", minWidth: 0 }}
+              >
                 {[
                   { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: T.green },
                   { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: T.red },
                   { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), tone: T.textDim },
-                ].map((metric) => (
-                  <Stat
+                  { label: "Sweep / block", value: `${executionStats.sweepCount} / ${executionStats.blockCount}`, sub: `${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`, tone: T.text },
+                  { label: "Avg size / top exp", value: isFiniteNumber(executionStats.avgSize) ? fmtCompactNumber(executionStats.avgSize) : MISSING_VALUE, sub: executionStats.topExpiration, tone: T.text },
+                ].map((metric, index) => (
+                  <div
                     key={metric.label}
-                    label={metric.label}
-                    value={metric.value}
-                    detail={metric.sub}
-                    tone={metric.tone}
-                    size="md"
-                  />
+                    style={{
+                      flex: "1 1 auto",
+                      minWidth: dim(110),
+                      padding: sp("0 8px"),
+                      borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                    }}
+                  >
+                    <Stat
+                      label={metric.label}
+                      value={metric.value}
+                      detail={metric.sub}
+                      tone={metric.tone}
+                      size="md"
+                    />
+                  </div>
                 ))}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(10) }}>
-                <Stat
-                  label="Sweep / block"
-                  value={`${executionStats.sweepCount} / ${executionStats.blockCount}`}
-                  detail={`${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`}
-                  size="md"
-                />
-                <Stat
-                  label="Avg size / top exp"
-                  value={
-                    isFiniteNumber(executionStats.avgSize)
-                      ? fmtCompactNumber(executionStats.avgSize)
-                      : MISSING_VALUE
-                  }
-                  detail={executionStats.topExpiration}
-                  size="md"
-                />
               </div>
               <div style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.02em" }}>
                 Basis mix · trade {executionStats.tradeCount} · snapshot {executionStats.snapshotCount}
@@ -5085,7 +5083,7 @@ const FlowOverviewPanel = ({
                       fontSize: textSize("caption"),
                       fontWeight: FONT_WEIGHTS.regular,
                       color: T.textDim,
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                       fontVariant: "all-small-caps",
                       whiteSpace: "nowrap",
                       overflow: "hidden",

@@ -1157,7 +1157,7 @@ export const IbkrConnectionLane = ({
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             textTransform: "uppercase",
             lineHeight: 1,
             whiteSpace: "nowrap",

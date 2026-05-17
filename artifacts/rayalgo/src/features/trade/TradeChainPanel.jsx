@@ -239,7 +239,7 @@ const ChainStatePanel = ({
       fontFamily: T.sans,
       background: T.bg0,
       border: `1px dashed ${T.border}`,
-      borderRadius: dim(4),
+      borderRadius: dim(RADII.xs),
     }}
   >
     <style>
@@ -281,7 +281,7 @@ const ChainStatePanel = ({
           border: `1px solid ${T.border}`,
           background: T.bg1,
           color: T.textSec,
-          borderRadius: dim(4),
+          borderRadius: dim(RADII.xs),
           padding: sp("4px 8px"),
           fontSize: textSize("caption"),
           fontFamily: T.sans,

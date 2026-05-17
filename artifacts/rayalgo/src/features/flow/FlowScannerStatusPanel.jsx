@@ -82,7 +82,7 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
         height,
         width: "100%",
         background: T.bg1,
-        borderRadius: dim(999),
+        borderRadius: dim(RADII.pill),
         border: "none",
         overflow: "hidden",
       }}
@@ -92,7 +92,7 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
           height: "100%",
           width: `${clamped * 100}%`,
           background: color,
-          borderRadius: dim(999),
+          borderRadius: dim(RADII.pill),
           transition: "width 0.4s ease",
         }}
       />
@@ -107,7 +107,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
       padding: sp("8px 10px"),
       background: T.bg1,
       border: "none",
-      borderRadius: dim(8),
+      borderRadius: dim(RADII.sm),
       transition:
         "background-color var(--ra-motion-fast) var(--ra-motion-ease)",
     }}
@@ -191,7 +191,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
         alignItems: "center",
         gap: sp(4),
         padding: sp("2px 8px"),
-        borderRadius: dim(999),
+        borderRadius: dim(RADII.pill),
         border: "none",
         background: `${tone}14`,
         color: tone,

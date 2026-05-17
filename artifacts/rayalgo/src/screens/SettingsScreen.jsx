@@ -426,7 +426,7 @@ function SourceBadge({ setting }) {
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         textTransform: "uppercase",
       }}
     >
@@ -1203,9 +1203,15 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
       </div>
       {lineUsage.rows.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
-          {lineUsage.rows.map((pool) => (
-            <div key={pool.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), padding: sp(12), background: T.bg1 }}>
+        <div
+          className="ra-hide-scrollbar"
+          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), background: T.bg1, marginTop: sp(12), minWidth: 0 }}
+        >
+          {lineUsage.rows.map((pool, index) => (
+            <div
+              key={pool.id}
+              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${T.border}` }}
+            >
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{pool.label}</div>
               <div style={{ color: Number(pool.used) > Number(pool.effectiveCap ?? pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
                 {formatCount(pool.used)} / {formatCount(pool.effectiveCap ?? pool.cap)}
@@ -1219,9 +1225,15 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
       )}
       {governorRows.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(160)}px, 1fr))`, gap: sp(8), marginTop: sp(12) }}>
-          {governorRows.map(([id, lane]) => (
-            <div key={id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), padding: sp(12), background: T.bg1 }}>
+        <div
+          className="ra-hide-scrollbar"
+          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), background: T.bg1, marginTop: sp(12), minWidth: 0 }}
+        >
+          {governorRows.map(([id, lane], index) => (
+            <div
+              key={id}
+              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${T.border}` }}
+            >
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{id}</div>
               <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued

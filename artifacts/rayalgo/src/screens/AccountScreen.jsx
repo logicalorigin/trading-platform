@@ -137,7 +137,7 @@ const ShadowWatchlistBacktestPanel = ({
     fontSize: fs(10),
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.06em",
+    letterSpacing: "0.04em",
     cursor: running ? "wait" : "pointer",
     textTransform: "uppercase",
   };
@@ -218,10 +218,14 @@ const ShadowWatchlistBacktestPanel = ({
         {run ? (
           <>
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: sp(4),
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                background: T.bg0,
+                borderRadius: dim(RADII.xs),
+                minWidth: 0,
               }}
             >
               {[
@@ -229,14 +233,14 @@ const ShadowWatchlistBacktestPanel = ({
                 ["Orders", summary.ordersCreated, T.text],
                 ["Open", summary.openSyntheticPositions, T.purple],
                 ["Skipped", summary.skippedSignals, T.amber],
-              ].map(([label, value, color]) => (
+              ].map(([label, value, color], index) => (
                 <div
                   key={label}
                   style={{
-                    border: "none",
-                    borderRadius: dim(RADII.xs),
-                    background: T.bg0,
-                    padding: sp("4px 5px"),
+                    flex: "1 1 auto",
+                    minWidth: dim(64),
+                    padding: sp("4px 9px"),
+                    borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
                   }}
                 >
                   <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
@@ -249,50 +253,61 @@ const ShadowWatchlistBacktestPanel = ({
               ))}
             </div>
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: sp(4),
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                gap: sp(8),
                 color: T.textSec,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
+                minWidth: 0,
               }}
             >
-              <div>
+              <span style={{ flexShrink: 0 }}>
                 P&L{" "}
                 <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Fees {formatAccountMoney(summary.fees, currency, true, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Win {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Exp{" "}
                 <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>Closed {formatNumber(summary.closedTrades || 0, 0)}</div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Closed {formatNumber(summary.closedTrades || 0, 0)}</span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 NAV{" "}
                 <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
                 </span>
-              </div>
-              <div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
                 Max DD{" "}
                 <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
                 </span>
-              </div>
-              <div>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</div>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</span>
             </div>
             {run.sweep ? (
               <div
@@ -1477,13 +1492,15 @@ export const AccountScreen = ({
                   Starting balance is tracked at $30,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
                 </div>
                 <div
+                  className="ra-hide-scrollbar"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: accountIsPhone
-                      ? "repeat(2, minmax(0, 1fr))"
-                      : "repeat(4, minmax(0, 1fr))",
-                    gap: sp(4),
-                    paddingTop: sp(2),
+                    display: "flex",
+                    flexWrap: "nowrap",
+                    overflowX: "auto",
+                    background: T.bg0,
+                    borderRadius: dim(RADII.xs),
+                    marginTop: sp(2),
+                    minWidth: 0,
                   }}
                 >
                   {[
@@ -1493,14 +1510,14 @@ export const AccountScreen = ({
                     ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
                     ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
                     ["Options BT Orders", shadowAutomationAudit.replayOrders, T.green],
-                  ].map(([label, value, color]) => (
+                  ].map(([label, value, color], index) => (
                     <div
                       key={label}
                       style={{
-                        border: "none",
-                        borderRadius: dim(RADII.xs),
-                        background: T.bg0,
-                        padding: sp("4px 5px"),
+                        flex: "1 1 auto",
+                        minWidth: dim(80),
+                        padding: sp("4px 9px"),
+                        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
                       }}
                     >
                       <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>

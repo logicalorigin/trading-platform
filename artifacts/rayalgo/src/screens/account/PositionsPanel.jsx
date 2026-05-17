@@ -85,7 +85,7 @@ const positionSourceAttributionKey = (rowId, source, index) =>
 const headerCellStyle = (active) => ({
   ...tableCellStyle,
   ...tableHeaderStyle,
-  color: active ? T.accent : T.textMuted,
+  color: active ? T.accent : T.textSec,
 });
 
 const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
@@ -150,7 +150,7 @@ const mobileHeaderStyle = {
   color: T.textDim,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
 };
 
@@ -882,23 +882,34 @@ export const PositionsPanel = ({
           ))}
           <div
             data-testid="account-positions-summary-row"
+            className="ra-hide-scrollbar"
             style={{
-              ...mobileScanShellStyle(false),
-              background: T.bg0,
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: sp(5),
-              padding: sp("5px 6px"),
+              background: T.bg1,
+              borderRadius: dim(RADII.sm),
+              display: "flex",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              minWidth: 0,
             }}
           >
-            <MobileMetric label="Day" value={formatAccountMoney(totalDayChange, currency, true, maskValues)} tone={toneForValue(totalDayChange)} />
-            <MobileMetric label="Net" value={formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues)} />
-            <MobileMetric
-              label="Unreal"
-              value={formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, true, maskValues)}
-              tone={toneForValue(query.data?.totals?.unrealizedPnl)}
-            />
-            <MobileMetric label="Weight" value={formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues)} />
+            {[
+              ["Day", formatAccountMoney(totalDayChange, currency, true, maskValues), toneForValue(totalDayChange)],
+              ["Net", formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues), undefined],
+              ["Unreal", formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, true, maskValues), toneForValue(query.data?.totals?.unrealizedPnl)],
+              ["Weight", formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues), undefined],
+            ].map(([label, value, tone], index) => (
+              <div
+                key={label}
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: dim(72),
+                  padding: sp("4px 10px"),
+                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                }}
+              >
+                <MobileMetric label={label} value={value} tone={tone} />
+              </div>
+            ))}
           </div>
         </div>
       ) : (

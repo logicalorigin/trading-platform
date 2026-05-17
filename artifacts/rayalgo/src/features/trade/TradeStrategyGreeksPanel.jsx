@@ -24,7 +24,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "long_put_atm",
@@ -34,7 +34,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: "#D77470",
+    color: T.red,
   },
   {
     id: "long_call_otm",
@@ -44,7 +44,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.3,
     qty: 5,
     dte: 7,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "0dte_lotto",
@@ -54,7 +54,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.2,
     qty: 10,
     dte: 0,
-    color: "#D9A864",
+    color: T.amber,
   },
   {
     id: "itm_call",
@@ -64,7 +64,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.7,
     qty: 2,
     dte: 14,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "long_put_otm",
@@ -74,7 +74,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.25,
     qty: 5,
     dte: 7,
-    color: "#D77470",
+    color: T.red,
   },
 ];
 
@@ -96,7 +96,7 @@ export const TradeStrategyGreeksPanel = ({
         style={{
           background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
           flexDirection: "column",
@@ -110,7 +110,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -139,7 +139,7 @@ export const TradeStrategyGreeksPanel = ({
         style={{
           background: T.bg1,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
           flexDirection: "column",
@@ -153,7 +153,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
           }}
@@ -265,7 +265,7 @@ export const TradeStrategyGreeksPanel = ({
       style={{
         background: T.bg1,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
+        borderRadius: dim(RADII.sm),
         padding: sp("8px 10px"),
         display: "flex",
         flexDirection: "column",
@@ -280,7 +280,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
@@ -306,7 +306,7 @@ export const TradeStrategyGreeksPanel = ({
                 padding: sp("6px 10px"),
                 background: `${strategy.color}10`,
                 border: "none",
-                borderRadius: dim(8),
+                borderRadius: dim(RADII.sm),
                 color: T.text,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
@@ -340,7 +340,7 @@ export const TradeStrategyGreeksPanel = ({
             fontWeight: FONT_WEIGHTS.regular,
             color: T.textSec,
             fontFamily: T.sans,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             borderBottom: `1px solid ${T.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
@@ -391,7 +391,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: fs(6),
             color: T.textMuted,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.04em",
             marginBottom: sp(2),
           }}
         >

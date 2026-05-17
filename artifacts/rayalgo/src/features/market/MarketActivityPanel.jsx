@@ -264,7 +264,7 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
           padding: sp("6px 20px 6px 10px"),
-          borderRadius: dim(6),
+          borderRadius: dim(RADII.sm),
           outline: "none",
           textTransform: "uppercase",
         }}
@@ -294,7 +294,7 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
             top: "calc(100% + 4px)",
             background: T.bg1,
             border: "none",
-            borderRadius: dim(8),
+            borderRadius: dim(RADII.sm),
             boxShadow: "0 6px 20px rgba(25, 23, 26, 0.12), 0 2px 4px rgba(25, 23, 26, 0.06)",
             maxHeight: dim(200),
             overflowY: "auto",
@@ -384,7 +384,7 @@ const MarketIconToolButton = ({
       color: active ? tone : T.textDim,
       cursor: disabled ? "wait" : "pointer",
       opacity: disabled ? 0.78 : 1,
-      borderRadius: RADII.none,
+      borderRadius: dim(RADII.xs),
       padding: 0,
     }}
   >
@@ -446,7 +446,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
         minWidth: 0,
         padding: sp("7px 8px"),
         border: `1px solid ${tone.color}33`,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         background: tone.background,
         textAlign: "left",
         cursor: "pointer",
@@ -577,7 +577,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
         minWidth: 0,
         padding: sp("7px 8px"),
         border: `1px solid ${tone.color}33`,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         background: tone.background,
         textAlign: "left",
         cursor: "pointer",
@@ -680,7 +680,7 @@ const MarketNotificationRow = ({
         padding: sp("5px 6px"),
         border: `1px solid ${tone.color}33`,
         background: tone.background,
-        borderRadius: dim(4),
+        borderRadius: dim(RADII.xs),
         textAlign: "left",
         cursor,
       }}
@@ -927,7 +927,7 @@ export const MarketActivityPanel = ({
               color: signalMonitorPending ? T.amber : T.textDim,
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.04em",
             }}
           >
             {monitorMeta}
@@ -1013,7 +1013,7 @@ export const MarketActivityPanel = ({
                   fontSize: textSize("body"),
                   fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
-                  borderRadius: RADII.none,
+                  borderRadius: dim(RADII.xs),
                   outline: "none",
                 }}
               >
@@ -1093,7 +1093,7 @@ export const MarketActivityPanel = ({
                   fontSize: textSize("body"),
                   fontWeight: FONT_WEIGHTS.regular,
                   padding: sp("6px 5px"),
-                  borderRadius: RADII.none,
+                  borderRadius: dim(RADII.xs),
                   outline: "none",
                 }}
               >
@@ -1123,7 +1123,7 @@ export const MarketActivityPanel = ({
                     border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}40`,
                     background: `${thresholdMatches ? T.textDim : T.amber}12`,
                     padding: sp("6px 5px"),
-                    borderRadius: RADII.none,
+                    borderRadius: dim(RADII.xs),
                     whiteSpace: "nowrap",
                     textAlign: "center",
                   }}

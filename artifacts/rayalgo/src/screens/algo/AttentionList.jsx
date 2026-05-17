@@ -104,7 +104,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
                       color: T.textMuted,
                       fontFamily: T.sans,
                       fontSize: fs(7),
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                       textTransform: "uppercase",
                     }}
                   >

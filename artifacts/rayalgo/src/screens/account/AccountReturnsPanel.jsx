@@ -44,7 +44,7 @@ const labelCapsStyle = {
   fontSize: textSize("caption"),
   fontFamily: T.sans,
   fontWeight: FONT_WEIGHTS.regular,
-  letterSpacing: "0.08em",
+  letterSpacing: "0.04em",
   textTransform: "uppercase",
   lineHeight: 1.25,
 };
@@ -129,14 +129,14 @@ const useLocalToday = () => {
 
 const calendarThemeStyle = () => {
   return {
-    gridLine: T.border,
+    gridLine: T.borderLight,
     neutralBg: T.bg1,
-    mutedNeutralBg: `${T.border}66`,
+    mutedNeutralBg: `${T.border}44`,
     dayText: T.textSec,
     mutedDayText: T.textMuted,
     zeroValueText: "transparent",
-    positive: T.greenBg,
-    negative: T.redBg,
+    positive: `${T.green}24`,
+    negative: `${T.red}24`,
     positiveText: T.green,
     negativeText: T.red,
     activeText: T.text,
@@ -172,7 +172,7 @@ const calendarCellTone = (value, muted = false, style = calendarThemeStyle()) =>
   if (numeric > 0) {
     return {
       background: style.positive,
-      color: style.activeText,
+      color: style.positiveText,
       dayColor: style.activeDayText,
       borderColor: "transparent",
       boxShadow: style.shadow,
@@ -181,7 +181,7 @@ const calendarCellTone = (value, muted = false, style = calendarThemeStyle()) =>
   if (numeric < 0) {
     return {
       background: style.negative,
-      color: style.activeText,
+      color: style.negativeText,
       dayColor: style.activeDayText,
       borderColor: "transparent",
       boxShadow: style.shadow,
@@ -243,12 +243,13 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
           key={day}
           style={{
             color: T.textMuted,
-            fontSize: fs(isPhone ? 6 : 7),
+            fontSize: fs(isPhone ? 7 : 8),
             fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.regular,
+            fontWeight: FONT_WEIGHTS.medium,
+            letterSpacing: "0.04em",
             lineHeight: 1,
             textAlign: "center",
-            padding: sp("1px 0 3px"),
+            padding: sp("1px 0 4px"),
           }}
         >
           {day}
@@ -279,12 +280,12 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
             <div
               style={{
                 minWidth: 0,
-                minHeight: dim(isPhone ? 28 : 38),
+                minHeight: dim(isPhone ? 32 : 44),
                 display: "grid",
                 gridTemplateRows: "auto minmax(0, 1fr)",
                 alignItems: "stretch",
-                gap: sp(isPhone ? 1 : 2),
-                padding: sp(isPhone ? "3px 2px 2px" : "4px 4px 3px"),
+                gap: sp(isPhone ? 1 : 3),
+                padding: sp(isPhone ? "4px 3px 3px" : "5px 5px 4px"),
                 border: `1px solid ${tone.borderColor}`,
                 borderRadius: dim(RADII.xs),
                 background: tone.background,
@@ -296,10 +297,10 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
               <div
                 style={{
                   color: tone.dayColor,
-                  fontSize: fs(isPhone ? 6 : 7),
+                  fontSize: fs(isPhone ? 7 : 9),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.medium,
-                  lineHeight: 1,
+                  lineHeight: 1.1,
                   textAlign: "left",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
@@ -311,16 +312,16 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
               <div
                 style={{
                   color: tone.color,
-                  fontSize: fs(isPhone ? 7 : 8),
+                  fontSize: fs(isPhone ? 8 : 10),
                   fontFamily: T.sans,
-                  fontWeight: FONT_WEIGHTS.regular,
+                  fontWeight: FONT_WEIGHTS.medium,
                   lineHeight: 1,
                   textAlign: "center",
                   alignSelf: "end",
                   justifySelf: "center",
                   fontVariantNumeric: "tabular-nums",
                   whiteSpace: "nowrap",
-                  minHeight: dim(9),
+                  minHeight: dim(10),
                   overflow: "hidden",
                   textOverflow: "clip",
                 }}
@@ -397,7 +398,7 @@ const YearCalendarGrid = ({
               border: `1px solid ${
                 month.isCurrentMonth ? calendarStyle.border : tone.borderColor
               }`,
-              borderRadius: RADII.none,
+              borderRadius: dim(RADII.xs),
               background: tone.background,
               color: T.textSec,
               boxShadow: tone.boxShadow,
@@ -414,8 +415,9 @@ const YearCalendarGrid = ({
                     : month.isCurrentMonth
                       ? T.text
                       : T.textSec,
-                fontSize: fs(isPhone ? 7 : 8),
+                fontSize: fs(isPhone ? 8 : 9),
                 fontFamily: T.sans,
+                fontWeight: month.isCurrentMonth ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -428,9 +430,9 @@ const YearCalendarGrid = ({
               style={{
                 minWidth: 0,
                 color: tone.color,
-                fontSize: fs(isPhone ? 7 : 8),
+                fontSize: fs(isPhone ? 8 : 10),
                 fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.regular,
+                fontWeight: FONT_WEIGHTS.medium,
                 lineHeight: 1,
                 fontVariantNumeric: "tabular-nums",
                 whiteSpace: "nowrap",

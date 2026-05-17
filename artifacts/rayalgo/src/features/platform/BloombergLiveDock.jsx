@@ -2622,7 +2622,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       fontSize: fs(7),
                       fontFamily: T.sans,
                       fontWeight: FONT_WEIGHTS.regular,
-                      letterSpacing: "0.06em",
+                      letterSpacing: "0.04em",
                     }}
                   >
                     {topStatusLabel}
@@ -2868,7 +2868,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         fontSize: fs(7),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
-                        letterSpacing: "0.06em",
+                        letterSpacing: "0.04em",
                         cursor: hasBufferedWindow ? "pointer" : "default",
                         opacity: hasBufferedWindow ? 1 : 0.45,
                         backdropFilter: "blur(18px)",
