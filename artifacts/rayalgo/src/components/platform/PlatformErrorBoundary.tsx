@@ -164,7 +164,8 @@ function WidgetErrorFallback({
       <div style={{ fontWeight: FONT_WEIGHT.emphasis }}>{label} unavailable</div>
       <div
         style={{
-          maxWidth: 420,
+          width: "100%",
+          maxWidth: "min(90vw, 420px)",
           opacity: 0.72,
           overflow: "hidden",
           textOverflow: "ellipsis",

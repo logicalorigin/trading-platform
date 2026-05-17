@@ -171,7 +171,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
 const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
   <AppTooltip content={label}>
     <button
-      className="ra-interactive"
+      className="ra-interactive ra-touch-target"
       data-testid={testId}
       type="button"
       onClick={onClick}
@@ -179,7 +179,6 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
       aria-pressed={active}
       style={{
         width: dim(32),
-        minWidth: dim(32),
         height: dim(32),
         display: "inline-flex",
         alignItems: "center",
@@ -872,7 +871,9 @@ export const PlatformShell = ({
             }}
           >
             <button
+              type="button"
               onClick={() => setSidebarCollapsed(false)}
+              aria-label="Expand watchlist"
               style={{
                 width: dim(28),
                 height: dim(28),
@@ -884,7 +885,7 @@ export const PlatformShell = ({
                 fontSize: fs(12),
               }}
             >
-              ☰
+              <span aria-hidden="true">☰</span>
             </button>
           </div>
         ) : (

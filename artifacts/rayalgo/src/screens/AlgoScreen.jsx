@@ -1569,6 +1569,7 @@ export const AlgoScreen = ({
                       value={deploymentName}
                       onChange={(event) => setDeploymentName(event.target.value)}
                       placeholder="Deployment name"
+                      aria-label="Deployment name"
                       style={{
                         width: "100%",
                         background: T.bg1,
@@ -1585,6 +1586,7 @@ export const AlgoScreen = ({
                       value={symbolUniverseInput}
                       onChange={(event) => setSymbolUniverseInput(event.target.value)}
                       placeholder="SPY, QQQ, NVDA"
+                      aria-label="Symbol universe (comma-separated tickers)"
                       style={{
                         width: "100%",
                         background: T.bg1,
@@ -2340,6 +2342,7 @@ export const AlgoScreen = ({
                   <button
                     type="button"
                     onClick={() => setPrimaryTab("signals")}
+                    aria-label="View all signals"
                     style={{
                       padding: sp("3px 8px"),
                       fontSize: textSize("caption"),

@@ -126,8 +126,9 @@ export const PatternsByOutcomeDriver = ({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`,
+        gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(260)}px), 1fr))`,
         gap: sp(7),
+        minWidth: 0,
       }}
     >
       <OutcomeBreakdownRows

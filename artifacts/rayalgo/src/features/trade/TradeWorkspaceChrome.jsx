@@ -140,7 +140,7 @@ const TickerTabStripItem = ({
         style={{
           fontSize: textSize("caption"),
           fontFamily: T.sans,
-          color: isActive ? "var(--ra-text-primary)" : "var(--ra-text-secondary)",
+          color: isActive ? T.text : T.textSec,
           fontVariantNumeric: "tabular-nums",
           fontWeight: FONT_WEIGHTS.regular,
         }}

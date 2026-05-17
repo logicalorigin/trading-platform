@@ -24,7 +24,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "long_put_atm",
@@ -34,7 +34,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: "#D77470",
+    color: T.red,
   },
   {
     id: "long_call_otm",
@@ -44,7 +44,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.3,
     qty: 5,
     dte: 7,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "0dte_lotto",
@@ -54,7 +54,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.2,
     qty: 10,
     dte: 0,
-    color: "#D9A864",
+    color: T.amber,
   },
   {
     id: "itm_call",
@@ -64,7 +64,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.7,
     qty: 2,
     dte: 14,
-    color: "#4FB286",
+    color: T.green,
   },
   {
     id: "long_put_otm",
@@ -74,7 +74,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.25,
     qty: 5,
     dte: 7,
-    color: "#D77470",
+    color: T.red,
   },
 ];
 

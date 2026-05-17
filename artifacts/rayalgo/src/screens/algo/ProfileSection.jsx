@@ -23,6 +23,7 @@ export const ProfileSection = ({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={expanded}
         className="ra-interactive ra-touch-target"
         style={{
           width: "100%",

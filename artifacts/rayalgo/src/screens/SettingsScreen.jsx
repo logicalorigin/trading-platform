@@ -2713,6 +2713,7 @@ export default function SettingsScreen({
             value={settingsSearch}
             onChange={(event) => setSettingsSearch(event.target.value)}
             placeholder="Search settings"
+            aria-label="Search settings"
             style={inputStyle()}
           />
           {visibleTabs.map((tab) => (
@@ -2721,6 +2722,7 @@ export default function SettingsScreen({
               data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
               type="button"
               onClick={() => setActiveTab(tab.id)}
+              aria-current={activeTab === tab.id ? "true" : undefined}
               style={{
                 border: "none",
                 background: activeTab === tab.id ? T.bg2 : "transparent",

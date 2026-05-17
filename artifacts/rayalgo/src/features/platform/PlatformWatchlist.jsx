@@ -1006,6 +1006,7 @@ export const Watchlist = ({
                 <button
                   key={watchlist.id}
                   type="button"
+                  aria-current={watchlist.id === activeWatchlistId ? "true" : undefined}
                   onClick={() => {
                     onSelectWatchlist?.(watchlist.id);
                     closeWatchlistMenu();
@@ -1218,9 +1219,11 @@ export const Watchlist = ({
           >
             <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
             <input
+              type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Filter..."
+              aria-label="Filter watchlist symbols"
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -1278,9 +1281,11 @@ export const Watchlist = ({
               }}
             >
               <input
+                type="search"
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
                 placeholder="Add symbol…"
+                aria-label="Search symbols to add"
                 style={{
                   flex: 1,
                   background: "transparent",
@@ -1630,9 +1635,11 @@ export const Watchlist = ({
             >
               <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
               <input
+                type="search"
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
                 placeholder="Add symbol…"
+                aria-label="Search symbols to add"
                 style={{
                   flex: 1,
                   minWidth: 0,

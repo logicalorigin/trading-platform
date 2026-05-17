@@ -61,6 +61,7 @@ const BLOOMBERG_WATCHDOG_RELOAD_LIMIT = 1;
 const BLOOMBERG_DIAGNOSTICS_GLOBAL =
   "__RAYALGO_BLOOMBERG_DIAGNOSTICS__";
 const BLOOMBERG_DOCK_Z_INDEX = 10020;
+const BLOOMBERG_VIDEO_BACKGROUND = "#000";
 const BLOOMBERG_DVR_BUFFER_SECONDS = 30;
 const BLOOMBERG_LIVE_EDGE_SLACK_SECONDS = 1;
 const BLOOMBERG_HLS_LIVE_SYNC_DURATION_COUNT = 1;
@@ -2492,9 +2493,9 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
         bottom: sp(34),
         zIndex: BLOOMBERG_DOCK_Z_INDEX,
         width: collapsed
-          ? `min(${dim(320)}px, calc(100vw - ${dim(18)}px))`
-          : `min(${dim(420)}px, calc(100vw - ${dim(18)}px))`,
-        maxWidth: "calc(100vw - 16px)",
+          ? `min(${dim(320)}px, 45vw, calc(100vw - ${dim(18)}px))`
+          : `min(${dim(420)}px, 45vw, calc(100vw - ${dim(18)}px))`,
+        maxWidth: `calc(100vw - ${dim(18)}px)`,
         display: "flex",
         flexDirection: "column",
         background: "transparent",
@@ -2528,7 +2529,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 }
               : {
                   position: "relative",
-                  background: "#000",
+                  background: BLOOMBERG_VIDEO_BACKGROUND,
                   aspectRatio: "16 / 9",
                   minHeight: dim(190),
                   borderRadius: dim(RADII.xl),
@@ -2547,13 +2548,13 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     width: 1,
                     height: 1,
                     display: "block",
-                    background: "#000",
+                    background: BLOOMBERG_VIDEO_BACKGROUND,
                   }
                 : {
                     width: "100%",
                     height: "100%",
                     display: "block",
-                    background: "#000",
+                    background: BLOOMBERG_VIDEO_BACKGROUND,
                   }
             }
           />

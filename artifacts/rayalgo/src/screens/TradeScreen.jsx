@@ -3739,7 +3739,7 @@ export const TradeScreen = ({
     whiteSpace: "nowrap",
   });
   const tradeMobileActionButtonStyle = {
-    minHeight: dim(38),
+    minHeight: dim(44),
     border: "none",
     borderRadius: dim(RADII.xs),
     background: T.bg1,

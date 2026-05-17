@@ -3224,11 +3224,13 @@ const FlowOverviewPanel = ({
         Include tickers
         <input
           data-testid="flow-include-input"
+          type="search"
           value={includeQuery}
           onChange={(event) => {
             updateFlowTapeFilters({ includeQuery: event.target.value });
           }}
           placeholder="SPY, QQQ, NVDA"
+          aria-label="Include tickers filter"
           style={{
             width: "100%",
             padding: sp("7px 10px"),
@@ -3255,11 +3257,13 @@ const FlowOverviewPanel = ({
         Exclude tickers
         <input
           data-testid="flow-exclude-input"
+          type="search"
           value={excludeQuery}
           onChange={(event) => {
             updateFlowTapeFilters({ excludeQuery: event.target.value });
           }}
           placeholder="AAPL, TSLA"
+          aria-label="Exclude tickers filter"
           style={{
             width: "100%",
             padding: sp("7px 10px"),
@@ -3790,6 +3794,7 @@ const FlowOverviewPanel = ({
             type="button"
             data-testid={`flow-built-in-preset-${preset.id}`}
             onClick={() => applyBuiltInPreset(preset)}
+            aria-pressed={active}
             style={{
               padding: sp("4px 10px"),
               border: "none",
@@ -3869,6 +3874,8 @@ const FlowOverviewPanel = ({
 
   return (
     <div
+      data-testid="flow-screen"
+      data-layout={isMobileFlowLayout ? "phone" : isNarrowFlowLayout ? "tablet" : "desktop"}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -4264,6 +4271,7 @@ const FlowOverviewPanel = ({
                           key={key}
                           type="button"
                           onClick={() => applyFlowSort(key)}
+                          aria-pressed={sortBy === key}
                           style={toolbarChipStyle(sortBy === key)}
                         >
                           {label}

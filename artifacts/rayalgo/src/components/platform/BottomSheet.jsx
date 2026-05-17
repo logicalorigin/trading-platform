@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+
+const SWIPE_DISMISS_RATIO = 0.3;
+const SWIPE_DISMISS_VELOCITY = 0.6;
 
 export const BottomSheet = ({
   open,
@@ -13,6 +16,9 @@ export const BottomSheet = ({
 }) => {
   const closeButtonRef = useRef(null);
   const returnFocusRef = useRef(null);
+  const sectionRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const [dragOffset, setDragOffset] = useState(0);
 
   useEffect(() => {
     if (!open || typeof document === "undefined") return undefined;
@@ -25,6 +31,24 @@ export const BottomSheet = ({
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         onClose?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const container = sectionRef.current;
+      if (!container) return;
+      const focusables = container.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !container.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !container.contains(active))) {
+        event.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -36,7 +60,54 @@ export const BottomSheet = ({
     };
   }, [onClose, open]);
 
+  useEffect(() => {
+    if (!open) {
+      dragStateRef.current = null;
+      setDragOffset(0);
+    }
+  }, [open]);
+
+  const handleDragPointerDown = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target?.closest?.("[data-swipe-skip]")) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      lastY: event.clientY,
+      lastTime: event.timeStamp,
+      velocity: 0,
+    };
+  };
+
+  const handleDragPointerMove = (event) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    const delta = Math.max(0, event.clientY - state.startY);
+    const dt = event.timeStamp - state.lastTime;
+    if (dt > 0) state.velocity = (event.clientY - state.lastY) / dt;
+    state.lastY = event.clientY;
+    state.lastTime = event.timeStamp;
+    setDragOffset(delta);
+  };
+
+  const finishDrag = (event) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    dragStateRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const height = sectionRef.current?.offsetHeight || 1;
+    const ratio = dragOffset / height;
+    if (ratio > SWIPE_DISMISS_RATIO || state.velocity > SWIPE_DISMISS_VELOCITY) {
+      onClose?.();
+    } else {
+      setDragOffset(0);
+    }
+  };
+
   if (!open || typeof document === "undefined") return null;
+
+  const isDragging = dragStateRef.current != null;
 
   return createPortal(
     <div
@@ -61,6 +132,7 @@ export const BottomSheet = ({
         }}
       />
       <section
+        ref={sectionRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -80,9 +152,19 @@ export const BottomSheet = ({
           borderTopRightRadius: dim(RADII.lg),
           boxShadow: ELEVATION.lg,
           fontFamily: T.sans,
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+          transform: dragOffset ? `translateY(${dragOffset}px)` : undefined,
+          transition: isDragging ? "none" : "transform 220ms ease",
+          willChange: isDragging ? "transform" : undefined,
         }}
       >
         <div
+          onPointerDown={handleDragPointerDown}
+          onPointerMove={handleDragPointerMove}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
           style={{
             flexShrink: 0,
             display: "flex",
@@ -94,6 +176,8 @@ export const BottomSheet = ({
             background: T.bg0,
             borderTopLeftRadius: dim(RADII.lg),
             borderTopRightRadius: dim(RADII.lg),
+            touchAction: "none",
+            cursor: isDragging ? "grabbing" : "grab",
           }}
         >
           <span
@@ -135,6 +219,7 @@ export const BottomSheet = ({
               type="button"
               aria-label={`Close ${title}`}
               onClick={onClose}
+              data-swipe-skip
               style={{
                 width: dim(32),
                 height: dim(32),

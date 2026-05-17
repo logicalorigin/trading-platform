@@ -133,7 +133,7 @@ export const PatternsBySymbol = ({
   selectedSymbol,
   onSymbolSelect,
 }) => (
-  <div style={{ display: "grid", gap: sp(5) }}>
+  <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
     <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
       <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }}>
         <Pill tone={tickerOrder === "bottom" ? "pnl-negative" : "pnl-positive"}>

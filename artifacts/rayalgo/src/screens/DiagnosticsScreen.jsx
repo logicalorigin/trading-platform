@@ -1086,6 +1086,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               activeTab === tab && "ra-focus-rail",
             )}
             onClick={() => setActiveTab(tab)}
+            aria-current={activeTab === tab ? "true" : undefined}
             style={{
               ...motionVars({ accent: T.green }),
               border: `1px solid ${activeTab === tab ? T.green : T.border}`,
@@ -1117,6 +1118,8 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                     audioEnabled: !current.audioEnabled,
                   }))
                 }
+                aria-pressed={audioEnabled}
+                className="ra-touch-target"
                 style={smallButton()}
               >
                 {audioEnabled ? "Audio On" : "Audio Off"}

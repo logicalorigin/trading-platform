@@ -527,6 +527,8 @@ export const MarketScreen = ({
   return (
     <div
       className="ra-panel-enter"
+      data-testid="market-screen"
+      data-layout={marketLayoutFlags.isPhone ? "phone" : marketLayoutFlags.isTablet ? "tablet" : "desktop"}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -760,6 +762,7 @@ export const MarketScreen = ({
                             <button
                               key={sector.sector}
                               type="button"
+                              aria-label={`View ${sector.sector} sector flow`}
                               onClick={() => {
                                 const match = SECTORS.find((item) =>
                                   item.name?.toLowerCase?.().includes(sector.sector.toLowerCase()),
@@ -833,6 +836,7 @@ export const MarketScreen = ({
                       <button
                         key={`${label}_${row.sym}_${index}`}
                         type="button"
+                        aria-label={`View ${row.sym} (${row.group}) ${label.toLowerCase()}`}
                         onClick={() => onSymClick?.(row.sym)}
                         style={{
                           display: "grid",

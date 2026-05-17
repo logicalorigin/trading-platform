@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+
+const SWIPE_DISMISS_RATIO = 0.3;
+const SWIPE_DISMISS_VELOCITY = 0.6;
 
 export const Drawer = ({
   open,
@@ -15,6 +18,11 @@ export const Drawer = ({
 }) => {
   const closeButtonRef = useRef(null);
   const returnFocusRef = useRef(null);
+  const asideRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const [dragOffset, setDragOffset] = useState(0);
+
+  const isRight = side === "right";
 
   useEffect(() => {
     if (!open || typeof document === "undefined") return undefined;
@@ -27,6 +35,24 @@ export const Drawer = ({
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         onClose?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const container = asideRef.current;
+      if (!container) return;
+      const focusables = container.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !container.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !container.contains(active))) {
+        event.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -38,9 +64,56 @@ export const Drawer = ({
     };
   }, [onClose, open]);
 
+  useEffect(() => {
+    if (!open) {
+      dragStateRef.current = null;
+      setDragOffset(0);
+    }
+  }, [open]);
+
+  const handleDragPointerDown = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target?.closest?.("[data-swipe-skip]")) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      lastX: event.clientX,
+      lastTime: event.timeStamp,
+      velocity: 0,
+    };
+  };
+
+  const handleDragPointerMove = (event) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    const raw = event.clientX - state.startX;
+    const delta = isRight ? Math.max(0, raw) : Math.min(0, raw);
+    const dt = event.timeStamp - state.lastTime;
+    if (dt > 0) state.velocity = (event.clientX - state.lastX) / dt;
+    state.lastX = event.clientX;
+    state.lastTime = event.timeStamp;
+    setDragOffset(delta);
+  };
+
+  const finishDrag = (event) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    dragStateRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const drawerWidth = asideRef.current?.offsetWidth || 1;
+    const ratio = Math.abs(dragOffset) / drawerWidth;
+    const signedVelocity = isRight ? state.velocity : -state.velocity;
+    if (ratio > SWIPE_DISMISS_RATIO || signedVelocity > SWIPE_DISMISS_VELOCITY) {
+      onClose?.();
+    } else {
+      setDragOffset(0);
+    }
+  };
+
   if (!open || typeof document === "undefined") return null;
 
-  const isRight = side === "right";
+  const isDragging = dragStateRef.current != null;
 
   return createPortal(
     <div
@@ -65,6 +138,7 @@ export const Drawer = ({
         }}
       />
       <aside
+        ref={asideRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -86,9 +160,20 @@ export const Drawer = ({
           borderLeft: "none",
           boxShadow: ELEVATION.lg,
           fontFamily: T.sans,
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: fullBleed || !isRight ? "env(safe-area-inset-left)" : 0,
+          paddingRight: fullBleed || isRight ? "env(safe-area-inset-right)" : 0,
+          transform: dragOffset ? `translateX(${dragOffset}px)` : undefined,
+          transition: isDragging ? "none" : "transform 220ms ease",
+          willChange: isDragging ? "transform" : undefined,
         }}
       >
         <div
+          onPointerDown={handleDragPointerDown}
+          onPointerMove={handleDragPointerMove}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
           style={{
             height: dim(52),
             flexShrink: 0,
@@ -99,6 +184,8 @@ export const Drawer = ({
             padding: sp("0 16px"),
             borderBottom: "none",
             background: T.bg0,
+            touchAction: "none",
+            cursor: isDragging ? "grabbing" : "grab",
           }}
         >
           <span
@@ -121,6 +208,7 @@ export const Drawer = ({
             type="button"
             aria-label={`Close ${title}`}
             onClick={onClose}
+            data-swipe-skip
             style={{
               width: dim(32),
               height: dim(32),

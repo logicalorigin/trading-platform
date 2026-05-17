@@ -243,6 +243,17 @@ textarea {
   min-height: 44px;
 }
 
+[data-testid="settings-screen"][data-layout="phone"] button,
+[data-testid="diagnostics-screen"][data-layout="phone"] button,
+[data-testid="flow-screen"][data-layout="phone"] button,
+[data-testid="market-screen"][data-layout="phone"] button,
+[data-testid="mobile-watchlist-drawer"] button,
+[data-testid="mobile-activity-sheet"] button,
+[data-testid="mobile-more-sheet"] button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 table {
   max-width: 100%;
 }
@@ -1007,6 +1018,11 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
   .ra-interactive:hover {
     transform: none;
+  }
+
+  [data-testid="platform-bottom-sheet"] [role="dialog"],
+  [data-testid="platform-drawer"] [role="dialog"] {
+    transition: none !important;
   }
 
   .ra-sparkline polyline,

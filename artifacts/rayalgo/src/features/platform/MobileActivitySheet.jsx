@@ -6,7 +6,7 @@ import {
   formatQuotePrice,
   formatRelativeTimeShort,
 } from "../../lib/formatters";
-import { MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
@@ -32,8 +32,8 @@ const SegmentButton = ({ active, children, onClick, testId }) => (
     data-testid={testId}
     aria-pressed={active}
     onClick={onClick}
+    className="ra-touch-target"
     style={{
-      minHeight: dim(34),
       border: `1px solid ${active ? T.accent : T.border}`,
       background: active ? `${T.accent}18` : T.bg1,
       color: active ? T.text : T.textDim,
@@ -59,6 +59,7 @@ const ActivityRow = ({
     data-testid={testId}
     onClick={onClick}
     disabled={!onClick}
+    className="ra-touch-target"
     style={{
       minHeight: dim(44),
       display: "grid",
@@ -124,11 +125,12 @@ const EmptyState = ({ children }) => (
       display: "grid",
       placeItems: "center",
       padding: sp(16),
-      color: T.textDim,
+      color: T.textMuted,
       fontFamily: T.sans,
       fontSize: fs(10),
       textAlign: "center",
-      border: `1px solid ${T.border}`,
+      border: `1px dashed ${T.border}`,
+      borderRadius: dim(RADII.md),
       background: T.bg1,
     }}
   >

@@ -49,7 +49,7 @@ const sourceTone = (sourceType) =>
       ? "purple"
       : "default";
 
-export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
+export const CashFundingPanel = ({ query, currency, maskValues = false, isPhone = false }) => (
   <Panel
     title="Cash & Funding"
     subtitle="Cash balances, deposits, withdrawals, dividends, interest, and fees"
@@ -105,12 +105,18 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: `minmax(0, 1.1fr) minmax(${dim(230)}px, 0.9fr)`,
+            gridTemplateColumns: isPhone
+              ? "minmax(0, 1fr)"
+              : `minmax(0, 1.1fr) minmax(${dim(230)}px, 0.9fr)`,
             gap: sp(6),
             alignItems: "start",
+            minWidth: 0,
           }}
         >
-          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 170 }}>
+          <div
+            className="ra-hide-scrollbar"
+            style={{ overflow: "auto", maxHeight: isPhone ? undefined : 170, minWidth: 0 }}
+          >
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}>
               <thead>
                 <tr style={tableHeaderStyle}>
@@ -158,8 +164,11 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
             style={{
               display: "grid",
               gap: sp(5),
-              paddingLeft: sp(2),
-              borderLeft: `1px solid ${T.border}`,
+              paddingLeft: isPhone ? 0 : sp(2),
+              borderLeft: isPhone ? "none" : `1px solid ${T.border}`,
+              paddingTop: isPhone ? sp(4) : 0,
+              borderTop: isPhone ? `1px solid ${T.border}` : "none",
+              minWidth: 0,
             }}
           >
             <div style={mutedLabelStyle}>Recent Dividends</div>

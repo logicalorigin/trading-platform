@@ -1451,6 +1451,7 @@ export const AccountScreen = ({
               query={cashQuery}
               currency={currency}
               maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
             />
             {shadowMode ? (
               <ShadowWatchlistBacktestPanel

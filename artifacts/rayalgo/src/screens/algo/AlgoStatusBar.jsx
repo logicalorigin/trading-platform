@@ -189,6 +189,7 @@ export const AlgoStatusBar = ({
                 : gatewayReady
                   ? T.cyan
                   : T.amber,
+              // Hardcoded dark ink for contrast on cyan/amber chip — must stay dark in both themes.
               color: "#031216",
             }}
           >
