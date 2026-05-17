@@ -25,6 +25,11 @@ export const TodaySnapshotPanel = ({
   return (
     <Panel
       title="Today"
+      subtitle={
+        tab === "heatmap"
+          ? "Position heat by day % move — area is market value"
+          : "Intraday P&L curve · session-to-now"
+      }
       action={<ToggleGroup options={TABS} value={tab} onChange={setTab} />}
       minHeight={300}
     >
