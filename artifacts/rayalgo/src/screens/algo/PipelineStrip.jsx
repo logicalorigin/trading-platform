@@ -110,7 +110,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
         border: `1px solid ${selected ? color : T.border}`,
         borderRadius: dim(RADII.md),
         background: selected
-          ? `${color}14`
+          ? `${color}28`
           : `linear-gradient(180deg, ${T.bg2} 0%, ${T.bg1} 100%)`,
         cursor: "pointer",
         transition: "all 0.18s",
@@ -230,7 +230,7 @@ export const PipelineStrip = ({
                 padding: sp("6px 9px"),
                 border: "none",
                 borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
-                background: selected ? `${color}14` : "transparent",
+                background: selected ? `${color}28` : "transparent",
                 color: alarmStatus ? color : T.textSec,
                 cursor: "pointer",
                 fontFamily: T.sans,

@@ -35,7 +35,7 @@ export const DiagPanel = ({
           gap: sp(5),
           padding: sp("3px 8px"),
           border: "none",
-          borderRadius: dim(3),
+          borderRadius: dim(RADII.xs),
           background: T.bg1,
           color: healthy ? T.textMuted : color,
           fontFamily: T.sans,

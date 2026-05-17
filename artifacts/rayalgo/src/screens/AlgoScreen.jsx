@@ -1134,8 +1134,8 @@ export const AlgoScreen = ({
     padding: sp("6px 12px"),
     borderRadius: dim(RADII.pill),
     border: "none",
-    background: active ? `${color}18` : T.bg2,
-    color: active ? color : T.text,
+    background: active ? color : T.bg2,
+    color: active ? T.onAccent : T.text,
     fontSize: textSize("caption"),
     fontFamily: T.sans,
     fontWeight: active ? 600 : 500,
@@ -1418,9 +1418,9 @@ export const AlgoScreen = ({
               style={{
                 padding: sp("7px 10px"),
                 borderRadius: dim(RADII.xs),
-                border: `1px solid ${T.amber}55`,
-                background: `${T.amber}18`,
-                color: T.amber,
+                border: `1px solid ${T.amber}`,
+                background: T.amber,
+                color: T.onAccent,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2545,7 +2545,7 @@ export const AlgoScreen = ({
                           textAlign: "left",
                           border: `1px solid ${selected ? tone : T.border}`,
                           borderRadius: dim(RADII.sm),
-                          background: selected ? `${tone}12` : T.bg2,
+                          background: selected ? `${tone}24` : T.bg2,
                           padding: sp("8px 9px"),
                           cursor: "pointer",
                         }}
@@ -2845,7 +2845,7 @@ export const AlgoScreen = ({
             const inputStyle = {
               background: T.bg1,
               border: "none",
-              borderRadius: dim(3),
+              borderRadius: dim(RADII.xs),
               color: T.text,
               padding: sp("5px 7px"),
               fontFamily: T.sans,
@@ -2985,9 +2985,9 @@ export const AlgoScreen = ({
                           !focusedDeployment ||
                           updateProfileMutation.isPending,
                       }),
-                      border: `1px solid ${T.amber}55`,
-                      background: `${T.amber}18`,
-                      color: T.amber,
+                      border: `1px solid ${T.amber}`,
+                      background: T.amber,
+                      color: T.onAccent,
                     }}
                   >
                     {updateProfileMutation.isPending ? "SAVING..." : "APPLY"}
