@@ -546,6 +546,57 @@ export const DataUnavailableState = ({
 };
 
 /**
+ * Icon — context-aware lucide-react wrapper.
+ *
+ * Each "context" pre-fills size + strokeWidth defaults so the app
+ * renders icons consistently across nav, inline, and control surfaces.
+ * Direct lucide usage is fine for one-offs; reach for <Icon> when the
+ * icon is part of a primary visual pattern (nav rail, badge prefix,
+ * button leading-icon) where consistency matters.
+ *
+ *   context="nav"     — 18px, strokeWidth 1.5 (rail icons, primary nav)
+ *   context="inline"  — 14px, strokeWidth 2   (badge prefix, status row)
+ *   context="control" — 16px, strokeWidth 2   (Button leading / trailing)
+ *
+ *   as            — a lucide-react icon component (e.g. Search, AlertCircle)
+ *   size          — override default
+ *   strokeWidth   — override default
+ *   color         — override default (inherits from currentColor otherwise)
+ *
+ * All other props (aria-*, className, style, etc.) forward to the lucide
+ * component so it stays accessibility-friendly.
+ */
+const ICON_CONTEXT_DEFAULTS = {
+  nav: { size: 18, strokeWidth: 1.5 },
+  inline: { size: 14, strokeWidth: 2 },
+  control: { size: 16, strokeWidth: 2 },
+};
+
+export const Icon = ({
+  as: LucideIcon,
+  context = "inline",
+  size,
+  strokeWidth,
+  color,
+  className,
+  style,
+  ...rest
+}) => {
+  if (!LucideIcon) return null;
+  const defaults = ICON_CONTEXT_DEFAULTS[context] || ICON_CONTEXT_DEFAULTS.inline;
+  return (
+    <LucideIcon
+      size={size ?? defaults.size}
+      strokeWidth={strokeWidth ?? defaults.strokeWidth}
+      color={color}
+      className={className}
+      style={style}
+      {...rest}
+    />
+  );
+};
+
+/**
  * SegmentedControl — iOS / Linear-style toggle group with a sliding
  * indicator that translateX-es between option bounds on change.
  *

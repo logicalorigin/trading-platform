@@ -98,6 +98,35 @@ test("TextField error state has its own CSS class for the red ring", () => {
   );
 });
 
+test("Icon primitive defaults size + strokeWidth per context", () => {
+  // Each context locks the visual rhythm: nav = 18px/1.5 stroke,
+  // inline = 14px/2, control = 16px/2. Consumers can override per-call,
+  // but the defaults must be wired through so a no-prop call renders
+  // at the right baseline.
+  const source = readPrimitivesSource();
+
+  assert.match(source, /export const Icon = /);
+  assert.match(
+    source,
+    /const ICON_CONTEXT_DEFAULTS = \{[\s\S]*?nav: \{ size: 18, strokeWidth: 1\.5/,
+  );
+  assert.match(
+    source,
+    /inline: \{ size: 14, strokeWidth: 2/,
+  );
+  assert.match(
+    source,
+    /control: \{ size: 16, strokeWidth: 2/,
+  );
+
+  // Forwards other props (aria-*, className, etc.) to the lucide
+  // component so accessibility attributes still reach the SVG.
+  const slice = source.match(/export const Icon =[\s\S]*?\n\};/);
+  assert.ok(slice, "Icon declaration not found");
+  assert.match(slice[0], /\.\.\.rest/);
+  assert.match(slice[0], /size=\{size \?\? defaults\.size\}/);
+});
+
 test("extractSparklineValues handles raw numbers + close/c/v shapes", () => {
   // Centralized normalizer for sparkline data — Watchlist + KPI Strip
   // were keeping their own copies; this test pins the shape support
