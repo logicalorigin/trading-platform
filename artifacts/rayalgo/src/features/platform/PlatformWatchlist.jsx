@@ -663,12 +663,12 @@ const WatchlistRow = memo(
             placeItems: "center",
             border: "none",
             borderRadius: dim(RADII.sm),
-            background: item.monitoredOnly ? `${T.accent}14` : "transparent",
+            background: item.monitoredOnly ? T.accent : "transparent",
             color: item.monitoredOnly
-              ? T.accent
+              ? T.onAccent
               : activeActionDisabled
                 ? T.textMuted
-                : T.textDim,
+                : T.textSec,
             cursor:
               (item.monitoredOnly && !busy) || !activeActionDisabled
                 ? "pointer"
@@ -1191,9 +1191,9 @@ export const Watchlist = ({
                 style={{
                   padding: sp("6px 4px"),
                   borderRadius: dim(RADII.sm),
-                  background: active ? `${T.accent}14` : "transparent",
+                  background: active ? T.accent : "transparent",
                   border: "none",
-                  color: active ? T.accent : T.textMuted,
+                  color: active ? T.onAccent : T.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
