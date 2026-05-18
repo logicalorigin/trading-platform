@@ -113,6 +113,7 @@ import {
   diffSignalSnapshots,
   limitToWindow,
 } from "../features/platform/algoTransitionsModel";
+import { summarizeCockpitDelta } from "../features/platform/algoActivitySummary";
 import {
   buildAttentionStream,
   buildCockpitGateSummary,
@@ -339,6 +340,9 @@ export const AlgoScreen = ({
   const prevCockpitSignalsRef = useRef(null);
   const [recentTransitions, setRecentTransitions] = useState([]);
   const [transitionsNow, setTransitionsNow] = useState(() => Date.now());
+  const prevActivitySnapshotRef = useRef(null);
+  const prevActivityPerformanceRef = useRef(null);
+  const [activitySummary, setActivitySummary] = useState(null);
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
@@ -508,6 +512,46 @@ export const AlgoScreen = ({
     }, 5_000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    prevActivitySnapshotRef.current = null;
+    prevActivityPerformanceRef.current = null;
+    setActivitySummary(null);
+  }, [focusedDeployment?.id]);
+
+  useEffect(() => {
+    if (!focusedDeployment?.id) {
+      setActivitySummary(null);
+      return;
+    }
+    const nextSnapshot = cockpit
+      ? {
+          evaluatedAt: cockpit.evaluatedAt,
+          signals: signalOptionsSignals,
+          candidates: signalOptionsCandidates,
+        }
+      : null;
+    const prevSnapshot = prevActivitySnapshotRef.current;
+    const prevPerformance = prevActivityPerformanceRef.current;
+    const summary = summarizeCockpitDelta({
+      prevSnapshot,
+      nextSnapshot,
+      recentEvents: events,
+      prevPerformance,
+      nextPerformance: signalOptionsPerformanceSummary,
+      nowMs: Date.now(),
+    });
+    setActivitySummary(summary);
+    prevActivitySnapshotRef.current = nextSnapshot;
+    prevActivityPerformanceRef.current = signalOptionsPerformanceSummary;
+  }, [
+    cockpit?.evaluatedAt,
+    events,
+    focusedDeployment?.id,
+    signalOptionsCandidates,
+    signalOptionsPerformanceSummary,
+    signalOptionsSignals,
+  ]);
 
   const visibleTransitions = useMemo(
     () =>
@@ -1419,6 +1463,7 @@ export const AlgoScreen = ({
           setStrategySettingsDraft={setStrategySettingsDraft}
           handleSaveStrategySettings={handleSaveStrategySettings}
           updateStrategySettingsMutation={updateStrategySettingsMutation}
+          activitySummary={activitySummary}
           focusedDeployment={focusedDeployment}
           handleToggleDeployment={handleToggleDeployment}
           handleRunShadowScan={handleRunShadowScan}

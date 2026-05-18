@@ -180,6 +180,8 @@ export const AlgoLivePage = ({
   setStrategySettingsDraft,
   handleSaveStrategySettings,
   updateStrategySettingsMutation,
+  // Smart summary
+  activitySummary,
   // Pause / Scan-now (existing mutations + handlers)
   focusedDeployment,
   handleToggleDeployment,
@@ -458,6 +460,56 @@ export const AlgoLivePage = ({
           </span>
         </div>
       </div>
+
+      {activitySummary?.segments?.length ? (
+        <div
+          data-testid="algo-activity-summary"
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            flexWrap: "wrap",
+            gap: sp(5),
+            padding: sp("5px 10px"),
+            background: T.bg1,
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(RADII.md),
+            color: T.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            minWidth: 0,
+          }}
+        >
+          {activitySummary.segments.map((segment, index) => (
+            <span
+              key={`${segment.kind}-${index}`}
+              style={{
+                color:
+                  segment.tone === "green"
+                    ? T.green
+                    : segment.tone === "amber"
+                      ? T.amber
+                      : segment.tone === "red"
+                        ? T.red
+                        : segment.tone === "cyan"
+                          ? T.cyan
+                          : segment.tone === "muted"
+                            ? T.textMuted
+                            : T.textDim,
+                fontFamily: segment.kind === "prefix" ? T.mono : T.sans,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                letterSpacing:
+                  segment.kind === "prefix" ? "0.04em" : "0.01em",
+                textTransform:
+                  segment.kind === "prefix" ? "uppercase" : "none",
+              }}
+            >
+              {segment.text}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <OperationsKpiStrip
         cockpitKpis={cockpitKpis}
