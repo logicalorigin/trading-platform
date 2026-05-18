@@ -38,6 +38,11 @@ export type UserPreferences = {
     extendedHours: boolean;
     sessionBreaks: boolean;
     rayAlgoDashboard: "auto" | "full" | "compact" | "hidden";
+    // Desktop-only opt-in: floating OHLC + delta badge that follows the
+    // crosshair on desktop pointer move. Mobile gets it automatically
+    // via mobileTrackingMode. Off by default — additive, doesn't disrupt
+    // existing chart preferences.
+    desktopCrosshairBadge: boolean;
   };
   workspace: {
     defaultScreen: string;
@@ -112,6 +117,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     extendedHours: true,
     sessionBreaks: false,
     rayAlgoDashboard: "auto",
+    desktopCrosshairBadge: false,
   },
   workspace: {
     defaultScreen: "market",
@@ -263,6 +269,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       extendedHours: booleanValue(chart.extendedHours, DEFAULT_USER_PREFERENCES.chart.extendedHours),
       sessionBreaks: booleanValue(chart.sessionBreaks, DEFAULT_USER_PREFERENCES.chart.sessionBreaks),
       rayAlgoDashboard: enumValue(chart.rayAlgoDashboard, ["auto", "full", "compact", "hidden"], DEFAULT_USER_PREFERENCES.chart.rayAlgoDashboard),
+      desktopCrosshairBadge: booleanValue(chart.desktopCrosshairBadge, DEFAULT_USER_PREFERENCES.chart.desktopCrosshairBadge),
     },
     workspace: {
       defaultScreen: stringValue(workspace.defaultScreen, DEFAULT_USER_PREFERENCES.workspace.defaultScreen, /^[a-z-]+$/i),

@@ -354,6 +354,31 @@ test("ResearchChartSurface autoscale controls apply to the main price scale imme
   );
 });
 
+test("ResearchChartSurface desktop crosshair badge is opt-in via preference", () => {
+  // Desktop opt-in for the floating OHLC + delta badge. The badge
+  // updates the floatingCrosshair state when EITHER mobileTrackingMode
+  // OR the desktopCrosshairBadge preference is on — both share one
+  // setFloatingCrosshair fire path. Default is false so existing users
+  // see no change.
+  const source = readResearchChartSurfaceSource();
+
+  // Preference is read from userPreferences.chart.desktopCrosshairBadge.
+  assert.match(
+    source,
+    /desktopCrosshairBadgeRef = useRef\(\s*Boolean\(userPreferences\.chart\.desktopCrosshairBadge\)/,
+  );
+  // Crosshair update fires for either mobile OR desktop opt-in.
+  assert.match(
+    source,
+    /\(mobileTrackingModeRef\.current \|\| desktopCrosshairBadgeRef\.current\) &&\s*param\?\.point/,
+  );
+  // Render branch composes both gates.
+  assert.match(
+    source,
+    /\(mobileTrackingMode \|\| userPreferences\.chart\.desktopCrosshairBadge\) &&\s*floatingCrosshair/,
+  );
+});
+
 test("ResearchChartSurface axis click-drag scales via custom capture-phase handler", () => {
   // We do NOT trust lightweight-charts' axisPressedMouseMove for desktop
   // (the config is still set so mobile touch works) — through our

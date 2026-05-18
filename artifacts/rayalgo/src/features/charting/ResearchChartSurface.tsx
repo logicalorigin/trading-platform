@@ -5326,6 +5326,13 @@ export const ResearchChartSurface = ({
   const [tapSelectedBar, setTapSelectedBar] = useState<HoverBar | null>(null);
   const tapSelectedBarRef = useRef<HoverBar | null>(null);
   const mobileTrackingModeRef = useRef(false);
+  // Desktop opt-in for the floating OHLC + delta badge that follows the
+  // crosshair. When enabled, the badge updates on every crosshair move
+  // (same fire path as mobile tracking — gates a single setFloatingCrosshair
+  // call). Off by default; toggle via userPreferences.chart.desktopCrosshairBadge.
+  const desktopCrosshairBadgeRef = useRef(
+    Boolean(userPreferences.chart.desktopCrosshairBadge),
+  );
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
@@ -6989,6 +6996,12 @@ export const ResearchChartSurface = ({
     mobileTrackingModeRef.current = mobileTrackingMode;
   }, [mobileTrackingMode]);
 
+  useEffect(() => {
+    desktopCrosshairBadgeRef.current = Boolean(
+      userPreferences.chart.desktopCrosshairBadge,
+    );
+  }, [userPreferences.chart.desktopCrosshairBadge]);
+
   useLayoutEffect(() => {
     if (!containerRef.current || !hasChartBars) {
       return undefined;
@@ -7167,7 +7180,10 @@ export const ResearchChartSurface = ({
         schedulePublishCrosshairSync(time);
         if (time == null) {
           setHoverBar((current) => (current === null ? current : null));
-          if (mobileTrackingModeRef.current) {
+          if (
+            mobileTrackingModeRef.current ||
+            desktopCrosshairBadgeRef.current
+          ) {
             setFloatingCrosshair((current) => (current === null ? current : null));
           }
           return;
@@ -7177,10 +7193,16 @@ export const ResearchChartSurface = ({
         setHoverBar((current) =>
           hoverBarsEqual(current, bar || null) ? current : bar || null,
         );
-        // Update the floating crosshair badge when the user is actively
-        // touching the chart on mobile. The badge offsets above-left of
-        // the pointer so the finger doesn't obscure it.
-        if (mobileTrackingModeRef.current && param?.point && bar) {
+        // Update the floating crosshair badge when EITHER:
+        //   - mobile tracking mode is active (user is finger-tracking the chart), OR
+        //   - desktop crosshair badge preference is on (user opted in via Settings).
+        // The badge offsets above-left of the pointer so neither a finger
+        // nor a mouse cursor obscures it.
+        if (
+          (mobileTrackingModeRef.current || desktopCrosshairBadgeRef.current) &&
+          param?.point &&
+          bar
+        ) {
           const delta = typeof bar.close === "number" && typeof bar.open === "number"
             ? bar.close - bar.open
             : null;
@@ -10122,7 +10144,8 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
-          {mobileTrackingMode && floatingCrosshair ? (
+          {(mobileTrackingMode || userPreferences.chart.desktopCrosshairBadge) &&
+          floatingCrosshair ? (
             <div
               style={{
                 position: "absolute",
