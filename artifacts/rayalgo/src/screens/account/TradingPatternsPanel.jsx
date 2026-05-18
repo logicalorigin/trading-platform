@@ -11,6 +11,7 @@ import {
   useCollapsibleSections,
 } from "./accountUtils";
 import { arrayValue, finiteNumber, startOfIsoWeek } from "./tradingPatterns/patternsCommon";
+import { PatternsExitReasons } from "./tradingPatterns/PatternsExitReasons";
 import { PatternsSummaryStrip } from "./tradingPatterns/PatternsSummaryStrip";
 import { PatternsWaterfall } from "./tradingPatterns/PatternsWaterfall";
 import { PatternsInsights } from "./tradingPatterns/PatternsInsights";
@@ -44,8 +45,8 @@ export const TradingPatternsPanel = ({
   isPhone = false,
 }) => {
   const sectionDefaults = isPhone
-    ? { insights: true, waterfall: true, byTime: true, bySymbol: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
-    : { insights: true, waterfall: true, byTime: true, bySymbol: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
+    ? { insights: true, waterfall: true, byTime: true, bySymbol: true, exitReasons: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
+    : { insights: true, waterfall: true, byTime: true, bySymbol: true, exitReasons: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
   const { isOpen, toggle } = useCollapsibleSections("patterns.openSections", sectionDefaults);
   const [sortKey, setSortKey] = useState("realizedPnl");
   const [tickerOrder, setTickerOrder] = useState("top");
@@ -204,6 +205,21 @@ export const TradingPatternsPanel = ({
               maskValues={maskValues}
               selectedLens={selectedLens}
               onLensChange={onLensChange}
+            />
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <SectionHeader
+            title="Exit Reasons"
+            onToggle={() => toggle("exitReasons")}
+            expanded={isOpen("exitReasons")}
+          />
+          {isOpen("exitReasons") ? (
+            <PatternsExitReasons
+              bucketGroups={analysis?.bucketGroups}
+              currency={currency}
+              maskValues={maskValues}
             />
           ) : null}
         </div>
