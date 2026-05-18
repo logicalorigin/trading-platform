@@ -542,29 +542,36 @@ test("platform signal monitor uses paper profile for all header-lane signal quer
 });
 
 test("algo signal-options automation uses generated API ownership path", () => {
-  const source = readFileSync(
+  const algoScreenSource = readFileSync(
     new URL("../../screens/AlgoScreen.jsx", import.meta.url),
     "utf8",
   );
+  const algoDirPath = new URL("../../screens/algo/", import.meta.url).pathname;
+  const algoComponentSources = existsSync(algoDirPath)
+    ? collectSourceFiles(new URL("../../screens/algo/", import.meta.url))
+        .map((file) => readFileSync(file, "utf8"))
+        .join("\n")
+    : "";
+  const algoCorpus = `${algoScreenSource}\n${algoComponentSources}`;
 
-  assert.match(source, /useGetSignalOptionsAutomationState/);
-  assert.match(source, /useGetSignalOptionsPerformance/);
-  assert.match(source, /useRunSignalOptionsShadowScan/);
-  assert.match(source, /useUpdateSignalOptionsExecutionProfile/);
-  assert.match(source, /getGetSignalOptionsAutomationStateQueryKey/);
-  assert.match(source, /getGetSignalOptionsPerformanceQueryKey/);
-  assert.match(source, /Signal -&gt; Action/);
-  assert.match(source, /signal-options-expanded-capacity/);
-  assert.match(source, /SHADOW ONLY/);
-  assert.match(source, /CREATE SHADOW DEPLOYMENT/);
-  assert.match(source, /Missing bid\/ask quote/);
-  assert.match(source, /Mark-only allowed/);
-  assert.match(source, /mtf_not_aligned:\s*"signal_policy"/);
-  assert.match(source, /candidateMatchesReasonCategory\(candidate, \["liquidity", "risk"\]\)/);
-  assert.doesNotMatch(source, /live_submitted/);
-  assert.doesNotMatch(source, /live_previewed/);
-  assert.doesNotMatch(source, /queryKey:\s*\[\s*"signal-options-state"/);
-  assert.doesNotMatch(source, /\/api\/algo\/deployments\/.*signal-options/);
+  assert.match(algoScreenSource, /useGetSignalOptionsAutomationState/);
+  assert.match(algoScreenSource, /useGetSignalOptionsPerformance/);
+  assert.match(algoScreenSource, /useRunSignalOptionsShadowScan/);
+  assert.match(algoScreenSource, /useUpdateSignalOptionsExecutionProfile/);
+  assert.match(algoScreenSource, /getGetSignalOptionsAutomationStateQueryKey/);
+  assert.match(algoScreenSource, /getGetSignalOptionsPerformanceQueryKey/);
+  assert.match(algoCorpus, /Signal -&gt; Action/);
+  assert.match(algoCorpus, /signal-options-expanded-capacity/);
+  assert.match(algoCorpus, /SHADOW ONLY/);
+  assert.match(algoCorpus, /CREATE SHADOW DEPLOYMENT/);
+  assert.match(algoCorpus, /Missing bid\/ask quote/);
+  assert.match(algoCorpus, /Mark-only allowed/);
+  assert.match(algoCorpus, /mtf_not_aligned:\s*"signal_policy"/);
+  assert.match(algoCorpus, /candidateMatchesReasonCategory\(candidate, \["liquidity", "risk"\]\)/);
+  assert.doesNotMatch(algoCorpus, /live_submitted/);
+  assert.doesNotMatch(algoCorpus, /live_previewed/);
+  assert.doesNotMatch(algoCorpus, /queryKey:\s*\[\s*"signal-options-state"/);
+  assert.doesNotMatch(algoCorpus, /\/api\/algo\/deployments\/.*signal-options/);
 });
 
 test("platform root polling stops while the page is hidden", () => {

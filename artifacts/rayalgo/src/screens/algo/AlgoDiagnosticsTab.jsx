@@ -1,0 +1,246 @@
+import {
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
+import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
+import { DiagPanel } from "./DiagPanel.jsx";
+import {
+  isDiagRowsHealthy,
+  isGateSummaryHealthy,
+} from "../algoCockpitDiagnosticsModel";
+
+export const AlgoDiagnosticsTab = ({
+  cockpitSkipCategoryRows,
+  cockpitSkipReasonRows,
+  cockpitReadinessRows,
+  cockpitMarkHealthRows,
+  cockpitLifecycleRows,
+  cockpitEntryGateRows,
+  cockpitOptionChainRows,
+  cockpitSignalFreshness,
+  cockpitTradePath,
+  diagExpansion,
+  setDiagExpansion,
+  algoIsPhone,
+  algoIsNarrow,
+}) => {
+  const diagPanels = [
+    { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: T.red },
+    { key: "skip-reasons", title: "Skip Reasons", rows: cockpitSkipReasonRows, color: T.red },
+    { key: "readiness", title: "Readiness", rows: cockpitReadinessRows, color: T.amber },
+    { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: T.cyan },
+    { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: T.green },
+    { key: "entry-gate", title: "Entry Gate", rows: cockpitEntryGateRows, color: T.amber },
+    { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: T.cyan },
+  ];
+  const gateHealthy = isGateSummaryHealthy(cockpitTradePath);
+  const resolveExpanded = (panel) => {
+    const healthy = isDiagRowsHealthy(panel.rows);
+    const override = diagExpansion[panel.key];
+    return typeof override === "boolean" ? override : !healthy;
+  };
+  const expandedPanels = diagPanels.filter((panel) => resolveExpanded(panel));
+  const collapsedPanels = diagPanels.filter((panel) => !resolveExpanded(panel));
+  return (
+    <div
+      data-testid="algo-cockpit-diagnostics"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(8),
+        minWidth: 0,
+      }}
+    >
+      <SectionHeader
+        title="Diagnostics"
+        right={
+          <div style={{ display: "flex", gap: sp(5) }}>
+            <button
+              type="button"
+              data-testid="algo-diag-expand-all"
+              onClick={() =>
+                setDiagExpansion(
+                  Object.fromEntries(diagPanels.map((p) => [p.key, true])),
+                )
+              }
+              style={{
+                padding: sp("4px 10px"),
+                fontSize: textSize("caption"),
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.medium,
+                color: T.textSec,
+                background: T.bg1,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.pill),
+                cursor: "pointer",
+                letterSpacing: "0.02em",
+              }}
+            >
+              Expand all
+            </button>
+            <button
+              type="button"
+              data-testid="algo-diag-collapse-all"
+              onClick={() =>
+                setDiagExpansion(
+                  Object.fromEntries(diagPanels.map((p) => [p.key, false])),
+                )
+              }
+              style={{
+                padding: sp("4px 10px"),
+                fontSize: textSize("caption"),
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.medium,
+                color: T.textSec,
+                background: T.bg1,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.pill),
+                cursor: "pointer",
+                letterSpacing: "0.02em",
+              }}
+            >
+              Collapse all
+            </button>
+          </div>
+        }
+      />
+
+      <div
+        data-testid="algo-diag-gate-summary"
+        style={{
+          border: "none",
+          borderRadius: dim(RADII.md),
+          background: T.bg1,
+          padding: sp("8px 10px"),
+          display: "grid",
+          gridTemplateColumns: algoIsPhone
+            ? "repeat(2, minmax(0, 1fr))"
+            : "repeat(6, minmax(0, 1fr))",
+          gap: sp(6),
+        }}
+      >
+        {[
+          ["Fresh", cockpitSignalFreshness.fresh ?? 0, T.green],
+          ["Stale", cockpitSignalFreshness.notFresh ?? 0, T.amber],
+          ["Blocked", cockpitTradePath.blockedCandidates ?? 0, T.red],
+          ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, T.green],
+          ["Marks", cockpitTradePath.markEvents ?? 0, T.cyan],
+          ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, T.amber],
+        ].map(([label, value, color]) => {
+          const isAlarm =
+            (label === "Blocked" || label === "Gateway") &&
+            Number(value) > 0;
+          return (
+            <div key={label} style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {String(label).toUpperCase()}
+              </div>
+              <div
+                style={{
+                  color: isAlarm
+                    ? color
+                    : Number(value) > 0 && label !== "Stale"
+                      ? color
+                      : T.text,
+                  fontFamily: T.sans,
+                  fontSize: fs(11),
+                  marginTop: sp(2),
+                }}
+              >
+                {Number(value || 0).toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {expandedPanels.length ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: algoIsPhone
+              ? "1fr"
+              : algoIsNarrow
+                ? "repeat(2, minmax(0, 1fr))"
+                : "repeat(3, minmax(0, 1fr))",
+            gap: sp(8),
+            minWidth: 0,
+          }}
+        >
+          {expandedPanels.map((panel) => (
+            <DiagPanel
+              key={panel.key}
+              title={panel.title}
+              color={panel.color}
+              rows={panel.rows}
+              healthy={isDiagRowsHealthy(panel.rows)}
+              expanded={true}
+              onToggle={() =>
+                setDiagExpansion((current) => ({
+                  ...current,
+                  [panel.key]: false,
+                }))
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {collapsedPanels.length ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: sp(5),
+            paddingTop: sp(2),
+          }}
+        >
+          <span
+            style={{
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              color: T.textMuted,
+              letterSpacing: "0.04em",
+              alignSelf: "center",
+              marginRight: sp(2),
+            }}
+          >
+            {gateHealthy && expandedPanels.length === 0
+              ? "ALL HEALTHY · "
+              : "HEALTHY · "}
+          </span>
+          {collapsedPanels.map((panel) => (
+            <DiagPanel
+              key={panel.key}
+              title={panel.title}
+              color={panel.color}
+              rows={panel.rows}
+              healthy={isDiagRowsHealthy(panel.rows)}
+              expanded={false}
+              onToggle={() =>
+                setDiagExpansion((current) => ({
+                  ...current,
+                  [panel.key]: true,
+                }))
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+export default AlgoDiagnosticsTab;
