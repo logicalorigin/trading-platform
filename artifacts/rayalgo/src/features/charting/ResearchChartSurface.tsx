@@ -6143,6 +6143,207 @@ export const ResearchChartSurface = ({
     // attaches to the live DOM element on first render after data loads.
   }, [hasChartBars, applyMainPriceAutoScale]);
 
+  // TradingView-style per-axis click-drag-to-scale (desktop mouse only).
+  // Mirrors handleAxisWheel above so a user gets the same Y-only / X-only
+  // scaling behavior whether they wheel or click-and-drag the axis.
+  //
+  // We do NOT rely on lightweight-charts' handleScale.axisPressedMouseMove
+  // for desktop: that path observed unreliable through our capture-phase
+  // event stack and gave inconsistent feel compared to the wheel zoom
+  // (different anchoring, no React-state autoScale sync — same root cause
+  // that snapped Y back to fit-content). pointerType === "mouse" lets the
+  // mobile touch path fall through to lightweight-charts' native handler,
+  // which is still configured in the interaction options above.
+  //
+  // Convention (matches TV):
+  //   • Time axis drag right  → zoom IN  (smaller logical range)
+  //   • Time axis drag left   → zoom OUT
+  //   • Price axis drag down  → zoom IN  (smaller price span)
+  //   • Price axis drag up    → zoom OUT
+  // Anchored on the price / logical-bar under the INITIAL click so the
+  // grabbed point stays under the cursor the whole drag.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    type AxisDragState = {
+      pointerId: number;
+      axis: "price" | "time";
+      startClientX: number;
+      startClientY: number;
+      startRange: { from: number; to: number };
+      cursorFrac: number;
+      cursorAnchor: number;
+    };
+    let dragState: AxisDragState | null = null;
+
+    const handlePointerDown = (event: globalThis.PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      if (event.button !== 0) return;
+      const chart = chartRef.current;
+      if (!chart) return;
+      const rect = container.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      const priceScaleWidth =
+        chart.priceScale?.("right", 0)?.width?.() || 0;
+      const timeScaleHeight = chart.timeScale?.()?.height?.() || 0;
+      const overPriceAxis =
+        priceScaleWidth > 0 &&
+        localX >= rect.width - priceScaleWidth &&
+        localX <= rect.width;
+      const overTimeAxis =
+        timeScaleHeight > 0 &&
+        localY >= rect.height - timeScaleHeight &&
+        localY <= rect.height;
+      if (!overPriceAxis && !overTimeAxis) return;
+      const axis: "price" | "time" = overPriceAxis ? "price" : "time";
+
+      let startRange: { from: number; to: number };
+      let cursorFrac: number;
+      let cursorAnchor: number;
+
+      if (axis === "price") {
+        const priceScale = chart.priceScale?.("right", 0);
+        if (!priceScale) return;
+        // Same React/chart autoScale sync as the wheel handler — otherwise
+        // the chart-options effect re-applies autoScale:true on the next
+        // bar tick and snaps Y back to fit-content mid-drag.
+        applyMainPriceAutoScale(false);
+        const r = priceScale.getVisibleRange?.();
+        if (
+          !r ||
+          typeof r.from !== "number" ||
+          typeof r.to !== "number" ||
+          r.to - r.from <= 0
+        ) {
+          return;
+        }
+        startRange = { from: r.from, to: r.to };
+        const span = startRange.to - startRange.from;
+        const localYInPlot = Math.max(0, Math.min(rect.height, localY));
+        cursorFrac = rect.height > 0 ? localYInPlot / rect.height : 0.5;
+        cursorAnchor = startRange.to - span * cursorFrac;
+      } else {
+        const timeScale = chart.timeScale?.();
+        if (!timeScale) return;
+        const r = timeScale.getVisibleLogicalRange?.();
+        if (
+          !r ||
+          typeof r.from !== "number" ||
+          typeof r.to !== "number" ||
+          r.to - r.from <= 0
+        ) {
+          return;
+        }
+        startRange = { from: r.from, to: r.to };
+        const range = startRange.to - startRange.from;
+        const localXInPlot = Math.max(0, Math.min(rect.width, localX));
+        cursorFrac = rect.width > 0 ? localXInPlot / rect.width : 0.5;
+        cursorAnchor = startRange.from + range * cursorFrac;
+      }
+
+      dragState = {
+        pointerId: event.pointerId,
+        axis,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startRange,
+        cursorFrac,
+        cursorAnchor,
+      };
+      try {
+        container.setPointerCapture?.(event.pointerId);
+      } catch (_e) {
+        // setPointerCapture can throw if the pointer is already captured
+        // elsewhere; fall back to relying on global pointermove/up.
+      }
+      // Intercept first so the existing capture-phase pointer-tracking
+      // effect (~line 6240) doesn't also mark this as a plot pan, and so
+      // lightweight-charts' canvas/axis handlers don't get the event.
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      const chart = chartRef.current;
+      if (!chart) return;
+      // Exp scaling: a ~140px drag is a 2x zoom, symmetric in both
+      // directions. The k=0.005 matches the wheel handler's 0.0015/step
+      // feel for a typical 100px sustained drag.
+      try {
+        if (dragState.axis === "price") {
+          const deltaY = event.clientY - dragState.startClientY;
+          const scaleFactor = Math.exp(-deltaY * 0.005);
+          const start = dragState.startRange;
+          const span = start.to - start.from;
+          if (span <= 0) return;
+          const newSpan = span * scaleFactor;
+          const newTo =
+            dragState.cursorAnchor + newSpan * dragState.cursorFrac;
+          const newFrom = newTo - newSpan;
+          if (
+            !Number.isFinite(newFrom) ||
+            !Number.isFinite(newTo) ||
+            newTo - newFrom <= 0
+          ) {
+            return;
+          }
+          chart.priceScale?.("right", 0)?.setVisibleRange?.({
+            from: newFrom,
+            to: newTo,
+          });
+        } else {
+          const deltaX = event.clientX - dragState.startClientX;
+          const scaleFactor = Math.exp(-deltaX * 0.005);
+          const start = dragState.startRange;
+          const range = start.to - start.from;
+          if (range <= 0) return;
+          const newRange = Math.max(4, range * scaleFactor);
+          const newFrom =
+            dragState.cursorAnchor - newRange * dragState.cursorFrac;
+          const newTo = newFrom + newRange;
+          chart.timeScale?.()?.setVisibleLogicalRange?.({
+            from: newFrom,
+            to: newTo,
+          });
+        }
+      } catch (_e) {
+        // swallow scale errors; chart may be mid-resize
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    const endDrag = (event: globalThis.PointerEvent) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      try {
+        container.releasePointerCapture?.(event.pointerId);
+      } catch (_e) {
+        // releasePointerCapture throws if no capture; safe to ignore.
+      }
+      dragState = null;
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown, {
+      capture: true,
+    });
+    container.addEventListener("pointermove", handlePointerMove, {
+      capture: true,
+    });
+    container.addEventListener("pointerup", endDrag, { capture: true });
+    container.addEventListener("pointercancel", endDrag, { capture: true });
+    return () => {
+      container.removeEventListener("pointerdown", handlePointerDown, true);
+      container.removeEventListener("pointermove", handlePointerMove, true);
+      container.removeEventListener("pointerup", endDrag, true);
+      container.removeEventListener("pointercancel", endDrag, true);
+    };
+  }, [hasChartBars, applyMainPriceAutoScale]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !hasChartBars) {

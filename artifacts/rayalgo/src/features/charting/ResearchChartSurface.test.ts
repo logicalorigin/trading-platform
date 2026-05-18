@@ -354,6 +354,42 @@ test("ResearchChartSurface autoscale controls apply to the main price scale imme
   );
 });
 
+test("ResearchChartSurface axis click-drag scales via custom capture-phase handler", () => {
+  // We do NOT trust lightweight-charts' axisPressedMouseMove for desktop
+  // (the config is still set so mobile touch works) — through our
+  // capture-phase event stack it didn't fire reliably, and even when it
+  // did the Y path snapped back to fit-content same as the wheel handler
+  // pre-fix. Custom handler must:
+  //   • intercept only mouse pointers (touch falls through to LWC)
+  //   • use the same priceScaleWidth / timeScaleHeight axis hit detection
+  //     as the wheel handler
+  //   • capture the pointer + preventDefault + stopImmediatePropagation
+  //   • flip autoScale via applyMainPriceAutoScale on price-axis drags
+  //   • call setVisibleLogicalRange / setVisibleRange directly
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(
+    source,
+    /if \(event\.pointerType !== "mouse"\) return/,
+  );
+  assert.match(
+    source,
+    /container\.setPointerCapture\?\.\(event\.pointerId\)/,
+  );
+  assert.match(
+    source,
+    /if \(axis === "price"\)[\s\S]*?applyMainPriceAutoScale\(false\)/,
+  );
+  assert.match(
+    source,
+    /chart\.timeScale\?\.\(\)\?\.setVisibleLogicalRange\?\.\(\{/,
+  );
+  assert.match(
+    source,
+    /chart\.priceScale\?\.\("right", 0\)\?\.setVisibleRange\?\.\(\{/,
+  );
+});
+
 test("ResearchChartSurface axis-wheel Y zoom routes autoScale through React state", () => {
   // Root-cause guard: when the user wheel-zooms the price axis we must
   // flip autoScale off via applyMainPriceAutoScale (which writes both
