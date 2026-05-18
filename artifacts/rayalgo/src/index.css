@@ -878,6 +878,29 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   stroke: var(--ra-tooltip-border);
 }
 
+.ra-popover-content {
+  z-index: 1200;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--ra-tooltip-border);
+  border-radius: 8px;
+  background: var(--ra-tooltip-bg);
+  box-shadow: var(--ra-tooltip-shadow);
+  color: var(--ra-tooltip-text);
+  font-family: var(--ra-font-sans);
+  font-size: var(--ra-type-paragraph-muted, var(--ra-type-body));
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.ra-popover-arrow {
+  fill: var(--ra-tooltip-bg);
+  stroke: var(--ra-tooltip-border);
+}
+
 .ra-header-chip:last-child {
   border-right: none !important;
   padding-right: 0 !important;

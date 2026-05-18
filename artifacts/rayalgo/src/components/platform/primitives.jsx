@@ -316,3 +316,107 @@ export const CardTitle = ({ children, right }) => (
     {right}
   </div>
 );
+
+/**
+ * Rich tooltip body: title + optional subtitle + optional metric grid +
+ * optional inline sparkline + optional caption. Drop into the existing
+ * AppTooltip's `content` prop; the surrounding tooltip chrome (background,
+ * border, shadow, arrow) is supplied by Radix + .ra-tooltip-content.
+ */
+export const RichTooltipContent = ({
+  title,
+  subtitle,
+  metrics = [],
+  sparkline = null,
+  caption,
+  width = 220,
+}) => (
+  <div
+    style={{
+      display: "grid",
+      gap: sp(3),
+      minWidth: dim(width),
+      maxWidth: dim(width + 80),
+      fontFamily: T.sans,
+    }}
+  >
+    {title ? (
+      <div
+        style={{
+          fontSize: textSize("bodyStrong"),
+          color: "var(--ra-tooltip-text)",
+          fontWeight: FONT_WEIGHTS.medium,
+          letterSpacing: "-0.005em",
+        }}
+      >
+        {title}
+      </div>
+    ) : null}
+    {subtitle ? (
+      <div
+        style={{
+          fontSize: textSize("caption"),
+          color: "var(--ra-tooltip-muted)",
+          lineHeight: 1.35,
+        }}
+      >
+        {subtitle}
+      </div>
+    ) : null}
+    {metrics.length ? (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${Math.min(metrics.length, 3)}, minmax(0, 1fr))`,
+          gap: sp(4),
+          padding: sp("4px 0 2px"),
+          borderTop: "1px solid var(--ra-tooltip-border)",
+        }}
+      >
+        {metrics.map((metric) => (
+          <div key={metric.label} style={{ display: "grid", gap: sp(1), minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: textSize("label"),
+                color: "var(--ra-tooltip-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                fontWeight: FONT_WEIGHTS.medium,
+              }}
+            >
+              {metric.label}
+            </div>
+            <div
+              style={{
+                fontSize: textSize("bodyStrong"),
+                color: metric.tone || "var(--ra-tooltip-text)",
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: FONT_WEIGHTS.medium,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {metric.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : null}
+    {sparkline ? (
+      <div style={{ display: "flex", justifyContent: "stretch" }}>{sparkline}</div>
+    ) : null}
+    {caption ? (
+      <div
+        style={{
+          fontSize: textSize("label"),
+          color: "var(--ra-tooltip-muted)",
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+        }}
+      >
+        {caption}
+      </div>
+    ) : null}
+  </div>
+);
