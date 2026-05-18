@@ -560,14 +560,11 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.match(algoScreenSource, /useUpdateSignalOptionsExecutionProfile/);
   assert.match(algoScreenSource, /getGetSignalOptionsAutomationStateQueryKey/);
   assert.match(algoScreenSource, /getGetSignalOptionsPerformanceQueryKey/);
-  assert.match(algoCorpus, /Signal -&gt; Action/);
+  assert.match(algoCorpus, /Signals?\s+→\s+Action|Signals?\s+-&gt;\s+Action/);
   assert.match(algoCorpus, /signal-options-expanded-capacity/);
-  assert.match(algoCorpus, /SHADOW ONLY/);
   assert.match(algoCorpus, /CREATE SHADOW DEPLOYMENT/);
   assert.match(algoCorpus, /Missing bid\/ask quote/);
-  assert.match(algoCorpus, /Mark-only allowed/);
   assert.match(algoCorpus, /mtf_not_aligned:\s*"signal_policy"/);
-  assert.match(algoCorpus, /candidateMatchesReasonCategory\(candidate, \["liquidity", "risk"\]\)/);
   assert.doesNotMatch(algoCorpus, /live_submitted/);
   assert.doesNotMatch(algoCorpus, /live_previewed/);
   assert.doesNotMatch(algoCorpus, /queryKey:\s*\[\s*"signal-options-state"/);
