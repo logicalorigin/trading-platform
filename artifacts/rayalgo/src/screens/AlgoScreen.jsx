@@ -441,6 +441,31 @@ export const AlgoScreen = ({
   );
   const latestEvent = events[0] || null;
 
+  const symbolIndex = useMemo(() => {
+    const index = {};
+    for (const signal of signalOptionsSignals || []) {
+      const symbol = String(asRecord(signal).symbol || "").toUpperCase();
+      if (!symbol) continue;
+      index[symbol] = index[symbol] || {};
+      index[symbol].signal = signal;
+    }
+    for (const candidate of signalOptionsCandidates || []) {
+      const symbol = String(asRecord(candidate).symbol || "").toUpperCase();
+      if (!symbol) continue;
+      index[symbol] = index[symbol] || {};
+      if (!index[symbol].candidate) {
+        index[symbol].candidate = candidate;
+      }
+    }
+    for (const position of signalOptionsPositions || []) {
+      const symbol = String(asRecord(position).symbol || "").toUpperCase();
+      if (!symbol) continue;
+      index[symbol] = index[symbol] || {};
+      index[symbol].position = position;
+    }
+    return index;
+  }, [signalOptionsSignals, signalOptionsCandidates, signalOptionsPositions]);
+
   useEffect(() => {
     const store = transitionsStoreRef.current;
     if (!store) return;
@@ -1398,6 +1423,9 @@ export const AlgoScreen = ({
             algoDetailGridTemplate={algoDetailGridTemplate}
             algoCandidateGridTemplate={algoCandidateGridTemplate}
             signalOptionsPositions={signalOptionsPositions}
+            symbolIndex={symbolIndex}
+            events={events}
+            userPreferences={userPreferences}
             algoIsPhone={algoIsPhone}
           />
         )}

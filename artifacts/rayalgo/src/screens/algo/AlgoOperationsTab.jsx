@@ -10,6 +10,7 @@ import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { AlgoPositionsTab } from "./AlgoPositionsTab";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
 import { OperationsKpiStrip } from "./OperationsKpiStrip";
+import { OperationsSignalDrill } from "./OperationsSignalDrill";
 import { OperationsSignalTable } from "./OperationsSignalTable";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
@@ -175,6 +176,10 @@ export const AlgoOperationsTab = ({
   algoCandidateGridTemplate,
   // Positions
   signalOptionsPositions,
+  // Drill
+  symbolIndex,
+  events,
+  userPreferences,
   // Layout
   algoIsPhone,
 }) => {
@@ -319,28 +324,20 @@ export const AlgoOperationsTab = ({
         signals={visibleSignalRows}
         candidates={signalOptionsCandidates}
         algoIsPhone={algoIsPhone}
-        renderDrill={({ signal, candidate }) => (
-          <div
-            data-testid="algo-signal-drill-placeholder"
-            style={{
-              padding: sp("10px 12px"),
-              fontFamily: T.sans,
-              fontSize: textSize("body"),
-              color: T.textDim,
-              lineHeight: 1.45,
-            }}
-          >
-            <div style={{ color: T.text, fontSize: fs(11), marginBottom: sp(2) }}>
-              {signal?.symbol || "Symbol"} drill — Overview / Action / Position /
-              History (placeholder, C6 will fill this in)
-            </div>
-            <div>
-              {candidate
-                ? `Candidate mapped: ${candidate.action || candidate.actionStatus || "—"} · status ${candidate.status || "—"}`
-                : "No candidate resolved yet for this signal."}
-            </div>
-          </div>
-        )}
+        renderDrill={({ signal, candidate }) => {
+          const symbol = String(signal?.symbol || "").toUpperCase();
+          const indexed = symbolIndex?.[symbol] || {};
+          return (
+            <OperationsSignalDrill
+              signal={signal}
+              candidate={candidate || indexed.candidate}
+              position={indexed.position}
+              events={events || []}
+              userPreferences={userPreferences}
+              signalOptionsProfile={signalOptionsProfile}
+            />
+          );
+        }}
       />
 
       <AlgoPositionsTab
