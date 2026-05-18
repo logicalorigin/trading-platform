@@ -32,10 +32,10 @@ export const TuningImpactRow = ({
       data-testid={`algo-tuning-impact-${String(label).toLowerCase().replace(/\s+/g, "-")}`}
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(170px, 0.9fr) minmax(120px, 0.6fr) minmax(0, 1.5fr)",
-        gap: sp(8),
+        gridTemplateColumns: "minmax(150px, 0.9fr) minmax(110px, 0.5fr) minmax(0, 1.4fr)",
+        gap: sp(6),
         alignItems: "center",
-        padding: sp("6px 10px"),
+        padding: sp("4px 8px"),
         background: T.bg1,
         border: `1px solid ${T.border}`,
         borderRadius: dim(RADII.sm),

@@ -115,8 +115,8 @@ export const OperationsPositionsTable = ({
           gridTemplateColumns: COLUMNS.map((column) =>
             column.width ? `${column.width}px` : "minmax(0, 1fr)",
           ).join(" "),
-          gap: sp(4),
-          padding: sp("4px 10px"),
+          gap: sp(3),
+          padding: sp("3px 8px"),
           borderBottom: `1px solid ${T.border}`,
           color: T.textMuted,
           fontFamily: T.sans,
@@ -173,9 +173,9 @@ export const OperationsPositionsTable = ({
                     : COLUMNS.map((column) =>
                         column.width ? `${column.width}px` : "minmax(0, 1fr)",
                       ).join(" "),
-                  gap: sp(4),
+                  gap: sp(3),
                   alignItems: "center",
-                  padding: sp("5px 10px"),
+                  padding: sp("3px 8px"),
                   borderBottom: `1px solid ${T.border}`,
                   background: focused ? `${T.accent}10` : "transparent",
                   borderLeft: focused

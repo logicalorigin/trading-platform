@@ -14,9 +14,11 @@ const Cell = ({ label, value, hint, tone }) => (
     style={{
       display: "flex",
       flexDirection: "column",
+      justifyContent: "center",
       gap: sp(1),
       padding: sp("6px 10px"),
       minWidth: 0,
+      minHeight: dim(56),
     }}
   >
     <span

@@ -17,14 +17,14 @@ import {
 } from "./algoHelpers";
 
 const COLUMNS = [
-  { key: "symbol", label: "Sym", width: 56 },
-  { key: "dir", label: "Dir", width: 36 },
-  { key: "score", label: "Score", width: 56 },
-  { key: "bars", label: "Bars", width: 44 },
+  { key: "symbol", label: "Sym", width: 52 },
+  { key: "dir", label: "Dir", width: 32 },
+  { key: "score", label: "Score", width: 48 },
+  { key: "bars", label: "Bars", width: 36 },
   { key: "action", label: "Mapped action", width: null },
-  { key: "spread", label: "Spr", width: 52 },
-  { key: "liq", label: "Liq", width: 32 },
-  { key: "status", label: "Status", width: 110 },
+  { key: "spread", label: "Spr", width: 44 },
+  { key: "liq", label: "Liq", width: 28 },
+  { key: "status", label: "Status", width: 96 },
 ];
 
 const directionGlyph = (direction) => {
@@ -88,9 +88,9 @@ export const OperationsSignalTableHeader = ({ algoIsPhone }) => (
       gridTemplateColumns: COLUMNS.map((column) =>
         column.width ? `${column.width}px` : "minmax(0, 1fr)",
       ).join(" "),
-      gap: sp(4),
+      gap: sp(3),
       alignItems: "center",
-      padding: sp("4px 8px"),
+      padding: sp("3px 6px"),
       borderBottom: `1px solid ${T.border}`,
       background: T.bg1,
       color: T.textMuted,
@@ -130,7 +130,7 @@ export const OperationsSignalRow = ({
     <TableExpandableRow
       expanded={expanded}
       onToggle={onToggle}
-      rowHeight={24}
+      rowHeight={22}
       expandedHeight={220}
       selectionAccent={tone}
       borderTone={T.border}
@@ -144,10 +144,10 @@ export const OperationsSignalRow = ({
               : COLUMNS.map((column) =>
                   column.width ? `${column.width}px` : "minmax(0, 1fr)",
                 ).join(" "),
-            gap: sp(4),
+            gap: sp(3),
             alignItems: "center",
-            paddingLeft: sp(8),
-            paddingRight: sp(8),
+            paddingLeft: sp(6),
+            paddingRight: sp(6),
             width: "100%",
             fontFamily: T.mono,
             fontSize: fs(11),

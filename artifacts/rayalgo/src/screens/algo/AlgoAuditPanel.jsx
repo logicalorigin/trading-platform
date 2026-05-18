@@ -155,10 +155,10 @@ export const AlgoAuditPanel = ({
             style={{
               ...motionRowStyle(index, 10, 140),
               display: "grid",
-              gridTemplateColumns: `${dim(64)}px ${dim(150)}px 1fr ${dim(96)}px`,
-              gap: sp(8),
+              gridTemplateColumns: `${dim(64)}px ${dim(130)}px 1fr ${dim(88)}px`,
+              gap: sp(6),
               alignItems: "start",
-              padding: sp("6px 0"),
+              padding: sp("4px 0"),
               borderBottom: `1px solid ${T.border}08`,
               fontSize: textSize("caption"),
             }}
