@@ -540,7 +540,7 @@ export const MarketScreen = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "12px 20px"),
+          padding: sp(marketLayoutFlags.isPhone ? "10px 10px" : "12px 20px"),
           display: "flex",
           flexDirection: "column",
           gap: sp(8),

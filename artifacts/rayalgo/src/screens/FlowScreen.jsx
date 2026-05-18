@@ -3879,11 +3879,11 @@ const FlowOverviewPanel = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(isMobileFlowLayout ? "12px 12px" : "16px 20px"),
+          padding: sp(isMobileFlowLayout ? "10px 10px" : "16px 20px"),
           display: "grid",
           gridAutoRows: "max-content",
           alignContent: "start",
-          gap: sp(10),
+          gap: sp(isMobileFlowLayout ? 6 : 10),
           minWidth: 0,
         }}
       >

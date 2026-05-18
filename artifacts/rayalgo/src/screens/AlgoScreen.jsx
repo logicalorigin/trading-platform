@@ -1541,10 +1541,10 @@ export const AlgoScreen = ({
     <div
       style={{
         width: "100%",
-        padding: sp(algoIsPhone ? "12px 12px 16px" : "16px 24px 20px"),
+        padding: sp(algoIsPhone ? "10px 10px 14px" : "16px 24px 20px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(algoIsPhone ? 10 : 10),
+        gap: sp(algoIsPhone ? 8 : 10),
         minWidth: 0,
       }}
     >
