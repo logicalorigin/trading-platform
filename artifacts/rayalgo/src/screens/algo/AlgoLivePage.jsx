@@ -360,7 +360,7 @@ export const AlgoLivePage = ({
               }}
             />
           </label>
-          {signalMonitorProfile?.watchlistId ? (
+          {!algoIsPhone && signalMonitorProfile?.watchlistId ? (
             <span
               style={{
                 color: T.textMuted,
@@ -368,6 +368,10 @@ export const AlgoLivePage = ({
                 fontSize: textSize("caption"),
                 letterSpacing: "0.04em",
                 textTransform: "uppercase",
+                maxWidth: dim(120),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
               wl {signalMonitorProfile.watchlistId}
@@ -391,7 +395,13 @@ export const AlgoLivePage = ({
               color: T.onAccent,
             }}
           >
-            {updateStrategySettingsMutation?.isPending ? "SAVING…" : "APPLY"}
+            {updateStrategySettingsMutation?.isPending
+              ? algoIsPhone
+                ? "…"
+                : "SAVING…"
+              : algoIsPhone
+                ? "✓"
+                : "APPLY"}
           </button>
           {focusedDeployment ? (
             <button
@@ -403,6 +413,7 @@ export const AlgoLivePage = ({
                 enableDeploymentMutation?.isPending ||
                 pauseDeploymentMutation?.isPending
               }
+              aria-label={focusedDeployment.enabled ? "Pause" : "Resume"}
               style={{
                 ...compactButtonStyle({
                   disabled:
@@ -416,7 +427,13 @@ export const AlgoLivePage = ({
                 color: focusedDeployment.enabled ? T.amber : T.green,
               }}
             >
-              {focusedDeployment.enabled ? "⏸ PAUSE" : "▶ RESUME"}
+              {focusedDeployment.enabled
+                ? algoIsPhone
+                  ? "⏸"
+                  : "⏸ PAUSE"
+                : algoIsPhone
+                  ? "▶"
+                  : "▶ RESUME"}
             </button>
           ) : null}
           {focusedDeployment ? (
@@ -424,6 +441,7 @@ export const AlgoLivePage = ({
               type="button"
               onClick={handleRunShadowScan}
               disabled={runShadowScanMutation?.isPending}
+              aria-label="Scan now"
               style={{
                 ...compactButtonStyle({
                   disabled: runShadowScanMutation?.isPending,
@@ -433,7 +451,13 @@ export const AlgoLivePage = ({
                 color: T.accent,
               }}
             >
-              {runShadowScanMutation?.isPending ? "⟳ SCANNING…" : "⟳ SCAN NOW"}
+              {runShadowScanMutation?.isPending
+                ? algoIsPhone
+                  ? "⟳"
+                  : "⟳ SCANNING…"
+                : algoIsPhone
+                  ? "⟳"
+                  : "⟳ SCAN NOW"}
             </button>
           ) : null}
           <span

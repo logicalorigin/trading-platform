@@ -15,79 +15,127 @@ import {
 } from "../../features/platform/algoKpiHistoryStore";
 import { formatMoney, formatPct } from "./algoHelpers";
 
-const Cell = ({ label, value, hint, tone, history, sparkPositive }) => (
-  <div
-    style={{
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "center",
-      gap: sp(1),
-      padding: sp("6px 10px"),
-      minWidth: 0,
-      minHeight: dim(64),
-    }}
-  >
-    <span
-      style={{
-        color: T.textMuted,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-      }}
-    >
-      {label}
-    </span>
+const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => {
+  if (compact) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: sp(4),
+          padding: sp("4px 8px"),
+          minWidth: 0,
+          minHeight: dim(34),
+        }}
+      >
+        <span
+          style={{
+            color: T.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            flex: "0 1 auto",
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            color: tone || T.text,
+            fontFamily: T.sans,
+            fontSize: fs(12),
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            flex: "0 0 auto",
+          }}
+        >
+          {value}
+        </span>
+      </div>
+    );
+  }
+  return (
     <div
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: sp(4),
+        flexDirection: "column",
+        justifyContent: "center",
+        gap: sp(1),
+        padding: sp("6px 10px"),
         minWidth: 0,
+        minHeight: dim(64),
       }}
     >
       <span
         style={{
-          color: tone || T.text,
-          fontFamily: T.sans,
-          fontSize: fs(14),
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1.1,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </span>
-      {history && history.length >= 2 ? (
-        <MicroSparkline
-          data={history}
-          width={dim(56)}
-          height={dim(18)}
-          positive={sparkPositive ?? null}
-        />
-      ) : null}
-    </div>
-    {hint ? (
-      <span
-        style={{
-          color: T.textDim,
+          color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}
       >
-        {hint}
+        {label}
       </span>
-    ) : null}
-  </div>
-);
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: tone || T.text,
+            fontFamily: T.sans,
+            fontSize: fs(14),
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {value}
+        </span>
+        {history && history.length >= 2 ? (
+          <MicroSparkline
+            data={history}
+            width={dim(56)}
+            height={dim(18)}
+            positive={sparkPositive ?? null}
+          />
+        ) : null}
+      </div>
+      {hint ? (
+        <span
+          style={{
+            color: T.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {hint}
+        </span>
+      ) : null}
+    </div>
+  );
+};
 
 export const OperationsKpiStrip = ({
   cockpitKpis,
@@ -151,6 +199,7 @@ export const OperationsKpiStrip = ({
       }}
     >
       <Cell
+        compact={algoIsPhone}
         label="Realized today"
         value={formatMoney(realized, 2)}
         hint={realized > 0 ? "session pnl" : realized < 0 ? "session loss" : null}
@@ -159,6 +208,7 @@ export const OperationsKpiStrip = ({
         sparkPositive={realized >= 0}
       />
       <Cell
+        compact={algoIsPhone}
         label="Unrealized"
         value={formatMoney(unrealized, 2)}
         hint={`${openPositions} open`}
@@ -167,6 +217,7 @@ export const OperationsKpiStrip = ({
         sparkPositive={unrealized >= 0}
       />
       <Cell
+        compact={algoIsPhone}
         label="Win / Loss"
         value={`${wins}W · ${losses}L`}
         hint={
@@ -177,6 +228,7 @@ export const OperationsKpiStrip = ({
         history={series.winRate}
       />
       <Cell
+        compact={algoIsPhone}
         label="Profit factor"
         value={
           Number.isFinite(Number(profitFactor))
@@ -203,6 +255,7 @@ export const OperationsKpiStrip = ({
         }
       />
       <Cell
+        compact={algoIsPhone}
         label="Signals"
         value={`${freshSignals} / ${totalSignals}`}
         hint={
@@ -213,6 +266,7 @@ export const OperationsKpiStrip = ({
         history={series.freshSignals}
       />
       <Cell
+        compact={algoIsPhone}
         label="Pipeline"
         value={`${openPositions} open${pending > 0 ? ` · ${pending} pending` : ""}`}
         hint={
