@@ -1362,7 +1362,7 @@ export const AccountScreen = ({
               background: T.bg1,
               padding: sp("5px 7px"),
               color: T.textSec,
-              fontFamily: T.data,
+              fontFamily: T.sans,
               fontSize: textSize("body"),
             }}
           >

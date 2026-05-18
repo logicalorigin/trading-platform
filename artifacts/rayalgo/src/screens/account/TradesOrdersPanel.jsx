@@ -1288,7 +1288,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
-          fontFamily: T.data,
+          fontFamily: T.sans,
           fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
@@ -1306,7 +1306,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
-          fontFamily: T.data,
+          fontFamily: T.sans,
           fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
@@ -1334,7 +1334,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           color: T.textMuted,
           display: "grid",
           placeItems: "center",
-          fontFamily: T.data,
+          fontFamily: T.sans,
           fontSize: textSize("caption"),
         }}
       >
@@ -1372,7 +1372,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           borderRadius: dim(RADII.xs),
           background: T.bg0,
           color: T.textMuted,
-          fontFamily: T.data,
+          fontFamily: T.sans,
           fontSize: textSize("caption"),
           padding: sp("6px 8px"),
           textAlign: "center",
@@ -1571,7 +1571,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               background: T.bg0,
               padding: sp("4px 5px"),
               alignItems: "center",
-              fontFamily: T.data,
+              fontFamily: T.sans,
               fontSize: textSize("body"),
             }}
           >
@@ -1579,7 +1579,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
             <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.detail}
             </span>
-            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: lifecycleToneColor(row.tone), fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
               {row.value == null
                 ? row.at
                   ? formatAppDate(row.at)
@@ -1814,7 +1814,7 @@ export const SelectedTradeAnalysisPanel = ({
         maskValues={maskValues}
       />
 
-        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: textSize("body"), fontFamily: T.data }}>
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
           <span>{detail.relatedOrders?.length || 0} related orders</span>
           <span>{detail.relatedPositions?.length || 0} related open positions</span>
           {trade.candidateId ? <span>candidate {trade.candidateId}</span> : null}

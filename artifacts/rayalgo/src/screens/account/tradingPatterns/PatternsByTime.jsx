@@ -164,15 +164,15 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
           justifyContent: "space-between",
           gap: sp(4),
           fontSize: textSize("tableHeader"),
-          fontFamily: T.data,
+          fontFamily: T.sans,
           color: T.textMuted,
         }}
       >
-        <span>{formatAppDateTime(weeks[0].weekStart).slice(0, 10)}</span>
+        <span style={{ fontFamily: T.data }}>{formatAppDateTime(weeks[0].weekStart).slice(0, 10)}</span>
         <span style={{ color: T.cyan }}>
           {flatPnl ? "trade count (no realized P&L)" : "4w rolling expectancy"}
         </span>
-        <span>{formatAppDateTime(weeks[weeks.length - 1].weekStart).slice(0, 10)}</span>
+        <span style={{ fontFamily: T.data }}>{formatAppDateTime(weeks[weeks.length - 1].weekStart).slice(0, 10)}</span>
       </div>
     </div>
   );

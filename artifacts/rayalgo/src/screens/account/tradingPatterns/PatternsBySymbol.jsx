@@ -16,7 +16,7 @@ const TickerRows = ({ rows, currency, maskValues, onSymbolSelect, selectedSymbol
         <tr
           style={{
             color: T.textMuted,
-            fontFamily: T.data,
+            fontFamily: T.sans,
             fontSize: textSize("tableHeader"),
             textTransform: "uppercase",
             borderBottom: `1px solid ${T.border}`,
@@ -106,7 +106,7 @@ const SourceBreakdown = ({ sourceRows, currency, maskValues }) => {
             background: T.bg1,
             padding: sp("5px 7px"),
             color: T.textSec,
-            fontFamily: T.data,
+            fontFamily: T.sans,
             fontSize: textSize("tableCell"),
             textAlign: "left",
           }}
@@ -114,7 +114,7 @@ const SourceBreakdown = ({ sourceRows, currency, maskValues }) => {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {row.label || row.sourceType}
           </span>
-          <span style={{ color: toneForValue(row.realizedPnl), fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: toneForValue(row.realizedPnl), fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
             {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
           </span>
         </div>

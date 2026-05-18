@@ -28,17 +28,17 @@ const OutcomeBreakdownRows = ({ title, groups = [], currency, maskValues }) => {
               borderRadius: dim(RADII.md),
               background: T.bg1,
               padding: sp("5px 8px"),
-              fontFamily: T.data,
+              fontFamily: T.sans,
               fontSize: textSize("label"),
             }}
           >
             <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.label}
             </span>
-            <span style={{ color: toneForValue(row.realizedPnl), fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: toneForValue(row.realizedPnl), fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
               {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
             </span>
-            <span style={{ color: T.textDim, textAlign: "right" }}>
+            <span style={{ color: T.textDim, fontFamily: T.data, textAlign: "right" }}>
               {formatNumber(row.count || 0, 0)} · {formatAccountPercent(row.winRatePercent, 0, maskValues)}
             </span>
           </div>
@@ -60,7 +60,7 @@ const StopScenarioRows = ({ scenarios = [], currency, maskValues }) => {
             <tr
               style={{
                 color: T.textMuted,
-                fontFamily: T.data,
+                fontFamily: T.sans,
                 fontSize: textSize("tableHeader"),
                 textTransform: "uppercase",
                 borderBottom: `1px solid ${T.border}`,
@@ -76,7 +76,7 @@ const StopScenarioRows = ({ scenarios = [], currency, maskValues }) => {
           <tbody>
             {rows.map((row) => (
               <tr key={row.key} className="ra-table-row">
-                <td style={{ padding: sp("5px"), color: T.text, fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
+                <td style={{ padding: sp("5px"), color: T.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
                   {row.label}
                 </td>
                 <td style={{ padding: sp("5px"), color: toneForValue(row.realizedPnl), fontFamily: T.data }}>

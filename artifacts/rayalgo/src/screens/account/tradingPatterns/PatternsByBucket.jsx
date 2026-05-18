@@ -86,7 +86,7 @@ export const PatternsByBucket = ({
               <span
                 style={{
                   color: active ? T.cyan : T.text,
-                  fontFamily: T.data,
+                  fontFamily: T.sans,
                   fontSize: textSize("control"),
                   fontWeight: FONT_WEIGHTS.regular,
                   overflow: "hidden",

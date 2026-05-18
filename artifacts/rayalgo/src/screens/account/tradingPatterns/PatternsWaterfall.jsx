@@ -181,15 +181,15 @@ export const PatternsWaterfall = ({
           justifyContent: "space-between",
           gap: sp(4),
           fontSize: textSize("tableHeader"),
-          fontFamily: T.data,
+          fontFamily: T.sans,
           color: T.textMuted,
         }}
       >
-        <span>
+        <span style={{ fontFamily: T.data }}>
           {stats.firstAt ? formatAppDateTime(stats.firstAt).slice(0, 10) : "—"}
         </span>
         <span style={{ color: T.cyan }}>cumulative line</span>
-        <span>
+        <span style={{ fontFamily: T.data }}>
           {stats.lastAt ? formatAppDateTime(stats.lastAt).slice(0, 10) : "—"}
         </span>
       </div>

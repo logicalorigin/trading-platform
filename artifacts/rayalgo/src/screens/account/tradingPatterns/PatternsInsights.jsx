@@ -56,10 +56,11 @@ const AnalysisCard = ({ card, currency, maskValues, onActivate }) => {
         <span
           style={{
             color,
-            fontFamily: T.data,
+            fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
             fontSize: textSize("control"),
             textTransform: "uppercase",
+            letterSpacing: "0.04em",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -81,7 +82,7 @@ const AnalysisCard = ({ card, currency, maskValues, onActivate }) => {
           {formatAccountPercent(card.meta.winRatePercent, 0, maskValues)}
         </div>
       ) : disabled ? (
-        <div style={{ color: T.textDim, fontFamily: T.data, fontSize: textSize("label") }}>
+        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("label") }}>
           Waiting for ledger data
         </div>
       ) : null}
@@ -140,7 +141,7 @@ const AnalysisReadinessStrip = ({ readiness = [] }) => {
             <div
               style={{
                 color: T.textDim,
-                fontFamily: T.data,
+                fontFamily: T.sans,
                 fontSize: textSize("label"),
                 overflow: "hidden",
                 textOverflow: "ellipsis",
