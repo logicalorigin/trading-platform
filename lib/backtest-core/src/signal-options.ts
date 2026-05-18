@@ -49,6 +49,19 @@ export type SignalOptionsExecutionProfile = {
     tightenAtFiveXGivebackPct: number;
     tightenAtTenXGivebackPct: number;
     flipOnOppositeSignal: boolean;
+    earlyExitBars: number;
+    earlyExitLossPct: number;
+    overnightExitEnabled: boolean;
+    overnightMinGainPct: number;
+    overnightRunnerGivebackPct: number;
+    conditionalQualityExitsEnabled: boolean;
+    lowQualityEarlyExitBars: number;
+    lowQualityEarlyExitLossPct: number;
+    highQualityEarlyExitBars: number;
+    highQualityEarlyExitLossPct: number;
+    weakLiquidityTrailGivebackPct: number;
+    strongLiquidityTrailGivebackPct: number;
+    highQualityOvernightMinGainPct: number;
   };
 };
 
@@ -112,6 +125,19 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       tightenAtFiveXGivebackPct: 35,
       tightenAtTenXGivebackPct: 25,
       flipOnOppositeSignal: true,
+      earlyExitBars: 0,
+      earlyExitLossPct: 0,
+      overnightExitEnabled: false,
+      overnightMinGainPct: 20,
+      overnightRunnerGivebackPct: 15,
+      conditionalQualityExitsEnabled: false,
+      lowQualityEarlyExitBars: 4,
+      lowQualityEarlyExitLossPct: 15,
+      highQualityEarlyExitBars: 8,
+      highQualityEarlyExitLossPct: 25,
+      weakLiquidityTrailGivebackPct: 15,
+      strongLiquidityTrailGivebackPct: 25,
+      highQualityOvernightMinGainPct: -100,
     },
   };
 
@@ -366,6 +392,86 @@ export function resolveSignalOptionsExecutionProfile(
       flipOnOppositeSignal: booleanValue(
         exitPolicy.flipOnOppositeSignal ?? root.flipOnOppositeSignal,
         defaults.exitPolicy.flipOnOppositeSignal,
+      ),
+      earlyExitBars: finiteInteger(
+        exitPolicy.earlyExitBars ?? root.earlyExitBars,
+        defaults.exitPolicy.earlyExitBars,
+        0,
+        100,
+      ),
+      earlyExitLossPct: finiteNumber(
+        exitPolicy.earlyExitLossPct ?? root.earlyExitLossPct,
+        defaults.exitPolicy.earlyExitLossPct,
+        0,
+        100,
+      ),
+      overnightExitEnabled: booleanValue(
+        exitPolicy.overnightExitEnabled ?? root.overnightExitEnabled,
+        defaults.exitPolicy.overnightExitEnabled,
+      ),
+      overnightMinGainPct: finiteNumber(
+        exitPolicy.overnightMinGainPct ?? root.overnightMinGainPct,
+        defaults.exitPolicy.overnightMinGainPct,
+        -100,
+        10_000,
+      ),
+      overnightRunnerGivebackPct: finiteNumber(
+        exitPolicy.overnightRunnerGivebackPct ??
+          root.overnightRunnerGivebackPct,
+        defaults.exitPolicy.overnightRunnerGivebackPct,
+        0,
+        100,
+      ),
+      conditionalQualityExitsEnabled: booleanValue(
+        exitPolicy.conditionalQualityExitsEnabled ??
+          root.conditionalQualityExitsEnabled,
+        defaults.exitPolicy.conditionalQualityExitsEnabled,
+      ),
+      lowQualityEarlyExitBars: finiteInteger(
+        exitPolicy.lowQualityEarlyExitBars ?? root.lowQualityEarlyExitBars,
+        defaults.exitPolicy.lowQualityEarlyExitBars,
+        0,
+        100,
+      ),
+      lowQualityEarlyExitLossPct: finiteNumber(
+        exitPolicy.lowQualityEarlyExitLossPct ?? root.lowQualityEarlyExitLossPct,
+        defaults.exitPolicy.lowQualityEarlyExitLossPct,
+        0,
+        100,
+      ),
+      highQualityEarlyExitBars: finiteInteger(
+        exitPolicy.highQualityEarlyExitBars ?? root.highQualityEarlyExitBars,
+        defaults.exitPolicy.highQualityEarlyExitBars,
+        0,
+        100,
+      ),
+      highQualityEarlyExitLossPct: finiteNumber(
+        exitPolicy.highQualityEarlyExitLossPct ??
+          root.highQualityEarlyExitLossPct,
+        defaults.exitPolicy.highQualityEarlyExitLossPct,
+        0,
+        100,
+      ),
+      weakLiquidityTrailGivebackPct: finiteNumber(
+        exitPolicy.weakLiquidityTrailGivebackPct ??
+          root.weakLiquidityTrailGivebackPct,
+        defaults.exitPolicy.weakLiquidityTrailGivebackPct,
+        0,
+        100,
+      ),
+      strongLiquidityTrailGivebackPct: finiteNumber(
+        exitPolicy.strongLiquidityTrailGivebackPct ??
+          root.strongLiquidityTrailGivebackPct,
+        defaults.exitPolicy.strongLiquidityTrailGivebackPct,
+        0,
+        100,
+      ),
+      highQualityOvernightMinGainPct: finiteNumber(
+        exitPolicy.highQualityOvernightMinGainPct ??
+          root.highQualityOvernightMinGainPct,
+        defaults.exitPolicy.highQualityOvernightMinGainPct,
+        -100,
+        10_000,
       ),
     },
   };

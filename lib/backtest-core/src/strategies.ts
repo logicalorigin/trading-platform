@@ -360,7 +360,7 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     key: "timeHorizon",
     label: "Time Horizon",
     type: "integer",
-    defaultValue: 10,
+    defaultValue: 8,
     options: [],
     min: 2,
     max: 50,
@@ -541,7 +541,7 @@ const strategies: ExecutableStrategy[] = [
     defaultParameters: {
       executionMode: "spot",
       contractPresetId: defaultBacktestOptionPresetId,
-      timeHorizon: 10,
+      timeHorizon: 8,
       signalOptionsMinDte:
         defaultSignalOptionsExecutionProfile.optionSelection.minDte,
       signalOptionsMaxDte:
