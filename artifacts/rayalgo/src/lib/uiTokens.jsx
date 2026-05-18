@@ -75,12 +75,13 @@ export const THEMES = {
 
 export const FONT_STACKS = {
   sans: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  code: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  data: "'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Menlo, Consolas, monospace",
+  code: "'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Menlo, Consolas, monospace",
 };
 
 export const TYPOGRAPHY = {
-  mono: FONT_STACKS.sans,
-  data: FONT_STACKS.sans,
+  mono: FONT_STACKS.data,
+  data: FONT_STACKS.data,
   code: FONT_STACKS.code,
   sans: FONT_STACKS.sans,
   display: FONT_STACKS.sans,
