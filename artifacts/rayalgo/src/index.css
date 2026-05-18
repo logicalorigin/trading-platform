@@ -577,8 +577,46 @@ table {
   border-color: var(--ra-border-default);
 }
 
+.ra-row-hover {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
 .ra-row-hover:hover {
   background: var(--ra-table-row-bg-hover);
+}
+
+/* Native interactive elements get a default state transition so any
+   JS-mediated hover swap (e.g. inline style.background = …) eases in
+   rather than snapping. .ra-interactive already overrides this with a
+   richer transition list for opted-in surfaces. */
+button,
+a,
+select,
+input,
+textarea,
+summary,
+[role="button"] {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-row-hover,
+  button,
+  a,
+  select,
+  input,
+  textarea,
+  summary,
+  [role="button"] {
+    transition: none;
+  }
 }
 
 .ra-pnl-positive {
