@@ -583,6 +583,26 @@ table {
     color var(--ra-motion-fast) var(--ra-motion-ease);
 }
 
+/* SegmentedControl indicator — slides between option bounds. The
+   transform + width animate together so the indicator both moves and
+   grows/shrinks if the next option has a different width. */
+.ra-segmented-indicator {
+  transition:
+    transform var(--ra-motion-standard) var(--ra-motion-ease),
+    width var(--ra-motion-standard) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-segmented-indicator {
+    transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+  }
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-segmented-indicator {
+  transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
 .ra-row-hover:hover {
   background: var(--ra-table-row-bg-hover);
 }

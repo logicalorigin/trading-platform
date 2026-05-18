@@ -4,7 +4,7 @@ import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, getCurrentTheme,
 const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { Skeleton } from "../../components/platform/primitives.jsx";
+import { SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
 
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
@@ -481,34 +481,11 @@ export const Pill = ({ children, tone = "default", title, style }) => {
   );
 };
 
+// ToggleGroup is a thin alias for SegmentedControl kept for backward
+// compatibility with existing call sites; the sliding indicator now
+// carries the active affordance.
 export const ToggleGroup = ({ options, value, onChange }) => (
-  <div
-    style={{
-      display: "inline-flex",
-      gap: sp(2),
-      padding: sp(2),
-      border: "none",
-      borderRadius: dim(RADII.pill),
-      background: T.bg1,
-      flexWrap: "wrap",
-    }}
-  >
-    {options.map((option) => {
-      const item = typeof option === "string" ? { value: option, label: option } : option;
-      const active = item.value === value;
-      return (
-        <button
-          key={item.value}
-          type="button"
-          className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
-          onClick={() => onChange(item.value)}
-          style={denseButtonStyle(active)}
-        >
-          {item.label}
-        </button>
-      );
-    })}
-  </div>
+  <SegmentedControl options={options} value={value} onChange={onChange} />
 );
 
 export const StatTile = ({

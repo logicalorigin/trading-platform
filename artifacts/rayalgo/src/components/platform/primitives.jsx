@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
@@ -301,6 +302,142 @@ export const DataUnavailableState = ({
     </div>
   </div>
 );
+
+/**
+ * SegmentedControl — iOS / Linear-style toggle group with a sliding
+ * indicator that translateX-es between option bounds on change.
+ *
+ *   options: string[] | { value, label }[] | { value, label, testId }[]
+ *   value:   the currently-active option's value
+ *   onChange(nextValue)
+ *
+ * The indicator is absolutely positioned behind the buttons; refs on each
+ * button feed offsetLeft + offsetWidth into a useLayoutEffect that updates
+ * the indicator's transform. First render hides the indicator until the
+ * initial measurement lands, avoiding a 0→target flash.
+ *
+ * The buttons themselves stay transparent — the indicator carries the
+ * "active" affordance. The text color shifts (T.text vs T.textDim) so the
+ * label still reads as active without the button needing its own fill.
+ *
+ * Honor prefers-reduced-motion / data-rayalgo-reduced-motion via the
+ * .ra-segmented-indicator class in index.css; the snap is instant when
+ * motion is reduced.
+ */
+export const SegmentedControl = ({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+  buttonTestId,
+}) => {
+  const containerRef = useRef(null);
+  const buttonRefs = useRef(new Map());
+  const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
+
+  const normalizedOptions = options.map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const activeButton = buttonRefs.current.get(value);
+    if (!container || !activeButton) return undefined;
+
+    const measure = () => {
+      setIndicator({
+        left: activeButton.offsetLeft,
+        width: activeButton.offsetWidth,
+        ready: true,
+      });
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(activeButton);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [value, normalizedOptions.length]);
+
+  return (
+    <div
+      ref={containerRef}
+      role="tablist"
+      aria-label={ariaLabel}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        gap: sp(2),
+        padding: sp(2),
+        borderRadius: dim(RADII.pill),
+        background: T.bg1,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        className="ra-segmented-indicator"
+        style={{
+          position: "absolute",
+          top: sp(2),
+          bottom: sp(2),
+          left: 0,
+          width: indicator.width,
+          transform: `translateX(${indicator.left}px)`,
+          borderRadius: dim(RADII.pill),
+          background: T.bg3,
+          boxShadow: ELEVATION.sm,
+          opacity: indicator.ready ? 1 : 0,
+          pointerEvents: "none",
+          zIndex: 0,
+        }}
+      />
+      {normalizedOptions.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            ref={(node) => {
+              if (node) buttonRefs.current.set(option.value, node);
+              else buttonRefs.current.delete(option.value);
+            }}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            data-testid={
+              buttonTestId
+                ? typeof buttonTestId === "function"
+                  ? buttonTestId(option.value)
+                  : `${buttonTestId}-${option.value}`
+                : option.testId
+            }
+            className="ra-interactive"
+            onClick={() => onChange(option.value)}
+            style={{
+              position: "relative",
+              zIndex: 1,
+              height: dim(22),
+              padding: sp("0 10px"),
+              borderRadius: dim(RADII.pill),
+              border: "none",
+              background: "transparent",
+              color: active ? T.text : T.textDim,
+              fontSize: textSize("control"),
+              fontFamily: T.sans,
+              fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
+              cursor: "pointer",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 /**
  * Skeleton — animated placeholder for loading content.

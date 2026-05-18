@@ -24,6 +24,7 @@ const unitTestFiles = [
   "src/lib/touch.test.ts",
   "src/lib/uiTokens.test.js",
   "src/lib/numberTick.test.js",
+  "src/components/platform/primitives.test.js",
   "src/features/flow/flowRowsConfig.test.js",
   "src/features/flow/flowTapeColumns.test.js",
   "src/features/flow/flowScannerStatusModel.test.js",

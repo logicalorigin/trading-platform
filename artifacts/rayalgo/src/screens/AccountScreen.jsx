@@ -62,6 +62,7 @@ import {
   formatNumber,
   normalizeAccountRange,
 } from "./account/accountUtils";
+import { SegmentedControl } from "../components/platform/primitives.jsx";
 import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
 import {
@@ -1127,32 +1128,14 @@ export const AccountScreen = ({
     );
   };
   const accountSectionControl = (
-    <div
-      style={{
-        display: "inline-flex",
-        gap: sp(2),
-        padding: sp(2),
-        borderRadius: dim(RADII.pill),
-        background: T.bg1,
-        marginLeft: "auto",
-      }}
-    >
-      {ACCOUNT_SECTIONS.map((section) => {
-        const active = accountSection === section.value;
-        return (
-          <button
-            key={section.value}
-            data-testid={`account-section-${section.value}`}
-            type="button"
-            aria-pressed={active}
-            className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
-            onClick={() => setAccountSection(section.value)}
-            style={denseButtonStyle(active)}
-          >
-            {section.label}
-          </button>
-        );
-      })}
+    <div style={{ marginLeft: "auto" }}>
+      <SegmentedControl
+        options={ACCOUNT_SECTIONS}
+        value={accountSection}
+        onChange={setAccountSection}
+        ariaLabel="Account section"
+        buttonTestId="account-section"
+      />
     </div>
   );
   const headerSectionControl = accountSectionControl;
