@@ -149,7 +149,12 @@ export const TradingPatternsPanel = ({
       }
     >
       <div style={{ display: "grid", gap: sp(8) }}>
-        <PatternsSummaryStrip summary={summary} currency={currency} maskValues={maskValues} />
+        <PatternsSummaryStrip
+          summary={summary}
+          riskMetrics={analysis?.riskMetrics}
+          currency={currency}
+          maskValues={maskValues}
+        />
 
         <div style={{ display: "grid", gap: sp(5) }}>
           <SectionHeader
