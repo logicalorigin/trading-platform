@@ -766,13 +766,11 @@ table {
   border-color: var(--ra-border-focus, var(--ra-color-accent));
 }
 
-input[type="text"]:focus-visible,
-input[type="search"]:focus-visible,
-input[type="email"]:focus-visible,
-input[type="tel"]:focus-visible,
-input[type="url"]:focus-visible,
-input[type="number"]:focus-visible,
-input[type="password"]:focus-visible,
+/* All non-button form controls get the accent focus ring. The :not()
+   list excludes the click-target types whose native UI provides its
+   own affordance (checkbox/radio/file/etc.) so we don't paint a ring
+   that visually competes with their built-in focus state. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="color"]):not([type="range"]):focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: none;
