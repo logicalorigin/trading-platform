@@ -3995,7 +3995,7 @@ export const TradeScreen = ({
           padding: sp(tradeIsPhone ? 4 : 6),
           display: "flex",
           flexDirection: "column",
-          gap: sp(6),
+          gap: sp(4),
           overflow: "auto",
           minWidth: 0,
         }}
