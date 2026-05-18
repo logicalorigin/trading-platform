@@ -606,6 +606,19 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
   }
 }
 
+.ra-pulse-orb {
+  animation: raStatusPulse 2.4s ease-in-out infinite;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ra-pulse-orb {
+    animation: none;
+  }
+}
+[data-rayalgo-reduced-motion="on"] .ra-pulse-orb {
+  animation: none;
+}
+
 @keyframes raFocusRail {
   from {
     transform: scaleY(0.35);

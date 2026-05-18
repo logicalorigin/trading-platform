@@ -12,6 +12,7 @@ import { OperationsKpiStrip } from "./OperationsKpiStrip";
 import { OperationsPositionsTable } from "./OperationsPositionsTable";
 import { OperationsSignalDrill } from "./OperationsSignalDrill";
 import { OperationsSignalTable } from "./OperationsSignalTable";
+import { OperationsStatusOrb } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
 import {
@@ -267,17 +268,12 @@ export const AlgoLivePage = ({
           >
             RayReplica Shadow
           </span>
-          <span
-            style={{
-              color: T.textDim,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-            }}
-          >
-            {gatewayReady ? "gateway ready" : "gateway pending"}
-          </span>
+          <OperationsStatusOrb
+            gatewayReady={gatewayReady}
+            scanOn={Boolean(focusedDeployment?.enabled)}
+            deploymentEnabled={focusedDeployment?.enabled}
+            attentionItems={attentionStream}
+          />
         </div>
         <div
           data-testid="algo-operations-header-monitor"
