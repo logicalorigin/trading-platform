@@ -241,67 +241,122 @@ const AppMetricTooltip = ({ content, children }) => {
   );
 };
 
+/**
+ * Semantic variant config for DataUnavailableState. Each variant
+ * controls (a) the title color when no explicit `tone` is given, and
+ * (b) a soft accent tint at the top of the surface so the variant
+ * reads at a glance without needing an icon.
+ */
+const DATA_STATE_VARIANT_TONES = {
+  neutral: null, // falls back to T.text — no accent wash
+  info: () => T.accent,
+  error: () => T.red,
+  warning: () => T.amber,
+};
+
 export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
   loading = false,
   tone,
+  variant = "neutral",
+  icon,
+  action,
   fill = false,
   minHeight = 72,
-}) => (
-  <div
-    className="ra-panel-enter"
-    style={{
-      width: "100%",
-      height: fill ? "100%" : "auto",
-      minHeight: dim(minHeight),
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: sp("16px 18px"),
-      textAlign: "center",
-      background: T.bg1,
-      border: `1px dashed ${T.border}`,
-      borderRadius: dim(RADII.md),
-      color: T.textMuted,
-      fontFamily: T.sans,
-    }}
-  >
-    <div style={{ maxWidth: dim(320), display: "flex", flexDirection: "column", gap: sp(6) }}>
-      {loading ? (
+}) => {
+  const variantToneFn = DATA_STATE_VARIANT_TONES[variant];
+  const variantTone = variantToneFn ? variantToneFn() : null;
+  const resolvedTone = tone || variantTone;
+  const accentBg =
+    variant === "neutral"
+      ? T.bg1
+      : `linear-gradient(180deg, ${variantTone}0e 0%, ${T.bg1} 60%)`;
+  const accentBorder =
+    variant === "neutral" ? T.border : `${variantTone}55`;
+  const titleColor = resolvedTone || T.text;
+  return (
+    <div
+      role={variant === "error" ? "alert" : undefined}
+      className="ra-panel-enter"
+      style={{
+        width: "100%",
+        height: fill ? "100%" : "auto",
+        minHeight: dim(minHeight),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp("16px 18px"),
+        textAlign: "center",
+        background: accentBg,
+        border: `1px dashed ${accentBorder}`,
+        borderRadius: dim(RADII.md),
+        color: T.textMuted,
+        fontFamily: T.sans,
+      }}
+    >
+      <div style={{ maxWidth: dim(320), display: "flex", flexDirection: "column", gap: sp(6) }}>
+        {icon ? (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              color: resolvedTone || T.textMuted,
+              marginBottom: sp(2),
+            }}
+            aria-hidden="true"
+          >
+            {icon}
+          </div>
+        ) : null}
+        {loading ? (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: sp(4),
+            }}
+          >
+            <LoadingSpinner color={resolvedTone || T.accent} />
+          </div>
+        ) : null}
         <div
           style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: sp(4),
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            color: titleColor,
+            letterSpacing: "-0.005em",
           }}
         >
-          <LoadingSpinner color={tone || T.accent} />
+          {title}
         </div>
-      ) : null}
-      <div
-        style={{
-          fontSize: textSize("paragraphMuted"),
-          fontWeight: FONT_WEIGHTS.medium,
-          color: tone || T.text,
-          letterSpacing: "-0.005em",
-        }}
-      >
-        {title}
-      </div>
-      <div
-        style={{
-          fontSize: textSize("body"),
-          lineHeight: 1.5,
-          color: T.textMuted,
-          fontFamily: T.sans,
-        }}
-      >
-        {detail}
+        <div
+          style={{
+            fontSize: textSize("body"),
+            lineHeight: 1.5,
+            color: T.textMuted,
+            fontFamily: T.sans,
+          }}
+        >
+          {detail}
+        </div>
+        {action ? (
+          <div
+            style={{
+              marginTop: sp(4),
+              display: "flex",
+              justifyContent: "center",
+              gap: sp(6),
+              flexWrap: "wrap",
+            }}
+          >
+            {action}
+          </div>
+        ) : null}
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 /**
  * SegmentedControl — iOS / Linear-style toggle group with a sliding

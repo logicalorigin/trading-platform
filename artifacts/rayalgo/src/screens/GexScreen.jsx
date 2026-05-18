@@ -1450,6 +1450,7 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
 
         {chainError ? (
           <DataUnavailableState
+            variant="error"
             title="GEX chain unavailable"
             detail={chainError?.message || "Option chain hydration failed."}
           />

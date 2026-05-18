@@ -98,6 +98,41 @@ test("TextField error state has its own CSS class for the red ring", () => {
   );
 });
 
+test("DataUnavailableState supports semantic variants + icon + action slots", () => {
+  // Empty/Error states had one shape: dashed border + optional spinner.
+  // Variants give the message a tone (info/error/warning) without forcing
+  // consumers to roll their own colored wrapper. icon + action slots
+  // are optional ReactNodes so consumers can drop in a lucide glyph at
+  // the top and a retry button at the bottom.
+  const source = readPrimitivesSource();
+
+  const slice = source.match(
+    /export const DataUnavailableState =[\s\S]*?^\};/m,
+  );
+  assert.ok(slice, "DataUnavailableState declaration not found");
+  const body = slice[0];
+
+  // Variant config maps semantic names to tones (no hardcoded colors).
+  assert.match(
+    source,
+    /const DATA_STATE_VARIANT_TONES = \{[\s\S]*?neutral:[\s\S]*?info:[\s\S]*?error:[\s\S]*?warning:/,
+  );
+
+  // role="alert" is set for the error variant so assistive tech is informed.
+  assert.match(body, /role=\{variant === "error" \? "alert" : undefined\}/);
+
+  // The accent wash on the background fades the variant tone into bg1
+  // — non-neutral variants get the gradient, neutral stays solid bg1.
+  assert.match(
+    body,
+    /variant === "neutral"[\s\S]*?T\.bg1[\s\S]*?linear-gradient/,
+  );
+
+  // icon + action slots are conditionally rendered (no slot = no chrome).
+  assert.match(body, /\{icon \? \(/);
+  assert.match(body, /\{action \? \(/);
+});
+
 test("Tables: selected-row class uses motion-accent for tone customization", () => {
   // .ra-table-row--selected must paint its left gutter + fill via
   // var(--ra-motion-accent) so consumers can pin the tone (cyan for
