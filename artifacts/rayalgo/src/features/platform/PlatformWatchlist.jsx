@@ -363,20 +363,9 @@ const WatchlistRow = memo(
             >
               {formatSignedPercent(snapshot?.pct)}
             </span>
-            <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-              <MicroSparkline
-                data={
-                  snapshot?.sparkBars?.length
-                    ? snapshot.sparkBars
-                    : snapshot?.spark || fallback.spark
-                }
-                positive={pctPositive}
-                width={88}
-                height={22}
-              />
-            </span>
             <span
               style={{
+                marginLeft: "auto",
                 color: T.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
