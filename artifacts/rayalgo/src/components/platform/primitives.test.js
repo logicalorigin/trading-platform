@@ -48,6 +48,56 @@ test("SegmentedControl uses a sliding indicator driven by measured offsets", () 
   assert.match(segmentedSlice[0], /background: "transparent"/);
 });
 
+test("TextField paints focus ring on wrapper, not native input", () => {
+  // The bare <input> must be borderless / outline-less; the wrapper
+  // .ra-textfield class paints the focus ring via :focus-within. This
+  // is what lets leading icons + trailing nodes share the focused
+  // visual without each one needing its own ring.
+  const source = readPrimitivesSource();
+
+  const textFieldSlice = source.match(
+    /export const TextField =[\s\S]*?\n\};/,
+  );
+  assert.ok(textFieldSlice, "TextField declaration not found");
+  const slice = textFieldSlice[0];
+
+  // Wrapper carries the focus-ring-bearing class.
+  assert.match(slice, /ra-textfield ra-textfield--error|"ra-textfield"/);
+
+  // Input is bare — no border, no outline (focus ring lives on wrapper).
+  assert.match(slice, /border: "none"/);
+  assert.match(slice, /outline: "none"/);
+
+  // aria-invalid wires the input to assistive tech in error state.
+  assert.match(slice, /aria-invalid=\{hasError \|\| undefined\}/);
+
+  // Helper text has role="alert" when in error state.
+  assert.match(slice, /role=\{hasError \? "alert" : undefined\}/);
+});
+
+test("TextField error state has its own CSS class for the red ring", () => {
+  const css = readFileSync(
+    join(here, "..", "..", "index.css"),
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.ra-textfield \{[\s\S]*?transition:[\s\S]*?border-color/,
+  );
+  assert.match(
+    css,
+    /\.ra-textfield:focus-within \{[\s\S]*?box-shadow: var\(--ra-focus-ring\)/,
+  );
+  assert.match(
+    css,
+    /\.ra-textfield--error \{[\s\S]*?border-color: color-mix\([\s\S]*?--ra-color-pnl-negative/,
+  );
+  assert.match(
+    css,
+    /\.ra-textfield--error:focus-within \{[\s\S]*?box-shadow: 0 0 0 2px color-mix\([\s\S]*?--ra-color-pnl-negative/,
+  );
+});
+
 test("SegmentedControl indicator respects reduced motion", () => {
   // The .ra-segmented-indicator class must have its transform/width
   // transitions zeroed out under prefers-reduced-motion or the

@@ -440,6 +440,156 @@ export const SegmentedControl = ({
 };
 
 /**
+ * TextField — labeled <input> wrapper with focus ring, error state,
+ * leading-icon / trailing-node slots, and a helper-text line.
+ *
+ *   label, hint, error: all optional. When error is non-empty it takes
+ *   over the helper line and the wrapper switches to the red ring.
+ *   leadingIcon, trailingNode: inline-flex slots flanking the input.
+ *   size: "sm" (24px, default) | "md" (28px).
+ *
+ * The wrapper carries .ra-textfield (and conditionally
+ * .ra-textfield--error). CSS in index.css handles :focus-within ring,
+ * error ring, and transition. The bare <input> inside the wrapper has
+ * its native focus ring removed because the wrapper paints it.
+ *
+ * Compose for date / search / etc. via the `type` prop.
+ */
+export const TextField = ({
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  label,
+  hint,
+  error,
+  leadingIcon,
+  trailingNode,
+  size = "sm",
+  disabled = false,
+  required = false,
+  id,
+  className,
+  style,
+  inputProps,
+}) => {
+  const hasError = Boolean(error);
+  const helperText = hasError ? error : hint;
+  const heightPx = size === "md" ? 28 : 24;
+  return (
+    <label
+      htmlFor={id}
+      className={className}
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: sp(3),
+        fontFamily: T.sans,
+        ...style,
+      }}
+    >
+      {label ? (
+        <span
+          style={{
+            fontSize: textSize("label"),
+            color: T.textMuted,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            fontWeight: FONT_WEIGHTS.medium,
+          }}
+        >
+          {label}
+          {required ? (
+            <span aria-hidden="true" style={{ color: T.red, marginLeft: sp(2) }}>
+              *
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      <span
+        className={
+          hasError ? "ra-textfield ra-textfield--error" : "ra-textfield"
+        }
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(5),
+          height: dim(heightPx),
+          padding: sp("0 10px"),
+          borderRadius: dim(RADII.sm),
+          background: T.bg2,
+          border: `1px solid transparent`,
+          color: disabled ? T.textMuted : T.text,
+          opacity: disabled ? 0.6 : 1,
+          minWidth: 0,
+        }}
+      >
+        {leadingIcon ? (
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-flex",
+              color: T.textMuted,
+              flexShrink: 0,
+            }}
+          >
+            {leadingIcon}
+          </span>
+        ) : null}
+        <input
+          {...inputProps}
+          id={id}
+          type={type}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          disabled={disabled}
+          required={required}
+          aria-invalid={hasError || undefined}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: "100%",
+            border: "none",
+            background: "transparent",
+            outline: "none",
+            color: "inherit",
+            fontSize: textSize("control"),
+            fontFamily: T.sans,
+            padding: 0,
+            ...(inputProps?.style ?? {}),
+          }}
+        />
+        {trailingNode ? (
+          <span
+            style={{
+              display: "inline-flex",
+              color: T.textMuted,
+              flexShrink: 0,
+            }}
+          >
+            {trailingNode}
+          </span>
+        ) : null}
+      </span>
+      {helperText ? (
+        <span
+          role={hasError ? "alert" : undefined}
+          style={{
+            fontSize: textSize("caption"),
+            color: hasError ? T.red : T.textMuted,
+            letterSpacing: "0.01em",
+            lineHeight: 1.4,
+          }}
+        >
+          {helperText}
+        </span>
+      ) : null}
+    </label>
+  );
+};
+
+/**
  * Skeleton — animated placeholder for loading content.
  *
  * variant: "shimmer" (default) — solid base + sweeping highlight via the

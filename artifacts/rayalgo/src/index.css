@@ -583,6 +583,31 @@ table {
     color var(--ra-motion-fast) var(--ra-motion-ease);
 }
 
+/* TextField wrapper — paints the focus ring around the whole row (label
+   slot, input, leading/trailing decoration) via :focus-within. The bare
+   <input> inside has outline: none + border: none and inherits the ring
+   from this wrapper. .ra-textfield--error swaps the ring to the pnl-
+   negative tone and shows a 1px tinted border even when not focused. */
+.ra-textfield {
+  transition:
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-textfield:focus-within {
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+.ra-textfield--error {
+  border-color: color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent) !important;
+}
+
+.ra-textfield--error:focus-within {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ra-color-pnl-negative) 36%, transparent);
+  border-color: var(--ra-color-pnl-negative) !important;
+}
+
 /* SegmentedControl indicator — slides between option bounds. The
    transform + width animate together so the indicator both moves and
    grows/shrinks if the next option has a different width. */

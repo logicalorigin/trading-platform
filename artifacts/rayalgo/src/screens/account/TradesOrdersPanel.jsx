@@ -23,7 +23,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
-import { Button } from "../../components/platform/primitives.jsx";
+import { Button, TextField } from "../../components/platform/primitives.jsx";
 import { closeDateMatchesPatternHour } from "./accountPatternLens";
 import {
   feeDragBucket,
@@ -954,14 +954,13 @@ export const ClosedTradesPanel = ({
               WebkitOverflowScrolling: isPhone ? "touch" : undefined,
             }}
           >
-            <input
+            <TextField
               value={filters.symbol}
-              onChange={(event) => onFiltersChange({ symbol: event.target.value.toUpperCase() })}
+              onChange={(event) =>
+                onFiltersChange({ symbol: event.target.value.toUpperCase() })
+              }
               placeholder="Symbol"
-              style={{
-                ...controlInputStyle,
-                ...(isPhone ? { flex: "0 0 76px", minWidth: dim(76) } : null),
-              }}
+              style={isPhone ? { flex: "0 0 76px", minWidth: dim(76) } : undefined}
             />
             <select
               value={filters.assetClass}
@@ -976,23 +975,17 @@ export const ClosedTradesPanel = ({
               <option value="ETF">ETF</option>
               <option value="Options">Options</option>
             </select>
-            <input
+            <TextField
               type="date"
               value={filters.from}
               onChange={(event) => onFiltersChange({ from: event.target.value })}
-              style={{
-                ...controlInputStyle,
-                ...(isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : null),
-              }}
+              style={isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : undefined}
             />
-            <input
+            <TextField
               type="date"
               value={filters.to}
               onChange={(event) => onFiltersChange({ to: event.target.value })}
-              style={{
-                ...controlInputStyle,
-                ...(isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : null),
-              }}
+              style={isPhone ? { flex: "0 0 112px", minWidth: dim(112) } : undefined}
             />
             <div
               className="ra-hide-scrollbar"
