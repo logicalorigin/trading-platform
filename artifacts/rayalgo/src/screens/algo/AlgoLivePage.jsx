@@ -137,7 +137,7 @@ const EmptyOperationsState = ({
   </div>
 );
 
-export const AlgoOperationsTab = ({
+export const AlgoLivePage = ({
   // Empty state
   deployments,
   candidateDrafts,
@@ -167,15 +167,7 @@ export const AlgoOperationsTab = ({
   // Signals
   visibleSignalRows,
   signalOptionsCandidates,
-  displayedSignalOptionsCandidates,
-  selectedCandidate,
-  setSelectedCandidateId,
-  selectedPipelineStageId,
   signalOptionsProfile,
-  handleOpenCandidateInTrade,
-  onJumpToTradeCandidate,
-  algoDetailGridTemplate,
-  algoCandidateGridTemplate,
   // Positions
   signalOptionsPositions,
   // Drill
@@ -190,6 +182,10 @@ export const AlgoOperationsTab = ({
   updateStrategySettingsMutation,
   // Layout
   algoIsPhone,
+  algoIsNarrow,
+  // Slots
+  auditPanel,
+  rightRail,
 }) => {
   if (!deployments.length) {
     return (
@@ -445,34 +441,72 @@ export const AlgoOperationsTab = ({
 
       <OperationsTransitionsStrip transitions={transitions || []} maxInline={5} />
 
-      <OperationsSignalTable
-        signals={visibleSignalRows}
-        candidates={signalOptionsCandidates}
-        algoIsPhone={algoIsPhone}
-        renderDrill={({ signal, candidate }) => {
-          const symbol = String(signal?.symbol || "").toUpperCase();
-          const indexed = symbolIndex?.[symbol] || {};
-          return (
-            <OperationsSignalDrill
-              signal={signal}
-              candidate={candidate || indexed.candidate}
-              position={indexed.position}
-              events={events || []}
-              userPreferences={userPreferences}
-              signalOptionsProfile={signalOptionsProfile}
-            />
-          );
+      <div
+        data-testid="algo-live-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            algoIsPhone || algoIsNarrow
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1fr) 380px",
+          gap: sp(8),
+          alignItems: "start",
+          minWidth: 0,
         }}
-      />
+      >
+        <div
+          data-testid="algo-live-main-column"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(6),
+            minWidth: 0,
+          }}
+        >
+          <OperationsSignalTable
+            signals={visibleSignalRows}
+            candidates={signalOptionsCandidates}
+            algoIsPhone={algoIsPhone}
+            renderDrill={({ signal, candidate }) => {
+              const symbol = String(signal?.symbol || "").toUpperCase();
+              const indexed = symbolIndex?.[symbol] || {};
+              return (
+                <OperationsSignalDrill
+                  signal={signal}
+                  candidate={candidate || indexed.candidate}
+                  position={indexed.position}
+                  events={events || []}
+                  userPreferences={userPreferences}
+                  signalOptionsProfile={signalOptionsProfile}
+                />
+              );
+            }}
+          />
 
-      <OperationsPositionsTable
-        positions={signalOptionsPositions}
-        symbolIndex={symbolIndex}
-        signalOptionsProfile={signalOptionsProfile}
-        algoIsPhone={algoIsPhone}
-      />
+          <OperationsPositionsTable
+            positions={signalOptionsPositions}
+            symbolIndex={symbolIndex}
+            signalOptionsProfile={signalOptionsProfile}
+            algoIsPhone={algoIsPhone}
+          />
+
+          {auditPanel}
+        </div>
+
+        <div
+          data-testid="algo-live-right-column"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(6),
+            minWidth: 0,
+          }}
+        >
+          {rightRail}
+        </div>
+      </div>
     </div>
   );
 };
 
-export default AlgoOperationsTab;
+export default AlgoLivePage;

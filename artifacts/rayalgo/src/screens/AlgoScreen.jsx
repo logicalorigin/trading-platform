@@ -28,7 +28,7 @@ import {
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
 import { AlgoAuditPanel } from "./algo/AlgoAuditPanel";
-import { AlgoOperationsTab } from "./algo/AlgoOperationsTab";
+import { AlgoLivePage } from "./algo/AlgoLivePage";
 import { AlgoRightRail } from "./algo/AlgoRightRail";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
@@ -1384,88 +1384,84 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        <AlgoOperationsTab
-            deployments={deployments}
-            candidateDrafts={candidateDrafts}
-            selectedDraft={selectedDraft}
-            setSelectedDraftId={setSelectedDraftId}
-            deploymentName={deploymentName}
-            setDeploymentName={setDeploymentName}
-            symbolUniverseInput={symbolUniverseInput}
-            setSymbolUniverseInput={setSymbolUniverseInput}
-            handleCreateDeployment={handleCreateDeployment}
-            createDeploymentMutation={createDeploymentMutation}
-            cockpitKpis={cockpitKpis}
-            cockpitSignalFreshness={cockpitSignalFreshness}
-            cockpitTradePath={cockpitTradePath}
-            signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
-            cockpitStageItems={cockpitStageItems}
-            selectedStage={selectedStage}
-            setSelectedPipelineStageId={setSelectedPipelineStageId}
-            cockpitAttentionItems={cockpitAttentionItems}
-            signalOptionsRuleAdherence={signalOptionsRuleAdherence}
-            gatewayReady={gatewayReady}
-            transitions={visibleTransitions}
-            visibleSignalRows={visibleSignalRows}
-            signalOptionsCandidates={signalOptionsCandidates}
-            displayedSignalOptionsCandidates={displayedSignalOptionsCandidates}
-            selectedCandidate={selectedCandidate}
-            setSelectedCandidateId={setSelectedCandidateId}
-            selectedPipelineStageId={selectedPipelineStageId}
-            signalOptionsProfile={signalOptionsProfile}
-            handleOpenCandidateInTrade={handleOpenCandidateInTrade}
-            onJumpToTradeCandidate={onJumpToTradeCandidate}
-            algoDetailGridTemplate={algoDetailGridTemplate}
-            algoCandidateGridTemplate={algoCandidateGridTemplate}
-            signalOptionsPositions={signalOptionsPositions}
-            symbolIndex={symbolIndex}
-            events={events}
-            userPreferences={userPreferences}
-            signalMonitorProfile={signalMonitorProfile}
-            strategySettingsDraft={strategySettingsDraft}
-            setStrategySettingsDraft={setStrategySettingsDraft}
-            handleSaveStrategySettings={handleSaveStrategySettings}
-            updateStrategySettingsMutation={updateStrategySettingsMutation}
-            algoIsPhone={algoIsPhone}
-          />
-
-        <AlgoRightRail
-            cockpit={cockpit}
-            signalOptionsPositions={signalOptionsPositions}
-            signalOptionsProfile={signalOptionsProfile}
-            profileDraft={profileDraft}
-            patchProfileDraft={patchProfileDraft}
-            patchProfileDraftNested={patchProfileDraftNested}
-            strategySettingsDraft={strategySettingsDraft}
-            setStrategySettingsDraft={setStrategySettingsDraft}
-            signalMonitorProfile={signalMonitorProfile}
-            focusedDeployment={focusedDeployment}
-            profileSectionOpen={profileSectionOpen}
-            setProfileSectionOpen={setProfileSectionOpen}
-            handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-            handleSaveStrategySettings={handleSaveStrategySettings}
-            handleSaveProfile={handleSaveProfile}
-            updateProfileMutation={updateProfileMutation}
-            updateStrategySettingsMutation={updateStrategySettingsMutation}
-            cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-            cockpitSkipReasonRows={cockpitSkipReasonRows}
-            cockpitReadinessRows={cockpitReadinessRows}
-            cockpitMarkHealthRows={cockpitMarkHealthRows}
-            cockpitLifecycleRows={cockpitLifecycleRows}
-            cockpitEntryGateRows={cockpitEntryGateRows}
-            cockpitOptionChainRows={cockpitOptionChainRows}
-            cockpitSignalFreshness={cockpitSignalFreshness}
-            cockpitTradePath={cockpitTradePath}
-            diagExpansion={diagExpansion}
-            setDiagExpansion={setDiagExpansion}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
-          />
-
-        <AlgoAuditPanel
+        <AlgoLivePage
+          deployments={deployments}
+          candidateDrafts={candidateDrafts}
+          selectedDraft={selectedDraft}
+          setSelectedDraftId={setSelectedDraftId}
+          deploymentName={deploymentName}
+          setDeploymentName={setDeploymentName}
+          symbolUniverseInput={symbolUniverseInput}
+          setSymbolUniverseInput={setSymbolUniverseInput}
+          handleCreateDeployment={handleCreateDeployment}
+          createDeploymentMutation={createDeploymentMutation}
+          cockpitKpis={cockpitKpis}
+          cockpitSignalFreshness={cockpitSignalFreshness}
+          cockpitTradePath={cockpitTradePath}
+          signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
+          cockpitStageItems={cockpitStageItems}
+          selectedStage={selectedStage}
+          setSelectedPipelineStageId={setSelectedPipelineStageId}
+          cockpitAttentionItems={cockpitAttentionItems}
+          signalOptionsRuleAdherence={signalOptionsRuleAdherence}
+          gatewayReady={gatewayReady}
+          transitions={visibleTransitions}
+          visibleSignalRows={visibleSignalRows}
+          signalOptionsCandidates={signalOptionsCandidates}
+          selectedCandidate={selectedCandidate}
+          signalOptionsProfile={signalOptionsProfile}
+          signalOptionsPositions={signalOptionsPositions}
+          symbolIndex={symbolIndex}
           events={events}
-          focusedDeployment={focusedDeployment}
           userPreferences={userPreferences}
+          signalMonitorProfile={signalMonitorProfile}
+          strategySettingsDraft={strategySettingsDraft}
+          setStrategySettingsDraft={setStrategySettingsDraft}
+          handleSaveStrategySettings={handleSaveStrategySettings}
+          updateStrategySettingsMutation={updateStrategySettingsMutation}
+          algoIsPhone={algoIsPhone}
+          algoIsNarrow={algoIsNarrow}
+          auditPanel={
+            <AlgoAuditPanel
+              events={events}
+              focusedDeployment={focusedDeployment}
+              userPreferences={userPreferences}
+            />
+          }
+          rightRail={
+            <AlgoRightRail
+              cockpit={cockpit}
+              signalOptionsPositions={signalOptionsPositions}
+              signalOptionsProfile={signalOptionsProfile}
+              profileDraft={profileDraft}
+              patchProfileDraft={patchProfileDraft}
+              patchProfileDraftNested={patchProfileDraftNested}
+              strategySettingsDraft={strategySettingsDraft}
+              setStrategySettingsDraft={setStrategySettingsDraft}
+              signalMonitorProfile={signalMonitorProfile}
+              focusedDeployment={focusedDeployment}
+              profileSectionOpen={profileSectionOpen}
+              setProfileSectionOpen={setProfileSectionOpen}
+              handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+              handleSaveStrategySettings={handleSaveStrategySettings}
+              handleSaveProfile={handleSaveProfile}
+              updateProfileMutation={updateProfileMutation}
+              updateStrategySettingsMutation={updateStrategySettingsMutation}
+              cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+              cockpitSkipReasonRows={cockpitSkipReasonRows}
+              cockpitReadinessRows={cockpitReadinessRows}
+              cockpitMarkHealthRows={cockpitMarkHealthRows}
+              cockpitLifecycleRows={cockpitLifecycleRows}
+              cockpitEntryGateRows={cockpitEntryGateRows}
+              cockpitOptionChainRows={cockpitOptionChainRows}
+              cockpitSignalFreshness={cockpitSignalFreshness}
+              cockpitTradePath={cockpitTradePath}
+              diagExpansion={diagExpansion}
+              setDiagExpansion={setDiagExpansion}
+              algoIsPhone={algoIsPhone}
+              algoIsNarrow={algoIsNarrow}
+            />
+          }
         />
       </div>
     </div>
