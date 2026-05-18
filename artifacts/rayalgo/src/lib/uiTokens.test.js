@@ -201,3 +201,62 @@ test("fs and dim scale and round numerically with the active scale", () => {
   assert.ok(dim(20) >= 20);
   setCurrentScale("m");
 });
+
+test("G proxy returns CSS var refs for every gradient token", async () => {
+  // The G proxy MUST return "var(--ra-gradient-...)" strings (never
+  // raw hex / rgba) — that's the only way accent-preset + theme
+  // changes flex through inline-styled JSX without re-resolving on
+  // every render.
+  const { G } = await import("./uiTokens.jsx");
+
+  const expected = {
+    surfaceTopHighlight: "--ra-gradient-surface-top-highlight",
+    hairlineDividerH: "--ra-gradient-hairline-divider-h",
+    hairlineDividerV: "--ra-gradient-hairline-divider-v",
+    accentSweep: "--ra-gradient-accent-sweep",
+    dataBarPositive: "--ra-gradient-data-bar-positive",
+    dataBarNegative: "--ra-gradient-data-bar-negative",
+    glassNav: "--ra-gradient-glass-nav",
+  };
+
+  for (const [key, cssVar] of Object.entries(expected)) {
+    assert.equal(G[key], `var(${cssVar})`, `G.${key} should be var(${cssVar})`);
+  }
+
+  // Unknown keys return undefined (so typos surface as bugs rather
+  // than silently returning a working but wrong string).
+  assert.equal(G.thisDoesNotExist, undefined);
+});
+
+test("every G gradient token has a matching --ra-gradient-* CSS declaration", () => {
+  // Pins the cross-file invariant: every G.* token's CSS var must
+  // actually be declared in index.css so the gradient resolves at
+  // paint time.
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+  const requiredVars = [
+    "--ra-gradient-surface-top-highlight",
+    "--ra-gradient-hairline-divider-h",
+    "--ra-gradient-hairline-divider-v",
+    "--ra-gradient-accent-sweep",
+    "--ra-gradient-data-bar-positive",
+    "--ra-gradient-data-bar-negative",
+    "--ra-gradient-glass-nav",
+  ];
+  for (const varName of requiredVars) {
+    assert.match(
+      cssSource,
+      new RegExp(`${varName.replace(/-/g, "\\-")}:`),
+      `index.css must declare ${varName}`,
+    );
+  }
+  // Gradient defs must compose through other CSS vars (not raw hex/rgba)
+  // so they flex with theme + accent changes.
+  const grad = cssSource.match(
+    /--ra-gradient-data-bar-positive:[\s\S]*?\);/,
+  );
+  assert.ok(grad, "data-bar-positive gradient not found");
+  assert.match(grad[0], /var\(--ra-color-pnl-positive\)/);
+});

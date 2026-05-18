@@ -316,6 +316,44 @@ export const T = new Proxy(
   },
 );
 
+/**
+ * G — gradient token proxy. Returns CSS var references (strings like
+ * "var(--ra-gradient-...)") suitable for direct use in inline style
+ * `background`, `background-image`, `mask-image`, etc.
+ *
+ * Each gradient resolves through CSS variables defined in index.css, so
+ * accent-preset and theme changes propagate without re-rendering. Add a
+ * new gradient here and a matching --ra-gradient-* declaration in :root.
+ *
+ *   surfaceTopHighlight — lit-from-above wash for cards and elevated surfaces
+ *   hairlineDividerH    — horizontal hairline (transparent → border → transparent)
+ *   hairlineDividerV    — vertical hairline (rotated 90°)
+ *   accentSweep         — accent-colored horizontal sweep, for hover affordances
+ *   dataBarPositive     — green vertical: bright top → faint bottom
+ *   dataBarNegative     — red vertical:   faint top → bright bottom
+ *   glassNav            — semi-transparent surface for backdrop-blur nav
+ */
+const G_TOKEN_VARS = {
+  surfaceTopHighlight: "--ra-gradient-surface-top-highlight",
+  hairlineDividerH: "--ra-gradient-hairline-divider-h",
+  hairlineDividerV: "--ra-gradient-hairline-divider-v",
+  accentSweep: "--ra-gradient-accent-sweep",
+  dataBarPositive: "--ra-gradient-data-bar-positive",
+  dataBarNegative: "--ra-gradient-data-bar-negative",
+  glassNav: "--ra-gradient-glass-nav",
+};
+
+export const G = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      if (typeof prop !== "string") return undefined;
+      const cssVar = G_TOKEN_VARS[prop];
+      return cssVar ? `var(${cssVar})` : undefined;
+    },
+  },
+);
+
 const resolveCssVarValue = (styles, value, depth = 0) => {
   if (!value || depth > 4) {
     return value;

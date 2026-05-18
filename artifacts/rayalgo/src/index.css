@@ -129,6 +129,50 @@
   --ra-card-inner-shadow: inset 0 1px 0 var(--ra-card-top-highlight);
   --ra-selected-glow: inset 0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 32%, transparent);
   --ra-glass-nav-bg: color-mix(in srgb, var(--ra-surface-1) 78%, transparent);
+
+  /* Tier 3 gradient tokens. Consumed via the G proxy in uiTokens.jsx
+     (G.surfaceTopHighlight, G.hairlineDividerH/V, G.accentSweep,
+     G.dataBarPositive/Negative, G.glassNav) so JSX can stay theme-aware
+     without resolving any values at render time. Every gradient resolves
+     through other CSS vars so accent / theme changes propagate for free. */
+  --ra-gradient-surface-top-highlight: linear-gradient(
+    180deg,
+    var(--ra-card-top-highlight) 0%,
+    transparent 60%
+  );
+  --ra-gradient-hairline-divider-h: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ra-border-default) 50%,
+    transparent 100%
+  );
+  --ra-gradient-hairline-divider-v: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--ra-border-default) 50%,
+    transparent 100%
+  );
+  --ra-gradient-accent-sweep: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ra-color-accent) 24%, transparent) 50%,
+    transparent 100%
+  );
+  --ra-gradient-data-bar-positive: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-color-pnl-positive) 95%, transparent) 0%,
+    color-mix(in srgb, var(--ra-color-pnl-positive) 55%, transparent) 100%
+  );
+  --ra-gradient-data-bar-negative: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent) 0%,
+    color-mix(in srgb, var(--ra-color-pnl-negative) 95%, transparent) 100%
+  );
+  --ra-gradient-glass-nav: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-surface-1) 92%, transparent) 0%,
+    color-mix(in srgb, var(--ra-surface-1) 86%, transparent) 100%
+  );
 }
 
 :root[data-rayalgo-theme="light"] {
