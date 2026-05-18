@@ -1501,6 +1501,7 @@ export const AlgoScreen = ({
           events={events}
           focusedDeployment={focusedDeployment}
           userPreferences={userPreferences}
+          onJumpToOperations={() => setPrimaryTab("operations")}
         />
       )}
 

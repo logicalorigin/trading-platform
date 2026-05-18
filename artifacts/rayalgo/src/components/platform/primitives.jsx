@@ -1087,6 +1087,114 @@ export const Card = ({
 };
 
 /**
+ * InlineFilterBar — single-row filter strip with an optional text input
+ * on the left and a row of chip toggles on the right. Chips can be a
+ * single-select group (`mode="single"`) or multi-select (`mode="multi"`).
+ * Designed for table headers / audit logs / any list that needs quick
+ * scoping without a full filter modal.
+ */
+export const InlineFilterBar = ({
+  textValue,
+  onTextChange,
+  textPlaceholder = "Filter",
+  chips = [],
+  selectedChipIds = [],
+  onChipsChange,
+  mode = "single",
+  right,
+  dataTestId,
+}) => {
+  const selected = new Set(selectedChipIds);
+  const toggleChip = (chipId) => {
+    if (mode === "multi") {
+      const next = new Set(selected);
+      if (next.has(chipId)) next.delete(chipId);
+      else next.add(chipId);
+      onChipsChange?.(Array.from(next));
+    } else {
+      onChipsChange?.(selected.has(chipId) ? [] : [chipId]);
+    }
+  };
+  return (
+    <div
+      data-testid={dataTestId}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(8),
+        flexWrap: "wrap",
+        padding: sp("6px 10px"),
+        background: T.bg1,
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.md),
+        minWidth: 0,
+      }}
+    >
+      {onTextChange ? (
+        <input
+          type="text"
+          value={textValue || ""}
+          onChange={(event) => onTextChange(event.target.value)}
+          placeholder={textPlaceholder}
+          style={{
+            background: T.bg2,
+            border: "none",
+            borderRadius: dim(RADII.xs),
+            color: T.text,
+            padding: sp("3px 8px"),
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            outline: "none",
+            minWidth: 140,
+          }}
+        />
+      ) : null}
+      <div
+        style={{
+          display: "flex",
+          gap: sp(3),
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        {chips.map((chip) => {
+          const isSelected = selected.has(chip.id);
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => toggleChip(chip.id)}
+              style={{
+                padding: sp("2px 8px"),
+                borderRadius: dim(RADII.pill),
+                border: `1px solid ${isSelected ? T.accent : T.border}`,
+                background: isSelected ? `${T.accent}1c` : "transparent",
+                color: isSelected ? T.text : T.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                cursor: "pointer",
+              }}
+            >
+              {chip.label}
+              {chip.count != null ? (
+                <span style={{ color: T.textMuted, marginLeft: sp(3) }}>
+                  {chip.count}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {right ? (
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+          {right}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/**
  * Inline-expandable table row. Renders the `row` children inside an
  * accessible button so the row itself is the toggle, and renders the
  * `expandedContent` children below when `expanded` is true. The expanded
