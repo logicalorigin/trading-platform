@@ -630,15 +630,16 @@ export const Panel = ({
     <div
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "space-between",
         gap: sp(8),
         padding: sp("8px 12px 6px"),
         borderBottom: `1px solid ${T.borderLight}`,
         background: T.bg1,
+        flexWrap: "wrap",
       }}
     >
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div style={{ minWidth: 0, flex: "1 1 180px" }}>
         <div style={sectionTitleStyle}>{title}</div>
         {subtitle || rightRail ? (
           <div
