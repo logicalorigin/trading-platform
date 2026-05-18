@@ -27,11 +27,10 @@ import {
   useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
-import { AlgoDiagnosticsTab } from "./algo/AlgoDiagnosticsTab";
 import { AlgoDraftsTab } from "./algo/AlgoDraftsTab";
 import { AlgoEventsTab } from "./algo/AlgoEventsTab";
 import { AlgoOperationsTab } from "./algo/AlgoOperationsTab";
-import { AlgoProfileTab } from "./algo/AlgoProfileTab";
+import { AlgoTuningTab } from "./algo/AlgoTuningTab";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -40,8 +39,10 @@ import {
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
   SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
+  RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
   STRATEGY_SIGNAL_TIMEFRAMES,
   asRecord,
+  boundedNumberFrom,
   buildExpandedSignalOptionsProfile,
   candidateMatchesReasonCategory,
   candidateReasonCategory,
@@ -569,6 +570,10 @@ export const AlgoScreen = ({
     setStrategySettingsDraft(resolvedStrategySignalSettings);
   }, [
     focusedDeployment?.id,
+    resolvedStrategySignalSettings.bosConfirmation,
+    resolvedStrategySignalSettings.chochAtrBuffer,
+    resolvedStrategySignalSettings.chochBodyExpansionAtr,
+    resolvedStrategySignalSettings.chochVolumeGate,
     resolvedStrategySignalSettings.signalTimeframe,
     resolvedStrategySignalSettings.timeHorizon,
   ]);
@@ -732,7 +737,7 @@ export const AlgoScreen = ({
         toast.push({
           kind: "success",
           title: "Signal settings saved",
-          body: "RayAlgo signal timeframe and time horizon were updated.",
+          body: "RayAlgo signal timeframe and RayReplica settings were updated.",
         });
       },
       onError: (error) => {
@@ -933,12 +938,36 @@ export const AlgoScreen = ({
     )
       ? strategySettingsDraft.signalTimeframe
       : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+    const bosConfirmation = RAY_REPLICA_BOS_CONFIRMATION_OPTIONS.includes(
+      strategySettingsDraft.bosConfirmation,
+    )
+      ? strategySettingsDraft.bosConfirmation
+      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.bosConfirmation;
 
     updateStrategySettingsMutation.mutate({
       deploymentId: focusedDeployment.id,
       data: {
         signalTimeframe,
         timeHorizon,
+        bosConfirmation,
+        chochAtrBuffer: boundedNumberFrom(
+          strategySettingsDraft.chochAtrBuffer,
+          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochAtrBuffer,
+          0,
+          20,
+        ),
+        chochBodyExpansionAtr: boundedNumberFrom(
+          strategySettingsDraft.chochBodyExpansionAtr,
+          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochBodyExpansionAtr,
+          0,
+          20,
+        ),
+        chochVolumeGate: boundedNumberFrom(
+          strategySettingsDraft.chochVolumeGate,
+          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochVolumeGate,
+          0,
+          20,
+        ),
       },
     });
   };
@@ -1431,47 +1460,38 @@ export const AlgoScreen = ({
         )}
 
         {primaryTab === "tuning" && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: sp(8),
-            }}
-          >
-            <AlgoProfileTab
-              profileDraft={profileDraft}
-              patchProfileDraft={patchProfileDraft}
-              patchProfileDraftNested={patchProfileDraftNested}
-              strategySettingsDraft={strategySettingsDraft}
-              setStrategySettingsDraft={setStrategySettingsDraft}
-              signalMonitorProfile={signalMonitorProfile}
-              focusedDeployment={focusedDeployment}
-              signalOptionsProfile={signalOptionsProfile}
-              profileSectionOpen={profileSectionOpen}
-              setProfileSectionOpen={setProfileSectionOpen}
-              handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-              handleSaveStrategySettings={handleSaveStrategySettings}
-              handleSaveProfile={handleSaveProfile}
-              updateProfileMutation={updateProfileMutation}
-              updateStrategySettingsMutation={updateStrategySettingsMutation}
-              algoIsPhone={algoIsPhone}
-            />
-            <AlgoDiagnosticsTab
-              cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-              cockpitSkipReasonRows={cockpitSkipReasonRows}
-              cockpitReadinessRows={cockpitReadinessRows}
-              cockpitMarkHealthRows={cockpitMarkHealthRows}
-              cockpitLifecycleRows={cockpitLifecycleRows}
-              cockpitEntryGateRows={cockpitEntryGateRows}
-              cockpitOptionChainRows={cockpitOptionChainRows}
-              cockpitSignalFreshness={cockpitSignalFreshness}
-              cockpitTradePath={cockpitTradePath}
-              diagExpansion={diagExpansion}
-              setDiagExpansion={setDiagExpansion}
-              algoIsPhone={algoIsPhone}
-              algoIsNarrow={algoIsNarrow}
-            />
-          </div>
+          <AlgoTuningTab
+            cockpit={cockpit}
+            signalOptionsPositions={signalOptionsPositions}
+            algoIsPhone={algoIsPhone}
+            algoIsNarrow={algoIsNarrow}
+            profileDraft={profileDraft}
+            patchProfileDraft={patchProfileDraft}
+            patchProfileDraftNested={patchProfileDraftNested}
+            strategySettingsDraft={strategySettingsDraft}
+            setStrategySettingsDraft={setStrategySettingsDraft}
+            signalMonitorProfile={signalMonitorProfile}
+            focusedDeployment={focusedDeployment}
+            signalOptionsProfile={signalOptionsProfile}
+            profileSectionOpen={profileSectionOpen}
+            setProfileSectionOpen={setProfileSectionOpen}
+            handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+            handleSaveStrategySettings={handleSaveStrategySettings}
+            handleSaveProfile={handleSaveProfile}
+            updateProfileMutation={updateProfileMutation}
+            updateStrategySettingsMutation={updateStrategySettingsMutation}
+            cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+            cockpitSkipReasonRows={cockpitSkipReasonRows}
+            cockpitReadinessRows={cockpitReadinessRows}
+            cockpitMarkHealthRows={cockpitMarkHealthRows}
+            cockpitLifecycleRows={cockpitLifecycleRows}
+            cockpitEntryGateRows={cockpitEntryGateRows}
+            cockpitOptionChainRows={cockpitOptionChainRows}
+            cockpitSignalFreshness={cockpitSignalFreshness}
+            cockpitTradePath={cockpitTradePath}
+            diagExpansion={diagExpansion}
+            setDiagExpansion={setDiagExpansion}
+          />
         )}
       </div>
 
