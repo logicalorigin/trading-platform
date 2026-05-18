@@ -12,6 +12,7 @@ import {
 } from "./accountUtils";
 import { arrayValue, finiteNumber, startOfIsoWeek } from "./tradingPatterns/patternsCommon";
 import { PatternsExitReasons } from "./tradingPatterns/PatternsExitReasons";
+import { PatternsHoldProfile } from "./tradingPatterns/PatternsHoldProfile";
 import { PatternsSummaryStrip } from "./tradingPatterns/PatternsSummaryStrip";
 import { PatternsWaterfall } from "./tradingPatterns/PatternsWaterfall";
 import { PatternsInsights } from "./tradingPatterns/PatternsInsights";
@@ -45,8 +46,8 @@ export const TradingPatternsPanel = ({
   isPhone = false,
 }) => {
   const sectionDefaults = isPhone
-    ? { insights: true, waterfall: true, byTime: true, bySymbol: true, exitReasons: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
-    : { insights: true, waterfall: true, byTime: true, bySymbol: true, exitReasons: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
+    ? { insights: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
+    : { insights: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
   const { isOpen, toggle } = useCollapsibleSections("patterns.openSections", sectionDefaults);
   const [sortKey, setSortKey] = useState("realizedPnl");
   const [tickerOrder, setTickerOrder] = useState("top");
@@ -201,6 +202,23 @@ export const TradingPatternsPanel = ({
             <PatternsByTime
               trades={trades}
               timeStats={packet.timeStats}
+              currency={currency}
+              maskValues={maskValues}
+              selectedLens={selectedLens}
+              onLensChange={onLensChange}
+            />
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <SectionHeader
+            title="Hold Profile"
+            onToggle={() => toggle("holdProfile")}
+            expanded={isOpen("holdProfile")}
+          />
+          {isOpen("holdProfile") ? (
+            <PatternsHoldProfile
+              bucketGroups={analysis?.bucketGroups}
               currency={currency}
               maskValues={maskValues}
               selectedLens={selectedLens}
