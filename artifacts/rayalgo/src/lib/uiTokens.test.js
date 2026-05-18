@@ -170,6 +170,38 @@ test("RADII and ELEVATION expose the primitives Button/Input/Stat rely on", () =
   for (const level of ["none", "sm", "md", "lg"]) {
     assert.equal(typeof ELEVATION[level], "string");
   }
+  // Layered elevation tokens resolve through CSS vars (per-theme depth).
+  for (const level of ["sm", "md", "lg", "hover"]) {
+    assert.match(ELEVATION[level], /^var\(--ra-elevation-/);
+  }
+});
+
+test("layered elevation: every level stacks ≥2 shadows in CSS", () => {
+  // Modern elevation depth comes from a stack (ambient + key + inset
+  // highlight) rather than a single drop shadow. This test pins the
+  // dark-theme recipe — comma-separated shadow list with at least 2
+  // entries per level so a future single-shadow regression fails loud.
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+  for (const level of ["sm", "md", "lg"]) {
+    const match = cssSource.match(
+      new RegExp(`--ra-elevation-${level}:[\\s\\S]*?;`),
+    );
+    assert.ok(match, `--ra-elevation-${level} not declared`);
+    const value = match[0];
+    const commas = (value.match(/,/g) || []).length;
+    assert.ok(
+      commas >= 1,
+      `--ra-elevation-${level} must stack ≥2 shadows (had ${commas + 1})`,
+    );
+  }
+  // Hover overlay must use accent color-mix so it flexes with accent
+  // preset (Coral / Amber / Green / Aurora).
+  const hover = cssSource.match(/--ra-elevation-hover:[\s\S]*?;/);
+  assert.ok(hover, "--ra-elevation-hover not declared");
+  assert.match(hover[0], /color-mix\([\s\S]*?--ra-color-accent/);
 });
 
 test("resolveEffectiveThemePreference respects explicit preference and fallback", () => {

@@ -127,11 +127,26 @@ export const RADII = {
   pill: 999,
 };
 
+/**
+ * ELEVATION — theme-aware layered shadows. Each level resolves through
+ * CSS vars declared in index.css so dark and light themes can carry
+ * their own shadow recipe (dark needs darker / more diffuse shadows
+ * because the bg is dark; light needs subtler shadows so they don't
+ * read as smudges). Composes 2-3 shadows per level:
+ *
+ *   ambient — large diffuse, no offset, soft
+ *   key     — directional, sharper, slight y-offset
+ *   highlight — inset 1px top, dark theme only (lit-from-above)
+ *
+ * Plus ELEVATION.hover — accent-tinted overlay shadow for elevated
+ * surfaces that lift under hover. Composes with the base elevation.
+ */
 export const ELEVATION = {
   none: "none",
-  sm: "0 1px 2px rgba(25, 23, 26, 0.04), 0 1px 3px rgba(25, 23, 26, 0.06)",
-  md: "0 4px 8px rgba(25, 23, 26, 0.06), 0 2px 4px rgba(25, 23, 26, 0.04)",
-  lg: "0 10px 24px rgba(25, 23, 26, 0.10), 0 4px 8px rgba(25, 23, 26, 0.06)",
+  sm: "var(--ra-elevation-sm)",
+  md: "var(--ra-elevation-md)",
+  lg: "var(--ra-elevation-lg)",
+  hover: "var(--ra-elevation-hover)",
 };
 
 export const MAX_WIDTHS = {

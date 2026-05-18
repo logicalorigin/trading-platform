@@ -918,6 +918,10 @@ export const Button = ({
     disabled,
   });
   const isDisabled = disabled || loading;
+  // primary / danger variants are elevated — base ELEVATION.sm plus the
+  // accent-tinted ELEVATION.hover overlay on hover. .ra-button-elevated
+  // (in index.css) composes the two via box-shadow's comma list.
+  const isElevated = variant === "primary" || variant === "danger";
   return (
     <button
       {...rest}
@@ -928,6 +932,7 @@ export const Button = ({
       className={[
         "ra-interactive",
         "ra-touch-target",
+        isElevated ? "ra-button-elevated" : null,
         className,
       ]
         .filter(Boolean)
