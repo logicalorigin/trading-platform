@@ -487,7 +487,7 @@ export const AlgoScreen = ({
     if (!store) return;
     const deploymentId = focusedDeployment?.id || null;
     if (!deploymentId) {
-      setRecentTransitions([]);
+      setRecentTransitions((prev) => (prev.length === 0 ? prev : []));
       return;
     }
     const evaluatedAt = cockpit?.evaluatedAt;
@@ -504,11 +504,13 @@ export const AlgoScreen = ({
     ]);
     prevCockpitSignalsRef.current = signalOptionsSignals;
     setRecentTransitions(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only fire on
+    // cockpit settle / deployment switch. `events` and `signalOptionsSignals`
+    // mint new refs every render before queries resolve and would loop the
+    // effect; we capture them via closure instead.
   }, [
     cockpit?.evaluatedAt,
-    events,
     focusedDeployment?.id,
-    signalOptionsSignals,
   ]);
 
   useEffect(() => {
