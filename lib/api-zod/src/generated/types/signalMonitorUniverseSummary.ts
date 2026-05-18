@@ -5,18 +5,20 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { SignalMonitorUniverseMode } from './signalMonitorUniverseMode';
-import type { SignalMonitorUniverseSource } from './signalMonitorUniverseSource';
+import type { SignalMonitorUniverseSummaryMode } from './signalMonitorUniverseSummaryMode';
+import type { SignalMonitorUniverseSummarySource } from './signalMonitorUniverseSummarySource';
 
 export interface SignalMonitorUniverseSummary {
-  mode: SignalMonitorUniverseMode;
+  mode: SignalMonitorUniverseSummaryMode;
   configuredMaxSymbols: number;
   resolvedSymbols: number;
   pinnedSymbols: number;
   expansionSymbols: number;
   shortfall: number;
-  source: SignalMonitorUniverseSource;
+  source: SignalMonitorUniverseSummarySource;
   fallbackUsed: boolean;
+  /** @nullable */
   degradedReason: string | null;
+  /** @nullable */
   rankedAt: Date | null;
 }

@@ -1,0 +1,5 @@
+rank,variantId,status,patch,realizedPnl,winRate,profitFactor,closedTrades,maxDrawdownAbs,openPositions,riskAdjustedScore,symbolsEvaluated,signalsEvaluated,entriesOpened,exitsClosed,error
+,focused-h8-best-structure,succeeded,"{""timeHorizon"":8,""bosConfirmation"":""wicks"",""chochAtrBuffer"":0,""chochBodyExpansionAtr"":0,""chochVolumeGate"":0}",0,0,0,0,0,0,0,90,1351,0,0,
+3,focused-h10-best-structure,succeeded,"{""timeHorizon"":10,""bosConfirmation"":""wicks"",""chochAtrBuffer"":0,""chochBodyExpansionAtr"":0,""chochVolumeGate"":0}",2612,0.5714285714285714,2.6294447910168435,35,451,1,5.224,90,1034,36,35,
+2,focused-h12-best-structure,succeeded,"{""timeHorizon"":12,""bosConfirmation"":""wicks"",""chochAtrBuffer"":0,""chochBodyExpansionAtr"":0,""chochVolumeGate"":0}",3500,0.6216216216216216,4.2110091743119265,37,205,1,7,90,858,38,37,
+1,focused-h15-best-structure,succeeded,"{""timeHorizon"":15,""bosConfirmation"":""wicks"",""chochAtrBuffer"":0,""chochBodyExpansionAtr"":0,""chochVolumeGate"":0}",3972,0.6444444444444445,4.195494770716009,45,238,1,7.944,90,698,46,45,

@@ -1,0 +1,689 @@
+{
+  "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/creative-quality-conditional-v1-h8-spy-compare-2026-05-18",
+  "deployment": {
+    "id": "7e2e4e6f-749f-4e65-a011-87d3559a23b0",
+    "name": "RayReplica Signal Options Shadow Paper",
+    "mode": "paper",
+    "symbolUniverse": [
+      "SPY"
+    ]
+  },
+  "config": {
+    "start": "2026-04-01",
+    "signalTimeframe": "5m",
+    "session": "regular",
+    "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/creative-quality-conditional-v1-h8-spy-compare-2026-05-18",
+    "lockWaitMs": 60000,
+    "timeHorizon": 8,
+    "symbols": [
+      "SPY"
+    ]
+  },
+  "results": [
+    {
+      "variant": {
+        "id": "combo-hard30-trail35-overnight10-early6",
+        "description": "Hard stop -30%, trail 35/15/20, overnight +10%, early loss after 6 bars.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-18T15:04:34.051Z",
+      "finishedAt": "2026-05-18T15:04:41.275Z",
+      "durationMs": 7224,
+      "metrics": {
+        "realizedPnl": 1924,
+        "winRate": 0.6666666666666666,
+        "profitFactor": 6.795180722891566,
+        "closedTrades": 6,
+        "maxDrawdownAbs": 110,
+        "openPositions": 0,
+        "riskAdjustedScore": 3.848
+      },
+      "window": {
+        "start": "2026-04-01",
+        "end": "2026-05-15",
+        "session": "regular",
+        "from": "2026-04-01T00:00:00.000Z",
+        "to": "2026-05-15T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 1,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "SPY"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 13,
+        "entriesOpened": 6,
+        "exitsClosed": 6,
+        "marksRecorded": 808,
+        "candidatesSkipped": 7,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 0,
+        "realizedPnl": 1924,
+        "winningTrades": 4,
+        "losingTrades": 2,
+        "exitReasons": {
+          "expiration": 1,
+          "early_invalidation": 1,
+          "runner_trail_stop": 2,
+          "opposite_signal": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 7
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778089800000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-06T17:50:00.000Z",
+            "closedAt": "2026-05-07T13:35:00.000Z",
+            "entryPrice": 3,
+            "exitPrice": 4.79,
+            "quantity": 3,
+            "pnl": 537,
+            "reason": "expiration",
+            "selectedContract": {
+              "ticker": "O:SPY260507C00730000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-07",
+              "strike": 730,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260507C00730000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 12.763656,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778165100000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-07T14:45:00.000Z",
+            "closedAt": "2026-05-07T15:59:00.000Z",
+            "entryPrice": 3.83,
+            "exitPrice": 3.09,
+            "quantity": 3,
+            "pnl": -222,
+            "reason": "early_invalidation",
+            "selectedContract": {
+              "ticker": "O:SPY260508C00733000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-08",
+              "strike": 733,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260508C00733000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 15.069742,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778613900000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-12T19:25:00.000Z",
+            "closedAt": "2026-05-13T13:30:00.000Z",
+            "entryPrice": 3.25,
+            "exitPrice": 3.73,
+            "quantity": 3,
+            "pnl": 144,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:SPY260513C00735000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-13",
+              "strike": 735,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260513C00735000"
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "strong",
+              "score": 5,
+              "reasons": [
+                "mtf_full_alignment",
+                "adx_confirmed",
+                "strong_liquidity"
+              ],
+              "adx": 42.525024,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778684100000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-13T14:55:00.000Z",
+            "closedAt": "2026-05-13T19:50:00.000Z",
+            "entryPrice": 4.22,
+            "exitPrice": 7.64,
+            "quantity": 3,
+            "pnl": 1026,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:SPY260514C00736000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-14",
+              "strike": 736,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260514C00736000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 20.466925,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778765700000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-14T13:35:00.000Z",
+            "closedAt": "2026-05-14T16:33:00.000Z",
+            "entryPrice": 4.03,
+            "exitPrice": 5.86,
+            "quantity": 3,
+            "pnl": 549,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:SPY260515C00743000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-15",
+              "strike": 743,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260515C00743000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 19.315661,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778854200000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-15T14:11:00.000Z",
+            "closedAt": "2026-05-15T19:50:00.000Z",
+            "entryPrice": 5.2,
+            "exitPrice": 4.65,
+            "quantity": 2,
+            "pnl": -110,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:SPY260518C00737000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-18",
+              "strike": 737,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260518C00737000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 15.931566,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "creative-quality-conditional-v1",
+        "description": "Best h8 policy plus conditional exits: cut low-quality earlier, let high-quality runners breathe.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20,
+            "conditionalQualityExitsEnabled": true,
+            "lowQualityEarlyExitBars": 4,
+            "lowQualityEarlyExitLossPct": 15,
+            "highQualityEarlyExitBars": 8,
+            "highQualityEarlyExitLossPct": 25,
+            "weakLiquidityTrailGivebackPct": 15,
+            "strongLiquidityTrailGivebackPct": 25,
+            "highQualityOvernightMinGainPct": -100
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-18T15:04:41.275Z",
+      "finishedAt": "2026-05-18T15:04:46.043Z",
+      "durationMs": 4768,
+      "metrics": {
+        "realizedPnl": 1789,
+        "winRate": 0.6666666666666666,
+        "profitFactor": 6.38855421686747,
+        "closedTrades": 6,
+        "maxDrawdownAbs": 110,
+        "openPositions": 0,
+        "riskAdjustedScore": 3.578
+      },
+      "window": {
+        "start": "2026-04-01",
+        "end": "2026-05-15",
+        "session": "regular",
+        "from": "2026-04-01T00:00:00.000Z",
+        "to": "2026-05-15T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 1,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "SPY"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 13,
+        "entriesOpened": 6,
+        "exitsClosed": 6,
+        "marksRecorded": 845,
+        "candidatesSkipped": 7,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 0,
+        "realizedPnl": 1789,
+        "winningTrades": 4,
+        "losingTrades": 2,
+        "exitReasons": {
+          "expiration": 1,
+          "early_invalidation": 1,
+          "runner_trail_stop": 2,
+          "opposite_signal": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 7
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778089800000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-06T17:50:00.000Z",
+            "closedAt": "2026-05-07T13:35:00.000Z",
+            "entryPrice": 3,
+            "exitPrice": 4.79,
+            "quantity": 3,
+            "pnl": 537,
+            "reason": "expiration",
+            "selectedContract": {
+              "ticker": "O:SPY260507C00730000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-07",
+              "strike": 730,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260507C00730000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 12.763656,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778165100000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-07T14:45:00.000Z",
+            "closedAt": "2026-05-07T15:59:00.000Z",
+            "entryPrice": 3.83,
+            "exitPrice": 3.09,
+            "quantity": 3,
+            "pnl": -222,
+            "reason": "early_invalidation",
+            "selectedContract": {
+              "ticker": "O:SPY260508C00733000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-08",
+              "strike": 733,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260508C00733000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 15.069742,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778613900000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-12T19:25:00.000Z",
+            "closedAt": "2026-05-13T13:30:00.000Z",
+            "entryPrice": 3.25,
+            "exitPrice": 3.73,
+            "quantity": 3,
+            "pnl": 144,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:SPY260513C00735000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-13",
+              "strike": 735,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260513C00735000"
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "strong",
+              "score": 5,
+              "reasons": [
+                "mtf_full_alignment",
+                "adx_confirmed",
+                "strong_liquidity"
+              ],
+              "adx": 42.525024,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778684100000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-13T14:55:00.000Z",
+            "closedAt": "2026-05-13T19:50:00.000Z",
+            "entryPrice": 4.22,
+            "exitPrice": 7.64,
+            "quantity": 3,
+            "pnl": 1026,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:SPY260514C00736000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-14",
+              "strike": 736,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260514C00736000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 20.466925,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778765700000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-14T13:35:00.000Z",
+            "closedAt": "2026-05-14T17:15:00.000Z",
+            "entryPrice": 4.03,
+            "exitPrice": 5.41,
+            "quantity": 3,
+            "pnl": 414,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:SPY260515C00743000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-15",
+              "strike": 743,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260515C00743000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 19.315661,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-SPY-buy-1778854200000",
+            "symbol": "SPY",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-15T14:11:00.000Z",
+            "closedAt": "2026-05-15T19:50:00.000Z",
+            "entryPrice": 5.2,
+            "exitPrice": 4.65,
+            "quantity": 2,
+            "pnl": -110,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:SPY260518C00737000",
+              "underlying": "SPY",
+              "expirationDate": "2026-05-18",
+              "strike": 737,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": "O:SPY260518C00737000"
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "strong",
+              "score": 4,
+              "reasons": [
+                "mtf_full_alignment",
+                "strong_liquidity"
+              ],
+              "adx": 15.931566,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": 0,
+              "bullishRegime": false
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    }
+  ],
+  "ranked": []
+}

@@ -3527,6 +3527,39 @@ export interface UpdateSignalMonitorProfileRequest {
   evaluationConcurrency?: number;
 }
 
+export type SignalMonitorUniverseSummaryMode = typeof SignalMonitorUniverseSummaryMode[keyof typeof SignalMonitorUniverseSummaryMode];
+
+
+export const SignalMonitorUniverseSummaryMode = {
+  selected_watchlist: 'selected_watchlist',
+  all_watchlists: 'all_watchlists',
+  all_watchlists_plus_universe: 'all_watchlists_plus_universe',
+} as const;
+
+export type SignalMonitorUniverseSummarySource = typeof SignalMonitorUniverseSummarySource[keyof typeof SignalMonitorUniverseSummarySource];
+
+
+export const SignalMonitorUniverseSummarySource = {
+  selected_watchlist: 'selected_watchlist',
+  all_watchlists: 'all_watchlists',
+  watchlists_plus_ranked_universe: 'watchlists_plus_ranked_universe',
+} as const;
+
+export interface SignalMonitorUniverseSummary {
+  mode: SignalMonitorUniverseSummaryMode;
+  configuredMaxSymbols: number;
+  resolvedSymbols: number;
+  pinnedSymbols: number;
+  expansionSymbols: number;
+  shortfall: number;
+  source: SignalMonitorUniverseSummarySource;
+  fallbackUsed: boolean;
+  /** @nullable */
+  degradedReason: string | null;
+  /** @nullable */
+  rankedAt: string | null;
+}
+
 export type EvaluateSignalMonitorRequestMode = typeof EvaluateSignalMonitorRequestMode[keyof typeof EvaluateSignalMonitorRequestMode];
 
 
@@ -3611,39 +3644,6 @@ export interface SignalMonitorEvent {
   emittedAt: string;
   source: string;
   payload: JsonObject;
-}
-
-export type SignalMonitorUniverseMode = typeof SignalMonitorUniverseMode[keyof typeof SignalMonitorUniverseMode];
-
-
-export const SignalMonitorUniverseMode = {
-  selected_watchlist: 'selected_watchlist',
-  all_watchlists: 'all_watchlists',
-  all_watchlists_plus_universe: 'all_watchlists_plus_universe',
-} as const;
-
-export type SignalMonitorUniverseSource = typeof SignalMonitorUniverseSource[keyof typeof SignalMonitorUniverseSource];
-
-
-export const SignalMonitorUniverseSource = {
-  selected_watchlist: 'selected_watchlist',
-  all_watchlists: 'all_watchlists',
-  watchlists_plus_ranked_universe: 'watchlists_plus_ranked_universe',
-} as const;
-
-export interface SignalMonitorUniverseSummary {
-  mode: SignalMonitorUniverseMode;
-  configuredMaxSymbols: number;
-  resolvedSymbols: number;
-  pinnedSymbols: number;
-  expansionSymbols: number;
-  shortfall: number;
-  source: SignalMonitorUniverseSource;
-  fallbackUsed: boolean;
-  /** @nullable */
-  degradedReason: string | null;
-  /** @nullable */
-  rankedAt: string | null;
 }
 
 export interface SignalMonitorStateResponse {
@@ -5282,3 +5282,4 @@ export type GetBacktestRunChartParams = {
 symbol?: string;
 selectedTradeId?: string;
 };
+

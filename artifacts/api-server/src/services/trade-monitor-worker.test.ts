@@ -67,6 +67,24 @@ function createNoopLogger() {
   };
 }
 
+function signalMonitorTestUniverse(
+  inputProfile: SignalMonitorProfileRow,
+  symbols: string[],
+) {
+  return {
+    mode: "selected_watchlist" as const,
+    configuredMaxSymbols: inputProfile.maxSymbols,
+    resolvedSymbols: symbols.length,
+    pinnedSymbols: symbols.length,
+    expansionSymbols: 0,
+    shortfall: Math.max(0, inputProfile.maxSymbols - symbols.length),
+    source: "selected_watchlist" as const,
+    fallbackUsed: false,
+    degradedReason: null,
+    rankedAt: null,
+  };
+}
+
 test("signal monitor completed-bar rules exclude active bars", () => {
   assert.equal(
     isSignalMonitorBarComplete({
@@ -205,6 +223,7 @@ test("trade monitor worker prevents concurrent evaluation of the same profile", 
       symbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
     }),
     loadCompletedBars: async () => ({
       bars: [],
@@ -246,6 +265,7 @@ test("trade monitor worker skips unchanged completed bars and reevaluates after 
       symbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
     }),
     loadCompletedBars: async () => ({
       bars: [],
@@ -288,6 +308,7 @@ test("trade monitor worker retries errored same-bar evaluations after a cooldown
       symbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
     }),
     loadCompletedBars: async () => ({
       bars: [],
@@ -331,6 +352,7 @@ test("trade monitor worker ignores symbols without a latest completed bar", asyn
       symbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
     }),
     loadCompletedBars: async () => ({
       bars: [],
