@@ -29,7 +29,7 @@ import {
 } from "@workspace/api-client-react";
 import { AlgoAuditPanel } from "./algo/AlgoAuditPanel";
 import { AlgoOperationsTab } from "./algo/AlgoOperationsTab";
-import { AlgoTuningTab } from "./algo/AlgoTuningTab";
+import { AlgoRightRail } from "./algo/AlgoRightRail";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -1429,11 +1429,10 @@ export const AlgoScreen = ({
             algoIsPhone={algoIsPhone}
           />
 
-        <AlgoTuningTab
+        <AlgoRightRail
             cockpit={cockpit}
             signalOptionsPositions={signalOptionsPositions}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
+            signalOptionsProfile={signalOptionsProfile}
             profileDraft={profileDraft}
             patchProfileDraft={patchProfileDraft}
             patchProfileDraftNested={patchProfileDraftNested}
@@ -1441,7 +1440,6 @@ export const AlgoScreen = ({
             setStrategySettingsDraft={setStrategySettingsDraft}
             signalMonitorProfile={signalMonitorProfile}
             focusedDeployment={focusedDeployment}
-            signalOptionsProfile={signalOptionsProfile}
             profileSectionOpen={profileSectionOpen}
             setProfileSectionOpen={setProfileSectionOpen}
             handleApplyExpandedCapacity={handleApplyExpandedCapacity}
@@ -1460,6 +1458,8 @@ export const AlgoScreen = ({
             cockpitTradePath={cockpitTradePath}
             diagExpansion={diagExpansion}
             setDiagExpansion={setDiagExpansion}
+            algoIsPhone={algoIsPhone}
+            algoIsNarrow={algoIsNarrow}
           />
 
         <AlgoAuditPanel
