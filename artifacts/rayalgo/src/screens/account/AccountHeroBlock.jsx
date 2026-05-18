@@ -60,8 +60,8 @@ export const AccountHeroBlock = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(isPhone ? 3 : 4),
-        padding: sp(isPhone ? "6px 4px 4px" : "10px 4px 6px"),
+        gap: sp(isPhone ? 3 : 3),
+        padding: sp(isPhone ? "6px 4px 4px" : "6px 4px 4px"),
         minWidth: 0,
       }}
     >
@@ -70,7 +70,7 @@ export const AccountHeroBlock = ({
           display: "flex",
           alignItems: "baseline",
           flexWrap: "wrap",
-          gap: sp(isPhone ? 8 : 12),
+          gap: sp(isPhone ? 8 : 10),
         }}
       >
         <div

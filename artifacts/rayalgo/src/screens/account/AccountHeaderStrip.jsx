@@ -21,7 +21,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
         gap: sp(4),
         minHeight: dim(20),
         minWidth: 0,
-        padding: sp("0 10px"),
+        padding: sp("0 6px"),
         whiteSpace: "nowrap",
         overflow: "hidden",
       }}

@@ -125,7 +125,9 @@ try {
     } catch (_e) {
       console.warn(`[${screen.id}] screen-host not found, continuing`);
     }
-    await page.waitForTimeout(1500);
+    // Give per-screen content (API calls, store hydration) plenty of
+    // time — Account in particular waits on broker positions / returns.
+    await page.waitForTimeout(4000);
 
     const m = await page.evaluate((screenId) => {
       const root = document.querySelector(

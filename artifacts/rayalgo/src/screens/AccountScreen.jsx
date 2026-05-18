@@ -1168,9 +1168,9 @@ export const AccountScreen = ({
       <div
         style={{
           width: "100%",
-          padding: sp(accountIsPhone ? "12px 12px" : "20px 28px"),
+          padding: sp(accountIsPhone ? "12px 12px" : "16px 24px"),
           display: "grid",
-          gap: sp(accountIsPhone ? 12 : 18),
+          gap: sp(accountIsPhone ? 10 : 12),
         }}
       >
         <AccountHeroBlock
