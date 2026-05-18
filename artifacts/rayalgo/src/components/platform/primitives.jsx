@@ -264,25 +264,34 @@ export const Card = ({
   noPad,
   dataZone = false,
   elevated = false,
+  className,
   ...props
-}) => (
-  <div
-    {...props}
-    style={{
-      background: T.bg1,
-      border: `1px solid ${dataZone ? T.borderLight : T.border}`,
-      borderRadius: dim(dataZone ? RADII.sm : RADII.md),
-      padding: noPad ? 0 : sp(dataZone ? "6px 8px" : "8px 10px"),
-      overflow: "hidden",
-      boxShadow: elevated ? ELEVATION.sm : ELEVATION.none,
-      transition:
-        "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease), box-shadow var(--ra-motion-fast) var(--ra-motion-ease)",
-      ...style,
-    }}
-  >
-    {children}
-  </div>
-);
+}) => {
+  const luminousClass = elevated
+    ? "ra-card-luminous-elevated"
+    : "ra-card-luminous";
+  const composedClassName = className
+    ? `${className} ${luminousClass}`
+    : luminousClass;
+  return (
+    <div
+      {...props}
+      className={composedClassName}
+      style={{
+        background: T.bg1,
+        border: `1px solid ${dataZone ? T.borderLight : T.border}`,
+        borderRadius: dim(dataZone ? RADII.sm : RADII.md),
+        padding: noPad ? 0 : sp(dataZone ? "6px 8px" : "8px 10px"),
+        overflow: "hidden",
+        transition:
+          "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease), box-shadow var(--ra-motion-fast) var(--ra-motion-ease)",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+};
 
 export const CardTitle = ({ children, right }) => (
   <div

@@ -200,13 +200,13 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
   <nav
     data-testid="mobile-bottom-nav"
     aria-label="Primary mobile navigation"
+    className="ra-glass-surface"
     style={{
       flexShrink: 0,
       display: "grid",
       gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
       gap: sp(2),
       padding: sp("4px 6px max(5px, env(safe-area-inset-bottom))"),
-      background: T.bg1,
       borderTop: `1px solid ${T.border}`,
       minHeight: `calc(${dim(54)}px + env(safe-area-inset-bottom))`,
     }}
