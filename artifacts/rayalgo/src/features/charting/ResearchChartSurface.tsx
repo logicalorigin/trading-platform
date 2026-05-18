@@ -6027,10 +6027,18 @@ export const ResearchChartSurface = ({
   }, [markUserViewportIntent]);
 
   // TradingView-style per-axis wheel zoom: scrolling over the price axis
-  // zooms Y only, over the time axis zooms X only. Scrolling over the
+  // zooms Y only (true zoom: visible price range changes), over the time
+  // axis zooms X only (visible logical range changes). Scrolling over the
   // chart body still uses lightweight-charts' default combined zoom.
   // Mobile axis-drag scaling is already handled by axisPressedMouseMove
   // in the interaction config above (lines ~1555-1582).
+  //
+  // capture: true is critical — lightweight-charts attaches its own wheel
+  // listener to its canvas (a child of containerRef). Without capture, our
+  // listener bubbles AFTER the chart's listener has already applied its
+  // default combined-zoom + horizontal-pan, leaving the impression that
+  // axis-area wheel "only stretches" or "only pans" depending on case.
+  // With capture + stopPropagation, we intercept first and own the gesture.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
@@ -6055,30 +6063,47 @@ export const ResearchChartSurface = ({
       if (!overPriceAxis && !overTimeAxis) {
         return; // chart-body wheel: leave to default combined-zoom path
       }
-      // Both prevent default chart wheel + native page scroll.
+      // Block lightweight-charts' own canvas wheel handler (which would
+      // otherwise pan horizontally and/or apply combined zoom) and the
+      // native page scroll.
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       const wheelDelta =
         typeof event.deltaY === "number" && Number.isFinite(event.deltaY)
           ? event.deltaY
           : 0;
       if (wheelDelta === 0) return;
+      // wheelDelta > 0 (scroll down) → zoom out (larger range factor)
+      // wheelDelta < 0 (scroll up) → zoom in (smaller range factor)
       const zoomFactor = Math.max(0.5, Math.min(1.5, 1 + wheelDelta * 0.0015));
       try {
         if (overPriceAxis) {
           const priceScale = chart.priceScale?.("right", 0);
           if (!priceScale) return;
-          const current = priceScale.options?.()?.scaleMargins;
-          const top = typeof current?.top === "number" ? current.top : 0.1;
-          const bottom = typeof current?.bottom === "number" ? current.bottom : 0.1;
-          // Zooming Y in (wheelDelta < 0) shrinks margins (more chart area);
-          // zooming out grows them. Symmetric.
-          const adjust = (margin: number) => {
-            const next = margin * zoomFactor;
-            return Math.max(0.02, Math.min(0.45, next));
-          };
-          priceScale.applyOptions?.({
-            scaleMargins: { top: adjust(top), bottom: adjust(bottom) },
-          });
+          // Switch off autoScale so our explicit range is respected.
+          priceScale.setAutoScale?.(false);
+          const range = priceScale.getVisibleRange?.();
+          if (!range || typeof range.from !== "number" || typeof range.to !== "number") {
+            return;
+          }
+          // Anchor zoom on the price under the cursor — TradingView's
+          // visual: prices below the cursor stay roughly where they are
+          // and you reveal more (or less) chart above/below.
+          const span = range.to - range.from;
+          if (span <= 0) return;
+          // Cursor maps from screen Y (top to bottom) to price (high to low):
+          // 0% (top of chart) = range.to; 100% (bottom) = range.from.
+          const localYInPlot = Math.max(0, Math.min(rect.height, localY));
+          const cursorFracFromTop = rect.height > 0 ? localYInPlot / rect.height : 0.5;
+          const cursorPrice = range.to - span * cursorFracFromTop;
+          const newSpan = span * zoomFactor;
+          const newTo = cursorPrice + (range.to - cursorPrice) * zoomFactor;
+          const newFrom = newTo - newSpan;
+          if (!Number.isFinite(newFrom) || !Number.isFinite(newTo) || newTo - newFrom <= 0) {
+            return;
+          }
+          priceScale.setVisibleRange?.({ from: newFrom, to: newTo });
         } else if (overTimeAxis) {
           const timeScale = chart.timeScale?.();
           if (!timeScale) return;
@@ -6086,22 +6111,28 @@ export const ResearchChartSurface = ({
           if (!visible || typeof visible.from !== "number" || typeof visible.to !== "number") {
             return;
           }
-          const center = (visible.from + visible.to) / 2;
           const range = visible.to - visible.from;
-          const nextRange = Math.max(4, range * zoomFactor);
-          timeScale.setVisibleLogicalRange?.({
-            from: center - nextRange / 2,
-            to: center + nextRange / 2,
-          });
+          if (range <= 0) return;
+          // Anchor zoom on the logical index under the cursor.
+          const localXInPlot = Math.max(0, Math.min(rect.width, localX));
+          const cursorFracFromLeft = rect.width > 0 ? localXInPlot / rect.width : 0.5;
+          const cursorLogical = visible.from + range * cursorFracFromLeft;
+          const newRange = Math.max(4, range * zoomFactor);
+          const newFrom = cursorLogical - newRange * cursorFracFromLeft;
+          const newTo = newFrom + newRange;
+          timeScale.setVisibleLogicalRange?.({ from: newFrom, to: newTo });
         }
       } catch (_e) {
         // swallow scale errors; chart may be mid-resize
       }
     };
 
-    container.addEventListener("wheel", handleAxisWheel, { passive: false });
+    container.addEventListener("wheel", handleAxisWheel, {
+      passive: false,
+      capture: true,
+    });
     return () => {
-      container.removeEventListener("wheel", handleAxisWheel);
+      container.removeEventListener("wheel", handleAxisWheel, true);
     };
     // Re-bind when the chart container appears/disappears so the listener
     // attaches to the live DOM element on first render after data loads.
