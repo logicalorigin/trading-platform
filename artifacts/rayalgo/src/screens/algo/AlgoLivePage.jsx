@@ -227,7 +227,7 @@ export const AlgoLivePage = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(6),
+        gap: sp(algoIsPhone ? 3 : 6),
         minWidth: 0,
       }}
     >
@@ -460,24 +460,26 @@ export const AlgoLivePage = ({
                   : "⟳ SCAN NOW"}
             </button>
           ) : null}
-          <span
-            style={{
-              color: T.textDim,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              marginLeft: sp(4),
-            }}
-          >
-            Realized{" "}
-            <span style={{ color: realizedToday >= 0 ? T.green : T.red }}>
-              {formatMoney(realizedToday, 2)}
+          {algoIsPhone ? null : (
+            <span
+              style={{
+                color: T.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                marginLeft: sp(4),
+              }}
+            >
+              Realized{" "}
+              <span style={{ color: realizedToday >= 0 ? T.green : T.red }}>
+                {formatMoney(realizedToday, 2)}
+              </span>
+              {" · "}
+              Unrealized{" "}
+              <span style={{ color: unrealized >= 0 ? T.green : T.red }}>
+                {formatMoney(unrealized, 2)}
+              </span>
             </span>
-            {" · "}
-            Unrealized{" "}
-            <span style={{ color: unrealized >= 0 ? T.green : T.red }}>
-              {formatMoney(unrealized, 2)}
-            </span>
-          </span>
+          )}
         </div>
       </div>
 
@@ -582,7 +584,7 @@ export const AlgoLivePage = ({
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: sp(6),
+            gap: sp(algoIsPhone ? 3 : 6),
             minWidth: 0,
           }}
         >
@@ -621,7 +623,7 @@ export const AlgoLivePage = ({
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: sp(6),
+            gap: sp(algoIsPhone ? 3 : 6),
             minWidth: 0,
           }}
         >
