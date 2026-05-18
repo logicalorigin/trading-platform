@@ -207,7 +207,7 @@ export const AlgoScreen = ({
   const [deploymentName, setDeploymentName] = useState("");
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
-  const [primaryTab, setPrimaryTab] = useState("now");
+  const [primaryTab, setPrimaryTab] = useState("operations");
   const [diagExpansion, setDiagExpansion] = useState({});
   const [profileSectionOpen, setProfileSectionOpen] = useState("signal");
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
@@ -1264,21 +1264,18 @@ export const AlgoScreen = ({
         dense={algoIsPhone}
         sticky={algoIsPhone}
         tabs={[
-          { id: "now", label: "Now" },
           {
-            id: "signals",
-            label: "Signals",
+            id: "operations",
+            label: "Operations",
             badge:
               Number(cockpitTradePath?.blockedCandidates) > 0
                 ? cockpitTradePath.blockedCandidates
                 : null,
           },
-          { id: "positions", label: "Positions" },
-          { id: "diagnostics", label: "Diagnostics" },
-          { id: "profile", label: "Profile" },
+          { id: "tuning", label: "Tuning" },
           {
-            id: "events",
-            label: "Events",
+            id: "audit",
+            label: "Audit",
             badge: events.length || null,
           },
           {
@@ -1300,7 +1297,7 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        {primaryTab === "now" && (
+        {primaryTab === "operations" && (
           <AlgoNowTab
             deployments={deployments}
             candidateDrafts={candidateDrafts}
@@ -1331,7 +1328,7 @@ export const AlgoScreen = ({
           />
         )}
 
-        {primaryTab === "diagnostics" && (
+        {primaryTab === "tuning" && (
           <AlgoDiagnosticsTab
             cockpitSkipCategoryRows={cockpitSkipCategoryRows}
             cockpitSkipReasonRows={cockpitSkipReasonRows}
@@ -1349,7 +1346,7 @@ export const AlgoScreen = ({
           />
         )}
 
-        {primaryTab === "signals" && (
+        {primaryTab === "operations" && (
           <AlgoSignalsTab
             visibleSignalRows={visibleSignalRows}
             signalOptionsCandidates={signalOptionsCandidates}
@@ -1367,7 +1364,7 @@ export const AlgoScreen = ({
         )}
 
 
-        {(primaryTab === "positions" || primaryTab === "profile") && (
+        {(primaryTab === "operations" || primaryTab === "tuning") && (
         <div
           style={{
             border: "none",
@@ -1377,14 +1374,14 @@ export const AlgoScreen = ({
             minWidth: 0,
           }}
         >
-          {primaryTab === "positions" && (
+          {primaryTab === "operations" && (
             <AlgoPositionsTab
               signalOptionsPositions={signalOptionsPositions}
               algoIsPhone={algoIsPhone}
             />
           )}
 
-          {primaryTab === "profile" && (
+          {primaryTab === "tuning" && (
             <AlgoProfileTab
               profileDraft={profileDraft}
               patchProfileDraft={patchProfileDraft}
@@ -1409,7 +1406,7 @@ export const AlgoScreen = ({
       </div>
 
 
-      {primaryTab === "events" && (
+      {primaryTab === "audit" && (
         <AlgoEventsTab
           events={events}
           focusedDeployment={focusedDeployment}

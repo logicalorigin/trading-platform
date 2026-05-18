@@ -394,7 +394,7 @@ export const AlgoNowTab = ({
           right={
             <button
               type="button"
-              onClick={() => setPrimaryTab("signals")}
+              onClick={() => setPrimaryTab("operations")}
               style={{
                 padding: sp("3px 8px"),
                 fontSize: textSize("caption"),
