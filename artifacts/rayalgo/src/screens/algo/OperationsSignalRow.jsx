@@ -6,7 +6,10 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { TableExpandableRow } from "../../components/platform/primitives.jsx";
+import {
+  ScoreBar,
+  TableExpandableRow,
+} from "../../components/platform/primitives.jsx";
 import {
   asRecord,
   formatContractLabel,
@@ -19,7 +22,7 @@ import {
 const COLUMNS = [
   { key: "symbol", label: "Sym", width: 52 },
   { key: "dir", label: "Dir", width: 32 },
-  { key: "score", label: "Score", width: 48 },
+  { key: "score", label: "Score", width: 76 },
   { key: "bars", label: "Bars", width: 36 },
   { key: "action", label: "Mapped action", width: null },
   { key: "spread", label: "Spr", width: 44 },
@@ -179,7 +182,10 @@ export const OperationsSignalRow = ({
               <span style={{ color: tone }}>
                 {directionGlyph(signalRecord.direction)}
               </span>
-              <span>{formatScore(signalRecord.score)}</span>
+              <ScoreBar value={signalRecord.score} width={72} height={14} />
+              <span style={{ display: "none" }}>
+                {formatScore(signalRecord.score)}
+              </span>
               <span style={{ color: T.textSec }}>
                 {formatBars(signalRecord.barsSinceSignal)}
               </span>

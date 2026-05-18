@@ -1087,6 +1087,97 @@ export const Card = ({
 };
 
 /**
+ * ScoreBar — inline horizontal heat-bar with a tick at the value.
+ * Renders a thin red→neutral→green gradient (clipped to the |value|
+ * range) with a vertical tick at the value's position. Used in dense
+ * tables where a numeric score is more legible as a visual bar than
+ * a digit.
+ */
+export const ScoreBar = ({
+  value,
+  min = -3,
+  max = 3,
+  width = 64,
+  height = 14,
+  showNumber = true,
+}) => {
+  if (!Number.isFinite(Number(value))) {
+    return (
+      <span
+        style={{
+          color: T.textDim,
+          fontFamily: T.mono,
+          fontSize: textSize("caption"),
+        }}
+      >
+        —
+      </span>
+    );
+  }
+  const numeric = Number(value);
+  const clamped = Math.max(min, Math.min(max, numeric));
+  const range = max - min || 1;
+  const zeroPos = ((0 - min) / range) * width;
+  const valuePos = ((clamped - min) / range) * width;
+  const tone = numeric > 0.1 ? T.green : numeric < -0.1 ? T.red : T.textMuted;
+  return (
+    <span
+      style={{
+        position: "relative",
+        display: "inline-block",
+        width,
+        height,
+        background: `linear-gradient(to right, ${T.red}33 0%, ${T.red}11 35%, ${T.bg2} 50%, ${T.green}11 65%, ${T.green}33 100%)`,
+        borderRadius: dim(RADII.xs),
+        border: `1px solid ${T.border}`,
+        verticalAlign: "middle",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: zeroPos,
+          width: 1,
+          background: T.border,
+        }}
+      />
+      <span
+        style={{
+          position: "absolute",
+          top: -1,
+          bottom: -1,
+          left: Math.max(0, Math.min(width - 2, valuePos - 1)),
+          width: 2,
+          background: tone,
+          borderRadius: 1,
+        }}
+      />
+      {showNumber ? (
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: T.text,
+            fontFamily: T.mono,
+            fontSize: textSize("caption"),
+            lineHeight: 1,
+            pointerEvents: "none",
+            textShadow: `0 0 2px ${T.bg1}, 0 0 2px ${T.bg1}`,
+          }}
+        >
+          {numeric.toFixed(1)}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+/**
  * InlineFilterBar — single-row filter strip with an optional text input
  * on the left and a row of chip toggles on the right. Chips can be a
  * single-select group (`mode="single"`) or multi-select (`mode="multi"`).
