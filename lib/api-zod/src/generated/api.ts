@@ -3681,7 +3681,19 @@ export const EvaluateSignalMonitorResponse = zod.object({
 })),
   "evaluatedAt": zod.coerce.date(),
   "truncated": zod.boolean(),
-  "skippedSymbols": zod.array(zod.string())
+  "skippedSymbols": zod.array(zod.string()),
+  "universe": zod.object({
+  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe']),
+  "configuredMaxSymbols": zod.number(),
+  "resolvedSymbols": zod.number(),
+  "pinnedSymbols": zod.number(),
+  "expansionSymbols": zod.number(),
+  "shortfall": zod.number(),
+  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe']),
+  "fallbackUsed": zod.boolean(),
+  "degradedReason": zod.string().nullable(),
+  "rankedAt": zod.coerce.date().nullable()
+})
 })
 
 
@@ -3777,7 +3789,19 @@ export const GetSignalMonitorStateResponse = zod.object({
 })),
   "evaluatedAt": zod.coerce.date(),
   "truncated": zod.boolean(),
-  "skippedSymbols": zod.array(zod.string())
+  "skippedSymbols": zod.array(zod.string()),
+  "universe": zod.object({
+  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe']),
+  "configuredMaxSymbols": zod.number(),
+  "resolvedSymbols": zod.number(),
+  "pinnedSymbols": zod.number(),
+  "expansionSymbols": zod.number(),
+  "shortfall": zod.number(),
+  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe']),
+  "fallbackUsed": zod.boolean(),
+  "degradedReason": zod.string().nullable(),
+  "rankedAt": zod.coerce.date().nullable()
+})
 })
 
 
@@ -5407,5 +5431,4 @@ export const ListBacktestDraftStrategiesResponse = zod.object({
   "promotedAt": zod.coerce.date()
 }))
 })
-
 

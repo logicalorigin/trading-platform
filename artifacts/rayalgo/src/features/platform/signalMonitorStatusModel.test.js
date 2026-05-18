@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildSignalMonitorStatusSnapshot,
   isSignalMonitorDegradedProfile,
   isSignalMonitorRuntimeFallbackProfile,
+  resolveSignalMonitorLastEvaluatedAt,
   resolveSignalMonitorStatus,
   summarizeSignalMonitorStates,
 } from "./signalMonitorStatusModel";
@@ -90,5 +92,50 @@ test("signal monitor state summary separates fresh, stale, and errored states", 
       problem: 3,
       allProblem: false,
     },
+  );
+});
+
+test("signal monitor status snapshot separates configured max from tracked states", () => {
+  const snapshot = buildSignalMonitorStatusSnapshot({
+    profile: {
+      maxSymbols: 250,
+      lastEvaluatedAt: "2026-05-18T18:55:00.000Z",
+    },
+    states: [
+      { status: "ok", fresh: true, lastEvaluatedAt: "2026-05-18T18:56:00.000Z" },
+      { status: "ok", fresh: false },
+    ],
+    universe: {
+      mode: "all_watchlists_plus_universe",
+      configuredMaxSymbols: 250,
+      resolvedSymbols: 250,
+      pinnedSymbols: 90,
+      expansionSymbols: 160,
+      shortfall: 0,
+      source: "watchlists_plus_ranked_universe",
+      fallbackUsed: false,
+      degradedReason: null,
+      rankedAt: "2026-05-18T18:45:00.000Z",
+    },
+  });
+
+  assert.equal(snapshot.configuredMaxSymbols, 250);
+  assert.equal(snapshot.stateSummary.total, 2);
+  assert.equal(snapshot.resolvedSymbols, 250);
+  assert.equal(snapshot.pinnedSymbols, 90);
+  assert.equal(snapshot.expansionSymbols, 160);
+  assert.equal(snapshot.lastEvaluatedAt, "2026-05-18T18:56:00.000Z");
+});
+
+test("signal monitor last evaluated ignores stale profile timestamps", () => {
+  assert.equal(
+    resolveSignalMonitorLastEvaluatedAt({
+      profile: { lastEvaluatedAt: "2026-05-18T18:50:00.000Z" },
+      states: [
+        { lastEvaluatedAt: "2026-05-18T18:49:00.000Z" },
+        { lastEvaluatedAt: "2026-05-18T18:53:00.000Z" },
+      ],
+    }),
+    "2026-05-18T18:53:00.000Z",
   );
 });

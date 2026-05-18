@@ -33,6 +33,9 @@ import {
   resolveHeaderBroadcastSpeedPreset,
 } from "../features/platform/headerBroadcastModel";
 import {
+  buildSignalMonitorStatusSnapshot,
+} from "../features/platform/signalMonitorStatusModel";
+import {
   useMemoryPressurePreferences,
 } from "../features/platform/memoryPressurePreferences";
 import { useMemoryPressureSnapshot } from "../features/platform/memoryPressureStore";
@@ -106,6 +109,39 @@ const SIGNAL_MONITOR_LIMITS = Object.freeze({
   evaluationConcurrency: { min: 1, max: 10 },
   freshWindowBars: { min: 1, max: 20 },
 });
+const SIGNAL_MONITOR_SCAN_AFFECTING_FIELDS = Object.freeze([
+  "enabled",
+  "watchlistId",
+  "timeframe",
+  "freshWindowBars",
+  "maxSymbols",
+  "evaluationConcurrency",
+  "rayReplicaSettings",
+]);
+const pickSignalMonitorEditableSettings = (profile) => {
+  const source = profile || {};
+  return {
+    enabled: Boolean(source.enabled),
+    watchlistId: source.watchlistId || null,
+    timeframe: source.timeframe || "5m",
+    freshWindowBars: Number(source.freshWindowBars),
+    pollIntervalSeconds: Number(source.pollIntervalSeconds),
+    maxSymbols: Number(source.maxSymbols),
+    evaluationConcurrency: Number(source.evaluationConcurrency),
+    rayReplicaSettings: source.rayReplicaSettings || {},
+  };
+};
+const signalMonitorEditableSettingsJson = (profile) =>
+  JSON.stringify(pickSignalMonitorEditableSettings(profile));
+const signalMonitorScanAffectingSettingsChanged = (current, next) => {
+  const currentSettings = pickSignalMonitorEditableSettings(current);
+  const nextSettings = pickSignalMonitorEditableSettings(next);
+  return SIGNAL_MONITOR_SCAN_AFFECTING_FIELDS.some(
+    (field) =>
+      JSON.stringify(currentSettings[field]) !==
+      JSON.stringify(nextSettings[field]),
+  );
+};
 const FLOW_FILTERS = ["all", "calls", "puts", "unusual", "golden", "sweep", "block", "cluster"];
 const FLOW_SORT_OPTIONS = ["time", "premium", "score", "ratio", "ticker"];
 const FLOW_DENSITY_OPTIONS = ["compact", "comfortable"];
@@ -702,7 +738,9 @@ function useSignalMonitorSettings() {
   const events = eventsQuery.data?.events || [];
 
   const dirty = useMemo(
-    () => JSON.stringify(profile || {}) !== JSON.stringify(draft || {}),
+    () =>
+      signalMonitorEditableSettingsJson(profile) !==
+      signalMonitorEditableSettingsJson(draft),
     [draft, profile],
   );
 
@@ -752,6 +790,17 @@ function useSignalMonitorSettings() {
             getGetSignalMonitorProfileQueryKey({ environment: payload.environment }),
             payload,
           );
+          queryClient.invalidateQueries({
+            queryKey: getGetSignalMonitorStateQueryKey({
+              environment: payload.environment,
+            }),
+          });
+          queryClient.invalidateQueries({
+            queryKey: getListSignalMonitorEventsQueryKey({
+              environment: payload.environment,
+              limit: signalMonitorEventsParams.limit,
+            }),
+          });
         }
         setDraft(payload);
       },
@@ -798,20 +847,35 @@ function useSignalMonitorSettings() {
   const save = useCallback(() => {
     if (!draft) return;
     setLocalError(null);
-    updateProfileMutation.mutate({
-      data: {
-        environment: SIGNAL_MONITOR_ENVIRONMENT,
-        enabled: Boolean(draft.enabled),
-        watchlistId: draft.watchlistId || null,
-        timeframe: draft.timeframe,
-        freshWindowBars: Number(draft.freshWindowBars),
-        pollIntervalSeconds: Number(draft.pollIntervalSeconds),
-        maxSymbols: Number(draft.maxSymbols),
-        evaluationConcurrency: Number(draft.evaluationConcurrency),
-        rayReplicaSettings: draft.rayReplicaSettings || {},
+    const shouldEvaluate = signalMonitorScanAffectingSettingsChanged(profile, draft);
+    updateProfileMutation.mutate(
+      {
+        data: {
+          environment: SIGNAL_MONITOR_ENVIRONMENT,
+          enabled: Boolean(draft.enabled),
+          watchlistId: draft.watchlistId || null,
+          timeframe: draft.timeframe,
+          freshWindowBars: Number(draft.freshWindowBars),
+          pollIntervalSeconds: Number(draft.pollIntervalSeconds),
+          maxSymbols: Number(draft.maxSymbols),
+          evaluationConcurrency: Number(draft.evaluationConcurrency),
+          rayReplicaSettings: draft.rayReplicaSettings || {},
+        },
       },
-    });
-  }, [draft, updateProfileMutation]);
+      {
+        onSuccess: (payload) => {
+          if (payload?.enabled && shouldEvaluate) {
+            evaluateMutation.mutate({
+              data: {
+                environment: SIGNAL_MONITOR_ENVIRONMENT,
+                mode: "incremental",
+              },
+            });
+          }
+        },
+      },
+    );
+  }, [draft, evaluateMutation, profile, updateProfileMutation]);
 
   const evaluate = useCallback((mode = "incremental") => {
     setLocalError(null);
@@ -2314,6 +2378,16 @@ function SignalMonitorSettingsPanel({ watchlists }) {
   const monitor = useSignalMonitorSettings();
   const draft = monitor.draft;
   const states = monitor.state?.states || [];
+  const liveProfile = monitor.state?.profile || monitor.profile || null;
+  const statusSnapshot = useMemo(
+    () =>
+      buildSignalMonitorStatusSnapshot({
+        profile: liveProfile,
+        states,
+        universe: monitor.state?.universe,
+      }),
+    [liveProfile, monitor.state?.universe, states],
+  );
   const watchlistOptions = [
     { value: "", label: "Default watchlist" },
     ...watchlists.map((watchlist) => ({
@@ -2372,12 +2446,18 @@ function SignalMonitorSettingsPanel({ watchlists }) {
         )}
       </Panel>
       <Panel title="Signal Monitor Status">
-        <StateRow label="Environment" value={draft?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
-        <StateRow label="Tracked symbols" value={states.length} />
-        <StateRow label="Fresh signals" value={states.filter((state) => state.fresh && state.status === "ok").length} />
+        <StateRow label="Environment" value={liveProfile?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
+        <StateRow label="Configured max" value={statusSnapshot.configuredMaxSymbols ?? MISSING_VALUE} />
+        <StateRow label="Resolved symbols" value={statusSnapshot.resolvedSymbols ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? T.amber : T.textSec} />
+        <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.total} />
+        <StateRow label="Pinned symbols" value={statusSnapshot.pinnedSymbols ?? MISSING_VALUE} />
+        <StateRow label="Expanded symbols" value={statusSnapshot.expansionSymbols ?? MISSING_VALUE} />
+        <StateRow label="Fresh signals" value={statusSnapshot.stateSummary.fresh} />
         <StateRow label="Recent events" value={monitor.events.length} />
-        <StateRow label="Last evaluated" value={draft?.lastEvaluatedAt || MISSING_VALUE} />
-        <StateRow label="Last error" value={draft?.lastError || MISSING_VALUE} tone={draft?.lastError ? T.red : T.textSec} />
+        <StateRow label="Universe source" value={statusSnapshot.universeSource || MISSING_VALUE} tone={statusSnapshot.universeFallbackUsed ? T.amber : T.textSec} />
+        <StateRow label="Shortfall" value={statusSnapshot.shortfall ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? T.amber : T.textSec} />
+        <StateRow label="Last evaluated" value={statusSnapshot.lastEvaluatedAt || MISSING_VALUE} />
+        <StateRow label="Last error" value={liveProfile?.lastError || statusSnapshot.universeDegradedReason || MISSING_VALUE} tone={liveProfile?.lastError || statusSnapshot.universeDegradedReason ? T.red : T.textSec} />
       </Panel>
     </div>
   );

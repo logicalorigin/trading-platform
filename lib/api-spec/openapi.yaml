@@ -9461,6 +9461,44 @@ components:
           minimum: 1
           maximum: 10
 
+    SignalMonitorUniverseSummary:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [selected_watchlist, all_watchlists, all_watchlists_plus_universe]
+        configuredMaxSymbols:
+          type: integer
+        resolvedSymbols:
+          type: integer
+        pinnedSymbols:
+          type: integer
+        expansionSymbols:
+          type: integer
+        shortfall:
+          type: integer
+        source:
+          type: string
+          enum: [selected_watchlist, all_watchlists, watchlists_plus_ranked_universe]
+        fallbackUsed:
+          type: boolean
+        degradedReason:
+          type: [string, "null"]
+        rankedAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - mode
+        - configuredMaxSymbols
+        - resolvedSymbols
+        - pinnedSymbols
+        - expansionSymbols
+        - shortfall
+        - source
+        - fallbackUsed
+        - degradedReason
+        - rankedAt
+
     EvaluateSignalMonitorRequest:
       type: object
       properties:
@@ -9654,12 +9692,15 @@ components:
           type: array
           items:
             type: string
+        universe:
+          $ref: "#/components/schemas/SignalMonitorUniverseSummary"
       required:
         - profile
         - states
         - evaluatedAt
         - truncated
         - skippedSymbols
+        - universe
 
     SignalMonitorMatrixResponse:
       type: object

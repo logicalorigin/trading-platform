@@ -6,6 +6,16 @@ const DB_UNAVAILABLE_ERROR_PATTERN =
   /postgres is unavailable|signal monitor data is temporarily degraded|database unavailable/i;
 const PROBLEM_STATE_STATUSES = new Set(["stale", "unavailable", "error"]);
 
+const parseTimeMs = (value) => {
+  if (!value) return 0;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+};
+
 export const isSignalMonitorRuntimeFallbackProfile = (profile) => {
   if (!profile) {
     return false;
@@ -68,6 +78,50 @@ export const summarizeSignalMonitorStates = (states) => {
 
   summary.allProblem = summary.total > 0 && summary.problem === summary.total;
   return summary;
+};
+
+export const resolveSignalMonitorLastEvaluatedAt = ({
+  profile,
+  states,
+} = {}) => {
+  const candidates = [
+    profile?.lastEvaluatedAt,
+    ...(Array.isArray(states)
+      ? states.map((state) => state?.lastEvaluatedAt)
+      : []),
+  ].filter(Boolean);
+  let latestValue = null;
+  let latestMs = 0;
+  candidates.forEach((value) => {
+    const timeMs = parseTimeMs(value);
+    if (timeMs > latestMs) {
+      latestMs = timeMs;
+      latestValue = value;
+    }
+  });
+  return latestValue;
+};
+
+export const buildSignalMonitorStatusSnapshot = ({
+  profile,
+  states,
+  universe,
+} = {}) => {
+  const stateSummary = summarizeSignalMonitorStates(states);
+  return {
+    stateSummary,
+    lastEvaluatedAt: resolveSignalMonitorLastEvaluatedAt({ profile, states }),
+    configuredMaxSymbols:
+      universe?.configuredMaxSymbols ?? profile?.maxSymbols ?? null,
+    resolvedSymbols: universe?.resolvedSymbols ?? null,
+    pinnedSymbols: universe?.pinnedSymbols ?? null,
+    expansionSymbols: universe?.expansionSymbols ?? null,
+    shortfall: universe?.shortfall ?? null,
+    universeMode: universe?.mode ?? null,
+    universeSource: universe?.source ?? null,
+    universeFallbackUsed: Boolean(universe?.fallbackUsed),
+    universeDegradedReason: universe?.degradedReason ?? null,
+  };
 };
 
 export const resolveSignalMonitorStatus = ({

@@ -5,6 +5,7 @@ const EMPTY_SIGNAL_MONITOR_SNAPSHOT = Object.freeze({
   profile: null,
   states: Object.freeze([]),
   events: Object.freeze([]),
+  universe: null,
   pending: false,
   degraded: false,
 });
@@ -25,6 +26,9 @@ const areSignalStatesEquivalent = (left, right) => {
     left.symbol === right.symbol &&
     left.timeframe === right.timeframe &&
     left.currentSignalDirection === right.currentSignalDirection &&
+    String(left.currentSignalAt || "") === String(right.currentSignalAt || "") &&
+    left.currentSignalPrice === right.currentSignalPrice &&
+    String(left.latestBarAt || "") === String(right.latestBarAt || "") &&
     left.barsSinceSignal === right.barsSinceSignal &&
     left.fresh === right.fresh &&
     left.status === right.status &&
@@ -79,6 +83,7 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
         profile: nextSnapshot.profile || null,
         states: nextStates,
         events: nextEvents,
+        universe: nextSnapshot.universe || null,
         pending: Boolean(nextSnapshot.pending),
         degraded,
       }

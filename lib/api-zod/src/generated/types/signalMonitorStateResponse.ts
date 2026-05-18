@@ -7,6 +7,7 @@
  */
 import type { SignalMonitorProfile } from './signalMonitorProfile';
 import type { SignalMonitorSymbolState } from './signalMonitorSymbolState';
+import type { SignalMonitorUniverseSummary } from './signalMonitorUniverseSummary';
 
 export interface SignalMonitorStateResponse {
   profile: SignalMonitorProfile;
@@ -14,4 +15,5 @@ export interface SignalMonitorStateResponse {
   evaluatedAt: Date;
   truncated: boolean;
   skippedSymbols: string[];
+  universe: SignalMonitorUniverseSummary;
 }

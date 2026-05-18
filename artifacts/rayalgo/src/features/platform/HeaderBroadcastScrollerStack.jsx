@@ -35,8 +35,8 @@ import {
 } from "./marketFlowStore";
 import { providerSummaryHasVisibleFlowDegradation } from "./flowSourceState.js";
 import {
+  buildSignalMonitorStatusSnapshot,
   isSignalMonitorRuntimeFallbackProfile,
-  summarizeSignalMonitorStates,
 } from "./signalMonitorStatusModel";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
@@ -721,10 +721,16 @@ export const HeaderBroadcastScrollerStack = memo(({
     () => buildHeaderSignalTapeItems(signalSnapshot),
     [signalSnapshot],
   );
-  const signalStateSummary = useMemo(
-    () => summarizeSignalMonitorStates(signalSnapshot?.states),
-    [signalSnapshot?.states],
+  const signalStatusSnapshot = useMemo(
+    () =>
+      buildSignalMonitorStatusSnapshot({
+        profile: signalSnapshot?.profile,
+        states: signalSnapshot?.states,
+        universe: signalSnapshot?.universe,
+      }),
+    [signalSnapshot?.profile, signalSnapshot?.states, signalSnapshot?.universe],
   );
+  const signalStateSummary = signalStatusSnapshot.stateSummary;
   const rawUnusualEvents = useMemo(
     () =>
       broadScanSnapshotActive
@@ -762,11 +768,7 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalDegraded = Boolean(
     !signalBusy && !signalHasError && signalSnapshot?.degraded,
   );
-  const signalLastEvaluatedAt =
-    signalSnapshot?.profile?.lastEvaluatedAt ||
-    signalSnapshot?.states?.find?.((state) => state?.lastEvaluatedAt)
-      ?.lastEvaluatedAt ||
-    null;
+  const signalLastEvaluatedAt = signalStatusSnapshot.lastEvaluatedAt;
   const signalNoTrackedSymbols = Boolean(
     !signalBusy &&
       !signalHasError &&
@@ -908,8 +910,16 @@ export const HeaderBroadcastScrollerStack = memo(({
       : signalEvaluationPending || signalSnapshot?.pending
         ? "SCANNING"
         : signalScanEnabled
-          ? "SCAN ON"
-          : "SCAN OFF";
+        ? "SCAN ON"
+        : "SCAN OFF";
+  const signalUniverseLabel =
+    signalStatusSnapshot.universeMode === "all_watchlists_plus_universe"
+      ? "Watchlists + universe"
+      : signalStatusSnapshot.universeMode === "all_watchlists"
+        ? "All watchlists"
+        : signalStatusSnapshot.universeMode === "selected_watchlist"
+          ? "Selected watchlist"
+          : MISSING_VALUE;
   const signalSettings = (
     <HeaderLaneSettingsPopover
       testId="header-signal-settings-popover"
@@ -951,7 +961,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             : "Signal Scan Off"}
       </HeaderLaneToggleButton>
       <div style={{ height: dim(7) }} />
-      <HeaderLaneInfoRow label="Visible" value={signalItems.length} />
+      <HeaderLaneInfoRow label="Lane items" value={signalItems.length} />
       <HeaderLaneInfoRow
         label="Tracked"
         value={signalStateSummary.total}
@@ -976,7 +986,21 @@ export const HeaderBroadcastScrollerStack = memo(({
       />
       <HeaderLaneInfoRow
         label="Max"
-        value={signalSnapshot?.profile?.maxSymbols ?? MISSING_VALUE}
+        value={signalStatusSnapshot.configuredMaxSymbols ?? MISSING_VALUE}
+      />
+      <HeaderLaneInfoRow
+        label="Resolved"
+        value={signalStatusSnapshot.resolvedSymbols ?? MISSING_VALUE}
+        tone={signalStatusSnapshot.shortfall ? T.amber : T.textSec}
+      />
+      <HeaderLaneInfoRow
+        label="Expanded"
+        value={signalStatusSnapshot.expansionSymbols ?? MISSING_VALUE}
+      />
+      <HeaderLaneInfoRow
+        label="Universe"
+        value={signalUniverseLabel}
+        tone={signalStatusSnapshot.universeFallbackUsed ? T.amber : T.textSec}
       />
       <HeaderLaneInfoRow
         label="State"
