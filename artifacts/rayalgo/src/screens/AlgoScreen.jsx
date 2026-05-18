@@ -29,10 +29,8 @@ import {
 import { AlgoDiagnosticsTab } from "./algo/AlgoDiagnosticsTab";
 import { AlgoDraftsTab } from "./algo/AlgoDraftsTab";
 import { AlgoEventsTab } from "./algo/AlgoEventsTab";
-import { AlgoNowTab } from "./algo/AlgoNowTab";
-import { AlgoPositionsTab } from "./algo/AlgoPositionsTab";
+import { AlgoOperationsTab } from "./algo/AlgoOperationsTab";
 import { AlgoProfileTab } from "./algo/AlgoProfileTab";
-import { AlgoSignalsTab } from "./algo/AlgoSignalsTab";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -1298,7 +1296,7 @@ export const AlgoScreen = ({
         }}
       >
         {primaryTab === "operations" && (
-          <AlgoNowTab
+          <AlgoOperationsTab
             deployments={deployments}
             candidateDrafts={candidateDrafts}
             selectedDraft={selectedDraft}
@@ -1309,45 +1307,16 @@ export const AlgoScreen = ({
             setSymbolUniverseInput={setSymbolUniverseInput}
             handleCreateDeployment={handleCreateDeployment}
             createDeploymentMutation={createDeploymentMutation}
-            cockpitSignalFreshness={cockpitSignalFreshness}
             cockpitKpis={cockpitKpis}
-            signalOptionsPositions={signalOptionsPositions}
-            signalOptionsCandidates={signalOptionsCandidates}
+            cockpitSignalFreshness={cockpitSignalFreshness}
             cockpitTradePath={cockpitTradePath}
             signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
-            signalOptionsRuleAdherence={signalOptionsRuleAdherence}
-            cockpitAttentionItems={cockpitAttentionItems}
-            gatewayReady={gatewayReady}
             cockpitStageItems={cockpitStageItems}
             selectedStage={selectedStage}
             setSelectedPipelineStageId={setSelectedPipelineStageId}
-            signalOptionsSignals={signalOptionsSignals}
-            setPrimaryTab={setPrimaryTab}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
-          />
-        )}
-
-        {primaryTab === "tuning" && (
-          <AlgoDiagnosticsTab
-            cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-            cockpitSkipReasonRows={cockpitSkipReasonRows}
-            cockpitReadinessRows={cockpitReadinessRows}
-            cockpitMarkHealthRows={cockpitMarkHealthRows}
-            cockpitLifecycleRows={cockpitLifecycleRows}
-            cockpitEntryGateRows={cockpitEntryGateRows}
-            cockpitOptionChainRows={cockpitOptionChainRows}
-            cockpitSignalFreshness={cockpitSignalFreshness}
-            cockpitTradePath={cockpitTradePath}
-            diagExpansion={diagExpansion}
-            setDiagExpansion={setDiagExpansion}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
-          />
-        )}
-
-        {primaryTab === "operations" && (
-          <AlgoSignalsTab
+            cockpitAttentionItems={cockpitAttentionItems}
+            signalOptionsRuleAdherence={signalOptionsRuleAdherence}
+            gatewayReady={gatewayReady}
             visibleSignalRows={visibleSignalRows}
             signalOptionsCandidates={signalOptionsCandidates}
             displayedSignalOptionsCandidates={displayedSignalOptionsCandidates}
@@ -1359,29 +1328,19 @@ export const AlgoScreen = ({
             onJumpToTradeCandidate={onJumpToTradeCandidate}
             algoDetailGridTemplate={algoDetailGridTemplate}
             algoCandidateGridTemplate={algoCandidateGridTemplate}
+            signalOptionsPositions={signalOptionsPositions}
             algoIsPhone={algoIsPhone}
           />
         )}
 
-
-        {(primaryTab === "operations" || primaryTab === "tuning") && (
-        <div
-          style={{
-            border: "none",
-            borderRadius: dim(RADII.md),
-            background: T.bg1,
-            padding: sp("9px 10px"),
-            minWidth: 0,
-          }}
-        >
-          {primaryTab === "operations" && (
-            <AlgoPositionsTab
-              signalOptionsPositions={signalOptionsPositions}
-              algoIsPhone={algoIsPhone}
-            />
-          )}
-
-          {primaryTab === "tuning" && (
+        {primaryTab === "tuning" && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: sp(8),
+            }}
+          >
             <AlgoProfileTab
               profileDraft={profileDraft}
               patchProfileDraft={patchProfileDraft}
@@ -1400,8 +1359,22 @@ export const AlgoScreen = ({
               updateStrategySettingsMutation={updateStrategySettingsMutation}
               algoIsPhone={algoIsPhone}
             />
-          )}
-        </div>
+            <AlgoDiagnosticsTab
+              cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+              cockpitSkipReasonRows={cockpitSkipReasonRows}
+              cockpitReadinessRows={cockpitReadinessRows}
+              cockpitMarkHealthRows={cockpitMarkHealthRows}
+              cockpitLifecycleRows={cockpitLifecycleRows}
+              cockpitEntryGateRows={cockpitEntryGateRows}
+              cockpitOptionChainRows={cockpitOptionChainRows}
+              cockpitSignalFreshness={cockpitSignalFreshness}
+              cockpitTradePath={cockpitTradePath}
+              diagExpansion={diagExpansion}
+              setDiagExpansion={setDiagExpansion}
+              algoIsPhone={algoIsPhone}
+              algoIsNarrow={algoIsNarrow}
+            />
+          </div>
         )}
       </div>
 
