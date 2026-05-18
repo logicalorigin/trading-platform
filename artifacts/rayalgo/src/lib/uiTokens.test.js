@@ -234,6 +234,65 @@ test("fs and dim scale and round numerically with the active scale", () => {
   setCurrentScale("m");
 });
 
+test("global scrollbar uses --ra-border-default + brightens on hover", () => {
+  // Scrollbar thumb must color-mix through --ra-border-default so it
+  // flexes with theme. Hover state brightens to --ra-color-accent so
+  // the active-grab affordance matches the rest of the UI's accent.
+  // The .chart-widget-menu has its own ::-webkit-scrollbar-thumb rule
+  // for the chart menu's themed scrollbar — find the GLOBAL rule
+  // (unscoped, no parent selector).
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+
+  const globalBaseMatches = cssSource.match(
+    /^::-webkit-scrollbar-thumb \{[\s\S]*?^\}/gm,
+  );
+  assert.ok(
+    globalBaseMatches && globalBaseMatches.length >= 1,
+    "global ::-webkit-scrollbar-thumb rule not declared",
+  );
+  // The last one is the global rule (declared later in the file).
+  const baseRule = globalBaseMatches[globalBaseMatches.length - 1];
+  assert.match(baseRule, /color-mix\([\s\S]*?--ra-border-default/);
+  assert.match(baseRule, /background-clip: padding-box/);
+
+  const hoverRule = cssSource.match(
+    /^::-webkit-scrollbar-thumb:hover \{[\s\S]*?^\}/m,
+  );
+  assert.ok(hoverRule, "global ::-webkit-scrollbar-thumb:hover not declared");
+  assert.match(hoverRule[0], /color-mix\([\s\S]*?--ra-color-accent/);
+
+  // Firefox scrollbar-color via the universal rule.
+  assert.match(
+    cssSource,
+    /\* \{[\s\S]*?scrollbar-color: color-mix\([\s\S]*?--ra-border-default/,
+  );
+});
+
+test("scroll-fade utility classes feather edges via mask-image", () => {
+  // .ra-scroll-fade-y / -x apply a linear-gradient mask that fades the
+  // first and last 16px to transparent — softens the abrupt edge of a
+  // scrolling list against the surrounding panel.
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+
+  const fadeY = cssSource.match(/\.ra-scroll-fade-y \{[\s\S]*?\}/);
+  const fadeX = cssSource.match(/\.ra-scroll-fade-x \{[\s\S]*?\}/);
+  assert.ok(fadeY, ".ra-scroll-fade-y not declared");
+  assert.ok(fadeX, ".ra-scroll-fade-x not declared");
+
+  assert.match(fadeY[0], /mask-image: linear-gradient\(\s*180deg/);
+  assert.match(fadeY[0], /-webkit-mask-image: linear-gradient\(\s*180deg/);
+  assert.match(fadeY[0], /transparent 0[,\s]/);
+  assert.match(fadeY[0], /black 16px/);
+
+  assert.match(fadeX[0], /mask-image: linear-gradient\(\s*90deg/);
+});
+
 test("hairline divider classes use G.hairlineDivider gradients", () => {
   // .ra-hairline-h / .ra-hairline-v render a 1px line via the
   // G.hairlineDividerH / G.hairlineDividerV gradients (transparent →
