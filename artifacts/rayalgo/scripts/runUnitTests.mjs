@@ -45,6 +45,7 @@ const unitTestFiles = [
   "src/features/platform/flowOptionChartIdentity.test.js",
   "src/features/platform/flowTapeModel.test.js",
   "src/features/platform/marketFlowScannerConfig.test.js",
+  "src/features/platform/algoTransitionsModel.test.js",
   "src/features/platform/marketActivityLaneModel.test.js",
   "src/features/platform/memoryPressureModel.test.js",
   "src/features/platform/appWorkScheduler.test.js",

@@ -5,6 +5,7 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -106,6 +107,12 @@ import {
   motionVars,
 } from "../lib/motion";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
+import {
+  buildTransitionsBufferStore,
+  collectEventTransitions,
+  diffSignalSnapshots,
+  limitToWindow,
+} from "../features/platform/algoTransitionsModel";
 import {
   buildAttentionStream,
   buildCockpitGateSummary,
@@ -327,6 +334,13 @@ export const AlgoScreen = ({
     },
   );
   const cockpit = cockpitQuery.data || null;
+  const transitionsStoreRef = useRef(null);
+  if (transitionsStoreRef.current === null) {
+    transitionsStoreRef.current = buildTransitionsBufferStore();
+  }
+  const prevCockpitSignalsRef = useRef(null);
+  const [recentTransitions, setRecentTransitions] = useState([]);
+  const [transitionsNow, setTransitionsNow] = useState(() => Date.now());
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
@@ -426,6 +440,60 @@ export const AlgoScreen = ({
     (deployment) => deployment.enabled,
   );
   const latestEvent = events[0] || null;
+
+  useEffect(() => {
+    const store = transitionsStoreRef.current;
+    if (!store) return;
+    const deploymentId = focusedDeployment?.id || null;
+    store.prune(deploymentId);
+    setRecentTransitions(store.get(deploymentId));
+    prevCockpitSignalsRef.current = null;
+  }, [focusedDeployment?.id]);
+
+  useEffect(() => {
+    const store = transitionsStoreRef.current;
+    if (!store) return;
+    const deploymentId = focusedDeployment?.id || null;
+    if (!deploymentId) {
+      setRecentTransitions([]);
+      return;
+    }
+    const evaluatedAt = cockpit?.evaluatedAt;
+    const prevSignals = prevCockpitSignalsRef.current;
+    const transitions = prevSignals
+      ? diffSignalSnapshots(prevSignals, signalOptionsSignals, evaluatedAt)
+      : [];
+    const eventTransitions = collectEventTransitions(events, {
+      sinceMs: Date.now() - 60_000,
+    });
+    const next = store.push(deploymentId, [
+      ...transitions,
+      ...eventTransitions,
+    ]);
+    prevCockpitSignalsRef.current = signalOptionsSignals;
+    setRecentTransitions(next);
+  }, [
+    cockpit?.evaluatedAt,
+    events,
+    focusedDeployment?.id,
+    signalOptionsSignals,
+  ]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setTransitionsNow(Date.now());
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const visibleTransitions = useMemo(
+    () =>
+      limitToWindow(recentTransitions, {
+        windowMs: 60_000,
+        nowMs: transitionsNow,
+      }),
+    [recentTransitions, transitionsNow],
+  );
 
   useEffect(() => {
     if (!candidateDrafts.length) {
@@ -1317,6 +1385,7 @@ export const AlgoScreen = ({
             cockpitAttentionItems={cockpitAttentionItems}
             signalOptionsRuleAdherence={signalOptionsRuleAdherence}
             gatewayReady={gatewayReady}
+            transitions={visibleTransitions}
             visibleSignalRows={visibleSignalRows}
             signalOptionsCandidates={signalOptionsCandidates}
             displayedSignalOptionsCandidates={displayedSignalOptionsCandidates}

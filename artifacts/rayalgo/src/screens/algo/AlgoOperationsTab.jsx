@@ -9,8 +9,9 @@ import {
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { AlgoPositionsTab } from "./AlgoPositionsTab";
 import { AlgoSignalsTab } from "./AlgoSignalsTab";
-import { OperationsKpiStrip } from "./OperationsKpiStrip";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
+import { OperationsKpiStrip } from "./OperationsKpiStrip";
+import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
 import {
   asRecord,
@@ -158,6 +159,8 @@ export const AlgoOperationsTab = ({
   cockpitAttentionItems,
   signalOptionsRuleAdherence,
   gatewayReady,
+  // Transitions
+  transitions,
   // Signals
   visibleSignalRows,
   signalOptionsCandidates,
@@ -309,6 +312,8 @@ export const AlgoOperationsTab = ({
       </div>
 
       <OperationsAttentionStrip items={attentionStream} maxInline={3} />
+
+      <OperationsTransitionsStrip transitions={transitions || []} maxInline={5} />
 
       <AlgoSignalsTab
         visibleSignalRows={visibleSignalRows}
