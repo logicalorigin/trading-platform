@@ -446,13 +446,6 @@ const WatchlistRow = memo(
           background:
             selectedRow || dragOver ? `${T.accent}12` : rowBackground,
           opacity: dragging ? 0.55 : 1,
-          transition: "background 0.18s ease, opacity 0.12s ease",
-        }}
-        onMouseEnter={(event) => {
-          if (!selectedRow && !dragOver) event.currentTarget.style.background = T.accentHoverBg;
-        }}
-        onMouseLeave={(event) => {
-          if (!selectedRow && !dragOver) event.currentTarget.style.background = "transparent";
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -971,14 +964,8 @@ export const Watchlist = ({
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
               letterSpacing: "-0.005em",
-              transition: "border-color 0.12s ease",
             }}
-            onMouseEnter={(event) => {
-              event.currentTarget.style.borderColor = T.accent;
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.borderColor = T.border;
-            }}
+            className="ra-interactive"
           >
             <span
               style={{
@@ -1089,14 +1076,8 @@ export const Watchlist = ({
               border: `1px solid ${T.border}`,
               color: T.accent,
               cursor: "pointer",
-              transition: "border-color 0.12s ease",
             }}
-            onMouseEnter={(event) => {
-              event.currentTarget.style.borderColor = T.accent;
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.borderColor = T.border;
-            }}
+            className="ra-interactive"
           >
             {mobileDense ? <SlidersHorizontal size={16} /> : <Plus size={16} />}
           </button></AppTooltip>
