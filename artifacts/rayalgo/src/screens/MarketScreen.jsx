@@ -540,10 +540,10 @@ export const MarketScreen = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "16px 20px"),
+          padding: sp(marketLayoutFlags.isPhone ? "12px 12px" : "12px 20px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(12),
+          gap: sp(8),
         }}
       >
         {/* ── ROW 1: Chart workspace + activity feed ── */}
@@ -697,7 +697,7 @@ export const MarketScreen = ({
               }}
             >
               {marketPulseItems.map((item) => (
-                <Card key={item.label} style={{ padding: sp("6px 8px"), minHeight: dim(56) }}>
+                <Card key={item.label} style={{ padding: sp("6px 8px"), minHeight: dim(48) }}>
                   <div
                     style={{
                       color: T.textDim,
@@ -750,7 +750,7 @@ export const MarketScreen = ({
                     ...sectorFlow.map((sector) => Math.abs(sector.calls - sector.puts)),
                   );
                   return (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(10) }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(6) }}>
                       {[...sectorFlow]
                         .map((sector) => ({ ...sector, net: sector.calls - sector.puts }))
                         .sort((left, right) => Math.abs(right.net) - Math.abs(left.net))
@@ -821,7 +821,7 @@ export const MarketScreen = ({
 
             <Card className="ra-panel-enter" style={{ padding: sp("8px 10px") }}>
               <CardTitle>Leadership / Weakness</CardTitle>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(10) }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
                 {[
                   ["Leaders", marketMovers.leaders, T.green],
                   ["Laggards", marketMovers.laggards, T.red],
@@ -843,7 +843,7 @@ export const MarketScreen = ({
                           border: "none",
                           borderTop: index ? `1px solid ${T.border}55` : "none",
                           background: "transparent",
-                          padding: sp("4px 0"),
+                          padding: sp("2px 0"),
                           cursor: "pointer",
                           textAlign: "left",
                         }}
