@@ -30,15 +30,20 @@ const TickerRows = ({ rows, currency, maskValues, onSymbolSelect, selectedSymbol
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {rows.map((row) => {
+          const isSelected = Boolean(selectedSymbol && row.symbol === selectedSymbol);
+          return (
           <tr
             key={row.symbol}
-            className="ra-table-row"
+            className={
+              isSelected
+                ? "ra-table-row ra-table-row--selected"
+                : "ra-table-row"
+            }
             style={{
-              background:
-                selectedSymbol && row.symbol === selectedSymbol
-                  ? `${T.cyan}14`
-                  : "transparent",
+              // Pin --ra-motion-accent to cyan to match the trade-row
+              // "inspect" tone used elsewhere in the account screen.
+              "--ra-motion-accent": T.cyan,
             }}
           >
             <td style={{ padding: sp("5px"), color: T.text, fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
@@ -83,7 +88,8 @@ const TickerRows = ({ rows, currency, maskValues, onSymbolSelect, selectedSymbol
               {formatNumber(row.openQuantity || 0, 2)}
             </td>
           </tr>
-        ))}
+        );
+        })}
       </tbody>
     </table>
   </div>

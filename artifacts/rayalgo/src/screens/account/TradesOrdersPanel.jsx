@@ -702,7 +702,7 @@ export const OrdersPanel = ({
               {(tab === "working"
                 ? ["Symbol", "Side", "Type", "Qty", "Limit / Stop", "TIF", "Status", "Placed", "Avg Fill", "Action"]
                 : ["Symbol", "Side", "Type", "Qty", "Placed", "Filled", "Avg Fill", "Commission", "Status", "Source"]).map((column) => (
-                <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
+                <th key={column} className="ra-table-header-sticky" style={{ ...tableCellStyle, ...tableHeaderStyle }}>
                   {column}
                 </th>
               ))}
@@ -1072,7 +1072,7 @@ export const ClosedTradesPanel = ({
                     "Hold",
                     "Source",
                   ].map((column) => (
-                    <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
+                    <th key={column} className="ra-table-header-sticky" style={{ ...tableCellStyle, ...tableHeaderStyle }}>
                       {column}
                     </th>
                   ))}
@@ -1082,15 +1082,13 @@ export const ClosedTradesPanel = ({
                 {rows.map((trade) => {
                   const tradeId = getAccountTradeId(trade);
                   const rowSelected = Boolean(selectedTradeId && tradeId === selectedTradeId);
-                  const selectedCellStyle = rowSelected
-                    ? {
-                        borderTop: `1px solid ${T.cyan}55`,
-                        borderBottom: `1px solid ${T.cyan}55`,
-                      }
-                    : {};
                   return (
                     <AppTooltip key={tradeId} content={onTradeSelect ? "Inspect trade" : undefined}><tr
-                      className="ra-table-row"
+                      className={
+                        rowSelected
+                          ? "ra-table-row ra-table-row--selected"
+                          : "ra-table-row"
+                      }
                       tabIndex={0}
                       onClick={() => onTradeSelect?.(tradeId)}
                       onKeyDown={(event) => {
@@ -1102,12 +1100,14 @@ export const ClosedTradesPanel = ({
                         moveTableFocus(event);
                       }}
                       style={{
-                        background: rowSelected ? `${T.cyan}16` : "transparent",
-                        boxShadow: rowSelected ? `inset 3px 0 0 ${T.cyan}` : "none",
+                        // Pin --ra-motion-accent to cyan so the selected
+                        // class paints the "inspect trade" tone, not the
+                        // user's global accent preset.
+                        "--ra-motion-accent": T.cyan,
                         cursor: onTradeSelect ? "pointer" : "default",
                       }}
                     >
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+                      <td style={{ ...tableCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
                         <MarketIdentityInline
                           item={{
                             ticker: trade.symbol,
@@ -1119,17 +1119,17 @@ export const ClosedTradesPanel = ({
                           style={{ maxWidth: dim(126) }}
                         />
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>
                         <Pill tone={/buy|long/i.test(trade.side) ? "side-buy" : "side-sell"}>{trade.side}</Pill>
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>{formatNumber(trade.quantity, 3)}</td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>{formatNumber(trade.quantity, 3)}</td>
+                      <td style={tableCellStyle}>
                         {formatAppDate(trade.openDate)}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>
                         {formatAppDate(trade.closeDate)}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>
                         {trade.avgOpen != null
                           ? formatAccountPrice(trade.avgOpen, 2, maskValues)
                           : "—"}
@@ -1138,7 +1138,7 @@ export const ClosedTradesPanel = ({
                           ? formatAccountPrice(trade.avgClose, 2, maskValues)
                           : "—"}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl), fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>
+                      <td style={{ ...tableCellStyle, color: toneForValue(trade.realizedPnl), fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>
                         {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
                         {trade.realizedPnlPercent != null
                           ? `/ ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}`
@@ -1150,12 +1150,12 @@ export const ClosedTradesPanel = ({
                           </span>
                         ) : null}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>
                         {trade.holdDurationMinutes != null
                           ? `${Math.round(trade.holdDurationMinutes / 60)}h`
                           : "—"}
                       </td>
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                      <td style={tableCellStyle}>
                         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
                           <Pill tone={trade.source === "FLEX" ? "accent" : "stream-healthy"}>
                             {trade.source}

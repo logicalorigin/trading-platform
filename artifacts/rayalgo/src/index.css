@@ -811,6 +811,33 @@ summary,
   box-shadow: inset 2px 0 0 var(--ra-motion-accent);
 }
 
+/* Selected row state — sustained accent fill + a thicker left gutter +
+   a soft inset glow on hover. The row's --ra-motion-accent can be
+   overridden via motionVars({ accent }) so consumers tone-customize
+   (cyan for "inspect trade", red for "danger row", etc.) without
+   forking the class. */
+.ra-table-row--selected {
+  background: color-mix(in srgb, var(--ra-motion-accent) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--ra-motion-accent);
+}
+
+.ra-table-row--selected:hover,
+.ra-table-row--selected:focus-visible {
+  background: color-mix(in srgb, var(--ra-motion-accent) 20%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--ra-motion-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-accent) 26%, transparent);
+}
+
+/* Sticky table header — soft drop shadow so the header reads as
+   floating over the scrolling rows instead of looking like a row that
+   simply doesn't scroll. Pair with position: sticky; top: 0; on the
+   <thead> row via tableHeaderStyle. */
+.ra-table-header-sticky {
+  box-shadow: 0 1px 0 var(--ra-border-default),
+    0 6px 14px color-mix(in srgb, var(--ra-bg-0) 75%, transparent);
+}
+
 .ra-hide-scrollbar {
   scrollbar-width: none;
 }

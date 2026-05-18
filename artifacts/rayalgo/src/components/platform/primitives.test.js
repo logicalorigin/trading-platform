@@ -98,6 +98,36 @@ test("TextField error state has its own CSS class for the red ring", () => {
   );
 });
 
+test("Tables: selected-row class uses motion-accent for tone customization", () => {
+  // .ra-table-row--selected must paint its left gutter + fill via
+  // var(--ra-motion-accent) so consumers can pin the tone (cyan for
+  // "inspect", red for danger, etc.) by setting --ra-motion-accent
+  // inline. The default accent comes from motionVars / theme.
+  const css = readFileSync(
+    join(here, "..", "..", "index.css"),
+    "utf8",
+  );
+
+  assert.match(
+    css,
+    /\.ra-table-row--selected \{[\s\S]*?background: color-mix\(in srgb, var\(--ra-motion-accent\)/,
+  );
+  assert.match(
+    css,
+    /\.ra-table-row--selected \{[\s\S]*?box-shadow: inset 3px 0 0 var\(--ra-motion-accent\)/,
+  );
+  // Hover/focus state adds an inset 1px ring glow on top of the gutter.
+  assert.match(
+    css,
+    /\.ra-table-row--selected:hover[\s\S]*?inset 0 0 0 1px color-mix/,
+  );
+  // Sticky header has a drop shadow that separates it from scrolling rows.
+  assert.match(
+    css,
+    /\.ra-table-header-sticky \{[\s\S]*?box-shadow:[\s\S]*?0 6px 14px/,
+  );
+});
+
 test("SegmentedControl indicator respects reduced motion", () => {
   // The .ra-segmented-indicator class must have its transform/width
   // transitions zeroed out under prefers-reduced-motion or the
