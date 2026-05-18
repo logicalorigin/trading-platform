@@ -1211,13 +1211,13 @@ const PremiumDistributionWidget = ({
           flexDirection: "column",
           gap: sp(2),
           minWidth: 0,
-          minHeight: dim(96),
+          minHeight: dim(72),
           borderRadius: dim(RADII.md),
           background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
           width: "100%",
         }}
       >
-        <FlowLoadingBlock width="86%" height={dim(74)} />
+        <FlowLoadingBlock width="86%" height={dim(54)} />
         <FlowLoadingBlock width="56%" height={dim(8)} />
       </Card>
     );
@@ -1251,7 +1251,7 @@ const PremiumDistributionWidget = ({
         gap: sp(1),
         minWidth: 0,
         width: "100%",
-        minHeight: dim(widgetHydrationWarning ? 96 : 84),
+        minHeight: dim(widgetHydrationWarning ? 80 : 68),
         borderRadius: dim(RADII.md),
         background: selected
           ? `linear-gradient(180deg, ${T.bg3}, ${T.bg2})`
