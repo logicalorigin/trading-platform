@@ -95,6 +95,53 @@ const buildTrailImpact = (positions) => {
   };
 };
 
+const collectNumericValues = (candidates, extractor) =>
+  (candidates || [])
+    .map(extractor)
+    .filter((value) => Number.isFinite(Number(value)))
+    .map(Number);
+
+const distributionOf = (values, { bucketCount = 10 } = {}) => {
+  if (!values.length) {
+    return { buckets: [], min: 0, max: 0 };
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) {
+    return { buckets: [values.length], min, max };
+  }
+  const buckets = Array(bucketCount).fill(0);
+  const range = max - min;
+  for (const value of values) {
+    const ratio = (value - min) / range;
+    const index = Math.min(
+      bucketCount - 1,
+      Math.max(0, Math.floor(ratio * bucketCount)),
+    );
+    buckets[index] += 1;
+  }
+  return { buckets, min, max };
+};
+
+const thresholdPositionWithin = (distribution, threshold) => {
+  if (!distribution.buckets.length) return null;
+  const range = distribution.max - distribution.min;
+  if (range <= 0) return 0.5;
+  if (!Number.isFinite(Number(threshold))) return null;
+  const ratio = (Number(threshold) - distribution.min) / range;
+  return Math.max(0, Math.min(1, ratio));
+};
+
+const buildHistogramView = (values, threshold) => {
+  const distribution = distributionOf(values);
+  return {
+    buckets: distribution.buckets,
+    min: distribution.min,
+    max: distribution.max,
+    thresholdPosition: thresholdPositionWithin(distribution, threshold),
+  };
+};
+
 export const buildAlgoTuningImpact = ({
   cockpit,
   profile,
@@ -104,12 +151,45 @@ export const buildAlgoTuningImpact = ({
   const minDte = Number(profile?.optionSelection?.minDte);
   const maxDte = Number(profile?.optionSelection?.maxDte);
   const hardStopPct = Number(profile?.exitPolicy?.hardStopPct);
+  const spreadThreshold = Number(profile?.liquidityGate?.maxSpreadPctOfMid);
+  const bidThreshold = Number(profile?.liquidityGate?.minBid);
+  const premiumThreshold = Number(profile?.riskCaps?.maxPremiumPerEntry);
+
+  const spreadValues = collectNumericValues(
+    candidates,
+    (candidate) => candidate?.liquidity?.spreadPctOfMid,
+  );
+  const bidValues = collectNumericValues(
+    candidates,
+    (candidate) => candidate?.liquidity?.bid,
+  );
+  const premiumValues = collectNumericValues(
+    candidates,
+    (candidate) => candidate?.orderPlan?.premiumAtRisk,
+  );
+  const dteValues = collectNumericValues(
+    candidates,
+    (candidate) => candidate?.dte,
+  );
+
   return {
-    spreadTooWide: buildBlockerImpact(candidates, SPREAD_TOO_WIDE),
-    bidBelowMinimum: buildBlockerImpact(candidates, BID_TOO_LOW),
-    premiumBudget: buildBlockerImpact(candidates, PREMIUM_BUDGET),
+    spreadTooWide: {
+      ...buildBlockerImpact(candidates, SPREAD_TOO_WIDE),
+      histogram: buildHistogramView(spreadValues, spreadThreshold),
+    },
+    bidBelowMinimum: {
+      ...buildBlockerImpact(candidates, BID_TOO_LOW),
+      histogram: buildHistogramView(bidValues, bidThreshold),
+    },
+    premiumBudget: {
+      ...buildBlockerImpact(candidates, PREMIUM_BUDGET),
+      histogram: buildHistogramView(premiumValues, premiumThreshold),
+    },
     regimeBlocks: buildBlockerImpact(candidates, REGIME_BLOCKS),
-    dteWindow: buildDteImpact(candidates, minDte, maxDte),
+    dteWindow: {
+      ...buildDteImpact(candidates, minDte, maxDte),
+      histogram: buildHistogramView(dteValues, maxDte),
+    },
     hardStop: buildHardStopImpact(positions, hardStopPct),
     trailing: buildTrailImpact(positions),
   };
@@ -122,4 +202,6 @@ export const __internalsForTests = {
   REGIME_BLOCKS,
   sampleTopSymbols,
   isOutsideDteBounds,
+  distributionOf,
+  thresholdPositionWithin,
 };

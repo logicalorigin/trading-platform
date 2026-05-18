@@ -76,6 +76,7 @@ export const TuningImpactPanel = ({
         }
         count={impact.spreadTooWide.count}
         sampleSymbols={impact.spreadTooWide.sampleSymbols}
+        histogram={impact.spreadTooWide.histogram}
         emptyHint="no candidates blocked"
       />
       <TuningImpactRow
@@ -91,6 +92,7 @@ export const TuningImpactPanel = ({
         }
         count={impact.bidBelowMinimum.count}
         sampleSymbols={impact.bidBelowMinimum.sampleSymbols}
+        histogram={impact.bidBelowMinimum.histogram}
         emptyHint="no candidates blocked"
       />
       <TuningImpactRow
@@ -106,6 +108,7 @@ export const TuningImpactPanel = ({
         }
         count={impact.premiumBudget.count}
         sampleSymbols={impact.premiumBudget.sampleSymbols}
+        histogram={impact.premiumBudget.histogram}
         emptyHint="within budget"
       />
       <TuningImpactRow
@@ -155,6 +158,7 @@ export const TuningImpactPanel = ({
         }
         count={impact.dteWindow.count}
         sampleSymbols={impact.dteWindow.sampleSymbols}
+        histogram={impact.dteWindow.histogram}
         emptyHint="all in window"
       />
 

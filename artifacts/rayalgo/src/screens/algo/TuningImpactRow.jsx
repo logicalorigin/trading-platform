@@ -5,6 +5,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { ThresholdHistogram } from "../../components/platform/primitives.jsx";
 
 export const TuningImpactRow = ({
   label,
@@ -15,6 +16,7 @@ export const TuningImpactRow = ({
   emptyHint,
   tone,
   warningWhenNonZero = true,
+  histogram,
 }) => {
   const hasImpact = Number(count) > 0;
   const impactTone = !hasImpact
@@ -56,23 +58,40 @@ export const TuningImpactRow = ({
       <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
         {inputElement}
       </div>
-      <span
+      <div
         style={{
-          color: impactTone,
-          fontFamily: T.sans,
-          fontSize: textSize("body"),
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(1),
+          minWidth: 0,
         }}
       >
-        {impactSummary}
-        {sampleSymbols.length > 0 && (
-          <span style={{ color: T.textDim, marginLeft: sp(6) }}>
-            · {sampleSymbols.join(", ")}
-          </span>
-        )}
-      </span>
+        {histogram?.buckets?.length ? (
+          <ThresholdHistogram
+            buckets={histogram.buckets}
+            thresholdPosition={histogram.thresholdPosition}
+            width={96}
+            height={16}
+          />
+        ) : null}
+        <span
+          style={{
+            color: impactTone,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {impactSummary}
+          {sampleSymbols.length > 0 && (
+            <span style={{ color: T.textDim, marginLeft: sp(6) }}>
+              · {sampleSymbols.join(", ")}
+            </span>
+          )}
+        </span>
+      </div>
     </div>
   );
 };

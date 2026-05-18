@@ -1087,6 +1087,63 @@ export const Card = ({
 };
 
 /**
+ * ThresholdHistogram — inline distribution bar with a vertical line at
+ * the current threshold position. Buckets are normalized to their max
+ * count and rendered as variable-height columns. Threshold position is
+ * a 0..1 ratio from min to max of the distribution domain.
+ */
+export const ThresholdHistogram = ({
+  buckets = [],
+  thresholdPosition = null,
+  width = 96,
+  height = 18,
+}) => {
+  if (!buckets.length) return null;
+  const maxCount = buckets.reduce((max, count) => Math.max(max, count), 0);
+  if (maxCount === 0) return null;
+  const bucketWidth = width / buckets.length;
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      style={{ display: "block" }}
+    >
+      {buckets.map((count, index) => {
+        const barHeight = Math.max(1, (count / maxCount) * (height - 2));
+        const x = index * bucketWidth;
+        const y = height - barHeight;
+        const isBeforeThreshold =
+          thresholdPosition != null && index / buckets.length < thresholdPosition;
+        return (
+          <rect
+            key={index}
+            x={x + 0.5}
+            y={y}
+            width={Math.max(1, bucketWidth - 1)}
+            height={barHeight}
+            fill={isBeforeThreshold ? T.green : T.amber}
+            opacity={count > 0 ? 0.7 : 0.2}
+          />
+        );
+      })}
+      {thresholdPosition != null ? (
+        <line
+          x1={thresholdPosition * width}
+          x2={thresholdPosition * width}
+          y1={0}
+          y2={height}
+          stroke={T.text}
+          strokeWidth="1"
+          strokeDasharray="2,2"
+        />
+      ) : null}
+    </svg>
+  );
+};
+
+/**
  * ScoreBar — inline horizontal heat-bar with a tick at the value.
  * Renders a thin red→neutral→green gradient (clipped to the |value|
  * range) with a vertical tick at the value's position. Used in dense
