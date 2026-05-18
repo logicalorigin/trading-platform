@@ -8,9 +8,9 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { AlgoPositionsTab } from "./AlgoPositionsTab";
-import { AlgoSignalsTab } from "./AlgoSignalsTab";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
 import { OperationsKpiStrip } from "./OperationsKpiStrip";
+import { OperationsSignalTable } from "./OperationsSignalTable";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
 import {
@@ -315,19 +315,32 @@ export const AlgoOperationsTab = ({
 
       <OperationsTransitionsStrip transitions={transitions || []} maxInline={5} />
 
-      <AlgoSignalsTab
-        visibleSignalRows={visibleSignalRows}
-        signalOptionsCandidates={signalOptionsCandidates}
-        displayedSignalOptionsCandidates={displayedSignalOptionsCandidates}
-        selectedCandidate={selectedCandidate}
-        setSelectedCandidateId={setSelectedCandidateId}
-        selectedPipelineStageId={selectedPipelineStageId}
-        signalOptionsProfile={signalOptionsProfile}
-        handleOpenCandidateInTrade={handleOpenCandidateInTrade}
-        onJumpToTradeCandidate={onJumpToTradeCandidate}
-        algoDetailGridTemplate={algoDetailGridTemplate}
-        algoCandidateGridTemplate={algoCandidateGridTemplate}
+      <OperationsSignalTable
+        signals={visibleSignalRows}
+        candidates={signalOptionsCandidates}
         algoIsPhone={algoIsPhone}
+        renderDrill={({ signal, candidate }) => (
+          <div
+            data-testid="algo-signal-drill-placeholder"
+            style={{
+              padding: sp("10px 12px"),
+              fontFamily: T.sans,
+              fontSize: textSize("body"),
+              color: T.textDim,
+              lineHeight: 1.45,
+            }}
+          >
+            <div style={{ color: T.text, fontSize: fs(11), marginBottom: sp(2) }}>
+              {signal?.symbol || "Symbol"} drill — Overview / Action / Position /
+              History (placeholder, C6 will fill this in)
+            </div>
+            <div>
+              {candidate
+                ? `Candidate mapped: ${candidate.action || candidate.actionStatus || "—"} · status ${candidate.status || "—"}`
+                : "No candidate resolved yet for this signal."}
+            </div>
+          </div>
+        )}
       />
 
       <AlgoPositionsTab

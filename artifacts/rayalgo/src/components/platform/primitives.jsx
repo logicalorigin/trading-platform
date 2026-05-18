@@ -1086,6 +1086,70 @@ export const Card = ({
   );
 };
 
+/**
+ * Inline-expandable table row. Renders the `row` children inside an
+ * accessible button so the row itself is the toggle, and renders the
+ * `expandedContent` children below when `expanded` is true. The expanded
+ * region is height-animated via CSS transition; consumers control the
+ * collapsed/expanded height via `rowHeight` and `expandedHeight`.
+ */
+export const TableExpandableRow = ({
+  expanded,
+  onToggle,
+  rowHeight = 22,
+  expandedHeight = 200,
+  borderTone = T.border,
+  selectionAccent = T.accent,
+  row,
+  expandedContent,
+  dataTestId,
+}) => (
+  <div
+    data-testid={dataTestId}
+    data-expanded={expanded ? "true" : "false"}
+    style={{
+      borderBottom: `1px solid ${borderTone}`,
+      minWidth: 0,
+    }}
+  >
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggle?.(event);
+        }
+      }}
+      style={{
+        height: rowHeight,
+        display: "flex",
+        alignItems: "center",
+        cursor: "pointer",
+        borderLeft: expanded ? `3px solid ${selectionAccent}` : "3px solid transparent",
+        background: expanded ? `${selectionAccent}10` : "transparent",
+        paddingLeft: expanded ? 0 : 3,
+        minWidth: 0,
+        transition: "background 120ms ease, border-color 120ms ease",
+      }}
+    >
+      {row}
+    </div>
+    <div
+      style={{
+        overflow: "hidden",
+        maxHeight: expanded ? expandedHeight : 0,
+        transition: "max-height 180ms ease",
+        borderTop: expanded ? `1px solid ${borderTone}` : "none",
+        background: `${selectionAccent}06`,
+      }}
+    >
+      {expanded ? expandedContent : null}
+    </div>
+  </div>
+);
+
 export const CardTitle = ({ children, right }) => (
   <div
     style={{
