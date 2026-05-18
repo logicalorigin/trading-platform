@@ -98,6 +98,46 @@ test("TextField error state has its own CSS class for the red ring", () => {
   );
 });
 
+test("extractSparklineValues handles raw numbers + close/c/v shapes", () => {
+  // Centralized normalizer for sparkline data — Watchlist + KPI Strip
+  // were keeping their own copies; this test pins the shape support
+  // matrix so a future change can't silently regress one consumer.
+  const source = readPrimitivesSource();
+
+  assert.match(source, /export const extractSparklineValues = /);
+  assert.match(source, /typeof point === "number"/);
+  assert.match(source, /point\?\.close/);
+  assert.match(source, /point\?\.c\b/);
+  assert.match(source, /point\?\.v\b/);
+  assert.match(source, /\.filter\(\(value\) => Number\.isFinite\(value\)\)/);
+});
+
+test("MicroSparkline + RowSparkValue are exported and composable", () => {
+  // Single-source-of-truth: MicroSparkline used to live in three places
+  // (Watchlist, HeaderKpiStrip, and the trade-row chart). RowSparkValue
+  // wraps it with a value + delta slot for the dense-row use case.
+  const source = readPrimitivesSource();
+
+  assert.match(source, /export const MicroSparkline = /);
+  assert.match(source, /export const RowSparkValue = /);
+
+  // Sparkline returns null when there's nothing to draw (caller doesn't
+  // need to guard).
+  const sparkSlice = source.match(
+    /export const MicroSparkline =[\s\S]*?^\};/m,
+  );
+  assert.ok(sparkSlice, "MicroSparkline declaration not found");
+  assert.match(sparkSlice[0], /if \(values\.length < 2\) \{\s*return null/);
+
+  // RowSparkValue's sparkline data is optional — without it, the row
+  // is just value + delta.
+  const rowSlice = source.match(
+    /export const RowSparkValue =[\s\S]*?\n\);/,
+  );
+  assert.ok(rowSlice, "RowSparkValue declaration not found");
+  assert.match(rowSlice[0], /\{sparklineData \? \(/);
+});
+
 test("DataUnavailableState supports semantic variants + icon + action slots", () => {
   // Empty/Error states had one shape: dashed border + optional spinner.
   // Variants give the message a tone (info/error/warning) without forcing

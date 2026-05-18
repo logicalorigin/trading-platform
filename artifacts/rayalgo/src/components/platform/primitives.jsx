@@ -1,6 +1,193 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
+
+/**
+ * Normalize a sparkline data array into a list of finite numeric closes.
+ * Accepts raw numbers, { close }, { c }, or { v } shapes — matches what
+ * the various market/runtime stores emit.
+ */
+export const extractSparklineValues = (data = []) =>
+  (Array.isArray(data) ? data : [])
+    .map((point) => {
+      if (typeof point === "number" && Number.isFinite(point)) {
+        return point;
+      }
+      if (typeof point?.close === "number" && Number.isFinite(point.close)) {
+        return point.close;
+      }
+      if (typeof point?.c === "number" && Number.isFinite(point.c)) {
+        return point.c;
+      }
+      if (typeof point?.v === "number" && Number.isFinite(point.v)) {
+        return point.v;
+      }
+      return null;
+    })
+    .filter((value) => Number.isFinite(value));
+
+/**
+ * MicroSparkline — green/red line + soft area fill + glowing tail dot.
+ * Used in PlatformWatchlist rows, HeaderKpiStrip, and (via RowSparkValue)
+ * any row primitive that wants an inline trend indicator.
+ *
+ *   data       — array of points (any of the shapes extractSparklineValues handles)
+ *   positive   — boolean override; null/undefined infers from first-vs-last value
+ *   width/height — SVG viewBox size in dim() units before scaling
+ *
+ * Returns null when fewer than 2 valid points are available so callers
+ * don't have to feature-check.
+ */
+export const MicroSparkline = ({
+  data = [],
+  positive = null,
+  width = 64,
+  height = 24,
+}) => {
+  const values = useMemo(() => extractSparklineValues(data), [data]);
+  const uid = useId().replace(/:/g, "");
+
+  if (values.length < 2) {
+    return null;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = width / Math.max(values.length - 1, 1);
+  const inferredPositive = values[values.length - 1] >= values[0];
+  const resolvedPositive =
+    typeof positive === "boolean" ? positive : inferredPositive;
+  const lineColor = resolvedPositive ? T.green : T.red;
+  const plottedPoints = values.map((value, index) => {
+    const x = index * step;
+    const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
+    return [x.toFixed(2), y.toFixed(2)];
+  });
+  const points = plottedPoints.map(([x, y]) => `${x},${y}`).join(" ");
+  const areaPath = `M ${plottedPoints
+    .map(([x, y], index) => `${index === 0 ? "" : "L "}${x},${y}`)
+    .join(" ")} L ${width},${height} L 0,${height} Z`;
+  const [tailX, tailY] = plottedPoints[plottedPoints.length - 1];
+  const gradientId = `raSparkGrad-${uid}`;
+  const glowId = `raSparkGlow-${uid}`;
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      style={{ display: "block" }}
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.32" />
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
+        </linearGradient>
+        <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradientId})`} />
+      <polyline
+        points={points}
+        fill="none"
+        stroke={lineColor}
+        strokeWidth="1.55"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <circle
+        className="ra-sparkline-tail"
+        cx={tailX}
+        cy={tailY}
+        r="1.6"
+        fill={lineColor}
+        filter={`url(#${glowId})`}
+      />
+    </svg>
+  );
+};
+
+/**
+ * RowSparkValue — compact inline row: [value] [delta?] [MicroSparkline].
+ * For dense lists where each entry is one numeric value, an optional
+ * delta indicator, and a tiny trend. Examples: alert history, broker-
+ * position rows, watchlist "mini" view. The watchlist's primary row
+ * has its own layout; this primitive is for the simpler patterns.
+ *
+ *   value       — string or ReactNode (the headline number / label)
+ *   delta       — optional ReactNode (signed percent, color-toned)
+ *   sparklineData — passed through to MicroSparkline
+ *   sparklineWidth / sparklineHeight — sized in dim() before scale
+ *   positive    — passed through to MicroSparkline (auto-infer if null)
+ *   align       — "start" | "end" (default "end"; positions sparkline on the right)
+ *
+ * No icon / no identity chip on purpose — those compose outside.
+ */
+export const RowSparkValue = ({
+  value,
+  delta,
+  sparklineData,
+  sparklineWidth = 44,
+  sparklineHeight = 18,
+  positive = null,
+  align = "end",
+  className,
+  style,
+}) => (
+  <span
+    className={className}
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(6),
+      minWidth: 0,
+      justifyContent: align === "start" ? "flex-start" : "flex-end",
+      fontFamily: T.sans,
+      fontVariantNumeric: "tabular-nums",
+      ...style,
+    }}
+  >
+    {value != null ? (
+      <span
+        style={{
+          color: T.text,
+          fontSize: textSize("paragraph"),
+          fontWeight: FONT_WEIGHTS.medium,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </span>
+    ) : null}
+    {delta != null ? (
+      <span
+        style={{
+          color: T.textDim,
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {delta}
+      </span>
+    ) : null}
+    {sparklineData ? (
+      <MicroSparkline
+        data={sparklineData}
+        width={sparklineWidth}
+        height={sparklineHeight}
+        positive={positive}
+      />
+    ) : null}
+  </span>
+);
 
 /**
  * Variant surface helper for Pill / Badge / StatusPill.

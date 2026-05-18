@@ -1,7 +1,8 @@
 import { useSearchUniverseTickers } from "@workspace/api-client-react";
 import { ChevronDown, GripVertical, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { MicroSparkline } from "../../components/platform/primitives.jsx";
 import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   fmtCompactNumber,
@@ -35,95 +36,8 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
-const extractSparklineValues = (data = []) =>
-  (Array.isArray(data) ? data : [])
-    .map((point) => {
-      if (typeof point === "number" && Number.isFinite(point)) {
-        return point;
-      }
-      if (typeof point?.close === "number" && Number.isFinite(point.close)) {
-        return point.close;
-      }
-      if (typeof point?.c === "number" && Number.isFinite(point.c)) {
-        return point.c;
-      }
-      if (typeof point?.v === "number" && Number.isFinite(point.v)) {
-        return point.v;
-      }
-      return null;
-    })
-    .filter((value) => Number.isFinite(value));
-
-const MicroSparkline = ({ data = [], positive = null, width = 64, height = 24 }) => {
-  const values = useMemo(() => extractSparklineValues(data), [data]);
-  const uid = useId().replace(/:/g, "");
-
-  if (values.length < 2) {
-    return null;
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const step = width / Math.max(values.length - 1, 1);
-  const inferredPositive = values[values.length - 1] >= values[0];
-  const resolvedPositive =
-    typeof positive === "boolean" ? positive : inferredPositive;
-  const lineColor = resolvedPositive ? T.green : T.red;
-  const plottedPoints = values.map((value, index) => {
-    const x = index * step;
-    const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
-    return [x.toFixed(2), y.toFixed(2)];
-  });
-  const points = plottedPoints.map(([x, y]) => `${x},${y}`).join(" ");
-  const areaPath = `M ${plottedPoints
-    .map(([x, y], index) => `${index === 0 ? "" : "L "}${x},${y}`)
-    .join(" ")} L ${width},${height} L 0,${height} Z`;
-  const [tailX, tailY] = plottedPoints[plottedPoints.length - 1];
-  const gradientId = `raSparkGrad-${uid}`;
-  const glowId = `raSparkGlow-${uid}`;
-
-  return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ display: "block" }}
-    >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.32" />
-          <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
-        </linearGradient>
-        <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      <path d={areaPath} fill={`url(#${gradientId})`} />
-      <polyline
-        points={points}
-        fill="none"
-        stroke={lineColor}
-        strokeWidth="1.55"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      <circle
-        className="ra-sparkline-tail"
-        cx={tailX}
-        cy={tailY}
-        r="1.6"
-        fill={lineColor}
-        filter={`url(#${glowId})`}
-      />
-    </svg>
-  );
-};
+// MicroSparkline + extractSparklineValues are exported from
+// components/platform/primitives.jsx — imported above.
 
 const fmtQuoteVolume = (value) =>
   value == null || Number.isNaN(value) ? MISSING_VALUE : fmtCompactNumber(value);
