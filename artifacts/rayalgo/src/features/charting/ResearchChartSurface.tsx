@@ -1433,6 +1433,11 @@ type ResearchChartSurfaceProps = {
   rangeIdentityKey?: string | null;
   viewportLayoutKey?: string | null;
   dataTestId?: string;
+  // Optional symbol displayed as a faint watermark behind the plot
+  // when userPreferences.chart.showTickerWatermark is true. Reinforces
+  // which chart is which when multiple panes are open. Pass from the
+  // chart frame / consumer; surface doesn't otherwise need the symbol.
+  symbol?: string | null;
   compact?: boolean;
   showToolbar?: boolean;
   showLegend?: boolean;
@@ -5087,6 +5092,7 @@ export const ResearchChartSurface = ({
   rangeIdentityKey = null,
   viewportLayoutKey = null,
   dataTestId,
+  symbol = null,
   compact = false,
   showToolbar = true,
   showLegend = true,
@@ -10191,6 +10197,31 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
+          {userPreferences.chart.showTickerWatermark && symbol ? (
+            <div
+              aria-hidden="true"
+              data-chart-ticker-watermark={symbol}
+              style={{
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: theme.text,
+                opacity: 0.06,
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.label,
+                fontSize: "min(20vw, 144px)",
+                letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+                userSelect: "none",
+                zIndex: 0,
+              }}
+            >
+              {symbol}
+            </div>
+          ) : null}
           {lastPricePulse ? (
             <span
               aria-hidden="true"

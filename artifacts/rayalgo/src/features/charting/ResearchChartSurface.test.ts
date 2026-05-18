@@ -354,6 +354,35 @@ test("ResearchChartSurface autoscale controls apply to the main price scale imme
   );
 });
 
+test("ResearchChartSurface ticker watermark is opt-in via preference + needs symbol", () => {
+  // Faint ticker text behind the plot is gated on the
+  // showTickerWatermark preference AND a non-null symbol prop. Both
+  // must be true; the watermark would be content-less without the
+  // symbol and visually intrusive without the opt-in.
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /symbol\?: string \| null;/);
+
+  // Gate composes preference + symbol existence (skips render otherwise).
+  assert.match(
+    source,
+    /\{userPreferences\.chart\.showTickerWatermark && symbol \? \(/,
+  );
+
+  // Watermark carries a telemetry attribute mirroring the symbol so
+  // e2e specs can grep for the active chart.
+  assert.match(source, /data-chart-ticker-watermark=\{symbol\}/);
+
+  // Low-opacity, non-interactive, centered.
+  const slice = source.match(
+    /data-chart-ticker-watermark=\{symbol\}[\s\S]*?\>\s*\{symbol\}\s*<\/div>/,
+  );
+  assert.ok(slice, "watermark block not found");
+  assert.match(slice[0], /opacity: 0\.06/);
+  assert.match(slice[0], /pointerEvents: "none"/);
+  assert.match(slice[0], /userSelect: "none"/);
+});
+
 test("ResearchChartSurface paints a last-price pulse only when realtime-following", () => {
   // Pulse position is recomputed via priceToCoordinate on bar updates +
   // when Y-scale-related state changes. The dot must hide when

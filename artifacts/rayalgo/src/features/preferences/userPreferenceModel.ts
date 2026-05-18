@@ -43,6 +43,10 @@ export type UserPreferences = {
     // via mobileTrackingMode. Off by default — additive, doesn't disrupt
     // existing chart preferences.
     desktopCrosshairBadge: boolean;
+    // Bloomberg / TradingView-style faint ticker text behind the plot.
+    // Reinforces which symbol is on screen when multiple charts are open.
+    // Off by default to keep the existing minimal chart look.
+    showTickerWatermark: boolean;
   };
   workspace: {
     defaultScreen: string;
@@ -118,6 +122,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     sessionBreaks: false,
     rayAlgoDashboard: "auto",
     desktopCrosshairBadge: false,
+    showTickerWatermark: false,
   },
   workspace: {
     defaultScreen: "market",
@@ -270,6 +275,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       sessionBreaks: booleanValue(chart.sessionBreaks, DEFAULT_USER_PREFERENCES.chart.sessionBreaks),
       rayAlgoDashboard: enumValue(chart.rayAlgoDashboard, ["auto", "full", "compact", "hidden"], DEFAULT_USER_PREFERENCES.chart.rayAlgoDashboard),
       desktopCrosshairBadge: booleanValue(chart.desktopCrosshairBadge, DEFAULT_USER_PREFERENCES.chart.desktopCrosshairBadge),
+      showTickerWatermark: booleanValue(chart.showTickerWatermark, DEFAULT_USER_PREFERENCES.chart.showTickerWatermark),
     },
     workspace: {
       defaultScreen: stringValue(workspace.defaultScreen, DEFAULT_USER_PREFERENCES.workspace.defaultScreen, /^[a-z-]+$/i),
