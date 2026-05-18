@@ -4158,6 +4158,58 @@ export const PauseAlgoDeploymentResponse = zod.object({
 
 
 /**
+ * @summary Update algo strategy signal settings
+ */
+export const UpdateAlgoDeploymentStrategySettingsParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const updateAlgoDeploymentStrategySettingsBodyTimeHorizonMin = 2;
+export const updateAlgoDeploymentStrategySettingsBodyTimeHorizonMax = 50;
+
+
+
+export const UpdateAlgoDeploymentStrategySettingsBody = zod.object({
+  "signalTimeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "timeHorizon": zod.number().min(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMin).max(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMax)
+})
+
+export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({
+  "deployment": zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "signalMonitorProfile": zod.object({
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+})
+
+
+/**
  * @summary Get signal-options shadow automation state for a deployment
  */
 export const GetSignalOptionsAutomationStateParams = zod.object({

@@ -3151,6 +3151,40 @@ export interface AlgoDeploymentsResponse {
   deployments: AlgoDeployment[];
 }
 
+export interface UpdateAlgoDeploymentStrategySettingsRequest {
+  signalTimeframe: SignalMonitorTimeframe;
+  /**
+   * @minimum 2
+   * @maximum 50
+   */
+  timeHorizon: number;
+}
+
+export interface SignalMonitorProfile {
+  id: string;
+  environment: EnvironmentMode;
+  enabled: boolean;
+  /** @nullable */
+  watchlistId: string | null;
+  timeframe: SignalMonitorTimeframe;
+  rayReplicaSettings: JsonObject;
+  freshWindowBars: number;
+  pollIntervalSeconds: number;
+  maxSymbols: number;
+  evaluationConcurrency: number;
+  /** @nullable */
+  lastEvaluatedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateAlgoDeploymentStrategySettingsResponse {
+  deployment: AlgoDeployment;
+  signalMonitorProfile: SignalMonitorProfile;
+}
+
 export type SignalOptionsExecutionProfileVersion = typeof SignalOptionsExecutionProfileVersion[keyof typeof SignalOptionsExecutionProfileVersion];
 
 
@@ -3463,26 +3497,6 @@ export const SignalMonitorSymbolStatus = {
   error: 'error',
   unknown: 'unknown',
 } as const;
-
-export interface SignalMonitorProfile {
-  id: string;
-  environment: EnvironmentMode;
-  enabled: boolean;
-  /** @nullable */
-  watchlistId: string | null;
-  timeframe: SignalMonitorTimeframe;
-  rayReplicaSettings: JsonObject;
-  freshWindowBars: number;
-  pollIntervalSeconds: number;
-  maxSymbols: number;
-  evaluationConcurrency: number;
-  /** @nullable */
-  lastEvaluatedAt: string | null;
-  /** @nullable */
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface UpdateSignalMonitorProfileRequest {
   environment?: EnvironmentMode;

@@ -190,6 +190,8 @@ import type {
   SubmitIbkrOrdersRequest,
   SubmitIbkrOrdersResponse,
   UniverseTickersResponse,
+  UpdateAlgoDeploymentStrategySettingsRequest,
+  UpdateAlgoDeploymentStrategySettingsResponse,
   UpdatePineScriptRequest,
   UpdateSignalMonitorProfileRequest,
   UpdateStockAggregateStreamSymbolsBody,
@@ -9100,6 +9102,78 @@ export const usePauseAlgoDeployment = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getPauseAlgoDeploymentMutationOptions(options));
+    }
+
+/**
+ * @summary Update algo strategy signal settings
+ */
+export const getUpdateAlgoDeploymentStrategySettingsUrl = (deploymentId: string,) => {
+
+
+
+
+  return `/api/algo/deployments/${deploymentId}/strategy-settings`
+}
+
+export const updateAlgoDeploymentStrategySettings = async (deploymentId: string,
+    updateAlgoDeploymentStrategySettingsRequest: UpdateAlgoDeploymentStrategySettingsRequest, options?: RequestInit): Promise<UpdateAlgoDeploymentStrategySettingsResponse> => {
+
+  return customFetch<UpdateAlgoDeploymentStrategySettingsResponse>(getUpdateAlgoDeploymentStrategySettingsUrl(deploymentId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateAlgoDeploymentStrategySettingsRequest,)
+  }
+);}
+
+
+
+
+export const getUpdateAlgoDeploymentStrategySettingsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>, TError,{deploymentId: string;data: BodyType<UpdateAlgoDeploymentStrategySettingsRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>, TError,{deploymentId: string;data: BodyType<UpdateAlgoDeploymentStrategySettingsRequest>}, TContext> => {
+
+const mutationKey = ['updateAlgoDeploymentStrategySettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>, {deploymentId: string;data: BodyType<UpdateAlgoDeploymentStrategySettingsRequest>}> = (props) => {
+          const {deploymentId,data} = props ?? {};
+
+          return  updateAlgoDeploymentStrategySettings(deploymentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAlgoDeploymentStrategySettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>>
+    export type UpdateAlgoDeploymentStrategySettingsMutationBody = BodyType<UpdateAlgoDeploymentStrategySettingsRequest>
+    export type UpdateAlgoDeploymentStrategySettingsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update algo strategy signal settings
+ */
+export const useUpdateAlgoDeploymentStrategySettings = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>, TError,{deploymentId: string;data: BodyType<UpdateAlgoDeploymentStrategySettingsRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAlgoDeploymentStrategySettings>>,
+        TError,
+        {deploymentId: string;data: BodyType<UpdateAlgoDeploymentStrategySettingsRequest>},
+        TContext
+      > => {
+      return useMutation(getUpdateAlgoDeploymentStrategySettingsMutationOptions(options));
     }
 
 /**

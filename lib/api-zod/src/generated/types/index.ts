@@ -459,6 +459,8 @@ export * from './universeMarket';
 export * from './universeTicker';
 export * from './universeTickerContractMeta';
 export * from './universeTickersResponse';
+export * from './updateAlgoDeploymentStrategySettingsRequest';
+export * from './updateAlgoDeploymentStrategySettingsResponse';
 export * from './updatePineScriptRequest';
 export * from './updatePineScriptRequestMetadata';
 export * from './updateSignalMonitorProfileRequest';
