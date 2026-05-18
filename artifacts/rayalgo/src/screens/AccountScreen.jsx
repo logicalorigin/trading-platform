@@ -26,7 +26,7 @@ import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeContro
 import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
-import { responsiveFlags, useElementSize } from "../lib/responsive";
+import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
 import { FONT_WEIGHTS, RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
@@ -415,9 +415,10 @@ export const AccountScreen = ({
     DEFAULT_EQUITY_BENCHMARK_VISIBILITY,
   );
   const [accountLayoutRef, accountLayoutSize] = useElementSize();
-  const accountLayoutFlags = responsiveFlags(accountLayoutSize.width);
-  const accountIsPhone = accountLayoutFlags.isPhone;
-  const accountIsNarrow = accountLayoutFlags.isNarrow;
+  const accountElementFlags = responsiveFlags(accountLayoutSize.width);
+  const viewport = useViewport();
+  const accountIsPhone = viewport.flags.isPhone || accountElementFlags.isPhone;
+  const accountIsNarrow = viewport.flags.isNarrow || accountElementFlags.isNarrow;
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
