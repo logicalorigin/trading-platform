@@ -696,6 +696,36 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
     color var(--ra-motion-fast) var(--ra-motion-ease);
 }
 
+/* Hairline dividers — softer than 1px solid borders. The G.hairline*
+   gradients fade to transparent at the edges so the divider feels
+   integrated with the surface rather than slicing across it.
+
+   Usage: drop .ra-hairline-h as a child element (e.g. an empty <hr/>
+   or <div>) where you'd normally put border-bottom: 1px solid; the
+   class paints its own 1px height with the gradient. For vertical
+   dividers between flex children use .ra-hairline-v.
+
+   Why a class instead of border-image: border-image has rough sub-pixel
+   behavior on Chromium / Firefox; an absolutely-sized div with a
+   gradient bg renders crisply at any DPR. */
+.ra-hairline-h {
+  display: block;
+  height: 1px;
+  width: 100%;
+  background: var(--ra-gradient-hairline-divider-h);
+  border: none;
+  margin: 0;
+}
+
+.ra-hairline-v {
+  display: block;
+  width: 1px;
+  height: 100%;
+  background: var(--ra-gradient-hairline-divider-v);
+  border: none;
+  margin: 0;
+}
+
 /* Elevated buttons (primary / danger Button variants) — base shadow
    from --ra-elevation-sm, overlaid with --ra-elevation-hover on :hover
    to add the accent-tinted glow. .ra-interactive handles the -1px

@@ -607,16 +607,26 @@ export const Panel = ({
   >
     <div
       style={{
+        position: "relative",
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "space-between",
         gap: sp(8),
         padding: sp("8px 12px 6px"),
-        borderBottom: `1px solid ${T.borderLight}`,
         background: T.bg1,
         flexWrap: "wrap",
       }}
     >
+      {/* Hairline divider in place of a hard 1px border — the gradient
+          fades to transparent at the left/right edges so the divider
+          feels integrated with the surface rather than slicing across.
+          Absolute-positioned at the bottom so it doesn't reflow flex
+          children. */}
+      <span
+        aria-hidden="true"
+        className="ra-hairline-h"
+        style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
+      />
       <div style={{ minWidth: 0, flex: "1 1 180px" }}>
         <div style={sectionTitleStyle}>{title}</div>
         {subtitle || rightRail ? (

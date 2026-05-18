@@ -234,6 +234,31 @@ test("fs and dim scale and round numerically with the active scale", () => {
   setCurrentScale("m");
 });
 
+test("hairline divider classes use G.hairlineDivider gradients", () => {
+  // .ra-hairline-h / .ra-hairline-v render a 1px line via the
+  // G.hairlineDividerH / G.hairlineDividerV gradients (transparent →
+  // border → transparent), softer than border-bottom: 1px solid. The
+  // class must be 1px tall (or 1px wide), have no border (the gradient
+  // IS the line), and reference the gradient CSS var.
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+
+  const hMatch = cssSource.match(/\.ra-hairline-h \{[\s\S]*?\}/);
+  const vMatch = cssSource.match(/\.ra-hairline-v \{[\s\S]*?\}/);
+  assert.ok(hMatch, ".ra-hairline-h not declared");
+  assert.ok(vMatch, ".ra-hairline-v not declared");
+
+  assert.match(hMatch[0], /height: 1px/);
+  assert.match(hMatch[0], /background: var\(--ra-gradient-hairline-divider-h\)/);
+  assert.match(hMatch[0], /border: none/);
+
+  assert.match(vMatch[0], /width: 1px/);
+  assert.match(vMatch[0], /background: var\(--ra-gradient-hairline-divider-v\)/);
+  assert.match(vMatch[0], /border: none/);
+});
+
 test("G proxy returns CSS var refs for every gradient token", async () => {
   // The G proxy MUST return "var(--ra-gradient-...)" strings (never
   // raw hex / rgba) — that's the only way accent-preset + theme
