@@ -68,7 +68,7 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
 import { useElementSize, useViewport } from "../../lib/responsive";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { TimeframeSheet } from "./ChartMobileSheets";
+import { DrawingToolsSheet, IndicatorPickerSheet, TimeframeSheet } from "./ChartMobileSheets";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1166,6 +1166,7 @@ export const ResearchChartWidgetHeader = ({
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
   const [timeframeSheetOpen, setTimeframeSheetOpen] = useState(false);
+  const [indicatorSheetOpen, setIndicatorSheetOpen] = useState(false);
   const frameDensity = useResolvedChartFrameDensity(dense, density);
   const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const iconOnlyChrome = isIconChartFrameDensity(frameDensity);
@@ -1564,6 +1565,43 @@ export const ResearchChartWidgetHeader = ({
         ) : null}
 
         {!minimalChrome ? (
+          isPhone ? (
+            <>
+              <AppTooltip content="Indicators">
+                <button
+                  type="button"
+                  data-testid="chart-indicators-menu-trigger"
+                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
+                  onClick={() => setIndicatorSheetOpen(true)}
+                >
+                  <Plus style={iconStyle(chromeDense)} />
+                  {iconOnlyChrome ? (
+                    selectedStudies.length > 0 ? (
+                      <span>{selectedStudies.length}</span>
+                    ) : null
+                  ) : (
+                    <span>
+                      {chromeDense
+                        ? selectedStudies.length > 0
+                          ? `Ind ${selectedStudies.length}`
+                          : "Ind"
+                        : `Indicators ${
+                            selectedStudies.length > 0 ? selectedStudies.length : ""
+                          }`.trim()}
+                    </span>
+                  )}
+                  <ChevronDown style={iconStyle(chromeDense)} />
+                </button>
+              </AppTooltip>
+              <IndicatorPickerSheet
+                open={indicatorSheetOpen}
+                onClose={() => setIndicatorSheetOpen(false)}
+                indicators={studies}
+                selectedIds={selectedStudies}
+                onToggle={(id) => onToggleStudy?.(id)}
+              />
+            </>
+          ) : (
           <DropdownMenu>
             <AppTooltip content="Indicators">
               <DropdownMenuTrigger asChild>
@@ -1626,6 +1664,7 @@ export const ResearchChartWidgetHeader = ({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          )
         ) : null}
 
         <div style={{ flex: 1 }} />

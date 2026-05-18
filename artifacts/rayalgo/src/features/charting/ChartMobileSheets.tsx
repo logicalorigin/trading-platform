@@ -1,4 +1,4 @@
-import { Star } from "lucide-react";
+import { Check, Minus, MoveHorizontal, MoveVertical, Square, Star, Trash2 } from "lucide-react";
 // @ts-expect-error JSX import from a .jsx module
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 // @ts-expect-error JSX import from a .jsx module
@@ -7,6 +7,17 @@ import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 export type TimeframeSheetOption = {
   value: string;
   label: string;
+};
+
+export type IndicatorOption = {
+  id: string;
+  label: string;
+};
+
+export type DrawingToolOption = {
+  id: "horizontal" | "vertical" | "box";
+  label: string;
+  description: string;
 };
 
 type TimeframeSheetProps = {
@@ -75,6 +86,203 @@ export const TimeframeSheet = ({
     </BottomSheet>
   );
 };
+
+type IndicatorPickerSheetProps = {
+  open: boolean;
+  onClose: () => void;
+  indicators: IndicatorOption[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+};
+
+export const IndicatorPickerSheet = ({
+  open,
+  onClose,
+  indicators,
+  selectedIds,
+  onToggle,
+}: IndicatorPickerSheetProps) => {
+  const selectedSet = new Set(selectedIds);
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Indicators" testId="chart-mobile-indicator-sheet" maxHeight="74dvh">
+      <div
+        style={{
+          display: "grid",
+          gap: sp(6),
+          padding: sp("10px 12px max(14px, env(safe-area-inset-bottom))"),
+        }}
+      >
+        {indicators.length ? (
+          indicators.map((indicator) => {
+            const isOn = selectedSet.has(indicator.id);
+            return (
+              <button
+                key={indicator.id}
+                type="button"
+                data-testid={`chart-mobile-indicator-${indicator.id}`}
+                data-active={isOn ? "true" : "false"}
+                onClick={() => onToggle(indicator.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(8),
+                  minHeight: dim(48),
+                  padding: sp("0 12px"),
+                  border: `1px solid ${isOn ? T.accent : T.border}`,
+                  background: isOn ? `${T.accent}1a` : T.bg1,
+                  borderRadius: dim(RADII.sm),
+                  color: T.text,
+                  fontFamily: T.sans,
+                  fontSize: fs(12),
+                  fontWeight: isOn ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+                  letterSpacing: "-0.005em",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: dim(20),
+                    height: dim(20),
+                    borderRadius: dim(RADII.xs),
+                    border: `1px solid ${isOn ? T.accent : T.border}`,
+                    background: isOn ? T.accent : "transparent",
+                    color: T.onAccent,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  {isOn ? <Check size={12} strokeWidth={3} /> : null}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {indicator.label}
+                </span>
+              </button>
+            );
+          })
+        ) : (
+          <div style={{ color: T.textSec, fontSize: fs(12), padding: sp(8) }}>
+            No indicators available for this chart.
+          </div>
+        )}
+      </div>
+    </BottomSheet>
+  );
+};
+
+const DRAWING_TOOL_ICON = {
+  horizontal: MoveHorizontal,
+  vertical: MoveVertical,
+  box: Square,
+} as const;
+
+type DrawingToolsSheetProps = {
+  open: boolean;
+  onClose: () => void;
+  tools: DrawingToolOption[];
+  activeTool?: DrawingToolOption["id"] | null;
+  onSelectTool: (id: DrawingToolOption["id"]) => void;
+  drawingCount?: number;
+  onClearAll?: () => void;
+};
+
+export const DrawingToolsSheet = ({
+  open,
+  onClose,
+  tools,
+  activeTool,
+  onSelectTool,
+  drawingCount = 0,
+  onClearAll,
+}: DrawingToolsSheetProps) => (
+  <BottomSheet open={open} onClose={onClose} title="Drawing tools" testId="chart-mobile-drawings-sheet" maxHeight="62dvh">
+    <div
+      style={{
+        display: "grid",
+        gap: sp(10),
+        padding: sp("10px 12px max(14px, env(safe-area-inset-bottom))"),
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+          gap: sp(6),
+        }}
+      >
+        {tools.map((tool) => {
+          const isActive = tool.id === activeTool;
+          const Icon = DRAWING_TOOL_ICON[tool.id] || Minus;
+          return (
+            <button
+              key={tool.id}
+              type="button"
+              data-testid={`chart-mobile-drawing-${tool.id}`}
+              data-active={isActive ? "true" : "false"}
+              onClick={() => {
+                onSelectTool(tool.id);
+                onClose();
+              }}
+              style={{
+                display: "grid",
+                gap: sp(3),
+                minHeight: dim(76),
+                padding: sp("10px 12px"),
+                border: `1px solid ${isActive ? T.accent : T.border}`,
+                background: isActive ? `${T.accent}1a` : T.bg1,
+                borderRadius: dim(RADII.sm),
+                color: T.text,
+                fontFamily: T.sans,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5), color: isActive ? T.accent : T.textSec }}>
+                <Icon size={16} strokeWidth={1.6} />
+                <span style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.medium, color: T.text }}>
+                  {tool.label}
+                </span>
+              </span>
+              <span style={{ fontSize: fs(10), color: T.textSec, lineHeight: 1.3 }}>{tool.description}</span>
+            </button>
+          );
+        })}
+      </div>
+      {drawingCount > 0 && onClearAll ? (
+        <button
+          type="button"
+          data-testid="chart-mobile-drawing-clear-all"
+          onClick={() => {
+            onClearAll();
+            onClose();
+          }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: sp(5),
+            minHeight: dim(40),
+            padding: sp("0 14px"),
+            border: `1px solid ${T.border}`,
+            background: T.bg1,
+            color: T.red,
+            borderRadius: dim(RADII.sm),
+            fontFamily: T.sans,
+            fontSize: fs(12),
+            fontWeight: FONT_WEIGHTS.medium,
+            cursor: "pointer",
+          }}
+        >
+          <Trash2 size={14} />
+          <span>Clear {drawingCount} drawing{drawingCount === 1 ? "" : "s"}</span>
+        </button>
+      ) : null}
+    </div>
+  </BottomSheet>
+);
 
 const SheetSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
