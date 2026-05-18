@@ -180,6 +180,13 @@ export const AlgoLivePage = ({
   setStrategySettingsDraft,
   handleSaveStrategySettings,
   updateStrategySettingsMutation,
+  // Pause / Scan-now (existing mutations + handlers)
+  focusedDeployment,
+  handleToggleDeployment,
+  handleRunShadowScan,
+  enableDeploymentMutation,
+  pauseDeploymentMutation,
+  runShadowScanMutation,
   // Layout
   algoIsPhone,
   algoIsNarrow,
@@ -388,6 +395,49 @@ export const AlgoLivePage = ({
           >
             {updateStrategySettingsMutation?.isPending ? "SAVING…" : "APPLY"}
           </button>
+          {focusedDeployment ? (
+            <button
+              type="button"
+              onClick={() =>
+                handleToggleDeployment?.(focusedDeployment)
+              }
+              disabled={
+                enableDeploymentMutation?.isPending ||
+                pauseDeploymentMutation?.isPending
+              }
+              style={{
+                ...compactButtonStyle({
+                  disabled:
+                    enableDeploymentMutation?.isPending ||
+                    pauseDeploymentMutation?.isPending,
+                }),
+                border: `1px solid ${
+                  focusedDeployment.enabled ? T.amber : T.green
+                }`,
+                background: "transparent",
+                color: focusedDeployment.enabled ? T.amber : T.green,
+              }}
+            >
+              {focusedDeployment.enabled ? "⏸ PAUSE" : "▶ RESUME"}
+            </button>
+          ) : null}
+          {focusedDeployment ? (
+            <button
+              type="button"
+              onClick={handleRunShadowScan}
+              disabled={runShadowScanMutation?.isPending}
+              style={{
+                ...compactButtonStyle({
+                  disabled: runShadowScanMutation?.isPending,
+                }),
+                border: `1px solid ${T.accent}`,
+                background: "transparent",
+                color: T.accent,
+              }}
+            >
+              {runShadowScanMutation?.isPending ? "⟳ SCANNING…" : "⟳ SCAN NOW"}
+            </button>
+          ) : null}
           <span
             style={{
               color: T.textDim,
