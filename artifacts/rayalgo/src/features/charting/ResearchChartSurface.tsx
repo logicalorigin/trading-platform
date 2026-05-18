@@ -6082,7 +6082,12 @@ export const ResearchChartSurface = ({
           const priceScale = chart.priceScale?.("right", 0);
           if (!priceScale) return;
           // Switch off autoScale so our explicit range is respected.
-          priceScale.setAutoScale?.(false);
+          // Must update React state too, otherwise the chart-options
+          // effect (~line 7533) re-applies `autoScale: true` on the next
+          // bar tick and snaps Y back to fit-content. The resize layout
+          // effect (~line 8338) reads the same state. applyMainPriceAutoScale
+          // writes both the chart and React state in one call.
+          applyMainPriceAutoScale(false);
           const range = priceScale.getVisibleRange?.();
           if (!range || typeof range.from !== "number" || typeof range.to !== "number") {
             return;
@@ -6136,7 +6141,7 @@ export const ResearchChartSurface = ({
     };
     // Re-bind when the chart container appears/disappears so the listener
     // attaches to the live DOM element on first render after data loads.
-  }, [hasChartBars]);
+  }, [hasChartBars, applyMainPriceAutoScale]);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -354,6 +354,24 @@ test("ResearchChartSurface autoscale controls apply to the main price scale imme
   );
 });
 
+test("ResearchChartSurface axis-wheel Y zoom routes autoScale through React state", () => {
+  // Root-cause guard: when the user wheel-zooms the price axis we must
+  // flip autoScale off via applyMainPriceAutoScale (which writes both
+  // the chart AND React state). A bare priceScale.setAutoScale(false)
+  // gets clobbered by the chart-options effect on the next streamed
+  // bar tick, snapping the Y range back to fit-content.
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(
+    source,
+    /if \(overPriceAxis\) \{[\s\S]*?applyMainPriceAutoScale\(false\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(overPriceAxis\) \{[\s\S]*?priceScale\.setAutoScale\?\.\(false\)/,
+  );
+});
+
 test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
   const source = readResearchChartSurfaceSource();
 
