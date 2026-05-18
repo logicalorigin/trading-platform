@@ -107,6 +107,10 @@ import {
   subscribeCrosshairSync,
   type CrosshairSyncEvent,
 } from "./chartCrosshairSyncStore";
+import {
+  ChartFloatingCrosshair,
+  type ChartFloatingPayload,
+} from "./ChartFloatingCrosshair";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
   "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3";
@@ -5608,6 +5612,11 @@ export const ResearchChartSurface = ({
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mobileTrackingMode, setMobileTrackingMode] = useState(false);
+  const [floatingCrosshair, setFloatingCrosshair] = useState<{
+    x: number;
+    y: number;
+    payload: ChartFloatingPayload;
+  } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{
     pointerId: number;
@@ -6840,6 +6849,9 @@ export const ResearchChartSurface = ({
         schedulePublishCrosshairSync(time);
         if (time == null) {
           setHoverBar((current) => (current === null ? current : null));
+          if (mobileTrackingModeRef.current) {
+            setFloatingCrosshair((current) => (current === null ? current : null));
+          }
           return;
         }
 
@@ -6847,6 +6859,45 @@ export const ResearchChartSurface = ({
         setHoverBar((current) =>
           hoverBarsEqual(current, bar || null) ? current : bar || null,
         );
+        // Update the floating crosshair badge when the user is actively
+        // touching the chart on mobile. The badge offsets above-left of
+        // the pointer so the finger doesn't obscure it.
+        if (mobileTrackingModeRef.current && param?.point && bar) {
+          const delta = typeof bar.close === "number" && typeof bar.open === "number"
+            ? bar.close - bar.open
+            : null;
+          const deltaPercent = delta != null && bar.open
+            ? (delta / bar.open) * 100
+            : null;
+          const timeLabel = (() => {
+            try {
+              const date = new Date(time * 1000);
+              return Number.isNaN(date.getTime())
+                ? null
+                : date.toLocaleTimeString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
+            } catch (_e) {
+              return null;
+            }
+          })();
+          setFloatingCrosshair({
+            x: param.point.x,
+            y: param.point.y,
+            payload: {
+              timeLabel,
+              open: bar.open ?? null,
+              high: bar.high ?? null,
+              low: bar.low ?? null,
+              close: bar.close ?? null,
+              delta,
+              deltaPercent,
+            },
+          });
+        }
       };
       handleClick = (param: ChartMouseEvent) => {
         const activeChart = chart;
@@ -9681,6 +9732,27 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
+          {mobileTrackingMode && floatingCrosshair ? (
+            <div
+              style={{
+                position: "absolute",
+                top: chartInsetTop,
+                left: chartInsetLeft,
+                right: 0,
+                bottom: chartInsetBottom,
+                pointerEvents: "none",
+              }}
+            >
+              <ChartFloatingCrosshair
+                visible
+                x={floatingCrosshair.x}
+                y={floatingCrosshair.y}
+                containerWidth={plotSize.width || 0}
+                containerHeight={plotSize.height || 0}
+                payload={floatingCrosshair.payload}
+              />
+            </div>
+          ) : null}
           {windowOverlays.length ||
           positionBubbleOverlays.length ||
           positionOffPaneOverlays.length ||
