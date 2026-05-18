@@ -34,7 +34,7 @@ const matchesStage = (eventType, stageIds) => {
   });
 };
 
-export const AlgoEventsTab = ({
+export const AlgoAuditPanel = ({
   events = [],
   focusedDeployment,
   userPreferences,
@@ -216,4 +216,4 @@ export const AlgoEventsTab = ({
   );
 };
 
-export default AlgoEventsTab;
+export default AlgoAuditPanel;

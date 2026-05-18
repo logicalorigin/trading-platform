@@ -27,8 +27,7 @@ import {
   useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
-import { AlgoDraftsTab } from "./algo/AlgoDraftsTab";
-import { AlgoEventsTab } from "./algo/AlgoEventsTab";
+import { AlgoAuditPanel } from "./algo/AlgoAuditPanel";
 import { AlgoOperationsTab } from "./algo/AlgoOperationsTab";
 import { AlgoTuningTab } from "./algo/AlgoTuningTab";
 import {
@@ -120,7 +119,6 @@ import {
   isDiagRowsHealthy,
   isGateSummaryHealthy,
 } from "./algoCockpitDiagnosticsModel";
-import { TabBar } from "../components/ui/tabs.jsx";
 import { SectionHeader } from "../components/ui/SectionHeader.jsx";
 import { AlgoStatusBar } from "./algo/AlgoStatusBar.jsx";
 import { DiagPanel } from "./algo/DiagPanel.jsx";
@@ -213,7 +211,6 @@ export const AlgoScreen = ({
   const [deploymentName, setDeploymentName] = useState("");
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
-  const [primaryTab, setPrimaryTab] = useState("operations");
   const [diagExpansion, setDiagExpansion] = useState({});
   const [profileSectionOpen, setProfileSectionOpen] = useState("signal");
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
@@ -1377,38 +1374,8 @@ export const AlgoScreen = ({
         scanPending={runShadowScanMutation.isPending}
         narrow={algoIsNarrow}
       />
-      <TabBar
-        dataTestId="algo-primary-tabs"
-        value={primaryTab}
-        onChange={setPrimaryTab}
-        dense={algoIsPhone}
-        sticky={algoIsPhone}
-        tabs={[
-          {
-            id: "operations",
-            label: "Operations",
-            badge:
-              Number(cockpitTradePath?.blockedCandidates) > 0
-                ? cockpitTradePath.blockedCandidates
-                : null,
-          },
-          { id: "tuning", label: "Tuning" },
-          {
-            id: "audit",
-            label: "Audit",
-            badge: events.length || null,
-          },
-          {
-            id: "drafts",
-            label: "Drafts",
-            badge: candidateDrafts.length || null,
-          },
-        ]}
-      />
       <div
-        key={primaryTab}
-        data-testid="algo-tab-content"
-        data-tab={primaryTab}
+        data-testid="algo-live-content"
         className="ra-panel-enter"
         style={{
           display: "flex",
@@ -1417,8 +1384,7 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        {primaryTab === "operations" && (
-          <AlgoOperationsTab
+        <AlgoOperationsTab
             deployments={deployments}
             candidateDrafts={candidateDrafts}
             selectedDraft={selectedDraft}
@@ -1462,10 +1428,8 @@ export const AlgoScreen = ({
             updateStrategySettingsMutation={updateStrategySettingsMutation}
             algoIsPhone={algoIsPhone}
           />
-        )}
 
-        {primaryTab === "tuning" && (
-          <AlgoTuningTab
+        <AlgoTuningTab
             cockpit={cockpit}
             signalOptionsPositions={signalOptionsPositions}
             algoIsPhone={algoIsPhone}
@@ -1497,22 +1461,13 @@ export const AlgoScreen = ({
             diagExpansion={diagExpansion}
             setDiagExpansion={setDiagExpansion}
           />
-        )}
-      </div>
 
-
-      {primaryTab === "audit" && (
-        <AlgoEventsTab
+        <AlgoAuditPanel
           events={events}
           focusedDeployment={focusedDeployment}
           userPreferences={userPreferences}
-          onJumpToOperations={() => setPrimaryTab("operations")}
         />
-      )}
-
-      {primaryTab === "drafts" && (
-        <AlgoDraftsTab isVisible={isVisible && primaryTab === "drafts"} />
-      )}
+      </div>
     </div>
     </div>
   );

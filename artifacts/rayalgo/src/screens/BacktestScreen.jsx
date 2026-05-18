@@ -1,4 +1,5 @@
 import {
+  AlgoDraftStrategiesPanel,
   BacktestWorkspace,
 } from "../features/backtesting/BacktestingPanels";
 import {
@@ -13,13 +14,27 @@ export const BacktestScreen = ({
   defaultWatchlistId,
   isVisible = false,
 }) => (
-  <BacktestWorkspace
-    theme={T}
-    scale={{ fs, sp, dim }}
-    watchlists={watchlists}
-    defaultWatchlistId={defaultWatchlistId}
-    isVisible={isVisible}
-  />
+  <div
+    style={{
+      display: "flex",
+      flexDirection: "column",
+      gap: sp(10),
+      minWidth: 0,
+    }}
+  >
+    <AlgoDraftStrategiesPanel
+      theme={T}
+      scale={{ fs, sp, dim }}
+      isVisible={isVisible}
+    />
+    <BacktestWorkspace
+      theme={T}
+      scale={{ fs, sp, dim }}
+      watchlists={watchlists}
+      defaultWatchlistId={defaultWatchlistId}
+      isVisible={isVisible}
+    />
+  </div>
 );
 
 export default BacktestScreen;
