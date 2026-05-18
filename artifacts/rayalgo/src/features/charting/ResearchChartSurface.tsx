@@ -6026,6 +6026,85 @@ export const ResearchChartSurface = ({
     };
   }, [markUserViewportIntent]);
 
+  // TradingView-style per-axis wheel zoom: scrolling over the price axis
+  // zooms Y only, over the time axis zooms X only. Scrolling over the
+  // chart body still uses lightweight-charts' default combined zoom.
+  // Mobile axis-drag scaling is already handled by axisPressedMouseMove
+  // in the interaction config above (lines ~1555-1582).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const handleAxisWheel = (event: globalThis.WheelEvent) => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const rect = container.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+      const priceScaleWidth =
+        chart.priceScale?.("right", 0)?.width?.() || 0;
+      const timeScaleHeight = chart.timeScale?.()?.height?.() || 0;
+      const overPriceAxis =
+        priceScaleWidth > 0 &&
+        localX >= rect.width - priceScaleWidth &&
+        localX <= rect.width;
+      const overTimeAxis =
+        timeScaleHeight > 0 &&
+        localY >= rect.height - timeScaleHeight &&
+        localY <= rect.height;
+      if (!overPriceAxis && !overTimeAxis) {
+        return; // chart-body wheel: leave to default combined-zoom path
+      }
+      // Both prevent default chart wheel + native page scroll.
+      event.preventDefault();
+      const wheelDelta =
+        typeof event.deltaY === "number" && Number.isFinite(event.deltaY)
+          ? event.deltaY
+          : 0;
+      if (wheelDelta === 0) return;
+      const zoomFactor = Math.max(0.5, Math.min(1.5, 1 + wheelDelta * 0.0015));
+      try {
+        if (overPriceAxis) {
+          const priceScale = chart.priceScale?.("right", 0);
+          if (!priceScale) return;
+          const current = priceScale.options?.()?.scaleMargins;
+          const top = typeof current?.top === "number" ? current.top : 0.1;
+          const bottom = typeof current?.bottom === "number" ? current.bottom : 0.1;
+          // Zooming Y in (wheelDelta < 0) shrinks margins (more chart area);
+          // zooming out grows them. Symmetric.
+          const adjust = (margin: number) => {
+            const next = margin * zoomFactor;
+            return Math.max(0.02, Math.min(0.45, next));
+          };
+          priceScale.applyOptions?.({
+            scaleMargins: { top: adjust(top), bottom: adjust(bottom) },
+          });
+        } else if (overTimeAxis) {
+          const timeScale = chart.timeScale?.();
+          if (!timeScale) return;
+          const visible = timeScale.getVisibleLogicalRange?.();
+          if (!visible || typeof visible.from !== "number" || typeof visible.to !== "number") {
+            return;
+          }
+          const center = (visible.from + visible.to) / 2;
+          const range = visible.to - visible.from;
+          const nextRange = Math.max(4, range * zoomFactor);
+          timeScale.setVisibleLogicalRange?.({
+            from: center - nextRange / 2,
+            to: center + nextRange / 2,
+          });
+        }
+      } catch (_e) {
+        // swallow scale errors; chart may be mid-resize
+      }
+    };
+
+    container.addEventListener("wheel", handleAxisWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleAxisWheel);
+    };
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !hasChartBars) {
