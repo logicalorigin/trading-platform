@@ -354,6 +354,37 @@ test("ResearchChartSurface autoscale controls apply to the main price scale imme
   );
 });
 
+test("ResearchChartSurface paints a last-price pulse only when realtime-following", () => {
+  // Pulse position is recomputed via priceToCoordinate on bar updates +
+  // when Y-scale-related state changes. The dot must hide when
+  // realtimeFollowRef is false (user has panned away from realtime) or
+  // when the price is outside the visible Y range — otherwise the dot
+  // would lie about the price being "live now."
+  const source = readResearchChartSurfaceSource();
+
+  // State holder for the pulse position + tone.
+  assert.match(
+    source,
+    /\[lastPricePulse, setLastPricePulse\] = useState<\{[\s\S]*?y: number;[\s\S]*?tone: "up" \| "down" \| "flat"/,
+  );
+
+  // Effect gates on realtimeFollowRef and priceToCoordinate finiteness.
+  assert.match(source, /realtimeFollowRef\.current/);
+  assert.match(
+    source,
+    /const y = series\.priceToCoordinate\?\.\(close\)/,
+  );
+
+  // Render branch uses the raStatusPulse keyframe (existing CSS token).
+  assert.match(
+    source,
+    /lastPricePulse \? \([\s\S]*?animation:\s*"raStatusPulse/,
+  );
+
+  // Telemetry attribute on the dot lets us assert visibility via DOM.
+  assert.match(source, /data-chart-last-price-pulse=""/);
+});
+
 test("ResearchChartSurface desktop crosshair badge is opt-in via preference", () => {
   // Desktop opt-in for the floating OHLC + delta badge. The badge
   // updates the floatingCrosshair state when EITHER mobileTrackingMode
