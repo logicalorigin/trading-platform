@@ -49,6 +49,54 @@ const BloombergLiveDock = lazyWithRetry(
   { label: "BloombergLiveDock" },
 );
 
+/**
+ * ScreenTransitionHost — wraps a screen so it fades + lifts on every
+ * activation, including retainInactive screens that stay mounted between
+ * switches.
+ *
+ * The .ra-screen-enter CSS class carries the raScreenEnter keyframe.
+ * CSS animations don't natively re-fire on display:none → display:flex,
+ * so we remove the class, force a layout reflow, and re-add the class
+ * inside a useLayoutEffect each time `active` flips true. For initial
+ * mount the class is on the element from the start, so the animation
+ * fires once on its own.
+ *
+ * Honors prefers-reduced-motion / data-rayalgo-reduced-motion via the
+ * media-query and html[data-rayalgo-reduced-motion="on"] overrides in
+ * index.css — the animation becomes a no-op when motion is reduced.
+ */
+const ScreenTransitionHost = ({ screenId, active, children }) => {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const node = ref.current;
+    if (!node) return;
+    node.classList.remove("ra-screen-enter");
+    // Force reflow so the next class addition restarts the animation
+    // instead of being coalesced with the removal.
+    void node.offsetWidth;
+    node.classList.add("ra-screen-enter");
+  }, [active]);
+  return (
+    <div
+      ref={ref}
+      data-testid={`screen-host-${screenId}`}
+      aria-hidden={!active}
+      className="ra-screen-enter"
+      style={{
+        flex: 1,
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        display: active ? "flex" : "none",
+        flexDirection: "column",
+      }}
+    >
+      {children}
+    </div>
+  );
+};
+
 const ScreenReadyProbe = ({ screenId, active }) => {
   useEffect(() => {
     if (!active) return undefined;
@@ -952,18 +1000,10 @@ export const PlatformShell = ({
           const shouldRender =
             mountedScreens[id] && (active || retainInactive);
           return shouldRender ? (
-            <div
+            <ScreenTransitionHost
               key={id}
-              data-testid={`screen-host-${id}`}
-              aria-hidden={!active}
-              style={{
-                flex: 1,
-                width: "100%",
-                minWidth: 0,
-                minHeight: 0,
-                display: active ? "flex" : "none",
-                flexDirection: "column",
-              }}
+              screenId={id}
+              active={active}
             >
               <Suspense
                 fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
@@ -971,7 +1011,7 @@ export const PlatformShell = ({
                 {renderScreenById(id)}
                 <ScreenReadyProbe screenId={id} active={active} />
               </Suspense>
-            </div>
+            </ScreenTransitionHost>
           ) : null;
         })}
       </div>

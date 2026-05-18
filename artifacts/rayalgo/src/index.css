@@ -412,6 +412,36 @@ table {
   }
 }
 
+/* Screen-switch entrance — short fade + 4px translateY rise. Reads as
+   "this screen just arrived" without being slow enough to delay user
+   interaction. Re-played from JS via classList.remove + reflow + add
+   each time a screen becomes active (works for retainInactive screens
+   that stay mounted between switches). */
+@keyframes raScreenEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ra-screen-enter {
+  animation: raScreenEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-screen-enter {
+    animation: none;
+  }
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
+  animation: none;
+}
+
 @keyframes raPopoverEnter {
   from {
     opacity: 0;
