@@ -132,6 +132,94 @@ test("signal matrix state returns neutral unavailable rows without persisting", 
   assert.match(state.id, /profile-1:AAPL:2m/);
 });
 
+test("signal monitor all-watchlists scope evaluates the combined universe", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        watchlistId: "core",
+        maxSymbols: 10,
+        rayReplicaSettings: {
+          __signalMonitorUniverseScope: "all_watchlists",
+        },
+      }),
+      watchlists: [
+        {
+          id: "core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+        {
+          id: "research",
+          name: "Research",
+          isDefault: false,
+          updatedAt: baseDate,
+          items: [{ symbol: "PLTR" }, { symbol: "spy" }, { symbol: "IONQ" }] as never,
+        },
+      ],
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "IONQ"]);
+  assert.deepEqual(result.skippedSymbols, []);
+  assert.equal(result.truncated, false);
+});
+
+test("signal monitor selected-watchlist scope stays on the configured watchlist", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        watchlistId: "core",
+        maxSymbols: 10,
+        rayReplicaSettings: {
+          __signalMonitorUniverseScope: "selected_watchlist",
+        },
+      }),
+      watchlists: [
+        {
+          id: "core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+        {
+          id: "research",
+          name: "Research",
+          isDefault: false,
+          updatedAt: baseDate,
+          items: [{ symbol: "PLTR" }, { symbol: "IONQ" }] as never,
+        },
+      ],
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
+});
+
+test("signal monitor marks built-in fallback universes as non-authoritative", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        maxSymbols: 10,
+        rayReplicaSettings: {
+          __signalMonitorUniverseScope: "all_watchlists",
+        },
+      }),
+      watchlists: [
+        {
+          id: "built-in-core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+      ],
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
+  assert.equal(result.fallbackWatchlists, true);
+});
+
 test("signal matrix cache serves stale data while a refresh is in flight", async () => {
   const key = "signal-matrix:unit";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };

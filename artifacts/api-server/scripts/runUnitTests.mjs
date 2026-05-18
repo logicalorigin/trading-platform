@@ -18,6 +18,7 @@ const unitTestFiles = [
   "src/services/account-risk.test.ts",
   "src/services/account-snapshot-persistence.test.ts",
   "src/services/account-trade-annotations.test.ts",
+  "src/services/automation.test.ts",
   "src/services/backtesting-strategies.test.ts",
   "src/services/diagnostics.test.ts",
   "src/services/flow-events-model.test.ts",

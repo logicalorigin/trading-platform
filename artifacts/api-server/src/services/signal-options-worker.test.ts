@@ -241,6 +241,37 @@ test("signal-options worker records signal freshness from successful scans", asy
   assert.equal(runtime?.lastBlockedCandidateCount, 2);
 });
 
+test("signal-options worker accepts lightweight scan summaries", async () => {
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => ({
+      summary: {
+        signalCount: 90,
+        freshSignalCount: 6,
+        staleSignalCount: 0,
+        unavailableSignalCount: 0,
+        latestSignalBarAt: "2026-05-18T18:20:00.000Z",
+        oldestSignalBarAt: "2026-05-18T18:05:00.000Z",
+        candidateCount: 5,
+        blockedCandidateCount: 4,
+      },
+    }),
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.lastSignalCount, 90);
+  assert.equal(runtime?.lastFreshSignalCount, 6);
+  assert.equal(runtime?.lastLatestSignalBarAt, "2026-05-18T18:20:00.000Z");
+  assert.equal(runtime?.lastOldestSignalBarAt, "2026-05-18T18:05:00.000Z");
+  assert.equal(runtime?.lastCandidateCount, 5);
+  assert.equal(runtime?.lastBlockedCandidateCount, 4);
+});
+
 test("signal-options worker backs off failed deployment scans", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");

@@ -99,8 +99,34 @@ function timestampMs(value: unknown): number | null {
   return null;
 }
 
+function numeric(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function summarizeScanResult(result: unknown) {
   const record = asRecord(result);
+  const summary = asRecord(record["summary"]);
+  const summarySignalCount = numeric(summary["signalCount"]);
+  if (summarySignalCount !== null) {
+    return {
+      signalCount: summarySignalCount,
+      freshSignalCount: numeric(summary["freshSignalCount"]) ?? 0,
+      staleSignalCount: numeric(summary["staleSignalCount"]) ?? 0,
+      unavailableSignalCount: numeric(summary["unavailableSignalCount"]) ?? 0,
+      latestSignalBarAt:
+        typeof summary["latestSignalBarAt"] === "string"
+          ? summary["latestSignalBarAt"]
+          : null,
+      oldestSignalBarAt:
+        typeof summary["oldestSignalBarAt"] === "string"
+          ? summary["oldestSignalBarAt"]
+          : null,
+      candidateCount: numeric(summary["candidateCount"]) ?? 0,
+      blockedCandidateCount: numeric(summary["blockedCandidateCount"]) ?? 0,
+    };
+  }
+
   const signals = asArray(record["signals"]).map(asRecord);
   const candidates = asArray(record["candidates"]).map(asRecord);
   const signalBarTimes = signals

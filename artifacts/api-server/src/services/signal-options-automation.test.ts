@@ -197,6 +197,32 @@ test("historical option trade fills use the first timely Polygon print", () => {
   assert.equal(late, null);
 });
 
+test("historical backfill option entries require a timely option bar", () => {
+  const signalAt = new Date("2026-05-14T14:00:00.000Z");
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isHistoricalOptionEntryBarTimely(
+      signalAt,
+      new Date("2026-05-14T14:01:00.000Z"),
+    ),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isHistoricalOptionEntryBarTimely(
+      signalAt,
+      new Date("2026-05-14T14:01:01.000Z"),
+    ),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isHistoricalOptionEntryBarTimely(
+      signalAt,
+      new Date("2026-05-14T13:59:59.000Z"),
+    ),
+    false,
+  );
+});
+
 test("signal-options replay prices option marks from 1m regular-session bars", () => {
   assert.equal(
     __signalOptionsAutomationInternalsForTests.SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
@@ -269,6 +295,7 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
   const currentState = {
     profile: {
       id: "signal-profile-paper",
+      timeframe: "5m",
       pollIntervalSeconds: 60,
       lastEvaluatedAt: "2026-05-14T13:59:20.000Z",
     },
@@ -290,6 +317,20 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
         profile: {
           ...currentState.profile,
           lastEvaluatedAt: "2026-05-14T13:58:00.000Z",
+        },
+      },
+      universe,
+      now,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.shouldRefreshSignalOptionsMonitorState({
+      evaluated: {
+        ...currentState,
+        profile: {
+          ...currentState.profile,
+          lastEvaluatedAt: "2026-05-14T13:54:00.000Z",
         },
       },
       universe,
@@ -334,6 +375,66 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
     }),
     false,
   );
+});
+
+test("signal-options scan timestamp keeps latest observed fresh signal", () => {
+  const latestSignalDate =
+    __signalOptionsAutomationInternalsForTests.latestSignalDate;
+  const earlier = new Date("2026-05-18T17:55:00.000Z");
+
+  assert.equal(
+    latestSignalDate(null, "2026-05-18T18:05:00.000Z")?.toISOString(),
+    "2026-05-18T18:05:00.000Z",
+  );
+  assert.equal(
+    latestSignalDate(earlier, "2026-05-18T18:05:00.000Z")?.toISOString(),
+    "2026-05-18T18:05:00.000Z",
+  );
+  assert.equal(
+    latestSignalDate(earlier, "2026-05-18T17:45:00.000Z"),
+    earlier,
+  );
+  assert.equal(latestSignalDate(earlier, "not-a-date"), earlier);
+});
+
+test("signal-options worker scan summary stays lightweight and universe-scoped", () => {
+  const summary =
+    __signalOptionsAutomationInternalsForTests.buildWorkerScanSummary({
+      states: [
+        {
+          symbol: "SPY",
+          fresh: true,
+          status: "ok",
+          latestBarAt: "2026-05-18T18:20:00.000Z",
+        },
+        {
+          symbol: "QQQ",
+          fresh: false,
+          status: "stale",
+          latestBarAt: "2026-05-18T18:10:00.000Z",
+        },
+        {
+          symbol: "DIA",
+          fresh: false,
+          status: "unavailable",
+          latestBarAt: null,
+        },
+      ] as never,
+      universe: new Set(["SPY", "QQQ"]),
+      candidateCount: 3,
+      blockedCandidateCount: 2,
+    });
+
+  assert.deepEqual(summary, {
+    signalCount: 2,
+    freshSignalCount: 1,
+    staleSignalCount: 1,
+    unavailableSignalCount: 0,
+    latestSignalBarAt: "2026-05-18T18:20:00.000Z",
+    oldestSignalBarAt: "2026-05-18T18:10:00.000Z",
+    candidateCount: 3,
+    blockedCandidateCount: 2,
+  });
 });
 
 test("active position marks record changed downside prices", () => {
@@ -1266,6 +1367,24 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
     ),
     [signalKey],
   );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            occurredAt: new Date("2026-05-12T15:01:00.000Z"),
+            payload: {
+              signalKey,
+              reason: "no_expiration_in_dte_window",
+            },
+          },
+        ] as never,
+        { profileUpdatedAt: new Date("2026-05-12T15:02:00.000Z") },
+      ),
+    ),
+    [],
+  );
 });
 
 test("signal-options candidates preserve RayReplica signal to shadow action mapping", () => {
@@ -1445,6 +1564,94 @@ test("scan events override matching live signal previews without losing mappings
   assert.equal(merged.signal?.signalKey, preview.signal?.signalKey);
 });
 
+test("later shadow entries clear earlier skipped candidate blockers", () => {
+  const signalAt = "2026-05-18T18:15:00.000Z";
+  const baseEvent = {
+    deploymentId: "deployment-123456789",
+    symbol: "VXX",
+    occurredAt: new Date("2026-05-18T18:31:57.000Z"),
+  };
+  const candidate = {
+    id: "SIGOPT-deploy-VXX-buy-1779128100000",
+    deploymentId: "deployment-123456789",
+    symbol: "VXX",
+    direction: "buy",
+    optionRight: "call",
+    timeframe: "5m",
+    signalAt,
+    signalPrice: 27.34,
+  };
+  const skipped =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent({
+      ...baseEvent,
+      id: "event-skip",
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      payload: {
+        candidate,
+        reason: "no_contract_for_strike_slot",
+      },
+    } as never);
+  const entry =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent({
+      ...baseEvent,
+      id: "event-entry",
+      eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+      occurredAt: new Date("2026-05-18T18:36:58.000Z"),
+      payload: {
+        candidate: {
+          ...candidate,
+          selectedContract: { ticker: "VXX20260522C27" },
+          orderPlan: { quantity: 3 },
+        },
+        selectedContract: { ticker: "VXX20260522C27" },
+        orderPlan: { quantity: 3 },
+      },
+    } as never);
+  const mark =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent({
+      ...baseEvent,
+      id: "event-mark",
+      eventType: SIGNAL_OPTIONS_MARK_EVENT,
+      occurredAt: new Date("2026-05-18T18:42:13.000Z"),
+      payload: {
+        position: {
+          candidateId: candidate.id,
+          symbol: "VXX",
+          direction: "buy",
+          selectedContract: { ticker: "VXX20260522C27" },
+        },
+      },
+    } as never);
+  assert.ok(skipped);
+  assert.ok(entry);
+  assert.ok(mark);
+
+  const mergedAfterEntry =
+    __signalOptionsAutomationInternalsForTests.mergeSignalOptionsCandidate(
+      skipped,
+      entry,
+    );
+  const mergedAfterMark =
+    __signalOptionsAutomationInternalsForTests.mergeSignalOptionsCandidate(
+      mergedAfterEntry,
+      mark,
+    );
+  const action =
+    __signalOptionsAutomationInternalsForTests.deriveCandidateActionStatus({
+      candidate: mergedAfterMark,
+      events: [
+        { eventType: SIGNAL_OPTIONS_SKIPPED_EVENT },
+        { eventType: SIGNAL_OPTIONS_ENTRY_EVENT },
+        { eventType: SIGNAL_OPTIONS_MARK_EVENT },
+      ] as never,
+      shadowLink: { orderId: "shadow-order", positionQuantity: 3 } as never,
+    });
+
+  assert.equal(mergedAfterMark.status, "open");
+  assert.equal(mergedAfterMark.reason, null);
+  assert.equal(action.actionStatus, "shadow_filled");
+});
+
 test("signal-options deployments normalize execution to the shadow account", () => {
   assert.equal(
     normalizeAlgoDeploymentProviderAccountId({
@@ -1488,6 +1695,11 @@ test("signal-options profile normalization fills entry-gate policy defaults", ()
         },
         blockedPutSymbols: ["sqqq", "PSQ", "sqqq"],
       },
+      exitPolicy: {
+        earlyExitBars: 3,
+        earlyExitLossPct: 15,
+        overnightExitEnabled: true,
+      },
     },
   });
 
@@ -1502,6 +1714,11 @@ test("signal-options profile normalization fills entry-gate policy defaults", ()
     requiredCount: 2,
   });
   assert.deepEqual(customProfile.entryGate.blockedPutSymbols, ["PSQ", "SQQQ"]);
+  assert.equal(customProfile.exitPolicy.hardStopPct, -40);
+  assert.equal(customProfile.exitPolicy.earlyExitBars, 3);
+  assert.equal(customProfile.exitPolicy.earlyExitLossPct, 15);
+  assert.equal(customProfile.exitPolicy.overnightExitEnabled, true);
+  assert.equal(customProfile.exitPolicy.overnightMinGainPct, 20);
 });
 
 test("signal-options entry gate requires MTF alignment and blocks inverse puts", () => {
@@ -1665,6 +1882,157 @@ test("signal-options conservative exit profile tightens hard stop and runner tra
   assert.equal(active.exitReason, "runner_trail_stop");
 });
 
+test("signal-options early invalidation exits losing positions after configured signal bars", () => {
+  const earlyProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      exitPolicy: {
+        earlyExitBars: 3,
+        earlyExitLossPct: 15,
+      },
+    },
+  });
+
+  const tooSoon =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 4.6,
+      markPrice: 3.2,
+      profile: earlyProfile,
+      barsSinceEntry: 2,
+    });
+  const invalidated =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 4.6,
+      markPrice: 3.2,
+      profile: earlyProfile,
+      barsSinceEntry: 3,
+    });
+
+  assert.equal(tooSoon.exitReason, null);
+  assert.equal(invalidated.exitReason, "early_invalidation");
+  assert.ok(Math.abs(invalidated.markReturnPct + 20) < 1e-9);
+});
+
+test("signal-options overnight policy exits weak holds and tightened runners", () => {
+  const overnightProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      exitPolicy: {
+        overnightExitEnabled: true,
+        overnightMinGainPct: 20,
+        overnightRunnerGivebackPct: 15,
+      },
+    },
+  });
+
+  const weakHold =
+    __signalOptionsAutomationInternalsForTests.computeOvernightPositionExit({
+      entryPrice: 4,
+      peakPrice: 4.6,
+      markPrice: 4.4,
+      profile: overnightProfile,
+    });
+  const runnerGiveback =
+    __signalOptionsAutomationInternalsForTests.computeOvernightPositionExit({
+      entryPrice: 4,
+      peakPrice: 8,
+      markPrice: 6.6,
+      profile: overnightProfile,
+    });
+  const strongRunner =
+    __signalOptionsAutomationInternalsForTests.computeOvernightPositionExit({
+      entryPrice: 4,
+      peakPrice: 8,
+      markPrice: 7,
+      profile: overnightProfile,
+    });
+
+  assert.equal(weakHold.exitReason, "overnight_risk_exit");
+  assert.equal(runnerGiveback.exitReason, "overnight_runner_stop");
+  assert.equal(runnerGiveback.overnightTrailStopPrice, 6.8);
+  assert.equal(strongRunner.exitReason, null);
+});
+
+test("signal-options conditional quality exits tighten weak entries and loosen strong runners", () => {
+  const conditionalProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      exitPolicy: {
+        trailActivationPct: 35,
+        minLockedGainPct: 15,
+        trailGivebackPct: 20,
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        overnightExitEnabled: true,
+        overnightMinGainPct: 10,
+        conditionalQualityExitsEnabled: true,
+        lowQualityEarlyExitBars: 4,
+        lowQualityEarlyExitLossPct: 15,
+        highQualityEarlyExitBars: 8,
+        highQualityEarlyExitLossPct: 25,
+        weakLiquidityTrailGivebackPct: 15,
+        strongLiquidityTrailGivebackPct: 25,
+        highQualityOvernightMinGainPct: -100,
+      },
+    },
+  });
+  const weakQuality = {
+    tier: "low" as const,
+    liquidityTier: "weak" as const,
+    score: 2,
+    reasons: ["weak_liquidity"],
+    adx: 18,
+    mtfMatches: 2,
+    mtfDirections: [1, 1, -1],
+    spreadPctOfMid: 35,
+    bullishRegime: false,
+  };
+  const strongQuality = {
+    tier: "high" as const,
+    liquidityTier: "strong" as const,
+    score: 5,
+    reasons: ["mtf_full_alignment", "adx_confirmed", "strong_liquidity"],
+    adx: 31,
+    mtfMatches: 3,
+    mtfDirections: [1, 1, 1],
+    spreadPctOfMid: 10,
+    bullishRegime: true,
+  };
+
+  const weakExit =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 4.2,
+      markPrice: 3.36,
+      profile: conditionalProfile,
+      barsSinceEntry: 4,
+      signalQuality: weakQuality,
+    });
+  const strongRunner =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 8,
+      markPrice: 6.2,
+      profile: conditionalProfile,
+      barsSinceEntry: 6,
+      signalQuality: strongQuality,
+    });
+  const strongOvernight =
+    __signalOptionsAutomationInternalsForTests.computeOvernightPositionExit({
+      entryPrice: 4,
+      peakPrice: 4.4,
+      markPrice: 3.9,
+      profile: conditionalProfile,
+      signalQuality: strongQuality,
+    });
+
+  assert.equal(weakExit.exitReason, "early_invalidation");
+  assert.equal(weakExit.conditionalExitPolicy.earlyExitBars, 4);
+  assert.equal(strongRunner.exitReason, null);
+  assert.equal(strongRunner.conditionalExitPolicy.trailGivebackPct, 25);
+  assert.equal(strongOvernight.exitReason, null);
+  assert.equal(strongOvernight.conditionalExitPolicy?.overnightMinGainPct, -100);
+});
+
 test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", () => {
   const liquid = quote(101, "call");
   const orderPlan = buildSignalOptionsShadowOrderPlan(liquid, profile);
@@ -1683,6 +2051,67 @@ test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", 
 
   assert.equal(liquidity.ok, false);
   assert.ok(liquidity.reasons.includes("spread_too_wide"));
+});
+
+test("signal-options liquidity gate allows mark-only quotes when bid/ask are optional", () => {
+  const markOnlyProfile = resolveSignalOptionsExecutionProfile({
+    liquidityGate: {
+      requireBidAsk: false,
+      requireFreshQuote: false,
+    },
+  });
+  const markOnly = {
+    ...quote(101, "call"),
+    bid: null,
+    ask: null,
+    mark: 1.1,
+    last: 1.05,
+  };
+
+  const liquidity = resolveSignalOptionsLiquidity(markOnly, markOnlyProfile);
+
+  assert.equal(liquidity.ok, true);
+  assert.deepEqual(liquidity.reasons, []);
+  assert.equal(liquidity.mid, 1.1);
+  assert.equal(liquidity.spreadPctOfMid, null);
+});
+
+test("signal-options liquidity gate still blocks missing bid/ask when required", () => {
+  const markOnly = {
+    ...quote(101, "call"),
+    bid: null,
+    ask: null,
+    mark: 1.1,
+    last: 1.05,
+  };
+
+  const liquidity = resolveSignalOptionsLiquidity(markOnly, profile);
+
+  assert.equal(liquidity.ok, false);
+  assert.ok(liquidity.reasons.includes("missing_bid_ask"));
+  assert.ok(!liquidity.reasons.includes("spread_too_wide"));
+});
+
+test("signal-options liquidity gate keeps freshness independent of bid/ask requirement", () => {
+  const markOnlyProfile = resolveSignalOptionsExecutionProfile({
+    liquidityGate: {
+      requireBidAsk: false,
+      requireFreshQuote: true,
+    },
+  });
+  const staleMarkOnly = {
+    ...quote(101, "call"),
+    bid: null,
+    ask: null,
+    mark: 1.1,
+    last: 1.05,
+    quoteFreshness: "stale",
+  };
+
+  const liquidity = resolveSignalOptionsLiquidity(staleMarkOnly, markOnlyProfile);
+
+  assert.equal(liquidity.ok, false);
+  assert.deepEqual(liquidity.reasons, ["quote_not_fresh"]);
 });
 
 test("daily signal-options pnl includes realized exits and open marked positions", () => {
@@ -1812,6 +2241,23 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
       selectedContract: null,
       timeline: [],
     },
+    {
+      id: "candidate-4",
+      symbol: "DIA",
+      status: "skipped",
+      actionStatus: "blocked",
+      syncStatus: "synced",
+      reason: "mtf_not_aligned",
+      signalAt: now.toISOString(),
+      action: { optionAction: "buy_put", executionMode: "shadow" },
+      selectedContract: null,
+      timeline: [
+        {
+          type: "signal_options_candidate_skipped",
+          occurredAt: now.toISOString(),
+        },
+      ],
+    },
   ] as never;
   const activePositions = [
     {
@@ -1857,15 +2303,178 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
     "blocked",
   );
   assert.equal(
-    stages.find((stage) => stage.id === "action_mapped")?.count,
+    stages.find((stage) => stage.id === "liquidity_risk_gate")?.count,
     1,
+  );
+  assert.equal(
+    stages.find((stage) => stage.id === "action_mapped")?.status,
+    "healthy",
+  );
+  assert.equal(
+    stages.find((stage) => stage.id === "action_mapped")?.count,
+    2,
   );
   assert.ok(
     attention.some((item) => item.id === "daily-loss-halt"),
   );
   assert.ok(
+    attention.every((item) => item.id !== "blocked-candidate-4"),
+  );
+  assert.ok(
+    attention.some(
+      (item) => item.id === "blocked-candidate-1" && item.stage === "liquidity_risk_gate",
+    ),
+  );
+  assert.ok(
     attention.some((item) => item.id === "shadow-candidate-2"),
   );
+});
+
+test("cockpit attention ignores blockers invalidated by a profile update", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-1",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["MSTR"],
+    lastEvaluatedAt: now,
+    lastSignalAt: now,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-1",
+      symbol: "MSTR",
+      status: "skipped",
+      actionStatus: "blocked",
+      syncStatus: "synced",
+      reason: "no_expiration_in_dte_window",
+      signalAt: "2026-04-28T17:45:00.000Z",
+      selectedContract: null,
+      timeline: [
+        {
+          type: "signal_options_candidate_skipped",
+          occurredAt: "2026-04-28T17:50:00.000Z",
+        },
+      ],
+    },
+  ] as never;
+  const events = [
+    {
+      eventType: "signal_options_profile_updated",
+      occurredAt: new Date("2026-04-28T17:55:00.000Z"),
+      payload: {},
+    },
+  ] as never;
+
+  const stages =
+    __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+      deployment,
+      readiness,
+      candidates,
+      activePositions: [],
+      risk: {},
+      events,
+    });
+  const attention =
+    __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+      deployment,
+      readiness,
+      candidates,
+      activePositions: [],
+      risk: {},
+      events,
+    });
+
+  assert.notEqual(
+    stages.find((stage) => stage.id === "contract_selected")?.status,
+    "attention",
+  );
+  assert.deepEqual(attention, []);
+});
+
+test("cockpit attention ignores transient mark misses while a position mark is fresh", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-1",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["VXX"],
+    lastEvaluatedAt: now,
+    lastSignalAt: now,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-1",
+      symbol: "VXX",
+      status: "skipped",
+      actionStatus: "blocked",
+      syncStatus: "synced",
+      reason: "position_mark_unavailable",
+      signalAt: now.toISOString(),
+      timeline: [
+        {
+          type: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: now.toISOString(),
+        },
+      ],
+    },
+  ] as never;
+  const activePositions = [
+    {
+      id: "position-1",
+      symbol: "VXX",
+      openedAt: now.toISOString(),
+      entryPrice: 1,
+      lastMarkPrice: 0.92,
+      stopPrice: 0.62,
+      quantity: 1,
+      selectedContract: { multiplier: 100 },
+      lastMarkedAt: now.toISOString(),
+    },
+  ] as never;
+
+  const stages =
+    __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+      deployment,
+      readiness,
+      candidates,
+      activePositions,
+      risk: {},
+      events: [],
+    });
+  const attention =
+    __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+      deployment,
+      readiness,
+      candidates,
+      activePositions,
+      risk: {},
+      events: [],
+    });
+
+  assert.equal(
+    stages.find((stage) => stage.id === "position_managed")?.status,
+    "healthy",
+  );
+  assert.deepEqual(attention, []);
 });
 
 test("cockpit diagnostics summarize trade blockers and signal freshness", () => {

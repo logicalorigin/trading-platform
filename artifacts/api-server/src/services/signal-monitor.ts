@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 import {
   db,
   signalMonitorEventsTable,
@@ -23,12 +23,25 @@ import {
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
-import { getBars, listWatchlists, listWatchlistsRuntimeFallback } from "./platform";
+import {
+  getBars,
+  getOptionsFlowUniverse,
+  listWatchlists,
+  listWatchlistsRuntimeFallback,
+} from "./platform";
 
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
 type SignalMonitorDirection = "buy" | "sell";
 type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
+type SignalMonitorUniverseMode =
+  | "selected_watchlist"
+  | "all_watchlists"
+  | "all_watchlists_plus_universe";
+type SignalMonitorUniverseSource =
+  | "selected_watchlist"
+  | "all_watchlists"
+  | "watchlists_plus_ranked_universe";
 export type EvaluationMode = "hydrate" | "incremental";
 export type SignalMonitorBarSnapshot =
   Awaited<ReturnType<typeof getBars>>["bars"][number];
@@ -62,6 +75,9 @@ const SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS = 60_000;
 const SIGNAL_MONITOR_MATRIX_STALE_TTL_MS = 5 * 60_000;
 const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
+const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
+  "all_watchlists_plus_universe";
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();
 const TIMEFRAME_MS: Record<SignalMonitorMatrixTimeframe, number> = {
@@ -106,8 +122,26 @@ export function withSignalMonitorUniverseScope(
 ): Record<string, unknown> {
   return {
     ...asRecord(settings),
-    universeScope,
+    [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: universeScope,
   };
+}
+
+function resolveSignalMonitorUniverseScope(
+  settings: Record<string, unknown>,
+): SignalMonitorUniverseMode {
+  const raw = String(
+    settings[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY] ??
+      settings["universeScope"] ??
+      "",
+  ).trim();
+  if (
+    raw === "selected_watchlist" ||
+    raw === "all_watchlists" ||
+    raw === "all_watchlists_plus_universe"
+  ) {
+    return raw;
+  }
+  return DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE;
 }
 
 function parseSignalTimeframe(value: unknown): SignalMonitorTimeframe {
@@ -584,11 +618,53 @@ async function ensureProfileWatchlist(profile: DbSignalMonitorProfile) {
 }
 
 function resolveWatchlistSymbols(watchlist: WatchlistRecord, maxSymbols: number) {
+  return resolveSymbolUniverse(
+    watchlist.items.map((item) => item.symbol),
+    maxSymbols,
+  );
+}
+
+type ResolvedSignalMonitorUniverse = {
+  symbols: string[];
+  skippedSymbols: string[];
+  truncated: boolean;
+  fallbackWatchlists?: boolean;
+  fallbackUsed?: boolean;
+  universe: SignalMonitorUniverseSummary;
+};
+
+type ResolvedSymbolUniverse = Pick<
+  ResolvedSignalMonitorUniverse,
+  "symbols" | "skippedSymbols" | "truncated"
+>;
+
+type SignalMonitorExpansionUniverse = {
+  symbols: string[];
+  fallbackUsed: boolean;
+  degradedReason: string | null;
+  rankedAt: Date | null;
+};
+
+type SignalMonitorUniverseSummary = {
+  mode: SignalMonitorUniverseMode;
+  configuredMaxSymbols: number;
+  resolvedSymbols: number;
+  pinnedSymbols: number;
+  expansionSymbols: number;
+  shortfall: number;
+  source: SignalMonitorUniverseSource;
+  fallbackUsed: boolean;
+  degradedReason: string | null;
+  rankedAt: Date | null;
+};
+
+function resolveSymbolUniverse(
+  sourceSymbols: string[],
+  maxSymbols: number,
+): ResolvedSymbolUniverse {
   const uniqueSymbols = Array.from(
     new Set(
-      watchlist.items
-        .map((item) => normalizeSymbol(item.symbol).toUpperCase())
-        .filter(Boolean),
+      sourceSymbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()).filter(Boolean),
     ),
   );
   return {
@@ -596,6 +672,107 @@ function resolveWatchlistSymbols(watchlist: WatchlistRecord, maxSymbols: number)
     skippedSymbols: uniqueSymbols.slice(maxSymbols),
     truncated: uniqueSymbols.length > maxSymbols,
   };
+}
+
+function resolveSignalMonitorUniverseFromWatchlists(input: {
+  profile: Pick<DbSignalMonitorProfile, "watchlistId" | "maxSymbols" | "rayReplicaSettings">;
+  watchlists: WatchlistRecord[];
+  ensureWatchlist?: boolean;
+  expansionUniverse?: SignalMonitorExpansionUniverse | null;
+}): ResolvedSignalMonitorUniverse {
+  const settings = asRecord(input.profile.rayReplicaSettings);
+  const universeScope = resolveSignalMonitorUniverseScope(settings);
+  const fallbackWatchlists = input.watchlists.some((watchlist) =>
+    String(watchlist.id || "").startsWith("built-in-"),
+  );
+  const allWatchlistSymbols = input.watchlists.flatMap((watchlist) =>
+    watchlist.items.map((item) => item.symbol),
+  );
+  const selectedWatchlist =
+    input.profile.watchlistId
+      ? input.watchlists.find((candidate) => candidate.id === input.profile.watchlistId) ??
+        null
+      : input.ensureWatchlist === false
+        ? null
+        : input.watchlists.find((candidate) => candidate.isDefault) ??
+          input.watchlists[0] ??
+          null;
+  const selectedWatchlistSymbols = selectedWatchlist
+    ? selectedWatchlist.items.map((item) => item.symbol)
+    : [];
+  const pinnedSourceSymbols =
+    universeScope === "selected_watchlist"
+      ? selectedWatchlistSymbols
+      : allWatchlistSymbols;
+  const sourceSymbols =
+    universeScope === "all_watchlists_plus_universe"
+      ? [
+          ...pinnedSourceSymbols,
+          ...(input.expansionUniverse?.symbols ?? []),
+        ]
+      : pinnedSourceSymbols;
+  const resolved = resolveSymbolUniverse(sourceSymbols, input.profile.maxSymbols);
+  const pinnedSet = new Set(resolveSymbolUniverse(pinnedSourceSymbols, Number.MAX_SAFE_INTEGER).symbols);
+  const expansionSymbols = resolved.symbols.filter((symbol) => !pinnedSet.has(symbol)).length;
+  const fallbackUsed = Boolean(
+    fallbackWatchlists || input.expansionUniverse?.fallbackUsed,
+  );
+  const source: SignalMonitorUniverseSource =
+    universeScope === "selected_watchlist"
+      ? "selected_watchlist"
+      : universeScope === "all_watchlists"
+        ? "all_watchlists"
+        : "watchlists_plus_ranked_universe";
+
+  return {
+    ...resolved,
+    ...(fallbackWatchlists ? { fallbackWatchlists } : {}),
+    fallbackUsed,
+    universe: {
+      mode: universeScope,
+      configuredMaxSymbols: input.profile.maxSymbols,
+      resolvedSymbols: resolved.symbols.length,
+      pinnedSymbols: pinnedSet.size,
+      expansionSymbols,
+      shortfall: Math.max(0, input.profile.maxSymbols - resolved.symbols.length),
+      source,
+      fallbackUsed,
+      degradedReason:
+        input.expansionUniverse?.degradedReason ??
+        (fallbackWatchlists ? "Signal monitor watchlists are using runtime fallback data." : null),
+      rankedAt: input.expansionUniverse?.rankedAt ?? null,
+    },
+  };
+}
+
+function loadSignalMonitorExpansionUniverse(): SignalMonitorExpansionUniverse {
+  try {
+    const universe = getOptionsFlowUniverse();
+    const coverage = universe.coverage ?? {};
+    const symbols = Array.isArray(universe.sources?.flowUniverseSymbols)
+      ? universe.sources.flowUniverseSymbols
+      : universe.symbols ?? [];
+    return {
+      symbols,
+      fallbackUsed: Boolean(coverage.fallbackUsed),
+      degradedReason: coverage.degradedReason ?? null,
+      rankedAt: dateOrNull(coverage.rankedAt ?? coverage.lastGoodAt ?? null),
+    };
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Signal monitor ranked universe expansion unavailable",
+    );
+    return {
+      symbols: [],
+      fallbackUsed: true,
+      degradedReason:
+        error instanceof Error
+          ? error.message
+          : "Signal monitor ranked universe expansion unavailable.",
+      rankedAt: null,
+    };
+  }
 }
 
 export async function resolveSignalMonitorProfileUniverse(
@@ -607,28 +784,22 @@ export async function resolveSignalMonitorProfileUniverse(
       ? profile
       : await ensureProfileWatchlist(profile);
   const { watchlists } = await listWatchlists();
-  const watchlist =
-    hydratedProfile.watchlistId
-      ? watchlists.find((candidate) => candidate.id === hydratedProfile.watchlistId) ??
-        null
-      : options.ensureWatchlist === false
-        ? null
-        : watchlists.find((candidate) => candidate.isDefault) ??
-          watchlists[0] ??
-          null;
-
-  if (!watchlist) {
-    return {
-      profile: hydratedProfile,
-      symbols: [] as string[],
-      skippedSymbols: [] as string[],
-      truncated: false,
-    };
-  }
+  const settings = asRecord(hydratedProfile.rayReplicaSettings);
+  const universeScope = resolveSignalMonitorUniverseScope(settings);
+  const expansionUniverse =
+    universeScope === "all_watchlists_plus_universe"
+      ? loadSignalMonitorExpansionUniverse()
+      : null;
+  const universe = resolveSignalMonitorUniverseFromWatchlists({
+    profile: hydratedProfile,
+    watchlists,
+    ensureWatchlist: options.ensureWatchlist,
+    expansionUniverse,
+  });
 
   return {
     profile: hydratedProfile,
-    ...resolveWatchlistSymbols(watchlist, hydratedProfile.maxSymbols),
+    ...universe,
   };
 }
 
@@ -1353,13 +1524,11 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
   const symbols = requestedSymbols
     ? universe.symbols.filter((symbol) => requestedSymbols.has(symbol))
     : universe.symbols;
-
-  if (input.deactivateMissing !== false) {
-    await db
-      .update(signalMonitorSymbolStatesTable)
-      .set({ active: false, updatedAt: evaluatedAt })
-      .where(eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id));
-  }
+  const shouldDeactivateMissing =
+    input.deactivateMissing !== false &&
+    !universe.fallbackWatchlists &&
+    !universe.fallbackUsed &&
+    !requestedSymbols;
 
   const evaluatedStates = await evaluateSymbolsInBatches({
     profile: universe.profile,
@@ -1368,6 +1537,19 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     mode,
     evaluatedAt,
   });
+  if (shouldDeactivateMissing) {
+    await db
+      .update(signalMonitorSymbolStatesTable)
+      .set({ active: false, updatedAt: evaluatedAt })
+      .where(
+        symbols.length
+          ? and(
+              eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id),
+              notInArray(signalMonitorSymbolStatesTable.symbol, symbols),
+            )
+          : eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id),
+      );
+  }
   const updatedProfile = await updateSignalMonitorProfileEvaluationMetadata({
     profile: universe.profile,
     evaluatedAt,
@@ -1380,6 +1562,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     evaluatedAt,
     truncated: universe.truncated,
     skippedSymbols: universe.skippedSymbols,
+    universe: universe.universe,
   };
 }
 
@@ -1594,22 +1777,10 @@ async function resolveRuntimeSignalMonitorProfileUniverse(
   profile: DbSignalMonitorProfile,
 ) {
   const { watchlists } = listWatchlistsRuntimeFallback();
-  const watchlist =
-    profile.watchlistId
-      ? watchlists.find((candidate) => candidate.id === profile.watchlistId) ?? null
-      : watchlists.find((candidate) => candidate.isDefault) ??
-        watchlists[0] ??
-        null;
-
-  if (!watchlist) {
-    return {
-      symbols: [] as string[],
-      skippedSymbols: [] as string[],
-      truncated: false,
-    };
-  }
-
-  return resolveWatchlistSymbols(watchlist, profile.maxSymbols);
+  return resolveSignalMonitorUniverseFromWatchlists({
+    profile,
+    watchlists,
+  });
 }
 
 async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
@@ -1674,6 +1845,7 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       evaluatedAt,
       truncated: universe.truncated,
       skippedSymbols: universe.skippedSymbols,
+      universe: universe.universe,
     };
   });
 }
@@ -1940,6 +2112,7 @@ export async function updateSignalMonitorProfile(input: {
 }
 
 export const __signalMonitorInternalsForTests = {
+  resolveSignalMonitorUniverseFromWatchlists,
   clearSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixEvaluationCache,
   seedSignalMonitorMatrixCache(
@@ -1968,7 +2141,7 @@ export async function getSignalMonitorState(input: {
 
   try {
     const profile = await getOrCreateProfile(environment);
-    const { profile: hydratedProfile, skippedSymbols, truncated } =
+    const { profile: hydratedProfile, skippedSymbols, truncated, universe } =
       await resolveSignalMonitorProfileUniverse(profile);
     const states = await db
       .select()
@@ -1991,6 +2164,7 @@ export async function getSignalMonitorState(input: {
       evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
       truncated,
       skippedSymbols,
+      universe,
     };
   } catch (error) {
     if (isTransientPostgresError(error)) {

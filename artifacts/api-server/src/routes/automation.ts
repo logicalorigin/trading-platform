@@ -5,6 +5,7 @@ import {
   listAlgoDeployments,
   listExecutionEvents,
   setAlgoDeploymentEnabled,
+  updateAlgoDeploymentStrategySettings,
 } from "../services/automation";
 import {
   ensureDefaultSignalOptionsPaperDeployment,
@@ -91,6 +92,21 @@ router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<v
     await setAlgoDeploymentEnabled({
       deploymentId: req.params.deploymentId,
       enabled: false,
+    }),
+  );
+});
+
+router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, res): Promise<void> => {
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+  res.json(
+    await updateAlgoDeploymentStrategySettings({
+      deploymentId: req.params.deploymentId,
+      timeHorizon: body.timeHorizon,
+      signalTimeframe: body.signalTimeframe,
     }),
   );
 });

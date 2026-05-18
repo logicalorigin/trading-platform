@@ -8,6 +8,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { assertAlgoGatewayReady } from "./algo-gateway";
 import { normalizeAlgoDeploymentProviderAccountId } from "./algo-deployment-account";
+import {
+  getSignalMonitorProfile,
+  updateSignalMonitorProfile,
+} from "./signal-monitor";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -27,6 +31,14 @@ type ListExecutionEventsInput = {
   limit?: number;
 };
 
+const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 async function getStrategyOrThrow(strategyId: string) {
   const [strategy] = await db
     .select()
@@ -41,6 +53,54 @@ async function getStrategyOrThrow(strategyId: string) {
   }
 
   return strategy;
+}
+
+async function getDeploymentOrThrow(deploymentId: string) {
+  const [deployment] = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.id, deploymentId))
+    .limit(1);
+
+  if (!deployment) {
+    throw new HttpError(404, "Algorithm deployment not found.", {
+      code: "algo_deployment_not_found",
+    });
+  }
+
+  return deployment;
+}
+
+function readTimeHorizon(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new HttpError(400, "Invalid time horizon.", {
+      code: "algo_strategy_time_horizon_invalid",
+      detail: "timeHorizon must be a number from 2 through 50.",
+      expose: true,
+    });
+  }
+  const horizon = Math.round(parsed);
+  if (horizon < 2 || horizon > 50) {
+    throw new HttpError(400, "Invalid time horizon.", {
+      code: "algo_strategy_time_horizon_invalid",
+      detail: "timeHorizon must be a number from 2 through 50.",
+      expose: true,
+    });
+  }
+  return horizon;
+}
+
+function readSignalTimeframe(value: unknown): string {
+  const timeframe = String(value || "").trim();
+  if (!STRATEGY_SIGNAL_TIMEFRAMES.includes(timeframe as never)) {
+    throw new HttpError(400, "Unsupported signal timeframe.", {
+      code: "algo_strategy_timeframe_invalid",
+      detail: `Use one of ${STRATEGY_SIGNAL_TIMEFRAMES.join(", ")}.`,
+      expose: true,
+    });
+  }
+  return timeframe;
 }
 
 function deploymentToResponse(
@@ -145,17 +205,7 @@ export async function setAlgoDeploymentEnabled(input: {
   deploymentId: string;
   enabled: boolean;
 }) {
-  const [existing] = await db
-    .select()
-    .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.id, input.deploymentId))
-    .limit(1);
-
-  if (!existing) {
-    throw new HttpError(404, "Algorithm deployment not found.", {
-      code: "algo_deployment_not_found",
-    });
-  }
+  const existing = await getDeploymentOrThrow(input.deploymentId);
 
   if (input.enabled) {
     await assertAlgoGatewayReady();
@@ -193,6 +243,68 @@ export async function setAlgoDeploymentEnabled(input: {
   });
 
   return deploymentToResponse(deployment);
+}
+
+export async function updateAlgoDeploymentStrategySettings(input: {
+  deploymentId: string;
+  timeHorizon: unknown;
+  signalTimeframe: unknown;
+}) {
+  const existing = await getDeploymentOrThrow(input.deploymentId);
+  const timeHorizon = readTimeHorizon(input.timeHorizon);
+  const signalTimeframe = readSignalTimeframe(input.signalTimeframe);
+  const config = asRecord(existing.config);
+  const parameters = asRecord(config.parameters);
+  const nextConfig = {
+    ...config,
+    parameters: {
+      ...parameters,
+      timeHorizon,
+      signalTimeframe,
+    },
+  };
+  const profile = await getSignalMonitorProfile({
+    environment: existing.mode,
+  });
+  const nextRayReplicaSettings = {
+    ...asRecord(profile.rayReplicaSettings),
+    timeHorizon,
+  };
+
+  const [updated] = await db
+    .update(algoDeploymentsTable)
+    .set({
+      config: nextConfig,
+      updatedAt: new Date(),
+      lastError: null,
+    })
+    .where(eq(algoDeploymentsTable.id, input.deploymentId))
+    .returning();
+
+  const signalMonitorProfile = await updateSignalMonitorProfile({
+    environment: existing.mode,
+    timeframe: signalTimeframe,
+    rayReplicaSettings: nextRayReplicaSettings,
+  });
+  const deployment = updated ?? existing;
+
+  await db.insert(executionEventsTable).values({
+    deploymentId: deployment.id,
+    providerAccountId: deployment.providerAccountId,
+    eventType: "deployment_strategy_settings_updated",
+    summary: `Updated strategy signal settings for ${deployment.name}`,
+    payload: {
+      timeHorizon,
+      signalTimeframe,
+      previousParameters: parameters,
+      signalMonitorProfileId: signalMonitorProfile.id,
+    },
+  });
+
+  return {
+    deployment: deploymentToResponse(deployment),
+    signalMonitorProfile,
+  };
 }
 
 export async function listExecutionEvents(input: ListExecutionEventsInput) {
