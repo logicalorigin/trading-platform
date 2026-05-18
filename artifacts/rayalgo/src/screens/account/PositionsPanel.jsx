@@ -16,11 +16,11 @@ import {
   formatNumber,
   moveTableFocus,
   mutedLabelStyle,
-  secondaryButtonStyle,
   tableCellStyle,
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
+import { Button } from "../../components/platform/primitives.jsx";
 import { isOpenPositionRow } from "../../features/account/accountPositionRows.js";
 import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -515,14 +515,9 @@ export const PositionsAtDateInspector = ({
       minHeight={136}
       action={
         pinnedDate ? (
-          <button
-            type="button"
-            className="ra-interactive"
-            onClick={onClearPin}
-            style={secondaryButtonStyle}
-          >
+          <Button variant="secondary" onClick={onClearPin}>
             Clear Pin
-          </button>
+          </Button>
         ) : null
       }
     >
@@ -1248,13 +1243,12 @@ export const PositionsPanel = ({
                             </div>
 
                             <div style={{ display: "grid", gap: sp(6), minWidth: dim(100) }}>
-                              <button
-                                type="button"
+                              <Button
+                                variant="secondary"
                                 onClick={() => onJumpToChart?.(row.symbol)}
-                                style={secondaryButtonStyle}
                               >
                                 Chart
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         </div>

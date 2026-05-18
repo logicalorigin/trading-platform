@@ -1694,14 +1694,9 @@ export const SelectedTradeAnalysisPanel = ({
       minHeight={170}
       action={
         trade?.symbol && onJumpToChart ? (
-          <button
-            type="button"
-            className="ra-interactive"
-            onClick={() => onJumpToChart(trade.symbol)}
-            style={secondaryButtonStyle}
-          >
+          <Button variant="secondary" onClick={() => onJumpToChart(trade.symbol)}>
             Chart
-          </button>
+          </Button>
         ) : null
       }
     >
