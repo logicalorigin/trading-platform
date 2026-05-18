@@ -9,8 +9,10 @@ import {
 } from "react";
 import {
   getGetAlgoDeploymentCockpitQueryKey,
+  getGetSignalMonitorProfileQueryKey,
   getGetSignalOptionsAutomationStateQueryKey,
   getGetSignalOptionsPerformanceQueryKey,
+  useGetSignalMonitorProfile,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
   useGetAlgoDeploymentCockpit,
@@ -21,6 +23,7 @@ import {
   useListExecutionEvents,
   usePauseAlgoDeployment,
   useRunSignalOptionsShadowScan,
+  useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
 import {
@@ -156,6 +159,13 @@ const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
   { value: 5, label: "Upper +2" },
 ];
 
+const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+
+const DEFAULT_STRATEGY_SIGNAL_SETTINGS = {
+  signalTimeframe: "5m",
+  timeHorizon: 8,
+};
+
 const SIGNAL_OPTIONS_ACTION_LABELS = {
   candidate: "Awaiting Scan",
   blocked: "Blocked",
@@ -164,6 +174,48 @@ const SIGNAL_OPTIONS_ACTION_LABELS = {
   manual_override: "Manual Override",
   closed: "Closed",
   mismatch: "Mismatch",
+};
+
+const SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS = {
+  missing_bid_ask: "Missing bid/ask quote",
+  bid_below_minimum: "Bid below minimum",
+  spread_too_wide: "Spread above max",
+  quote_not_fresh: "Quote not fresh",
+  missing_mark: "No usable option price",
+  liquidity_gate_failed: "Liquidity gate failed",
+};
+
+const SIGNAL_OPTIONS_REASON_CATEGORIES = {
+  position_mark_unavailable: "marking",
+  position_mark_failed: "marking",
+  invalid_position_mark: "marking",
+  no_contract_for_strike_slot: "contract_resolution",
+  no_expiration_in_dte_window: "contract_resolution",
+  historical_option_bars_unavailable: "contract_resolution",
+  options_upstream_failure: "contract_resolution",
+  missing_bid_ask: "liquidity",
+  spread_too_wide: "liquidity",
+  bid_below_minimum: "liquidity",
+  quote_not_fresh: "liquidity",
+  missing_mark: "liquidity",
+  liquidity_gate_failed: "liquidity",
+  invalid_shadow_order_plan: "liquidity",
+  invalid_historical_shadow_order_plan: "liquidity",
+  max_open_symbols_reached: "risk",
+  daily_loss_halt_active: "risk",
+  premium_budget_exceeded: "risk",
+  quantity_below_minimum: "risk",
+  ibkr_not_configured: "gateway",
+  gateway_socket_disconnected: "gateway",
+  gateway_not_ready: "gateway",
+  bridge_unavailable: "gateway",
+  bear_regime_gate_failed: "signal_policy",
+  mtf_not_aligned: "signal_policy",
+  inverse_put_blocked: "signal_policy",
+  entry_gate_failed: "signal_policy",
+  same_direction_position_open: "signal_policy",
+  opposite_signal_flip_disabled: "signal_policy",
+  candidate_resolution_failed: "signal_policy",
 };
 
 const asRecord = (value) =>
@@ -175,9 +227,54 @@ const cloneProfile = (profile) =>
 const signalOptionsActionLabel = (status) =>
   SIGNAL_OPTIONS_ACTION_LABELS[status] || formatEnumLabel(status || "candidate");
 
+const formatLiquidityReason = (reason) =>
+  SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS[reason] ||
+  formatEnumLabel(reason || "liquidity_gate_failed");
+
+const formatLiquidityFreshness = (value) => {
+  const freshness = String(value || "").trim();
+  return freshness ? formatEnumLabel(freshness) : MISSING_VALUE;
+};
+
+const candidateReasonCategory = (candidate) =>
+  SIGNAL_OPTIONS_REASON_CATEGORIES[String(asRecord(candidate).reason || "")] ||
+  "other";
+
+const candidateMatchesReasonCategory = (candidate, categories) =>
+  categories.includes(candidateReasonCategory(candidate));
+
 const numberFrom = (value, fallback) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const resolveStrategySignalSettings = (deployment, signalMonitorProfile) => {
+  const parameters = asRecord(asRecord(deployment?.config).parameters);
+  const rayReplicaSettings = asRecord(signalMonitorProfile?.rayReplicaSettings);
+  const profileTimeframe = String(signalMonitorProfile?.timeframe || "");
+  const configTimeframe = String(parameters.signalTimeframe || "");
+  const signalTimeframe = STRATEGY_SIGNAL_TIMEFRAMES.includes(profileTimeframe)
+    ? profileTimeframe
+    : STRATEGY_SIGNAL_TIMEFRAMES.includes(configTimeframe)
+      ? configTimeframe
+      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+  const timeHorizon = Math.min(
+    50,
+    Math.max(
+      2,
+      Math.round(
+        numberFrom(
+          rayReplicaSettings.timeHorizon ?? parameters.timeHorizon,
+          DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
+        ),
+      ),
+    ),
+  );
+
+  return {
+    signalTimeframe,
+    timeHorizon,
+  };
 };
 
 const mergeSignalOptionsProfile = (source) => {
@@ -494,11 +591,14 @@ export const AlgoScreen = ({
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
   const [primaryTab, setPrimaryTab] = useState("now");
   const [diagExpansion, setDiagExpansion] = useState({});
-  const [profileSectionOpen, setProfileSectionOpen] = useState("risk");
+  const [profileSectionOpen, setProfileSectionOpen] = useState("signal");
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
   const [profileDraft, setProfileDraft] = useState(
     SIGNAL_OPTIONS_DEFAULT_PROFILE,
+  );
+  const [strategySettingsDraft, setStrategySettingsDraft] = useState(
+    DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   );
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
@@ -599,9 +699,21 @@ export const AlgoScreen = ({
       },
     },
   );
+  const signalMonitorProfileQuery = useGetSignalMonitorProfile(
+    { environment: focusedDeployment?.mode || environment },
+    {
+      query: {
+        ...QUERY_DEFAULTS,
+        enabled: Boolean(isVisible && focusedDeployment?.id),
+        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        retry: false,
+      },
+    },
+  );
   const cockpit = cockpitQuery.data || null;
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
+  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
   const signalOptionsProfile =
     signalOptionsState?.profile || SIGNAL_OPTIONS_DEFAULT_PROFILE;
   const signalOptionsCandidates =
@@ -659,15 +771,25 @@ export const AlgoScreen = ({
       const timeline = Array.isArray(candidate.timeline) ? candidate.timeline : [];
       if (selectedPipelineStageId === "signal_detected") return true;
       if (selectedPipelineStageId === "action_mapped") {
-        return Object.keys(asRecord(candidate.action)).length > 0;
+        return (
+          Object.keys(asRecord(candidate.action)).length > 0 ||
+          candidateMatchesReasonCategory(candidate, ["signal_policy"])
+        );
       }
-      if (selectedPipelineStageId === "contract_selected") return hasContract;
+      if (selectedPipelineStageId === "contract_selected") {
+        return (
+          hasContract ||
+          candidateMatchesReasonCategory(candidate, ["contract_resolution"])
+        );
+      }
       if (selectedPipelineStageId === "liquidity_risk_gate") {
         return (
-          actionStatus === "blocked" ||
-          candidate.status === "skipped" ||
+          candidateMatchesReasonCategory(candidate, ["liquidity", "risk"]) ||
           Object.keys(asRecord(candidate.liquidity)).length > 0
         );
+      }
+      if (selectedPipelineStageId === "position_managed") {
+        return candidateMatchesReasonCategory(candidate, ["marking"]);
       }
       if (selectedPipelineStageId === "order_shadow") {
         return (
@@ -729,6 +851,19 @@ export const AlgoScreen = ({
     setProfileDraft(cloneProfile(signalOptionsProfile));
   }, [focusedDeployment?.id, signalOptionsProfile]);
 
+  const resolvedStrategySignalSettings = useMemo(
+    () => resolveStrategySignalSettings(focusedDeployment, signalMonitorProfile),
+    [focusedDeployment, signalMonitorProfile],
+  );
+
+  useEffect(() => {
+    setStrategySettingsDraft(resolvedStrategySignalSettings);
+  }, [
+    focusedDeployment?.id,
+    resolvedStrategySignalSettings.signalTimeframe,
+    resolvedStrategySignalSettings.timeHorizon,
+  ]);
+
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
       setSelectedCandidateId(null);
@@ -748,6 +883,11 @@ export const AlgoScreen = ({
     queryClient.invalidateQueries({ queryKey: ["/api/algo/deployments"] });
     queryClient.invalidateQueries({ queryKey: ["/api/algo/events"] });
     queryClient.invalidateQueries({ queryKey: ["/api/session"] });
+    queryClient.invalidateQueries({
+      queryKey: getGetSignalMonitorProfileQueryKey({
+        environment: focusedDeployment?.mode || environment,
+      }),
+    });
     if (focusedDeployment?.id) {
       queryClient.invalidateQueries({
         queryKey: getGetSignalOptionsAutomationStateQueryKey(focusedDeployment.id),
@@ -857,6 +997,40 @@ export const AlgoScreen = ({
           kind: "error",
           title: "Profile save failed",
           body: error?.message || "The signal-options profile could not be saved.",
+        });
+      },
+    },
+  });
+
+  const updateStrategySettingsMutation = useUpdateAlgoDeploymentStrategySettings({
+    mutation: {
+      onSuccess: (payload) => {
+        refreshAlgoQueries();
+        if (payload?.signalMonitorProfile?.environment) {
+          queryClient.setQueryData(
+            getGetSignalMonitorProfileQueryKey({
+              environment: payload.signalMonitorProfile.environment,
+            }),
+            payload.signalMonitorProfile,
+          );
+        }
+        setStrategySettingsDraft(
+          resolveStrategySignalSettings(
+            payload?.deployment || focusedDeployment,
+            payload?.signalMonitorProfile || signalMonitorProfile,
+          ),
+        );
+        toast.push({
+          kind: "success",
+          title: "Signal settings saved",
+          body: "RayAlgo signal timeframe and time horizon were updated.",
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Signal settings failed",
+          body: error?.message || "The strategy signal settings could not be saved.",
         });
       },
     },
@@ -1035,6 +1209,29 @@ export const AlgoScreen = ({
       return;
     }
     runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
+  };
+
+  const handleSaveStrategySettings = () => {
+    if (!focusedDeployment?.id) {
+      return;
+    }
+    const timeHorizon = Math.min(
+      50,
+      Math.max(2, Math.round(numberFrom(strategySettingsDraft.timeHorizon, 8))),
+    );
+    const signalTimeframe = STRATEGY_SIGNAL_TIMEFRAMES.includes(
+      strategySettingsDraft.signalTimeframe,
+    )
+      ? strategySettingsDraft.signalTimeframe
+      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+
+    updateStrategySettingsMutation.mutate({
+      deploymentId: focusedDeployment.id,
+      data: {
+        signalTimeframe,
+        timeHorizon,
+      },
+    });
   };
 
   const patchProfileDraft = (section, key, value) => {
@@ -1344,10 +1541,10 @@ export const AlgoScreen = ({
     <div
       style={{
         width: "100%",
-        padding: sp(algoIsPhone ? "12px 12px 16px" : "20px 28px 24px"),
+        padding: sp(algoIsPhone ? "12px 12px 16px" : "16px 24px 20px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(algoIsPhone ? 10 : 14),
+        gap: sp(algoIsPhone ? 10 : 10),
         minWidth: 0,
       }}
     >
@@ -2643,6 +2840,13 @@ export const AlgoScreen = ({
                         ["Filter", signalFilterStateLabel(selectedCandidate.signal)],
                         ["Destination", "Shadow account"],
                         ["Bid / Ask", `${formatMoney(asRecord(selectedCandidate.liquidity).bid, 2)} / ${formatMoney(asRecord(selectedCandidate.liquidity).ask, 2)}`],
+                        ["Mark / Last", `${formatMoney(asRecord(selectedCandidate.liquidity).mark, 2)} / ${formatMoney(asRecord(selectedCandidate.liquidity).last, 2)}`],
+                        ["Mid / Spread", `${formatMoney(asRecord(selectedCandidate.liquidity).mid, 2)} / ${formatPct(asRecord(selectedCandidate.liquidity).spreadPctOfMid)}`],
+                        ["Freshness", formatLiquidityFreshness(asRecord(selectedCandidate.liquidity).quoteFreshness)],
+                        [
+                          "Gate",
+                          `${signalOptionsProfile.liquidityGate.requireBidAsk ? "Bid/ask required" : "Mark-only allowed"} · max ${formatPct(signalOptionsProfile.liquidityGate.maxSpreadPctOfMid, 0)}`,
+                        ],
                         ["Premium", formatMoney(asRecord(selectedCandidate.orderPlan).premiumAtRisk)],
                       ].map(([label, value]) => (
                         <div
@@ -2690,7 +2894,7 @@ export const AlgoScreen = ({
                           lineHeight: 1.4,
                         }}
                       >
-                        {formatEnumLabel(selectedCandidate.reason)}
+                        {formatLiquidityReason(selectedCandidate.reason)}
                       </div>
                     )}
                   </div>
@@ -2920,6 +3124,7 @@ export const AlgoScreen = ({
               (option) =>
                 option.value === profileDraft?.optionSelection?.putStrikeSlot,
             );
+            const strategySummary = `${strategySettingsDraft.signalTimeframe} · h${strategySettingsDraft.timeHorizon}`;
             const riskSummary = `${formatMoney(profileDraft?.riskCaps?.maxPremiumPerEntry)}/entry · ${profileDraft?.riskCaps?.maxOpenSymbols ?? "?"} sym · ${formatMoney(profileDraft?.riskCaps?.maxDailyLoss)} halt`;
             const gatesSummary = `bear ADX ${profileDraft?.entryGate?.bearishRegime?.minAdx ?? "?"} · ${profileDraft?.entryGate?.bearishRegime?.enabled ? "bear on" : "bear off"}`;
             const strikesSummary = `${profileDraft?.optionSelection?.minDte ?? 0}-${profileDraft?.optionSelection?.maxDte ?? 0} DTE · call ${callSlot?.label || "?"} · put ${putSlot?.label || "?"}`;
@@ -2993,6 +3198,95 @@ export const AlgoScreen = ({
                     {updateProfileMutation.isPending ? "SAVING..." : "APPLY"}
                   </button>
                 </div>
+
+                <ProfileSection
+                  id="signal"
+                  title="Signal"
+                  summary={strategySummary}
+                  expanded={profileSectionOpen === "signal"}
+                  onToggle={() => toggleSection("signal")}
+                >
+                  <div style={gridStyle}>
+                    <label style={numberFieldStyle}>
+                      <span style={labelTextStyle}>SIGNAL TIMEFRAME</span>
+                      <select
+                        value={strategySettingsDraft.signalTimeframe}
+                        onChange={(event) =>
+                          setStrategySettingsDraft((current) => ({
+                            ...current,
+                            signalTimeframe: event.target.value,
+                          }))
+                        }
+                        style={inputStyle}
+                      >
+                        {STRATEGY_SIGNAL_TIMEFRAMES.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={numberFieldStyle}>
+                      <span style={labelTextStyle}>TIME HORIZON</span>
+                      <input
+                        type="number"
+                        min={2}
+                        max={50}
+                        step={1}
+                        value={strategySettingsDraft.timeHorizon}
+                        onChange={(event) =>
+                          setStrategySettingsDraft((current) => ({
+                            ...current,
+                            timeHorizon: numberFrom(event.target.value, 8),
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: sp(10),
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div
+                      style={{
+                        color: T.textDim,
+                        fontFamily: T.sans,
+                        fontSize: textSize("body"),
+                      }}
+                    >
+                      Live profile {signalMonitorProfile?.timeframe || "5m"} ·
+                      deployment h{asRecord(asRecord(focusedDeployment?.config).parameters).timeHorizon ?? 8}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveStrategySettings}
+                      disabled={
+                        !focusedDeployment ||
+                        updateStrategySettingsMutation.isPending
+                      }
+                      style={{
+                        ...compactButtonStyle({
+                          disabled:
+                            !focusedDeployment ||
+                            updateStrategySettingsMutation.isPending,
+                        }),
+                        border: "none",
+                        background: T.accent,
+                        color: T.onAccent,
+                      }}
+                    >
+                      {updateStrategySettingsMutation.isPending
+                        ? "SAVING..."
+                        : "SAVE SIGNAL"}
+                    </button>
+                  </div>
+                </ProfileSection>
 
                 <ProfileSection
                   id="risk"
