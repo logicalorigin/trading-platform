@@ -1163,6 +1163,8 @@ export const InlineFilterBar = ({
             <button
               key={chip.id}
               type="button"
+              data-testid={dataTestId ? `${dataTestId}-chip-${chip.id}` : undefined}
+              data-selected={isSelected ? "true" : "false"}
               onClick={() => toggleChip(chip.id)}
               style={{
                 padding: sp("2px 8px"),

@@ -13,6 +13,7 @@ import {
   setAlgoFocus,
   useAlgoFocus,
 } from "../../features/platform/algoFocusStore";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { asRecord } from "./algoHelpers";
 import {
   OperationsSignalRow,
@@ -219,7 +220,7 @@ export const OperationsSignalTable = ({
                 key={asRecord(signal).signalKey || symbol}
                 signal={signal}
                 candidate={candidate}
-                expanded={expanded}
+                expanded={expanded && !algoIsPhone}
                 onToggle={() => {
                   if (expanded) {
                     clearAlgoFocus();
@@ -228,7 +229,7 @@ export const OperationsSignalTable = ({
                   }
                 }}
                 expandedContent={
-                  expanded
+                  expanded && !algoIsPhone
                     ? renderDrill?.({ signal, candidate, drillTab: focus.drillTab })
                     : null
                 }
@@ -238,6 +239,30 @@ export const OperationsSignalTable = ({
           })
         )}
       </div>
+      {algoIsPhone && focus.focusedSymbol ? (
+        <BottomSheet
+          open={Boolean(focus.focusedSymbol)}
+          onClose={clearAlgoFocus}
+          title={focus.focusedSymbol}
+          testId="algo-signal-drill-sheet"
+        >
+          {(() => {
+            const focusedRow = rows.find(
+              ({ signal }) =>
+                String(asRecord(signal).symbol || "").toUpperCase() ===
+                String(focus.focusedSymbol || "").toUpperCase(),
+            );
+            return (
+              focusedRow &&
+              renderDrill?.({
+                signal: focusedRow.signal,
+                candidate: focusedRow.candidate,
+                drillTab: focus.drillTab,
+              })
+            );
+          })()}
+        </BottomSheet>
+      ) : null}
     </div>
   );
 };
