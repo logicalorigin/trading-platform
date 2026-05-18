@@ -7,9 +7,10 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { MicroSparkline } from "../../components/platform/primitives.jsx";
 import { formatMoney, formatPct } from "./algoHelpers";
 
-const Cell = ({ label, value, hint, tone }) => (
+const Cell = ({ label, value, hint, tone, history, sparkPositive }) => (
   <div
     style={{
       display: "flex",
@@ -18,7 +19,7 @@ const Cell = ({ label, value, hint, tone }) => (
       gap: sp(1),
       padding: sp("6px 10px"),
       minWidth: 0,
-      minHeight: dim(56),
+      minHeight: dim(64),
     }}
   >
     <span
@@ -35,20 +36,37 @@ const Cell = ({ label, value, hint, tone }) => (
     >
       {label}
     </span>
-    <span
+    <div
       style={{
-        color: tone || T.text,
-        fontFamily: T.sans,
-        fontSize: fs(14),
-        fontWeight: FONT_WEIGHTS.medium,
-        lineHeight: 1.1,
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        display: "flex",
+        alignItems: "center",
+        gap: sp(4),
+        minWidth: 0,
       }}
     >
-      {value}
-    </span>
+      <span
+        style={{
+          color: tone || T.text,
+          fontFamily: T.sans,
+          fontSize: fs(14),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.1,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {value}
+      </span>
+      {history && history.length >= 2 ? (
+        <MicroSparkline
+          data={history}
+          width={dim(56)}
+          height={dim(18)}
+          positive={sparkPositive ?? null}
+        />
+      ) : null}
+    </div>
     {hint ? (
       <span
         style={{
@@ -73,8 +91,10 @@ export const OperationsKpiStrip = ({
   signalOptionsPerformanceSummary,
   signalOptionsPositions,
   signalOptionsCandidates,
+  kpiHistorySeries,
   algoIsPhone,
 }) => {
+  const series = kpiHistorySeries || {};
   const realized = Number(cockpitKpis?.dailyRealizedPnl ?? 0);
   const unrealized = Number(cockpitKpis?.openUnrealizedPnl ?? 0);
   const wins = Number(signalOptionsPerformanceSummary?.wins ?? 0);
@@ -119,12 +139,16 @@ export const OperationsKpiStrip = ({
         value={formatMoney(realized, 2)}
         hint={realized > 0 ? "session pnl" : realized < 0 ? "session loss" : null}
         tone={realized > 0 ? T.green : realized < 0 ? T.red : T.text}
+        history={series.realized}
+        sparkPositive={realized >= 0}
       />
       <Cell
         label="Unrealized"
         value={formatMoney(unrealized, 2)}
         hint={`${openPositions} open`}
         tone={unrealized > 0 ? T.green : unrealized < 0 ? T.red : T.text}
+        history={series.unrealized}
+        sparkPositive={unrealized >= 0}
       />
       <Cell
         label="Win / Loss"
@@ -134,6 +158,7 @@ export const OperationsKpiStrip = ({
             ? `${formatPct(winRate, 0)} win`
             : "—"
         }
+        history={series.winRate}
       />
       <Cell
         label="Profit factor"
@@ -156,6 +181,10 @@ export const OperationsKpiStrip = ({
               ? T.amber
               : T.text
         }
+        history={series.profitFactor}
+        sparkPositive={
+          Number.isFinite(Number(profitFactor)) && Number(profitFactor) >= 1
+        }
       />
       <Cell
         label="Signals"
@@ -165,6 +194,7 @@ export const OperationsKpiStrip = ({
             ? `${formatPct((freshSignals / totalSignals) * 100, 0)} fresh`
             : "no scan yet"
         }
+        history={series.freshSignals}
       />
       <Cell
         label="Pipeline"
@@ -175,6 +205,7 @@ export const OperationsKpiStrip = ({
             : null
         }
         tone={Number(cockpitTradePath?.blockedCandidates) > 0 ? T.amber : T.text}
+        history={series.openPositions}
       />
     </div>
   );

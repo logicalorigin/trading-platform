@@ -115,6 +115,13 @@ import {
 } from "../features/platform/algoTransitionsModel";
 import { summarizeCockpitDelta } from "../features/platform/algoActivitySummary";
 import {
+  buildKpiSample,
+  pruneAlgoKpiHistory,
+  pushAlgoKpiSample,
+  useAlgoKpiHistory,
+  seriesFromBuffer,
+} from "../features/platform/algoKpiHistoryStore";
+import {
   buildAttentionStream,
   buildCockpitGateSummary,
   isDiagRowsHealthy,
@@ -552,6 +559,44 @@ export const AlgoScreen = ({
     signalOptionsPerformanceSummary,
     signalOptionsSignals,
   ]);
+
+  useEffect(() => {
+    pruneAlgoKpiHistory(focusedDeployment?.id || null);
+  }, [focusedDeployment?.id]);
+
+  useEffect(() => {
+    if (!focusedDeployment?.id || !cockpit?.evaluatedAt) return;
+    pushAlgoKpiSample(
+      focusedDeployment.id,
+      buildKpiSample({
+        cockpitKpis,
+        cockpitSignalFreshness,
+        signalOptionsPerformanceSummary,
+        signalOptionsPositions,
+        timestampMs: Date.now(),
+      }),
+    );
+  }, [
+    cockpit?.evaluatedAt,
+    cockpitKpis,
+    cockpitSignalFreshness,
+    focusedDeployment?.id,
+    signalOptionsPerformanceSummary,
+    signalOptionsPositions,
+  ]);
+
+  const kpiHistoryBuffer = useAlgoKpiHistory(focusedDeployment?.id || null);
+  const kpiHistorySeries = useMemo(
+    () => ({
+      realized: seriesFromBuffer(kpiHistoryBuffer, "realized"),
+      unrealized: seriesFromBuffer(kpiHistoryBuffer, "unrealized"),
+      winRate: seriesFromBuffer(kpiHistoryBuffer, "winRate"),
+      profitFactor: seriesFromBuffer(kpiHistoryBuffer, "profitFactor"),
+      freshSignals: seriesFromBuffer(kpiHistoryBuffer, "freshSignals"),
+      openPositions: seriesFromBuffer(kpiHistoryBuffer, "openPositions"),
+    }),
+    [kpiHistoryBuffer],
+  );
 
   const visibleTransitions = useMemo(
     () =>
@@ -1464,6 +1509,7 @@ export const AlgoScreen = ({
           handleSaveStrategySettings={handleSaveStrategySettings}
           updateStrategySettingsMutation={updateStrategySettingsMutation}
           activitySummary={activitySummary}
+          kpiHistorySeries={kpiHistorySeries}
           focusedDeployment={focusedDeployment}
           handleToggleDeployment={handleToggleDeployment}
           handleRunShadowScan={handleRunShadowScan}

@@ -47,6 +47,7 @@ const unitTestFiles = [
   "src/features/platform/marketFlowScannerConfig.test.js",
   "src/features/platform/algoActivitySummary.test.js",
   "src/features/platform/algoFocusStore.test.js",
+  "src/features/platform/algoKpiHistoryStore.test.js",
   "src/features/platform/algoTransitionsModel.test.js",
   "src/features/platform/algoTuningImpactModel.test.js",
   "src/features/platform/marketActivityLaneModel.test.js",

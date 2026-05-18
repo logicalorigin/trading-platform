@@ -182,6 +182,8 @@ export const AlgoLivePage = ({
   updateStrategySettingsMutation,
   // Smart summary
   activitySummary,
+  // KPI sparkline history
+  kpiHistorySeries,
   // Pause / Scan-now (existing mutations + handlers)
   focusedDeployment,
   handleToggleDeployment,
@@ -518,6 +520,7 @@ export const AlgoLivePage = ({
         signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
         signalOptionsPositions={signalOptionsPositions}
         signalOptionsCandidates={signalOptionsCandidates}
+        kpiHistorySeries={kpiHistorySeries}
         algoIsPhone={algoIsPhone}
       />
 
