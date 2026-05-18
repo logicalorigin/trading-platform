@@ -612,7 +612,7 @@ export const Panel = ({
         alignItems: "flex-start",
         justifyContent: "space-between",
         gap: sp(8),
-        padding: sp("8px 12px 6px"),
+        padding: sp("6px 10px 4px"),
         background: T.bg1,
         flexWrap: "wrap",
       }}
@@ -668,7 +668,7 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(8) }}>
+    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(6) }}>
       {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
