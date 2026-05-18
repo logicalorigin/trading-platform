@@ -1,8 +1,53 @@
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
-export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
+/**
+ * Variant surface helper for Pill / Badge / StatusPill.
+ *
+ *   "solid"   → tinted background + tone-colored text (default; existing look)
+ *   "outline" → transparent bg + 1px tone border + tone text — secondary
+ *               emphasis without competing with adjacent solid badges
+ *   "ghost"   → transparent bg + no border + tone text — quietest variant,
+ *               useful when the badge sits inside an already-tinted cell
+ *
+ * solidAlpha controls the bg alpha for the "solid" variant so different
+ * primitives can pick their own visual weight (Pill active is denser than
+ * Badge default).
+ */
+const resolveBadgeVariantSurface = ({ variant, color, solidAlpha = "14" }) => {
+  if (variant === "outline") {
+    return {
+      background: "transparent",
+      border: `1px solid ${color}`,
+      color,
+    };
+  }
+  if (variant === "ghost") {
+    return {
+      background: "transparent",
+      border: "none",
+      color,
+    };
+  }
+  return {
+    background: `${color}${solidAlpha}`,
+    border: "none",
+    color,
+  };
+};
+
+export const Pill = ({
+  children,
+  active,
+  onClick,
+  color,
+  variant = "solid",
+  ...buttonProps
+}) => {
   const accent = color || T.accent;
+  const surface = active
+    ? resolveBadgeVariantSurface({ variant, color: accent, solidAlpha: "1f" })
+    : { background: "transparent", border: "none", color: T.textSec };
   return (
     <button
       {...buttonProps}
@@ -14,12 +59,10 @@ export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
         fontSize: textSize("bodyStrong"),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.medium,
-        border: "none",
         borderRadius: dim(RADII.pill),
         cursor: onClick ? "pointer" : "default",
         transition: "all 0.18s ease",
-        background: active ? `${accent}1f` : "transparent",
-        color: active ? accent : T.textSec,
+        ...surface,
       }}
     >
       {children}
@@ -27,7 +70,7 @@ export const Pill = ({ children, active, onClick, color, ...buttonProps }) => {
   );
 };
 
-export const Badge = ({ children, color = T.textDim }) => (
+export const Badge = ({ children, color = T.textDim, variant = "solid" }) => (
   <span
     style={{
       display: "inline-block",
@@ -38,9 +81,7 @@ export const Badge = ({ children, color = T.textDim }) => (
       fontFamily: T.sans,
       letterSpacing: "0.04em",
       textTransform: "uppercase",
-      background: `${color}14`,
-      color,
-      border: "none",
+      ...resolveBadgeVariantSurface({ variant, color, solidAlpha: "14" }),
     }}
   >
     {children}
@@ -52,7 +93,12 @@ export const Badge = ({ children, color = T.textDim }) => (
  * Use for status text like "Live", "Stale", "Delayed", "Connected" where eyebrow-caps
  * feels wrong. Pairs a small colored dot with the status text.
  */
-export const StatusPill = ({ children, color = T.textMuted, dot = true }) => (
+export const StatusPill = ({
+  children,
+  color = T.textMuted,
+  dot = true,
+  variant = "solid",
+}) => (
   <span
     style={{
       display: "inline-flex",
@@ -64,10 +110,8 @@ export const StatusPill = ({ children, color = T.textMuted, dot = true }) => (
       fontWeight: FONT_WEIGHTS.medium,
       fontFamily: T.sans,
       letterSpacing: "-0.005em",
-      background: `${color}12`,
-      color,
-      border: "none",
       whiteSpace: "nowrap",
+      ...resolveBadgeVariantSurface({ variant, color, solidAlpha: "12" }),
     }}
   >
     {dot ? (
