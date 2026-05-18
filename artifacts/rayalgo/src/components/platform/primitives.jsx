@@ -1074,7 +1074,7 @@ export const Card = ({
         background: T.bg1,
         border: `1px solid ${dataZone ? T.borderLight : T.border}`,
         borderRadius: dim(dataZone ? RADII.sm : RADII.md),
-        padding: noPad ? 0 : sp(dataZone ? "6px 8px" : "8px 10px"),
+        padding: noPad ? 0 : sp("6px 8px"),
         overflow: "hidden",
         transition:
           "background-color var(--ra-motion-fast) var(--ra-motion-ease), border-color var(--ra-motion-fast) var(--ra-motion-ease), box-shadow var(--ra-motion-fast) var(--ra-motion-ease)",
@@ -1092,7 +1092,7 @@ export const CardTitle = ({ children, right }) => (
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: sp(3),
+      marginBottom: sp(2),
     }}
   >
     <span
