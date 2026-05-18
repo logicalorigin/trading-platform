@@ -463,7 +463,7 @@ const WatchlistRow = memo(
               size={14}
               strokeWidth={2}
               style={{
-                color: canDrag ? T.textDim : T.textMuted,
+                color: canDrag ? T.textSec : T.textMuted,
                 opacity: canDrag ? 1 : 0.35,
                 cursor: canDrag ? "grab" : "default",
               }}
@@ -977,7 +977,7 @@ export const Watchlist = ({
             >
               {activeWatchlist?.name || "Watchlists"}
             </span>
-            <ChevronDown size={15} style={{ color: T.textDim, flexShrink: 0 }} />
+            <ChevronDown size={15} style={{ color: T.textSec, flexShrink: 0 }} />
           </button>
           {watchlistMenuOpen ? (
             <div
@@ -1203,7 +1203,7 @@ export const Watchlist = ({
               minWidth: 0,
             }}
           >
-            <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
+            <Search size={15} style={{ color: T.textSec, flexShrink: 0 }} />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1615,7 +1615,7 @@ export const Watchlist = ({
                 borderBottom: `1px solid ${T.borderLight}`,
               }}
             >
-              <Search size={15} style={{ color: T.textDim, flexShrink: 0 }} />
+              <Search size={15} style={{ color: T.textSec, flexShrink: 0 }} />
               <input
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
