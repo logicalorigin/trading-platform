@@ -271,6 +271,7 @@ type ResearchChartFrameProps = {
   surfaceUiStateKey?: string;
   rangeIdentityKey?: string | null;
   viewportLayoutKey?: string | null;
+  symbol?: string | null;
   placement?: ResearchChartFramePlacement;
   compact?: boolean;
   mobileInteractionMode?: MobileChartInteractionMode;
@@ -322,6 +323,12 @@ export const ResearchChartFrame = ({
   surfaceUiStateKey,
   rangeIdentityKey,
   viewportLayoutKey,
+  // Optional — passed through to <ResearchChartSurface symbol={symbol} />
+  // for the ticker watermark feature (Tier 3 C.3). Callers that don't
+  // have a symbol context (e.g., parity lab, generic backtest replay)
+  // can leave it null; the watermark only renders when both this prop
+  // and userPreferences.chart.showTickerWatermark are truthy.
+  symbol = null,
   placement = "workspace",
   compact,
   mobileInteractionMode,
@@ -443,6 +450,7 @@ export const ResearchChartFrame = ({
             rangeIdentityKey={rangeIdentityKey}
             viewportLayoutKey={viewportLayoutKey}
             model={model}
+            symbol={symbol}
             compact={resolvedCompact}
             mobileInteractionMode={resolvedMobileInteractionMode}
             showToolbar={resolvedShowSurfaceToolbar}
