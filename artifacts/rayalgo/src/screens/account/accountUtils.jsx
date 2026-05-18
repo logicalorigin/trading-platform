@@ -4,6 +4,7 @@ import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, getCurrentTheme,
 const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Skeleton } from "../../components/platform/primitives.jsx";
 
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
@@ -804,15 +805,10 @@ export const useCollapsibleSections = (storageKey, defaults = {}) => {
 export const SkeletonRows = ({ rows = 4 }) => (
   <div style={{ display: "grid", gap: sp(6) }}>
     {Array.from({ length: rows }).map((_, index) => (
-      <div
+      <Skeleton
         key={index}
-        className="ra-skeleton"
-        style={{
-          height: dim(index === 0 ? 34 : 24),
-          borderRadius: dim(RADII.sm),
-          background: `linear-gradient(90deg, ${T.border}33, ${T.border}66, ${T.border}33)`,
-          border: "none",
-        }}
+        height={dim(index === 0 ? 34 : 24)}
+        radius={RADII.sm}
       />
     ))}
   </div>

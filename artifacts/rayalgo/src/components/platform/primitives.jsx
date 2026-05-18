@@ -258,6 +258,49 @@ export const DataUnavailableState = ({
   </div>
 );
 
+/**
+ * Skeleton — animated placeholder for loading content.
+ *
+ * variant: "shimmer" (default) — solid base + sweeping highlight via the
+ * --ra-skeleton-base / --ra-skeleton-highlight CSS vars on a 200% gradient.
+ * Use for standalone placeholders (rows, chips, avatars, blocks).
+ *
+ * variant: "sweep" — transparent body with a ::after pseudo-element that
+ * sweeps a subtle white highlight across. Use when the placeholder sits
+ * on a custom background you want to keep showing through.
+ *
+ * Both variants respect prefers-reduced-motion + data-rayalgo-reduced-motion.
+ *
+ * Pass numeric RADII values for radius (defaults to RADII.xs).
+ */
+export const Skeleton = ({
+  width = "100%",
+  height = dim(12),
+  radius = RADII.xs,
+  variant = "shimmer",
+  className = "",
+  style = {},
+  ...rest
+}) => (
+  <span
+    aria-hidden="true"
+    className={[
+      variant === "sweep" ? "ra-skeleton" : "ra-skeleton-shimmer",
+      className,
+    ]
+      .filter(Boolean)
+      .join(" ")}
+    style={{
+      display: "block",
+      width,
+      height,
+      borderRadius: dim(radius),
+      ...style,
+    }}
+    {...rest}
+  />
+);
+
 export const Card = ({
   children,
   style = {},

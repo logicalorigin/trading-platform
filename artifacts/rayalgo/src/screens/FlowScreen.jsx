@@ -68,6 +68,7 @@ import {
   CardTitle,
   DataUnavailableState,
   Pill,
+  Skeleton,
 } from "../components/platform/primitives.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
@@ -454,16 +455,11 @@ const FlowLoadingBlock = ({
   height = dim(10),
   style = {},
 }) => (
-  <div
-    className="ra-skeleton"
-    style={{
-      width,
-      height,
-      borderRadius: dim(3),
-      background: `${T.border}70`,
-      opacity: 0.65,
-      ...style,
-    }}
+  <Skeleton
+    width={width}
+    height={height}
+    radius={RADII.xs}
+    style={style}
   />
 );
 
