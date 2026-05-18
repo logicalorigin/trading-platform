@@ -495,6 +495,35 @@ table {
   }
 }
 
+/* Error-shake — short horizontal jitter for invalid form submits.
+   Four micro-steps (4px → -4px → 3px → 0) over ~280ms gives a
+   readable "no, that wasn't right" without being theatrical. Pair with
+   the .ra-error-shake class (apply via state when validation fails;
+   remove after one cycle if you want it to fire again on the next
+   submission). */
+@keyframes raErrorShake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(4px); }
+  40%  { transform: translateX(-4px); }
+  60%  { transform: translateX(3px); }
+  80%  { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+
+.ra-error-shake {
+  animation: raErrorShake 280ms var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-error-shake {
+    animation: none;
+  }
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-error-shake {
+  animation: none;
+}
+
 /* Screen-switch entrance — short fade + 4px translateY rise. Reads as
    "this screen just arrived" without being slow enough to delay user
    interaction. Re-played from JS via classList.remove + reflow + add

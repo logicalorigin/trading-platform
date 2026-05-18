@@ -234,6 +234,53 @@ test("fs and dim scale and round numerically with the active scale", () => {
   setCurrentScale("m");
 });
 
+test("motion: error-shake keyframe + class + reduced-motion override", () => {
+  // raErrorShake is the only horizontal-jitter motion in the app. The
+  // class must respect prefers-reduced-motion AND the
+  // data-rayalgo-reduced-motion="on" opt-in, so users who explicitly
+  // disable motion don't see the jitter on invalid submits.
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+
+  assert.match(cssSource, /@keyframes raErrorShake \{/);
+  assert.match(
+    cssSource,
+    /\.ra-error-shake \{[\s\S]*?animation: raErrorShake 280ms/,
+  );
+  assert.match(
+    cssSource,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-error-shake[\s\S]*?animation: none/,
+  );
+  assert.match(
+    cssSource,
+    /html\[data-rayalgo-reduced-motion="on"\] \.ra-error-shake[\s\S]*?animation: none/,
+  );
+});
+
+test("motion roles documented in motion.jsx", () => {
+  // motion.jsx must carry the role-table comment block so future
+  // contributors know which timing/easing pair goes with which role.
+  // Pinned as a regression guard — if someone removes it during a
+  // refactor, this test fails loud.
+  const motionSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "motion.jsx"),
+    "utf8",
+  );
+  assert.match(motionSource, /RayAlgo motion roles/);
+  for (const role of [
+    "entrance",
+    "hover",
+    "active-press",
+    "selection-change",
+    "value-flash",
+    "error-shake",
+  ]) {
+    assert.match(motionSource, new RegExp(role), `motion role "${role}" missing from doc`);
+  }
+});
+
 test("global scrollbar uses --ra-border-default + brightens on hover", () => {
   // Scrollbar thumb must color-mix through --ra-border-default so it
   // flexes with theme. Hover state brightens to --ra-color-accent so

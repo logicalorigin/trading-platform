@@ -1,5 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/**
+ * RayAlgo motion roles.
+ *
+ * Each motion in the app maps to exactly one role and uses exactly one
+ * timing + one easing pair. Inline transitions that don't match a role
+ * are bugs — they should either move to a `.ra-*` class that carries
+ * the role's tokens, or be removed if the motion isn't communicating
+ * anything useful.
+ *
+ * Tokens are CSS vars on :root in index.css (--ra-motion-micro / -fast
+ * / -standard / -slow + --ra-motion-ease / -enter / -exit). Reduced
+ * motion is honored at the role-class level: every animation /
+ * transition has a `@media (prefers-reduced-motion: reduce)` override
+ * AND an `html[data-rayalgo-reduced-motion="on"]` override.
+ *
+ *   ROLE             TIMING                 EASING                CSS HOOK
+ *   ----             ------                 ------                --------
+ *   entrance         standard (190ms)       enter (cubic-out)     .ra-panel-enter, .ra-row-enter, .ra-screen-enter, .ra-popover-enter
+ *   exit             fast (140ms)           exit (cubic-in)       (not needed today — we don't reverse-animate on unmount)
+ *   hover            fast (140ms)           ease (cubic-in-out)   .ra-interactive, .ra-row-hover, default button/a/input rule
+ *   active-press     micro (90ms)           ease (cubic-in-out)   .ra-interactive:active
+ *   selection-change standard (190ms)       ease (cubic-in-out)   .ra-segmented-indicator (transform+width)
+ *   value-flash      620ms                  enter (cubic-out)     .ra-value-flash-up / .ra-value-flash-down
+ *   error-shake      micro × 4 (≈ 280ms)    ease                  .ra-error-shake (raErrorShake keyframe)
+ *
+ * When adding a new motion: if none of the above roles fit, that's a
+ * red flag — discuss with the team before introducing a new role.
+ */
+
 const DEFAULT_FLASH_MS = 680;
 
 const toComparableNumber = (value) => {
