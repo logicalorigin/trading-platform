@@ -159,6 +159,117 @@ const summarizeTrades = (trades) => {
   };
 };
 
+const tradeCloseInstant = (trade) => {
+  const raw = trade?.closeDate || trade?.exitDate || trade?.openDate;
+  if (!raw) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// Sortino ratio = mean trade P&L / std-dev of negative trade P&Ls.
+// Uses 0 as the risk-free target (most standard for a P&L stream
+// vs a return stream). Returns null when fewer than 3 trades or
+// no losing trades (no downside dispersion to measure).
+const computeSortinoRatio = (trades) => {
+  const rows = arrayValue(trades);
+  if (rows.length < 3) return null;
+  const pnls = rows.map(tradePnl);
+  const mean = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
+  const downsideSquares = pnls
+    .filter((value) => value < 0)
+    .map((value) => value * value);
+  if (!downsideSquares.length) return null;
+  const downsideDeviation = Math.sqrt(
+    downsideSquares.reduce((sum, value) => sum + value, 0) / downsideSquares.length,
+  );
+  if (downsideDeviation <= 0) return null;
+  return mean / downsideDeviation;
+};
+
+// Build a cumulative equity curve from trades sorted by close time,
+// then return [equityHigh, maxDrawdown] in absolute dollars.
+const computeEquityCurveStats = (trades) => {
+  const rows = arrayValue(trades)
+    .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
+    .filter((row) => row.t != null)
+    .sort((left, right) => left.t - right.t);
+  if (!rows.length) {
+    return { totalPnl: 0, peakEquity: 0, maxDrawdown: 0 };
+  }
+  let equity = 0;
+  let peak = 0;
+  let maxDrawdown = 0;
+  rows.forEach(({ trade }) => {
+    equity += tradePnl(trade);
+    if (equity > peak) peak = equity;
+    const drawdown = peak - equity;
+    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+  });
+  return { totalPnl: equity, peakEquity: peak, maxDrawdown };
+};
+
+// Calmar ratio = total P&L / max drawdown.
+// Returns null if no drawdown or fewer than 3 trades.
+const computeCalmarRatio = (trades) => {
+  const rows = arrayValue(trades);
+  if (rows.length < 3) return null;
+  const { totalPnl, maxDrawdown } = computeEquityCurveStats(rows);
+  if (maxDrawdown <= 0) return null;
+  return totalPnl / maxDrawdown;
+};
+
+// Bootstrap simulation: resample trade outcomes with replacement,
+// run N simulations of the same trade count, and report:
+//   - p05PnL: 5th-percentile total P&L (worst 5% of resampled runs)
+//   - probabilityOfLossPercent: % of resampled runs that ended net negative
+// Returns null when fewer than 10 trades (sampling is too noisy below that).
+const SIM_COUNT = 600;
+const computeMonteCarloMetrics = (trades) => {
+  const rows = arrayValue(trades);
+  if (rows.length < 10) return null;
+  const pnls = rows.map(tradePnl);
+  const n = pnls.length;
+  const outcomes = new Array(SIM_COUNT);
+  let lossRuns = 0;
+  for (let i = 0; i < SIM_COUNT; i += 1) {
+    let total = 0;
+    for (let j = 0; j < n; j += 1) {
+      total += pnls[Math.floor(Math.random() * n)];
+    }
+    outcomes[i] = total;
+    if (total < 0) lossRuns += 1;
+  }
+  outcomes.sort((left, right) => left - right);
+  const p05Index = Math.max(0, Math.floor(0.05 * SIM_COUNT) - 1);
+  return {
+    p05PnL: outcomes[p05Index],
+    probabilityOfLossPercent: (lossRuns / SIM_COUNT) * 100,
+  };
+};
+
+const WATERFALL_LIMIT = 40;
+const buildTradeWaterfall = (trades, limit = WATERFALL_LIMIT) => {
+  const rows = arrayValue(trades)
+    .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
+    .filter((row) => row.t != null)
+    .sort((left, right) => left.t - right.t);
+  const sliced = rows.slice(-limit);
+  let cumulative = 0;
+  return sliced.map(({ trade, t }) => {
+    const value = tradePnl(trade);
+    cumulative += value;
+    return {
+      id: getAccountTradeId(trade),
+      symbol: trade?.symbol || "",
+      side: trade?.side || "",
+      pnl: value,
+      cumulative,
+      closeInstant: t,
+      trade,
+    };
+  });
+};
+
 const groupTrades = (trades, kind, resolver) => {
   const groups = new Map();
   arrayValue(trades).forEach((trade) => {
@@ -688,8 +799,24 @@ export const buildAccountTradingAnalysisModel = ({
       }
     : null;
 
+  const equityCurveStats = computeEquityCurveStats(tradeRows);
+  const monteCarlo = computeMonteCarloMetrics(tradeRows);
+  const riskMetrics = {
+    sortinoRatio: computeSortinoRatio(tradeRows),
+    calmarRatio: computeCalmarRatio(tradeRows),
+    maxDrawdown: equityCurveStats.maxDrawdown || null,
+    peakEquity: equityCurveStats.peakEquity || null,
+    monteCarloP05Pnl: monteCarlo ? monteCarlo.p05PnL : null,
+    monteCarloLossProbabilityPercent: monteCarlo
+      ? monteCarlo.probabilityOfLossPercent
+      : null,
+  };
+  const waterfall = buildTradeWaterfall(tradeRows);
+
   return {
     summary,
+    riskMetrics,
+    waterfall,
     readiness: buildAccountAnalysisReadiness({
       trades: tradeRows,
       orders,

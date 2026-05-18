@@ -225,3 +225,96 @@ test("account trading analysis groups option outcomes and stop scenarios", () =>
   assert.ok(model.stopScenarios.length >= 3);
   assert.equal(model.contractBreakdowns.strikeSlot.some((group) => group.key === "2"), true);
 });
+
+test("risk metrics: empty trades produce nulls", () => {
+  const model = buildAccountTradingAnalysisModel({ trades: [] });
+  assert.equal(model.riskMetrics.sortinoRatio, null);
+  assert.equal(model.riskMetrics.calmarRatio, null);
+  assert.equal(model.riskMetrics.maxDrawdown, null);
+  assert.equal(model.riskMetrics.monteCarloP05Pnl, null);
+  assert.equal(model.riskMetrics.monteCarloLossProbabilityPercent, null);
+  assert.deepEqual(model.waterfall, []);
+});
+
+test("risk metrics: Sortino positive when mean > 0 with one loser", () => {
+  const sample = [
+    { id: "s1", symbol: "AAA", closeDate: "2026-01-01T15:00:00Z", realizedPnl: 100 },
+    { id: "s2", symbol: "BBB", closeDate: "2026-01-02T15:00:00Z", realizedPnl: 80 },
+    { id: "s3", symbol: "CCC", closeDate: "2026-01-03T15:00:00Z", realizedPnl: -40 },
+  ];
+  const model = buildAccountTradingAnalysisModel({ trades: sample });
+  assert.ok(model.riskMetrics.sortinoRatio > 0);
+});
+
+test("risk metrics: Sortino null when no losers", () => {
+  const sample = [
+    { id: "w1", symbol: "AAA", closeDate: "2026-01-01T15:00:00Z", realizedPnl: 100 },
+    { id: "w2", symbol: "BBB", closeDate: "2026-01-02T15:00:00Z", realizedPnl: 80 },
+    { id: "w3", symbol: "CCC", closeDate: "2026-01-03T15:00:00Z", realizedPnl: 60 },
+  ];
+  const model = buildAccountTradingAnalysisModel({ trades: sample });
+  assert.equal(model.riskMetrics.sortinoRatio, null);
+});
+
+test("risk metrics: max drawdown reflects peak-to-trough", () => {
+  const sample = [
+    { id: "d1", symbol: "X", closeDate: "2026-01-01T15:00:00Z", realizedPnl: 200 },
+    { id: "d2", symbol: "X", closeDate: "2026-01-02T15:00:00Z", realizedPnl: -150 },
+    { id: "d3", symbol: "X", closeDate: "2026-01-03T15:00:00Z", realizedPnl: 50 },
+  ];
+  const model = buildAccountTradingAnalysisModel({ trades: sample });
+  assert.equal(model.riskMetrics.peakEquity, 200);
+  assert.equal(model.riskMetrics.maxDrawdown, 150);
+  assert.equal(model.riskMetrics.calmarRatio, (200 - 150 + 50) / 150);
+});
+
+test("risk metrics: Monte Carlo only runs with 10+ trades", () => {
+  const few = [
+    { id: "a", symbol: "X", closeDate: "2026-01-01T15:00:00Z", realizedPnl: 5 },
+    { id: "b", symbol: "X", closeDate: "2026-01-02T15:00:00Z", realizedPnl: -3 },
+  ];
+  const fewModel = buildAccountTradingAnalysisModel({ trades: few });
+  assert.equal(fewModel.riskMetrics.monteCarloP05Pnl, null);
+
+  const many = Array.from({ length: 12 }).map((_, index) => ({
+    id: `mc${index}`,
+    symbol: "X",
+    closeDate: `2026-01-${String(index + 1).padStart(2, "0")}T15:00:00Z`,
+    realizedPnl: index % 2 === 0 ? 50 : -20,
+  }));
+  const manyModel = buildAccountTradingAnalysisModel({ trades: many });
+  assert.equal(typeof manyModel.riskMetrics.monteCarloP05Pnl, "number");
+  assert.equal(
+    typeof manyModel.riskMetrics.monteCarloLossProbabilityPercent,
+    "number",
+  );
+});
+
+test("waterfall: returns trades sorted by close time with running cumulative", () => {
+  const sample = [
+    { id: "w-c", symbol: "C", closeDate: "2026-01-03T15:00:00Z", realizedPnl: 30 },
+    { id: "w-a", symbol: "A", closeDate: "2026-01-01T15:00:00Z", realizedPnl: 100 },
+    { id: "w-b", symbol: "B", closeDate: "2026-01-02T15:00:00Z", realizedPnl: -40 },
+  ];
+  const model = buildAccountTradingAnalysisModel({ trades: sample });
+  assert.equal(model.waterfall.length, 3);
+  assert.equal(model.waterfall[0].symbol, "A");
+  assert.equal(model.waterfall[0].cumulative, 100);
+  assert.equal(model.waterfall[1].symbol, "B");
+  assert.equal(model.waterfall[1].cumulative, 60);
+  assert.equal(model.waterfall[2].symbol, "C");
+  assert.equal(model.waterfall[2].cumulative, 90);
+});
+
+test("waterfall: caps to last 40 trades", () => {
+  const sample = Array.from({ length: 55 }).map((_, index) => ({
+    id: `t${index}`,
+    symbol: `T${index}`,
+    closeDate: `2026-01-${String((index % 28) + 1).padStart(2, "0")}T${String(
+      index % 24,
+    ).padStart(2, "0")}:00:00Z`,
+    realizedPnl: index % 3 === 0 ? -10 : 5,
+  }));
+  const model = buildAccountTradingAnalysisModel({ trades: sample });
+  assert.equal(model.waterfall.length, 40);
+});
