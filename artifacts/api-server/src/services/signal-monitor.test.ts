@@ -196,6 +196,46 @@ test("signal monitor selected-watchlist scope stays on the configured watchlist"
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
 });
 
+test("signal monitor default scope expands watchlists with ranked universe symbols", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        watchlistId: "core",
+        maxSymbols: 6,
+      }),
+      watchlists: [
+        {
+          id: "core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+        {
+          id: "research",
+          name: "Research",
+          isDefault: false,
+          updatedAt: baseDate,
+          items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
+        },
+      ],
+      expansionUniverse: {
+        symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+        fallbackUsed: false,
+        degradedReason: null,
+        rankedAt: baseDate,
+      },
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "AAPL", "MSFT", "TSLA"]);
+  assert.deepEqual(result.skippedSymbols, ["AMD"]);
+  assert.equal(result.universe.configuredMaxSymbols, 6);
+  assert.equal(result.universe.pinnedSymbols, 3);
+  assert.equal(result.universe.expansionSymbols, 3);
+  assert.equal(result.universe.shortfall, 0);
+  assert.equal(result.universe.source, "watchlists_plus_ranked_universe");
+});
+
 test("signal monitor marks built-in fallback universes as non-authoritative", () => {
   const result =
     __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({

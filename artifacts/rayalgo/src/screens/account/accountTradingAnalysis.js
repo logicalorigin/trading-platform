@@ -128,6 +128,15 @@ const bucketLabel = (kind, value) => {
       unknown: "Unknown MFE",
     }[value] || value;
   }
+  if (kind === "premiumAtRisk") {
+    return {
+      "sub-500": "< $500 premium",
+      "500-1000": "$500-$1k premium",
+      "1000-1500": "$1k-$1.5k premium",
+      "1500-plus": "$1.5k+ premium",
+      unknown: "Unknown premium",
+    }[value] || value;
+  }
   if (kind === "pnl") return value === "winners" ? "Winners" : "Losers";
   return value;
 };
@@ -359,6 +368,116 @@ const mfeGivebackBucket = (trade) => {
   if (ratio >= 0.75) return "large-giveback";
   if (ratio >= 0.35) return "gave-back";
   return "held-gain";
+};
+
+const premiumAtRiskBucket = (trade) => {
+  const premium =
+    finiteNumber(trade?.premiumAtRisk) ??
+    (finiteNumber(trade?.avgOpen) != null
+      ? finiteNumber(trade?.avgOpen) * tradeQuantity(trade) * tradeMultiplier(trade)
+      : null);
+  if (premium == null || premium <= 0) return "unknown";
+  if (premium < 500) return "sub-500";
+  if (premium < 1_000) return "500-1000";
+  if (premium < 1_500) return "1000-1500";
+  return "1500-plus";
+};
+
+const attributionRow = (group) => {
+  if (!group) return null;
+  const holdRows = arrayValue(group.trades).filter(
+    (trade) => finiteNumber(trade?.holdDurationMinutes) != null,
+  );
+  return {
+    kind: group.kind,
+    key: group.key,
+    label: group.label,
+    realizedPnl: group.realizedPnl,
+    count: group.count,
+    winRatePercent: group.winRatePercent,
+    expectancy: group.expectancy,
+    profitFactor: group.profitFactor,
+    averageHoldMinutes: holdRows.length
+      ? holdRows.reduce(
+          (sum, trade) => sum + (finiteNumber(trade?.holdDurationMinutes) ?? 0),
+          0,
+        ) / holdRows.length
+      : null,
+  };
+};
+
+const buildAttributionRows = (groups, limit = 6) =>
+  arrayValue(groups)
+    .filter((group) => group?.key && group.key !== "unknown" && group.count)
+    .map(attributionRow)
+    .filter(Boolean)
+    .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
+    .slice(0, limit);
+
+const buildImprovementTargets = (groups) =>
+  groups
+    .flatMap((rows) => arrayValue(rows))
+    .filter(
+      (group) =>
+        group?.key &&
+        group.key !== "unknown" &&
+        group.count >= 2 &&
+        (group.realizedPnl < 0 || (group.expectancy ?? 0) < 0),
+    )
+    .map(attributionRow)
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftLoss = Math.min(0, left.realizedPnl || 0);
+      const rightLoss = Math.min(0, right.realizedPnl || 0);
+      return leftLoss - rightLoss || (left.expectancy ?? 0) - (right.expectancy ?? 0);
+    })
+    .slice(0, 8);
+
+const buildAccountAttributionModel = ({
+  symbol,
+  exitReason,
+  regime,
+  mfeGiveback,
+  premiumAtRisk,
+  dte,
+  entryTime,
+  optionRight,
+}) => {
+  const contributionRows = [
+    ...buildAttributionRows(symbol, 5),
+    ...buildAttributionRows(exitReason, 4),
+    ...buildAttributionRows(regime, 4),
+  ]
+    .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
+    .slice(0, 10);
+  return {
+    contributionRows,
+    exitRows: buildAttributionRows(exitReason, 8),
+    qualityRows: [
+      ...buildAttributionRows(regime, 5),
+      ...buildAttributionRows(mfeGiveback, 5),
+    ]
+      .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
+      .slice(0, 8),
+    contractRows: [
+      ...buildAttributionRows(optionRight, 3),
+      ...buildAttributionRows(dte, 5),
+      ...buildAttributionRows(premiumAtRisk, 5),
+    ]
+      .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0))
+      .slice(0, 8),
+    timingRows: buildAttributionRows(entryTime, 5),
+    improvementTargets: buildImprovementTargets([
+      symbol,
+      exitReason,
+      regime,
+      mfeGiveback,
+      premiumAtRisk,
+      dte,
+      entryTime,
+      optionRight,
+    ]),
+  };
 };
 
 const STOP_SCENARIOS = Object.freeze([
@@ -692,6 +811,7 @@ export const buildAccountTradingAnalysisModel = ({
   const byEntryTime = groupTrades(tradeRows, "entryTime", entryTimeBucket);
   const byRegime = groupTrades(tradeRows, "regime", regimeBucket);
   const byMfeGiveback = groupTrades(tradeRows, "mfeGiveback", mfeGivebackBucket);
+  const byPremiumAtRisk = groupTrades(tradeRows, "premiumAtRisk", premiumAtRiskBucket);
   const byHoldDuration = groupTrades(tradeRows, "holdDuration", (trade) =>
     holdDurationBucket(trade.holdDurationMinutes),
   );
@@ -839,10 +959,21 @@ export const buildAccountTradingAnalysisModel = ({
       entryTime: byEntryTime,
       regime: byRegime,
       mfeGiveback: byMfeGiveback,
+      premiumAtRisk: byPremiumAtRisk,
       holdDuration: byHoldDuration,
       strategy: byStrategy,
       feeDrag: byFeeDrag,
     },
+    attribution: buildAccountAttributionModel({
+      symbol: bySymbol,
+      exitReason: byExitReason,
+      regime: byRegime,
+      mfeGiveback: byMfeGiveback,
+      premiumAtRisk: byPremiumAtRisk,
+      dte: byDte,
+      entryTime: byEntryTime,
+      optionRight: byOptionRight,
+    }),
     stopScenarios: buildStopScenarioAnalysis(tradeRows),
     contractBreakdowns: {
       optionRight: byOptionRight,

@@ -891,6 +891,9 @@ export default function PlatformApp() {
 
   const session = sessionQuery.data || null;
   const environment = sessionQuery.data?.environment || "paper";
+  // The platform signal lane drives the shadow algo scanner, so keep it pinned
+  // to the paper signal-monitor profile instead of the broker session mode.
+  const signalMonitorEnvironment = "paper";
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(
     session?.ibkrBridge?.authenticated &&
@@ -948,10 +951,15 @@ export default function PlatformApp() {
     queryClient.invalidateQueries({ queryKey: ["market-performance-baselines"] });
     queryClient.invalidateQueries({ queryKey: ["trade-market-depth"] });
     queryClient.invalidateQueries({
-      queryKey: getGetSignalMonitorStateQueryKey({ environment }),
+      queryKey: getGetSignalMonitorStateQueryKey({
+        environment: signalMonitorEnvironment,
+      }),
     });
     queryClient.invalidateQueries({
-      queryKey: getListSignalMonitorEventsQueryKey({ environment, limit: 100 }),
+      queryKey: getListSignalMonitorEventsQueryKey({
+        environment: signalMonitorEnvironment,
+        limit: 100,
+      }),
     });
 
     const optionsRefreshTimer = window.setTimeout(() => {
@@ -963,7 +971,7 @@ export default function PlatformApp() {
     return () => {
       window.clearTimeout(optionsRefreshTimer);
     };
-  }, [environment, pageVisible, queryClient]);
+  }, [pageVisible, queryClient, signalMonitorEnvironment]);
 
   useEffect(() => {
     if (mountedScreens[screen]) {
@@ -1213,10 +1221,13 @@ export default function PlatformApp() {
       lossAlerts,
     });
   }, [lossAlerts, marketAlertItems, totalAlerts, winAlerts]);
-  const signalMonitorParams = useMemo(() => ({ environment }), [environment]);
+  const signalMonitorParams = useMemo(
+    () => ({ environment: signalMonitorEnvironment }),
+    [signalMonitorEnvironment],
+  );
   const signalMonitorEventsParams = useMemo(
-    () => ({ environment, limit: 100 }),
-    [environment],
+    () => ({ environment: signalMonitorEnvironment, limit: 100 }),
+    [signalMonitorEnvironment],
   );
   const signalMonitorProfileQuery = useGetSignalMonitorProfile(
     signalMonitorParams,
@@ -1337,6 +1348,12 @@ export default function PlatformApp() {
             environment: profile.environment,
           }),
         });
+        queryClient.invalidateQueries({
+          queryKey: getListSignalMonitorEventsQueryKey({
+            environment: profile.environment,
+            limit: 100,
+          }),
+        });
       },
       onError: (error) => {
         pushToast({
@@ -1383,7 +1400,7 @@ export default function PlatformApp() {
             signalMonitorEvaluationInFlightRef.current = true;
             evaluateSignalMonitorMutation.mutate({
               data: {
-                environment,
+                environment: signalMonitorEnvironment,
                 mode: queuedMode,
               },
             });
@@ -1424,7 +1441,7 @@ export default function PlatformApp() {
     signalMatrixEvaluationInFlightRef.current = true;
     evaluateSignalMonitorMatrixMutation.mutate({
       data: {
-        environment,
+        environment: signalMonitorEnvironment,
         watchlistId: activeWatchlist?.id || null,
         symbols: activeWatchlist?.id ? undefined : watchlistSymbols,
         timeframes: ["2m", "5m", "15m"],
@@ -1432,8 +1449,8 @@ export default function PlatformApp() {
     });
   }, [
     activeWatchlist?.id,
-    environment,
     evaluateSignalMonitorMatrixMutation.mutate,
+    signalMonitorEnvironment,
     signalMatrixSymbolsKey,
     watchlistSymbols,
   ]);
@@ -1461,12 +1478,12 @@ export default function PlatformApp() {
       signalMonitorEvaluationInFlightRef.current = true;
       evaluateSignalMonitorMutation.mutate({
         data: {
-          environment,
+          environment: signalMonitorEnvironment,
           mode,
         },
       });
     },
-    [environment, evaluateSignalMonitorMutation.mutate],
+    [evaluateSignalMonitorMutation.mutate, signalMonitorEnvironment],
   );
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
   const signalMonitorEvents = signalMonitorEventsQuery.data?.events || [];
@@ -1510,6 +1527,7 @@ export default function PlatformApp() {
       profile: signalMonitorProfile,
       states: signalMonitorStates,
       events: signalMonitorEvents,
+      universe: signalMonitorStateQuery.data?.universe || null,
       pending: evaluateSignalMonitorMutation.isPending,
       degraded: signalMonitorDegraded,
     });
@@ -1518,6 +1536,7 @@ export default function PlatformApp() {
     signalMonitorEvents,
     signalMonitorDegraded,
     signalMonitorProfile,
+    signalMonitorStateQuery.data?.universe,
     signalMonitorStates,
   ]);
   // Persist state changes (debounced via useEffect — fires after each commit)
@@ -1643,7 +1662,7 @@ export default function PlatformApp() {
     updateSignalMonitorProfileMutation.mutate(
       {
         data: {
-          environment,
+          environment: signalMonitorEnvironment,
           enabled: nextEnabled,
         },
       },
@@ -1656,8 +1675,8 @@ export default function PlatformApp() {
       },
     );
   }, [
-    environment,
     runSignalMonitorEvaluation,
+    signalMonitorEnvironment,
     signalMonitorProfile?.enabled,
     updateSignalMonitorProfileMutation,
   ]);
@@ -1667,7 +1686,7 @@ export default function PlatformApp() {
     updateSignalMonitorProfileMutation.mutate(
       {
         data: {
-          environment,
+          environment: signalMonitorEnvironment,
           timeframe: normalizedTimeframe,
         },
       },
@@ -1680,19 +1699,29 @@ export default function PlatformApp() {
       },
     );
   }, [
-    environment,
     runSignalMonitorEvaluation,
+    signalMonitorEnvironment,
     updateSignalMonitorProfileMutation,
   ]);
   const handleChangeSignalMonitorWatchlist = useCallback((watchlistId) => {
-    updateSignalMonitorProfileMutation.mutate({
-      data: {
-        environment,
-        watchlistId: watchlistId || null,
+    updateSignalMonitorProfileMutation.mutate(
+      {
+        data: {
+          environment: signalMonitorEnvironment,
+          watchlistId: watchlistId || null,
+        },
       },
-    });
+      {
+        onSuccess: (profile) => {
+          if (profile?.enabled) {
+            runSignalMonitorEvaluation("incremental");
+          }
+        },
+      },
+    );
   }, [
-    environment,
+    runSignalMonitorEvaluation,
+    signalMonitorEnvironment,
     updateSignalMonitorProfileMutation,
   ]);
   const handleRunSignalMonitorNow = useCallback(() => {

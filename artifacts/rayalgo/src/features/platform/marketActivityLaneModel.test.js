@@ -104,7 +104,7 @@ test("signal lane filters active state signals older than two days", () => {
   );
 });
 
-test("signal lane ranks fresh current signals before stale events", () => {
+test("signal lane sorts newest signal rows before freshness ties", () => {
   const rows = buildSignalLaneRows(
     {
       selectedTimeframe: "15m",
@@ -132,8 +132,8 @@ test("signal lane ranks fresh current signals before stale events", () => {
     { nowMs: Date.parse("2026-04-30T16:00:00Z") },
   );
 
-  assert.equal(rows[0].symbol, "MSFT");
-  assert.equal(rows[0].source, "state");
+  assert.equal(rows[0].symbol, "TSLA");
+  assert.equal(rows[0].source, "event");
 });
 
 test("unusual lane excludes routine flow and sorts by recency, score, then premium", () => {

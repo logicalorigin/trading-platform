@@ -226,6 +226,85 @@ test("account trading analysis groups option outcomes and stop scenarios", () =>
   assert.equal(model.contractBreakdowns.strikeSlot.some((group) => group.key === "2"), true);
 });
 
+test("account trading analysis builds attribution rows for strategy tuning", () => {
+  const model = buildAccountTradingAnalysisModel({
+    trades: [
+      {
+        id: "attr-1",
+        source: "SHADOW",
+        symbol: "NVDA",
+        side: "sell",
+        assetClass: "Options",
+        quantity: 1,
+        avgOpen: 10,
+        avgClose: 14,
+        closeDate: "2026-05-01T16:00:00.000Z",
+        realizedPnl: 400,
+        optionRight: "call",
+        dte: 2,
+        exitReason: "runner_trail_stop",
+        premiumAtRisk: 1000,
+        peakPrice: 15,
+        mfePercent: 50,
+        givebackPercent: 10,
+        adx: 31,
+        mtfDirections: [1, 1, 1],
+      },
+      {
+        id: "attr-2",
+        source: "SHADOW",
+        symbol: "TSLA",
+        side: "sell",
+        assetClass: "Options",
+        quantity: 1,
+        avgOpen: 12,
+        avgClose: 9,
+        closeDate: "2026-05-01T17:00:00.000Z",
+        realizedPnl: -300,
+        optionRight: "put",
+        dte: 7,
+        exitReason: "early_invalidation",
+        premiumAtRisk: 1200,
+        peakPrice: 12.5,
+        mfePercent: 4,
+        givebackPercent: 29,
+        adx: 17,
+        mtfDirections: [1, -1, 1],
+      },
+      {
+        id: "attr-3",
+        source: "SHADOW",
+        symbol: "TSLA",
+        side: "sell",
+        assetClass: "Options",
+        quantity: 1,
+        avgOpen: 11,
+        avgClose: 9,
+        closeDate: "2026-05-02T17:00:00.000Z",
+        realizedPnl: -200,
+        optionRight: "put",
+        dte: 7,
+        exitReason: "early_invalidation",
+        premiumAtRisk: 1100,
+        peakPrice: 11.2,
+        mfePercent: 2,
+        givebackPercent: 20,
+        adx: 16,
+        mtfDirections: [1, -1, 1],
+      },
+    ],
+  });
+
+  assert.ok(model.attribution.contributionRows.some((row) => row.label === "TSLA"));
+  assert.ok(model.attribution.exitRows.some((row) => row.key === "early_invalidation"));
+  assert.ok(model.attribution.contractRows.some((row) => row.key === "1000-1500"));
+  assert.ok(
+    model.attribution.improvementTargets.some(
+      (row) => row.kind === "symbol" && row.key === "TSLA",
+    ),
+  );
+});
+
 test("risk metrics: empty trades produce nulls", () => {
   const model = buildAccountTradingAnalysisModel({ trades: [] });
   assert.equal(model.riskMetrics.sortinoRatio, null);

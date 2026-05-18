@@ -136,9 +136,9 @@ export const buildSignalLaneRows = (
 
   return Array.from(rowsByKey.values())
     .sort((left, right) => {
+      if (left.timeMs !== right.timeMs) return right.timeMs - left.timeMs;
       const priorityDelta = getSignalRowPriority(left) - getSignalRowPriority(right);
       if (priorityDelta !== 0) return priorityDelta;
-      if (left.timeMs !== right.timeMs) return right.timeMs - left.timeMs;
       return left.symbol.localeCompare(right.symbol);
     })
     .slice(0, maxItems);

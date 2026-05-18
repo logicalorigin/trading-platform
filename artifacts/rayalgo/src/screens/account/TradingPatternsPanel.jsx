@@ -21,6 +21,7 @@ import { PatternsBySymbol } from "./tradingPatterns/PatternsBySymbol";
 import { PatternsByBucket } from "./tradingPatterns/PatternsByBucket";
 import { PatternsByOutcomeDriver } from "./tradingPatterns/PatternsByOutcomeDriver";
 import { PatternsOutcomeDistribution } from "./tradingPatterns/PatternsOutcomeDistribution";
+import { PatternsAttribution } from "./tradingPatterns/PatternsAttribution";
 export { startOfIsoWeek };
 
 const SORT_OPTIONS = [
@@ -46,8 +47,8 @@ export const TradingPatternsPanel = ({
   isPhone = false,
 }) => {
   const sectionDefaults = isPhone
-    ? { insights: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
-    : { insights: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
+    ? { insights: true, attribution: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
+    : { insights: true, attribution: true, waterfall: true, byTime: true, holdProfile: true, bySymbol: true, exitReasons: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
   const { isOpen, toggle } = useCollapsibleSections("patterns.openSections", sectionDefaults);
   const [sortKey, setSortKey] = useState("realizedPnl");
   const [tickerOrder, setTickerOrder] = useState("top");
@@ -172,6 +173,21 @@ export const TradingPatternsPanel = ({
               maskValues={maskValues}
               onLensChange={onLensChange}
               onTradeSelect={onTradeSelect}
+            />
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <SectionHeader
+            title="Attribution"
+            onToggle={() => toggle("attribution")}
+            expanded={isOpen("attribution")}
+          />
+          {isOpen("attribution") ? (
+            <PatternsAttribution
+              attribution={analysis?.attribution}
+              currency={currency}
+              maskValues={maskValues}
             />
           ) : null}
         </div>

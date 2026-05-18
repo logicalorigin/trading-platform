@@ -512,7 +512,33 @@ test("settings signal monitor uses generated API ownership path", () => {
   assert.match(source, /maxSymbols:\s*\{\s*min:\s*1,\s*max:\s*250\s*\}/);
   assert.match(source, /freshWindowBars:\s*\{\s*min:\s*1,\s*max:\s*20\s*\}/);
   assert.match(source, /evaluationConcurrency:\s*\{\s*min:\s*1,\s*max:\s*10\s*\}/);
+  assert.match(source, /const SIGNAL_MONITOR_ENVIRONMENT = "paper"/);
+  assert.match(source, /useGetSignalMonitorProfile\(signalMonitorParams/);
+  assert.match(source, /useGetSignalMonitorState\(signalMonitorParams/);
+  assert.match(
+    source,
+    /useListSignalMonitorEvents\(signalMonitorEventsParams/,
+  );
+  assert.match(source, /environment:\s*SIGNAL_MONITOR_ENVIRONMENT/);
   assert.doesNotMatch(source, /fetch\("\/api\/signal-monitor/);
+});
+
+test("platform signal monitor uses paper profile for all header-lane signal queries", () => {
+  const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /const signalMonitorEnvironment = "paper"/);
+  assert.match(
+    source,
+    /getGetSignalMonitorStateQueryKey\(\{\s*environment:\s*signalMonitorEnvironment,/,
+  );
+  assert.match(
+    source,
+    /getListSignalMonitorEventsQueryKey\(\{\s*environment:\s*signalMonitorEnvironment,\s*limit:\s*100,/,
+  );
+  assert.match(
+    source,
+    /environment:\s*signalMonitorEnvironment,\s*mode:\s*queuedMode/,
+  );
 });
 
 test("algo signal-options automation uses generated API ownership path", () => {
@@ -531,6 +557,10 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.match(source, /signal-options-expanded-capacity/);
   assert.match(source, /SHADOW ONLY/);
   assert.match(source, /CREATE SHADOW DEPLOYMENT/);
+  assert.match(source, /Missing bid\/ask quote/);
+  assert.match(source, /Mark-only allowed/);
+  assert.match(source, /mtf_not_aligned:\s*"signal_policy"/);
+  assert.match(source, /candidateMatchesReasonCategory\(candidate, \["liquidity", "risk"\]\)/);
   assert.doesNotMatch(source, /live_submitted/);
   assert.doesNotMatch(source, /live_previewed/);
   assert.doesNotMatch(source, /queryKey:\s*\[\s*"signal-options-state"/);
