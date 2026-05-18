@@ -1726,6 +1726,16 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
         <CheckboxField label="Keep zoom" checked={chart.keepTimeZoom} onChange={(value) => patchChart({ keepTimeZoom: value })} />
         <CheckboxField label="Extended hours" checked={chart.extendedHours} onChange={(value) => patchChart({ extendedHours: value })} />
         <CheckboxField label="Session breaks" checked={chart.sessionBreaks} onChange={(value) => patchChart({ sessionBreaks: value })} />
+        <CheckboxField
+          label="Desktop crosshair badge"
+          checked={chart.desktopCrosshairBadge}
+          onChange={(value) => patchChart({ desktopCrosshairBadge: value })}
+        />
+        <CheckboxField
+          label="Ticker watermark"
+          checked={chart.showTickerWatermark}
+          onChange={(value) => patchChart({ showTickerWatermark: value })}
+        />
       </div>
     </Panel>
   );
