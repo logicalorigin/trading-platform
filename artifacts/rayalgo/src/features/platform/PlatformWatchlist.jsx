@@ -1337,7 +1337,7 @@ export const Watchlist = ({
         ) : null}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div className="ra-scroll-fade-y" style={{ flex: 1, overflowY: "auto" }}>
         {sorted.map((item) => {
           const itemKey = item.key || item.id || item.sym;
           const canDrag =

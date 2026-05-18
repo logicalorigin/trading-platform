@@ -536,6 +536,7 @@ export const MarketScreen = ({
       }}
     >
       <div
+        className="ra-scroll-fade-y"
         style={{
           flex: 1,
           overflowY: "auto",
