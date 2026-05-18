@@ -317,6 +317,127 @@ export const DataUnavailableState = ({
  *
  * Pass numeric RADII values for radius (defaults to RADII.xs).
  */
+/**
+ * Button — single consistent primitive for click targets.
+ *
+ *   variant: "primary" — accent fill, on-accent text. Default emphasis.
+ *   variant: "secondary" — bg2 fill, primary text. Quiet emphasis.
+ *   variant: "ghost" — transparent + textSec. Tertiary, inline.
+ *   variant: "tonal" — colored tint of `tone` (default accent) with tone text.
+ *   variant: "danger" — red fill, white text. Destructive only.
+ *
+ *   size: "xs" (20px), "sm" (24px), "md" (28px). Default sm.
+ *
+ *   leftIcon / rightIcon: ReactNode, rendered with a 6px gap on the
+ *   appropriate side. Use lucide-react icons sized 14 / 16 / 18.
+ *
+ *   loading: replaces children with a small LoadingSpinner + sets
+ *   aria-busy. The button is disabled while loading.
+ *
+ *   tone: only meaningful for variant="tonal"; defaults to T.accent.
+ *
+ * Composes .ra-interactive so hover gets the standard -1px lift + 60ms
+ * active press. Forwards any extra props to the underlying <button>.
+ */
+const BUTTON_SIZES = {
+  xs: { height: 20, paddingX: 8, fontKey: "label", iconGap: 5 },
+  sm: { height: 24, paddingX: 12, fontKey: "control", iconGap: 6 },
+  md: { height: 28, paddingX: 14, fontKey: "bodyStrong", iconGap: 7 },
+};
+
+const resolveButtonSurface = ({ variant, tone, disabled }) => {
+  if (variant === "primary") {
+    return { background: T.accent, color: T.onAccent, border: "none" };
+  }
+  if (variant === "danger") {
+    return { background: T.red, color: T.onAccent, border: "none" };
+  }
+  if (variant === "secondary") {
+    return { background: T.bg2, color: T.text, border: "none" };
+  }
+  if (variant === "ghost") {
+    return { background: "transparent", color: T.textSec, border: "none" };
+  }
+  // tonal
+  return {
+    background: `${tone}1f`,
+    color: tone,
+    border: "none",
+  };
+};
+
+export const Button = ({
+  children,
+  variant = "secondary",
+  size = "sm",
+  tone,
+  leftIcon,
+  rightIcon,
+  loading = false,
+  disabled = false,
+  type = "button",
+  className,
+  style,
+  onClick,
+  ...rest
+}) => {
+  const resolvedTone = tone || T.accent;
+  const sizing = BUTTON_SIZES[size] || BUTTON_SIZES.sm;
+  const surface = resolveButtonSurface({
+    variant,
+    tone: resolvedTone,
+    disabled,
+  });
+  const isDisabled = disabled || loading;
+  return (
+    <button
+      {...rest}
+      type={type}
+      onClick={isDisabled ? undefined : onClick}
+      disabled={isDisabled}
+      aria-busy={loading || undefined}
+      className={[
+        "ra-interactive",
+        "ra-touch-target",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(sizing.iconGap),
+        height: dim(sizing.height),
+        padding: sp(`0 ${sizing.paddingX}px`),
+        borderRadius: dim(RADII.pill),
+        fontSize: textSize(sizing.fontKey),
+        fontFamily: T.sans,
+        fontWeight: variant === "primary" || variant === "danger"
+          ? FONT_WEIGHTS.label
+          : FONT_WEIGHTS.medium,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        cursor: isDisabled ? "not-allowed" : "pointer",
+        opacity: isDisabled && !loading ? 0.55 : 1,
+        whiteSpace: "nowrap",
+        ...surface,
+        ...style,
+      }}
+    >
+      {loading ? (
+        <LoadingSpinner size={Math.max(10, sizing.height - 10)} color={surface.color} />
+      ) : (
+        <>
+          {leftIcon ? <span aria-hidden="true" style={{ display: "inline-flex" }}>{leftIcon}</span> : null}
+          <span>{children}</span>
+          {rightIcon ? <span aria-hidden="true" style={{ display: "inline-flex" }}>{rightIcon}</span> : null}
+        </>
+      )}
+    </button>
+  );
+};
+
 export const Skeleton = ({
   width = "100%",
   height = dim(12),

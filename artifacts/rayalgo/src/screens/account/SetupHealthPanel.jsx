@@ -9,9 +9,8 @@ import {
   Panel,
   Pill,
   mutedLabelStyle,
-  primaryButtonStyle,
-  secondaryButtonStyle,
 } from "./accountUtils";
+import { Button } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -85,31 +84,17 @@ export const SetupHealthPanel = ({
       minHeight={160}
       action={
         <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            onClick={() => healthQuery.refetch()}
-            style={secondaryButtonStyle}
-          >
+          <Button variant="secondary" onClick={() => healthQuery.refetch()}>
             Refresh
-          </button>
-          <button
-            type="button"
-            disabled={!health?.flexConfigured || !health?.schemaReady || testMutation.isPending}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!health?.flexConfigured || !health?.schemaReady}
+            loading={testMutation.isPending}
             onClick={() => testMutation.mutate()}
-            style={{
-              ...primaryButtonStyle,
-              opacity:
-                !health?.flexConfigured || !health?.schemaReady || testMutation.isPending
-                  ? 0.55
-                  : 1,
-              cursor:
-                !health?.flexConfigured || !health?.schemaReady || testMutation.isPending
-                  ? "not-allowed"
-                  : "pointer",
-            }}
           >
-            {testMutation.isPending ? "Importing..." : "Pull Flex History"}
-          </button>
+            {testMutation.isPending ? "Importing…" : "Pull Flex History"}
+          </Button>
         </div>
       }
     >

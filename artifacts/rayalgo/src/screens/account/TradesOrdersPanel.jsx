@@ -23,6 +23,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
+import { Button } from "../../components/platform/primitives.jsx";
 import { closeDateMatchesPatternHour } from "./accountPatternLens";
 import {
   feeDragBucket,
@@ -936,9 +937,9 @@ export const ClosedTradesPanel = ({
               value={filters.feeDrag || "all"}
               onChange={(value) => onFiltersChange({ feeDrag: value })}
             />
-            <button type="button" onClick={onResetFilters} style={secondaryButtonStyle}>
+            <Button variant="secondary" onClick={onResetFilters}>
               Reset
-            </button>
+            </Button>
           </div>
           <div
             style={{
