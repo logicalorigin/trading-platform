@@ -6103,7 +6103,9 @@ export const ResearchChartSurface = ({
     return () => {
       container.removeEventListener("wheel", handleAxisWheel);
     };
-  }, []);
+    // Re-bind when the chart container appears/disappears so the listener
+    // attaches to the live DOM element on first render after data loads.
+  }, [hasChartBars]);
 
   useEffect(() => {
     const container = containerRef.current;
