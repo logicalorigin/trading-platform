@@ -7432,6 +7432,32 @@ export const ResearchChartSurface = ({
     themeKey,
   ]);
 
+  // Memoized values bridge the data effect (Effect A) and the options
+  // effect (Effect B). priceFormat / baselineBaseValue only need to feed
+  // into Effect B's series.applyOptions, but they're derived from chartBars.
+  // By memoizing on the actual deciding signal (precision integer, first
+  // bar's open price) instead of the bars array itself, Effect B only
+  // re-fires when those derived values actually change — not on every tick.
+  const pricePrecision = useMemo(
+    () => resolvePricePrecision(model.chartBars),
+    [model.chartBars],
+  );
+  const priceFormat = useMemo(
+    () => buildChartPriceFormat(pricePrecision),
+    [pricePrecision],
+  );
+  const baselineBaseValue = useMemo(
+    () => ({ type: "price" as const, price: model.chartBars[0]?.o ?? 0 }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [model.chartBars[0]?.o],
+  );
+
+  // Effect A — DATA SYNC ONLY. Fires on every streaming tick because
+  // model.chartBars is in deps. Re-syncs the six series via syncSeriesData
+  // and reconciles the visible range. Does NOT call any .applyOptions on
+  // chart, priceScale, or series — that's Effect B's job. Keeping these
+  // two concerns separate is what stops the per-bar flicker: lightweight-
+  // charts' layout/grid/crosshair are no longer re-painted every tick.
   useLayoutEffect(() => {
     if (
       !chartRef.current ||
@@ -7452,8 +7478,6 @@ export const ResearchChartSurface = ({
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const seriesSyncStartedAt = nowMs();
-    const pricePrecision = resolvePricePrecision(model.chartBars);
-    const priceFormat = buildChartPriceFormat(pricePrecision);
     const candleSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
       open: bar.o,
@@ -7651,7 +7675,17 @@ export const ResearchChartSurface = ({
       setProgrammaticVisibleLogicalRange(autoHydrationVisibleRange, {
         markInitialized: true,
       });
-    } else if (shouldFollowLatestBars && canApplyProgrammaticRangeSync) {
+    } else if (
+      shouldFollowLatestBars &&
+      canApplyProgrammaticRangeSync &&
+      // Don't slam the chart to the right edge while the user is actively
+      // panning (pointer down on plot) or just wheel-zoomed. Without this
+      // gate, a streaming bar arriving mid-gesture yanks the viewport
+      // back to the latest time, fighting the user's drag/scroll.
+      !viewportPointerActiveRef.current &&
+      Date.now() - lastWheelViewportIntentAtRef.current >
+        USER_VIEWPORT_INTENT_WINDOW_MS
+    ) {
       recordViewportDiagnostic(
         "viewportRealtimeFollowApplies",
         "visibleRangeRealtimeFollow",
@@ -7663,8 +7697,13 @@ export const ResearchChartSurface = ({
         "viewportUserRangePreserves",
         "visibleRangeUserPreserved",
       );
+      // markProgrammaticIntent must be true so publishVisibleLogicalRange
+      // records the signature and the subsequent visibleLogicalRangeChange
+      // event isn't misread as a user-driven change (which would clear
+      // realtimeFollowRef and let the next tick re-decide the range,
+      // creating an oscillation after every full-reset sync).
       setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync, {
-        markProgrammaticIntent: false,
+        markProgrammaticIntent: true,
       });
     } else if (
       canApplyProgrammaticRangeSync &&
@@ -7690,39 +7729,54 @@ export const ResearchChartSurface = ({
       );
     }
 
-    const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
+    recordChartHydrationMetric(
+      "seriesSyncMs",
+      nowMs() - seriesSyncStartedAt,
+      hydrationScopeKey,
+    );
+  }, [
+    model.chartBars,
+    model.defaultVisibleLogicalRange,
+    hydrationScopeKey,
+    showVolume,
+    theme.green,
+    theme.red,
+    theme.textMuted,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
+    viewportUserTouched,
+    isViewportInteractionActive,
+    markProgrammaticViewportIntent,
+    setProgrammaticVisibleLogicalRange,
+  ]);
 
-    candleSeries.applyOptions({ visible: baseSeriesType === "candles" });
-    barSeries.applyOptions({ visible: baseSeriesType === "bars" });
-    lineSeries.applyOptions({
-      visible: baseSeriesType === "line",
-      color: theme.accent || theme.text,
-      priceFormat,
-      priceLineVisible: effectivePriceLineVisibility,
-      lastValueVisible: effectivePriceLineVisibility,
-    });
-    areaSeries.applyOptions({
-      visible: baseSeriesType === "area",
-      lineColor: theme.accent || theme.text,
-      topColor: withAlpha(theme.accent || theme.text, "1e"),
-      bottomColor: withAlpha(theme.accent || theme.text, "02"),
-      priceFormat,
-      priceLineVisible: effectivePriceLineVisibility,
-      lastValueVisible: effectivePriceLineVisibility,
-    });
-    baselineSeries.applyOptions({
-      visible: baseSeriesType === "baseline",
-      baseValue: { type: "price", price: model.chartBars[0]?.o ?? 0 },
-      topLineColor: theme.green,
-      topFillColor1: withAlpha(theme.green, "2f"),
-      topFillColor2: withAlpha(theme.green, "08"),
-      bottomLineColor: theme.red,
-      bottomFillColor1: withAlpha(theme.red, "08"),
-      bottomFillColor2: withAlpha(theme.red, "2f"),
-      priceFormat,
-      priceLineVisible: effectivePriceLineVisibility,
-      lastValueVisible: effectivePriceLineVisibility,
-    });
+  // Effect B — OPTIONS APPLY ONLY. Fires when theme, series type,
+  // priceFormat, baselineBaseValue, or user prefs actually change — NOT
+  // on every streaming bar. Re-applies series.applyOptions,
+  // priceScale.applyOptions, and the big chart.applyOptions megacall.
+  useLayoutEffect(() => {
+    if (
+      !chartRef.current ||
+      !candleSeriesRef.current ||
+      !barSeriesRef.current ||
+      !lineSeriesRef.current ||
+      !areaSeriesRef.current ||
+      !baselineSeriesRef.current ||
+      !volumeSeriesRef.current
+    ) {
+      return;
+    }
+
+    const candleSeries = candleSeriesRef.current;
+    const barSeries = barSeriesRef.current;
+    const lineSeries = lineSeriesRef.current;
+    const areaSeries = areaSeriesRef.current;
+    const baselineSeries = baselineSeriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+    const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
+    const accent = theme.accent || theme.text;
+
     candleSeries.applyOptions({
       visible: baseSeriesType === "candles",
       priceFormat,
@@ -7731,6 +7785,35 @@ export const ResearchChartSurface = ({
     });
     barSeries.applyOptions({
       visible: baseSeriesType === "bars",
+      priceFormat,
+      priceLineVisible: effectivePriceLineVisibility,
+      lastValueVisible: effectivePriceLineVisibility,
+    });
+    lineSeries.applyOptions({
+      visible: baseSeriesType === "line",
+      color: accent,
+      priceFormat,
+      priceLineVisible: effectivePriceLineVisibility,
+      lastValueVisible: effectivePriceLineVisibility,
+    });
+    areaSeries.applyOptions({
+      visible: baseSeriesType === "area",
+      lineColor: accent,
+      topColor: withAlpha(accent, "1e"),
+      bottomColor: withAlpha(accent, "02"),
+      priceFormat,
+      priceLineVisible: effectivePriceLineVisibility,
+      lastValueVisible: effectivePriceLineVisibility,
+    });
+    baselineSeries.applyOptions({
+      visible: baseSeriesType === "baseline",
+      baseValue: baselineBaseValue,
+      topLineColor: theme.green,
+      topFillColor1: withAlpha(theme.green, "2f"),
+      topFillColor2: withAlpha(theme.green, "08"),
+      bottomLineColor: theme.red,
+      bottomFillColor1: withAlpha(theme.red, "08"),
+      bottomFillColor2: withAlpha(theme.red, "2f"),
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -7822,46 +7905,34 @@ export const ResearchChartSurface = ({
           baseline: baselineSeries,
         } satisfies Record<BaseSeriesType, ChartSeriesApi>
       )[baseSeriesType] || candleSeries;
-    recordChartHydrationMetric(
-      "seriesSyncMs",
-      nowMs() - seriesSyncStartedAt,
-      hydrationScopeKey,
-    );
   }, [
     baseSeriesType,
-    chartInteractionConfig.handleScale,
-    chartInteractionConfig.handleScroll,
-    crosshairMode,
-    model.chartBars,
-    scaleMode,
     autoScale,
     invertScale,
-    enableInteractions,
-    hideCrosshair,
+    scaleMode,
     showVolume,
     effectiveShowGrid,
     showPriceLine,
     showRightPriceScale,
     showTimeScaleState,
-    chartTimeScaleRightOffset,
-    compact,
-    effectiveViewportSnapshot?.identityKey,
-    effectiveViewportSnapshot?.userTouched,
-    externalViewportUserTouched,
+    hideCrosshair,
+    crosshairMode,
     hideTimeScale,
-    userPreferences,
-    viewportUserTouched,
+    compact,
+    chartTimeScaleRightOffset,
+    chartInteractionConfig.handleScale,
+    chartInteractionConfig.handleScroll,
+    theme.bg2,
     theme.border,
     theme.accent,
     theme.green,
     theme.red,
     theme.text,
     theme.textMuted,
-    model.defaultVisibleLogicalRange,
-    hydrationScopeKey,
-    isViewportInteractionActive,
-    markProgrammaticViewportIntent,
-    setProgrammaticVisibleLogicalRange,
+    theme.mono,
+    userPreferences,
+    priceFormat,
+    baselineBaseValue,
   ]);
 
   useLayoutEffect(() => {
@@ -8631,7 +8702,8 @@ export const ResearchChartSurface = ({
     ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) /
       4
     : null;
-  const pricePrecision = resolvePricePrecision(model.chartBars);
+  // pricePrecision is hoisted to a memo near the chart-options effect
+  // (~line 7441); reuse that here instead of recomputing.
   const formatPrice = (value: number | null | undefined): string =>
     formatChartPriceAxisValue(value, pricePrecision);
   const deltaColor = (displayDeltaValue ?? 0) >= 0 ? theme.green : theme.red;

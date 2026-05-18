@@ -408,6 +408,54 @@ test("ResearchChartSurface axis-wheel Y zoom routes autoScale through React stat
   );
 });
 
+test("ResearchChartSurface splits data-sync and options-apply into separate effects", () => {
+  // Root-cause guard for streaming flicker + range-snap. The data-sync
+  // useLayoutEffect must NOT touch chart.applyOptions / priceScale
+  // .applyOptions / per-series .applyOptions — those re-fire lightweight-
+  // charts' layout + grid + crosshair paint on every bar tick. The
+  // options-apply useLayoutEffect must NOT call syncSeriesData —
+  // otherwise theme/pref changes would re-sync the entire bar history.
+  const source = readResearchChartSurfaceSource();
+
+  const dataEffectMatch = source.match(
+    /\/\/ Effect A — DATA SYNC ONLY\.[\s\S]*?\n  \}, \[[\s\S]*?\]\);/,
+  );
+  const optionsEffectMatch = source.match(
+    /\/\/ Effect B — OPTIONS APPLY ONLY\.[\s\S]*?\n  \}, \[[\s\S]*?\]\);/,
+  );
+
+  assert.ok(dataEffectMatch, "data-sync effect block not found");
+  assert.ok(optionsEffectMatch, "options-apply effect block not found");
+
+  const dataBody = dataEffectMatch[0];
+  const optionsBody = optionsEffectMatch[0];
+
+  assert.doesNotMatch(
+    dataBody,
+    /chart\.applyOptions\(|chartRef\.current\.applyOptions\(|priceScale\("right", 0\)\.applyOptions\(/,
+  );
+  assert.doesNotMatch(
+    dataBody,
+    /\b(?:candle|bar|line|area|baseline|volume)Series\.applyOptions\(/,
+  );
+  assert.doesNotMatch(optionsBody, /syncSeriesData\(/);
+
+  // Post-reset range restore must carry programmatic intent so the
+  // chart's visible-range-change subscriber doesn't misread the restore
+  // as a user change.
+  assert.match(
+    dataBody,
+    /shouldRestoreRangeAfterFullReset[\s\S]*?markProgrammaticIntent: true/,
+  );
+
+  // scrollToRealTime must be gated on absence of in-flight user gesture
+  // — bare scrollToRealTime would yank the viewport mid-drag.
+  assert.match(
+    dataBody,
+    /shouldFollowLatestBars[\s\S]*?!viewportPointerActiveRef\.current[\s\S]*?lastWheelViewportIntentAtRef[\s\S]*?scrollToRealTime/,
+  );
+});
+
 test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
   const source = readResearchChartSurfaceSource();
 
