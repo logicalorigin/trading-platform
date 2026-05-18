@@ -19,6 +19,7 @@ import {
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
 import { IbkrLaneArchitecturePanel } from "./settings/IbkrLaneArchitecturePanel";
+import { buildRayalgoRuntimeFingerprint } from "../app/runtimeDiagnostics";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_CONFIG_LIMITS,
@@ -263,6 +264,77 @@ function labelStyle() {
     fontWeight: FONT_WEIGHTS.regular,
     minWidth: 0,
   };
+}
+
+/**
+ * AboutPanel — top-of-System-tab build metadata + one-line health
+ * summary. Pulls from the existing build fingerprint so the gitSha,
+ * branch, build mode, and "dirty/clean" tag stay accurate as new
+ * builds roll. Health summary degrades gracefully if a subsystem is
+ * down (renders dim text instead of erroring).
+ */
+function AboutPanel({ summary, providers }) {
+  const fingerprint = useMemo(() => {
+    try {
+      return buildRayalgoRuntimeFingerprint();
+    } catch (_e) {
+      return null;
+    }
+  }, []);
+  if (!fingerprint) return null;
+
+  const shortSha =
+    fingerprint.gitSha && fingerprint.gitSha !== "unknown"
+      ? fingerprint.gitSha.slice(0, 7)
+      : "—";
+  const sourceTreeTone =
+    fingerprint.sourceTreeStatus === "dirty"
+      ? T.amber
+      : fingerprint.sourceTreeStatus === "clean"
+        ? T.green
+        : T.textDim;
+  const tradingTone =
+    summary?.tradingMode === "live"
+      ? T.red
+      : summary?.tradingMode === "paper"
+        ? T.green
+        : T.textDim;
+  const providerOk = Boolean(
+    providers?.polygon && providers?.research && providers?.ibkr,
+  );
+
+  return (
+    <Panel title="About">
+      <StateRow label="Application" value="RayAlgo" />
+      <StateRow
+        label="Build SHA"
+        value={shortSha}
+        tone={shortSha === "—" ? T.textDim : T.text}
+      />
+      <StateRow
+        label="Source tree"
+        value={fingerprint.sourceTreeStatus}
+        tone={sourceTreeTone}
+      />
+      <StateRow label="Branch" value={fingerprint.gitBranch || "—"} />
+      <StateRow label="Build mode" value={fingerprint.buildMode} />
+      <StateRow
+        label="Node env"
+        value={fingerprint.nodeEnv || "—"}
+        tone={T.textDim}
+      />
+      <StateRow
+        label="Trading mode"
+        value={summary?.tradingMode || "—"}
+        tone={tradingTone}
+      />
+      <StateRow
+        label="Providers"
+        value={providerOk ? "all configured" : "incomplete"}
+        tone={providerOk ? T.green : T.amber}
+      />
+    </Panel>
+  );
 }
 
 function Panel({ title, action, children }) {
@@ -2849,6 +2921,7 @@ export default function SettingsScreen({
 
           {activeTab === "System" && (
             <>
+              <AboutPanel summary={summary} providers={providers} />
               <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(10) }}>
                 <Panel title="Runtime">
                   <StateRow label="Trading mode" value={summary.tradingMode} tone={summary.tradingMode === "live" ? T.red : T.green} />

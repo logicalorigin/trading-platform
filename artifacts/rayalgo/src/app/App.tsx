@@ -114,6 +114,11 @@ function AppLoadingFallback() {
   const themeKey = resolveAppLoadingFallbackTheme();
   const palette = APP_LOADING_FALLBACK_PALETTES[themeKey];
 
+  // Boot screen — brand wordmark + a 3-segment progress bar that
+  // cycles through its segments to communicate "the app is loading,
+  // not stuck." Replaces the blank-then-spinner gap that previously
+  // showed during first-paint. No external assets; everything is
+  // inline CSS so it renders even if the main bundle is still in flight.
   return (
     <div
       data-testid="app-loading-fallback"
@@ -121,29 +126,68 @@ function AppLoadingFallback() {
       style={{
         minHeight: "100vh",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 18,
         background: palette.shellBg,
         color: palette.text,
         fontFamily: FONT_CSS_VAR.sans,
       }}
     >
       <style>
-        {`@keyframes rayalgoBootSpin { to { transform: rotate(360deg); } }`}
+        {`
+          @keyframes rayalgoBootFade {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes rayalgoBootBar {
+            0%, 100% { opacity: 0.25; }
+            50% { opacity: 1; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .rayalgo-boot-wordmark { animation: none; }
+            .rayalgo-boot-bar { animation: none; opacity: 0.6; }
+          }
+        `}
       </style>
       <span
-        aria-label="Loading RayAlgo"
+        aria-label="RayAlgo"
         role="status"
+        className="rayalgo-boot-wordmark"
         style={{
-          display: "inline-block",
-          width: 28,
-          height: 28,
-          borderRadius: "50%",
-          border: `2px solid ${palette.border}`,
-          borderTopColor: palette.accent,
-          animation: "rayalgoBootSpin 900ms linear infinite",
+          fontSize: 18,
+          fontWeight: 600,
+          letterSpacing: "0.16em",
+          textTransform: "uppercase",
+          color: palette.accent,
+          animation: "rayalgoBootFade 420ms cubic-bezier(0, 0, 0.2, 1) both",
         }}
-      />
+      >
+        RayAlgo
+      </span>
+      <span
+        aria-hidden="true"
+        style={{
+          display: "inline-flex",
+          gap: 4,
+        }}
+      >
+        {[0, 1, 2].map((index) => (
+          <span
+            key={index}
+            className="rayalgo-boot-bar"
+            style={{
+              width: 18,
+              height: 2,
+              background: palette.accent,
+              borderRadius: 1,
+              opacity: 0.25,
+              animation: `rayalgoBootBar 1200ms ease-in-out ${index * 200}ms infinite`,
+            }}
+          />
+        ))}
+      </span>
     </div>
   );
 }
