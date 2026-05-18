@@ -99,6 +99,7 @@ const SETTINGS_TABS = [
 ];
 
 const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+const SIGNAL_MONITOR_ENVIRONMENT = "paper";
 const SIGNAL_MONITOR_LIMITS = Object.freeze({
   pollIntervalSeconds: { min: 15, max: 3600 },
   maxSymbols: { min: 1, max: 250 },
@@ -670,14 +671,21 @@ function useSignalMonitorSettings() {
   const [draft, setDraft] = useState(null);
   const [localError, setLocalError] = useState(null);
   const lastProfileJsonRef = useRef(null);
-  const signalMonitorEventsParams = useMemo(() => ({ limit: 20 }), []);
-  const profileQuery = useGetSignalMonitorProfile(undefined, {
+  const signalMonitorParams = useMemo(
+    () => ({ environment: SIGNAL_MONITOR_ENVIRONMENT }),
+    [],
+  );
+  const signalMonitorEventsParams = useMemo(
+    () => ({ environment: SIGNAL_MONITOR_ENVIRONMENT, limit: 20 }),
+    [],
+  );
+  const profileQuery = useGetSignalMonitorProfile(signalMonitorParams, {
     query: {
       staleTime: 15_000,
       retry: false,
     },
   });
-  const stateQuery = useGetSignalMonitorState(undefined, {
+  const stateQuery = useGetSignalMonitorState(signalMonitorParams, {
     query: {
       staleTime: 15_000,
       retry: false,
@@ -739,7 +747,6 @@ function useSignalMonitorSettings() {
   const updateProfileMutation = useUpdateSignalMonitorProfile({
     mutation: {
       onSuccess: (payload) => {
-        queryClient.setQueryData(getGetSignalMonitorProfileQueryKey(), payload);
         if (payload.environment) {
           queryClient.setQueryData(
             getGetSignalMonitorProfileQueryKey({ environment: payload.environment }),
@@ -757,7 +764,6 @@ function useSignalMonitorSettings() {
   const evaluateMutation = useEvaluateSignalMonitor({
     mutation: {
       onSuccess: (payload) => {
-        queryClient.setQueryData(getGetSignalMonitorStateQueryKey(), payload);
         if (payload.profile?.environment) {
           queryClient.setQueryData(
             getGetSignalMonitorStateQueryKey({ environment: payload.profile.environment }),
@@ -774,7 +780,6 @@ function useSignalMonitorSettings() {
           queryKey: getListSignalMonitorEventsQueryKey(signalMonitorEventsParams),
         });
         if (payload.profile) {
-          queryClient.setQueryData(getGetSignalMonitorProfileQueryKey(), payload.profile);
           if (payload.profile.environment) {
             queryClient.setQueryData(
               getGetSignalMonitorProfileQueryKey({ environment: payload.profile.environment }),
@@ -795,7 +800,7 @@ function useSignalMonitorSettings() {
     setLocalError(null);
     updateProfileMutation.mutate({
       data: {
-        environment: draft.environment,
+        environment: SIGNAL_MONITOR_ENVIRONMENT,
         enabled: Boolean(draft.enabled),
         watchlistId: draft.watchlistId || null,
         timeframe: draft.timeframe,
@@ -812,11 +817,11 @@ function useSignalMonitorSettings() {
     setLocalError(null);
     evaluateMutation.mutate({
       data: {
-        environment: draft?.environment || profile?.environment,
+        environment: SIGNAL_MONITOR_ENVIRONMENT,
         mode,
       },
     });
-  }, [draft?.environment, evaluateMutation, profile?.environment]);
+  }, [evaluateMutation]);
 
   const queryError = profileQuery.error || stateQuery.error || eventsQuery.error;
   const loading =
@@ -1180,7 +1185,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           {error}
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(14) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(8) }}>
         <div>
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
@@ -1410,7 +1415,7 @@ function BrowserStorageFootprintPanel() {
         </button>
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10), marginBottom: sp(12) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8), marginBottom: sp(8) }}>
         <StateRow
           label="Local storage"
           value={`${formatBytes(storage.snapshot.local.totalBytes)} / ${storage.snapshot.local.count} keys`}
@@ -1422,7 +1427,7 @@ function BrowserStorageFootprintPanel() {
           tone={T.textSec}
         />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(12) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(8) }}>
         <div>
           <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
             Largest Local Keys
@@ -1477,7 +1482,7 @@ function AppPreferencesPanel({
 }) {
   return (
     <Panel title="App Preferences">
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(8) }}>
         <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Theme" value={theme} />
           <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
@@ -1531,7 +1536,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
             {userPreferences.error}
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
           <StateRow label="Source" value={userPreferences.snapshot?.source || "local"} tone={userPreferences.snapshot?.source === "database" ? T.green : T.amber} />
           <StateRow label="Status" value={userPreferences.saving ? "saving" : userPreferences.loading ? "loading" : "synced"} tone={userPreferences.saving || userPreferences.loading ? T.amber : T.green} />
           <StateRow label="App time" value={formatPreferenceTimeZoneLabel(prefs, "app")} />
@@ -1540,7 +1545,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Appearance">
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(8) }}>
           <SelectField
             label="Theme"
             value={prefs.appearance.theme}
@@ -1585,7 +1590,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Time Display">
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(8) }}>
           <SelectField
             label="App Time Zone"
             value={prefs.time.appTimeZoneMode}
@@ -1639,7 +1644,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       </Panel>
 
       <Panel title="Privacy">
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
           <CheckboxField
             label="Hide account values"
             checked={prefs.privacy.hideAccountValues}
@@ -1668,7 +1673,7 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
 
   return (
     <Panel title="Chart Display">
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(8) }}>
         <SelectField
           label="Status Line"
           value={chart.statusLineDetail}
@@ -1748,7 +1753,7 @@ function WorkspaceProfilePreferencesPanel({ userPreferences }) {
 
   return (
     <Panel title="Synced Workspace Profile">
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(8) }}>
         <SelectField
           label="Default Screen"
           value={workspace.defaultScreen}
@@ -1819,7 +1824,7 @@ function NotificationPreferencePanel({ userPreferences }) {
   return (
     <div style={{ display: "grid", gap: sp(14) }}>
       <Panel title="Notifications">
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(175)}px, 1fr))`, gap: sp(8) }}>
           <SelectField
             label="Desktop"
             value={notifications.desktopNotifications}
@@ -1854,7 +1859,7 @@ function NotificationPreferencePanel({ userPreferences }) {
         </div>
       </Panel>
       <Panel title="Trading Display">
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
           <CheckboxField label="Confirm orders" checked={trading.confirmOrders} onChange={(value) => patchTrading({ confirmOrders: value })} />
           <CheckboxField label="Execution markers" checked={trading.showExecutionMarkers} onChange={(value) => patchTrading({ showExecutionMarkers: value })} />
           <CheckboxField label="Position lines" checked={trading.showPositionLines} onChange={(value) => patchTrading({ showPositionLines: value })} />
@@ -1961,7 +1966,7 @@ function DiagnosticAlertPreferencesPanel() {
       <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the local browser alert state used by Diagnostics for crash-risk, cache, and memory warnings.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
         <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
           <input
             type="checkbox"
@@ -2060,7 +2065,7 @@ function WorkspaceDefaultsPanel() {
         <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           These settings update the same workspace state read by the app. Mounted screens may need a revisit or reload to pick up default-only values.
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(10) }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
           <SelectField
             label="Header Tape Speed"
             value={headerPreset}
@@ -2279,7 +2284,7 @@ function FlowScannerSettingsPanel() {
       <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Shared with the header flow scan controls and persisted in the app workspace state.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(10) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(8) }}>
         <SelectField
           label="Universe"
           value={config.mode}
@@ -2348,7 +2353,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
             Loading signal monitor profile.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(10) }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(8) }}>
             <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
               <input
                 type="checkbox"
@@ -2367,6 +2372,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
         )}
       </Panel>
       <Panel title="Signal Monitor Status">
+        <StateRow label="Environment" value={draft?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
         <StateRow label="Tracked symbols" value={states.length} />
         <StateRow label="Fresh signals" value={states.filter((state) => state.fresh && state.status === "ok").length} />
         <StateRow label="Recent events" value={monitor.events.length} />
@@ -2932,7 +2938,7 @@ export default function SettingsScreen({
           {activeTab === "System" && (
             <>
               <AboutPanel summary={summary} providers={providers} />
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(10) }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
                 <Panel title="Runtime">
                   <StateRow label="Trading mode" value={summary.tradingMode} tone={summary.tradingMode === "live" ? T.red : T.green} />
                   <StateRow label="Diagnostics" value={summary.diagnosticsStatus} />
