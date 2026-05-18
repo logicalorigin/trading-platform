@@ -23,7 +23,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
-import { Button, TextField } from "../../components/platform/primitives.jsx";
+import { Button, Icon, TextField } from "../../components/platform/primitives.jsx";
 import { closeDateMatchesPatternHour } from "./accountPatternLens";
 import {
   feeDragBucket,
@@ -322,9 +322,9 @@ const MobileOrderRow = memo(({
           onClick={onRowAction}
         >
           {expanded ? (
-            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+            <Icon as={ChevronDown} context="inline" aria-hidden="true" />
           ) : (
-            <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+            <Icon as={ChevronRight} context="inline" aria-hidden="true" />
           )}
         </MobileIconButton>
       </div>
@@ -425,9 +425,9 @@ const MobileTradeRow = memo(({
         onClick={onRowAction}
       >
         {rowSelected ? (
-          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+          <Icon as={ChevronDown} context="inline" aria-hidden="true" />
         ) : (
-          <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+          <Icon as={ChevronRight} context="inline" aria-hidden="true" />
         )}
       </MobileIconButton>
     </div>

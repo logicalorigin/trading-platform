@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { Icon } from "./primitives.jsx";
 
 export const BottomSheet = ({
   open,
@@ -149,7 +150,7 @@ export const BottomSheet = ({
                 flexShrink: 0,
               }}
             >
-              <X size={16} strokeWidth={2} />
+              <Icon as={X} context="control" />
             </button>
           </div>
         </div>
