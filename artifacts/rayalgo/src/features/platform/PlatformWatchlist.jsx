@@ -865,9 +865,9 @@ export const Watchlist = ({
       }}
     >
         <div
+          className="ra-hairline-bottom"
           style={{
           padding: sp("12px 14px"),
-          borderBottom: `1px solid ${T.border}`,
           display: "flex",
           flexDirection: "column",
           gap: sp(8),

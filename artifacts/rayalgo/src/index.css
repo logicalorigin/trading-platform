@@ -755,6 +755,44 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
   margin: 0;
 }
 
+/* Hairline-as-decoration utility — drop on any element where you'd
+   normally put border-bottom: 1px solid. Uses ::after so the parent
+   keeps its existing border / padding / box-sizing intact; only the
+   hairline overlay is added. Parent's position becomes relative so the
+   ::after lands at the bottom edge.
+
+   .ra-hairline-bottom — gradient hairline along the bottom edge
+   .ra-hairline-top    — gradient hairline along the top edge */
+.ra-hairline-bottom {
+  position: relative;
+}
+
+.ra-hairline-bottom::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--ra-gradient-hairline-divider-h);
+  pointer-events: none;
+}
+
+.ra-hairline-top {
+  position: relative;
+}
+
+.ra-hairline-top::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--ra-gradient-hairline-divider-h);
+  pointer-events: none;
+}
+
 /* Elevated buttons (primary / danger Button variants) — base shadow
    from --ra-elevation-sm, overlaid with --ra-elevation-hover on :hover
    to add the accent-tinted glow. .ra-interactive handles the -1px

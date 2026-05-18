@@ -311,6 +311,7 @@ const HeaderIbkrDetailRow = ({
   wrap = false,
 }) => (
   <div
+    className="ra-hairline-bottom"
     style={{
       display: "grid",
       gridTemplateColumns: `minmax(${dim(96)}px, 0.78fr) minmax(0, 1.22fr)`,
@@ -318,7 +319,6 @@ const HeaderIbkrDetailRow = ({
       alignItems: "baseline",
       minWidth: 0,
       padding: sp("8px 0"),
-      borderBottom: `1px solid ${T.borderLight}`,
       fontFamily: T.sans,
     }}
   >

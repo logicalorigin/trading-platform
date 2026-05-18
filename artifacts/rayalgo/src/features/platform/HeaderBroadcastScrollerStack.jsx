@@ -481,6 +481,7 @@ const HeaderBroadcastLane = ({
   return (
     <div
       data-testid={testId}
+      className="ra-hairline-bottom"
       style={{
         display: "grid",
         gridTemplateColumns: compactSettings
@@ -489,7 +490,6 @@ const HeaderBroadcastLane = ({
         alignItems: "center",
         minHeight: dim(compactSettings ? 18 : 22),
         minWidth: 0,
-        borderBottom: `1px solid ${T.border}`,
       }}
     >
       <div
@@ -1208,13 +1208,13 @@ export const HeaderBroadcastScrollerStack = memo(({
     <div
       ref={rootRef}
       data-testid="header-broadcast-scrollers"
+      className="ra-hairline-bottom"
       style={{
         flexShrink: 0,
         display: "grid",
         gridTemplateRows: "auto auto",
         minWidth: 0,
         background: T.bg0,
-        borderBottom: `1px solid ${T.border}`,
       }}
     >
       <HeaderBroadcastLane

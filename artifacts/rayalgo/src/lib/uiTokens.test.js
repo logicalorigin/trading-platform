@@ -340,6 +340,35 @@ test("scroll-fade utility classes feather edges via mask-image", () => {
   assert.match(fadeX[0], /mask-image: linear-gradient\(\s*90deg/);
 });
 
+test("hairline ::after / ::before utility classes use G.hairlineDividerH", () => {
+  // .ra-hairline-bottom / .ra-hairline-top are the "drop-in" hairline
+  // utility — adds a 1px gradient line via ::after / ::before so the
+  // parent's existing border / padding / box-sizing stay intact. The
+  // bottom variant is the more common one (replaces border-bottom).
+  const cssSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
+    "utf8",
+  );
+
+  // .ra-hairline-bottom needs position:relative for the ::after to
+  // anchor against, and the ::after must use the gradient + sit at
+  // the bottom edge with height: 1px.
+  assert.match(
+    cssSource,
+    /\.ra-hairline-bottom \{[\s\S]*?position: relative/,
+  );
+  assert.match(
+    cssSource,
+    /\.ra-hairline-bottom::after \{[\s\S]*?bottom: 0[\s\S]*?height: 1px[\s\S]*?background: var\(--ra-gradient-hairline-divider-h\)/,
+  );
+
+  // .ra-hairline-top mirror with top: 0 + ::before
+  assert.match(
+    cssSource,
+    /\.ra-hairline-top::before \{[\s\S]*?top: 0[\s\S]*?height: 1px[\s\S]*?background: var\(--ra-gradient-hairline-divider-h\)/,
+  );
+});
+
 test("hairline divider classes use G.hairlineDivider gradients", () => {
   // .ra-hairline-h / .ra-hairline-v render a 1px line via the
   // G.hairlineDividerH / G.hairlineDividerV gradients (transparent →
