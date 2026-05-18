@@ -12,6 +12,7 @@ import {
 } from "./accountUtils";
 import { arrayValue, finiteNumber, startOfIsoWeek } from "./tradingPatterns/patternsCommon";
 import { PatternsSummaryStrip } from "./tradingPatterns/PatternsSummaryStrip";
+import { PatternsWaterfall } from "./tradingPatterns/PatternsWaterfall";
 import { PatternsInsights } from "./tradingPatterns/PatternsInsights";
 import { PatternsByTime } from "./tradingPatterns/PatternsByTime";
 import { PatternsBySymbol } from "./tradingPatterns/PatternsBySymbol";
@@ -43,8 +44,8 @@ export const TradingPatternsPanel = ({
   isPhone = false,
 }) => {
   const sectionDefaults = isPhone
-    ? { insights: true, byTime: true, bySymbol: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
-    : { insights: true, byTime: true, bySymbol: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
+    ? { insights: true, waterfall: true, byTime: true, bySymbol: true, byBucket: false, byOutcomeDriver: false, outcomeDistribution: false }
+    : { insights: true, waterfall: true, byTime: true, bySymbol: true, byBucket: true, byOutcomeDriver: true, outcomeDistribution: true };
   const { isOpen, toggle } = useCollapsibleSections("patterns.openSections", sectionDefaults);
   const [sortKey, setSortKey] = useState("realizedPnl");
   const [tickerOrder, setTickerOrder] = useState("top");
@@ -168,6 +169,22 @@ export const TradingPatternsPanel = ({
               currency={currency}
               maskValues={maskValues}
               onLensChange={onLensChange}
+              onTradeSelect={onTradeSelect}
+            />
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <SectionHeader
+            title="Trade Waterfall"
+            onToggle={() => toggle("waterfall")}
+            expanded={isOpen("waterfall")}
+          />
+          {isOpen("waterfall") ? (
+            <PatternsWaterfall
+              waterfall={analysis?.waterfall}
+              currency={currency}
+              maskValues={maskValues}
               onTradeSelect={onTradeSelect}
             />
           ) : null}
