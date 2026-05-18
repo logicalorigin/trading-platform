@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useMemo,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -65,8 +66,9 @@ import {
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
-import { useElementSize } from "../../lib/responsive";
+import { useElementSize, useViewport } from "../../lib/responsive";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { TimeframeSheet } from "./ChartMobileSheets";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1161,6 +1163,9 @@ export const ResearchChartWidgetHeader = ({
   contextSlot = null,
 }: ResearchChartWidgetHeaderProps) => {
   const { preferences: userPreferences } = useUserPreferences();
+  const viewport = useViewport();
+  const isPhone = viewport.flags.isPhone;
+  const [timeframeSheetOpen, setTimeframeSheetOpen] = useState(false);
   const frameDensity = useResolvedChartFrameDensity(dense, density);
   const chromeDense = isCompressedChartFrameDensity(frameDensity);
   const iconOnlyChrome = isIconChartFrameDensity(frameDensity);
@@ -1387,6 +1392,32 @@ export const ResearchChartWidgetHeader = ({
 
         <div style={dividerStyle(theme, chromeDense)} />
 
+        {isPhone ? (
+          <>
+            <AppTooltip content="More timeframes">
+              <button
+                type="button"
+                data-testid="chart-timeframe-menu-trigger"
+                data-chart-timeframe={timeframe}
+                style={barButtonStyle({ theme, palette, dense: chromeDense })}
+                onClick={() => setTimeframeSheetOpen(true)}
+              >
+                <span>{timeframe}</span>
+                <ChevronDown style={iconStyle(chromeDense)} />
+              </button>
+            </AppTooltip>
+            <TimeframeSheet
+              open={timeframeSheetOpen}
+              onClose={() => setTimeframeSheetOpen(false)}
+              timeframe={timeframe}
+              options={timeframes}
+              favoriteTimeframes={favoriteTimeframes}
+              onSelect={selectTimeframe}
+              onToggleFavorite={onToggleFavoriteTimeframe}
+              onPrewarm={onPrewarmTimeframe}
+            />
+          </>
+        ) : (
         <DropdownMenu>
           <AppTooltip content="More timeframes">
             <DropdownMenuTrigger asChild>
@@ -1477,6 +1508,7 @@ export const ResearchChartWidgetHeader = ({
             })}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
 
         {!minimalChrome ? (
           <DropdownMenu>
