@@ -15,9 +15,11 @@ import { OperationsSignalTable } from "./OperationsSignalTable";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
 import {
+  STRATEGY_SIGNAL_TIMEFRAMES,
   asRecord,
   compactButtonStyle,
   formatMoney,
+  numberFrom,
 } from "./algoHelpers";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 
@@ -180,6 +182,12 @@ export const AlgoOperationsTab = ({
   symbolIndex,
   events,
   userPreferences,
+  // Signal monitor (promoted header controls)
+  signalMonitorProfile,
+  strategySettingsDraft,
+  setStrategySettingsDraft,
+  handleSaveStrategySettings,
+  updateStrategySettingsMutation,
   // Layout
   algoIsPhone,
 }) => {
@@ -230,6 +238,7 @@ export const AlgoOperationsTab = ({
           padding: sp("6px 10px"),
           background: T.bg0,
           borderBottom: `1px solid ${T.border}`,
+          flexWrap: "wrap",
         }}
       >
         <div
@@ -264,22 +273,138 @@ export const AlgoOperationsTab = ({
           </span>
         </div>
         <div
+          data-testid="algo-operations-header-monitor"
           style={{
             display: "flex",
-            alignItems: "baseline",
-            gap: sp(8),
-            color: T.textDim,
-            fontFamily: T.sans,
-            fontSize: textSize("body"),
+            alignItems: "center",
+            gap: sp(6),
+            flexWrap: "wrap",
           }}
         >
-          <span>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(2),
+              color: T.textDim,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            tf
+            <select
+              value={strategySettingsDraft?.signalTimeframe || "5m"}
+              onChange={(event) =>
+                setStrategySettingsDraft?.((current) => ({
+                  ...current,
+                  signalTimeframe: event.target.value,
+                }))
+              }
+              disabled={updateStrategySettingsMutation?.isPending}
+              style={{
+                background: T.bg1,
+                color: T.text,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.xs),
+                padding: sp("1px 4px"),
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+              }}
+            >
+              {STRATEGY_SIGNAL_TIMEFRAMES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(2),
+              color: T.textDim,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            h=
+            <input
+              type="number"
+              min={2}
+              max={50}
+              step={1}
+              value={strategySettingsDraft?.timeHorizon ?? 8}
+              onChange={(event) =>
+                setStrategySettingsDraft?.((current) => ({
+                  ...current,
+                  timeHorizon: numberFrom(event.target.value, 8),
+                }))
+              }
+              disabled={updateStrategySettingsMutation?.isPending}
+              style={{
+                width: dim(48),
+                background: T.bg1,
+                color: T.text,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(RADII.xs),
+                padding: sp("1px 4px"),
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                textAlign: "center",
+              }}
+            />
+          </label>
+          {signalMonitorProfile?.watchlistId ? (
+            <span
+              style={{
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              wl {signalMonitorProfile.watchlistId}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleSaveStrategySettings}
+            disabled={
+              !handleSaveStrategySettings ||
+              updateStrategySettingsMutation?.isPending
+            }
+            style={{
+              ...compactButtonStyle({
+                disabled:
+                  !handleSaveStrategySettings ||
+                  updateStrategySettingsMutation?.isPending,
+              }),
+              border: "none",
+              background: T.accent,
+              color: T.onAccent,
+            }}
+          >
+            {updateStrategySettingsMutation?.isPending ? "SAVING…" : "APPLY"}
+          </button>
+          <span
+            style={{
+              color: T.textDim,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              marginLeft: sp(4),
+            }}
+          >
             Realized{" "}
             <span style={{ color: realizedToday >= 0 ? T.green : T.red }}>
               {formatMoney(realizedToday, 2)}
             </span>
-          </span>
-          <span>
+            {" · "}
             Unrealized{" "}
             <span style={{ color: unrealized >= 0 ? T.green : T.red }}>
               {formatMoney(unrealized, 2)}

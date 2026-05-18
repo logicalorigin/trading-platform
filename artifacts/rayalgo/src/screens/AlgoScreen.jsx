@@ -1455,6 +1455,11 @@ export const AlgoScreen = ({
             symbolIndex={symbolIndex}
             events={events}
             userPreferences={userPreferences}
+            signalMonitorProfile={signalMonitorProfile}
+            strategySettingsDraft={strategySettingsDraft}
+            setStrategySettingsDraft={setStrategySettingsDraft}
+            handleSaveStrategySettings={handleSaveStrategySettings}
+            updateStrategySettingsMutation={updateStrategySettingsMutation}
             algoIsPhone={algoIsPhone}
           />
         )}
