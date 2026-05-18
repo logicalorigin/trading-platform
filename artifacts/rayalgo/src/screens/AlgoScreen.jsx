@@ -118,8 +118,6 @@ import {
   buildKpiSample,
   pruneAlgoKpiHistory,
   pushAlgoKpiSample,
-  useAlgoKpiHistory,
-  seriesFromBuffer,
 } from "../features/platform/algoKpiHistoryStore";
 import {
   buildAttentionStream,
@@ -551,14 +549,11 @@ export const AlgoScreen = ({
     setActivitySummary(summary);
     prevActivitySnapshotRef.current = nextSnapshot;
     prevActivityPerformanceRef.current = signalOptionsPerformanceSummary;
-  }, [
-    cockpit?.evaluatedAt,
-    events,
-    focusedDeployment?.id,
-    signalOptionsCandidates,
-    signalOptionsPerformanceSummary,
-    signalOptionsSignals,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only recompute
+    // on cockpit settle / deployment switch; `events` is captured by closure
+    // and never destabilises the effect (using it as a dep would re-fire on
+    // every render before the events query resolves).
+  }, [cockpit?.evaluatedAt, focusedDeployment?.id]);
 
   useEffect(() => {
     pruneAlgoKpiHistory(focusedDeployment?.id || null);
@@ -576,27 +571,11 @@ export const AlgoScreen = ({
         timestampMs: Date.now(),
       }),
     );
-  }, [
-    cockpit?.evaluatedAt,
-    cockpitKpis,
-    cockpitSignalFreshness,
-    focusedDeployment?.id,
-    signalOptionsPerformanceSummary,
-    signalOptionsPositions,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on
+    // cockpit.evaluatedAt (which fires once per scan) instead of the
+    // asRecord() wrappers, which mint a new reference every render.
+  }, [cockpit?.evaluatedAt, focusedDeployment?.id]);
 
-  const kpiHistoryBuffer = useAlgoKpiHistory(focusedDeployment?.id || null);
-  const kpiHistorySeries = useMemo(
-    () => ({
-      realized: seriesFromBuffer(kpiHistoryBuffer, "realized"),
-      unrealized: seriesFromBuffer(kpiHistoryBuffer, "unrealized"),
-      winRate: seriesFromBuffer(kpiHistoryBuffer, "winRate"),
-      profitFactor: seriesFromBuffer(kpiHistoryBuffer, "profitFactor"),
-      freshSignals: seriesFromBuffer(kpiHistoryBuffer, "freshSignals"),
-      openPositions: seriesFromBuffer(kpiHistoryBuffer, "openPositions"),
-    }),
-    [kpiHistoryBuffer],
-  );
 
   const visibleTransitions = useMemo(
     () =>
@@ -1509,7 +1488,6 @@ export const AlgoScreen = ({
           handleSaveStrategySettings={handleSaveStrategySettings}
           updateStrategySettingsMutation={updateStrategySettingsMutation}
           activitySummary={activitySummary}
-          kpiHistorySeries={kpiHistorySeries}
           focusedDeployment={focusedDeployment}
           handleToggleDeployment={handleToggleDeployment}
           handleRunShadowScan={handleRunShadowScan}

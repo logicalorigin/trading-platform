@@ -12,7 +12,7 @@ import { InlineFilterBar } from "../../components/platform/primitives.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import { motionRowStyle } from "../../lib/motion";
-import { setAlgoFocus } from "../../features/platform/algoFocusStore";
+import { setAlgoFocus, useAlgoFocus } from "../../features/platform/algoFocusStore";
 
 const STAGE_CHIPS = [
   { id: "signal", label: "Signal", matches: (type) => /signal/.test(type) && !/options/.test(type) },
@@ -42,9 +42,10 @@ export const AlgoAuditPanel = ({
 }) => {
   const [symbolFilter, setSymbolFilter] = useState("");
   const [stageFilters, setStageFilters] = useState([]);
+  const focus = useAlgoFocus();
   const filteredEvents = useMemo(() => {
     const symbolQuery = symbolFilter.trim().toUpperCase();
-    return events.filter((event) => {
+    const matching = events.filter((event) => {
       if (symbolQuery) {
         const symbol = String(event?.symbol || "").toUpperCase();
         if (!symbol.includes(symbolQuery)) return false;
@@ -52,7 +53,16 @@ export const AlgoAuditPanel = ({
       if (!matchesStage(event?.eventType, stageFilters)) return false;
       return true;
     });
-  }, [events, stageFilters, symbolFilter]);
+    if (!focus.focusedSymbol) return matching;
+    const focused = String(focus.focusedSymbol).toUpperCase();
+    const matches = matching.filter(
+      (event) => String(event?.symbol || "").toUpperCase() === focused,
+    );
+    const rest = matching.filter(
+      (event) => String(event?.symbol || "").toUpperCase() !== focused,
+    );
+    return [...matches, ...rest];
+  }, [events, focus.focusedSymbol, stageFilters, symbolFilter]);
 
   const stageCounts = useMemo(() => {
     const counts = {};
@@ -148,10 +158,16 @@ export const AlgoAuditPanel = ({
             : "No events match the current filter."}
         </div>
       ) : (
-        filteredEvents.map((event, index) => (
+        filteredEvents.map((event, index) => {
+          const isFocused =
+            focus.focusedSymbol &&
+            String(event.symbol || "").toUpperCase() ===
+              String(focus.focusedSymbol).toUpperCase();
+          return (
           <div
             key={event.id}
             className="ra-row-enter"
+            data-focused={isFocused ? "true" : undefined}
             style={{
               ...motionRowStyle(index, 10, 140),
               display: "grid",
@@ -159,6 +175,11 @@ export const AlgoAuditPanel = ({
               gap: sp(6),
               alignItems: "start",
               padding: sp("4px 0"),
+              paddingLeft: isFocused ? sp(6) : 0,
+              borderLeft: isFocused
+                ? `3px solid ${T.accent}`
+                : "3px solid transparent",
+              background: isFocused ? `${T.accent}10` : "transparent",
               borderBottom: `1px solid ${T.border}08`,
               fontSize: textSize("caption"),
             }}
@@ -210,7 +231,8 @@ export const AlgoAuditPanel = ({
               </span>
             )}
           </div>
-        ))
+          );
+        })
       )}
     </div>
   );

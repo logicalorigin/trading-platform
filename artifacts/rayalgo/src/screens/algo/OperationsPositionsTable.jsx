@@ -142,7 +142,17 @@ export const OperationsPositionsTable = ({
         </div>
       ) : (
         <div style={{ maxHeight: 280, overflowY: "auto", minWidth: 0 }}>
-          {positions.map((position) => {
+          {[...positions]
+            .sort((a, b) => {
+              const focused = String(focus.focusedSymbol || "").toUpperCase();
+              if (!focused) return 0;
+              const aSymbol = String(a.symbol || "").toUpperCase();
+              const bSymbol = String(b.symbol || "").toUpperCase();
+              if (aSymbol === focused && bSymbol !== focused) return -1;
+              if (aSymbol !== focused && bSymbol === focused) return 1;
+              return 0;
+            })
+            .map((position) => {
             const symbol = String(position.symbol || "").toUpperCase();
             const entry = numberFrom(position.entryPrice, NaN);
             const mark = numberFrom(position.lastMarkPrice, NaN);

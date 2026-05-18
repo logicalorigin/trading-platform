@@ -49,27 +49,36 @@ const classifySignal = (signal, candidate) => {
   return "ready";
 };
 
-const sortRows = (rows, sortKey) => {
+const sortRows = (rows, sortKey, focusedSymbol = null) => {
+  const focused = String(focusedSymbol || "").toUpperCase();
   const copy = [...rows];
-  if (sortKey === "symbol") {
-    copy.sort((a, b) =>
-      String(a.signal.symbol || "").localeCompare(
+  const isFocused = (row) =>
+    focused &&
+    String(row.signal.symbol || "").toUpperCase() === focused;
+  const baseCompare = (a, b) => {
+    if (sortKey === "symbol") {
+      return String(a.signal.symbol || "").localeCompare(
         String(b.signal.symbol || ""),
-      ),
-    );
-  } else if (sortKey === "bars") {
-    copy.sort((a, b) => {
+      );
+    }
+    if (sortKey === "bars") {
       const aBars = Number(a.signal.barsSinceSignal ?? Number.POSITIVE_INFINITY);
       const bBars = Number(b.signal.barsSinceSignal ?? Number.POSITIVE_INFINITY);
       return aBars - bBars;
-    });
-  } else {
-    copy.sort((a, b) => {
-      const aScore = Number(a.signal.score ?? Number.NEGATIVE_INFINITY);
-      const bScore = Number(b.signal.score ?? Number.NEGATIVE_INFINITY);
-      return bScore - aScore;
-    });
-  }
+    }
+    const aScore = Number(a.signal.score ?? Number.NEGATIVE_INFINITY);
+    const bScore = Number(b.signal.score ?? Number.NEGATIVE_INFINITY);
+    return bScore - aScore;
+  };
+  copy.sort((a, b) => {
+    if (focused) {
+      const aFocused = isFocused(a);
+      const bFocused = isFocused(b);
+      if (aFocused && !bFocused) return -1;
+      if (!aFocused && bFocused) return 1;
+    }
+    return baseCompare(a, b);
+  });
   return copy;
 };
 
@@ -92,8 +101,8 @@ export const OperationsSignalTable = ({
       filter === "all"
         ? augmented
         : augmented.filter((row) => row.classification === filter);
-    return sortRows(filtered, sortKey);
-  }, [candidates, filter, signals, sortKey]);
+    return sortRows(filtered, sortKey, focus.focusedSymbol);
+  }, [candidates, filter, focus.focusedSymbol, signals, sortKey]);
 
   const counts = useMemo(() => {
     const augmented = (signals || []).map((signal) => {

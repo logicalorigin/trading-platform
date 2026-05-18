@@ -8,6 +8,11 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
+import { useMemo } from "react";
+import {
+  seriesFromBuffer,
+  useAlgoKpiHistory,
+} from "../../features/platform/algoKpiHistoryStore";
 import { formatMoney, formatPct } from "./algoHelpers";
 
 const Cell = ({ label, value, hint, tone, history, sparkPositive }) => (
@@ -91,10 +96,21 @@ export const OperationsKpiStrip = ({
   signalOptionsPerformanceSummary,
   signalOptionsPositions,
   signalOptionsCandidates,
-  kpiHistorySeries,
+  deploymentId,
   algoIsPhone,
 }) => {
-  const series = kpiHistorySeries || {};
+  const buffer = useAlgoKpiHistory(deploymentId);
+  const series = useMemo(
+    () => ({
+      realized: seriesFromBuffer(buffer, "realized"),
+      unrealized: seriesFromBuffer(buffer, "unrealized"),
+      winRate: seriesFromBuffer(buffer, "winRate"),
+      profitFactor: seriesFromBuffer(buffer, "profitFactor"),
+      freshSignals: seriesFromBuffer(buffer, "freshSignals"),
+      openPositions: seriesFromBuffer(buffer, "openPositions"),
+    }),
+    [buffer],
+  );
   const realized = Number(cockpitKpis?.dailyRealizedPnl ?? 0);
   const unrealized = Number(cockpitKpis?.openUnrealizedPnl ?? 0);
   const wins = Number(signalOptionsPerformanceSummary?.wins ?? 0);
