@@ -7,9 +7,9 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
-import { AlgoPositionsTab } from "./AlgoPositionsTab";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
 import { OperationsKpiStrip } from "./OperationsKpiStrip";
+import { OperationsPositionsTable } from "./OperationsPositionsTable";
 import { OperationsSignalDrill } from "./OperationsSignalDrill";
 import { OperationsSignalTable } from "./OperationsSignalTable";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
@@ -340,8 +340,10 @@ export const AlgoOperationsTab = ({
         }}
       />
 
-      <AlgoPositionsTab
-        signalOptionsPositions={signalOptionsPositions}
+      <OperationsPositionsTable
+        positions={signalOptionsPositions}
+        symbolIndex={symbolIndex}
+        signalOptionsProfile={signalOptionsProfile}
         algoIsPhone={algoIsPhone}
       />
     </div>

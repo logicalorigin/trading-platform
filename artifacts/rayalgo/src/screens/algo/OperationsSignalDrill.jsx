@@ -161,7 +161,14 @@ const ActionPane = ({ candidate, signalOptionsProfile }) => {
   );
 };
 
-const PositionPane = ({ position }) => {
+const computeHardStopTriggerPrice = (position, signalOptionsProfile) => {
+  const entry = Number(position?.entryPrice ?? NaN);
+  const hardStopPct = Number(signalOptionsProfile?.exitPolicy?.hardStopPct ?? NaN);
+  if (!Number.isFinite(entry) || !Number.isFinite(hardStopPct)) return null;
+  return entry * (1 + hardStopPct / 100);
+};
+
+const PositionPane = ({ position, signalOptionsProfile }) => {
   if (!position) {
     return (
       <div
@@ -184,7 +191,8 @@ const PositionPane = ({ position }) => {
     Number.isFinite(entry) && Number.isFinite(mark)
       ? (mark - entry) * qty * multiplier
       : null;
-  const triggerPrice = position.hardStopTriggerPrice;
+  const triggerPrice = computeHardStopTriggerPrice(position, signalOptionsProfile);
+  const currentStop = Number(position.stopPrice ?? NaN);
   return (
     <div style={{ display: "grid", gap: sp(1), padding: sp("8px 12px") }}>
       <Row label="Contract" value={formatContractLabel(position.selectedContract)} />
@@ -206,6 +214,13 @@ const PositionPane = ({ position }) => {
         <Row
           label="Hard stop"
           value={`triggers @ ${formatPlainPrice(triggerPrice, 2)}`}
+          tone={T.amber}
+        />
+      ) : null}
+      {Number.isFinite(currentStop) ? (
+        <Row
+          label="Active stop"
+          value={formatPlainPrice(currentStop, 2)}
           tone={T.amber}
         />
       ) : null}
@@ -325,7 +340,9 @@ export const OperationsSignalDrill = ({
       {drillTab === "action" && (
         <ActionPane candidate={candidate} signalOptionsProfile={signalOptionsProfile} />
       )}
-      {drillTab === "position" && <PositionPane position={position} />}
+      {drillTab === "position" && (
+        <PositionPane position={position} signalOptionsProfile={signalOptionsProfile} />
+      )}
       {drillTab === "history" && (
         <HistoryPane events={filteredEvents} userPreferences={userPreferences} />
       )}
