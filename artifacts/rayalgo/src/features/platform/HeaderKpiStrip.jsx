@@ -5,6 +5,7 @@ import {
   formatSignedPercent,
   isFiniteNumber,
 } from "../../lib/formatters";
+import { useNumberTick } from "../../lib/numberTick.js";
 import { useRuntimeTickerSnapshot } from "./runtimeTickerStore";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -122,6 +123,11 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
   );
   const snapshot = useRuntimeTickerSnapshot(symbol, fallback);
   const positive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
+  // 420ms tick — fast enough that streaming updates don't pile up, slow
+  // enough that the human eye registers movement. Reduced-motion drops
+  // straight to the target value (the hook handles that).
+  const animatedPrice = useNumberTick(snapshot?.price, 420);
+  const animatedPct = useNumberTick(snapshot?.pct, 420);
 
   return (
     <AppTooltip content={`${label} proxy · ${symbol}`}><button
@@ -223,7 +229,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
               letterSpacing: "-0.01em",
             }}
           >
-            {formatQuotePrice(snapshot?.price)}
+            {formatQuotePrice(animatedPrice ?? snapshot?.price)}
           </span>
           <span
             style={{
@@ -238,7 +244,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {formatSignedPercent(snapshot?.pct)}
+            {formatSignedPercent(animatedPct ?? snapshot?.pct)}
           </span>
         </span>
       </span>
