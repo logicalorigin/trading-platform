@@ -87,9 +87,7 @@ export const MarketDataSubscriptionProvider = ({
     [activeWatchlistItems],
   );
   const sparklineHistoryEnabled = Boolean(
-    lowPriorityHistoryEnabled &&
-      marketScreenActive &&
-      sparklineSymbols.length > 0,
+    lowPriorityHistoryEnabled && sparklineSymbols.length > 0,
   );
   const marketStreamRuntimeEnabled = Boolean(
     pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
