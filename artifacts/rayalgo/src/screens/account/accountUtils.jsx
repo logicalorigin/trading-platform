@@ -729,7 +729,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
           color: "inherit",
           textAlign: "left",
           width: "100%",
-          padding: sp("0 0 4px 0"),
+          padding: sp("0 0 2px 0"),
           cursor: "pointer",
         }}
       >
@@ -744,7 +744,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
         alignItems: "center",
         justifyContent: "space-between",
         gap: sp(5),
-        paddingBottom: sp(4),
+        paddingBottom: sp(2),
         borderBottom: `1px solid ${T.border}`,
       }}
     >
