@@ -38,6 +38,20 @@
 
         const theme = resolveTheme();
         document.documentElement.dataset.rayalgoTheme = theme;
+
+        const resolveAccentPreset = () => {
+          try {
+            const state = JSON.parse(window.localStorage?.getItem(storageKey) || "{}");
+            const preset = state?.userPreferences?.appearance?.accentPreset;
+            if (preset === "coral" || preset === "amber" || preset === "green" || preset === "aurora") {
+              return preset;
+            }
+            return "coral";
+          } catch {
+            return "coral";
+          }
+        };
+        document.documentElement.dataset.rayalgoAccentPreset = resolveAccentPreset();
         // Paint the page bg + text color before any stylesheet loads to avoid
         // a flash of unstyled (dark default) content during boot.
         const root = document.documentElement;

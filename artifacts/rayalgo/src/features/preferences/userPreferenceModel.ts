@@ -2,11 +2,14 @@ export const USER_PREFERENCES_UPDATED_EVENT = "rayalgo:user-preferences-updated"
 export const USER_PREFERENCES_STORAGE_KEY = "rayalgo:state:v1";
 export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
+export type AccentPreset = "coral" | "amber" | "green" | "aurora";
+
 export type UserPreferences = {
   appearance: {
     theme: "system" | "dark" | "light";
     density: "compact" | "comfortable";
     scale: "xs" | "s" | "m" | "l" | "xl";
+    accentPreset: AccentPreset;
     reducedMotion: "system" | "on" | "off";
     showTooltips: boolean;
     maskBalances: boolean;
@@ -80,6 +83,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     theme: "system",
     density: "compact",
     scale: "m",
+    accentPreset: "coral",
     reducedMotion: "system",
     showTooltips: true,
     maskBalances: false,
@@ -225,6 +229,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       theme: enumValue(appearance.theme, ["system", "dark", "light"], DEFAULT_USER_PREFERENCES.appearance.theme),
       density: enumValue(appearance.density, ["compact", "comfortable"], DEFAULT_USER_PREFERENCES.appearance.density),
       scale: enumValue(appearance.scale, ["xs", "s", "m", "l", "xl"], DEFAULT_USER_PREFERENCES.appearance.scale),
+      accentPreset: enumValue(appearance.accentPreset, ["coral", "amber", "green", "aurora"], DEFAULT_USER_PREFERENCES.appearance.accentPreset),
       reducedMotion: enumValue(appearance.reducedMotion, ["system", "on", "off"], DEFAULT_USER_PREFERENCES.appearance.reducedMotion),
       showTooltips: booleanValue(appearance.showTooltips, DEFAULT_USER_PREFERENCES.appearance.showTooltips),
       maskBalances: booleanValue(appearance.maskBalances, DEFAULT_USER_PREFERENCES.appearance.maskBalances),

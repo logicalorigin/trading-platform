@@ -1432,6 +1432,12 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
       onToggleTheme?.();
     }
   };
+  const setAccentPreset = (value) => {
+    patchSection("appearance", { accentPreset: value });
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-rayalgo-accent-preset", value);
+    }
+  };
 
   return (
     <div style={{ display: "grid", gap: sp(14) }}>
@@ -1468,6 +1474,17 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
             value={prefs.appearance.theme}
             onChange={setThemePreference}
             options={USER_THEME_OPTIONS}
+          />
+          <SelectField
+            label="Accent Preset"
+            value={prefs.appearance.accentPreset || "coral"}
+            onChange={setAccentPreset}
+            options={[
+              { value: "coral", label: "Coral (default)" },
+              { value: "amber", label: "Bloomberg Amber" },
+              { value: "green", label: "Robinhood Green" },
+              { value: "aurora", label: "Aurora Purple" },
+            ]}
           />
           <SelectField
             label="Density"

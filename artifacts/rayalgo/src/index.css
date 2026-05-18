@@ -190,6 +190,53 @@
   --ra-glass-nav-bg: color-mix(in srgb, var(--ra-surface-1) 82%, transparent);
 }
 
+/* Accent presets — rotate the brand accent only (preset CSS vars override theme-specified accent).
+   Coral is the default (no selector needed). Each preset has dark and light variants. */
+:root[data-rayalgo-accent-preset="amber"] {
+  --ra-accent-500: #D9A864;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #D9A864;
+  --ra-focus-ring: 0 0 0 2px rgba(217, 168, 100, 0.32);
+}
+:root[data-rayalgo-accent-preset="amber"][data-rayalgo-theme="light"] {
+  --ra-accent-500: #C28526;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #C28526;
+  --ra-focus-ring: 0 0 0 2px rgba(194, 133, 38, 0.30);
+}
+
+:root[data-rayalgo-accent-preset="green"] {
+  --ra-accent-500: #4FB286;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #4FB286;
+  --ra-focus-ring: 0 0 0 2px rgba(79, 178, 134, 0.34);
+}
+:root[data-rayalgo-accent-preset="green"][data-rayalgo-theme="light"] {
+  --ra-accent-500: #0F6E51;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #0F6E51;
+  --ra-focus-ring: 0 0 0 2px rgba(15, 110, 81, 0.30);
+}
+
+:root[data-rayalgo-accent-preset="aurora"] {
+  --ra-accent-500: #A189CF;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #A189CF;
+  --ra-focus-ring: 0 0 0 2px rgba(161, 137, 207, 0.34);
+}
+:root[data-rayalgo-accent-preset="aurora"][data-rayalgo-theme="light"] {
+  --ra-accent-500: #6B4E8E;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #6B4E8E;
+  --ra-focus-ring: 0 0 0 2px rgba(107, 78, 142, 0.30);
+}
+
 :root[data-rayalgo-color-mode="protan"] {
   --ra-pnl-positive: var(--ra-blue-500);
   --ra-pnl-negative: var(--ra-amber-500);
