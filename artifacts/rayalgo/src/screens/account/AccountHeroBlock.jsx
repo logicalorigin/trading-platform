@@ -68,11 +68,17 @@ export const AccountHeroBlock = ({
             lineHeight: 1,
             fontWeight: FONT_WEIGHTS.label,
             whiteSpace: "nowrap",
+            minWidth: 0,
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {formatMoney(netLiquidation, currency, maskValues)}
         </div>
-        {sectionControl}
+        {sectionControl ? (
+          <div style={{ flexShrink: 0, maxWidth: "100%" }}>{sectionControl}</div>
+        ) : null}
       </div>
       {dayPositive !== null || (totalPositive !== null && !isPhone) ? (
         <div

@@ -651,7 +651,11 @@ export const Panel = ({
               flexWrap: "wrap",
             }}
           >
-            {subtitle ? <div style={mutedLabelStyle}>{subtitle}</div> : <span />}
+            {subtitle ? (
+              <div style={{ ...mutedLabelStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {subtitle}
+              </div>
+            ) : <span />}
             {rightRail ? (
               <div
                 style={{
@@ -659,6 +663,12 @@ export const Panel = ({
                   fontSize: textSize("label"),
                   fontFamily: T.data,
                   fontWeight: FONT_WEIGHTS.regular,
+                  minWidth: 0,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flexShrink: 1,
                 }}
               >
                 {rightRail}
