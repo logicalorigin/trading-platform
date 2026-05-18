@@ -100,9 +100,9 @@ export const PatternsExitReasons = ({
                     top: 0,
                     bottom: 0,
                     width: `${widthPercent}%`,
-                    background: tone,
-                    opacity: 0.8,
+                    background: `linear-gradient(90deg, ${tone}cc, ${tone}66)`,
                     borderRadius: dim(RADII.xs),
+                    boxShadow: `inset 0 1px 0 ${tone}33`,
                   }}
                 />
               </span>

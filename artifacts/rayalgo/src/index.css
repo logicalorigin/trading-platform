@@ -768,6 +768,24 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   animation: raSparkDraw var(--ra-motion-slow) var(--ra-motion-enter) both;
 }
 
+.ra-sparkline-tail {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: raSparklineTailPulse 2400ms ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+@keyframes raSparklineTailPulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.45);
+  }
+}
+
 .ra-bar-fill {
   transform: scaleX(0);
   transform-origin: left center;
@@ -1006,8 +1024,14 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-skeleton::after,
   .ra-sparkline polyline,
   .ra-sparkline path,
+  .ra-sparkline-tail,
   .ra-bar-fill {
     animation: none !important;
+  }
+
+  .ra-sparkline-tail {
+    transform: none !important;
+    opacity: 1;
   }
 
   .ra-interactive {
@@ -1039,8 +1063,14 @@ html[data-rayalgo-reduced-motion="on"] .ra-scan-sweep::after,
 html[data-rayalgo-reduced-motion="on"] .ra-skeleton::after,
 html[data-rayalgo-reduced-motion="on"] .ra-sparkline polyline,
 html[data-rayalgo-reduced-motion="on"] .ra-sparkline path,
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline-tail,
 html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
   animation: none !important;
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline-tail {
+  transform: none !important;
+  opacity: 1;
 }
 
 html[data-rayalgo-reduced-motion="on"] .ra-interactive {

@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useId, useMemo } from "react";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatQuotePrice,
@@ -46,6 +46,7 @@ const MicroSparkline = ({
   height = 24,
 }) => {
   const values = useMemo(() => extractSparklineValues(data), [data]);
+  const uid = useId().replace(/:/g, "");
 
   if (values.length < 2) {
     return null;
@@ -68,6 +69,9 @@ const MicroSparkline = ({
   const areaPath = `M ${plottedPoints
     .map(([x, y], index) => `${index === 0 ? "" : "L "}${x},${y}`)
     .join(" ")} L ${width},${height} L 0,${height} Z`;
+  const [tailX, tailY] = plottedPoints[plottedPoints.length - 1];
+  const gradientId = `raKpiSparkGrad-${uid}`;
+  const glowId = `raKpiSparkGlow-${uid}`;
 
   return (
     <svg
@@ -77,7 +81,20 @@ const MicroSparkline = ({
       preserveAspectRatio="none"
       style={{ display: "block" }}
     >
-      <path d={areaPath} fill={`${lineColor}1f`} />
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.32" />
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
+        </linearGradient>
+        <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradientId})`} />
       <polyline
         points={points}
         fill="none"
@@ -85,6 +102,14 @@ const MicroSparkline = ({
         strokeWidth="1.55"
         strokeLinejoin="round"
         strokeLinecap="round"
+      />
+      <circle
+        className="ra-sparkline-tail"
+        cx={tailX}
+        cy={tailY}
+        r="1.6"
+        fill={lineColor}
+        filter={`url(#${glowId})`}
       />
     </svg>
   );

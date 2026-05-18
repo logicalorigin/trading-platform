@@ -121,8 +121,8 @@ export const PatternsHoldProfile = ({
                     right: 0,
                     bottom: 0,
                     height: `${(heightFraction * 100).toFixed(1)}%`,
-                    background: tone,
-                    opacity: 0.85,
+                    background: `linear-gradient(180deg, ${tone}66, ${tone}cc)`,
+                    boxShadow: `inset 0 -1px 0 ${tone}55`,
                   }}
                 />
               </div>

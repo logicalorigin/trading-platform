@@ -1,5 +1,6 @@
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { FONT_WEIGHTS, T, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { useNumberTick } from "../../lib/numberTick.js";
 import { formatAccountMoney, formatAccountPercent } from "./accountUtils";
 
 const MASKED = "•••••";
@@ -30,6 +31,20 @@ export const AccountHeroBlock = ({
   const dayPnlPercent = metrics.dayPnlPercent?.value;
   const totalPnl = metrics.totalPnl?.value;
   const totalPnlPercent = metrics.totalPnlPercent?.value;
+
+  // Animate the hero net liquidation value when it changes (rAF-driven,
+  // respects prefers-reduced-motion). Disabled when masked since the
+  // bullets aren't a number.
+  const animatedNet = useNumberTick(
+    maskValues ? null : Number.isFinite(Number(netLiquidation)) ? Number(netLiquidation) : null,
+    520,
+  );
+  const animatedDayPnl = useNumberTick(
+    maskValues ? null : Number.isFinite(Number(dayPnl)) ? Number(dayPnl) : null,
+    520,
+  );
+  const displayNet = animatedNet ?? netLiquidation;
+  const displayDayPnl = animatedDayPnl ?? dayPnl;
   const dayPositive = Number.isFinite(Number(dayPnl)) ? Number(dayPnl) >= 0 : null;
   const totalPositive = Number.isFinite(Number(totalPnl))
     ? Number(totalPnl) >= 0
@@ -74,7 +89,7 @@ export const AccountHeroBlock = ({
             textOverflow: "ellipsis",
           }}
         >
-          {formatMoney(netLiquidation, currency, maskValues)}
+          {formatMoney(displayNet, currency, maskValues)}
         </div>
         {sectionControl ? (
           <div style={{ flexShrink: 0, maxWidth: "100%" }}>{sectionControl}</div>
@@ -102,7 +117,7 @@ export const AccountHeroBlock = ({
               }}
             >
               <DayIcon size={11} />
-              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(dayPnl, currency, maskValues)}</span>
+              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
               {formatPercent(dayPnlPercent, maskValues) ? (
                 <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
                   {formatPercent(dayPnlPercent, maskValues)}

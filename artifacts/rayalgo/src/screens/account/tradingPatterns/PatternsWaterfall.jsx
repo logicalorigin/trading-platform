@@ -104,6 +104,23 @@ export const PatternsWaterfall = ({
         preserveAspectRatio="none"
         style={{ display: "block" }}
       >
+        <defs>
+          <linearGradient id="raWfBarGreen" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={T.green} stopOpacity="0.95" />
+            <stop offset="100%" stopColor={T.green} stopOpacity="0.55" />
+          </linearGradient>
+          <linearGradient id="raWfBarRed" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={T.red} stopOpacity="0.55" />
+            <stop offset="100%" stopColor={T.red} stopOpacity="0.95" />
+          </linearGradient>
+          <filter id="raWfCumGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1.4" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
         <line
           x1={PAD_X}
           x2={W - PAD_X}
@@ -121,7 +138,7 @@ export const PatternsWaterfall = ({
           const x = PAD_X + colWidth * idx + colWidth * 0.18;
           const w = Math.max(1.5, colWidth * 0.64);
           const positive = row.pnl >= 0;
-          const fill = positive ? T.green : T.red;
+          const gradientUrl = positive ? "url(#raWfBarGreen)" : "url(#raWfBarRed)";
           const y = positive ? zeroY - barHeight : zeroY;
           return (
             <g
@@ -141,8 +158,7 @@ export const PatternsWaterfall = ({
                 y={y}
                 width={w}
                 height={barHeight}
-                fill={fill}
-                opacity={0.82}
+                fill={gradientUrl}
                 rx={1}
               />
             </g>
@@ -153,8 +169,9 @@ export const PatternsWaterfall = ({
             d={cumulativePath}
             fill="none"
             stroke={T.cyan}
-            strokeWidth={1.3}
-            opacity={0.9}
+            strokeWidth={1.4}
+            opacity={0.95}
+            filter="url(#raWfCumGlow)"
           />
         ) : null}
       </svg>
