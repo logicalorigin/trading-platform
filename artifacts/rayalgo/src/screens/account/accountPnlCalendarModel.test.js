@@ -322,6 +322,42 @@ test("buildDailyPnlSeries uses current terminal NAV for same-day unrealized P&L"
   assert.equal(today.pnlSource, "total");
 });
 
+test("buildDailyPnlSeries does not pile sparse multi-day NAV gaps into the latest day", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 10),
+    endDate: new Date(2026, 4, 18),
+    trades: [trade("2026-05-18T15:30:00.000Z", 12)],
+    equityPoints: [
+      equityPoint("2026-05-10T15:31:37.099Z", 30_000, { deposits: 30_000 }),
+      equityPoint("2026-05-18T20:01:11.784Z", 54_885.57),
+    ],
+  });
+
+  const may18 = series.find((day) => day.iso === "2026-05-18");
+  assert.equal(may18.total, null);
+  assert.equal(may18.unrealized, null);
+  assert.equal(may18.pnl, 12);
+  assert.equal(may18.pnlSource, "realized");
+});
+
+test("buildDailyPnlSeries uses same-day NAV baseline after a stale prior NAV gap", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 10),
+    endDate: new Date(2026, 4, 18),
+    equityPoints: [
+      equityPoint("2026-05-10T15:31:37.099Z", 30_000, { deposits: 30_000 }),
+      equityPoint("2026-05-18T15:01:11.784Z", 55_000),
+      equityPoint("2026-05-18T20:01:11.784Z", 54_885.57),
+    ],
+  });
+
+  const may18 = series.find((day) => day.iso === "2026-05-18");
+  assert.equal(Number(may18.total.toFixed(2)), -114.43);
+  assert.equal(Number(may18.unrealized.toFixed(2)), -114.43);
+  assert.equal(Number(may18.pnl.toFixed(2)), -114.43);
+  assert.equal(may18.pnlSource, "total");
+});
+
 test("buildDailyPnlSeries falls back to realized P&L when NAV total is unavailable", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 0, 2),

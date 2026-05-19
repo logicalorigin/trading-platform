@@ -17,6 +17,9 @@ const MONTH_LABELS = [
   "Dec",
 ];
 
+const DAY_MS = 86_400_000;
+const MAX_NAV_BASELINE_GAP_MS = 4 * DAY_MS;
+
 const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -185,9 +188,11 @@ export const buildDailyPnlSeries = ({
   const dates = dayRange(startDate, endDate);
   const windowStartIso = dates[0] ? isoCalendarDay(dates[0]) : null;
   let priorNav = null;
+  let priorNavTs = null;
   for (const entry of sortedEquityDays) {
     if (windowStartIso && entry.iso < windowStartIso) {
       priorNav = entry.eodNav;
+      priorNavTs = entry.eodTs;
     } else {
       break;
     }
@@ -205,20 +210,25 @@ export const buildDailyPnlSeries = ({
       Number.isFinite(equityRow.firstTs) &&
       Number.isFinite(equityRow.eodTs) &&
       equityRow.firstTs < equityRow.eodTs;
-    const hasPriorBaseline = priorNav != null;
-    const baselineNav = hasPriorBaseline
+    const hasNearbyPriorBaseline =
+      priorNav != null &&
+      priorNavTs != null &&
+      equityRow?.eodTs != null &&
+      equityRow.eodTs - priorNavTs <= MAX_NAV_BASELINE_GAP_MS;
+    const baselineNav = hasNearbyPriorBaseline
       ? priorNav
       : intradayBaselineAvailable
         ? equityRow.firstNav
         : null;
     if (equityRow?.eodNav != null && baselineNav != null) {
-      const transferAdjustment = hasPriorBaseline
+      const transferAdjustment = hasNearbyPriorBaseline
         ? equityRow.transfers || 0
         : equityRow.transfersAfterFirstTs || 0;
       total = equityRow.eodNav - baselineNav - transferAdjustment;
     }
     if (equityRow?.eodNav != null) {
       priorNav = equityRow.eodNav;
+      priorNavTs = equityRow.eodTs;
     }
     const pnl = total != null ? total : realized;
     return {
