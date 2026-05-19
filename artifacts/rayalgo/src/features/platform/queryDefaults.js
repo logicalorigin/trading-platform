@@ -5,12 +5,12 @@ import {
 } from "./hydrationCoordinator";
 
 export const QUERY_DEFAULTS = {
-  staleTime: 30_000,
-  refetchInterval: 30_000,
+  staleTime: 15_000,
+  refetchInterval: 15_000,
   retry: 2,
   retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
   refetchOnMount: true,
-  gcTime: 60_000,
+  gcTime: 30_000,
 };
 
 export const BARS_QUERY_DEFAULTS = {
