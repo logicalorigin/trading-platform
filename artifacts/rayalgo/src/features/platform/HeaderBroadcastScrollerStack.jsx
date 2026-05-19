@@ -109,30 +109,7 @@ const HeaderBroadcastSegment = ({
   );
 };
 
-const intervalStatesEqual = (left, right) => {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) return false;
-  for (const key of leftKeys) {
-    const leftState = left[key];
-    const rightState = right[key];
-    if (leftState === rightState) continue;
-    if (!leftState || !rightState) return false;
-    if (
-      leftState.currentSignalDirection !== rightState.currentSignalDirection ||
-      leftState.currentSignalAt !== rightState.currentSignalAt ||
-      leftState.fresh !== rightState.fresh ||
-      leftState.barsSinceSignal !== rightState.barsSinceSignal
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const HeaderSignalTapeItemImpl = ({
+const HeaderSignalTapeItem = ({
   item,
   duplicate = false,
   onClick,
@@ -180,23 +157,6 @@ const HeaderSignalTapeItemImpl = ({
     </HeaderBroadcastSegment>
   );
 };
-
-const HeaderSignalTapeItem = memo(
-  HeaderSignalTapeItemImpl,
-  (prev, next) =>
-    prev.duplicate === next.duplicate &&
-    prev.compact === next.compact &&
-    prev.selectedTimeframe === next.selectedTimeframe &&
-    prev.onClick === next.onClick &&
-    prev.item?.symbol === next.item?.symbol &&
-    prev.item?.direction === next.item?.direction &&
-    prev.item?.directionLabel === next.item?.directionLabel &&
-    prev.item?.timeframe === next.item?.timeframe &&
-    prev.item?.time === next.item?.time &&
-    prev.item?.price === next.item?.price &&
-    prev.item?.fresh === next.item?.fresh &&
-    intervalStatesEqual(prev.item?.intervalStates, next.item?.intervalStates),
-);
 
 const colorWithAlpha = (color, alpha) => {
   const match = /^#([0-9a-f]{6})$/i.exec(String(color || ""));
