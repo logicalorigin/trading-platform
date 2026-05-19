@@ -1,6 +1,5 @@
 import {
   Fragment,
-  memo,
   useEffect,
   useLayoutEffect,
   useCallback,
@@ -5085,7 +5084,7 @@ const applyChartPaneStretchFactors = (
   });
 };
 
-const ResearchChartSurfaceImpl = ({
+export const ResearchChartSurface = ({
   model,
   theme,
   themeKey,
@@ -11878,5 +11877,3 @@ const ResearchChartSurfaceImpl = ({
     </div>
   );
 };
-
-export const ResearchChartSurface = memo(ResearchChartSurfaceImpl);
