@@ -113,7 +113,7 @@ import {
 } from "./ChartFloatingCrosshair";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
-  "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3";
+  "ResearchChartSurface@20260518-basis-aware-flow-markers-v2";
 
 type DisposableChart = { remove: () => void };
 type ChartTimeScaleApi = Omit<
@@ -9881,17 +9881,15 @@ export const ResearchChartSurface = ({
     ? "disabled"
     : flowChartEventCount <= 0
       ? chartFlowHydrationState
-      : confirmedTradeFlowEventCount <= 0
-        ? "no-confirmed-flow"
-        : flowChartBucketDiagnostics.markerEligibleEventCount <= 0
-          ? "no-marker-eligible-flow"
-          : flowChartBucketDiagnostics.markerPlacementCount <= 0
-            ? flowChartBucketDiagnostics.droppedMarkerOutsideBarCount > 0
-              ? "confirmed-outside-loaded-bars"
-              : "confirmed-unplaced"
-            : renderedFlowMarkerCount <= 0
-              ? "off-viewport"
-              : "rendered";
+      : flowChartBucketDiagnostics.markerEligibleEventCount <= 0
+        ? "no-marker-eligible-flow"
+        : flowChartBucketDiagnostics.markerPlacementCount <= 0
+          ? flowChartBucketDiagnostics.droppedMarkerOutsideBarCount > 0
+            ? "flow-outside-loaded-bars"
+            : "flow-unplaced"
+          : renderedFlowMarkerCount <= 0
+            ? "off-viewport"
+            : "rendered";
   const extendedSessionBarCount =
     marketSessionBarCounts.overnight +
     marketSessionBarCounts.pre +

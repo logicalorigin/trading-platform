@@ -123,6 +123,9 @@ const flowChartSourceBasisOrder: Record<FlowChartSourceBasis, number> = {
   other: 2,
 };
 
+export const FLOW_CHART_MAX_MARKER_PLACEMENTS = 200;
+export const FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS = 60;
+
 const severityRank: Record<ChartEventSeverity, number> = {
   low: 0,
   medium: 1,
@@ -455,7 +458,60 @@ const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
   resolveFlowChartSourceBasis(event) === "snapshot_activity";
 
 const isFlowChartMarkerEligibleEvent = (event: ChartEvent): boolean =>
-  resolveFlowChartSourceBasis(event) === "confirmed_trade";
+  resolveFlowChartSourceBasis(event) !== "other";
+
+const compareFlowChartMarkerPriority = (
+  left: ChartEvent,
+  right: ChartEvent,
+): number => {
+  const sourcePriority =
+    flowChartSourceBasisOrder[resolveFlowChartSourceBasis(left)] -
+    flowChartSourceBasisOrder[resolveFlowChartSourceBasis(right)];
+  if (sourcePriority !== 0) return sourcePriority;
+
+  const premiumPriority = readPremium(right) - readPremium(left);
+  if (premiumPriority !== 0) return premiumPriority;
+
+  const leftTime = Date.parse(left.time);
+  const rightTime = Date.parse(right.time);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+    return leftTime - rightTime;
+  }
+  return left.id.localeCompare(right.id);
+};
+
+const selectFlowChartMarkerEvents = (events: ChartEvent[]): ChartEvent[] => {
+  const eligible = events.filter(isFlowChartMarkerEligibleEvent);
+  const snapshotEligibleCount = eligible.filter(
+    (event) => resolveFlowChartSourceBasis(event) === "snapshot_activity",
+  ).length;
+  if (
+    eligible.length <= FLOW_CHART_MAX_MARKER_PLACEMENTS &&
+    snapshotEligibleCount <= FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS
+  ) {
+    return eligible;
+  }
+
+  const selected: ChartEvent[] = [];
+  let snapshotCount = 0;
+  [...eligible].sort(compareFlowChartMarkerPriority).some((event) => {
+    const sourceBasis = resolveFlowChartSourceBasis(event);
+    if (
+      sourceBasis === "snapshot_activity" &&
+      snapshotCount >= FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS
+    ) {
+      return false;
+    }
+
+    selected.push(event);
+    if (sourceBasis === "snapshot_activity") {
+      snapshotCount += 1;
+    }
+    return selected.length >= FLOW_CHART_MAX_MARKER_PLACEMENTS;
+  });
+
+  return selected;
+};
 
 const readFlowChartEventTimeBasis = (event: ChartEvent): string =>
   String(event.metadata?.timeBasis || event.metadata?.chartTimeBasis || "")
@@ -605,10 +661,31 @@ const resolveBucketIndex = (
   eventMs: number,
   bars: ChartBar[],
   ranges: ChartBarRange[] = [],
+  options: { allowLiveEdge?: boolean } = {},
 ): number => {
   if (!bars.length) {
     return -1;
   }
+
+  const lastIndex = bars.length - 1;
+  const lastBarMs = bars[lastIndex].time * 1000;
+  const lastRange = ranges.length
+    ? ranges[Math.min(ranges.length, bars.length) - 1]
+    : undefined;
+  const inferredStepMs =
+    lastRange && lastRange.endMs > lastRange.startMs
+      ? lastRange.endMs - lastRange.startMs
+      : bars.length > 1
+        ? Math.max(1, (bars[lastIndex].time - bars[lastIndex - 1].time) * 1000)
+        : 60_000;
+  const lastLoadedEndMs = lastRange?.endMs ?? lastBarMs + inferredStepMs;
+  const liveEdgeToleranceMs = Math.max(inferredStepMs * 2, 15 * 60_000);
+  const resolveLiveEdgeIndex = () =>
+    options.allowLiveEdge &&
+    eventMs >= lastLoadedEndMs &&
+    eventMs <= lastLoadedEndMs + liveEdgeToleranceMs
+      ? lastIndex
+      : -1;
 
   const rangeIndex = ranges.findIndex(
     (range) => eventMs >= range.startMs && eventMs < range.endMs,
@@ -623,21 +700,12 @@ const resolveBucketIndex = (
     return exactIndex;
   }
   if (ranges.length > 0) {
-    return -1;
+    return resolveLiveEdgeIndex();
   }
 
   const firstLoadedMs = ranges[0]?.startMs ?? bars[0].time * 1000;
-  const lastRange = ranges.length
-    ? ranges[Math.min(ranges.length, bars.length) - 1]
-    : undefined;
-  const lastBarMs = bars[bars.length - 1].time * 1000;
-  const inferredStepMs =
-    bars.length > 1
-      ? Math.max(1, (bars[bars.length - 1].time - bars[bars.length - 2].time) * 1000)
-      : 60_000;
-  const lastLoadedEndMs = lastRange?.endMs ?? lastBarMs + inferredStepMs;
   if (eventMs < firstLoadedMs || eventMs >= lastLoadedEndMs) {
-    return -1;
+    return resolveLiveEdgeIndex();
   }
 
   let bestIndex = -1;
@@ -865,7 +933,7 @@ export const summarizeFlowChartBucketPlacement = (
       diagnostics.markerEligibleEventCount += 1;
     } else if (sourceBasis === "snapshot_activity") {
       diagnostics.snapshotActivityFlowEventCount += 1;
-      diagnostics.markerSnapshotSkippedEventCount += 1;
+      diagnostics.markerEligibleEventCount += 1;
     } else {
       diagnostics.otherFlowEventCount += 1;
       diagnostics.markerOtherSkippedEventCount += 1;
@@ -876,10 +944,15 @@ export const summarizeFlowChartBucketPlacement = (
       diagnostics.droppedInvalidTimeCount += 1;
       return;
     }
-    const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
+    const barIndex = resolveBucketIndex(
+      parsed,
+      model.chartBars,
+      model.chartBarRanges,
+      { allowLiveEdge: sourceBasis !== "other" },
+    );
     if (barIndex < 0) {
       diagnostics.droppedOutsideBarCount += 1;
-      if (sourceBasis === "confirmed_trade") {
+      if (sourceBasis !== "other") {
         diagnostics.droppedMarkerOutsideBarCount += 1;
       }
       return;
@@ -890,6 +963,7 @@ export const summarizeFlowChartBucketPlacement = (
       diagnostics.markerPlacementCount += 1;
     } else if (sourceBasis === "snapshot_activity") {
       diagnostics.bucketedSnapshotActivityEventCount += 1;
+      diagnostics.markerPlacementCount += 1;
     } else {
       diagnostics.bucketedOtherEventCount += 1;
     }
@@ -911,9 +985,14 @@ export const buildFlowChartBuckets = (
   normalized.forEach((event) => {
     const parsed = Date.parse(event.time);
     if (!Number.isFinite(parsed)) return;
-    const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
-    if (barIndex < 0) return;
     const sourceBasis = resolveFlowChartSourceBasis(event);
+    const barIndex = resolveBucketIndex(
+      parsed,
+      model.chartBars,
+      model.chartBarRanges,
+      { allowLiveEdge: sourceBasis !== "other" },
+    );
+    if (barIndex < 0) return;
     const key = `${barIndex}:${sourceBasis}`;
     const bucket = grouped.get(key) || { barIndex, sourceBasis, events: [] };
     bucket.events.push(event);
@@ -953,7 +1032,7 @@ export const buildFlowChartVolumeBuckets = (
     events.filter(
       (event) =>
         event.eventType === "unusual_flow" &&
-        resolveFlowChartSourceBasis(event) === "confirmed_trade",
+        isFlowChartMarkerEligibleEvent(event),
     ),
     model,
   );
@@ -966,14 +1045,21 @@ export const buildFlowChartEventPlacements = (
     return [];
   }
 
-  const normalized = normalizeFlowChartEvents(events).events;
+  const normalized = selectFlowChartMarkerEvents(
+    normalizeFlowChartEvents(events).events,
+  );
   const placements = normalized.flatMap((event, index): FlowChartEventPlacement[] => {
     const parsed = Date.parse(event.time);
     if (!Number.isFinite(parsed)) return [];
-    const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
-    if (barIndex < 0) return [];
     const sourceBasis = resolveFlowChartSourceBasis(event);
     if (!isFlowChartMarkerEligibleEvent(event)) return [];
+    const barIndex = resolveBucketIndex(
+      parsed,
+      model.chartBars,
+      model.chartBarRanges,
+      { allowLiveEdge: true },
+    );
+    if (barIndex < 0) return [];
     const idPart = normalizeKeyPart(event.id) || `${parsed}:${index}`;
     const bucket = buildRawFlowChartBucket({
       id: `flow-event-bucket:${sourceBasis}:${model.chartBars[barIndex].time}:${idPart}`,

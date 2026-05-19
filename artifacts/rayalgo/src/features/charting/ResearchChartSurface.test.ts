@@ -1903,7 +1903,7 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
 
   assert.equal(
     RESEARCH_CHART_SURFACE_MODULE_VERSION,
-    "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3",
+    "ResearchChartSurface@20260518-basis-aware-flow-markers-v2",
   );
   assert.match(source, /data-chart-surface-module-version=\{RESEARCH_CHART_SURFACE_MODULE_VERSION\}/);
   assert.match(source, /data-chart-surface-module-source="ResearchChartSurface\.tsx"/);

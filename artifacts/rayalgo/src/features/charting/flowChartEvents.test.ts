@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { flowEventsToChartEvents, type ChartEvent } from "./chartEvents";
 import {
+  FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS,
   buildFlowChartBuckets,
   buildFlowChartEventPlacements,
   buildFlowChartVolumeBuckets,
@@ -225,7 +226,7 @@ test("buildFlowChartEventPlacements does not assign gap events to a sparse previ
   assert.equal(placements.length, 0);
 });
 
-test("buildFlowChartEventPlacements only renders confirmed trades as price markers", () => {
+test("buildFlowChartEventPlacements renders confirmed trades and snapshot activity as basis-aware markers", () => {
   const placements = buildFlowChartEventPlacements(
     [
       flowEvent({
@@ -252,12 +253,17 @@ test("buildFlowChartEventPlacements only renders confirmed trades as price marke
     { chartBars: bars, chartBarRanges: ranges },
   );
 
-  assert.equal(placements.length, 1);
+  assert.equal(placements.length, 2);
   assert.equal(placements[0].event.id, "confirmed-print");
   assert.equal(placements[0].sourceBasis, "confirmed_trade");
   assert.equal(placements[0].eventIso, "2026-04-30T14:31:00.000Z");
   assert.equal(placements[0].timeBasis, "trade_reported");
   assert.equal(placements[0].timeSourceField, "sip_timestamp");
+  assert.equal(placements[1].event.id, "snapshot-contract");
+  assert.equal(placements[1].sourceBasis, "snapshot_activity");
+  assert.equal(placements[1].eventIso, "2026-04-30T14:31:00.000Z");
+  assert.equal(placements[1].timeBasis, "snapshot_observed");
+  assert.equal(placements[1].timeSourceField, "updatedAt");
 });
 
 test("buildFlowChartEventPlacements treats confirmed source basis as marker eligible over stale snapshot basis", () => {
@@ -334,6 +340,46 @@ test("buildFlowChartBuckets aggregates premium, bias, top contract, and intensit
   assert.equal(buckets[0].volumeSegmentRatio >= 0.08, true);
 });
 
+test("buildFlowChartEventPlacements caps snapshot activity marker fanout", () => {
+  const snapshotEvents = Array.from(
+    { length: FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS + 20 },
+    (_, index) =>
+      flowEvent({
+        id: `snapshot-${index}`,
+        time: "2026-04-30T14:31:00.000Z",
+        metadata: {
+          provider: "ibkr",
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          providerContractId: `conid-${index}`,
+          cp: "C",
+          strike: 500 + index,
+          expirationDate: "2026-05-15",
+          premium: index + 1,
+        },
+      }),
+  );
+
+  const placements = buildFlowChartEventPlacements(snapshotEvents, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+
+  assert.equal(placements.length, FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS);
+  assert.equal(
+    placements.some((placement) => placement.event.id === "snapshot-0"),
+    false,
+  );
+  assert.equal(
+    placements.some(
+      (placement) =>
+        placement.event.id ===
+        `snapshot-${FLOW_CHART_MAX_SNAPSHOT_MARKER_PLACEMENTS + 19}`,
+    ),
+    true,
+  );
+});
+
 test("buildFlowChartBuckets dedupes live and historical copies before totaling", () => {
   const buckets = buildFlowChartBuckets(
     [
@@ -383,45 +429,50 @@ test("buildFlowChartBuckets dedupes live and historical copies before totaling",
 });
 
 test("buildFlowChartBuckets keeps confirmed prints and snapshot activity separate on the same candle", () => {
-  const buckets = buildFlowChartBuckets(
-    [
-      flowEvent({
-        id: "same-candle-confirmed",
-        metadata: {
-          provider: "polygon",
-          basis: "trade",
-          sourceBasis: "confirmed_trade",
-          optionTicker: "SPY260515C00500000",
-          cp: "C",
-          strike: 500,
-          expirationDate: "2026-05-15",
-          side: "buy",
-          price: 2.1,
-          size: 20,
-          premium: 42_000,
-          contractLabel: "SPY 500C",
-        },
-      }),
-      flowEvent({
-        id: "same-candle-snapshot",
-        metadata: {
-          provider: "ibkr",
-          basis: "snapshot",
-          sourceBasis: "snapshot_activity",
-          optionTicker: "SPY260515C00500000",
-          cp: "C",
-          strike: 500,
-          expirationDate: "2026-05-15",
-          side: "buy",
-          price: 2.1,
-          size: 5000,
-          premium: 1_050_000,
-          contractLabel: "SPY 500C",
-        },
-      }),
-    ],
-    { chartBars: bars, chartBarRanges: ranges },
-  );
+  const events = [
+    flowEvent({
+      id: "same-candle-confirmed",
+      metadata: {
+        provider: "polygon",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+        contractLabel: "SPY 500C",
+      },
+    }),
+    flowEvent({
+      id: "same-candle-snapshot",
+      metadata: {
+        provider: "ibkr",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        side: "buy",
+        price: 2.1,
+        size: 5000,
+        premium: 1_050_000,
+        contractLabel: "SPY 500C",
+      },
+    }),
+  ];
+  const buckets = buildFlowChartBuckets(events, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
+  const volumeBuckets = buildFlowChartVolumeBuckets(events, {
+    chartBars: bars,
+    chartBarRanges: ranges,
+  });
 
   assert.equal(buckets.length, 2);
   assert.deepEqual(
@@ -434,6 +485,10 @@ test("buildFlowChartBuckets keeps confirmed prints and snapshot activity separat
   );
   assert.equal(buildFlowTooltipModel(buckets[0]).title, "Flow event");
   assert.equal(buildFlowTooltipModel(buckets[1]).title, "Active contract flow");
+  assert.deepEqual(
+    volumeBuckets.map((bucket) => bucket.sourceBasis),
+    ["confirmed_trade", "snapshot_activity"],
+  );
 });
 
 test("buildFlowChartBuckets keeps same-time prints distinct when size differs", () => {
@@ -681,7 +736,7 @@ test("buildFlowChartBuckets preserves multiple visible flow buckets across bars"
   );
 });
 
-test("buildFlowChartVolumeBuckets excludes snapshot activity from rendered volume bars", () => {
+test("buildFlowChartVolumeBuckets renders snapshot activity as visible flow bars", () => {
   const buckets = buildFlowChartVolumeBuckets(
     [
       flowEvent({
@@ -722,24 +777,24 @@ test("buildFlowChartVolumeBuckets excludes snapshot activity from rendered volum
     { chartBars: bars, chartBarRanges: ranges },
   );
 
-  assert.equal(buckets.length, 2);
+  assert.equal(buckets.length, 3);
   assert.deepEqual(
     buckets.map((bucket) => bucket.barIndex),
-    [0, 1],
+    [0, 1, 1],
   );
   assert.deepEqual(
     buckets.map((bucket) => bucket.sourceBasis),
-    ["confirmed_trade", "confirmed_trade"],
+    ["confirmed_trade", "confirmed_trade", "snapshot_activity"],
   );
   assert.deepEqual(
     buckets.map((bucket) => bucket.totalPremium),
-    [200_000, 350_000],
+    [200_000, 350_000, 10_000_000],
   );
   assert.equal(
     buckets.some((bucket) =>
       bucket.events.some((event) => event.id === "snapshot-close"),
     ),
-    false,
+    true,
   );
 });
 
@@ -853,9 +908,9 @@ test("summarizeFlowChartBucketPlacement reports confirmed and snapshot basis cou
   assert.equal(diagnostics.snapshotActivityFlowEventCount, 1);
   assert.equal(diagnostics.bucketedConfirmedTradeEventCount, 1);
   assert.equal(diagnostics.bucketedSnapshotActivityEventCount, 1);
-  assert.equal(diagnostics.markerEligibleEventCount, 1);
-  assert.equal(diagnostics.markerPlacementCount, 1);
-  assert.equal(diagnostics.markerSnapshotSkippedEventCount, 1);
+  assert.equal(diagnostics.markerEligibleEventCount, 2);
+  assert.equal(diagnostics.markerPlacementCount, 2);
+  assert.equal(diagnostics.markerSnapshotSkippedEventCount, 0);
 });
 
 test("buildFlowChartBuckets does not pile after-hours snapshot flow onto the final bar", () => {
@@ -877,6 +932,37 @@ test("buildFlowChartBuckets does not pile after-hours snapshot flow onto the fin
   );
 
   assert.equal(buckets.length, 0);
+});
+
+test("buildFlowChartEventPlacements anchors near-live snapshot flow to the latest loaded candle", () => {
+  const events = [
+    flowEvent({
+      id: "live-edge-snapshot",
+      time: "2026-04-30T14:44:30.000Z",
+      metadata: {
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        timeBasis: "snapshot_observed",
+        chartTimeSourceField: "occurredAt",
+        cp: "C",
+        premium: 1_250_000,
+        contractLabel: "AAPL 205C",
+      },
+    }),
+  ];
+  const model = { chartBars: bars, chartBarRanges: ranges };
+  const buckets = buildFlowChartBuckets(events, model);
+  const placements = buildFlowChartEventPlacements(events, model);
+  const diagnostics = summarizeFlowChartBucketPlacement(events, model);
+
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].barIndex, 1);
+  assert.equal(placements.length, 1);
+  assert.equal(placements[0].barIndex, 1);
+  assert.equal(placements[0].sourceBasis, "snapshot_activity");
+  assert.equal(diagnostics.bucketedSnapshotActivityEventCount, 1);
+  assert.equal(diagnostics.markerPlacementCount, 1);
+  assert.equal(diagnostics.droppedOutsideBarCount, 0);
 });
 
 test("buildFlowTooltipModel returns compact TradingView-style event details", () => {
