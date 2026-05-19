@@ -27,6 +27,10 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   );
   assert.match(source, /const MARKET_CHART_FLOW_REFRESH_MS = 5_000;/);
   assert.match(source, /const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;/);
+  assert.match(
+    source,
+    /const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS = 30_000;/,
+  );
   assert.doesNotMatch(source, /MARKET_CHART_FLOW_STARTUP_DELAY_MS/);
   assert.doesNotMatch(source, /chartFlowStartupReady/);
   assert.doesNotMatch(
@@ -45,7 +49,7 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.match(source, /mapFlowEventToUi/);
   assert.match(
     source,
-    /isTransientEmptyFlowSource\(query\.state\.data\?\.source\)[\s\S]*\? MARKET_CHART_FLOW_REFRESH_MS[\s\S]*: MARKET_CHART_FLOW_HISTORY_REFRESH_MS/,
+    /isHistoricalChartFlowTransientSource\(query\.state\.data\?\.source\)[\s\S]*\? MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS[\s\S]*: MARKET_CHART_FLOW_HISTORY_REFRESH_MS/,
   );
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
   assert.match(scannerCall, /enabled:\s*chartFlowEnabled/);

@@ -91,14 +91,24 @@ const MARKET_CHART_FLOW_MAX_CONCURRENCY = 4;
 const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY.active;
 const MARKET_CHART_FLOW_REFRESH_MS = 5_000;
 const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;
+const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS = 30_000;
 const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
+const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS = new Set([
+  "options_flow_historical_provider_timeout",
+  "options_flow_historical_refreshing",
+]);
 
 const MARKET_CHART_FLOW_PENDING_SOURCE = {
   provider: "polygon",
   status: "empty",
   ibkrStatus: "empty",
   ibkrReason: "options_flow_historical_refreshing",
+};
+
+const isHistoricalChartFlowTransientSource = (source) => {
+  const reason = String(source?.ibkrReason || "").toLowerCase();
+  return MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS.has(reason);
 };
 
 const getMarketChartFlowHistoryBucketSeconds = (timeframe) => {
@@ -433,8 +443,8 @@ export const MultiChartGrid = ({
       staleTime: MARKET_CHART_FLOW_HISTORY_REFRESH_MS,
       refetchInterval: chartFlowEnabled
         ? (query) =>
-            isTransientEmptyFlowSource(query.state.data?.source)
-              ? MARKET_CHART_FLOW_REFRESH_MS
+            isHistoricalChartFlowTransientSource(query.state.data?.source)
+              ? MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS
               : MARKET_CHART_FLOW_HISTORY_REFRESH_MS
         : false,
       placeholderData: (previousData) => previousData,
