@@ -279,6 +279,17 @@ export default function PlatformApp() {
   const preferredScale = appearancePreferences.scale;
   const preferredDensity = appearancePreferences.density;
   const preferredReducedMotion = appearancePreferences.reducedMotion;
+  const maskAccountValues = useMemo(
+    () =>
+      Boolean(
+        userPreferences.preferences?.appearance?.maskBalances ||
+          userPreferences.preferences?.privacy?.hideAccountValues,
+      ),
+    [
+      userPreferences.preferences?.appearance?.maskBalances,
+      userPreferences.preferences?.privacy?.hideAccountValues,
+    ],
+  );
   const [activeWatchlistId, setActiveWatchlistId] = useState(
     _initialState.activeWatchlistId || null,
   );
@@ -1190,6 +1201,22 @@ export default function PlatformApp() {
   const winAlerts = alertingPositions.filter((a) => a.kind === "profit").length;
   const lossAlerts = alertingPositions.filter((a) => a.kind === "loss").length;
   const totalAlerts = winAlerts + lossAlerts;
+  const watchlistsMutating =
+    createWatchlistMutation.isPending ||
+    updateWatchlistMutation.isPending ||
+    deleteWatchlistMutation.isPending ||
+    addWatchlistSymbolMutation.isPending ||
+    removeWatchlistSymbolMutation.isPending ||
+    reorderWatchlistMutation.isPending;
+  const watchlistsBusy = useMemo(
+    () => ({
+      mutating: watchlistsMutating,
+      totalAlerts,
+      winAlerts,
+      lossAlerts,
+    }),
+    [lossAlerts, totalAlerts, watchlistsMutating, winAlerts],
+  );
   const marketAlertItems = useMemo(() => {
     if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
       return [];
@@ -2203,26 +2230,12 @@ export default function PlatformApp() {
             onRemoveSymbolFromWatchlist={handleRemoveSymbolFromWatchlist}
             onSignalAction={handleSignalAction}
             watchlists={watchlistsQuery.data?.watchlists || []}
-            watchlistsBusy={{
-              mutating:
-                createWatchlistMutation.isPending ||
-                updateWatchlistMutation.isPending ||
-                deleteWatchlistMutation.isPending ||
-                addWatchlistSymbolMutation.isPending ||
-                removeWatchlistSymbolMutation.isPending ||
-                reorderWatchlistMutation.isPending,
-              totalAlerts,
-              winAlerts,
-              lossAlerts,
-            }}
+            watchlistsBusy={watchlistsBusy}
             accounts={accounts}
             primaryAccountId={primaryAccountId}
             primaryAccount={primaryAccount}
             onSelectAccount={setSelectedAccountId}
-            maskAccountValues={Boolean(
-              userPreferences.preferences?.appearance?.maskBalances ||
-                userPreferences.preferences?.privacy?.hideAccountValues,
-            )}
+            maskAccountValues={maskAccountValues}
             session={session}
             environment={environment}
             bridgeTone={bridgeTone}
