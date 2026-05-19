@@ -460,6 +460,7 @@ export const PlatformShell = ({
   watchlistSymbols,
   signalMonitorStates,
   signalMatrixStates,
+  headerSignalMatrixStates,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -494,6 +495,9 @@ export const PlatformShell = ({
   signalEvaluationPending,
   signalScanErrored,
   onToggleSignalScan,
+  onChangeSignalMonitorTimeframe,
+  onChangeSignalMonitorFreshWindowBars,
+  onChangeSignalMonitorMaxSymbols,
 }) => {
   const viewport = useViewport();
   const { isPhone, isNarrow } = viewport.flags;
@@ -836,6 +840,12 @@ export const PlatformShell = ({
       signalEvaluationPending={signalEvaluationPending}
       signalScanErrored={signalScanErrored}
       onToggleSignalScan={onToggleSignalScan}
+      onChangeSignalMonitorTimeframe={onChangeSignalMonitorTimeframe}
+      onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
+      onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
+      signalMatrixStates={
+        headerSignalMatrixStates?.length ? headerSignalMatrixStates : signalMatrixStates
+      }
     />
 
     <MobileMoreSheet

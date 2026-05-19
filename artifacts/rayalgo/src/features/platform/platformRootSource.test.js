@@ -173,21 +173,35 @@ test("floating platform controls use pointer outside-click listeners", () => {
     new URL("../market/MarketActivityPanel.jsx", import.meta.url),
     "utf8",
   );
-  const headerSource = readFileSync(
-    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
-    "utf8",
-  );
   const tickerSearchSource = readFileSync(
     new URL("./tickerSearch/TickerSearch.jsx", import.meta.url),
     "utf8",
   );
 
-  [marketActivitySource, headerSource, tickerSearchSource].forEach((source) => {
+  [marketActivitySource, tickerSearchSource].forEach((source) => {
     assert.match(source, /addEventListener\("pointerdown", handlePointerDown\)/);
     assert.match(source, /removeEventListener\("pointerdown", handlePointerDown\)/);
     assert.doesNotMatch(source, /addEventListener\("mousedown", handlePointerDown\)/);
     assert.doesNotMatch(source, /removeEventListener\("mousedown", handlePointerDown\)/);
   });
+});
+
+test("header broadcast lane settings use the shared Radix Popover primitive", () => {
+  const headerSource = readFileSync(
+    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    headerSource,
+    /from\s+"\.\.\/\.\.\/components\/ui\/popover"/,
+  );
+  assert.match(headerSource, /<PopoverTrigger asChild>/);
+  assert.match(headerSource, /<PopoverContent\b/);
+  assert.doesNotMatch(
+    headerSource,
+    /addEventListener\("pointerdown", handlePointerDown\)/,
+  );
 });
 
 test("Market phone layout uses the app-frame activity sheet instead of the old panel", () => {

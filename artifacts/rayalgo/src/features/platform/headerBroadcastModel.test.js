@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildHeaderSignalContextSymbols,
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
   getHeaderBroadcastSpeedDurations,
@@ -95,6 +96,154 @@ test("buildHeaderSignalTapeItems sorts newest signal first", () => {
     items.map((item) => item.symbol),
     ["NVDA", "AAPL"],
   );
+});
+
+test("buildHeaderSignalTapeItems attaches interval context to 5m signal pills", () => {
+  const nowMs = Date.parse("2026-04-27T16:00:00Z");
+  const items = buildHeaderSignalTapeItems(
+    {
+      states: [
+        {
+          id: "spy-5m-state",
+          symbol: "SPY",
+          timeframe: "5m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:55:00Z",
+          currentSignalPrice: 510.25,
+          barsSinceSignal: 0,
+          fresh: true,
+          active: true,
+        },
+      ],
+    },
+    {
+      nowMs,
+      signalMatrixStates: [
+        {
+          symbol: "spy",
+          timeframe: "2m",
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-04-27T15:54:00Z",
+          barsSinceSignal: 1,
+          fresh: true,
+        },
+        {
+          symbol: "SPY",
+          timeframe: "15m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:45:00Z",
+          barsSinceSignal: 2,
+          fresh: false,
+        },
+      ],
+    },
+  );
+
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].intervalTimeframes, ["2m", "5m", "15m"]);
+  assert.equal(items[0].intervalStates["2m"].currentSignalDirection, "sell");
+  assert.equal(items[0].intervalStates["5m"].currentSignalDirection, "buy");
+  assert.equal(items[0].intervalStates["5m"].barsSinceSignal, 0);
+  assert.equal(items[0].intervalStates["15m"].currentSignalDirection, "buy");
+});
+
+test("buildHeaderSignalTapeItems does not promote matrix-only intervals into pills", () => {
+  const items = buildHeaderSignalTapeItems(
+    {},
+    {
+      nowMs: Date.parse("2026-04-27T16:00:00Z"),
+      signalMatrixStates: [
+        {
+          symbol: "SPY",
+          timeframe: "2m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:58:00Z",
+          fresh: true,
+        },
+        {
+          symbol: "QQQ",
+          timeframe: "15m",
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-04-27T15:45:00Z",
+          fresh: true,
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(items, []);
+});
+
+test("buildHeaderSignalTapeItems uses pill state as the 5m dot fallback", () => {
+  const items = buildHeaderSignalTapeItems(
+    {
+      events: [
+        {
+          id: "nvda-event",
+          symbol: "NVDA",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-04-27T15:55:00Z",
+          signalPrice: 910.12,
+        },
+      ],
+    },
+    {
+      nowMs: Date.parse("2026-04-27T16:00:00Z"),
+      signalMatrixStates: [
+        {
+          symbol: "NVDA",
+          timeframe: "5m",
+          currentSignalDirection: null,
+          status: "ok",
+        },
+      ],
+    },
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].intervalStates["5m"].currentSignalDirection, "sell");
+  assert.equal(items[0].intervalStates["5m"].currentSignalPrice, 910.12);
+  assert.equal(items[0].intervalStates["5m"].fresh, false);
+});
+
+test("buildHeaderSignalContextSymbols includes every visible signal pill symbol", () => {
+  const symbols = buildHeaderSignalContextSymbols(
+    {
+      states: [
+        {
+          id: "older-state",
+          symbol: "SPY",
+          timeframe: "5m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:10:00Z",
+          active: true,
+        },
+      ],
+      events: [
+        {
+          id: "latest-event",
+          symbol: "NVDA",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-04-27T15:55:00Z",
+        },
+        {
+          id: "different-timeframe",
+          symbol: "QQQ",
+          timeframe: "15m",
+          direction: "buy",
+          signalAt: "2026-04-27T15:58:00Z",
+        },
+      ],
+    },
+    {
+      nowMs: Date.parse("2026-04-27T16:00:00Z"),
+      maxSymbols: 4,
+    },
+  );
+
+  assert.deepEqual(symbols, ["QQQ", "NVDA", "SPY"]);
 });
 
 test("buildHeaderUnusualTapeItems ranks scanner-selected flow events", () => {

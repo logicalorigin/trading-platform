@@ -1,5 +1,8 @@
+import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
+
 export const HEADER_SIGNAL_MAX_ITEMS = 24;
 export const HEADER_UNUSUAL_MAX_ITEMS = 28;
+export const HEADER_SIGNAL_CONTEXT_SYMBOL_LIMIT = HEADER_SIGNAL_MAX_ITEMS;
 export const HEADER_RECENT_SIGNAL_MS = 2 * 24 * 60 * 60 * 1000;
 export const DEFAULT_HEADER_BROADCAST_SPEED_PRESET = "slow";
 export const HEADER_BROADCAST_SPEED_PRESETS = {
@@ -47,6 +50,57 @@ const normalizeDirection = (direction) => {
   return normalized === "buy" || normalized === "sell" ? normalized : "";
 };
 
+const normalizeSignalIntervalTimeframe = (timeframe) => {
+  const normalized = String(timeframe || "").trim();
+  return WATCHLIST_SIGNAL_TIMEFRAMES.includes(normalized) ? normalized : "";
+};
+
+const buildSignalIntervalStatesBySymbol = (states = []) => {
+  const bySymbol = {};
+  (states || []).forEach((state) => {
+    const symbol = normalizeSymbol(state?.symbol);
+    const timeframe = normalizeSignalIntervalTimeframe(state?.timeframe);
+    if (!symbol || !timeframe) return;
+    bySymbol[symbol] = {
+      ...(bySymbol[symbol] || {}),
+      [timeframe]: state,
+    };
+  });
+  return bySymbol;
+};
+
+const signalItemToIntervalState = (item) => {
+  const timeframe = normalizeSignalIntervalTimeframe(item?.timeframe);
+  if (!timeframe) return null;
+  return {
+    ...(item?.raw || {}),
+    symbol: item.symbol,
+    timeframe,
+    currentSignalDirection: item.direction,
+    currentSignalAt: item.time,
+    currentSignalPrice: item.price,
+    barsSinceSignal: item?.raw?.barsSinceSignal ?? null,
+    fresh: Boolean(item.fresh),
+    status: item?.raw?.status || (item.fresh ? "ok" : item.source || "signal"),
+  };
+};
+
+const withSignalIntervalStates = (item, intervalStatesBySymbol) => {
+  const intervalStates = { ...(intervalStatesBySymbol[item.symbol] || {}) };
+  const fallbackState = signalItemToIntervalState(item);
+  if (fallbackState) {
+    const currentState = intervalStates[fallbackState.timeframe];
+    if (!normalizeDirection(currentState?.currentSignalDirection)) {
+      intervalStates[fallbackState.timeframe] = fallbackState;
+    }
+  }
+  return {
+    ...item,
+    intervalStates,
+    intervalTimeframes: WATCHLIST_SIGNAL_TIMEFRAMES,
+  };
+};
+
 const upsertByKey = (itemsByKey, item) => {
   if (!item?.key) return;
   const existing = itemsByKey.get(item.key);
@@ -71,10 +125,13 @@ export const buildHeaderSignalTapeItems = (
     nowMs = Date.now(),
     maxItems = HEADER_SIGNAL_MAX_ITEMS,
     recentSignalMs = HEADER_RECENT_SIGNAL_MS,
+    signalMatrixStates = [],
   } = {},
 ) => {
   const itemsByKey = new Map();
   const cutoffMs = nowMs - recentSignalMs;
+  const intervalStatesBySymbol =
+    buildSignalIntervalStatesBySymbol(signalMatrixStates);
 
   (snapshot?.states || []).forEach((state) => {
     const symbol = normalizeSymbol(state?.symbol);
@@ -145,12 +202,32 @@ export const buildHeaderSignalTapeItems = (
   });
 
   return Array.from(itemsByKey.values())
+    .map((item) => withSignalIntervalStates(item, intervalStatesBySymbol))
     .sort((left, right) => {
       if (left.timeMs !== right.timeMs) return right.timeMs - left.timeMs;
       if (left.fresh !== right.fresh) return left.fresh ? -1 : 1;
       return left.symbol.localeCompare(right.symbol);
     })
     .slice(0, maxItems);
+};
+
+export const buildHeaderSignalContextSymbols = (
+  snapshot,
+  {
+    maxItems = HEADER_SIGNAL_MAX_ITEMS,
+    maxSymbols = HEADER_SIGNAL_CONTEXT_SYMBOL_LIMIT,
+    nowMs = Date.now(),
+  } = {},
+) => {
+  const items = buildHeaderSignalTapeItems(snapshot, { maxItems, nowMs });
+
+  return [
+    ...new Set(
+      items
+        .map((item) => normalizeSymbol(item?.symbol))
+        .filter(Boolean),
+    ),
+  ].slice(0, maxSymbols);
 };
 
 const getFlowEventTime = (event) =>

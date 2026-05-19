@@ -1,8 +1,9 @@
-import { RadioTower, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, RadioTower, Settings } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatOptionContractLabel,
   formatQuotePrice,
@@ -38,6 +39,7 @@ import {
   buildSignalMonitorStatusSnapshot,
   isSignalMonitorRuntimeFallbackProfile,
 } from "./signalMonitorStatusModel";
+import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
   FLOW_SCANNER_MODE,
@@ -107,7 +109,13 @@ const HeaderBroadcastSegment = ({
   );
 };
 
-const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
+const HeaderSignalTapeItem = ({
+  item,
+  duplicate = false,
+  onClick,
+  compact = false,
+  selectedTimeframe = "5m",
+}) => {
   const isSell = item.direction === "sell";
   const tone = isSell ? T.red : T.green;
   const priceLabel =
@@ -141,9 +149,200 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = fals
       <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
       </span>
+      <HeaderSignalIntervalContext
+        statesByTimeframe={item.intervalStates}
+        compact={compact}
+        selectedTimeframe={selectedTimeframe}
+      />
     </HeaderBroadcastSegment>
   );
 };
+
+const colorWithAlpha = (color, alpha) => {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(color || ""));
+  if (!match) return color;
+  const value = match[1];
+  const r = Number.parseInt(value.slice(0, 2), 16);
+  const g = Number.parseInt(value.slice(2, 4), 16);
+  const b = Number.parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const normalizeSignalIntervalDirection = (state) => {
+  const direction = String(
+    state?.currentSignalDirection || state?.direction || "",
+  ).toLowerCase();
+  return direction === "buy" || direction === "sell" ? direction : "";
+};
+
+const resolveHeaderSignalTimeframe = (value) => {
+  const normalized = String(value || "").trim();
+  return WATCHLIST_SIGNAL_TIMEFRAMES.includes(normalized) ? normalized : "5m";
+};
+
+const HEADER_SIGNAL_CONTEXT_SLANT = 8;
+const HEADER_SIGNAL_CONTEXT_VIEWBOX = "0 0 48 32";
+
+const getHeaderSignalContextShapePoints = (timeframe) =>
+  timeframe === "15m" ? "8,0 48,0 48,32 0,32" : "8,0 48,0 40,32 0,32";
+
+const HeaderSignalContextDivider = () => (
+  <svg
+    aria-hidden="true"
+    data-testid="header-signal-context-diagonal-divider"
+    width="8"
+    height="100%"
+    viewBox="0 0 8 32"
+    preserveAspectRatio="none"
+    focusable="false"
+    style={{
+      position: "absolute",
+      left: 0,
+      top: 0,
+      display: "block",
+      width: dim(HEADER_SIGNAL_CONTEXT_SLANT),
+      height: "100%",
+      pointerEvents: "none",
+      zIndex: 4,
+    }}
+  >
+    <line
+      x1="1"
+      y1="32"
+      x2="7"
+      y2="0"
+      stroke={colorWithAlpha(T.textSec, 0.36)}
+      strokeWidth="1"
+      vectorEffect="non-scaling-stroke"
+    />
+  </svg>
+);
+
+const HeaderSignalPelletChrome = ({ fill, selected, timeframe }) => {
+  const points = getHeaderSignalContextShapePoints(timeframe);
+
+  return (
+    <svg
+      aria-hidden="true"
+      width="100%"
+      height="100%"
+      viewBox={HEADER_SIGNAL_CONTEXT_VIEWBOX}
+      preserveAspectRatio="none"
+      focusable="false"
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "block",
+        width: "100%",
+        height: "100%",
+        pointerEvents: "none",
+        zIndex: 1,
+      }}
+    >
+      <polygon points={points} fill={fill} stroke="none" />
+      {selected ? (
+        <polygon
+          data-testid="header-signal-context-selected-outline"
+          points={points}
+          fill="none"
+          stroke={T.amber}
+          strokeWidth="1.6"
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : null}
+    </svg>
+  );
+};
+
+const HeaderSignalIntervalContext = ({
+  statesByTimeframe = {},
+  compact = false,
+  selectedTimeframe = "5m",
+}) => (
+  <span
+    data-testid="header-signal-interval-context"
+    style={{
+      display: "inline-flex",
+      alignItems: "stretch",
+      alignSelf: "stretch",
+      height: "100%",
+      gap: 0,
+      marginRight: compact ? "-12px" : "-14px",
+      overflow: "hidden",
+      borderTopRightRadius: dim(RADII.pill),
+      borderBottomRightRadius: dim(RADII.pill),
+    }}
+  >
+    {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe, index) => {
+      const state = statesByTimeframe?.[timeframe];
+      const direction = normalizeSignalIntervalDirection(state);
+      const hasDirection = Boolean(direction);
+      const pending = !state;
+      const color =
+        direction === "buy" ? T.green : direction === "sell" ? T.red : T.textMuted;
+      const fresh = Boolean(state?.fresh);
+      const status = state?.status || "unknown";
+      const selected = timeframe === resolveHeaderSignalTimeframe(selectedTimeframe);
+      const label = pending
+        ? `${timeframe} pending`
+        : hasDirection
+          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          : `${timeframe} no signal - ${status}`;
+      const pelletFill = hasDirection
+        ? colorWithAlpha(color, fresh ? 0.24 : 0.18)
+        : pending
+          ? colorWithAlpha(T.textMuted, 0.08)
+          : colorWithAlpha(T.textMuted, 0.1);
+      const labelColor = hasDirection ? color : pending ? T.textDim : T.textSec;
+      const width = timeframe === "15m" ? 54 : 44;
+
+      return (
+        <AppTooltip
+          key={timeframe}
+          content={state?.lastError ? `${label} - ${state.lastError}` : label}
+        >
+          <span
+            data-testid={`header-signal-context-${timeframe}`}
+            data-timeframe={timeframe}
+            data-direction={pending ? "pending" : hasDirection ? direction : "none"}
+            data-selected={selected ? "true" : "false"}
+            aria-label={label}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              position: "relative",
+              height: "100%",
+              width: dim(width),
+              minWidth: dim(width),
+              marginLeft: index > 0 ? dim(-HEADER_SIGNAL_CONTEXT_SLANT) : 0,
+              padding: 0,
+              border: 0,
+              background: "transparent",
+              color: labelColor,
+              opacity: pending ? 0.72 : hasDirection ? 1 : 0.82,
+              boxShadow: "none",
+              fontFamily: T.sans,
+              fontSize: textSize(compact ? "body" : "paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.label,
+              fontVariantNumeric: "tabular-nums",
+              lineHeight: 1,
+              zIndex: selected ? 3 : 1,
+            }}
+          >
+            <HeaderSignalPelletChrome
+              fill={pelletFill}
+              selected={selected}
+              timeframe={timeframe}
+            />
+            {index > 0 ? <HeaderSignalContextDivider /> : null}
+            <span style={{ position: "relative", zIndex: 5 }}>{timeframe}</span>
+          </span>
+        </AppTooltip>
+      );
+    })}
+  </span>
+);
 
 const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const isPut =
@@ -190,7 +389,6 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
 const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
   <div
     data-testid={testId}
-    className="ra-popover-enter"
     style={sheet
       ? {
           padding: sp(10),
@@ -200,23 +398,210 @@ const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
           fontFamily: T.sans,
         }
       : {
-          position: "absolute",
-          top: 0,
-          left: `calc(100% + ${dim(6)}px)`,
-          zIndex: 80,
-          width: dim(252),
-          padding: sp(10),
-          maxHeight: `calc(100vh - ${dim(18)}px)`,
+          maxHeight: `calc(100vh - ${dim(24)}px)`,
           overflowY: "auto",
-          background: T.bg1,
-          border: "none",
-          borderRadius: dim(RADII.md),
-          boxShadow: ELEVATION.lg,
           color: T.text,
           fontFamily: T.sans,
         }}
   >
     {children}
+  </div>
+);
+
+const useDebouncedSave = (commit, delay = 300) => {
+  const [state, setState] = useState("idle");
+  const timerRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  const commitRef = useRef(commit);
+  useEffect(() => {
+    commitRef.current = commit;
+  }, [commit]);
+  const schedule = useCallback((payload) => {
+    setState("pending");
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    timerRef.current = setTimeout(async () => {
+      try {
+        await commitRef.current?.(payload);
+      } finally {
+        setState("saved");
+        savedTimerRef.current = setTimeout(() => setState("idle"), 1200);
+      }
+    }, delay);
+  }, [delay]);
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+  }, []);
+  return { state, schedule };
+};
+
+const HeaderLaneSavedChip = ({ state }) => {
+  if (state === "idle") return null;
+  const label = state === "pending" ? "Saving…" : "Saved";
+  const tone = state === "pending" ? T.textDim : T.accent;
+  return (
+    <span
+      data-testid="header-lane-saved-chip"
+      data-state={state}
+      style={{
+        color: tone,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+};
+
+const HeaderLanePopoverSection = ({ title, saveState, testId, children }) => (
+  <div data-testid={testId} style={{ display: "grid", gap: sp(3) }}>
+    <div
+      style={{
+        marginTop: sp(8),
+        marginBottom: sp(4),
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: sp(8),
+        color: T.textMuted,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+      }}
+    >
+      <span>{title}</span>
+      {saveState != null ? <HeaderLaneSavedChip state={saveState} /> : null}
+    </div>
+    {children}
+  </div>
+);
+
+const HeaderLaneAdvancedExpander = ({ open, onToggle, label, children, testId }) => (
+  <div style={{ marginTop: sp(3) }}>
+    <button
+      type="button"
+      data-testid={testId}
+      data-state={open ? "expanded" : "collapsed"}
+      aria-expanded={open}
+      onClick={onToggle}
+      className="ra-interactive"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(5),
+        padding: sp("3px 8px"),
+        border: "none",
+        borderRadius: dim(RADII.xs ?? RADII.sm),
+        background: "transparent",
+        color: open ? T.textSec : T.textMuted,
+        cursor: "pointer",
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+      }}
+    >
+      {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+      <span>{label}</span>
+    </button>
+    {open ? (
+      <div style={{ display: "grid", gap: sp(3), marginTop: sp(4) }}>{children}</div>
+    ) : null}
+  </div>
+);
+
+const HeaderLaneChipRow = ({ value, options, onChange, ariaLabel, testId }) => (
+  <div
+    role="group"
+    aria-label={ariaLabel}
+    data-testid={testId}
+    style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${options.length}, 1fr)`,
+      gap: sp(4),
+    }}
+  >
+    {options.map((option) => {
+      const active = String(value) === String(option.value);
+      return (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={active}
+          data-testid={testId ? `${testId}-${option.value}` : undefined}
+          className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
+          onClick={() => onChange(option.value)}
+          style={{
+            ...motionVars({ accent: T.accent }),
+            minHeight: dim(22),
+            border: `1px solid ${active ? T.accent : T.border}`,
+            borderRadius: dim(RADII.sm),
+            background: active ? `${T.accent}18` : T.bg1,
+            color: active ? T.accent : T.textDim,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
+            fontVariantNumeric: "tabular-nums",
+            padding: 0,
+          }}
+        >
+          {option.label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const HEADER_LANE_MIN_PREMIUM_PRESETS = [100_000, 500_000, 1_000_000, 5_000_000];
+const HeaderLaneMinPremiumChips = ({ value, onChange, testId }) => (
+  <div
+    role="group"
+    aria-label="Minimum premium presets"
+    data-testid={testId}
+    style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${HEADER_LANE_MIN_PREMIUM_PRESETS.length}, 1fr)`,
+      gap: sp(4),
+      marginBottom: sp(3),
+    }}
+  >
+    {HEADER_LANE_MIN_PREMIUM_PRESETS.map((preset) => {
+      const active = Number(value) === preset;
+      return (
+        <button
+          key={preset}
+          type="button"
+          aria-pressed={active}
+          data-testid={`${testId}-${preset}`}
+          className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
+          onClick={() => onChange(preset)}
+          style={{
+            ...motionVars({ accent: T.accent }),
+            minHeight: dim(22),
+            border: `1px solid ${active ? T.accent : T.border}`,
+            borderRadius: dim(RADII.sm),
+            background: active ? `${T.accent}18` : T.bg1,
+            color: active ? T.accent : T.textDim,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.regular,
+            fontVariantNumeric: "tabular-nums",
+            padding: 0,
+          }}
+        >
+          {fmtCompactCurrency(preset).replace(".00", "").replace(".0", "")}
+        </button>
+      );
+    })}
   </div>
 );
 
@@ -227,7 +612,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
       alignItems: "center",
       justifyContent: "space-between",
       gap: sp(8),
-      marginBottom: sp(7),
+      marginBottom: sp(4),
     }}
   >
     <span
@@ -298,7 +683,6 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
       display: "grid",
       gridTemplateColumns: "repeat(3, 1fr)",
       gap: sp(4),
-      marginBottom: sp(7),
     }}
   >
     {Object.entries(HEADER_BROADCAST_SPEED_PRESETS).map(([preset, config]) => {
@@ -348,11 +732,11 @@ const HeaderLaneToggleButton = ({
     style={{
       ...motionVars({ accent: tone }),
       width: "100%",
-      minHeight: dim(28),
+      minHeight: dim(24),
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      gap: sp(6),
+      gap: sp(5),
       border: `1px solid ${active ? tone : T.border}`,
       background: active ? `${tone}18` : T.bg1,
       color: disabled ? T.textMuted : active ? tone : T.textSec,
@@ -369,16 +753,16 @@ const HeaderLaneToggleButton = ({
 
 const headerLaneControlInputStyle = {
   width: "100%",
-  minHeight: dim(30),
+  minHeight: dim(24),
   background: T.bg1,
   border: `1px solid ${T.border}`,
   borderRadius: dim(RADII.sm),
   color: T.text,
   fontFamily: T.sans,
-  fontSize: textSize("body"),
+  fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
   fontVariantNumeric: "tabular-nums",
-  padding: sp("6px 8px"),
+  padding: sp("3px 6px"),
   outline: "none",
 };
 
@@ -386,19 +770,39 @@ const HeaderLaneControlRow = ({ label, children }) => (
   <label
     style={{
       display: "grid",
-      gridTemplateColumns: `${dim(58)} minmax(0, 1fr)`,
+      gridTemplateColumns: `${dim(42)} minmax(0, 1fr)`,
       alignItems: "center",
-      gap: sp(6),
-      minHeight: dim(25),
+      gap: sp(4),
+      minHeight: dim(22),
       color: T.textDim,
       fontFamily: T.sans,
-      fontSize: textSize("body"),
+      fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.regular,
     }}
   >
-    <span>{label}</span>
+    <span
+      style={{
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
     {children}
   </label>
+);
+
+const HeaderLanePairRow = ({ children }) => (
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+      gap: sp(6),
+    }}
+  >
+    {children}
+  </div>
 );
 
 const HeaderLaneSelectControl = ({ label, value, onChange, options, testId }) => (
@@ -472,11 +876,39 @@ const HeaderBroadcastLane = ({
   durationSeconds = 34,
   settingsOpen = false,
   onToggleSettings,
-  settingsContent,
+  labelTrigger,
   compactSettings = false,
 }) => {
   const shouldScroll = items.length >= 4;
   const renderedItems = shouldScroll ? [...items, ...items] : items;
+  const defaultTrigger = (
+    <button
+      type="button"
+      data-testid={`${testId}-settings-trigger`}
+      aria-expanded={settingsOpen}
+      aria-label={`${label} settings`}
+      onClick={onToggleSettings}
+      style={{
+        width: "100%",
+        height: "100%",
+        minHeight: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp("0px 8px"),
+        border: "none",
+        background: settingsOpen ? `${T.accent}14` : "transparent",
+        color: settingsOpen ? T.accent : T.textDim,
+        cursor: "pointer",
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {compactSettings ? <Settings size={14} strokeWidth={2} /> : label}
+    </button>
+  );
 
   return (
     <div
@@ -494,7 +926,6 @@ const HeaderBroadcastLane = ({
     >
       <div
         style={{
-          position: "relative",
           height: "100%",
           display: "flex",
           alignItems: "center",
@@ -502,33 +933,7 @@ const HeaderBroadcastLane = ({
           borderRight: `1px solid ${T.border}`,
         }}
       >
-        <button
-          type="button"
-          data-testid={`${testId}-settings-trigger`}
-          aria-expanded={settingsOpen}
-          aria-label={`${label} settings`}
-          onClick={onToggleSettings}
-          style={{
-            width: "100%",
-            height: "100%",
-            minHeight: 0,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: sp("0px 8px"),
-            border: "none",
-            background: settingsOpen ? `${T.accent}14` : "transparent",
-            color: settingsOpen ? T.accent : T.textDim,
-            cursor: "pointer",
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {compactSettings ? <Settings size={14} strokeWidth={2} /> : label}
-        </button>
-        {settingsOpen ? settingsContent : null}
+        {labelTrigger ?? defaultTrigger}
       </div>
 
       <div
@@ -624,6 +1029,10 @@ export const HeaderBroadcastScrollerStack = memo(({
   signalEvaluationPending = false,
   signalScanErrored = false,
   onToggleSignalScan,
+  onChangeSignalMonitorTimeframe,
+  onChangeSignalMonitorFreshWindowBars,
+  onChangeSignalMonitorMaxSymbols,
+  signalMatrixStates = [],
 }) => {
   const rootRef = useRef(null);
   const viewport = useViewport();
@@ -694,32 +1103,71 @@ export const HeaderBroadcastScrollerStack = memo(({
   const toggleBroadScan = useCallback(() => {
     setFlowScannerControlState({ enabled: !broadScanEnabled });
   }, [broadScanEnabled]);
-  useEffect(() => {
-    if (!openSettingsLane || typeof document === "undefined") {
-      return undefined;
-    }
-
-    const handlePointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) {
-        setOpenSettingsLane(null);
-      }
-    };
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setOpenSettingsLane(null);
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openSettingsLane]);
+  const [flowAdvancedOpen, setFlowAdvancedOpen] = useState(false);
+  const [signalDraft, setSignalDraft] = useState({});
+  const commitSignalProfileSetting = useCallback(
+    ({ field, value }) => {
+      if (field === "timeframe") onChangeSignalMonitorTimeframe?.(value);
+      else if (field === "freshWindowBars") onChangeSignalMonitorFreshWindowBars?.(value);
+      else if (field === "maxSymbols") onChangeSignalMonitorMaxSymbols?.(value);
+      setSignalDraft((prev) => {
+        if (!(field in prev)) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    },
+    [
+      onChangeSignalMonitorTimeframe,
+      onChangeSignalMonitorFreshWindowBars,
+      onChangeSignalMonitorMaxSymbols,
+    ],
+  );
+  const signalSave = useDebouncedSave(commitSignalProfileSetting, 400);
+  const scheduleSignalProfileChange = useCallback(
+    (field, value) => {
+      setSignalDraft((prev) => ({ ...prev, [field]: value }));
+      signalSave.schedule({ field, value });
+    },
+    [signalSave],
+  );
+  const [flowSaveState, setFlowSaveState] = useState("idle");
+  const flowSaveTimerRef = useRef(null);
+  const flashFlowSave = useCallback(() => {
+    setFlowSaveState("saved");
+    if (flowSaveTimerRef.current) clearTimeout(flowSaveTimerRef.current);
+    flowSaveTimerRef.current = setTimeout(() => setFlowSaveState("idle"), 1200);
+  }, []);
+  useEffect(() => () => {
+    if (flowSaveTimerRef.current) clearTimeout(flowSaveTimerRef.current);
+  }, []);
+  const scheduleFlowScannerChange = useCallback(
+    (patch) => {
+      changeFlowScannerConfig(patch);
+      flashFlowSave();
+    },
+    [changeFlowScannerConfig, flashFlowSave],
+  );
+  const scheduleFlowTapeChange = useCallback(
+    (patch) => {
+      changeFlowTapeFilters(patch);
+      flashFlowSave();
+    },
+    [changeFlowTapeFilters, flashFlowSave],
+  );
+  const scheduleFlowTapePreset = useCallback(
+    (presetId) => {
+      changeFlowTapePreset(presetId);
+      flashFlowSave();
+    },
+    [changeFlowTapePreset, flashFlowSave],
+  );
   const signalItems = useMemo(
-    () => buildHeaderSignalTapeItems(signalSnapshot),
-    [signalSnapshot],
+    () => buildHeaderSignalTapeItems(signalSnapshot, { signalMatrixStates }),
+    [signalMatrixStates, signalSnapshot],
+  );
+  const selectedSignalTimeframe = resolveHeaderSignalTimeframe(
+    signalSnapshot?.profile?.timeframe,
   );
   const signalStatusSnapshot = useMemo(
     () =>
@@ -920,6 +1368,15 @@ export const HeaderBroadcastScrollerStack = memo(({
         : signalStatusSnapshot.universeMode === "selected_watchlist"
           ? "Selected watchlist"
           : MISSING_VALUE;
+  const signalProfileTimeframe =
+    signalDraft.timeframe ?? (signalSnapshot?.profile?.timeframe || "5m");
+  const signalProfileFreshWindowBars =
+    signalDraft.freshWindowBars ?? (signalSnapshot?.profile?.freshWindowBars ?? "");
+  const signalProfileMaxSymbols =
+    signalDraft.maxSymbols ??
+    (signalStatusSnapshot.configuredMaxSymbols ??
+      signalSnapshot?.profile?.maxSymbols ??
+      "");
   const signalSettings = (
     <HeaderLaneSettingsPopover
       testId="header-signal-settings-popover"
@@ -930,107 +1387,101 @@ export const HeaderBroadcastScrollerStack = memo(({
         status={signalStatusLabel}
         tone={signalScanTone}
       />
-      <HeaderLaneInfoRow
-        label="Speed"
-        value={HEADER_BROADCAST_SPEED_PRESETS[speedPreset].label}
-        tone={T.textSec}
-      />
-      <HeaderLaneSegmentedControl
-        value={speedPreset}
-        onChange={changeSpeedPreset}
-      />
-      <HeaderLaneToggleButton
-        active={signalScanEnabled}
-        disabled={signalBusy || !onToggleSignalScan}
-        onClick={onToggleSignalScan}
-        testId="header-signal-scan-settings-toggle"
-        tone={signalScanTone}
+      <HeaderLanePopoverSection
+        title="Settings"
+        saveState={signalSave.state}
+        testId="header-signal-settings-section"
       >
-        {signalHasError
-          ? "Signal Scan Degraded"
-          : signalDegraded
-            ? signalRuntimeFallback
-              ? "Runtime Signal Scan"
-              : "Signal Scan Degraded"
-          : signalNoTrackedSymbols
-            ? "Signal Scan No Data"
-          : signalNoFreshSignals
-            ? "Signal Scan No Fresh"
-          : signalScanEnabled
-            ? "Signal Scan On"
-            : "Signal Scan Off"}
-      </HeaderLaneToggleButton>
-      <div style={{ height: dim(7) }} />
-      <HeaderLaneInfoRow label="Lane items" value={signalItems.length} />
-      <HeaderLaneInfoRow
-        label="Tracked"
-        value={signalStateSummary.total}
-        tone={signalNoTrackedSymbols ? T.amber : T.textSec}
-      />
-      <HeaderLaneInfoRow
-        label="Fresh"
-        value={
-          signalStateSummary.total
-            ? `${signalStateSummary.fresh}/${signalStateSummary.total}`
-            : MISSING_VALUE
-        }
-        tone={signalNoFreshSignals ? T.amber : T.textSec}
-      />
-      <HeaderLaneInfoRow
-        label="Timeframe"
-        value={signalSnapshot?.profile?.timeframe || MISSING_VALUE}
-      />
-      <HeaderLaneInfoRow
-        label="Fresh Bars"
-        value={signalSnapshot?.profile?.freshWindowBars ?? MISSING_VALUE}
-      />
-      <HeaderLaneInfoRow
-        label="Max"
-        value={signalStatusSnapshot.configuredMaxSymbols ?? MISSING_VALUE}
-      />
-      <HeaderLaneInfoRow
-        label="Resolved"
-        value={signalStatusSnapshot.resolvedSymbols ?? MISSING_VALUE}
-        tone={signalStatusSnapshot.shortfall ? T.amber : T.textSec}
-      />
-      <HeaderLaneInfoRow
-        label="Expanded"
-        value={signalStatusSnapshot.expansionSymbols ?? MISSING_VALUE}
-      />
-      <HeaderLaneInfoRow
-        label="Universe"
-        value={signalUniverseLabel}
-        tone={signalStatusSnapshot.universeFallbackUsed ? T.amber : T.textSec}
-      />
-      <HeaderLaneInfoRow
-        label="State"
-        value={
-          signalHasError
-            ? "Error"
-            : signalDegraded
-              ? signalRuntimeFallback
-                ? "Runtime-only"
-                : "Degraded"
-            : signalNoTrackedSymbols
-              ? "No data"
-            : signalNoFreshSignals
-              ? "No fresh"
-            : signalBusy
-              ? "Evaluating"
-              : signalScanEnabled
-                ? "Watching"
-                : "Off"
-        }
-        tone={signalScanTone}
-      />
-      <HeaderLaneInfoRow
-        label="Last"
-        value={
-          signalLastEvaluatedAt
-            ? formatRelativeTimeShort(signalLastEvaluatedAt)
-            : MISSING_VALUE
-        }
-      />
+        <HeaderLanePairRow>
+          <HeaderLaneSegmentedControl
+            value={speedPreset}
+            onChange={changeSpeedPreset}
+          />
+          <HeaderLaneToggleButton
+            active={signalScanEnabled}
+            disabled={signalBusy || !onToggleSignalScan}
+            onClick={onToggleSignalScan}
+            testId="header-signal-scan-settings-toggle"
+            tone={signalScanTone}
+          >
+            {signalScanEnabled ? "On" : "Off"}
+          </HeaderLaneToggleButton>
+        </HeaderLanePairRow>
+        <HeaderLaneChipRow
+          ariaLabel="Signal timeframe"
+          value={signalProfileTimeframe}
+          onChange={(value) => scheduleSignalProfileChange("timeframe", value)}
+          testId="header-signal-settings-timeframe"
+          options={[
+            { value: "1m", label: "1m" },
+            { value: "5m", label: "5m" },
+            { value: "15m", label: "15m" },
+            { value: "1h", label: "1h" },
+            { value: "1d", label: "1d" },
+          ]}
+        />
+        <HeaderLanePairRow>
+          <HeaderLaneNumberControl
+            label="Max"
+            value={signalProfileMaxSymbols}
+            min={1}
+            max={250}
+            onChange={(value) => scheduleSignalProfileChange("maxSymbols", value)}
+            testId="header-signal-settings-max-symbols"
+          />
+          <HeaderLaneNumberControl
+            label="Fresh"
+            value={signalProfileFreshWindowBars}
+            min={1}
+            max={20}
+            onChange={(value) => scheduleSignalProfileChange("freshWindowBars", value)}
+            testId="header-signal-settings-fresh-window-bars"
+          />
+        </HeaderLanePairRow>
+      </HeaderLanePopoverSection>
+      <HeaderLanePopoverSection
+        title="Status"
+        testId="header-signal-status-section"
+      >
+        <HeaderLaneInfoRow label="Visible" value={signalItems.length} />
+        <HeaderLaneInfoRow
+          label="Tracked"
+          value={
+            signalStateSummary.total
+              ? `${signalStateSummary.total} · ${signalStateSummary.fresh} fresh`
+              : MISSING_VALUE
+          }
+          tone={
+            signalNoTrackedSymbols || signalNoFreshSignals
+              ? T.amber
+              : T.textSec
+          }
+        />
+        <HeaderLaneInfoRow
+          label="Resolved"
+          value={
+            signalStatusSnapshot.resolvedSymbols == null
+              ? MISSING_VALUE
+              : signalStatusSnapshot.expansionSymbols
+                ? `${signalStatusSnapshot.resolvedSymbols} (+${signalStatusSnapshot.expansionSymbols} expanded)`
+                : `${signalStatusSnapshot.resolvedSymbols}`
+          }
+          tone={signalStatusSnapshot.shortfall ? T.amber : T.textSec}
+        />
+        <HeaderLaneInfoRow
+          label="Universe"
+          value={signalUniverseLabel}
+          tone={signalStatusSnapshot.universeFallbackUsed ? T.amber : T.textSec}
+        />
+        <HeaderLaneInfoRow
+          label="Last"
+          value={
+            signalLastEvaluatedAt
+              ? formatRelativeTimeShort(signalLastEvaluatedAt)
+              : MISSING_VALUE
+          }
+        />
+      </HeaderLanePopoverSection>
     </HeaderLaneSettingsPopover>
   );
   const unusualCoverage = flowProviderSummary?.coverage || null;
@@ -1056,177 +1507,227 @@ export const HeaderBroadcastScrollerStack = memo(({
         status={flowScanStatusLabel}
         tone={flowScanTone}
       />
-      <HeaderLaneInfoRow
-        label="Speed"
-        value={HEADER_BROADCAST_SPEED_PRESETS[speedPreset].label}
-        tone={T.textSec}
-      />
-      <HeaderLaneSegmentedControl
-        value={speedPreset}
-        onChange={changeSpeedPreset}
-      />
-      <HeaderLaneToggleButton
-        active={broadScanEnabled}
-        onClick={toggleBroadScan}
-        testId="header-unusual-settings-broad-toggle"
-        tone={flowScanTone}
+      <HeaderLanePopoverSection
+        title="Settings"
+        saveState={flowSaveState}
+        testId="header-unusual-settings-section"
       >
-        {broadScanSnapshotActive
-          ? "Flow Scan On"
-          : broadScanEnabled
-            ? "Flow Scan Idle"
-            : "Flow Scan Off"}
-      </HeaderLaneToggleButton>
-      <HeaderLaneSectionLabel>Tape Filters</HeaderLaneSectionLabel>
-      <HeaderLaneTextControl
-        label="Include"
-        value={flowTapeFilters.includeQuery}
-        onChange={(value) => changeFlowTapeFilters({ includeQuery: value })}
-        testId="header-flow-filter-include"
-        placeholder="SPY, QQQ"
-      />
-      <HeaderLaneTextControl
-        label="Exclude"
-        value={flowTapeFilters.excludeQuery}
-        onChange={(value) => changeFlowTapeFilters({ excludeQuery: value })}
-        testId="header-flow-filter-exclude"
-        placeholder="AAPL, TSLA"
-      />
-      <HeaderLaneSelectControl
-        label="Flow"
-        value={flowTapeFilters.filter}
-        onChange={(value) => changeFlowTapeFilters({ filter: value })}
-        testId="header-flow-filter-type"
-        options={FLOW_TAPE_FILTER_OPTIONS.map((option) => ({
-          value: option.id,
-          label: option.label,
-        }))}
-      />
-      <HeaderLaneSelectControl
-        label="Min Prem"
-        value={String(flowTapeFilters.minPrem)}
-        onChange={(value) => changeFlowTapeFilters({ minPrem: Number(value) })}
-        testId="header-flow-filter-min-premium"
-        options={FLOW_MIN_PREMIUM_OPTIONS.map((option) => ({
-          value: String(option.value),
-          label: option.label,
-        }))}
-      />
-      <HeaderLaneSelectControl
-        label="Preset"
-        value={flowTapeFilters.activeFlowPresetId || ""}
-        onChange={changeFlowTapePreset}
-        testId="header-flow-filter-preset"
-        options={[
-          { value: "", label: "None" },
-          ...FLOW_BUILT_IN_PRESETS.map((preset) => ({
-            value: preset.id,
-            label: preset.label,
-          })),
-        ]}
-      />
-      <HeaderLaneSectionLabel>Scanner</HeaderLaneSectionLabel>
-      <HeaderLaneInfoRow
-        label="Source"
-        value="All + universe"
-        tone={T.textSec}
-      />
-      <HeaderLaneSelectControl
-        label="Scope"
-        value={flowScannerConfig.scope}
-        onChange={(value) => changeFlowScannerConfig({ scope: value })}
-        testId="header-flow-scan-scope"
-        options={[
-          { value: FLOW_SCANNER_SCOPE.unusual, label: "Unusual" },
-          { value: FLOW_SCANNER_SCOPE.all, label: "All Flow" },
-        ]}
-      />
-      <HeaderLaneNumberControl
-        label="Symbols"
-        value={flowScannerConfig.maxSymbols}
-        min={FLOW_SCANNER_CONFIG_LIMITS.maxSymbols.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.maxSymbols.max}
-        onChange={(value) => changeFlowScannerConfig({ maxSymbols: value })}
-        testId="header-flow-scan-max-symbols"
-      />
-      <HeaderLaneNumberControl
-        label="Batch"
-        value={flowScannerConfig.batchSize}
-        min={FLOW_SCANNER_CONFIG_LIMITS.batchSize.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.batchSize.max}
-        onChange={(value) => changeFlowScannerConfig({ batchSize: value })}
-        testId="header-flow-scan-batch-size"
-      />
-      <HeaderLaneNumberControl
-        label="Conc"
-        value={flowScannerConfig.concurrency}
-        min={FLOW_SCANNER_CONFIG_LIMITS.concurrency.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.concurrency.max}
-        onChange={(value) => changeFlowScannerConfig({ concurrency: value })}
-        testId="header-flow-scan-concurrency"
-      />
-      <HeaderLaneNumberControl
-        label="Vol/OI"
-        value={flowScannerConfig.unusualThreshold}
-        min={FLOW_SCANNER_CONFIG_LIMITS.unusualThreshold.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.unusualThreshold.max}
-        step={0.1}
-        onChange={(value) =>
-          changeFlowScannerConfig({ unusualThreshold: value })
-        }
-        testId="header-flow-scan-unusual-threshold"
-      />
-      <HeaderLaneNumberControl
-        label="Min $"
-        value={flowScannerConfig.minPremium}
-        min={FLOW_SCANNER_CONFIG_LIMITS.minPremium.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.minPremium.max}
-        step={5_000}
-        onChange={(value) => changeFlowScannerConfig({ minPremium: value })}
-        testId="header-flow-scan-min-premium"
-      />
-      <HeaderLaneNumberControl
-        label="Max DTE"
-        value={flowScannerConfig.maxDte}
-        min={FLOW_SCANNER_CONFIG_LIMITS.maxDte.min}
-        max={FLOW_SCANNER_CONFIG_LIMITS.maxDte.max}
-        onChange={(value) =>
-          changeFlowScannerConfig({ maxDte: value === "" ? null : value })
-        }
-        testId="header-flow-scan-max-dte"
-        placeholder="Any"
-      />
-      <div style={{ height: dim(7) }} />
-      <HeaderLaneInfoRow label="Visible" value={unusualItems.length} />
-      <HeaderLaneInfoRow
-        label="Batch"
-        value={`${unusualBatchSize}/${unusualConcurrency}`}
-      />
-      <HeaderLaneInfoRow
-        label="Scanning"
-        value={unusualScanningNow}
-        tone={unusualCurrentBatch.length ? T.accent : T.textDim}
-      />
-      <HeaderLaneInfoRow
-        label="Flow"
-        value={flowStatus.toUpperCase()}
-        tone={flowHasError ? T.red : flowStatus === "loading" ? T.accent : T.textSec}
-      />
-      <HeaderLaneInfoRow
-        label="Scanned"
-        value={
-          unusualCoverage
-            ? `${unusualCoverage.scannedSymbols}/${unusualCoverage.totalSymbols}`
-            : MISSING_VALUE
-        }
-      />
-      <HeaderLaneInfoRow
-        label="Cycle"
-        value={unusualLineDetail}
-        tone={flowScanTone}
-      />
+        <HeaderLanePairRow>
+          <HeaderLaneSegmentedControl
+            value={speedPreset}
+            onChange={changeSpeedPreset}
+          />
+          <HeaderLaneToggleButton
+            active={broadScanEnabled}
+            onClick={toggleBroadScan}
+            testId="header-unusual-settings-broad-toggle"
+            tone={flowScanTone}
+          >
+            {broadScanEnabled ? (broadScanSnapshotActive ? "On" : "Idle") : "Off"}
+          </HeaderLaneToggleButton>
+        </HeaderLanePairRow>
+        <HeaderLanePairRow>
+          <HeaderLaneTextControl
+            label="Include"
+            value={flowTapeFilters.includeQuery}
+            onChange={(value) => scheduleFlowTapeChange({ includeQuery: value })}
+            testId="header-flow-filter-include"
+            placeholder="SPY, QQQ"
+          />
+          <HeaderLaneTextControl
+            label="Exclude"
+            value={flowTapeFilters.excludeQuery}
+            onChange={(value) => scheduleFlowTapeChange({ excludeQuery: value })}
+            testId="header-flow-filter-exclude"
+            placeholder="AAPL, TSLA"
+          />
+        </HeaderLanePairRow>
+        <HeaderLanePairRow>
+          <HeaderLaneSelectControl
+            label="Flow"
+            value={flowTapeFilters.filter}
+            onChange={(value) => scheduleFlowTapeChange({ filter: value })}
+            testId="header-flow-filter-type"
+            options={FLOW_TAPE_FILTER_OPTIONS.map((option) => ({
+              value: option.id,
+              label: option.label,
+            }))}
+          />
+          <HeaderLaneSelectControl
+            label="MinPrm"
+            value={String(flowTapeFilters.minPrem)}
+            onChange={(value) => scheduleFlowTapeChange({ minPrem: Number(value) })}
+            testId="header-flow-filter-min-premium"
+            options={FLOW_MIN_PREMIUM_OPTIONS.map((option) => ({
+              value: String(option.value),
+              label: option.label,
+            }))}
+          />
+        </HeaderLanePairRow>
+        <HeaderLaneSelectControl
+          label="Preset"
+          value={flowTapeFilters.activeFlowPresetId || ""}
+          onChange={scheduleFlowTapePreset}
+          testId="header-flow-filter-preset"
+          options={[
+            { value: "", label: "None" },
+            ...FLOW_BUILT_IN_PRESETS.map((preset) => ({
+              value: preset.id,
+              label: preset.label,
+            })),
+          ]}
+        />
+        <HeaderLaneSectionLabel>Scanner</HeaderLaneSectionLabel>
+        <HeaderLanePairRow>
+          <HeaderLaneSelectControl
+            label="Scope"
+            value={flowScannerConfig.scope}
+            onChange={(value) => scheduleFlowScannerChange({ scope: value })}
+            testId="header-flow-scan-scope"
+            options={[
+              { value: FLOW_SCANNER_SCOPE.unusual, label: "Unusual" },
+              { value: FLOW_SCANNER_SCOPE.all, label: "All Flow" },
+            ]}
+          />
+          <HeaderLaneNumberControl
+            label="Symbols"
+            value={flowScannerConfig.maxSymbols}
+            min={FLOW_SCANNER_CONFIG_LIMITS.maxSymbols.min}
+            max={FLOW_SCANNER_CONFIG_LIMITS.maxSymbols.max}
+            onChange={(value) => scheduleFlowScannerChange({ maxSymbols: value })}
+            testId="header-flow-scan-max-symbols"
+          />
+        </HeaderLanePairRow>
+        <HeaderLaneMinPremiumChips
+          value={flowScannerConfig.minPremium}
+          onChange={(value) => scheduleFlowScannerChange({ minPremium: value })}
+          testId="header-flow-scan-min-premium-chips"
+        />
+        <HeaderLaneAdvancedExpander
+          open={flowAdvancedOpen}
+          onToggle={() => setFlowAdvancedOpen((prev) => !prev)}
+          label="Advanced"
+          testId="header-flow-scan-advanced-toggle"
+        >
+          <HeaderLaneNumberControl
+            label="Min $"
+            value={flowScannerConfig.minPremium}
+            min={FLOW_SCANNER_CONFIG_LIMITS.minPremium.min}
+            max={FLOW_SCANNER_CONFIG_LIMITS.minPremium.max}
+            step={5_000}
+            onChange={(value) => scheduleFlowScannerChange({ minPremium: value })}
+            testId="header-flow-scan-min-premium"
+          />
+          <HeaderLanePairRow>
+            <HeaderLaneNumberControl
+              label="Batch"
+              value={flowScannerConfig.batchSize}
+              min={FLOW_SCANNER_CONFIG_LIMITS.batchSize.min}
+              max={FLOW_SCANNER_CONFIG_LIMITS.batchSize.max}
+              onChange={(value) => scheduleFlowScannerChange({ batchSize: value })}
+              testId="header-flow-scan-batch-size"
+            />
+            <HeaderLaneNumberControl
+              label="Conc"
+              value={flowScannerConfig.concurrency}
+              min={FLOW_SCANNER_CONFIG_LIMITS.concurrency.min}
+              max={FLOW_SCANNER_CONFIG_LIMITS.concurrency.max}
+              onChange={(value) => scheduleFlowScannerChange({ concurrency: value })}
+              testId="header-flow-scan-concurrency"
+            />
+          </HeaderLanePairRow>
+          <HeaderLanePairRow>
+            <HeaderLaneNumberControl
+              label="Vol/OI"
+              value={flowScannerConfig.unusualThreshold}
+              min={FLOW_SCANNER_CONFIG_LIMITS.unusualThreshold.min}
+              max={FLOW_SCANNER_CONFIG_LIMITS.unusualThreshold.max}
+              step={0.1}
+              onChange={(value) =>
+                scheduleFlowScannerChange({ unusualThreshold: value })
+              }
+              testId="header-flow-scan-unusual-threshold"
+            />
+            <HeaderLaneNumberControl
+              label="Max DTE"
+              value={flowScannerConfig.maxDte}
+              min={FLOW_SCANNER_CONFIG_LIMITS.maxDte.min}
+              max={FLOW_SCANNER_CONFIG_LIMITS.maxDte.max}
+              onChange={(value) =>
+                scheduleFlowScannerChange({
+                  maxDte: value === "" ? null : value,
+                })
+              }
+              testId="header-flow-scan-max-dte"
+              placeholder="Any"
+            />
+          </HeaderLanePairRow>
+        </HeaderLaneAdvancedExpander>
+      </HeaderLanePopoverSection>
+      <HeaderLanePopoverSection
+        title="Status"
+        testId="header-unusual-status-section"
+      >
+        <HeaderLaneInfoRow
+          label="Coverage"
+          value={
+            unusualCoverage
+              ? `${unusualItems.length} · ${unusualCoverage.scannedSymbols}/${unusualCoverage.totalSymbols}`
+              : `${unusualItems.length}`
+          }
+        />
+        <HeaderLaneInfoRow
+          label="Scanning"
+          value={unusualScanningNow}
+          tone={unusualCurrentBatch.length ? T.accent : T.textDim}
+        />
+        <HeaderLaneInfoRow
+          label="Cycle"
+          value={unusualLineDetail}
+          tone={flowScanTone}
+        />
+        <HeaderLaneInfoRow
+          label="Flow"
+          value={flowStatus.toUpperCase()}
+          tone={flowHasError ? T.red : flowStatus === "loading" ? T.accent : T.textSec}
+        />
+      </HeaderLanePopoverSection>
     </HeaderLaneSettingsPopover>
   );
+
+  const signalTriggerActive = openSettingsLane === "signals";
+  const unusualTriggerActive = openSettingsLane === "unusual";
+  const buildLaneTriggerButton = ({ testId, ariaLabel, active, accentTone, content }) => (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      style={{
+        width: "100%",
+        height: "100%",
+        minHeight: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp("0px 8px"),
+        border: "none",
+        background: active ? `${accentTone}14` : "transparent",
+        color: active ? accentTone : T.textDim,
+        cursor: "pointer",
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.regular,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {content}
+    </button>
+  );
+  const popoverContentStyle = {
+    width: dim(312),
+    maxWidth: `min(${dim(340)}px, calc(100vw - ${dim(24)}px))`,
+    padding: sp(8),
+  };
 
   return (
     <div
@@ -1241,102 +1742,148 @@ export const HeaderBroadcastScrollerStack = memo(({
         background: T.bg0,
       }}
     >
-      <HeaderBroadcastLane
-        label="SIGNALS"
-        items={signalItems}
-        emptyLabel={signalEmptyLabel}
-        emptyTone={signalScanTone}
-        testId="header-signal-tape"
-        durationSeconds={speedDurations.signalDurationSeconds}
-        settingsOpen={openSettingsLane === "signals"}
-        onToggleSettings={() =>
-          setOpenSettingsLane((lane) => (lane === "signals" ? null : "signals"))
-        }
-        settingsContent={isPhone ? null : signalSettings}
-        compactSettings={isPhone}
-        action={
-          <AppTooltip content={signalToggleTitle}><button
-            type="button"
-            data-testid="header-signal-scan-toggle"
-            aria-label={signalToggleTitle}
-            aria-pressed={signalScanEnabled}
-            disabled={signalBusy || !onToggleSignalScan}
-            onClick={onToggleSignalScan}
-            style={{
-              width: dim(24),
-              height: dim(22),
-              minHeight: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "none",
-              borderRadius: dim(3),
-              background: signalScanEnabled ? `${signalScanTone}18` : "transparent",
-              color: signalScanTone,
-              cursor: signalBusy ? "wait" : onToggleSignalScan ? "pointer" : "default",
-            }}
-          >
-            <RadioTower size={14} strokeWidth={2.4} />
-          </button></AppTooltip>
-        }
+      <Popover
+        open={!isPhone && signalTriggerActive}
+        onOpenChange={(next) => setOpenSettingsLane(next ? "signals" : null)}
       >
-        {(item, duplicate, compact) => (
-          <HeaderSignalTapeItem
-            item={item}
-            duplicate={duplicate}
-            compact={compact}
-            onClick={onSignalAction}
-          />
-        )}
-      </HeaderBroadcastLane>
+        <HeaderBroadcastLane
+          label="SIGNALS"
+          items={signalItems}
+          emptyLabel={signalEmptyLabel}
+          emptyTone={signalScanTone}
+          testId="header-signal-tape"
+          durationSeconds={speedDurations.signalDurationSeconds}
+          compactSettings={isPhone}
+          labelTrigger={
+            <PopoverTrigger asChild>
+              {buildLaneTriggerButton({
+                testId: "header-signal-tape-settings-trigger",
+                ariaLabel: "SIGNALS settings",
+                active: signalTriggerActive,
+                accentTone: T.accent,
+                content: isPhone ? <Settings size={14} strokeWidth={2} /> : "SIGNALS",
+              })}
+            </PopoverTrigger>
+          }
+          action={
+            <AppTooltip content={signalToggleTitle}><button
+              type="button"
+              data-testid="header-signal-scan-toggle"
+              aria-label={signalToggleTitle}
+              aria-pressed={signalScanEnabled}
+              disabled={signalBusy || !onToggleSignalScan}
+              onClick={onToggleSignalScan}
+              style={{
+                width: dim(24),
+                height: dim(22),
+                minHeight: dim(22),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                borderRadius: dim(3),
+                background: signalScanEnabled ? `${signalScanTone}18` : "transparent",
+                color: signalScanTone,
+                cursor: signalBusy ? "wait" : onToggleSignalScan ? "pointer" : "default",
+              }}
+            >
+              <RadioTower size={14} strokeWidth={2.4} />
+            </button></AppTooltip>
+          }
+        >
+          {(item, duplicate, compact) => (
+            <HeaderSignalTapeItem
+              item={item}
+              duplicate={duplicate}
+              compact={compact}
+              onClick={onSignalAction}
+              selectedTimeframe={selectedSignalTimeframe}
+            />
+          )}
+        </HeaderBroadcastLane>
+        {!isPhone ? (
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={6}
+            collisionPadding={12}
+            style={popoverContentStyle}
+          >
+            {signalSettings}
+          </PopoverContent>
+        ) : null}
+      </Popover>
 
-      <HeaderBroadcastLane
-        label="FLOW"
-        items={unusualItems}
-        emptyLabel={unusualEmptyLabel}
-        emptyTone={flowScanTone}
-        testId="header-unusual-tape"
-        durationSeconds={speedDurations.unusualDurationSeconds}
-        settingsOpen={openSettingsLane === "unusual"}
-        onToggleSettings={() =>
-          setOpenSettingsLane((lane) => (lane === "unusual" ? null : "unusual"))
-        }
-        settingsContent={isPhone ? null : unusualSettings}
-        compactSettings={isPhone}
-        action={
-          <AppTooltip content={broadToggleTitle}><button
-            type="button"
-            data-testid="header-unusual-broad-toggle"
-            aria-label={broadToggleTitle}
-            aria-pressed={broadScanEnabled}
-            onClick={toggleBroadScan}
-            style={{
-              width: dim(24),
-              height: dim(22),
-              minHeight: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "none",
-              borderRadius: dim(3),
-              background: broadScanEnabled ? `${flowScanTone}18` : "transparent",
-              color: flowScanTone,
-              cursor: "pointer",
-            }}
-          >
-            <RadioTower size={14} strokeWidth={2.4} />
-          </button></AppTooltip>
-        }
+      <Popover
+        open={!isPhone && unusualTriggerActive}
+        onOpenChange={(next) => setOpenSettingsLane(next ? "unusual" : null)}
       >
-        {(item, duplicate, compact) => (
-          <HeaderUnusualTapeItem
-            item={item}
-            duplicate={duplicate}
-            compact={compact}
-            onClick={onFlowAction}
-          />
-        )}
-      </HeaderBroadcastLane>
+        <HeaderBroadcastLane
+          label="FLOW"
+          items={unusualItems}
+          emptyLabel={unusualEmptyLabel}
+          emptyTone={flowScanTone}
+          testId="header-unusual-tape"
+          durationSeconds={speedDurations.unusualDurationSeconds}
+          compactSettings={isPhone}
+          labelTrigger={
+            <PopoverTrigger asChild>
+              {buildLaneTriggerButton({
+                testId: "header-unusual-tape-settings-trigger",
+                ariaLabel: "FLOW settings",
+                active: unusualTriggerActive,
+                accentTone: T.accent,
+                content: isPhone ? <Settings size={14} strokeWidth={2} /> : "FLOW",
+              })}
+            </PopoverTrigger>
+          }
+          action={
+            <AppTooltip content={broadToggleTitle}><button
+              type="button"
+              data-testid="header-unusual-broad-toggle"
+              aria-label={broadToggleTitle}
+              aria-pressed={broadScanEnabled}
+              onClick={toggleBroadScan}
+              style={{
+                width: dim(24),
+                height: dim(22),
+                minHeight: dim(22),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                borderRadius: dim(3),
+                background: broadScanEnabled ? `${flowScanTone}18` : "transparent",
+                color: flowScanTone,
+                cursor: "pointer",
+              }}
+            >
+              <RadioTower size={14} strokeWidth={2.4} />
+            </button></AppTooltip>
+          }
+        >
+          {(item, duplicate, compact) => (
+            <HeaderUnusualTapeItem
+              item={item}
+              duplicate={duplicate}
+              compact={compact}
+              onClick={onFlowAction}
+            />
+          )}
+        </HeaderBroadcastLane>
+        {!isPhone ? (
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={6}
+            collisionPadding={12}
+            style={popoverContentStyle}
+          >
+            {unusualSettings}
+          </PopoverContent>
+        ) : null}
+      </Popover>
+
       <BottomSheet
         open={isPhone && openSettingsLane === "signals"}
         onClose={() => setOpenSettingsLane(null)}
