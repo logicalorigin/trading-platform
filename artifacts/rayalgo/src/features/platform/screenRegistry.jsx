@@ -103,7 +103,7 @@ export const ScreenLoadingFallback = ({ label = "Loading" }) => (
       style={{
         border: "none",
         borderRadius: dim(12),
-        background: T.border,
+        background: T.bg1,
         animation: "rayalgoScreenFallbackPulse 1.45s ease-in-out infinite",
       }}
     />
@@ -120,7 +120,7 @@ export const ScreenLoadingFallback = ({ label = "Loading" }) => (
           style={{
             border: "none",
             borderRadius: dim(12),
-            background: T.border,
+            background: T.bg1,
             animation: `rayalgoScreenFallbackPulse ${1.55 + index * 0.12}s ease-in-out infinite`,
           }}
         />
