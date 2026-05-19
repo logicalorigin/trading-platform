@@ -33,17 +33,17 @@ test("keeps account realtime during backoff for active trading state", () => {
   assert.equal(schedule.classes.foregroundIbkr, false);
 });
 
-test("starts broad flow runtime when visible after session metadata settles", () => {
+test("does not start broad flow runtime on unrelated screens", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "account",
-    screenWarmupPhase: "initial",
+    screenWarmupPhase: "ready",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("keeps broad flow runtime owned without broker readiness", () => {
+test("requires broker readiness for broad flow runtime", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -52,12 +52,12 @@ test("keeps broad flow runtime owned without broker readiness", () => {
     brokerAuthenticated: false,
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.accountRealtime, false);
   assert.equal(schedule.streams.marketStockAggregates, false);
 });
 
-test("keeps broad flow runtime owned when background IBKR work is blocked", () => {
+test("pauses broad flow runtime when background IBKR work is blocked", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
@@ -65,7 +65,7 @@ test("keeps broad flow runtime owned when background IBKR work is blocked", () =
     ibkrWorkPressure: WORK_PRESSURE_STATE.degraded,
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.marketStockAggregates, true);
   assert.equal(schedule.streams.lowPriorityHistory, false);
 });
@@ -98,7 +98,7 @@ test("memory watch pressure blocks low-priority background hydration first", () 
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
 });
 
-test("critical memory pressure pauses hidden preload without dropping broad flow owner", () => {
+test("critical memory pressure pauses hidden preload and broad flow", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -110,21 +110,21 @@ test("critical memory pressure pauses hidden preload without dropping broad flow
   });
 
   assert.equal(schedule.hydrationPressure, "stalled");
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.resume.backgroundRefresh, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
 });
 
-test("keeps broad flow runtime active while page is hidden", () => {
+test("pauses broad flow runtime while page is hidden", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     pageVisible: false,
-    activeScreen: "account",
+    activeScreen: "flow",
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.accountRealtime, false);
   assert.equal(schedule.streams.marketStockAggregates, false);
 });
@@ -140,14 +140,14 @@ test("defers broad flow runtime before session metadata settles", () => {
   assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("starts broad flow runtime before first screen ready while deferring low priority work", () => {
+test("defers broad flow runtime before first screen ready", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
     screenWarmupPhase: "initial",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
@@ -167,5 +167,5 @@ test("waits for a first memory sample before starting background work", () => {
   assert.equal(schedule.memoryPressure.observed, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
 });

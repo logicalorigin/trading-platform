@@ -422,7 +422,7 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
   assert.doesNotMatch(platformAppSource, /broadFlowActiveSymbols/);
 });
 
-test("Broad scanner owns Flow and Market flow without the shared all-flow runtime", () => {
+test("Broad scanner owns Flow and Market flow without app-wide always-on runtime", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const schedulerSource = readFileSync(
     new URL("./appWorkScheduler.js", import.meta.url),
@@ -453,7 +453,7 @@ test("Broad scanner owns Flow and Market flow without the shared all-flow runtim
   assert.match(schedulerSource, /const firstScreenReady = screenWarmupPhase !== "initial"/);
   assert.match(
     schedulerSource,
-    /const broadFlowAllowed = Boolean\(sessionReady\)/,
+    /const broadFlowAllowed = Boolean\([\s\S]*sessionReady[\s\S]*firstScreenReady[\s\S]*visible[\s\S]*\(market \|\| flow\)[\s\S]*backgroundIbkr[\s\S]*\);/,
   );
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);

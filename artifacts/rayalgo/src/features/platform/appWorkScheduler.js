@@ -77,11 +77,17 @@ export const buildPlatformWorkSchedule = ({
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
   const firstScreenReady = screenWarmupPhase !== "initial";
-  const broadFlowAllowed = Boolean(sessionReady);
   const market = screen === "market";
   const flow = screen === "flow";
   const trade = screen === "trade";
   const account = screen === "account";
+  const broadFlowAllowed = Boolean(
+    sessionReady &&
+      firstScreenReady &&
+      visible &&
+      (market || flow) &&
+      backgroundIbkr,
+  );
   const accountRealtimeCritical = Boolean(
     criticalIbkr &&
       (account ||
