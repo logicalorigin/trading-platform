@@ -109,13 +109,44 @@ const HeaderBroadcastSegment = ({
   );
 };
 
-const HeaderSignalTapeItem = ({
+const headerSignalIntervalStateEqual = (left, right) =>
+  left?.currentSignalDirection === right?.currentSignalDirection &&
+  left?.currentSignalAt === right?.currentSignalAt &&
+  left?.fresh === right?.fresh &&
+  left?.barsSinceSignal === right?.barsSinceSignal &&
+  left?.status === right?.status &&
+  left?.lastError === right?.lastError;
+
+const headerSignalIntervalStatesEqual = (left = {}, right = {}) =>
+  WATCHLIST_SIGNAL_TIMEFRAMES.every((timeframe) =>
+    headerSignalIntervalStateEqual(left?.[timeframe], right?.[timeframe]),
+  );
+
+const headerSignalTapeItemsEqual = (left = {}, right = {}) =>
+  left.id === right.id &&
+  left.symbol === right.symbol &&
+  left.direction === right.direction &&
+  left.directionLabel === right.directionLabel &&
+  left.time === right.time &&
+  left.price === right.price &&
+  left.fresh === right.fresh &&
+  left.timeframe === right.timeframe &&
+  headerSignalIntervalStatesEqual(left.intervalStates, right.intervalStates);
+
+const headerSignalTapeItemPropsEqual = (left, right) =>
+  left.duplicate === right.duplicate &&
+  left.compact === right.compact &&
+  left.selectedTimeframe === right.selectedTimeframe &&
+  left.onClick === right.onClick &&
+  headerSignalTapeItemsEqual(left.item, right.item);
+
+const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
   item,
   duplicate = false,
   onClick,
   compact = false,
   selectedTimeframe = "5m",
-}) => {
+}) {
   const isSell = item.direction === "sell";
   const tone = isSell ? T.red : T.green;
   const priceLabel =
@@ -156,7 +187,7 @@ const HeaderSignalTapeItem = ({
       />
     </HeaderBroadcastSegment>
   );
-};
+}, headerSignalTapeItemPropsEqual);
 
 const colorWithAlpha = (color, alpha) => {
   const match = /^#([0-9a-f]{6})$/i.exec(String(color || ""));
