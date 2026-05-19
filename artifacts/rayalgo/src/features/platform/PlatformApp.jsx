@@ -71,11 +71,6 @@ import {
 } from "./HeaderKpiStrip.jsx";
 import { MemoHeaderStatusCluster } from "./HeaderStatusCluster.jsx";
 import { HeaderBroadcastScrollerStack } from "./HeaderBroadcastScrollerStack.jsx";
-import {
-  buildHeaderSignalContextSymbols,
-  HEADER_SIGNAL_CONTEXT_SYMBOL_LIMIT,
-  HEADER_SIGNAL_MAX_ITEMS,
-} from "./headerBroadcastModel";
 import { MemoWatchlistContainer } from "./PlatformWatchlist.jsx";
 import { LatencyDebugStrip } from "./LatencyDebugStrip.jsx";
 import { normalizeTickerSymbol } from "./tickerIdentity";
@@ -179,23 +174,7 @@ input[type=range]{accent-color:#E08F76}
 
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
-const HEADER_SIGNAL_CONTEXT_CHUNK_SIZE = 8;
 const SIGNAL_MATRIX_TIMEFRAMES = ["2m", "5m", "15m"];
-
-const signalMatrixStateKey = (state) => {
-  const symbol = normalizeTickerSymbol(state?.symbol);
-  const timeframe = String(state?.timeframe || "").trim();
-  return symbol && timeframe ? `${symbol}|${timeframe}` : null;
-};
-
-const mergeSignalMatrixStates = (previousStates = [], nextStates = []) => {
-  const byKey = new Map();
-  [...previousStates, ...nextStates].forEach((state) => {
-    const key = signalMatrixStateKey(state);
-    if (key) byKey.set(key, state);
-  });
-  return Array.from(byKey.values());
-};
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -1460,7 +1439,7 @@ export default function PlatformApp() {
   });
   const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => ({
     states: [],
-    timeframes: ["2m", "5m", "15m"],
+    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
   }));
   const signalMatrixEvaluationInFlightRef = useRef(false);
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
@@ -1476,21 +1455,6 @@ export default function PlatformApp() {
       ],
     [signalMonitorStates],
   );
-  const headerSignalSymbols = useMemo(
-    () => {
-      return buildHeaderSignalContextSymbols(
-        {
-          states: signalMonitorStates,
-          events: signalMonitorEvents,
-        },
-        {
-          maxItems: HEADER_SIGNAL_MAX_ITEMS,
-          maxSymbols: HEADER_SIGNAL_CONTEXT_SYMBOL_LIMIT,
-        },
-      );
-    },
-    [signalMonitorEvents, signalMonitorStates],
-  );
   const signalMatrixSymbols = useMemo(
     () => [...new Set(watchlistSymbols)].slice(0, 250),
     [watchlistSymbols],
@@ -1504,7 +1468,7 @@ export default function PlatformApp() {
       onSuccess: (data) => {
         setSignalMatrixSnapshot({
           states: data?.states || [],
-          timeframes: data?.timeframes || ["2m", "5m", "15m"],
+          timeframes: data?.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
           evaluatedAt: data?.evaluatedAt || null,
           skippedSymbols: data?.skippedSymbols || [],
           truncated: Boolean(data?.truncated),
@@ -1525,7 +1489,7 @@ export default function PlatformApp() {
         environment: signalMonitorEnvironment,
         watchlistId: null,
         symbols: signalMatrixSymbols,
-        timeframes: ["2m", "5m", "15m"],
+        timeframes: SIGNAL_MATRIX_TIMEFRAMES,
       },
     });
   }, [
@@ -1549,138 +1513,7 @@ export default function PlatformApp() {
     signalMatrixSymbolsKey,
     signalMatrixSymbols.length,
   ]);
-  const [headerSignalMatrixSnapshot, setHeaderSignalMatrixSnapshot] = useState(
-    () => ({
-      states: [],
-      timeframes: ["2m", "5m", "15m"],
-    }),
-  );
-  const headerSignalMatrixInFlightKeysRef = useRef(new Set());
-  const headerSignalSymbolsKey = useMemo(
-    () => headerSignalSymbols.join(","),
-    [headerSignalSymbols],
-  );
-  const headerSignalMatrixContextKey = useMemo(
-    () =>
-      [
-        signalMonitorEnvironment,
-        headerSignalSymbolsKey,
-      ].join("|"),
-    [headerSignalSymbolsKey, signalMonitorEnvironment],
-  );
-  const headerSignalMatrixContextKeyRef = useRef(headerSignalMatrixContextKey);
-  const evaluateHeaderSignalMatrixMutation = useEvaluateSignalMonitorMatrix();
-  useEffect(() => {
-    headerSignalMatrixContextKeyRef.current = headerSignalMatrixContextKey;
-    const activeSymbols = new Set(
-      headerSignalSymbolsKey
-        ? headerSignalSymbolsKey.split(",").map((symbol) => normalizeTickerSymbol(symbol))
-        : [],
-    );
-    setHeaderSignalMatrixSnapshot((previous) => ({
-      ...previous,
-      states: (previous.states || []).filter((state) =>
-        activeSymbols.has(normalizeTickerSymbol(state?.symbol)),
-      ),
-      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-      skippedSymbols: (previous.skippedSymbols || []).filter((symbol) =>
-        activeSymbols.has(normalizeTickerSymbol(symbol)),
-      ),
-      truncated: false,
-    }));
-  }, [headerSignalMatrixContextKey, headerSignalSymbolsKey]);
-  const runHeaderSignalMatrixEvaluation = useCallback(async () => {
-    if (headerSignalMatrixInFlightKeysRef.current.has(headerSignalMatrixContextKey)) {
-      return;
-    }
-    headerSignalMatrixInFlightKeysRef.current.add(headerSignalMatrixContextKey);
-    const activeSymbols = new Set(headerSignalSymbols);
-    const requestContextKey = headerSignalMatrixContextKey;
-    setHeaderSignalMatrixSnapshot((previous) => ({
-      ...previous,
-      states: (previous.states || []).filter((state) =>
-        activeSymbols.has(normalizeTickerSymbol(state?.symbol)),
-      ),
-    }));
-
-    try {
-      const symbolChunks = [];
-      for (let index = 0; index < headerSignalSymbols.length; index += HEADER_SIGNAL_CONTEXT_CHUNK_SIZE) {
-        symbolChunks.push(headerSignalSymbols.slice(
-          index,
-          index + HEADER_SIGNAL_CONTEXT_CHUNK_SIZE,
-        ));
-      }
-      await Promise.all(symbolChunks.map(async (symbols) => {
-        const data = await evaluateHeaderSignalMatrixMutation.mutateAsync({
-          data: {
-            environment: signalMonitorEnvironment,
-            watchlistId: null,
-            symbols,
-            timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-          },
-        });
-        if (headerSignalMatrixContextKeyRef.current !== requestContextKey) {
-          return;
-        }
-        setHeaderSignalMatrixSnapshot((previous) => ({
-          states: mergeSignalMatrixStates(
-            (previous.states || []).filter((state) =>
-              activeSymbols.has(normalizeTickerSymbol(state?.symbol)),
-            ),
-            data?.states || [],
-          ),
-          timeframes:
-            data?.timeframes || previous.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
-          evaluatedAt: data?.evaluatedAt || previous.evaluatedAt || null,
-          skippedSymbols: [
-            ...new Set([
-              ...(previous.skippedSymbols || []),
-              ...(data?.skippedSymbols || []),
-            ]),
-          ],
-          truncated: Boolean(previous.truncated || data?.truncated),
-        }));
-      }));
-    } catch (_error) {
-      // The regular signal monitor state remains the source of truth; failed
-      // context chunks should not blank the lane.
-    } finally {
-      headerSignalMatrixInFlightKeysRef.current.delete(requestContextKey);
-    }
-  }, [
-    evaluateHeaderSignalMatrixMutation.mutateAsync,
-    headerSignalMatrixContextKey,
-    headerSignalSymbols,
-    headerSignalSymbolsKey,
-    signalMonitorEnvironment,
-  ]);
-  useEffect(() => {
-    if (!pageVisible || !headerSignalSymbols.length) {
-      return undefined;
-    }
-
-    runHeaderSignalMatrixEvaluation();
-    const interval = window.setInterval(
-      runHeaderSignalMatrixEvaluation,
-      signalMonitorPollMs,
-    );
-    return () => window.clearInterval(interval);
-  }, [
-    headerSignalSymbols.length,
-    headerSignalSymbolsKey,
-    pageVisible,
-    runHeaderSignalMatrixEvaluation,
-    signalMonitorPollMs,
-  ]);
-  const headerBroadcastSignalMatrixStates = useMemo(
-    () =>
-      mergeSignalMatrixStates(
-        signalMatrixSnapshot.states || [],
-        headerSignalMatrixSnapshot.states || [],
-      ),
-    [headerSignalMatrixSnapshot.states, signalMatrixSnapshot.states],
-  );
+  const headerBroadcastSignalMatrixStates = signalMatrixSnapshot.states;
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental") => {
       if (signalMonitorEvaluationInFlightRef.current) {
