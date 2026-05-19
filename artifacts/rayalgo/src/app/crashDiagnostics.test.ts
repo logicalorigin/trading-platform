@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
+  RootCrashDiagnosticsFallback,
   buildRootCrashDiagnosticBundle,
   redactCrashDiagnosticValue,
 } from "./crashDiagnostics";
@@ -41,4 +44,22 @@ test("root crash bundle includes runtime and normalized error metadata", () => {
   assert.equal(bundle.error.message, "Render failed");
   assert.equal(bundle.componentStack, "\n    at Crash");
   assert.equal(bundle.runtime.packageName, "@workspace/rayalgo");
+});
+
+test("root crash fallback always renders the diagnostic screen", () => {
+  const markup = renderToStaticMarkup(
+    createElement(RootCrashDiagnosticsFallback, {
+      error: new TypeError("Render failed"),
+      label: "Rayalgo app shell",
+      normalizedError: new TypeError("Render failed"),
+      componentStack: "\n    at Crash",
+      resetErrorBoundary() {},
+    }),
+  );
+
+  assert.match(markup, /data-testid="root-crash-diagnostics"/);
+  assert.match(markup, /Open Diagnostics/);
+  assert.match(markup, /Redacted Bundle/);
+  assert.doesNotMatch(markup, /root-crash-minimal/);
+  assert.doesNotMatch(markup, /only shown in development/);
 });

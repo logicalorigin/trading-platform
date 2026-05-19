@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ErrorInfo } from "react";
 import { Activity, AlertTriangle, Copy, RefreshCcw } from "lucide-react";
 import type { FallbackProps } from "react-error-boundary";
@@ -56,13 +56,6 @@ type LatestDiagnosticsSummary = {
 
 const SENSITIVE_KEY_PATTERN =
   /(authorization|cookie|password|secret|token|account|accountid|selectedaccount|credential|apiKey|session)/i;
-
-const readImportMetaEnv = () =>
-  ((import.meta as unknown as { env?: Record<string, unknown> }).env || {}) as {
-    DEV?: boolean;
-  };
-
-const isCrashDiagnosticsVerbose = () => readImportMetaEnv().DEV === true;
 
 const readSessionJson = (key: string): unknown => {
   try {
@@ -235,7 +228,7 @@ const loadLatestDiagnostics = async (): Promise<LatestDiagnosticsSummary | null>
   };
 };
 
-const openDiagnosticsScreen = () => {
+export const openDiagnosticsScreen = () => {
   try {
     const raw = window.localStorage?.getItem(RAYALGO_STORAGE_KEY);
     const state = raw ? JSON.parse(raw) : {};
@@ -260,39 +253,6 @@ const buttonStyle = {
   cursor: "pointer",
 } as const;
 
-function MinimalRootCrashFallback({
-  resetErrorBoundary,
-}: {
-  resetErrorBoundary: () => void;
-}) {
-  return (
-    <main
-      data-testid="root-crash-minimal"
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        background: "#16151A",
-        color: "#F2EFE9",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 520 }}>
-        <h1 style={{ margin: "0 0 10px", fontSize: 18 }}>RayAlgo could not load</h1>
-        <p style={{ margin: "0 0 16px", color: "#B8B4AC", fontSize: 13 }}>
-          Reload the app. Full crash diagnostics are only shown in development.
-        </p>
-        <button type="button" onClick={resetErrorBoundary} style={buttonStyle}>
-          <RefreshCcw size={15} aria-hidden="true" />
-          Reload
-        </button>
-      </div>
-    </main>
-  );
-}
-
 export function RootCrashDiagnosticsFallback({
   error,
   normalizedError,
@@ -307,7 +267,6 @@ export function RootCrashDiagnosticsFallback({
   const [latestDiagnostics, setLatestDiagnostics] =
     useState<LatestDiagnosticsSummary | null>(null);
   const [copyLabel, setCopyLabel] = useState("Copy bundle");
-  const verbose = isCrashDiagnosticsVerbose();
   const normalized = normalizedError ?? normalizeError(error);
   const bundle = useMemo(
     () =>
@@ -334,7 +293,6 @@ export function RootCrashDiagnosticsFallback({
   );
 
   useEffect(() => {
-    if (!verbose) return undefined;
     let cancelled = false;
     loadLatestDiagnostics()
       .then((summary) => {
@@ -346,11 +304,7 @@ export function RootCrashDiagnosticsFallback({
     return () => {
       cancelled = true;
     };
-  }, [verbose]);
-
-  if (!verbose) {
-    return <MinimalRootCrashFallback resetErrorBoundary={resetErrorBoundary} />;
-  }
+  }, []);
 
   const handleCopy = async () => {
     try {

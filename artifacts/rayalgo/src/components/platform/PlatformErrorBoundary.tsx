@@ -1,6 +1,8 @@
 import {
+  useMemo,
   useEffect,
   useRef,
+  useState,
   type ErrorInfo,
   type MutableRefObject,
   type ReactNode,
@@ -9,6 +11,11 @@ import {
   ErrorBoundary,
   type FallbackProps,
 } from "react-error-boundary";
+import {
+  buildRootCrashDiagnosticBundle,
+  openDiagnosticsScreen,
+  redactCrashDiagnosticValue,
+} from "../../app/crashDiagnostics";
 import { FONT_CSS_VAR, FONT_WEIGHT, TYPE_CSS_VAR } from "../../lib/typography";
 
 type PlatformErrorBoundaryProps = {
@@ -94,6 +101,7 @@ function WidgetErrorFallback({
   autoResetDelaysMs,
   onAutoReset,
   markNextResetAutomatic,
+  componentStack,
 }: FallbackProps & {
   label: string;
   minHeight?: number | string;
@@ -101,10 +109,27 @@ function WidgetErrorFallback({
   autoResetDelaysMs?: number[];
   onAutoReset?: PlatformErrorBoundaryProps["onAutoReset"];
   markNextResetAutomatic: () => void;
+  componentStack?: string | null;
 }) {
   const normalizedError = normalizeBoundaryError(error);
+  const [copyLabel, setCopyLabel] = useState("Copy bundle");
   const autoResetDelayMs =
     autoResetDelaysMs?.[autoResetAttemptRef.current] ?? null;
+  const bundleText = useMemo(
+    () =>
+      JSON.stringify(
+        redactCrashDiagnosticValue(
+          buildRootCrashDiagnosticBundle({
+            label,
+            error: normalizedError,
+            componentStack,
+          }),
+        ),
+        null,
+        2,
+      ),
+    [componentStack, label, normalizedError],
+  );
 
   useEffect(() => {
     if (!Number.isFinite(autoResetDelayMs) || Number(autoResetDelayMs) < 0) {
@@ -138,6 +163,22 @@ function WidgetErrorFallback({
     autoResetAttemptRef.current = 0;
     resetErrorBoundary();
   };
+  const handleCopyBundle = async () => {
+    try {
+      await navigator.clipboard.writeText(bundleText);
+      setCopyLabel("Copied");
+    } catch {
+      setCopyLabel("Copy failed");
+    }
+  };
+  const actionStyle = {
+    border: "1px solid color-mix(in srgb, currentColor 28%, transparent)",
+    background: "Canvas",
+    color: "CanvasText",
+    cursor: "pointer",
+    font: `700 ${TYPE_CSS_VAR.label} ${FONT_CSS_VAR.code}`,
+    padding: "6px 10px",
+  } as const;
 
   return (
     <div
@@ -172,20 +213,24 @@ function WidgetErrorFallback({
       >
         {normalizedError.message || "Render failed."}
       </div>
-      <button
-        type="button"
-        onClick={handleManualRetry}
+      <div
         style={{
-          border: "1px solid color-mix(in srgb, currentColor 28%, transparent)",
-          background: "Canvas",
-          color: "CanvasText",
-          cursor: "pointer",
-          font: `700 ${TYPE_CSS_VAR.label} ${FONT_CSS_VAR.code}`,
-          padding: "6px 10px",
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: 8,
         }}
       >
-        Retry
-      </button>
+        <button type="button" onClick={handleManualRetry} style={actionStyle}>
+          Retry
+        </button>
+        <button type="button" onClick={openDiagnosticsScreen} style={actionStyle}>
+          Open Diagnostics
+        </button>
+        <button type="button" onClick={handleCopyBundle} style={actionStyle}>
+          {copyLabel}
+        </button>
+      </div>
     </div>
   );
 }
@@ -257,6 +302,7 @@ export function PlatformErrorBoundary({
             autoResetDelaysMs={autoResetDelaysMs}
             onAutoReset={onAutoReset}
             markNextResetAutomatic={markNextResetAutomatic}
+            componentStack={lastErrorInfoRef.current?.componentStack ?? null}
           />
         );
       }}
