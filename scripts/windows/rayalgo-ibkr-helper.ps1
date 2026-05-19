@@ -33,7 +33,7 @@ $BuildRefFile = Join-Path $StateDir 'bridge-build-ref.txt'
 $BridgeBundleHashFile = Join-Path $StateDir 'bridge-bundle.sha256'
 $LockHashFile = Join-Path $StateDir 'pnpm-lock.sha256'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-05-06.gateway-reuse-v13'
+$HelperVersion = '2026-05-19.gateway-progress-v14'
 $script:BridgeBundleHash = ''
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
@@ -397,17 +397,9 @@ function Get-IBGatewayProcessSummary {
         $candidateFilter = "Name = 'ibgateway.exe' OR Name = 'java.exe' OR Name = 'javaw.exe'"
         $cimProcesses = @()
         try {
-            $cimProcesses = @(Get-CimInstance Win32_Process -Filter $candidateFilter -ErrorAction Stop)
+            $cimProcesses = @(Get-CimInstance Win32_Process -Filter $candidateFilter -OperationTimeoutSec 3 -ErrorAction Stop)
         } catch {
-            if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
-                try {
-                    $cimProcesses = @(Get-WmiObject Win32_Process -Filter $candidateFilter -ErrorAction Stop)
-                } catch {
-                    Write-Log "IB Gateway process command-line detection skipped: $($_.Exception.Message)"
-                }
-            } else {
-                Write-Log "IB Gateway process command-line detection skipped: $($_.Exception.Message)"
-            }
+            Write-Log "IB Gateway process command-line detection skipped: $($_.Exception.Message)"
         }
 
         foreach ($process in $cimProcesses) {
@@ -494,6 +486,8 @@ function Find-IBGatewayExecutable {
 }
 
 function Ensure-IBGatewaySocket {
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'checking_gateway_socket' -Message 'Checking IB Gateway live API socket on 127.0.0.1:4001.'
+
     if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
         Send-BridgeProgress -Status 'launched' -Step 'gateway_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
         return
