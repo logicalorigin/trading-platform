@@ -1,5 +1,13 @@
 import { useMemo, useState } from "react";
 import {
+  ArrowUpDown,
+  Ban,
+  CheckCircle2,
+  Inbox,
+  List,
+  MinusCircle,
+} from "lucide-react";
+import {
   RADII,
   T,
   dim,
@@ -14,17 +22,25 @@ import {
   useAlgoFocus,
 } from "../../features/platform/algoFocusStore";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { asRecord } from "./algoHelpers";
+import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
+import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
+import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
+import {
+  asRecord,
+  findSignalOptionsCandidateForSignal,
+  optionProviderContractId,
+} from "./algoHelpers";
 import {
   OperationsSignalRow,
   OperationsSignalTableHeader,
 } from "./OperationsSignalRow";
 
 const FILTER_OPTIONS = [
-  { id: "all", label: "All" },
-  { id: "ready", label: "Ready" },
-  { id: "blocked", label: "Blocked" },
-  { id: "unavailable", label: "Unavailable" },
+  { id: "all", label: "All", icon: List, tone: T.accent },
+  { id: "ready", label: "Ready", icon: CheckCircle2, tone: T.green },
+  { id: "blocked", label: "Blocked", icon: Ban, tone: T.red },
+  { id: "unavailable", label: "Unavailable", icon: MinusCircle, tone: T.textDim },
 ];
 
 const SORT_OPTIONS = [
@@ -32,13 +48,6 @@ const SORT_OPTIONS = [
   { id: "symbol", label: "Symbol" },
   { id: "bars", label: "Bars" },
 ];
-
-const candidateByKey = (candidates, signalKey) =>
-  candidates.find(
-    (candidate) =>
-      asRecord(candidate?.signal).signalKey &&
-      asRecord(candidate?.signal).signalKey === signalKey,
-  ) || null;
 
 const classifySignal = (signal, candidate) => {
   if (signal?.status === "unavailable") return "unavailable";
@@ -85,16 +94,34 @@ const sortRows = (rows, sortKey, focusedSymbol = null) => {
 export const OperationsSignalTable = ({
   signals = [],
   candidates = [],
+  signalMatrixStates = [],
   algoIsPhone,
   renderDrill,
 }) => {
   const [filter, setFilter] = useState("all");
   const [sortKey, setSortKey] = useState("score");
   const focus = useAlgoFocus();
+  const providerContractIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (candidates || [])
+            .map((candidate) =>
+              optionProviderContractId(asRecord(candidate).selectedContract),
+            )
+            .filter(Boolean),
+        ),
+      ),
+    [candidates],
+  );
+  useStoredOptionQuoteSnapshotVersion(providerContractIds);
+  const signalMatrixBySymbol = useMemo(
+    () => buildSignalMatrixBySymbol(signalMatrixStates),
+    [signalMatrixStates],
+  );
   const rows = useMemo(() => {
     const augmented = (signals || []).map((signal) => {
-      const signalKey = asRecord(signal).signalKey;
-      const candidate = candidateByKey(candidates || [], signalKey);
+      const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
       return { signal, candidate, classification: classifySignal(signal, candidate) };
     });
     const filtered =
@@ -103,11 +130,18 @@ export const OperationsSignalTable = ({
         : augmented.filter((row) => row.classification === filter);
     return sortRows(filtered, sortKey, focus.focusedSymbol);
   }, [candidates, filter, focus.focusedSymbol, signals, sortKey]);
+  const rowSymbols = useMemo(
+    () =>
+      rows
+        .map(({ signal }) => String(asRecord(signal).symbol || "").toUpperCase())
+        .filter(Boolean),
+    [rows],
+  );
+  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
 
   const counts = useMemo(() => {
     const augmented = (signals || []).map((signal) => {
-      const signalKey = asRecord(signal).signalKey;
-      const candidate = candidateByKey(candidates || [], signalKey);
+      const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
       return classifySignal(signal, candidate);
     });
     return {
@@ -125,7 +159,8 @@ export const OperationsSignalTable = ({
         background: T.bg1,
         border: `1px solid ${T.border}`,
         borderRadius: dim(RADII.md),
-        overflow: "hidden",
+        overflowX: "auto",
+        overflowY: "hidden",
         minWidth: 0,
       }}
     >
@@ -144,11 +179,13 @@ export const OperationsSignalTable = ({
           style={{
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(12),
+            fontSize: fs(algoIsPhone ? 11 : 12),
             fontWeight: 600,
+            flex: "0 0 auto",
+            whiteSpace: "nowrap",
           }}
         >
-          Signals → Action
+          {algoIsPhone ? "Signals" : "Signals to Action"}
         </span>
         <div
           style={{
@@ -161,28 +198,60 @@ export const OperationsSignalTable = ({
             fontSize: textSize("caption"),
           }}
         >
-          {FILTER_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setFilter(option.id)}
-              style={{
-                padding: sp("2px 8px"),
-                borderRadius: dim(RADII.pill),
-                border: `1px solid ${filter === option.id ? T.accent : T.border}`,
-                background: filter === option.id ? `${T.accent}1c` : "transparent",
-                color: filter === option.id ? T.text : T.textDim,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                cursor: "pointer",
-              }}
-            >
-              {option.label}{" "}
-              <span style={{ color: T.textMuted }}>{counts[option.id] ?? 0}</span>
-            </button>
-          ))}
-          <span style={{ paddingLeft: sp(4) }}>
-            Sort{" "}
+          {FILTER_OPTIONS.map((option) => {
+            const active = filter === option.id;
+            const Icon = option.icon;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setFilter(option.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(3),
+                  padding: sp("2px 8px"),
+                  borderRadius: dim(RADII.pill),
+                  border: `1px solid ${active ? option.tone : T.border}`,
+                  background: active ? `${option.tone}1c` : "transparent",
+                  color: active ? T.text : T.textDim,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  cursor: "pointer",
+                }}
+              >
+                {!algoIsPhone && Icon ? (
+                  <Icon
+                    size={12}
+                    strokeWidth={1.8}
+                    aria-hidden="true"
+                    style={{ color: active ? option.tone : T.textMuted }}
+                  />
+                ) : null}
+                <span>{option.label}</span>
+                <span style={{ color: active ? option.tone : T.textMuted }}>
+                  {counts[option.id] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(3),
+              paddingLeft: sp(4),
+            }}
+          >
+            {!algoIsPhone ? (
+              <ArrowUpDown
+                size={12}
+                strokeWidth={1.8}
+                aria-hidden="true"
+                style={{ color: T.textMuted }}
+              />
+            ) : null}
+            <span>Sort</span>
             <select
               value={sortKey}
               onChange={(event) => setSortKey(event.target.value)}
@@ -210,15 +279,22 @@ export const OperationsSignalTable = ({
 
       <div style={{ maxHeight: 520, overflowY: "auto", minWidth: 0 }}>
         {rows.length === 0 ? (
-          <div
-            style={{
-              padding: sp("16px 14px"),
-              color: T.textDim,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-            }}
-          >
-            No signals match the current filter.
+          <div style={{ padding: sp(6) }}>
+            <DataUnavailableState
+              title={
+                filter === "all"
+                  ? "Awaiting next scan"
+                  : "No signals match this filter"
+              }
+              detail={
+                filter === "all"
+                  ? "Signals appear as soon as the monitor finishes its next pass."
+                  : "Switch filter to All to see signals in other states."
+              }
+              icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}
+              minHeight={56}
+              loading={filter === "all"}
+            />
           </div>
         ) : (
           rows.map(({ signal, candidate }) => {
@@ -229,6 +305,10 @@ export const OperationsSignalTable = ({
                 key={asRecord(signal).signalKey || symbol}
                 signal={signal}
                 candidate={candidate}
+                tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
+                tickerSnapshot={
+                  tickerSnapshotsBySymbol?.[String(symbol || "").toUpperCase()] || null
+                }
                 expanded={expanded && !algoIsPhone}
                 onToggle={() => {
                   if (expanded) {

@@ -8,6 +8,7 @@ import {
 import { ProfileSection } from "./ProfileSection.jsx";
 import {
   PROFILE_NUMBER_FIELDS,
+  RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
@@ -131,12 +132,12 @@ export const AlgoProfileTab = ({
     (option) =>
       option.value === profileDraft?.optionSelection?.putStrikeSlot,
   );
-  const strategySummary = `${strategySettingsDraft.signalTimeframe} · h${strategySettingsDraft.timeHorizon}`;
+  const strategySummary = `${strategySettingsDraft.signalTimeframe} · h${strategySettingsDraft.timeHorizon} · ${strategySettingsDraft.bosConfirmation}`;
   const riskSummary = `${formatMoney(profileDraft?.riskCaps?.maxPremiumPerEntry)}/entry · ${profileDraft?.riskCaps?.maxOpenSymbols ?? "?"} sym · ${formatMoney(profileDraft?.riskCaps?.maxDailyLoss)} halt`;
   const gatesSummary = `bear ADX ${profileDraft?.entryGate?.bearishRegime?.minAdx ?? "?"} · ${profileDraft?.entryGate?.bearishRegime?.enabled ? "bear on" : "bear off"}`;
   const strikesSummary = `${profileDraft?.optionSelection?.minDte ?? 0}-${profileDraft?.optionSelection?.maxDte ?? 0} DTE · call ${callSlot?.label || "?"} · put ${putSlot?.label || "?"}`;
   const fillsSummary = `${formatPct(profileDraft?.liquidityGate?.maxSpreadPctOfMid, 0)} spread · ${profileDraft?.fillPolicy?.ttlSeconds ?? "?"}s · chase ${formatChaseSteps(profileDraft?.fillPolicy?.chaseSteps)}`;
-  const exitsSummary = `stop ${profileDraft?.exitPolicy?.hardStopPct ?? "?"}% · trail ${profileDraft?.exitPolicy?.trailActivationPct ?? "?"}/${profileDraft?.exitPolicy?.trailGivebackPct ?? "?"}`;
+  const exitsSummary = `stop ${profileDraft?.exitPolicy?.hardStopPct ?? "?"}% · trail ${profileDraft?.exitPolicy?.trailActivationPct ?? "?"}/${profileDraft?.exitPolicy?.trailGivebackPct ?? "?"} · overnight ${profileDraft?.exitPolicy?.overnightExitEnabled ? "on" : "off"}`;
   const toggleSection = (id) =>
     setProfileSectionOpen((current) => (current === id ? null : id));
   return (
@@ -250,6 +251,76 @@ export const AlgoProfileTab = ({
               style={inputStyle}
             />
           </label>
+          <label style={numberFieldStyle}>
+            <span style={labelTextStyle}>BOS CONFIRMATION</span>
+            <select
+              value={strategySettingsDraft.bosConfirmation}
+              onChange={(event) =>
+                setStrategySettingsDraft((current) => ({
+                  ...current,
+                  bosConfirmation: event.target.value,
+                }))
+              }
+              style={inputStyle}
+            >
+              {RAY_REPLICA_BOS_CONFIRMATION_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={numberFieldStyle}>
+            <span style={labelTextStyle}>CHOCH ATR BUFFER</span>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              step={0.05}
+              value={strategySettingsDraft.chochAtrBuffer}
+              onChange={(event) =>
+                setStrategySettingsDraft((current) => ({
+                  ...current,
+                  chochAtrBuffer: numberFrom(event.target.value, 0),
+                }))
+              }
+              style={inputStyle}
+            />
+          </label>
+          <label style={numberFieldStyle}>
+            <span style={labelTextStyle}>CHOCH BODY ATR</span>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              step={0.05}
+              value={strategySettingsDraft.chochBodyExpansionAtr}
+              onChange={(event) =>
+                setStrategySettingsDraft((current) => ({
+                  ...current,
+                  chochBodyExpansionAtr: numberFrom(event.target.value, 0),
+                }))
+              }
+              style={inputStyle}
+            />
+          </label>
+          <label style={numberFieldStyle}>
+            <span style={labelTextStyle}>CHOCH VOLUME GATE</span>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              step={0.05}
+              value={strategySettingsDraft.chochVolumeGate}
+              onChange={(event) =>
+                setStrategySettingsDraft((current) => ({
+                  ...current,
+                  chochVolumeGate: numberFrom(event.target.value, 0),
+                }))
+              }
+              style={inputStyle}
+            />
+          </label>
         </div>
         <div
           style={{
@@ -267,8 +338,9 @@ export const AlgoProfileTab = ({
               fontSize: textSize("body"),
             }}
           >
-            Live profile {signalMonitorProfile?.timeframe || "5m"} ·
-            deployment h{asRecord(asRecord(focusedDeployment?.config).parameters).timeHorizon ?? 8}
+            Live profile {signalMonitorProfile?.timeframe || "5m"} · deployment h
+            {asRecord(asRecord(focusedDeployment?.config).parameters).timeHorizon ?? 8} ·{" "}
+            {asRecord(signalMonitorProfile?.rayReplicaSettings).bosConfirmation || "wicks"}
           </div>
           <button
             type="button"
@@ -508,6 +580,20 @@ export const AlgoProfileTab = ({
             renderNumberField(
               ...numberByKey("exitPolicy", "tightenAtTenXGivebackPct"),
             )}
+          {numberByKey("exitPolicy", "earlyExitBars") &&
+            renderNumberField(...numberByKey("exitPolicy", "earlyExitBars"))}
+          {numberByKey("exitPolicy", "earlyExitLossPct") &&
+            renderNumberField(
+              ...numberByKey("exitPolicy", "earlyExitLossPct"),
+            )}
+          {numberByKey("exitPolicy", "overnightMinGainPct") &&
+            renderNumberField(
+              ...numberByKey("exitPolicy", "overnightMinGainPct"),
+            )}
+          {numberByKey("exitPolicy", "overnightRunnerGivebackPct") &&
+            renderNumberField(
+              ...numberByKey("exitPolicy", "overnightRunnerGivebackPct"),
+            )}
           {renderBoolean(
             profileDraft?.exitPolicy?.flipOnOppositeSignal,
             (value) =>
@@ -518,6 +604,17 @@ export const AlgoProfileTab = ({
               ),
             "Exit on opposite signal",
             "exitPolicy.flipOnOppositeSignal",
+          )}
+          {renderBoolean(
+            profileDraft?.exitPolicy?.overnightExitEnabled,
+            (value) =>
+              patchProfileDraft(
+                "exitPolicy",
+                "overnightExitEnabled",
+                value,
+              ),
+            "Overnight exit enabled",
+            "exitPolicy.overnightExitEnabled",
           )}
         </div>
       </ProfileSection>

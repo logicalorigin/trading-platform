@@ -19,6 +19,9 @@ export type SignalOptionsWorkerSnapshot = {
     failedUntilMs: number;
     lastSuccessAt: string | null;
     lastError: string | null;
+    currentScanStartedAt: string | null;
+    currentScanAgeMs: number | null;
+    lastScanDurationMs: number | null;
     scanCount: number;
     totalFailureCount: number;
     failureCount: number;

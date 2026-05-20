@@ -239,6 +239,65 @@ test("signal-options worker records signal freshness from successful scans", asy
   assert.equal(runtime?.lastOldestSignalBarAt, "2026-04-28T13:15:00.000Z");
   assert.equal(runtime?.lastCandidateCount, 3);
   assert.equal(runtime?.lastBlockedCandidateCount, 2);
+  assert.equal(runtime?.currentScanStartedAt, null);
+  assert.equal(runtime?.currentScanAgeMs, null);
+  assert.equal(typeof runtime?.lastScanDurationMs, "number");
+});
+
+test("signal-options worker exposes active scan timing", async () => {
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  let resolveScan!: () => void;
+  let markScanStarted!: () => void;
+  const scanStarted = new Promise<void>((resolve) => {
+    markScanStarted = resolve;
+  });
+  const scanDone = new Promise<void>((resolve) => {
+    resolveScan = resolve;
+  });
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      markScanStarted();
+      await scanDone;
+      return {
+        summary: {
+          signalCount: 1,
+          freshSignalCount: 1,
+          staleSignalCount: 0,
+          unavailableSignalCount: 0,
+          latestSignalBarAt: "2026-04-28T13:59:00.000Z",
+          oldestSignalBarAt: "2026-04-28T13:59:00.000Z",
+          candidateCount: 0,
+          blockedCandidateCount: 0,
+        },
+      };
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  const run = worker.runOnce();
+  await scanStarted;
+  now = new Date("2026-04-28T14:00:30.000Z");
+
+  let snapshot = worker.getRuntimeSnapshot();
+  let runtime = snapshot.deployments[0];
+  assert.equal(snapshot.activeDeploymentCount, 1);
+  assert.equal(runtime?.currentScanStartedAt, "2026-04-28T14:00:00.000Z");
+  assert.equal(runtime?.currentScanAgeMs, 30_000);
+  assert.equal(runtime?.lastScanDurationMs, null);
+
+  resolveScan();
+  await run;
+
+  snapshot = worker.getRuntimeSnapshot();
+  runtime = snapshot.deployments[0];
+  assert.equal(snapshot.activeDeploymentCount, 0);
+  assert.equal(runtime?.currentScanStartedAt, null);
+  assert.equal(runtime?.currentScanAgeMs, null);
+  assert.equal(runtime?.lastScanDurationMs, 30_000);
 });
 
 test("signal-options worker accepts lightweight scan summaries", async () => {

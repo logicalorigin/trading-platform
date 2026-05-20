@@ -12,6 +12,7 @@ import {
   getSignalMonitorProfile,
   updateSignalMonitorProfile,
 } from "./signal-monitor";
+import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -32,6 +33,7 @@ type ListExecutionEventsInput = {
 };
 
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
+const RAY_REPLICA_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -101,6 +103,39 @@ function readSignalTimeframe(value: unknown): string {
     });
   }
   return timeframe;
+}
+
+function readOptionalBosConfirmation(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const confirmation = String(value || "").trim();
+  if (!RAY_REPLICA_BOS_CONFIRMATIONS.includes(confirmation as never)) {
+    throw new HttpError(400, "Unsupported BOS confirmation.", {
+      code: "algo_strategy_bos_confirmation_invalid",
+      detail: `Use one of ${RAY_REPLICA_BOS_CONFIRMATIONS.join(", ")}.`,
+      expose: true,
+    });
+  }
+  return confirmation;
+}
+
+function readOptionalRayReplicaNumber(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 20) {
+    throw new HttpError(400, "Invalid RayReplica setting.", {
+      code: "algo_strategy_ray_replica_setting_invalid",
+      detail: `${field} must be a number from 0 through 20.`,
+      expose: true,
+    });
+  }
+  return parsed;
 }
 
 function deploymentToResponse(
@@ -198,6 +233,12 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     },
   });
 
+  notifyAlgoCockpitChanged({
+    deploymentId: deployment.id,
+    mode: deployment.mode,
+    reason: "deployment_created",
+  });
+
   return deploymentToResponse(deployment);
 }
 
@@ -242,6 +283,12 @@ export async function setAlgoDeploymentEnabled(input: {
     },
   });
 
+  notifyAlgoCockpitChanged({
+    deploymentId: deployment.id,
+    mode: deployment.mode,
+    reason: input.enabled ? "deployment_enabled" : "deployment_paused",
+  });
+
   return deploymentToResponse(deployment);
 }
 
@@ -249,18 +296,42 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   deploymentId: string;
   timeHorizon: unknown;
   signalTimeframe: unknown;
+  bosConfirmation?: unknown;
+  chochAtrBuffer?: unknown;
+  chochBodyExpansionAtr?: unknown;
+  chochVolumeGate?: unknown;
 }) {
   const existing = await getDeploymentOrThrow(input.deploymentId);
   const timeHorizon = readTimeHorizon(input.timeHorizon);
   const signalTimeframe = readSignalTimeframe(input.signalTimeframe);
+  const bosConfirmation = readOptionalBosConfirmation(input.bosConfirmation);
+  const chochAtrBuffer = readOptionalRayReplicaNumber(
+    input.chochAtrBuffer,
+    "chochAtrBuffer",
+  );
+  const chochBodyExpansionAtr = readOptionalRayReplicaNumber(
+    input.chochBodyExpansionAtr,
+    "chochBodyExpansionAtr",
+  );
+  const chochVolumeGate = readOptionalRayReplicaNumber(
+    input.chochVolumeGate,
+    "chochVolumeGate",
+  );
   const config = asRecord(existing.config);
   const parameters = asRecord(config.parameters);
+  const rayReplicaSettingsPatch = {
+    timeHorizon,
+    ...(bosConfirmation !== undefined ? { bosConfirmation } : {}),
+    ...(chochAtrBuffer !== undefined ? { chochAtrBuffer } : {}),
+    ...(chochBodyExpansionAtr !== undefined ? { chochBodyExpansionAtr } : {}),
+    ...(chochVolumeGate !== undefined ? { chochVolumeGate } : {}),
+  };
   const nextConfig = {
     ...config,
     parameters: {
       ...parameters,
-      timeHorizon,
       signalTimeframe,
+      ...rayReplicaSettingsPatch,
     },
   };
   const profile = await getSignalMonitorProfile({
@@ -268,7 +339,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   });
   const nextRayReplicaSettings = {
     ...asRecord(profile.rayReplicaSettings),
-    timeHorizon,
+    ...rayReplicaSettingsPatch,
   };
 
   const [updated] = await db
@@ -296,9 +367,16 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     payload: {
       timeHorizon,
       signalTimeframe,
+      rayReplicaSettings: rayReplicaSettingsPatch,
       previousParameters: parameters,
       signalMonitorProfileId: signalMonitorProfile.id,
     },
+  });
+
+  notifyAlgoCockpitChanged({
+    deploymentId: deployment.id,
+    mode: deployment.mode,
+    reason: "deployment_strategy_settings_updated",
   });
 
   return {

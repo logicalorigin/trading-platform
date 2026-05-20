@@ -1,3 +1,4 @@
+import { Clock } from "lucide-react";
 import {
   RADII,
   T,
@@ -45,7 +46,11 @@ const transitionTone = (transition) => {
   return T.text;
 };
 
-export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) => {
+export const OperationsTransitionsStrip = ({
+  transitions = [],
+  maxInline = 5,
+  embedded = false,
+}) => {
   const visible = transitions.slice(0, maxInline);
   return (
     <div
@@ -53,14 +58,15 @@ export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) 
       style={{
         display: "flex",
         alignItems: "center",
-        gap: sp(8),
+        gap: sp(embedded ? 4 : 6),
         flexWrap: "wrap",
-        rowGap: sp(3),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(RADII.md),
-        padding: sp("6px 10px"),
+        rowGap: sp(2),
+        background: embedded ? "transparent" : T.bg1,
+        border: embedded ? "none" : `1px solid ${T.border}`,
+        borderRadius: embedded ? 0 : dim(RADII.md),
+        padding: embedded ? sp("2px 6px") : sp("6px 10px"),
         minWidth: 0,
+        minHeight: embedded ? dim(24) : "auto",
       }}
     >
       <span
@@ -78,13 +84,17 @@ export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) 
       {visible.length === 0 ? (
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
             color: T.textDim,
             fontFamily: T.sans,
-            fontSize: textSize("body"),
+            fontSize: embedded ? textSize("caption") : textSize("body"),
             fontStyle: "italic",
           }}
         >
-          (awaiting next scan)
+          <Clock size={13} strokeWidth={1.8} aria-hidden="true" />
+          Awaiting next scan
         </span>
       ) : (
         visible.map((transition) => {
@@ -98,7 +108,7 @@ export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) 
                 gap: sp(3),
                 color: T.textSec,
                 fontFamily: T.sans,
-                fontSize: textSize("body"),
+                fontSize: embedded ? textSize("caption") : textSize("body"),
                 lineHeight: 1.3,
                 minWidth: 0,
               }}
@@ -106,7 +116,7 @@ export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) 
               <span
                 style={{
                   color: T.textDim,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   fontSize: textSize("caption"),
                 }}
               >
@@ -118,7 +128,7 @@ export const OperationsTransitionsStrip = ({ transitions = [], maxInline = 5 }) 
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  maxWidth: "260px",
+                  maxWidth: embedded ? "100%" : "260px",
                 }}
               >
                 {transitionLabel(transition)}

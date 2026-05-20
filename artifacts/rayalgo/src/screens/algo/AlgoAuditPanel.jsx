@@ -184,7 +184,7 @@ export const AlgoAuditPanel = ({
               fontSize: textSize("caption"),
             }}
           >
-            <span style={{ color: T.textDim, fontFamily: T.mono }}>
+            <span style={{ color: T.textDim, fontFamily: T.sans }}>
               {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
             </span>
             <span

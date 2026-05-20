@@ -29,6 +29,7 @@ import {
   listWatchlists,
   listWatchlistsRuntimeFallback,
 } from "./platform";
+import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
@@ -136,10 +137,15 @@ function resolveSignalMonitorUniverseScope(
   ).trim();
   if (
     raw === "selected_watchlist" ||
-    raw === "all_watchlists" ||
     raw === "all_watchlists_plus_universe"
   ) {
     return raw;
+  }
+  if (raw === "all_watchlists_only") {
+    return "all_watchlists";
+  }
+  if (raw === "all_watchlists") {
+    return "all_watchlists_plus_universe";
   }
   return DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE;
 }
@@ -1058,6 +1064,28 @@ async function insertSignalEvent(input: {
     .onConflictDoNothing();
 }
 
+async function insertSignalEventBestEffort(input: {
+  profile: DbSignalMonitorProfile;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  signal: RayReplicaSignalEvent;
+  latestBarAt: Date;
+}) {
+  try {
+    await insertSignalEvent(input);
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        profileId: input.profile.id,
+      },
+      "Signal monitor event persistence failed",
+    );
+  }
+}
+
 async function upsertSymbolState(input: {
   profileId: string;
   symbol: string;
@@ -1278,7 +1306,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     const signalAt = new Date(signal.time * 1000);
 
     if (input.mode === "incremental" && fresh) {
-      await insertSignalEvent({
+      await insertSignalEventBestEffort({
         profile: input.profile,
         symbol: input.symbol,
         timeframe: input.timeframe,
@@ -2041,10 +2069,15 @@ export async function updateSignalMonitorProfile(input: {
 }) {
   const environment = resolveEnvironment(input.environment);
   if (isSignalMonitorDbBackoffActive()) {
-    return profileToResponse(await updateRuntimeSignalMonitorProfile({
+    const response = profileToResponse(await updateRuntimeSignalMonitorProfile({
       ...input,
       environment,
     }));
+    notifyAlgoCockpitChanged({
+      mode: environment,
+      reason: "signal_monitor_profile_updated",
+    });
+    return response;
   }
 
   try {
@@ -2098,14 +2131,24 @@ export async function updateSignalMonitorProfile(input: {
       .returning();
 
     clearSignalMonitorMatrixEvaluationCache(environment);
-    return profileToResponse(updated ?? profile);
+    const response = profileToResponse(updated ?? profile);
+    notifyAlgoCockpitChanged({
+      mode: environment,
+      reason: "signal_monitor_profile_updated",
+    });
+    return response;
   } catch (error) {
     if (isTransientPostgresError(error)) {
       warnSignalMonitorDbUnavailable(error);
-      return profileToResponse(await updateRuntimeSignalMonitorProfile({
+      const response = profileToResponse(await updateRuntimeSignalMonitorProfile({
         ...input,
         environment,
       }));
+      notifyAlgoCockpitChanged({
+        mode: environment,
+        reason: "signal_monitor_profile_updated",
+      });
+      return response;
     }
     throw error;
   }

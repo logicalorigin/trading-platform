@@ -236,6 +236,7 @@ test("signal-options replay prices option marks from 1m regular-session bars", (
   assert.match(source, /timeframe:\s*SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME/);
   assert.match(source, /outsideRth:\s*false/);
   assert.match(source, /skipBrokerContractResolution:\s*true/);
+  assert.doesNotMatch(source, /providerContractId:\s*result\.providerContractId\s*\?\?\s*optionTicker/);
 });
 
 test("position mark quote snapshots map onto signal option quotes", () => {
@@ -837,6 +838,116 @@ test("signal-options replay stamps event dates while preserving entry-scoped pos
   );
 });
 
+test("live signal-options state excludes replay events and orphan mark skips", () => {
+  const occurredAt = new Date("2026-05-19T14:00:00.000Z");
+  const liveEntry = {
+    id: "live-entry",
+    eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+    symbol: "OUST",
+    deploymentId: "deployment-1",
+    occurredAt,
+    payload: {
+      candidate: {
+        id: "live-candidate",
+        symbol: "OUST",
+        direction: "buy",
+        optionRight: "call",
+        signalAt: occurredAt.toISOString(),
+      },
+      position: {
+        candidateId: "live-candidate",
+        entryPrice: 1.25,
+        quantity: 1,
+      },
+      selectedContract: {
+        underlying: "OUST",
+        expirationDate: "2026-05-22",
+        strike: 29,
+        right: "call",
+        multiplier: 100,
+      },
+    },
+  };
+  const replayEntry = {
+    id: "replay-entry",
+    eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
+    symbol: "NVDA",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-05-19T14:01:00.000Z"),
+    payload: {
+      metadata: {
+        sourceType: "signal_options_replay",
+        runMode: "replay",
+        runSource: "signal_options_replay",
+      },
+      replay: { source: "signal_options_replay" },
+      candidate: {
+        id: "replay-candidate",
+        symbol: "NVDA",
+        direction: "buy",
+        signalAt: "2026-05-19T14:01:00.000Z",
+      },
+      position: {
+        candidateId: "replay-candidate",
+        entryPrice: 8.25,
+        quantity: 1,
+      },
+      selectedContract: {
+        underlying: "NVDA",
+        expirationDate: "2026-05-22",
+        strike: 220,
+        right: "call",
+        multiplier: 100,
+      },
+    },
+  };
+  const orphanMarkSkip = {
+    id: "orphan-mark-skip",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    symbol: "NVDA",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-05-19T14:02:00.000Z"),
+    payload: {
+      reason: "position_mark_unavailable",
+      position: { candidateId: "replay-candidate" },
+    },
+  };
+  const liveMarkSkip = {
+    id: "live-mark-skip",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    symbol: "OUST",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-05-19T14:03:00.000Z"),
+    payload: {
+      reason: "position_mark_unavailable",
+      position: { candidateId: "live-candidate" },
+    },
+  };
+
+  const stateEvents =
+    __signalOptionsAutomationInternalsForTests.stateSignalOptionsEvents([
+      liveMarkSkip,
+      orphanMarkSkip,
+      replayEntry,
+      liveEntry,
+    ] as never);
+
+  assert.deepEqual(
+    stateEvents.activePositions.map((position) => position.symbol),
+    ["OUST"],
+  );
+  assert.deepEqual(
+    stateEvents.signalEvents.map((event) => event.id),
+    ["live-mark-skip", "live-entry"],
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsReplayEvent(
+      replayEntry as never,
+    ),
+    true,
+  );
+});
+
 test("historical backfill uses signal monitor watchlist symbols before deployment symbols", () => {
   const universe =
     __signalOptionsAutomationInternalsForTests.buildSignalOptionsBackfillUniverse({
@@ -1219,6 +1330,36 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
           eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
           payload: {
             signalKey,
+            reason: "option_chain_backoff",
+            retryable: true,
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "option_expiration_backoff",
+            retryable: true,
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
             reason: "bear_regime_gate_failed",
             entryGate: {
               reasons: ["adx_below_minimum"],
@@ -1228,6 +1369,100 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
       ] as never),
     ),
     [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "daily_loss_halt_active",
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "daily_loss_halt_active",
+            selectedContract: { ticker: "SPY20260522C500" },
+          },
+        },
+      ] as never),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "max_open_symbols_reached",
+            candidate: { selectedContract: { ticker: "SPY20260522C500" } },
+          },
+        },
+      ] as never),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "algo_gateway_not_ready",
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "algo_gateway_not_ready",
+              selectedContract: { ticker: "SPY20260522C500" },
+            },
+          },
+        ] as never,
+        { gatewayReady: false },
+      ),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "algo_gateway_not_ready",
+              selectedContract: { ticker: "SPY20260522C500" },
+            },
+          },
+        ] as never,
+        { gatewayReady: true },
+      ),
+    ),
+    [],
   );
   assert.deepEqual(
     Array.from(
@@ -1384,6 +1619,139 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
       ),
     ),
     [],
+  );
+});
+
+test("signal-options classifies option market-data backoff without hiding it as contract misses", () => {
+  const {
+    classifySignalOptionsSkipReason,
+    optionBackoffFromDebug,
+    optionChainBackoffFromAttempts,
+  } = __signalOptionsAutomationInternalsForTests;
+
+  const chainBackoff = optionChainBackoffFromAttempts([
+    {
+      contractCount: 0,
+      chainDebug: {
+        reason: "options_backoff",
+        backoffRemainingMs: 1234,
+      },
+    },
+  ]);
+
+  assert.equal(chainBackoff?.reason, "option_chain_backoff");
+  assert.equal(chainBackoff?.source, "chain");
+  assert.equal(chainBackoff?.backoffRemainingMs, 1234);
+  assert.equal(
+    optionChainBackoffFromAttempts([
+      {
+        contractCount: 1,
+        chainDebug: {
+          reason: "options_backoff",
+          backoffRemainingMs: 1234,
+        },
+      },
+    ]),
+    null,
+  );
+
+  const expirationBackoff = optionBackoffFromDebug({
+    debug: {
+      reason: "options_backoff",
+      backoffRemainingMs: 555,
+    },
+    reason: "option_expiration_backoff",
+    source: "expiration",
+  });
+  assert.equal(expirationBackoff?.reason, "option_expiration_backoff");
+  assert.equal(expirationBackoff?.source, "expiration");
+  assert.equal(expirationBackoff?.backoffRemainingMs, 555);
+
+  assert.equal(
+    classifySignalOptionsSkipReason("option_chain_backoff"),
+    "contract_resolution",
+  );
+  assert.equal(
+    classifySignalOptionsSkipReason("option_expiration_backoff"),
+    "contract_resolution",
+  );
+});
+
+test("signal-options risk halts block execution after contract planning", () => {
+  const executionBlocker =
+    __signalOptionsAutomationInternalsForTests.signalOptionsExecutionBlocker;
+  const gatewayExecutionBlocker =
+    __signalOptionsAutomationInternalsForTests.signalOptionsGatewayExecutionBlocker;
+
+  assert.deepEqual(
+    executionBlocker({
+      dailyHaltActive: true,
+      dailyPnl: -1250,
+      profile,
+      openSymbols: 0,
+    }),
+    {
+      reason: "daily_loss_halt_active",
+      detail: {
+        dailyPnl: -1250,
+        maxDailyLoss: profile.riskCaps.maxDailyLoss,
+      },
+    },
+  );
+  assert.deepEqual(
+    executionBlocker({
+      dailyHaltActive: false,
+      dailyPnl: 0,
+      profile: {
+        ...profile,
+        riskCaps: { ...profile.riskCaps, maxOpenSymbols: 2 },
+      },
+      openSymbols: 2,
+    }),
+    {
+      reason: "max_open_symbols_reached",
+      detail: {
+        openSymbols: 2,
+        maxOpenSymbols: 2,
+      },
+    },
+  );
+  assert.equal(
+    executionBlocker({
+      dailyHaltActive: false,
+      dailyPnl: 0,
+      profile,
+      openSymbols: 0,
+    }),
+    null,
+  );
+  assert.equal(
+    gatewayExecutionBlocker({
+      ready: true,
+      reason: null,
+      message: "ready",
+      diagnostics: {},
+    }),
+    null,
+  );
+  assert.deepEqual(
+    gatewayExecutionBlocker({
+      ready: false,
+      reason: "gateway_socket_disconnected",
+      message: "IB Gateway disconnected.",
+      diagnostics: { connected: false },
+    }),
+    {
+      reason: "algo_gateway_not_ready",
+      detail: {
+        readiness: {
+          ready: false,
+          reason: "gateway_socket_disconnected",
+          message: "IB Gateway disconnected.",
+          diagnostics: { connected: false },
+        },
+      },
+    },
   );
 });
 

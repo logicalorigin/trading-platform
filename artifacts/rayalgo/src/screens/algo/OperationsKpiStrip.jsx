@@ -15,7 +15,17 @@ import {
 } from "../../features/platform/algoKpiHistoryStore";
 import { formatMoney, formatPct } from "./algoHelpers";
 
-const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => {
+const Cell = ({
+  label,
+  value,
+  hint,
+  tone,
+  history,
+  sparkPositive,
+  compact,
+  hideHint = false,
+}) => {
+  const visibleHint = hideHint ? null : hint;
   if (compact) {
     return (
       <div
@@ -24,9 +34,10 @@ const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => 
           alignItems: "baseline",
           justifyContent: "space-between",
           gap: sp(4),
-          padding: sp("4px 8px"),
+          padding: sp("3px 7px"),
           minWidth: 0,
-          minHeight: dim(34),
+          minHeight: dim(28),
+          background: T.bg1,
         }}
       >
         <span
@@ -40,24 +51,51 @@ const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => 
             overflow: "hidden",
             textOverflow: "ellipsis",
             flex: "0 1 auto",
+            minWidth: 0,
           }}
         >
           {label}
         </span>
         <span
           style={{
-            color: tone || T.text,
-            fontFamily: T.sans,
-            fontSize: fs(12),
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1.1,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            flex: "0 0 auto",
+            display: "inline-flex",
+            alignItems: "baseline",
+            justifyContent: "flex-end",
+            gap: sp(4),
+            minWidth: 0,
+            flex: "1 1 auto",
           }}
         >
-          {value}
+          <span
+            style={{
+              color: tone || T.text,
+              fontFamily: T.sans,
+              fontSize: fs(12),
+              fontWeight: FONT_WEIGHTS.medium,
+              lineHeight: 1.1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              minWidth: 0,
+            }}
+          >
+            {value}
+          </span>
+          {visibleHint ? (
+            <span
+              style={{
+                color: T.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                minWidth: 0,
+              }}
+            >
+              {visibleHint}
+            </span>
+          ) : null}
         </span>
       </div>
     );
@@ -119,7 +157,7 @@ const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => 
           />
         ) : null}
       </div>
-      {hint ? (
+      {visibleHint ? (
         <span
           style={{
             color: T.textDim,
@@ -130,7 +168,7 @@ const Cell = ({ label, value, hint, tone, history, sparkPositive, compact }) => 
             textOverflow: "ellipsis",
           }}
         >
-          {hint}
+          {visibleHint}
         </span>
       ) : null}
     </div>
@@ -145,8 +183,11 @@ export const OperationsKpiStrip = ({
   signalOptionsPositions,
   signalOptionsCandidates,
   deploymentId,
-  algoIsPhone,
+  algoIsPhone = false,
+  algoIsNarrow = false,
+  algoIsPocketWidth = false,
 }) => {
+  const dense = algoIsPhone || algoIsNarrow;
   const buffer = useAlgoKpiHistory(deploymentId);
   const series = useMemo(
     () => ({
@@ -185,39 +226,44 @@ export const OperationsKpiStrip = ({
   return (
     <div
       data-testid="algo-operations-kpi-strip"
+      data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
       style={{
         display: "grid",
-        gridTemplateColumns: algoIsPhone
+        gridTemplateColumns: algoIsPocketWidth
           ? "repeat(2, minmax(0, 1fr))"
-          : "repeat(6, minmax(0, 1fr))",
-        gap: sp(1),
-        background: T.bg1,
+          : dense
+            ? "repeat(auto-fit, minmax(145px, 1fr))"
+            : "repeat(auto-fit, minmax(170px, 1fr))",
+        gap: 1,
+        background: T.border,
         border: `1px solid ${T.border}`,
-        borderRadius: dim(RADII.md),
+        borderRadius: dim(RADII.sm),
         padding: sp(1),
         minWidth: 0,
       }}
     >
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Realized today"
         value={formatMoney(realized, 2)}
         hint={realized > 0 ? "session pnl" : realized < 0 ? "session loss" : null}
         tone={realized > 0 ? T.green : realized < 0 ? T.red : T.text}
         history={series.realized}
         sparkPositive={realized >= 0}
+        hideHint={dense}
       />
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Unrealized"
         value={formatMoney(unrealized, 2)}
         hint={`${openPositions} open`}
         tone={unrealized > 0 ? T.green : unrealized < 0 ? T.red : T.text}
         history={series.unrealized}
         sparkPositive={unrealized >= 0}
+        hideHint={dense}
       />
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Win / Loss"
         value={`${wins}W · ${losses}L`}
         hint={
@@ -226,9 +272,10 @@ export const OperationsKpiStrip = ({
             : "—"
         }
         history={series.winRate}
+        hideHint={dense}
       />
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Profit factor"
         value={
           Number.isFinite(Number(profitFactor))
@@ -253,9 +300,10 @@ export const OperationsKpiStrip = ({
         sparkPositive={
           Number.isFinite(Number(profitFactor)) && Number(profitFactor) >= 1
         }
+        hideHint={dense}
       />
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Signals"
         value={`${freshSignals} / ${totalSignals}`}
         hint={
@@ -264,9 +312,10 @@ export const OperationsKpiStrip = ({
             : "no scan yet"
         }
         history={series.freshSignals}
+        hideHint={dense}
       />
       <Cell
-        compact={algoIsPhone}
+        compact
         label="Pipeline"
         value={`${openPositions} open${pending > 0 ? ` · ${pending} pending` : ""}`}
         hint={
@@ -276,6 +325,7 @@ export const OperationsKpiStrip = ({
         }
         tone={Number(cockpitTradePath?.blockedCandidates) > 0 ? T.amber : T.text}
         history={series.openPositions}
+        hideHint={dense}
       />
     </div>
   );

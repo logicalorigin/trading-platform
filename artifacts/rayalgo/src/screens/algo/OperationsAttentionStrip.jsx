@@ -1,3 +1,4 @@
+import { ShieldCheck } from "lucide-react";
 import {
   RADII,
   T,
@@ -18,7 +19,11 @@ const severityColor = (severity) => {
   return T.cyan;
 };
 
-export const OperationsAttentionStrip = ({ items = [], maxInline = 3 }) => {
+export const OperationsAttentionStrip = ({
+  items = [],
+  maxInline = 3,
+  embedded = false,
+}) => {
   const visible = items.slice(0, maxInline);
   const overflow = Math.max(0, items.length - maxInline);
 
@@ -29,13 +34,14 @@ export const OperationsAttentionStrip = ({ items = [], maxInline = 3 }) => {
         display: "flex",
         alignItems: "center",
         flexWrap: "wrap",
-        gap: sp(8),
-        rowGap: sp(3),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(RADII.md),
-        padding: sp("6px 10px"),
+        gap: sp(embedded ? 4 : 6),
+        rowGap: sp(2),
+        background: embedded ? "transparent" : T.bg1,
+        border: embedded ? "none" : `1px solid ${T.border}`,
+        borderRadius: embedded ? 0 : dim(RADII.md),
+        padding: embedded ? sp("2px 6px") : sp("6px 10px"),
         minWidth: 0,
+        minHeight: embedded ? dim(24) : "auto",
       }}
     >
       <span
@@ -53,12 +59,16 @@ export const OperationsAttentionStrip = ({ items = [], maxInline = 3 }) => {
       {visible.length === 0 ? (
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
             color: T.green,
             fontFamily: T.sans,
-            fontSize: textSize("body"),
+            fontSize: embedded ? textSize("caption") : textSize("body"),
           }}
         >
-          all clear
+          <ShieldCheck size={13} strokeWidth={1.8} aria-hidden="true" />
+          All clear
         </span>
       ) : (
         visible.map((item) => {
@@ -75,7 +85,7 @@ export const OperationsAttentionStrip = ({ items = [], maxInline = 3 }) => {
                 gap: sp(2),
                 color: T.textSec,
                 fontFamily: T.sans,
-                fontSize: textSize("body"),
+                fontSize: embedded ? textSize("caption") : textSize("body"),
                 lineHeight: 1.3,
                 minWidth: 0,
               }}
@@ -86,7 +96,7 @@ export const OperationsAttentionStrip = ({ items = [], maxInline = 3 }) => {
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  maxWidth: "320px",
+                  maxWidth: embedded ? "100%" : "320px",
                 }}
               >
                 {symbol}

@@ -1,5 +1,9 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { HttpError } from "../lib/errors";
+import {
+  fetchAlgoCockpitCriticalPayload,
+  subscribeAlgoCockpitSnapshots,
+} from "../services/algo-cockpit-streams";
 import {
   createAlgoDeployment,
   listAlgoDeployments,
@@ -19,6 +23,15 @@ import {
 } from "../services/signal-options-automation";
 
 const router: IRouter = Router();
+
+function writeSseEvent(
+  res: Response,
+  event: string,
+  payload: unknown,
+) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
 
 function readRequiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -107,6 +120,10 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
       deploymentId: req.params.deploymentId,
       timeHorizon: body.timeHorizon,
       signalTimeframe: body.signalTimeframe,
+      bosConfirmation: body.bosConfirmation,
+      chochAtrBuffer: body.chochAtrBuffer,
+      chochBodyExpansionAtr: body.chochBodyExpansionAtr,
+      chochVolumeGate: body.chochVolumeGate,
     }),
   );
 });
@@ -218,6 +235,90 @@ router.get("/algo/events", async (req, res): Promise<void> => {
       limit: Number.isFinite(limit) ? limit : undefined,
     }),
   );
+});
+
+router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
+  const mode: "paper" | "live" = req.query.mode === "live" ? "live" : "paper";
+  const deploymentId =
+    typeof req.query.deploymentId === "string" && req.query.deploymentId.trim()
+      ? req.query.deploymentId.trim()
+      : null;
+  const eventLimit =
+    typeof req.query.eventLimit === "string" && req.query.eventLimit.trim()
+      ? Number(req.query.eventLimit)
+      : undefined;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  res.write("retry: 5000\n\n");
+
+  let closed = false;
+  let unsubscribe = () => {};
+  const cleanup = () => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    unsubscribe();
+    if (!res.destroyed) {
+      res.end();
+    }
+  };
+  req.on("aborted", cleanup);
+  res.on("close", cleanup);
+
+  try {
+    const input = {
+      deploymentId,
+      mode,
+      eventLimit: Number.isFinite(eventLimit) ? eventLimit : undefined,
+    };
+    const initialPayload = await fetchAlgoCockpitCriticalPayload(input);
+    if (closed) {
+      return;
+    }
+    writeSseEvent(res, "live", initialPayload);
+    writeSseEvent(res, "ready", {
+      stream: "algo-cockpit",
+      mode: initialPayload.mode,
+      deploymentId: initialPayload.deploymentId,
+      source: "algo-cockpit",
+    });
+    unsubscribe = subscribeAlgoCockpitSnapshots(
+      input,
+      (payload) => {
+        if (!closed) {
+          writeSseEvent(res, "live", payload);
+        }
+      },
+      {
+        initialPayload,
+        onPollSuccess: ({ changed, payload }) => {
+          if (!closed) {
+            writeSseEvent(res, "freshness", {
+              stream: "algo-cockpit",
+              mode: payload.mode,
+              deploymentId: payload.deploymentId,
+              changed,
+              at: new Date().toISOString(),
+            });
+          }
+        },
+      },
+    );
+  } catch (error) {
+    if (!closed) {
+      writeSseEvent(res, "error", {
+        title: "Algo cockpit stream setup failed",
+        status: 500,
+        detail: error instanceof Error ? error.message : "Unknown stream error.",
+      });
+    }
+    cleanup();
+  }
 });
 
 export default router;

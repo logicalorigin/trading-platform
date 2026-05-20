@@ -23,9 +23,9 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     putStrikeSlot: 2,
   },
   riskCaps: {
-    maxPremiumPerEntry: 500,
+    maxPremiumPerEntry: 1500,
     maxContracts: 3,
-    maxOpenSymbols: 5,
+    maxOpenSymbols: 10,
     maxDailyLoss: 1000,
   },
   liquidityGate: {
@@ -63,18 +63,31 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     chaseSteps: [0, 0.35, 0.65, 0.9],
   },
   exitPolicy: {
-    hardStopPct: -40,
-    trailActivationPct: 40,
-    minLockedGainPct: 10,
-    trailGivebackPct: 25,
+    hardStopPct: -30,
+    trailActivationPct: 35,
+    minLockedGainPct: 15,
+    trailGivebackPct: 20,
     tightenAtFiveXGivebackPct: 35,
     tightenAtTenXGivebackPct: 25,
     flipOnOppositeSignal: true,
+    earlyExitBars: 6,
+    earlyExitLossPct: 20,
+    overnightExitEnabled: true,
+    overnightMinGainPct: 10,
+    overnightRunnerGivebackPct: 15,
+    conditionalQualityExitsEnabled: false,
+    lowQualityEarlyExitBars: 4,
+    lowQualityEarlyExitLossPct: 15,
+    highQualityEarlyExitBars: 8,
+    highQualityEarlyExitLossPct: 25,
+    weakLiquidityTrailGivebackPct: 15,
+    strongLiquidityTrailGivebackPct: 25,
+    highQualityOvernightMinGainPct: -100,
   },
 };
 
 export const SIGNAL_OPTIONS_EXPANDED_CAPACITY = {
-  maxOpenSymbols: 5,
+  maxOpenSymbols: 10,
   maxDailyLoss: 1000,
 };
 
@@ -88,10 +101,15 @@ export const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
 ];
 
 export const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+export const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"];
 
 export const DEFAULT_STRATEGY_SIGNAL_SETTINGS = {
   signalTimeframe: "5m",
   timeHorizon: 8,
+  bosConfirmation: "wicks",
+  chochAtrBuffer: 0,
+  chochBodyExpansionAtr: 0,
+  chochVolumeGate: 0,
 };
 
 export const SIGNAL_OPTIONS_ACTION_LABELS = {
@@ -135,6 +153,7 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   daily_loss_halt_active: "risk",
   premium_budget_exceeded: "risk",
   quantity_below_minimum: "risk",
+  algo_gateway_not_ready: "gateway",
   ibkr_not_configured: "gateway",
   gateway_socket_disconnected: "gateway",
   gateway_not_ready: "gateway",
@@ -150,6 +169,67 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
 
 export const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const normalizeMatchKey = (value) => String(value || "").trim();
+const normalizeMatchToken = (value) => normalizeMatchKey(value).toUpperCase();
+
+export const findSignalOptionsCandidateForSignal = (candidates, signal) => {
+  const signalRecord = asRecord(signal);
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+  const signalKey = normalizeMatchKey(signalRecord.signalKey);
+  if (signalKey) {
+    const keyed = candidateList.find((candidate) => {
+      const candidateRecord = asRecord(candidate);
+      const candidateSignal = asRecord(candidateRecord.signal);
+      return [
+        candidateSignal.signalKey,
+        candidateRecord.signalKey,
+        candidateRecord.id,
+      ].some((value) => normalizeMatchKey(value) === signalKey);
+    });
+    if (keyed) return keyed;
+  }
+
+  const signalSymbol = normalizeMatchToken(signalRecord.symbol);
+  if (!signalSymbol) return null;
+  const signalTimeframe = normalizeMatchToken(signalRecord.timeframe);
+  const signalDirection = normalizeMatchToken(signalRecord.direction);
+
+  return (
+    candidateList.find((candidate) => {
+      const candidateRecord = asRecord(candidate);
+      const candidateSignal = asRecord(candidateRecord.signal);
+      const candidateSymbol = normalizeMatchToken(
+        candidateRecord.symbol || candidateSignal.symbol,
+      );
+      if (candidateSymbol !== signalSymbol) return false;
+
+      const candidateTimeframe = normalizeMatchToken(
+        candidateRecord.timeframe || candidateSignal.timeframe,
+      );
+      if (
+        signalTimeframe &&
+        candidateTimeframe &&
+        signalTimeframe !== candidateTimeframe
+      ) {
+        return false;
+      }
+
+      const candidateDirection = normalizeMatchToken(
+        candidateRecord.direction || candidateSignal.direction,
+      );
+      if (
+        signalDirection &&
+        candidateDirection &&
+        signalDirection !== candidateDirection
+      ) {
+        return false;
+      }
+
+      return true;
+    }) || null
+  );
+};
 
 export const shadowLinkSummary = (shadowLink) => {
   const link = asRecord(shadowLink);
@@ -212,6 +292,34 @@ export const formatLiquidityFreshness = (value) => {
   return freshness ? formatEnumLabel(freshness) : MISSING_VALUE;
 };
 
+export const candidateBlockerLabel = (candidate) => {
+  const reason = String(asRecord(candidate).reason || "").trim();
+  return reason ? formatEnumLabel(reason) : MISSING_VALUE;
+};
+
+export const candidateLatestActivityLabel = (candidate) => {
+  const timeline = Array.isArray(asRecord(candidate).timeline)
+    ? asRecord(candidate).timeline
+    : [];
+  const latest = asRecord(timeline[timeline.length - 1]);
+  const summary = String(latest.summary || "").trim();
+  if (summary) return summary;
+  const type = String(latest.type || "").trim();
+  return type ? formatEnumLabel(type) : MISSING_VALUE;
+};
+
+export const entryQualityLabel = (quality) => {
+  const record = asRecord(quality);
+  const tier = String(record.tier || "").trim();
+  const score = Number(record.score);
+  if (!tier && !Number.isFinite(score)) return MISSING_VALUE;
+  const parts = [
+    tier ? formatEnumLabel(tier) : null,
+    Number.isFinite(score) ? score.toFixed(1) : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+};
+
 export const candidateReasonCategory = (candidate) =>
   SIGNAL_OPTIONS_REASON_CATEGORIES[String(asRecord(candidate).reason || "")] ||
   "other";
@@ -224,32 +332,70 @@ export const numberFrom = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+export const boundedNumberFrom = (value, fallback, min, max) =>
+  Math.min(max, Math.max(min, numberFrom(value, fallback)));
+
 export const resolveStrategySignalSettings = (deployment, signalMonitorProfile) => {
   const parameters = asRecord(asRecord(deployment?.config).parameters);
   const rayReplicaSettings = asRecord(signalMonitorProfile?.rayReplicaSettings);
+  const marketStructure = asRecord(
+    rayReplicaSettings.marketStructure ?? parameters.marketStructure,
+  );
   const profileTimeframe = String(signalMonitorProfile?.timeframe || "");
   const configTimeframe = String(parameters.signalTimeframe || "");
   const signalTimeframe = STRATEGY_SIGNAL_TIMEFRAMES.includes(profileTimeframe)
     ? profileTimeframe
-    : STRATEGY_SIGNAL_TIMEFRAMES.includes(configTimeframe)
-      ? configTimeframe
-      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
-  const timeHorizon = Math.min(
-    50,
-    Math.max(
+      : STRATEGY_SIGNAL_TIMEFRAMES.includes(configTimeframe)
+        ? configTimeframe
+        : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
+  const rawBosConfirmation = String(
+    marketStructure.bosConfirmation ??
+      rayReplicaSettings.bosConfirmation ??
+      parameters.bosConfirmation ??
+      "",
+  );
+  const bosConfirmation = RAY_REPLICA_BOS_CONFIRMATION_OPTIONS.includes(
+    rawBosConfirmation,
+  )
+    ? rawBosConfirmation
+    : DEFAULT_STRATEGY_SIGNAL_SETTINGS.bosConfirmation;
+  const timeHorizon = Math.round(
+    boundedNumberFrom(
+      marketStructure.timeHorizon ?? rayReplicaSettings.timeHorizon ?? parameters.timeHorizon,
+      DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
       2,
-      Math.round(
-        numberFrom(
-          rayReplicaSettings.timeHorizon ?? parameters.timeHorizon,
-          DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon,
-        ),
-      ),
+      50,
     ),
   );
 
   return {
     signalTimeframe,
     timeHorizon,
+    bosConfirmation,
+    chochAtrBuffer: boundedNumberFrom(
+      marketStructure.chochAtrBuffer ??
+        rayReplicaSettings.chochAtrBuffer ??
+        parameters.chochAtrBuffer,
+      DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochAtrBuffer,
+      0,
+      20,
+    ),
+    chochBodyExpansionAtr: boundedNumberFrom(
+      marketStructure.chochBodyExpansionAtr ??
+        rayReplicaSettings.chochBodyExpansionAtr ??
+        parameters.chochBodyExpansionAtr,
+      DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochBodyExpansionAtr,
+      0,
+      20,
+    ),
+    chochVolumeGate: boundedNumberFrom(
+      marketStructure.chochVolumeGate ??
+        rayReplicaSettings.chochVolumeGate ??
+        parameters.chochVolumeGate,
+      DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochVolumeGate,
+      0,
+      20,
+    ),
   };
 };
 
@@ -416,6 +562,248 @@ export const formatContractLabel = (contract) => {
   return label || MISSING_VALUE;
 };
 
+export const optionProviderContractId = (contract) =>
+  String(asRecord(contract).providerContractId || asRecord(contract).conid || "").trim();
+
+const positiveNumberOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+};
+
+export const mergeOptionQuoteSnapshot = (quote, liveQuote) => {
+  const base = asRecord(quote);
+  const live = asRecord(liveQuote);
+  if (!Object.keys(live).length) return base;
+  const liveLast = positiveNumberOrNull(live.last ?? live.price);
+  const liveMark = positiveNumberOrNull(live.mark ?? live.price);
+  return {
+    ...base,
+    bid: positiveNumberOrNull(live.bid) ?? base.bid,
+    ask: positiveNumberOrNull(live.ask) ?? base.ask,
+    last: liveLast ?? base.last,
+    mark: liveMark ?? base.mark,
+    impliedVolatility: live.impliedVolatility ?? base.impliedVolatility,
+    delta: live.delta ?? base.delta,
+    gamma: live.gamma ?? base.gamma,
+    theta: live.theta ?? base.theta,
+    vega: live.vega ?? base.vega,
+    openInterest: live.openInterest ?? base.openInterest,
+    volume: live.volume ?? base.volume,
+    quoteFreshness: live.quoteFreshness ?? live.freshness ?? base.quoteFreshness,
+    marketDataMode: live.marketDataMode ?? base.marketDataMode,
+    quoteUpdatedAt: live.quoteUpdatedAt ?? live.updatedAt ?? base.quoteUpdatedAt,
+    dataUpdatedAt: live.dataUpdatedAt ?? base.dataUpdatedAt,
+    updatedAt: live.updatedAt ?? base.updatedAt,
+    ageMs: live.ageMs ?? live.cacheAgeMs ?? base.ageMs,
+  };
+};
+
+const firstFiniteNumber = (...values) => {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+};
+
+const firstPositiveNumber = (...values) => {
+  for (const value of values) {
+    const numeric = positiveNumberOrNull(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const firstText = (...values) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const formatOptionalMoney = (value, digits = 2) =>
+  value === null || value === undefined || value === ""
+    ? MISSING_VALUE
+    : formatMoney(value, digits);
+
+export const formatCompactMetric = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return MISSING_VALUE;
+  const abs = Math.abs(numeric);
+  if (abs >= 1_000_000) return `${(numeric / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000) return `${(numeric / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
+  return numeric.toFixed(0);
+};
+
+const parseExpirationDate = (value) => {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const formatDteLabel = (expirationDate, now = new Date()) => {
+  const expiration = parseExpirationDate(expirationDate);
+  const current = now instanceof Date ? now : new Date(now);
+  if (!expiration || Number.isNaN(current.getTime())) return MISSING_VALUE;
+  const currentDate = new Date(
+    Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate()),
+  );
+  const days = Math.round((expiration.getTime() - currentDate.getTime()) / 86_400_000);
+  return days >= 0 ? `${days}DTE` : `${Math.abs(days)}d exp`;
+};
+
+export const formatContractProviderLabel = (contract) => {
+  const record = asRecord(contract);
+  const providerContractId = firstText(record.providerContractId, record.conid);
+  if (providerContractId) {
+    const compactId =
+      providerContractId.length > 18
+        ? `${providerContractId.slice(0, 8)}...${providerContractId.slice(-6)}`
+        : providerContractId;
+    return `conid ${compactId}`;
+  }
+  const ticker = firstText(record.ticker, record.optionTicker, record.localSymbol);
+  return ticker || MISSING_VALUE;
+};
+
+export const formatContractDetail = (contract, { now } = {}) => {
+  const record = asRecord(contract);
+  const main = formatContractLabel(record);
+  if (main === MISSING_VALUE) {
+    return { main, detail: MISSING_VALUE };
+  }
+  const multiplier = firstFiniteNumber(record.multiplier, record.sharesPerContract);
+  const provider = formatContractProviderLabel(record);
+  const detail = [
+    formatDteLabel(record.expirationDate ?? record.exp ?? record.expiry, now),
+    multiplier ? `x${multiplier}` : null,
+    provider !== MISSING_VALUE ? provider : null,
+  ].filter((value) => value && value !== MISSING_VALUE);
+  return {
+    main,
+    detail: detail.length ? detail.join(" · ") : MISSING_VALUE,
+  };
+};
+
+export const formatQuoteSummary = (quote, liquidity) => {
+  const quoteRecord = asRecord(quote);
+  const liquidityRecord = asRecord(liquidity);
+  const bid = firstPositiveNumber(quoteRecord.bid, liquidityRecord.bid);
+  const ask = firstPositiveNumber(quoteRecord.ask, liquidityRecord.ask);
+  const mid = firstPositiveNumber(quoteRecord.mid, liquidityRecord.mid);
+  const mark = firstPositiveNumber(quoteRecord.mark, liquidityRecord.mark);
+  const last = firstPositiveNumber(
+    quoteRecord.last,
+    quoteRecord.price,
+    liquidityRecord.last,
+  );
+  const spreadPct = firstFiniteNumber(
+    quoteRecord.spreadPctOfMid,
+    liquidityRecord.spreadPctOfMid,
+  );
+  const spreadCents =
+    firstFiniteNumber(quoteRecord.spreadCents, liquidityRecord.spreadCents) ??
+    (bid != null && ask != null ? (ask - bid) * 100 : null);
+  const freshness = firstText(
+    quoteRecord.quoteFreshness,
+    quoteRecord.freshness,
+    liquidityRecord.freshness,
+  );
+  const mode = firstText(quoteRecord.marketDataMode, liquidityRecord.marketDataMode);
+  const main =
+    bid != null || ask != null
+      ? `${formatOptionalMoney(bid, 2)} / ${formatOptionalMoney(ask, 2)}`
+      : mark != null
+        ? `mark ${formatOptionalMoney(mark, 2)}`
+        : last != null
+          ? `last ${formatOptionalMoney(last, 2)}`
+          : MISSING_VALUE;
+  const priceDetail = [
+    mid != null ? `mid ${formatOptionalMoney(mid, 2)}` : null,
+    mark != null ? `mark ${formatOptionalMoney(mark, 2)}` : null,
+    last != null && mark == null ? `last ${formatOptionalMoney(last, 2)}` : null,
+  ].filter(Boolean);
+  const marketDetail = [
+    spreadPct != null
+      ? `spr ${formatPct(spreadPct)}`
+      : spreadCents != null
+        ? `spr ${spreadCents.toFixed(0)}c`
+        : null,
+    freshness ? formatEnumLabel(freshness) : null,
+    mode ? formatEnumLabel(mode) : null,
+  ].filter(Boolean);
+  const detail = [...priceDetail.slice(0, 2), ...marketDetail.slice(0, 2)];
+  return {
+    main,
+    detail: detail.length ? detail.join(" · ") : MISSING_VALUE,
+  };
+};
+
+const formatIvLabel = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return MISSING_VALUE;
+  const pct = Math.abs(numeric) <= 3 ? numeric * 100 : numeric;
+  return `${pct.toFixed(1)}%`;
+};
+
+const formatGreekNumber = (value, digits = 2) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : MISSING_VALUE;
+};
+
+export const formatQuoteGreeksSummary = (quote) => {
+  const record = asRecord(quote);
+  const delta = formatGreekNumber(record.delta, 2);
+  const iv = formatIvLabel(record.impliedVolatility);
+  const gamma = formatGreekNumber(record.gamma, 3);
+  const theta = formatGreekNumber(record.theta, 3);
+  const vega = formatGreekNumber(record.vega, 3);
+  const openInterest = formatCompactMetric(record.openInterest);
+  const volume = formatCompactMetric(record.volume);
+  const main = [
+    delta !== MISSING_VALUE ? `d ${delta}` : null,
+    iv !== MISSING_VALUE ? `IV ${iv}` : null,
+  ].filter(Boolean);
+  const detail = [
+    openInterest !== MISSING_VALUE ? `OI ${openInterest}` : null,
+    volume !== MISSING_VALUE ? `Vol ${volume}` : null,
+  ].filter(Boolean);
+  const full = [
+    gamma !== MISSING_VALUE ? `g ${gamma}` : null,
+    theta !== MISSING_VALUE ? `th ${theta}` : null,
+    vega !== MISSING_VALUE ? `v ${vega}` : null,
+  ].filter(Boolean);
+  return {
+    main: main.length ? main.join(" / ") : MISSING_VALUE,
+    detail: detail.length ? detail.join(" / ") : MISSING_VALUE,
+    full: full.length ? full.join(" / ") : MISSING_VALUE,
+  };
+};
+
+export const formatContractSelectionSummary = (selection) => {
+  const record = asRecord(selection);
+  const attempts = Array.isArray(record.attempts) ? record.attempts : [];
+  const preferredSlot = firstText(record.preferredSlot);
+  const selectedSlot = firstText(record.selectedSlot);
+  const main = [
+    selectedSlot ? `selected slot ${selectedSlot}` : null,
+    preferredSlot && preferredSlot !== selectedSlot ? `preferred ${preferredSlot}` : null,
+  ].filter(Boolean);
+  const failedAttempt = attempts.find((attempt) => firstText(asRecord(attempt).reason));
+  const detail = [
+    record.fallbackUsed === true ? "fallback used" : attempts.length ? "preferred path" : null,
+    attempts.length ? `${attempts.length} attempt${attempts.length === 1 ? "" : "s"}` : null,
+    failedAttempt ? formatEnumLabel(asRecord(failedAttempt).reason) : null,
+  ].filter(Boolean);
+  return {
+    main: main.length ? main.join(" · ") : MISSING_VALUE,
+    detail: detail.length ? detail.join(" · ") : MISSING_VALUE,
+  };
+};
+
 export const signalOptionsActionColor = (status) => {
   if (status === "shadow_filled") return T.green;
   if (status === "manual_override" || status === "partial_shadow") return T.amber;
@@ -455,6 +843,10 @@ export const PROFILE_NUMBER_FIELDS = [
   ["exitPolicy", "trailGivebackPct", "Trail giveback %", 5],
   ["exitPolicy", "tightenAtFiveXGivebackPct", "5x giveback %", 5],
   ["exitPolicy", "tightenAtTenXGivebackPct", "10x giveback %", 5],
+  ["exitPolicy", "earlyExitBars", "Early exit bars", 1],
+  ["exitPolicy", "earlyExitLossPct", "Early exit loss %", 1],
+  ["exitPolicy", "overnightMinGainPct", "Overnight min gain %", 1],
+  ["exitPolicy", "overnightRunnerGivebackPct", "Overnight giveback %", 1],
 ];
 
 export const PROFILE_BOOLEAN_FIELDS = [
@@ -462,6 +854,7 @@ export const PROFILE_BOOLEAN_FIELDS = [
   ["liquidityGate", "requireBidAsk", "Require bid/ask"],
   ["liquidityGate", "requireFreshQuote", "Require fresh quote"],
   ["exitPolicy", "flipOnOppositeSignal", "Exit on opposite signal"],
+  ["exitPolicy", "overnightExitEnabled", "Overnight exit enabled"],
 ];
 
 export const compactButtonStyle = ({

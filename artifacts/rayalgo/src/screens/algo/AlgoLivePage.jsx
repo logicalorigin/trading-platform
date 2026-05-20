@@ -1,3 +1,16 @@
+import { useMemo } from "react";
+import {
+  Activity,
+  Check,
+  Clock,
+  Layers,
+  Pause,
+  Play,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import {
   RADII,
   T,
@@ -6,6 +19,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
 import { OperationsKpiStrip } from "./OperationsKpiStrip";
@@ -21,11 +35,14 @@ import {
   compactButtonStyle,
   formatMoney,
   numberFrom,
+  optionProviderContractId,
 } from "./algoHelpers";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
+import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 
 const EmptyOperationsState = ({
   candidateDrafts,
+  setupDataSettled,
   selectedDraft,
   setSelectedDraftId,
   deploymentName,
@@ -37,111 +54,240 @@ const EmptyOperationsState = ({
 }) => (
   <div
     style={{
-      border: `1px solid ${T.border}`,
-      borderRadius: dim(RADII.md),
-      background: T.bg1,
-      padding: sp("12px 14px"),
+      minHeight: "60vh",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
       minWidth: 0,
+      padding: sp("12px 0"),
     }}
   >
-    <SectionHeader title="Setup Shadow Deployment" />
-    {candidateDrafts.length ? (
-      <div style={{ display: "grid", gap: sp(7) }}>
-        <select
-          value={selectedDraft?.id || ""}
-          onChange={(event) => setSelectedDraftId(event.target.value)}
-          style={{
-            width: "100%",
-            background: T.bg1,
-            border: "none",
-            borderRadius: dim(RADII.md),
-            padding: sp("8px 10px"),
-            color: T.text,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-            outline: "none",
-          }}
-        >
-          {candidateDrafts.map((draft) => (
-            <option key={draft.id} value={draft.id}>
-              {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
-            </option>
-          ))}
-        </select>
-        <input
-          value={deploymentName}
-          onChange={(event) => setDeploymentName(event.target.value)}
-          placeholder="Deployment name"
-          style={{
-            width: "100%",
-            background: T.bg1,
-            border: "none",
-            borderRadius: dim(RADII.md),
-            padding: sp("8px 10px"),
-            color: T.text,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-            outline: "none",
-          }}
-        />
-        <input
-          value={symbolUniverseInput}
-          onChange={(event) => setSymbolUniverseInput(event.target.value)}
-          placeholder="SPY, QQQ, NVDA"
-          style={{
-            width: "100%",
-            background: T.bg1,
-            border: "none",
-            borderRadius: dim(RADII.md),
-            padding: sp("8px 10px"),
-            color: T.text,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-            outline: "none",
-          }}
-        />
-        <button
-          type="button"
-          onClick={handleCreateDeployment}
-          disabled={createDeploymentMutation.isPending}
-          style={{
-            ...compactButtonStyle({
-              fill: true,
-              disabled: createDeploymentMutation.isPending,
-            }),
-            border: "none",
-            background: T.accent,
-            color: T.onAccent,
-          }}
-        >
-          {createDeploymentMutation.isPending
-            ? "CREATING..."
-            : "CREATE SHADOW DEPLOYMENT"}
-        </button>
-      </div>
-    ) : (
+    <div
+      style={{
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.md),
+        background: T.bg1,
+        padding: sp("14px 16px"),
+        minWidth: 0,
+        width: "min(100%, 460px)",
+      }}
+    >
+      <SectionHeader title="Setup Shadow Deployment" />
       <div
         style={{
-          border: `1px dashed ${T.border}`,
-          borderRadius: dim(RADII.sm),
           color: T.textDim,
           fontFamily: T.sans,
-          fontSize: fs(10),
+          fontSize: textSize("caption"),
           lineHeight: 1.45,
-          padding: sp("14px 10px"),
+          marginBottom: sp(8),
         }}
       >
-        No promoted draft strategies are available yet. Promote a completed
-        backtest run first, then return here to create a Shadow signal deployment.
+        Shadow deployments paper-trade a promoted backtest strategy in real time.
       </div>
-    )}
+      {!setupDataSettled ? (
+        <div
+          data-testid="algo-setup-loading"
+          style={{
+            border: `1px dashed ${T.border}`,
+            borderRadius: dim(RADII.sm),
+            color: T.textDim,
+            fontFamily: T.sans,
+            fontSize: fs(10),
+            lineHeight: 1.45,
+            padding: sp("14px 10px"),
+          }}
+        >
+          Loading promoted drafts and shadow deployments...
+        </div>
+      ) : candidateDrafts.length ? (
+        <div style={{ display: "grid", gap: sp(7) }}>
+          <select
+            value={selectedDraft?.id || ""}
+            onChange={(event) => setSelectedDraftId(event.target.value)}
+            style={{
+              width: "100%",
+              background: T.bg1,
+              border: "none",
+              borderRadius: dim(RADII.md),
+              padding: sp("8px 10px"),
+              color: T.text,
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              outline: "none",
+            }}
+          >
+            {candidateDrafts.map((draft) => (
+              <option key={draft.id} value={draft.id}>
+                {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
+              </option>
+            ))}
+          </select>
+          <input
+            value={deploymentName}
+            onChange={(event) => setDeploymentName(event.target.value)}
+            placeholder="Deployment name"
+            style={{
+              width: "100%",
+              background: T.bg1,
+              border: "none",
+              borderRadius: dim(RADII.md),
+              padding: sp("8px 10px"),
+              color: T.text,
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              outline: "none",
+            }}
+          />
+          <input
+            value={symbolUniverseInput}
+            onChange={(event) => setSymbolUniverseInput(event.target.value)}
+            placeholder="SPY, QQQ, NVDA"
+            style={{
+              width: "100%",
+              background: T.bg1,
+              border: "none",
+              borderRadius: dim(RADII.md),
+              padding: sp("8px 10px"),
+              color: T.text,
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              outline: "none",
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleCreateDeployment}
+            disabled={createDeploymentMutation.isPending}
+            style={{
+              ...compactButtonStyle({
+                fill: true,
+                disabled: createDeploymentMutation.isPending,
+              }),
+              border: "none",
+              background: T.accent,
+              color: T.onAccent,
+            }}
+          >
+            {createDeploymentMutation.isPending
+              ? "CREATING..."
+              : "CREATE SHADOW DEPLOYMENT"}
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            border: `1px dashed ${T.border}`,
+            borderRadius: dim(RADII.sm),
+            color: T.textDim,
+            fontFamily: T.sans,
+            fontSize: fs(10),
+            lineHeight: 1.45,
+            padding: sp("14px 10px"),
+          }}
+        >
+          No promoted draft strategies are available yet. Promote a completed
+          backtest run first, then return here to create a Shadow signal deployment.
+        </div>
+      )}
+    </div>
   </div>
 );
+
+const buildAlgoOptionQuoteGroups = ({
+  candidates = [],
+  positions = [],
+  ledgerPositions = [],
+}) => {
+  const groups = new Map();
+  const addContract = (contract, symbol) => {
+    const record = asRecord(contract);
+    const providerContractId = optionProviderContractId(record);
+    const underlying = String(record.underlying || symbol || "").trim().toUpperCase();
+    if (!providerContractId || !underlying) return;
+    if (!groups.has(underlying)) groups.set(underlying, new Set());
+    groups.get(underlying).add(providerContractId);
+  };
+  candidates.forEach((candidate) => {
+    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol);
+  });
+  positions.forEach((position) => {
+    addContract(asRecord(position).selectedContract, asRecord(position).symbol);
+  });
+  ledgerPositions.forEach((position) => {
+    addContract(asRecord(position).optionContract, asRecord(position).symbol);
+  });
+  return Array.from(groups, ([underlying, ids]) => ({
+    underlying,
+    providerContractIds: Array.from(ids),
+  }));
+};
+
+const AlgoOptionQuoteStreamGroup = ({ underlying, providerContractIds }) => {
+  useIbkrOptionQuoteStream({
+    underlying,
+    providerContractIds,
+    enabled: Boolean(underlying && providerContractIds.length),
+    owner: `algo-operations:${underlying}`,
+    intent: "automation-live",
+    requiresGreeks: true,
+  });
+  return null;
+};
+
+const HEADER_ICON_SIZE = 13;
+
+const activitySegmentColor = (tone) => {
+  if (tone === "green") return T.green;
+  if (tone === "amber") return T.amber;
+  if (tone === "red") return T.red;
+  if (tone === "cyan") return T.cyan;
+  if (tone === "muted") return T.textMuted;
+  return T.textDim;
+};
+
+const ActivitySummaryInline = ({ activitySummary }) => {
+  if (!activitySummary?.segments?.length) return null;
+  return (
+    <div
+      data-testid="algo-activity-summary"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: sp(5),
+        rowGap: sp(2),
+        padding: sp("2px 6px"),
+        color: T.textSec,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        minHeight: dim(24),
+        minWidth: 0,
+      }}
+    >
+      {activitySummary.segments.map((segment, index) => (
+        <span
+          key={`${segment.kind}-${index}`}
+          style={{
+            color: activitySegmentColor(segment.tone),
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            letterSpacing: segment.kind === "prefix" ? "0.04em" : "0.01em",
+            textTransform: segment.kind === "prefix" ? "uppercase" : "none",
+          }}
+        >
+          {segment.text}
+        </span>
+      ))}
+    </div>
+  );
+};
 
 export const AlgoLivePage = ({
   // Empty state
   deployments,
   candidateDrafts,
+  setupDataSettled = true,
   selectedDraft,
   setSelectedDraftId,
   deploymentName,
@@ -152,6 +298,10 @@ export const AlgoLivePage = ({
   createDeploymentMutation,
   // KPI strip
   cockpitKpis,
+  cockpitRisk,
+  cockpitGeneratedAt,
+  latestEvent,
+  refreshPending,
   cockpitSignalFreshness,
   cockpitTradePath,
   signalOptionsPerformanceSummary,
@@ -168,9 +318,11 @@ export const AlgoLivePage = ({
   // Signals
   visibleSignalRows,
   signalOptionsCandidates,
+  signalMatrixStates = [],
   signalOptionsProfile,
   // Positions
   signalOptionsPositions,
+  signalOptionsLedgerPositionsQuery,
   // Drill
   symbolIndex,
   events,
@@ -193,14 +345,30 @@ export const AlgoLivePage = ({
   // Layout
   algoIsPhone,
   algoIsNarrow,
+  algoLayoutWidth = 0,
   // Slots
   auditPanel,
   rightRail,
 }) => {
+  const optionQuoteGroups = useMemo(
+    () =>
+      buildAlgoOptionQuoteGroups({
+        candidates: signalOptionsCandidates,
+        positions: signalOptionsPositions,
+        ledgerPositions: signalOptionsLedgerPositionsQuery?.data?.positions,
+      }),
+    [
+      signalOptionsCandidates,
+      signalOptionsLedgerPositionsQuery?.data?.positions,
+      signalOptionsPositions,
+    ],
+  );
+
   if (!deployments.length) {
     return (
       <EmptyOperationsState
         candidateDrafts={candidateDrafts}
+        setupDataSettled={setupDataSettled}
         selectedDraft={selectedDraft}
         setSelectedDraftId={setSelectedDraftId}
         deploymentName={deploymentName}
@@ -221,6 +389,87 @@ export const AlgoLivePage = ({
   });
   const realizedToday = Number(cockpitKpis?.dailyRealizedPnl ?? 0);
   const unrealized = Number(cockpitKpis?.openUnrealizedPnl ?? 0);
+  const riskRecord = asRecord(cockpitRisk);
+  const blockedCandidates = Number(cockpitKpis?.blockedCandidates ?? 0);
+  const openPremiumValue = Number(
+    riskRecord.openPremium ?? cockpitKpis?.openPremium ?? 0,
+  );
+  const maxOpenPremium = Number(
+    riskRecord.maxOpenPremium ?? cockpitKpis?.maxOpenPremium,
+  );
+  const openPremiumUsage =
+    Number.isFinite(openPremiumValue) &&
+    Number.isFinite(maxOpenPremium) &&
+    maxOpenPremium > 0
+      ? Math.abs(openPremiumValue) / maxOpenPremium
+      : null;
+  const DeploymentToggleIcon = focusedDeployment?.enabled ? Pause : Play;
+  const deploymentToggleLabel = focusedDeployment?.enabled ? "PAUSE" : "RESUME";
+  const scanButtonLabel = runShadowScanMutation?.isPending
+    ? "SCANNING..."
+    : "SCAN NOW";
+  const hasActivitySummary = Boolean(activitySummary?.segments?.length);
+  const denseOperationsLayout = algoIsPhone || algoIsNarrow;
+  const algoIsPocketWidth =
+    Number.isFinite(Number(algoLayoutWidth)) && Number(algoLayoutWidth) > 0
+      ? Number(algoLayoutWidth) < 520
+      : false;
+  const snapshotFacts = [
+    {
+      label: "Snapshot",
+      value: refreshPending
+        ? "refreshing"
+        : cockpitGeneratedAt
+          ? formatRelativeTimeShort(cockpitGeneratedAt)
+          : "waiting",
+      detail: focusedDeployment?.lastEvaluatedAt
+        ? `scan ${formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)}`
+        : "no scan yet",
+      color: refreshPending ? T.amber : T.textSec,
+      icon: Clock,
+      severity: refreshPending ? "warning" : "neutral",
+    },
+    {
+      label: "Latest event",
+      value: latestEvent ? formatEnumLabel(latestEvent.eventType) : "none",
+      detail: latestEvent
+        ? formatRelativeTimeShort(latestEvent.occurredAt)
+        : "no execution events",
+      color: latestEvent ? T.cyan : T.textDim,
+      icon: Activity,
+      severity: "neutral",
+    },
+    {
+      label: "Candidates",
+      value: String(cockpitKpis?.candidates ?? signalOptionsCandidates.length),
+      detail: `${blockedCandidates} blocked`,
+      color: blockedCandidates > 0 ? T.amber : T.green,
+      icon: Layers,
+      severity: blockedCandidates > 0 ? "warning" : "neutral",
+    },
+    {
+      label: "Risk",
+      value: riskRecord.dailyHaltActive ? "halt active" : "within limits",
+      detail: `loss left ${formatMoney(cockpitKpis?.dailyLossRemaining, 0)}`,
+      color: riskRecord.dailyHaltActive ? T.red : T.green,
+      icon: riskRecord.dailyHaltActive ? ShieldAlert : ShieldCheck,
+      severity: riskRecord.dailyHaltActive ? "critical" : "neutral",
+    },
+    {
+      label: "Open premium",
+      value: formatMoney(openPremiumValue, 0),
+      detail: `${riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0}/${riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?"} symbols`,
+      color:
+        openPremiumUsage != null && openPremiumUsage >= 0.7
+          ? T.amber
+          : T.textSec,
+      icon: Wallet,
+      severity:
+        openPremiumUsage != null && openPremiumUsage >= 0.7
+          ? "warning"
+          : "neutral",
+    },
+  ];
 
   return (
     <div
@@ -231,6 +480,14 @@ export const AlgoLivePage = ({
         minWidth: 0,
       }}
     >
+      {optionQuoteGroups.map((group) => (
+        <AlgoOptionQuoteStreamGroup
+          key={group.underlying}
+          underlying={group.underlying}
+          providerContractIds={group.providerContractIds}
+        />
+      ))}
+
       <div
         data-testid="algo-operations-header"
         style={{
@@ -384,25 +641,41 @@ export const AlgoLivePage = ({
               !handleSaveStrategySettings ||
               updateStrategySettingsMutation?.isPending
             }
+            aria-label="Apply strategy settings"
+            title="Apply strategy settings"
             style={{
               ...compactButtonStyle({
                 disabled:
                   !handleSaveStrategySettings ||
                   updateStrategySettingsMutation?.isPending,
               }),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: sp(3),
               border: "none",
               background: T.accent,
               color: T.onAccent,
             }}
           >
-            {updateStrategySettingsMutation?.isPending
-              ? algoIsPhone
-                ? "…"
-                : "SAVING…"
-              : algoIsPhone
-                ? "✓"
-                : "APPLY"}
+            <Check
+              size={HEADER_ICON_SIZE}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+            {updateStrategySettingsMutation?.isPending ? "SAVING..." : "APPLY"}
           </button>
+          {focusedDeployment ? (
+            <span
+              aria-hidden="true"
+              style={{
+                width: 1,
+                height: dim(18),
+                background: T.border,
+                marginInline: sp(1),
+              }}
+            />
+          ) : null}
           {focusedDeployment ? (
             <button
               type="button"
@@ -414,12 +687,17 @@ export const AlgoLivePage = ({
                 pauseDeploymentMutation?.isPending
               }
               aria-label={focusedDeployment.enabled ? "Pause" : "Resume"}
+              title={focusedDeployment.enabled ? "Pause" : "Resume"}
               style={{
                 ...compactButtonStyle({
                   disabled:
                     enableDeploymentMutation?.isPending ||
                     pauseDeploymentMutation?.isPending,
                 }),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: sp(3),
                 border: `1px solid ${
                   focusedDeployment.enabled ? T.amber : T.green
                 }`,
@@ -427,13 +705,12 @@ export const AlgoLivePage = ({
                 color: focusedDeployment.enabled ? T.amber : T.green,
               }}
             >
-              {focusedDeployment.enabled
-                ? algoIsPhone
-                  ? "⏸"
-                  : "⏸ PAUSE"
-                : algoIsPhone
-                  ? "▶"
-                  : "▶ RESUME"}
+              <DeploymentToggleIcon
+                size={HEADER_ICON_SIZE}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              {deploymentToggleLabel}
             </button>
           ) : null}
           {focusedDeployment ? (
@@ -442,22 +719,26 @@ export const AlgoLivePage = ({
               onClick={handleRunShadowScan}
               disabled={runShadowScanMutation?.isPending}
               aria-label="Scan now"
+              title="Scan now"
               style={{
                 ...compactButtonStyle({
                   disabled: runShadowScanMutation?.isPending,
                 }),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: sp(3),
                 border: `1px solid ${T.accent}`,
                 background: "transparent",
                 color: T.accent,
               }}
             >
-              {runShadowScanMutation?.isPending
-                ? algoIsPhone
-                  ? "⟳"
-                  : "⟳ SCANNING…"
-                : algoIsPhone
-                  ? "⟳"
-                  : "⟳ SCAN NOW"}
+              <RefreshCw
+                size={HEADER_ICON_SIZE}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
+              {scanButtonLabel}
             </button>
           ) : null}
           {algoIsPhone ? null : (
@@ -483,55 +764,110 @@ export const AlgoLivePage = ({
         </div>
       </div>
 
-      {activitySummary?.segments?.length ? (
-        <div
-          data-testid="algo-activity-summary"
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            flexWrap: "wrap",
-            gap: sp(5),
-            padding: sp("5px 10px"),
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(RADII.md),
-            color: T.textSec,
-            fontFamily: T.sans,
-            fontSize: textSize("body"),
-            minWidth: 0,
-          }}
-        >
-          {activitySummary.segments.map((segment, index) => (
-            <span
-              key={`${segment.kind}-${index}`}
+      <div
+        data-testid="algo-snapshot-details"
+        data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
+        style={{
+          display: "grid",
+          gridTemplateColumns: algoIsPocketWidth
+            ? "repeat(2, minmax(0, 1fr))"
+            : denseOperationsLayout
+              ? "repeat(auto-fit, minmax(145px, 1fr))"
+              : "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 1,
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(RADII.sm),
+          background: T.border,
+          padding: sp(1),
+          minWidth: 0,
+        }}
+      >
+        {snapshotFacts.map((fact) => {
+          const FactIcon = fact.icon;
+          const isCritical = fact.severity === "critical";
+          const isWarning = fact.severity === "warning";
+          const cardBackground = isCritical
+            ? T.redBg
+            : isWarning
+              ? T.amberBg
+              : T.bg1;
+          const iconTone = isCritical
+            ? T.red
+            : isWarning
+              ? T.amber
+              : fact.color;
+          return (
+            <div
+              key={fact.label}
+              title={`${fact.label}: ${fact.value}${fact.detail ? ` · ${fact.detail}` : ""}`}
               style={{
-                color:
-                  segment.tone === "green"
-                    ? T.green
-                    : segment.tone === "amber"
-                      ? T.amber
-                      : segment.tone === "red"
-                        ? T.red
-                        : segment.tone === "cyan"
-                          ? T.cyan
-                          : segment.tone === "muted"
-                            ? T.textMuted
-                            : T.textDim,
-                fontFamily: segment.kind === "prefix" ? T.mono : T.sans,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                letterSpacing:
-                  segment.kind === "prefix" ? "0.04em" : "0.01em",
-                textTransform:
-                  segment.kind === "prefix" ? "uppercase" : "none",
+                display: "flex",
+                alignItems: "center",
+                gap: sp(denseOperationsLayout ? 4 : 5),
+                borderRadius: dim(RADII.xs),
+                background: cardBackground,
+                padding: sp(denseOperationsLayout ? "3px 6px" : "3px 7px"),
+                minHeight: dim(denseOperationsLayout ? 26 : 28),
+                minWidth: 0,
               }}
             >
-              {segment.text}
-            </span>
-          ))}
-        </div>
-      ) : null}
+              {FactIcon ? (
+                <FactIcon
+                  size={13}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  style={{ color: iconTone, flex: "0 0 auto" }}
+                />
+              ) : null}
+              <span
+                style={{
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flex: "0 1 auto",
+                  minWidth: 0,
+                }}
+              >
+                {fact.label}
+              </span>
+              <span
+                style={{
+                  color: fact.color,
+                  fontFamily: T.sans,
+                  fontSize: textSize("bodyStrong"),
+                  fontWeight: 600,
+                  flex: "1 1 auto",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {fact.value}
+              </span>
+              <span
+                style={{
+                  color: T.textDim,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  display: denseOperationsLayout ? "none" : "inline",
+                }}
+              >
+                {fact.detail}
+              </span>
+            </div>
+          );
+        })}
+      </div>
 
       <OperationsKpiStrip
         cockpitKpis={cockpitKpis}
@@ -542,15 +878,17 @@ export const AlgoLivePage = ({
         signalOptionsCandidates={signalOptionsCandidates}
         deploymentId={focusedDeployment?.id || null}
         algoIsPhone={algoIsPhone}
+        algoIsNarrow={algoIsNarrow}
+        algoIsPocketWidth={algoIsPocketWidth}
       />
 
       <div
         data-testid="algo-operations-pipeline-strip"
         style={{
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(RADII.md),
-          padding: sp("6px 10px"),
+          background: "transparent",
+          border: "none",
+          borderRadius: 0,
+          padding: 0,
           minWidth: 0,
         }}
       >
@@ -558,13 +896,64 @@ export const AlgoLivePage = ({
           stages={cockpitStageItems}
           selectedStageId={selectedStage?.id}
           onSelectStage={(id) => setSelectedPipelineStageId(id)}
-          narrow={algoIsPhone}
+          narrow
         />
       </div>
 
-      <OperationsAttentionStrip items={attentionStream} maxInline={3} />
-
-      <OperationsTransitionsStrip transitions={transitions || []} maxInline={5} />
+      <div
+        data-testid="algo-operations-compact-status-row"
+        data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
+        style={{
+          display: "grid",
+          gridTemplateColumns: algoIsPocketWidth
+            ? "repeat(2, minmax(0, 1fr))"
+            : denseOperationsLayout
+              ? "repeat(auto-fit, minmax(150px, 1fr))"
+              : "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 1,
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(RADII.sm),
+          background: T.border,
+          overflow: "hidden",
+          minWidth: 0,
+        }}
+      >
+        {hasActivitySummary ? (
+          <div
+            style={{
+              minWidth: 0,
+              background: T.bg1,
+              gridColumn: algoIsPhone ? "1 / -1" : undefined,
+            }}
+          >
+            <ActivitySummaryInline activitySummary={activitySummary} />
+          </div>
+        ) : null}
+        <div
+          style={{
+            minWidth: 0,
+            background: T.bg1,
+          }}
+        >
+          <OperationsAttentionStrip
+            items={attentionStream}
+            maxInline={algoIsPhone ? 2 : 3}
+            embedded
+          />
+        </div>
+        <div
+          style={{
+            minWidth: 0,
+            background: T.bg1,
+          }}
+        >
+          <OperationsTransitionsStrip
+            transitions={transitions || []}
+            maxInline={algoIsPhone ? 2 : 4}
+            embedded
+          />
+        </div>
+      </div>
 
       <div
         data-testid="algo-live-grid"
@@ -591,6 +980,7 @@ export const AlgoLivePage = ({
           <OperationsSignalTable
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
+            signalMatrixStates={signalMatrixStates}
             algoIsPhone={algoIsPhone}
             renderDrill={({ signal, candidate }) => {
               const symbol = String(signal?.symbol || "").toUpperCase();
@@ -610,6 +1000,7 @@ export const AlgoLivePage = ({
 
           <OperationsPositionsTable
             positions={signalOptionsPositions}
+            accountPositionsQuery={signalOptionsLedgerPositionsQuery}
             symbolIndex={symbolIndex}
             signalOptionsProfile={signalOptionsProfile}
             algoIsPhone={algoIsPhone}

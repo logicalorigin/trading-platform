@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
+import type { UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation } from './updateAlgoDeploymentStrategySettingsRequestBosConfirmation';
 
 export interface UpdateAlgoDeploymentStrategySettingsRequest {
   signalTimeframe: SignalMonitorTimeframe;
@@ -14,4 +15,20 @@ export interface UpdateAlgoDeploymentStrategySettingsRequest {
    * @maximum 50
    */
   timeHorizon: number;
+  bosConfirmation?: UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochAtrBuffer?: number;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochBodyExpansionAtr?: number;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochVolumeGate?: number;
 }

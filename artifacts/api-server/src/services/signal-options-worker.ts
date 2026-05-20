@@ -47,6 +47,8 @@ type DeploymentRuntime = {
   failedUntilMs: number;
   lastSuccessAt: string | null;
   lastError: string | null;
+  currentScanStartedAtMs: number | null;
+  lastScanDurationMs: number | null;
   scanCount: number;
   totalFailureCount: number;
   failureCount: number;
@@ -260,7 +262,9 @@ async function runDeployment(input: {
     return;
   }
 
+  const scanStartedAtMs = dependencies.now().getTime();
   activeDeploymentIds.add(deployment.id);
+  runtime.currentScanStartedAtMs = scanStartedAtMs;
   try {
     const scanResult = await dependencies.scanDeployment({
       deploymentId: deployment.id,
@@ -297,6 +301,9 @@ async function runDeployment(input: {
       "Signal-options shadow worker scan failed",
     );
   } finally {
+    const scanEndedAtMs = dependencies.now().getTime();
+    runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
+    runtime.currentScanStartedAtMs = null;
     activeDeploymentIds.delete(deployment.id);
   }
 }
@@ -394,6 +401,8 @@ export function createSignalOptionsWorker(
             failedUntilMs: 0,
             lastSuccessAt: null,
             lastError: null,
+            currentScanStartedAtMs: null,
+            lastScanDurationMs: null,
             scanCount: 0,
             totalFailureCount: 0,
             failureCount: 0,
@@ -486,6 +495,7 @@ export function createSignalOptionsWorker(
     },
     runOnce,
     getRuntimeSnapshot() {
+      const snapshotNowMs = dependencies.now().getTime();
       const deployments = Array.from(deploymentRuntime.entries()).map(
         ([deploymentId, runtime]) => ({
           deploymentId,
@@ -493,6 +503,15 @@ export function createSignalOptionsWorker(
           failedUntilMs: runtime.failedUntilMs,
           lastSuccessAt: runtime.lastSuccessAt,
           lastError: runtime.lastError,
+          currentScanStartedAt:
+            runtime.currentScanStartedAtMs === null
+              ? null
+              : new Date(runtime.currentScanStartedAtMs).toISOString(),
+          currentScanAgeMs:
+            runtime.currentScanStartedAtMs === null
+              ? null
+              : Math.max(0, snapshotNowMs - runtime.currentScanStartedAtMs),
+          lastScanDurationMs: runtime.lastScanDurationMs,
           scanCount: runtime.scanCount,
           totalFailureCount: runtime.totalFailureCount,
           failureCount: runtime.failureCount,

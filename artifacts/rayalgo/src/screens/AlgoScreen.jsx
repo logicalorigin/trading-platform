@@ -13,6 +13,7 @@ import {
   getGetSignalMonitorProfileQueryKey,
   getGetSignalOptionsAutomationStateQueryKey,
   getGetSignalOptionsPerformanceQueryKey,
+  useGetAccountPositions,
   useGetSignalMonitorProfile,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
@@ -71,6 +72,10 @@ import {
 } from "./algo/algoHelpers";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
+  useAlgoCockpitStream,
+  useShadowAccountSnapshotStream,
+} from "../features/platform/live-streams";
+import {
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
 } from "../features/platform/bridgeRuntimeModel";
@@ -79,6 +84,7 @@ import {
   closeIbkrProtocolLauncher,
   navigateIbkrProtocolLauncher,
   openIbkrProtocolLauncher,
+  shouldUseRemoteIbkrLaunchBrowser,
 } from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
@@ -164,8 +170,10 @@ export const AlgoScreen = ({
   environment,
   accounts = [],
   selectedAccountId = null,
+  signalMatrixStates = [],
   isVisible = false,
   onJumpToTradeCandidate,
+  onReadinessChange,
 }) => {
   const [algoRootRef, algoRootSize] = useElementSize();
   const { isPhone: algoIsPhone, isNarrow: algoIsNarrow } =
@@ -243,17 +251,97 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
-  useRuntimeWorkloadFlag("algo:deployments", isVisible, {
-    kind: "poll",
-    label: "Algo deployments",
-    detail: "15s",
+  const algoCockpitStreamFreshness = useAlgoCockpitStream({
+    deploymentId: focusedDeploymentId,
+    mode: environment || "paper",
+    enabled: Boolean(isVisible),
+  });
+  const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
+    enabled: Boolean(isVisible),
+  });
+  const [algoCriticalFallbackReady, setAlgoCriticalFallbackReady] = useState(false);
+  const [algoDerivedFallbackReady, setAlgoDerivedFallbackReady] = useState(false);
+  useEffect(() => {
+    if (!isVisible || algoCockpitStreamFreshness.algoCriticalFresh) {
+      setAlgoCriticalFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAlgoCriticalFallbackReady(true);
+    }, 2_500);
+    return () => window.clearTimeout(timer);
+  }, [algoCockpitStreamFreshness.algoCriticalFresh, isVisible]);
+  useEffect(() => {
+    if (!isVisible || algoCockpitStreamFreshness.algoFullFresh) {
+      setAlgoDerivedFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAlgoDerivedFallbackReady(true);
+    }, 6_000);
+    return () => window.clearTimeout(timer);
+  }, [algoCockpitStreamFreshness.algoFullFresh, isVisible]);
+  useEffect(() => {
+    const criticalReady = Boolean(
+      isVisible &&
+        (algoCockpitStreamFreshness.algoCriticalFresh ||
+          algoCriticalFallbackReady),
+    );
+    const derivedReady = Boolean(
+      isVisible &&
+        (algoCockpitStreamFreshness.algoFullFresh ||
+          algoDerivedFallbackReady),
+    );
+    onReadinessChange?.({
+      criticalReady,
+      derivedReady,
+      backgroundAllowed: derivedReady,
+    });
+  }, [
+    algoCockpitStreamFreshness.algoCriticalFresh,
+    algoCockpitStreamFreshness.algoFullFresh,
+    algoCriticalFallbackReady,
+    algoDerivedFallbackReady,
+    isVisible,
+    onReadinessChange,
+  ]);
+  const algoCriticalQueriesEnabled = Boolean(
+    isVisible &&
+      algoCriticalFallbackReady &&
+      !algoCockpitStreamFreshness.algoCriticalFresh,
+  );
+  const algoDerivedQueriesEnabled = Boolean(
+    isVisible &&
+      algoDerivedFallbackReady &&
+      !algoCockpitStreamFreshness.algoFullFresh,
+  );
+  const algoPostCriticalQueriesEnabled = Boolean(
+    isVisible &&
+      (algoCockpitStreamFreshness.algoCriticalFresh || algoCriticalFallbackReady),
+  );
+  const algoRoutineRefetchInterval =
+    isVisible && !algoCockpitStreamFreshness.algoCriticalFresh
+      ? QUERY_DEFAULTS.refetchInterval
+      : false;
+  const algoDerivedRefetchInterval =
+    isVisible && !algoCockpitStreamFreshness.algoFullFresh
+      ? QUERY_DEFAULTS.refetchInterval
+      : false;
+  const signalOptionsLedgerPositionsRefetchInterval =
+    algoPostCriticalQueriesEnabled && !shadowAccountStreamFreshness.accountFresh
+      ? QUERY_DEFAULTS.refetchInterval
+      : false;
+  useRuntimeWorkloadFlag("algo:cockpit", isVisible, {
+    kind: algoCockpitStreamFreshness.algoCriticalFresh ? "stream" : "poll",
+    label: "Algo cockpit",
+    detail: algoCockpitStreamFreshness.algoCriticalFresh ? "SSE" : "15s fallback",
     priority: 7,
   });
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(isVisible),
-      refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+      enabled: algoPostCriticalQueriesEnabled,
+      refetchInterval: algoDerivedRefetchInterval,
       retry: false,
     },
   });
@@ -262,8 +350,8 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(isVisible),
-        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        enabled: algoCriticalQueriesEnabled,
+        refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
     },
@@ -274,6 +362,15 @@ export const AlgoScreen = ({
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
     return matchingMode.length ? matchingMode : drafts;
   }, [draftsQuery.data, environment]);
+  const algoSetupDataSettled = Boolean(
+    (algoCockpitStreamFreshness.algoCriticalFresh ||
+      algoCriticalFallbackReady ||
+      deploymentsQuery.isFetched ||
+      deploymentsQuery.isError) &&
+      (!algoPostCriticalQueriesEnabled ||
+        draftsQuery.isFetched ||
+        draftsQuery.isError),
+  );
   const selectedDraft =
     candidateDrafts.find((draft) => draft.id === selectedDraftId) ||
     candidateDrafts[0] ||
@@ -289,8 +386,8 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(isVisible),
-        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        enabled: algoCriticalQueriesEnabled,
+        refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
     },
@@ -301,8 +398,8 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(isVisible && focusedDeployment?.id),
-        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        enabled: Boolean(algoCriticalQueriesEnabled && focusedDeployment?.id),
+        refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
     },
@@ -310,8 +407,8 @@ export const AlgoScreen = ({
   const cockpitQuery = useGetAlgoDeploymentCockpit(focusedDeployment?.id || "", {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(isVisible && focusedDeployment?.id),
-      refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+      enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
+      refetchInterval: algoDerivedRefetchInterval,
       retry: false,
     },
   });
@@ -320,8 +417,8 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(isVisible && focusedDeployment?.id),
-        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
+        refetchInterval: algoDerivedRefetchInterval,
         retry: false,
       },
     },
@@ -331,8 +428,26 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(isVisible && focusedDeployment?.id),
-        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
+        refetchInterval: algoDerivedRefetchInterval,
+        retry: false,
+      },
+    },
+  );
+  const signalOptionsLedgerPositionsQuery = useGetAccountPositions(
+    "shadow",
+    {
+      mode: "paper",
+      assetClass: "Options",
+    },
+    {
+      query: {
+        ...QUERY_DEFAULTS,
+        enabled: algoPostCriticalQueriesEnabled,
+        staleTime: shadowAccountStreamFreshness.accountFresh
+          ? 30_000
+          : QUERY_DEFAULTS.staleTime,
+        refetchInterval: signalOptionsLedgerPositionsRefetchInterval,
         retry: false,
       },
     },
@@ -683,13 +798,26 @@ export const AlgoScreen = ({
   };
 
   const startGatewayBridgeMutation = useMutation({
-    mutationFn: () => signalOptionsApi("/api/ibkr/bridge/launcher"),
-    onSuccess: (payload, protocolLauncher) => {
+    mutationFn: ({ useRemoteDesktopLaunch }) =>
+      signalOptionsApi(
+        useRemoteDesktopLaunch
+          ? "/api/ibkr/remote-launch"
+          : "/api/ibkr/bridge/launcher",
+        useRemoteDesktopLaunch
+          ? {
+              method: "POST",
+              body: JSON.stringify({ autoLogin: false }),
+            }
+          : undefined,
+      ),
+    onSuccess: (payload, variables) => {
       setBridgeLauncherError(null);
-      const launched = navigateIbkrProtocolLauncher(
-        protocolLauncher,
-        payload.launchUrl,
-      );
+      const launched = variables.useRemoteDesktopLaunch
+        ? Boolean(payload.remoteLaunch?.jobId)
+        : navigateIbkrProtocolLauncher(
+            variables.protocolLauncher,
+            payload.launchUrl,
+          );
       if (launched) {
         setBridgeLaunchInFlightUntil(
           Date.now() + IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
@@ -697,19 +825,27 @@ export const AlgoScreen = ({
       }
       if (!launched) {
         setBridgeLauncherError(
-          "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
+          variables.useRemoteDesktopLaunch
+            ? "No paired Windows desktop accepted the IBKR bridge launch request."
+            : "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
         );
       }
       toast.push({
         kind: "success",
-        title: launched ? "Bridge launcher opened" : "Bridge launcher ready",
-        body: launched
+        title: launched
+          ? variables.useRemoteDesktopLaunch
+            ? "Bridge launch sent"
+            : "Bridge launcher opened"
+          : "Bridge launcher ready",
+        body: launched && variables.useRemoteDesktopLaunch
+          ? "The paired Windows desktop should start the RayAlgo IBKR helper."
+          : launched
           ? "Your browser should ask to open the RayAlgo IBKR PowerShell launcher."
           : "The one-click IBKR bridge handler did not open.",
       });
     },
-    onError: (error, protocolLauncher) => {
-      closeIbkrProtocolLauncher(protocolLauncher);
+    onError: (error, variables) => {
+      closeIbkrProtocolLauncher(variables?.protocolLauncher);
       setBridgeLauncherError(error?.message || "Gateway bridge launch failed.");
       toast.push({
         kind: "error",
@@ -888,8 +1024,14 @@ export const AlgoScreen = ({
     if (gatewayBridgeLaunching) {
       return;
     }
-    const protocolLauncher = openIbkrProtocolLauncher();
-    startGatewayBridgeMutation.mutate(protocolLauncher);
+    const useRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser();
+    const protocolLauncher = useRemoteDesktopLaunch
+      ? null
+      : openIbkrProtocolLauncher();
+    startGatewayBridgeMutation.mutate({
+      protocolLauncher,
+      useRemoteDesktopLaunch,
+    });
   };
 
   const handleCreateDeployment = () => {
@@ -917,7 +1059,6 @@ export const AlgoScreen = ({
         title: "Data bridge required",
         body: "Start the IB Gateway bridge before creating a Shadow signal deployment.",
       });
-      handleStartGatewayBridge();
       return;
     }
 
@@ -959,7 +1100,6 @@ export const AlgoScreen = ({
         title: "Data bridge required",
         body: "Start the IB Gateway bridge before enabling a Shadow signal deployment.",
       });
-      handleStartGatewayBridge();
       return;
     }
 
@@ -986,7 +1126,6 @@ export const AlgoScreen = ({
         title: "Data bridge required",
         body: "Start the IB Gateway bridge before running a Shadow signal-options scan.",
       });
-      handleStartGatewayBridge();
       return;
     }
     runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
@@ -1284,7 +1423,7 @@ export const AlgoScreen = ({
           signalAt: candidate.signalAt,
           signalPrice: candidate.signalPrice,
         }))
-  ).slice(0, algoIsPhone ? 4 : 6);
+  ).slice(0, algoIsPhone ? 8 : 20);
 
   return (
     <div
@@ -1457,6 +1596,7 @@ export const AlgoScreen = ({
         <AlgoLivePage
           deployments={deployments}
           candidateDrafts={candidateDrafts}
+          setupDataSettled={algoSetupDataSettled}
           selectedDraft={selectedDraft}
           setSelectedDraftId={setSelectedDraftId}
           deploymentName={deploymentName}
@@ -1466,6 +1606,10 @@ export const AlgoScreen = ({
           handleCreateDeployment={handleCreateDeployment}
           createDeploymentMutation={createDeploymentMutation}
           cockpitKpis={cockpitKpis}
+          cockpitRisk={cockpit?.risk}
+          cockpitGeneratedAt={cockpit?.generatedAt}
+          latestEvent={latestEvent}
+          refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
           cockpitSignalFreshness={cockpitSignalFreshness}
           cockpitTradePath={cockpitTradePath}
           signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
@@ -1478,9 +1622,11 @@ export const AlgoScreen = ({
           transitions={visibleTransitions}
           visibleSignalRows={visibleSignalRows}
           signalOptionsCandidates={signalOptionsCandidates}
+          signalMatrixStates={signalMatrixStates}
           selectedCandidate={selectedCandidate}
           signalOptionsProfile={signalOptionsProfile}
           signalOptionsPositions={signalOptionsPositions}
+          signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
           symbolIndex={symbolIndex}
           events={events}
           userPreferences={userPreferences}
@@ -1498,6 +1644,7 @@ export const AlgoScreen = ({
           runShadowScanMutation={runShadowScanMutation}
           algoIsPhone={algoIsPhone}
           algoIsNarrow={algoIsNarrow}
+          algoLayoutWidth={algoRootSize.width}
           auditPanel={
             <AlgoAuditPanel
               events={events}

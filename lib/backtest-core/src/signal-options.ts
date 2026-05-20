@@ -65,6 +65,17 @@ export type SignalOptionsExecutionProfile = {
   };
 };
 
+export const tunedSignalOptionsStrategySettings = {
+  signalTimeframe: "5m",
+  rayReplicaSettings: {
+    timeHorizon: 8,
+    bosConfirmation: "wicks",
+    chochAtrBuffer: 0,
+    chochBodyExpansionAtr: 0,
+    chochVolumeGate: 0,
+  },
+} as const;
+
 export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile =
   {
     version: "v1",
@@ -140,6 +151,24 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       highQualityOvernightMinGainPct: -100,
     },
   };
+
+export const tunedSignalOptionsExecutionProfilePatch = {
+  riskCaps: {
+    maxOpenSymbols: 10,
+    maxPremiumPerEntry: 1_500,
+  },
+  exitPolicy: {
+    hardStopPct: -30,
+    trailActivationPct: 35,
+    minLockedGainPct: 15,
+    trailGivebackPct: 20,
+    overnightExitEnabled: true,
+    overnightMinGainPct: 10,
+    overnightRunnerGivebackPct: 15,
+    earlyExitBars: 6,
+    earlyExitLossPct: 20,
+  },
+} as const;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -476,6 +505,9 @@ export function resolveSignalOptionsExecutionProfile(
     },
   };
 }
+
+export const tunedSignalOptionsExecutionProfile =
+  resolveSignalOptionsExecutionProfile(tunedSignalOptionsExecutionProfilePatch);
 
 export function signalOptionsRightForDirection(
   direction: "buy" | "sell" | "long" | "short",

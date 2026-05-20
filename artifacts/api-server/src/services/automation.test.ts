@@ -11,16 +11,42 @@ test("algo strategy settings API patches deployment and signal monitor settings"
     new URL("./automation.ts", import.meta.url),
     "utf8",
   );
+  const signalOptionsServiceSource = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     routeSource,
     /\/algo\/deployments\/:deploymentId\/strategy-settings/,
   );
+  assert.match(routeSource, /\/streams\/algo\/cockpit/);
+  assert.match(routeSource, /fetchAlgoCockpitCriticalPayload/);
+  assert.match(routeSource, /subscribeAlgoCockpitSnapshots/);
   assert.match(serviceSource, /updateAlgoDeploymentStrategySettings/);
-  assert.match(serviceSource, /parameters:\s*\{[\s\S]*timeHorizon,[\s\S]*signalTimeframe,/);
+  assert.match(serviceSource, /notifyAlgoCockpitChanged/);
+  assert.match(signalOptionsServiceSource, /notifyAlgoCockpitChanged/);
+  assert.match(
+    serviceSource,
+    /parameters:\s*\{[\s\S]*signalTimeframe,[\s\S]*\.\.\.rayReplicaSettingsPatch,/,
+  );
+  assert.match(routeSource, /bosConfirmation:\s*body\.bosConfirmation/);
+  assert.match(routeSource, /chochAtrBuffer:\s*body\.chochAtrBuffer/);
+  assert.match(serviceSource, /readOptionalBosConfirmation\(input\.bosConfirmation\)/);
+  assert.match(serviceSource, /chochBodyExpansionAtr/);
+  assert.match(serviceSource, /chochVolumeGate/);
+  assert.match(serviceSource, /rayReplicaSettingsPatch\s*=\s*\{[\s\S]*timeHorizon,[\s\S]*bosConfirmation/);
   assert.match(serviceSource, /updateSignalMonitorProfile\(\{[\s\S]*timeframe:\s*signalTimeframe,[\s\S]*rayReplicaSettings:\s*nextRayReplicaSettings,/);
   assert.doesNotMatch(
     serviceSource,
     /signalOptions:\s*resolveSignalOptionsExecutionProfile/,
+  );
+  assert.match(
+    signalOptionsServiceSource,
+    /tunedSignalOptionsStrategySettings/,
+  );
+  assert.match(
+    signalOptionsServiceSource,
+    /signalOptions:\s*tunedSignalOptionsExecutionProfile/,
   );
 });

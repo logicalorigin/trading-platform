@@ -2,13 +2,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { tunedSignalOptionsStrategySettings } from "@workspace/backtest-core";
 import { pool } from "@workspace/db";
 import { runSignalOptionsShadowBackfill } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
 
 type JsonRecord = Record<string, unknown>;
 
-type ExitPolicyVariant = {
+export type ExitPolicyVariant = {
   id: string;
   description: string;
   profilePatch: JsonRecord;
@@ -24,7 +25,7 @@ type SweepMetrics = {
   riskAdjustedScore: number;
 };
 
-type SweepResult = {
+export type SweepResult = {
   variant: ExitPolicyVariant;
   status: "succeeded" | "failed";
   eligible: boolean;
@@ -52,12 +53,16 @@ type SweepConfig = {
   session: string;
   reportDir: string;
   lockWaitMs: number;
+  heartbeatMs: number;
+  variantTimeoutMs: number;
   timeHorizon: number;
   symbols: string[];
 };
 
 const MIN_CLOSED_TRADES = 20;
 const ACCOUNT_SIZE = 30_000;
+const DEFAULT_VARIANT_HEARTBEAT_MS = 60_000;
+const DEFAULT_VARIANT_TIMEOUT_MS = 20 * 60_000;
 const RISK_CAP_PATCH = {
   riskCaps: {
     maxOpenSymbols: 10,
@@ -103,11 +108,26 @@ function readSweepConfig(): SweepConfig {
   return {
     start: process.env["SIGNAL_OPTIONS_EXIT_SWEEP_START"] ?? "2026-04-01",
     ...(end ? { end } : {}),
-    signalTimeframe: process.env["SIGNAL_OPTIONS_EXIT_SWEEP_TIMEFRAME"] ?? "5m",
+    signalTimeframe:
+      process.env["SIGNAL_OPTIONS_EXIT_SWEEP_TIMEFRAME"] ??
+      tunedSignalOptionsStrategySettings.signalTimeframe,
     session: process.env["SIGNAL_OPTIONS_EXIT_SWEEP_SESSION"] ?? "regular",
     reportDir: path.resolve(process.cwd(), reportRoot),
     lockWaitMs: readIntegerEnv("SIGNAL_OPTIONS_EXIT_SWEEP_LOCK_WAIT_MS", 0),
-    timeHorizon: readBoundedIntegerEnv("SIGNAL_OPTIONS_EXIT_SWEEP_HORIZON", 8, 2, 50),
+    heartbeatMs: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_HEARTBEAT_MS",
+      DEFAULT_VARIANT_HEARTBEAT_MS,
+    ),
+    variantTimeoutMs: readIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_VARIANT_TIMEOUT_MS",
+      DEFAULT_VARIANT_TIMEOUT_MS,
+    ),
+    timeHorizon: readBoundedIntegerEnv(
+      "SIGNAL_OPTIONS_EXIT_SWEEP_HORIZON",
+      tunedSignalOptionsStrategySettings.rayReplicaSettings.timeHorizon,
+      2,
+      50,
+    ),
     symbols:
       process.env["SIGNAL_OPTIONS_EXIT_SWEEP_SYMBOLS"]
         ?.split(",")
@@ -123,7 +143,7 @@ function withProfilePatch(exitPolicy: JsonRecord = {}): JsonRecord {
   };
 }
 
-function buildVariants(): ExitPolicyVariant[] {
+export function buildVariants(): ExitPolicyVariant[] {
   return [
     {
       id: "baseline-current-exits",
@@ -281,6 +301,13 @@ function buildVariants(): ExitPolicyVariant[] {
       }),
     },
   ];
+}
+
+export function buildRayReplicaSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
+  return {
+    ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
+    timeHorizon: config.timeHorizon,
+  };
 }
 
 function selectVariants(variants: ExitPolicyVariant[]): ExitPolicyVariant[] {
@@ -468,6 +495,51 @@ async function acquireSignalOptionsWorkerLock(waitMs: number) {
   return release;
 }
 
+async function withVariantHeartbeat<T>(input: {
+  variantId: string;
+  config: SweepConfig;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const startedAt = Date.now();
+  let warnedAboutTimeout = false;
+  const heartbeat =
+    input.config.heartbeatMs > 0
+      ? setInterval(() => {
+          const elapsedMs = Date.now() - startedAt;
+          const timeoutExceeded =
+            input.config.variantTimeoutMs > 0 &&
+            elapsedMs >= input.config.variantTimeoutMs;
+          if (timeoutExceeded && !warnedAboutTimeout) {
+            warnedAboutTimeout = true;
+            console.warn(
+              JSON.stringify({
+                variant: input.variantId,
+                status: "timeout_threshold_exceeded",
+                elapsedMs,
+                variantTimeoutMs: input.config.variantTimeoutMs,
+              }),
+            );
+          } else {
+            console.log(
+              JSON.stringify({
+                variant: input.variantId,
+                status: "running",
+                elapsedMs,
+              }),
+            );
+          }
+        }, input.config.heartbeatMs)
+      : null;
+  heartbeat?.unref?.();
+  try {
+    return await input.run();
+  } finally {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
+  }
+}
+
 async function runVariant(input: {
   deployment: DeploymentRow;
   variant: ExitPolicyVariant;
@@ -475,22 +547,28 @@ async function runVariant(input: {
 }): Promise<SweepResult> {
   const started = new Date();
   try {
-    const result = await runSignalOptionsShadowBackfill({
-      deploymentId: input.deployment.id,
-      start: input.config.start,
-      end: input.config.end,
-      session: input.config.session,
-      commit: false,
-      replay: false,
-      replaceReplayRows: false,
-      forceDeploymentUniverse: true,
-      symbolUniverseOverride: input.deployment.symbolUniverse.map((symbol) =>
-        String(symbol).toUpperCase(),
-      ),
-      signalTimeframe: input.config.signalTimeframe,
-      rayReplicaSettingsPatch: { timeHorizon: input.config.timeHorizon },
-      profilePatch: input.variant.profilePatch,
-      progress: true,
+    const rayReplicaSettingsPatch = buildRayReplicaSettingsPatch(input.config);
+    const result = await withVariantHeartbeat({
+      variantId: input.variant.id,
+      config: input.config,
+      run: () =>
+        runSignalOptionsShadowBackfill({
+          deploymentId: input.deployment.id,
+          start: input.config.start,
+          end: input.config.end,
+          session: input.config.session,
+          commit: false,
+          replay: false,
+          replaceReplayRows: false,
+          forceDeploymentUniverse: true,
+          symbolUniverseOverride: input.deployment.symbolUniverse.map((symbol) =>
+            String(symbol).toUpperCase(),
+          ),
+          signalTimeframe: input.config.signalTimeframe,
+          rayReplicaSettingsPatch,
+          profilePatch: input.variant.profilePatch,
+          progress: true,
+        }),
     });
     const finished = new Date();
     const metrics = computeMetrics(result);
@@ -586,7 +664,7 @@ async function writeReports(input: {
     `- Symbols: ${input.deployment.symbolUniverse.length}`,
     `- Window: ${input.config.start} through ${input.config.end ?? "latest completed trading day"}`,
     `- Signal timeframe: ${input.config.signalTimeframe}`,
-    `- RayReplica patch: \`${JSON.stringify({ timeHorizon: input.config.timeHorizon })}\``,
+    `- RayReplica patch: \`${JSON.stringify(buildRayReplicaSettingsPatch(input.config))}\``,
     `- Risk caps: \`${JSON.stringify(RISK_CAP_PATCH.riskCaps)}\``,
     `- Premium-bucket variants: excluded`,
     `- Dry variants: ${input.results.length}`,
@@ -648,7 +726,7 @@ async function main() {
         },
         config,
         variants: variants.length,
-        rayReplicaSettingsPatch: { timeHorizon: config.timeHorizon },
+        rayReplicaSettingsPatch: buildRayReplicaSettingsPatch(config),
         riskCaps: RISK_CAP_PATCH.riskCaps,
       }),
     );
