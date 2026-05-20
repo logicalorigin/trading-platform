@@ -654,23 +654,85 @@ function isSimulationShadowOrderSource(source: string | null | undefined): boole
   return source === WATCHLIST_BACKTEST_SOURCE || source === SIGNAL_OPTIONS_REPLAY_SOURCE;
 }
 
+function shadowPositionKeySource(
+  positionKey: string | null | undefined,
+): ShadowAttributionSource | null {
+  if (isWatchlistBacktestPositionKey(positionKey)) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+  if (isSignalOptionsReplayPositionKey(positionKey)) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
+  }
+  return null;
+}
+
+function shadowPayloadEffectiveSource(payload: unknown): ShadowAttributionSource | null {
+  const payloadRecord = readRecord(payload) ?? {};
+  const metadata = readRecord(payloadRecord.metadata) ?? {};
+  const replay = readRecord(payloadRecord.replay) ?? {};
+  const backfill = readRecord(payloadRecord.backfill) ?? {};
+  const sourceCandidates = [
+    readString(payloadRecord.source),
+    readString(payloadRecord.sourceType),
+    readString(payloadRecord.runSource),
+    readString(metadata.source),
+    readString(metadata.sourceType),
+    readString(metadata.runSource),
+    readString(replay.source),
+    readString(backfill.source),
+  ];
+
+  if (sourceCandidates.includes(SIGNAL_OPTIONS_REPLAY_SOURCE)) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
+  }
+  if (sourceCandidates.includes(WATCHLIST_BACKTEST_SOURCE)) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+
+  return shadowPositionKeySource(shadowPayloadPositionKey(payload));
+}
+
+function shadowOrderEffectiveSource(
+  order?: Pick<ShadowOrderRow, "source" | "payload"> | null,
+): ShadowAttributionSource {
+  const payloadSource = shadowPayloadEffectiveSource(order?.payload);
+  if (payloadSource) {
+    return payloadSource;
+  }
+  if (order?.source === WATCHLIST_BACKTEST_SOURCE) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+  if (order?.source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
+  }
+  if (order?.source === "automation") {
+    return "automation";
+  }
+  return "manual";
+}
+
 function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
-  return !isSimulationShadowOrderSource(order?.source) && !isForwardTestShadowOrder(order);
+  return (
+    !isSimulationShadowOrderSource(shadowOrderEffectiveSource(order)) &&
+    !isForwardTestShadowOrder(order)
+  );
 }
 
 function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: string) {
-  if (!order || order.source !== source) {
+  if (!order) {
     return false;
   }
+  const effectiveSource = shadowOrderEffectiveSource(order);
   if (source === "automation") {
-    return !isForwardTestShadowOrder(order);
+    return effectiveSource === "automation" && !isForwardTestShadowOrder(order);
   }
-  return true;
+  return effectiveSource === source;
 }
 
 function isLiveShadowPosition(position: Pick<ShadowPositionRow, "positionKey">): boolean {
   return (
     !isWatchlistBacktestPositionKey(position.positionKey) &&
+    !isSignalOptionsReplayPositionKey(position.positionKey) &&
     !isShadowEquityForwardPositionKey(position.positionKey)
   );
 }
@@ -688,6 +750,7 @@ function positionMatchesShadowSource(
   if (source === "automation") {
     return (
       !isWatchlistBacktestPositionKey(position.positionKey) &&
+      !isSignalOptionsReplayPositionKey(position.positionKey) &&
       !isShadowEquityForwardPositionKey(position.positionKey)
     );
   }
@@ -753,13 +816,14 @@ function isAutomatedShadowSource(source: ShadowOrderSource | null | undefined) {
 }
 
 function shadowSourceType(order?: ShadowOrderRow | null): ShadowAttributionSource {
-  if (order?.source === "automation") {
+  const effectiveSource = shadowOrderEffectiveSource(order);
+  if (effectiveSource === "automation") {
     return "automation";
   }
-  if (order?.source === WATCHLIST_BACKTEST_SOURCE) {
+  if (effectiveSource === WATCHLIST_BACKTEST_SOURCE) {
     return WATCHLIST_BACKTEST_SOURCE;
   }
-  if (order?.source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+  if (effectiveSource === SIGNAL_OPTIONS_REPLAY_SOURCE) {
     return SIGNAL_OPTIONS_REPLAY_SOURCE;
   }
   return "manual";
@@ -1105,6 +1169,25 @@ async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
   return (await readOpenShadowPositions()).filter(
     (position) =>
       isLiveShadowPosition(position) && livePositionKeys.has(position.positionKey),
+  );
+}
+
+async function readOpenShadowPositionsForSource(
+  source: ShadowSourceScope | null,
+): Promise<ShadowPositionRow[]> {
+  if (!source) {
+    return readOpenLiveShadowPositions();
+  }
+  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const sourcePositionKeys = shadowPositionKeysForOrders(
+    fills
+      .filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
+      .map((fill) => ordersById.get(fill.orderId)),
+  );
+  return (await readOpenShadowPositions()).filter(
+    (position) =>
+      sourcePositionKeys.has(position.positionKey) &&
+      positionMatchesShadowSource(position, source),
   );
 }
 
@@ -2701,11 +2784,7 @@ export async function getShadowAccountSummary(input: { source?: string | null } 
     const degraded = isShadowAccountDbBackoffActive();
     const positions = degraded
       ? []
-      : source
-        ? (await readOpenShadowPositions()).filter((position) =>
-            positionMatchesShadowSource(position, source),
-          )
-        : await readOpenLiveShadowPositions();
+      : await readOpenShadowPositionsForSource(source);
     const dayChanges = degraded
       ? new Map<string, ShadowPositionDayChange>()
       : await readShadowPositionDayChanges(positions);
@@ -3438,11 +3517,7 @@ export async function getShadowAccountAllocation(input: { source?: string | null
     const degraded = isShadowAccountDbBackoffActive();
     const positions = degraded
       ? []
-      : source
-        ? (await readOpenShadowPositions()).filter((position) =>
-            positionMatchesShadowSource(position, source),
-          )
-        : await readOpenLiveShadowPositions();
+      : await readOpenShadowPositionsForSource(source);
     return buildShadowAccountAllocationResponse({ totals, positions, degraded });
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -3511,17 +3586,7 @@ export async function getShadowAccountPositions(input: {
     .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(1000);
-  const sourcePositionKeys = source
-    ? shadowPositionKeysForOrders(
-        orders.filter((order) => shadowOrderMatchesSource(order, source)),
-      )
-    : null;
-  const positions = source
-    ? (await readOpenShadowPositions()).filter((position) =>
-        sourcePositionKeys!.has(position.positionKey) &&
-        positionMatchesShadowSource(position, source),
-      )
-    : await readOpenLiveShadowPositions();
+  const positions = await readOpenShadowPositionsForSource(source);
   const filtered =
     input.assetClass && input.assetClass !== "all"
       ? positions.filter(
@@ -7668,8 +7733,10 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   signalOptionsReplayOrderMatchesRange,
   signalOptionsReplayOrderSourceMatchesRange,
   isSimulationShadowOrderSource,
+  shadowOrderEffectiveSource,
   isLiveShadowOrder,
   isLiveShadowPosition,
+  readOpenShadowPositionsForSource,
   shouldCloseOptionForShadowMaintenance,
   shadowPositionKeyForOrder,
   shadowPositionKeysForOrders,
