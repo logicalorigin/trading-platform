@@ -379,63 +379,71 @@ test("runtime diagnostics use the active API quote stream as strict stream proof
 });
 
 test("runtime diagnostics require quote data events for strict stream proof", async () => {
-  __setIbkrBridgeClientFactoryForTests(
-    () =>
-      ({
-        getHealth: async () => ({
-          configured: true,
-          authenticated: true,
-          connected: true,
-          competing: false,
-          selectedAccountId: "DU1234567",
-          accounts: ["DU1234567"],
-          lastTickleAt: new Date(),
-          lastError: null,
-          lastRecoveryAttemptAt: null,
-          lastRecoveryError: null,
-          updatedAt: new Date(),
-          transport: "tws",
-          connectionTarget: "127.0.0.1:4001",
-          sessionMode: "live",
-          clientId: 101,
-          marketDataMode: "live",
-          liveMarketDataAvailable: true,
-          streamFresh: false,
-          lastStreamEventAgeMs: null,
-          strictReady: false,
-          strictReason: "stream_not_fresh",
-          diagnostics: {
-            subscriptions: {
-              lastQuoteAgeMs: null,
-              lastAggregateSourceAgeMs: null,
-            },
-          },
-        }),
-      }) as unknown as IbkrBridgeClient,
-  );
-  __setBridgeQuoteClientForTests({
-    getQuoteSnapshots: async () => [],
-    streamQuoteSnapshots: (_symbols, _onSnapshot, _onError, onSignal) => {
-      onSignal?.({
-        type: "status",
-        at: new Date(),
-        status: { state: "open", lastEventAgeMs: null },
-      });
-      return () => {};
-    },
+  test.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-04-28T14:30:00.000Z"),
   });
+  try {
+    __setIbkrBridgeClientFactoryForTests(
+      () =>
+        ({
+          getHealth: async () => ({
+            configured: true,
+            authenticated: true,
+            connected: true,
+            competing: false,
+            selectedAccountId: "DU1234567",
+            accounts: ["DU1234567"],
+            lastTickleAt: new Date(),
+            lastError: null,
+            lastRecoveryAttemptAt: null,
+            lastRecoveryError: null,
+            updatedAt: new Date(),
+            transport: "tws",
+            connectionTarget: "127.0.0.1:4001",
+            sessionMode: "live",
+            clientId: 101,
+            marketDataMode: "live",
+            liveMarketDataAvailable: true,
+            streamFresh: false,
+            lastStreamEventAgeMs: null,
+            strictReady: false,
+            strictReason: "stream_not_fresh",
+            diagnostics: {
+              subscriptions: {
+                lastQuoteAgeMs: null,
+                lastAggregateSourceAgeMs: null,
+              },
+            },
+          }),
+        }) as unknown as IbkrBridgeClient,
+    );
+    __setBridgeQuoteClientForTests({
+      getQuoteSnapshots: async () => [],
+      streamQuoteSnapshots: (_symbols, _onSnapshot, _onError, onSignal) => {
+        onSignal?.({
+          type: "status",
+          at: new Date(),
+          status: { state: "open", lastEventAgeMs: null },
+        });
+        return () => {};
+      },
+    });
 
-  const unsubscribe = subscribeBridgeQuoteSnapshots(["NVDA"], () => {});
-  await new Promise((resolve) => setTimeout(resolve, 180));
-  const diagnostics = await getRuntimeDiagnostics();
-  unsubscribe();
+    const unsubscribe = subscribeBridgeQuoteSnapshots(["NVDA"], () => {});
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const diagnostics = await getRuntimeDiagnostics();
+    unsubscribe();
 
-  assert.equal(diagnostics.ibkr.streamFresh, false);
-  assert.equal(diagnostics.ibkr.strictReady, false);
-  assert.equal(diagnostics.ibkr.strictReason, "stream_not_fresh");
-  assert.equal(diagnostics.ibkr.streamState, "stale");
-  assert.equal(diagnostics.ibkr.streamStateReason, "stream_not_fresh");
-  assert.equal(diagnostics.ibkr.lastStreamEventAgeMs, null);
+    assert.equal(diagnostics.ibkr.streamFresh, false);
+    assert.equal(diagnostics.ibkr.strictReady, false);
+    assert.equal(diagnostics.ibkr.strictReason, "stream_not_fresh");
+    assert.equal(diagnostics.ibkr.streamState, "stale");
+    assert.equal(diagnostics.ibkr.streamStateReason, "stream_not_fresh");
+    assert.equal(diagnostics.ibkr.lastStreamEventAgeMs, null);
+  } finally {
+    test.mock.timers.reset();
+  }
 });
 
 test("runtime diagnostics do not require stream proof for passive bridge line leases", async () => {
