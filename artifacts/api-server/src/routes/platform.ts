@@ -106,7 +106,9 @@ import {
   subscribeShadowAccountSnapshots,
 } from "../services/shadow-account-streams";
 import {
-  fetchAccountPageSnapshotPayload,
+  ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
+  ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
+  fetchAccountPageCriticalPayload,
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
 import {
@@ -148,9 +150,23 @@ import {
 import {
   attachLegacyIbkrBridgeRuntime,
   attachIbkrBridgeRuntime,
+  cancelLegacyIbkrBridgeActivation,
+  claimLegacyIbkrBridgeLoginEnvelope,
+  claimIbkrRemoteDesktopLaunchJob,
+  completeIbkrRemoteDesktopJob,
+  createIbkrRemoteBridgeLaunch,
+  createIbkrRemoteBridgeShutdown,
   detachIbkrBridgeRuntime,
   getIbkrBridgeLauncher,
+  heartbeatIbkrRemoteDesktop,
+  listIbkrRemoteDesktops,
+  readIbkrRemoteDesktopJobStatus,
+  readLegacyIbkrBridgeActivationStatus,
+  readLegacyIbkrBridgeLoginKey,
   recordLegacyIbkrBridgeActivationProgress,
+  registerIbkrRemoteDesktop,
+  submitLegacyIbkrBridgeLoginEnvelope,
+  submitLegacyIbkrBridgeLoginKey,
 } from "../services/ibkr-bridge-runtime";
 
 const router: IRouter = Router();
@@ -189,6 +205,15 @@ const isHistoryBarTimeframe = (
   value: string,
 ): value is RouteHistoryBarTimeframe =>
   HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
+
+function readFetchPriority(req: Request): number | undefined {
+  const raw = req.get("x-rayalgo-fetch-priority");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 function normalizeStreamSymbols(rawSymbols: unknown): string[] {
   const values = Array.isArray(rawSymbols)
@@ -508,6 +533,20 @@ function getReplitBridgeBaseUrl(): string | null {
   return null;
 }
 
+function getHostnameFromHost(host: string): string {
+  const trimmed = host.trim();
+  try {
+    return new URL(`http://${trimmed}`).hostname.toLowerCase();
+  } catch {
+    return trimmed.split(":")[0]?.toLowerCase() ?? "";
+  }
+}
+
+function isReplitShellHost(host: string): boolean {
+  const hostname = getHostnameFromHost(host);
+  return hostname === "replit.com" || hostname.endsWith(".replit.com");
+}
+
 function buildOriginFromHost(
   proto: string | null,
   host: string,
@@ -531,7 +570,11 @@ export function getIbkrBridgeRequestOrigin(
 
   const forwardedProto = getFirstHeaderValue(req.get("x-forwarded-proto"));
   const forwardedHost = getFirstHeaderValue(req.get("x-forwarded-host"));
+  const replitBaseUrl = getReplitBridgeBaseUrl();
   if (forwardedHost && !isLoopbackHost(forwardedHost)) {
+    if (isReplitShellHost(forwardedHost) && replitBaseUrl) {
+      return replitBaseUrl;
+    }
     return buildOriginFromHost(forwardedProto, forwardedHost, {
       preferHttpsForPublicHost: true,
     });
@@ -542,12 +585,14 @@ export function getIbkrBridgeRequestOrigin(
   if (host && isLoopbackHost(host) && origin) {
     const normalizedOrigin = normalizeOrigin(origin);
     if (normalizedOrigin && !isLoopbackHost(new URL(normalizedOrigin).host)) {
+      if (isReplitShellHost(new URL(normalizedOrigin).host) && replitBaseUrl) {
+        return replitBaseUrl;
+      }
       return normalizedOrigin;
     }
   }
 
   if ((host && isLoopbackHost(host)) || (forwardedHost && isLoopbackHost(forwardedHost))) {
-    const replitBaseUrl = getReplitBridgeBaseUrl();
     if (replitBaseUrl) {
       return replitBaseUrl;
     }
@@ -980,12 +1025,17 @@ async function startSse(
   });
 
   try {
-    unsubscribe =
+    const setupUnsubscribe =
       (await setup({
         writeEvent,
         writeComment,
         lastEventId,
       })) ?? (() => {});
+    if (cleanedUp) {
+      setupUnsubscribe();
+      return;
+    }
+    unsubscribe = setupUnsubscribe;
   } catch (error) {
     closeReason = "setup_error";
     if (!res.headersSent) {
@@ -1026,6 +1076,55 @@ router.get("/ibkr/bridge/launcher", async (req, res) => {
   );
 });
 
+router.get("/ibkr/desktops", async (_req, res) => {
+  res.json(listIbkrRemoteDesktops());
+});
+
+router.post("/ibkr/desktop/register", async (req, res) => {
+  res.json(registerIbkrRemoteDesktop(req.body));
+});
+
+router.post("/ibkr/desktop/heartbeat", async (req, res) => {
+  res.json(heartbeatIbkrRemoteDesktop(req.body));
+});
+
+router.post("/ibkr/desktop/jobs/claim", async (req, res) => {
+  res.json(claimIbkrRemoteDesktopLaunchJob(req.body));
+});
+
+router.post("/ibkr/desktop/jobs/complete", async (req, res) => {
+  res.json(completeIbkrRemoteDesktopJob(req.body));
+});
+
+router.post("/ibkr/desktop/jobs/status", async (req, res) => {
+  res.json(readIbkrRemoteDesktopJobStatus(req.body));
+});
+
+router.post("/ibkr/remote-launch", async (req, res) => {
+  const apiBaseUrl = getIbkrBridgeRequestOrigin(req);
+  const bundleUrl =
+    findIbkrBridgeBundlePath() || getIbkrBridgeBundleRedirectUrl()
+      ? `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`
+      : null;
+
+  res.json(
+    createIbkrRemoteBridgeLaunch({
+      apiBaseUrl,
+      body: req.body,
+      bundleUrl,
+    }),
+  );
+});
+
+router.post("/ibkr/remote-shutdown", async (req, res) => {
+  res.json(
+    createIbkrRemoteBridgeShutdown({
+      apiBaseUrl: getIbkrBridgeRequestOrigin(req),
+      body: req.body,
+    }),
+  );
+});
+
 router.post("/ibkr/activation/:activationId/progress", async (req, res) => {
   res.json(
     recordLegacyIbkrBridgeActivationProgress(
@@ -1034,6 +1133,37 @@ router.post("/ibkr/activation/:activationId/progress", async (req, res) => {
     ),
   );
 });
+
+router.post("/ibkr/activation/:activationId/status", async (req, res) => {
+  res.json(readLegacyIbkrBridgeActivationStatus(req.params.activationId, req.body));
+});
+
+router.post("/ibkr/activation/:activationId/cancel", async (req, res) => {
+  res.json(cancelLegacyIbkrBridgeActivation(req.params.activationId, req.body));
+});
+
+router.post("/ibkr/activation/:activationId/login-key", async (req, res) => {
+  res.json(submitLegacyIbkrBridgeLoginKey(req.params.activationId, req.body));
+});
+
+router.post("/ibkr/activation/:activationId/login-key/read", async (req, res) => {
+  res.json(readLegacyIbkrBridgeLoginKey(req.params.activationId, req.body));
+});
+
+router.post("/ibkr/activation/:activationId/login-envelope", async (req, res) => {
+  res.json(
+    submitLegacyIbkrBridgeLoginEnvelope(req.params.activationId, req.body),
+  );
+});
+
+router.post(
+  "/ibkr/activation/:activationId/login-envelope/claim",
+  async (req, res) => {
+    res.json(
+      claimLegacyIbkrBridgeLoginEnvelope(req.params.activationId, req.body),
+    );
+  },
+);
 
 router.post("/ibkr/activation/:activationId/complete", async (req, res) => {
   res.json(await attachLegacyIbkrBridgeRuntime(req.params.activationId, req.body));
@@ -1625,7 +1755,7 @@ router.get("/bars", async (req, res) => {
       Number.isFinite(rawBrokerRecentWindowMinutes)
         ? rawBrokerRecentWindowMinutes
         : null,
-  }, { signal });
+  }, { signal, priority: readFetchPriority(req) });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetBarsResponse.parse(raw);
 
@@ -2046,6 +2176,11 @@ router.get("/streams/bars", async (req, res) => {
             : req.query.source === "trades"
               ? "trades"
               : undefined,
+        priority:
+          typeof req.query.priority === "string" &&
+          Number.isFinite(Number(req.query.priority))
+            ? Number(req.query.priority)
+            : undefined,
       }),
     );
     await writeEvent("ready", {
@@ -2081,6 +2216,11 @@ router.get("/streams/bars", async (req, res) => {
               : req.query.source === "trades"
                 ? "trades"
                 : undefined,
+          priority:
+            typeof req.query.priority === "string" &&
+            Number.isFinite(Number(req.query.priority))
+              ? Number(req.query.priority)
+              : undefined,
         },
         (payload) => {
           void writeBarPayload(payload);
@@ -2303,8 +2443,8 @@ router.get("/streams/accounts/page", async (req, res) => {
   };
 
   await startSse(req, res, "account-page", async ({ writeEvent }) => {
-    const initialPayload = await fetchAccountPageSnapshotPayload(input);
-    await writeEvent("bootstrap", initialPayload);
+    const initialCriticalPayload = await fetchAccountPageCriticalPayload(input);
+    await writeEvent("critical", initialCriticalPayload);
     await writeEvent("ready", {
       accountId,
       mode,
@@ -2320,7 +2460,9 @@ router.get("/streams/accounts/page", async (req, res) => {
         writeEvent("derived", payload);
       },
       {
-        initialPayload,
+        initialCriticalPayload,
+        initialLiveDelayMs: ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
+        initialDerivedDelayMs: ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
         onPollSuccess: ({ changed, kind }) =>
           writeEvent("freshness", {
             stream: "account-page",

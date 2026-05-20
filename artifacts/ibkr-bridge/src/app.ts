@@ -91,6 +91,14 @@ function normalizeQuoteStreamSymbols(rawSymbols: unknown): string[] {
   );
 }
 
+function readPriority(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 const quoteStreamSessions = new Map<
   string,
   {
@@ -428,7 +436,7 @@ app.get("/quotes/option-activity", async (req, res) => {
 });
 
 app.post("/quotes/prewarm", async (req, res) => {
-  const body = req.body as { symbols?: unknown };
+  const body = req.body as { owner?: unknown; symbols?: unknown };
   const rawSymbols = Array.isArray(body.symbols)
     ? body.symbols
     : typeof body.symbols === "string"
@@ -441,9 +449,14 @@ app.post("/quotes/prewarm", async (req, res) => {
         .filter(Boolean),
     ),
   );
+  const owner =
+    typeof body.owner === "string" && body.owner.trim()
+      ? body.owner.trim()
+      : undefined;
 
-  await ibkrBridgeService.prewarmQuoteSubscriptions(symbols);
+  await ibkrBridgeService.prewarmQuoteSubscriptions(symbols, owner);
   res.json({
+    owner: owner ?? "default",
     symbols,
     updatedAt: new Date().toISOString(),
   });
@@ -696,6 +709,7 @@ app.get("/bars", async (req, res) => {
         typeof req.query.exchange === "string" && req.query.exchange.trim()
           ? req.query.exchange.trim()
           : undefined,
+      priority: readPriority(req.query.priority),
     }),
   });
 });
@@ -743,6 +757,7 @@ app.get("/streams/bars", async (req, res, next) => {
       typeof req.query.exchange === "string" && req.query.exchange.trim()
         ? req.query.exchange.trim()
         : undefined,
+    priority: readPriority(req.query.priority),
   } as const;
 
   res.status(200);

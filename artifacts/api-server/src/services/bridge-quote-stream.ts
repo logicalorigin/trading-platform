@@ -74,7 +74,10 @@ type Subscriber = {
 };
 
 type BridgeQuoteClient = {
-  getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]>;
+  getQuoteSnapshots(
+    symbols: string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<QuoteSnapshot[]>;
   streamMutableQuoteSnapshots?(
     symbols: string[],
     onQuotes: (quotes: QuoteSnapshot[]) => void,
@@ -107,6 +110,13 @@ const STREAM_STALL_RECONNECT_MS = Math.max(
   15_000,
   Number.parseInt(process.env["IBKR_QUOTE_STREAM_STALL_MS"] ?? "45000", 10) ||
     45_000,
+);
+const SNAPSHOT_BOOTSTRAP_TIMEOUT_MS = Math.max(
+  500,
+  Number.parseInt(
+    process.env["IBKR_QUOTE_SNAPSHOT_BOOTSTRAP_TIMEOUT_MS"] ?? "2500",
+    10,
+  ) || 2_500,
 );
 
 let nextSubscriberId = 1;
@@ -815,9 +825,30 @@ export async function fetchBridgeQuoteSnapshots(
 
   try {
     if (hydrateSymbols.length > 0) {
-      const freshQuotes = await bridgeClient.getQuoteSnapshots(hydrateSymbols);
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        SNAPSHOT_BOOTSTRAP_TIMEOUT_MS,
+      );
+      timeout.unref?.();
+      let freshQuotes: QuoteSnapshot[] = [];
+      try {
+        freshQuotes = await bridgeClient.getQuoteSnapshots(hydrateSymbols, {
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       freshQuotes.forEach(cacheQuote);
     }
+  } catch (error) {
+    const now = nowProvider();
+    lastError = readErrorMessage(error);
+    lastErrorAt = now;
+    logger.warn(
+      { err: error, symbols: hydrateSymbols },
+      "IBKR bridge quote snapshot bootstrap skipped",
+    );
   } finally {
     releaseMarketDataLeases(owner, "snapshot_complete");
   }

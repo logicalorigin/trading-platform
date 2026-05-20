@@ -51,6 +51,7 @@ test.afterEach(() => {
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_TIMEOUT_MS"];
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_STALE_CACHE_MS"];
   delete process.env["IBKR_BRIDGE_HEALTH_FRESH_MS"];
+  delete process.env["IBKR_BRIDGE_UNHEALTHY_CACHE_MS"];
   delete process.env["SESSION_BRIDGE_HEALTH_STALE_TIMEOUT_MS"];
   delete process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"];
 });
@@ -377,7 +378,7 @@ test("runtime diagnostics use the active API quote stream as strict stream proof
   assert.equal(typeof session.ibkrBridge?.lastStreamEventAgeMs, "number");
 });
 
-test("runtime diagnostics accept live quote stream heartbeats as strict stream proof", async () => {
+test("runtime diagnostics require quote data events for strict stream proof", async () => {
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -429,11 +430,84 @@ test("runtime diagnostics accept live quote stream heartbeats as strict stream p
   const diagnostics = await getRuntimeDiagnostics();
   unsubscribe();
 
-  assert.equal(diagnostics.ibkr.streamFresh, true);
-  assert.equal(diagnostics.ibkr.strictReady, true);
-  assert.equal(diagnostics.ibkr.strictReason, null);
-  assert.ok(["live", "quiet"].includes(diagnostics.ibkr.streamState));
-  assert.equal(typeof diagnostics.ibkr.lastStreamEventAgeMs, "number");
+  assert.equal(diagnostics.ibkr.streamFresh, false);
+  assert.equal(diagnostics.ibkr.strictReady, false);
+  assert.equal(diagnostics.ibkr.strictReason, "stream_not_fresh");
+  assert.equal(diagnostics.ibkr.streamState, "stale");
+  assert.equal(diagnostics.ibkr.streamStateReason, "stream_not_fresh");
+  assert.equal(diagnostics.ibkr.lastStreamEventAgeMs, null);
+});
+
+test("runtime diagnostics do not require stream proof for passive bridge line leases", async () => {
+  test.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-04-28T14:30:00.000Z"),
+  });
+  try {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: "https://healthy.trycloudflare.com",
+      apiToken: "test-token",
+    });
+    __setIbkrBridgeClientFactoryForTests(
+      () =>
+        ({
+          getHealth: async () => ({
+            configured: true,
+            authenticated: true,
+            connected: true,
+            competing: false,
+            selectedAccountId: "DU1234567",
+            accounts: ["DU1234567"],
+            lastTickleAt: new Date(),
+            lastError: null,
+            lastRecoveryAttemptAt: null,
+            lastRecoveryError: null,
+            updatedAt: new Date(),
+            transport: "tws",
+            connectionTarget: "127.0.0.1:4001",
+            sessionMode: "live",
+            clientId: 101,
+            marketDataMode: "live",
+            liveMarketDataAvailable: true,
+            streamFresh: false,
+            lastStreamEventAgeMs: null,
+            strictReady: false,
+            strictReason: "stream_not_fresh",
+            diagnostics: {
+              subscriptions: {
+                activeQuoteSubscriptions: 34,
+                activeEquitySubscriptions: 24,
+                activeOptionSubscriptions: 10,
+                quoteListenerCount: 0,
+                prewarmSymbolCount: 24,
+                lastQuoteAgeMs: null,
+                lastAggregateSourceAgeMs: null,
+              },
+            },
+          }),
+        }) as unknown as IbkrBridgeClient,
+    );
+
+    const diagnostics = await getRuntimeDiagnostics();
+    const session = await getSession();
+
+    assert.equal(diagnostics.ibkr.strictReady, true);
+    assert.equal(diagnostics.ibkr.strictReason, null);
+    assert.equal(diagnostics.ibkr.streamState, "quiet");
+    assert.equal(
+      diagnostics.ibkr.streamStateReason,
+      "no_active_quote_consumers",
+    );
+    assert.equal(session.ibkrBridge?.strictReady, true);
+    assert.equal(session.ibkrBridge?.strictReason, null);
+    assert.equal(session.ibkrBridge?.streamState, "quiet");
+    assert.equal(
+      session.ibkrBridge?.streamStateReason,
+      "no_active_quote_consumers",
+    );
+  } finally {
+    test.mock.timers.reset();
+  }
 });
 
 test("runtime diagnostics ignore request-scoped bridge health errors while connected", async () => {
@@ -445,6 +519,8 @@ test("runtime diagnostics ignore request-scoped bridge health errors while conne
     "Error validating request.-'bO' : cause - Snapshot market data subscription is not applicable to generic ticks",
     "Can't find EId with tickerId:904",
     "Lane timed out after 2000ms. | IBKR bridge lane control lane timed out after 2000ms.",
+    "Historical Market Data Service error message:HMDS query returned no data: AGGA@OVERNIGHT Trades",
+    "Requested market data is not subscribed. Check API status by selecting the Account menu then under Management choose Market Data Subscription Manager and/or availability of delayed data.",
   ];
   let errorIndex = 0;
   __setIbkrBridgeClientFactoryForTests(
@@ -588,4 +664,53 @@ test("runtime diagnostics serves stale cached bridge health without blocking", a
   assert.equal(diagnostics.ibkr.streamStateReason, "health_stale");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(calls, 2);
+});
+
+test("runtime diagnostics rechecks unhealthy cached bridge health quickly", async () => {
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: "https://healthy.trycloudflare.com",
+    apiToken: "test-token",
+  });
+  process.env["IBKR_BRIDGE_UNHEALTHY_CACHE_MS"] = "5";
+  let calls = 0;
+  let recovered = false;
+  const makeHealth = (connected: boolean) => ({
+    configured: true,
+    authenticated: connected,
+    connected,
+    competing: false,
+    selectedAccountId: connected ? "DU1234567" : null,
+    accounts: connected ? ["DU1234567"] : [],
+    lastTickleAt: connected ? new Date() : null,
+    lastError: connected ? null : "connect ECONNREFUSED 127.0.0.1:4001",
+    lastRecoveryAttemptAt: null,
+    lastRecoveryError: null,
+    updatedAt: new Date(),
+    transport: "tws" as const,
+    connectionTarget: "127.0.0.1:4001",
+    sessionMode: "live" as const,
+    clientId: 101,
+    marketDataMode: "live" as const,
+    liveMarketDataAvailable: true,
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => {
+          calls += 1;
+          return makeHealth(recovered);
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const disconnected = await getRuntimeDiagnostics();
+  assert.equal(disconnected.ibkr.connected, false);
+
+  recovered = true;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const diagnostics = await getRuntimeDiagnostics();
+
+  assert.equal(calls, 2);
+  assert.equal(diagnostics.ibkr.connected, true);
+  assert.equal(diagnostics.ibkr.authenticated, true);
 });

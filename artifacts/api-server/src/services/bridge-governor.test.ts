@@ -55,6 +55,25 @@ test("bridge governor opens a category circuit after transient failures", async 
   assert.ok(getBridgeGovernorSnapshot().options.backoffRemainingMs > 0);
 });
 
+test("bridge governor does not duplicate bridge lane backoff", async () => {
+  process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_FAILURE_THRESHOLD"] = "1";
+  process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_BACKOFF_MS"] = "1000";
+
+  await assert.rejects(
+    runBridgeWork("options", async () => {
+      throw new HttpError(503, "bridge lane is backed off", {
+        code: "upstream_http_error",
+        data: { code: "ibkr_bridge_lane_backoff" },
+      });
+    }),
+  );
+
+  const snapshot = getBridgeGovernorSnapshot().options;
+  assert.equal(isBridgeWorkBackedOff("options"), false);
+  assert.equal(snapshot.failureCount, 0);
+  assert.equal(snapshot.backoffRemainingMs, 0);
+});
+
 test("bridge governor backs off order reads after one timeout", async () => {
   process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_FAILURE_THRESHOLD"] = "1";
   process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_BACKOFF_MS"] = "1000";

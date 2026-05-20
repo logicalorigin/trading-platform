@@ -730,6 +730,59 @@ function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
     .slice(0, 8);
 }
 
+function buildApiErrorRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
+  const byPath = new Map<
+    string,
+    {
+      count: number;
+      errors: number;
+      durations: number[];
+      lastSeenAt: number;
+    }
+  >();
+
+  samples.forEach((sample) => {
+    const current =
+      byPath.get(sample.path) ??
+      {
+        count: 0,
+        errors: 0,
+        durations: [],
+        lastSeenAt: 0,
+      };
+    current.count += 1;
+    if (sample.statusCode >= 500) {
+      current.errors += 1;
+      current.durations.push(sample.durationMs);
+      current.lastSeenAt = Math.max(current.lastSeenAt, sample.recordedAt);
+    }
+    byPath.set(sample.path, current);
+  });
+
+  return Array.from(byPath.entries())
+    .filter(([, value]) => value.errors > 0)
+    .map(([path, value]) => ({
+      path,
+      requestCount5m: value.count,
+      errorCount5m: value.errors,
+      p95ErrorLatencyMs: percentile(value.durations, 95),
+      maxErrorLatencyMs:
+        value.durations.length > 0 ? Math.max(...value.durations) : null,
+      lastErrorAt: new Date(value.lastSeenAt).toISOString(),
+    }))
+    .sort((left, right) => {
+      const rightErrors = numeric(right["errorCount5m"]) ?? 0;
+      const leftErrors = numeric(left["errorCount5m"]) ?? 0;
+      if (rightErrors !== leftErrors) {
+        return rightErrors - leftErrors;
+      }
+      const rightP95 = numeric(right["p95ErrorLatencyMs"]) ?? 0;
+      const leftP95 = numeric(left["p95ErrorLatencyMs"]) ?? 0;
+      return rightP95 - leftP95;
+    })
+    .slice(0, 8);
+}
+
 function buildApiMetrics(runtime: JsonRecord): JsonRecord {
   const samples = getRecentRequestSamples();
   const durations = samples.map((sample) => sample.durationMs);
@@ -752,9 +805,11 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
   const p99LatencyMs = percentile(durations, 99);
   const latencyAlertReady = samples.length >= API_LATENCY_ALERT_MIN_SAMPLES;
   const slowRoutes = buildApiRouteStats(samples);
+  const errorRoutes = buildApiErrorRouteStats(samples);
   const dominantSlowRoute = slowRoutes.find(
     (route) => (numeric(route["p95LatencyMs"]) ?? 0) >= SLOW_API_ROUTE_MS,
   );
+  const dominantErrorRoute = errorRoutes[0] ?? null;
   return {
     requestCount5m: samples.length,
     errorCount5m: errors,
@@ -769,8 +824,11 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
       (sample) => sample.durationMs >= SLOW_API_ROUTE_MS,
     ).length,
     slowRoutes,
+    errorRoutes,
     dominantSlowRoute: dominantSlowRoute?.["path"] ?? null,
     dominantSlowRouteP95Ms: dominantSlowRoute?.["p95LatencyMs"] ?? null,
+    dominantErrorRoute: dominantErrorRoute?.["path"] ?? null,
+    dominantErrorRouteCount: dominantErrorRoute?.["errorCount5m"] ?? null,
     uptimeMs: numeric(apiRuntime["uptimeMs"]),
     heapUsedMb,
     heapTotalMb: numeric(memory["heapTotal"]),
@@ -1589,11 +1647,14 @@ function classifyIbkrSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (metrics["streamFresh"] === false || metrics["strictReady"] === false) {
     return "warning";
   }
+  if (metrics["streamFresh"] === true && metrics["strictReady"] === true) {
+    return "info";
+  }
   const heartbeatAgeMs = numeric(metrics["heartbeatAgeMs"]);
-  if (heartbeatAgeMs !== null && heartbeatAgeMs >= 120_000) {
+  if (heartbeatAgeMs !== null && heartbeatAgeMs >= 180_000) {
     return "critical";
   }
-  if (heartbeatAgeMs !== null && heartbeatAgeMs >= 30_000) {
+  if (heartbeatAgeMs !== null && heartbeatAgeMs >= 90_000) {
     return "warning";
   }
   return "info";
@@ -1630,12 +1691,16 @@ function buildProbeMetrics(probes: JsonRecord): {
   };
 }
 
+const SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS = 120_000;
+const SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS = 300_000;
+
 async function buildAutomationMetrics(): Promise<{
   metrics: JsonRecord;
   raw: JsonRecord;
 }> {
   const worker = getSignalOptionsWorkerSnapshot();
-  const recentSince = new Date(Date.now() - 60 * 60 * 1000);
+  const nowMs = Date.now();
+  const recentSince = new Date(nowMs - 60 * 60 * 1000);
   const recentEvents = await safeDb(
     "list automation diagnostic events",
     async () =>
@@ -1717,14 +1782,39 @@ async function buildAutomationMetrics(): Promise<{
     null,
   );
   const latestScanAgeMs =
-    latestSuccessMs === null ? null : Math.max(0, Date.now() - latestSuccessMs);
+    latestSuccessMs === null ? null : Math.max(0, nowMs - latestSuccessMs);
   const staleScanCount = deployments.filter((deployment) => {
     const lastSuccessAt = timestampMs(asJsonRecord(deployment)["lastSuccessAt"]);
     return (
       lastSuccessAt === null ||
-      Date.now() - lastSuccessAt >= 120_000
+      nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS
     );
   }).length;
+  const inactiveStaleScanCount = deployments.filter((deployment) => {
+    const record = asJsonRecord(deployment);
+    const currentScanAgeMs = numeric(record["currentScanAgeMs"]);
+    const lastSuccessAt = timestampMs(record["lastSuccessAt"]);
+    return (
+      currentScanAgeMs === null &&
+      (lastSuccessAt === null ||
+        nowMs - lastSuccessAt >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
+    );
+  }).length;
+  const activeScanAges = deployments
+    .map((deployment) => numeric(asJsonRecord(deployment)["currentScanAgeMs"]))
+    .filter((value): value is number => value !== null);
+  const activeLongScanCount = activeScanAges.filter(
+    (ageMs) => ageMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS,
+  ).length;
+  const activeMaxScanAgeMs =
+    activeScanAges.length > 0 ? Math.max(...activeScanAges) : null;
+  const lastScanDurationMs =
+    deployments
+      .map((deployment) =>
+        numeric(asJsonRecord(deployment)["lastScanDurationMs"]),
+      )
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => right - left)[0] ?? null;
   const latestSuccessAtMs = latestSuccessMs;
   const gatewayBlockedEvents = automationEvents.filter(
     (event) => event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
@@ -1810,7 +1900,7 @@ async function buildAutomationMetrics(): Promise<{
   const maxSignalBarAgeMs =
     oldestSignalBarAt === null
       ? null
-      : Math.max(0, Date.now() - oldestSignalBarAt);
+      : Math.max(0, nowMs - oldestSignalBarAt);
   const candidateCount = deployments.reduce(
     (sum, deployment) =>
       sum + (numeric(asJsonRecord(deployment)["lastCandidateCount"]) ?? 0),
@@ -1854,6 +1944,10 @@ async function buildAutomationMetrics(): Promise<{
       latestScanAgeMs,
       latest_scan_age_ms: latestScanAgeMs,
       staleScanCount,
+      inactiveStaleScanCount,
+      activeLongScanCount,
+      activeMaxScanAgeMs,
+      lastScanDurationMs,
       gatewayBlockedCount,
       gateway_blocked_count: gatewayBlockedCount,
       activeGatewayBlockedCount: gatewayBlockedCount,
@@ -1911,9 +2005,13 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const legacyEquityForwardEnabledCount =
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
+  const activeMaxScanAgeMs = numeric(metrics["activeMaxScanAgeMs"]);
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
   const staleScanCount = numeric(metrics["staleScanCount"]) ?? 0;
+  const inactiveStaleScanCount =
+    numeric(metrics["inactiveStaleScanCount"]) ?? staleScanCount;
+  const activeLongScanCount = numeric(metrics["activeLongScanCount"]) ?? 0;
   const signalCount = numeric(metrics["signalCount"]) ?? 0;
   const staleSignalCount = numeric(metrics["staleSignalCount"]) ?? 0;
   const unavailableSignalCount = numeric(metrics["unavailableSignalCount"]) ?? 0;
@@ -1933,7 +2031,10 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     failureCount >= 3 ||
     (enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
-      latestScanAgeMs >= 300_000)
+      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS) ||
+    (enabledDeployments > 0 &&
+      activeMaxScanAgeMs !== null &&
+      activeMaxScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS)
   ) {
     return "critical";
   }
@@ -1941,9 +2042,10 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (
     enabledDeployments > 0 &&
     (metrics["workerRunning"] !== true ||
-      staleScanCount > 0 ||
+      inactiveStaleScanCount > 0 ||
+      activeLongScanCount > 0 ||
       latestScanAgeMs === null ||
-      latestScanAgeMs >= 120_000 ||
+      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS ||
       (signalCount > 0 &&
         degradedSignalInputCount > 0 &&
         (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)) ||
@@ -2422,9 +2524,15 @@ function isCollectorManagedEvent(event: DiagnosticEventPayload): boolean {
 
   if (
     event.subsystem === "automation" &&
-    ["freshness", "gateway-readiness", "worker", "threshold"].includes(
-      event.category,
-    )
+    [
+      "deployment",
+      "freshness",
+      "gateway-readiness",
+      "ledger-maintenance",
+      "signal-freshness",
+      "worker",
+      "threshold",
+    ].includes(event.category)
   ) {
     return true;
   }
@@ -2752,6 +2860,7 @@ async function loadThresholdOverrides(): Promise<
 
 async function evaluateThresholds(
   snapshots: DiagnosticSnapshotPayload[],
+  suppressedMetricKeys = new Set<string>(),
 ): Promise<Set<string>> {
   const activeIncidentKeys = new Set<string>();
   const thresholds = await getDiagnosticThresholds();
@@ -2760,7 +2869,9 @@ async function evaluateThresholds(
       thresholds
       .filter(
         (threshold) =>
-          threshold.enabled && threshold.subsystem === snapshot.subsystem,
+          threshold.enabled &&
+          threshold.subsystem === snapshot.subsystem &&
+          !suppressedMetricKeys.has(threshold.metricKey),
       )
       .map(async (threshold) => {
         const localKey = threshold.metricKey.split(".").at(-1);
@@ -3110,7 +3221,29 @@ export async function collectDiagnosticSnapshot(
   const activeIncidentKeys = new Set<string>();
   const activeEvents: DiagnosticEventInput[] = [];
   const ibkrRaw = asJsonRecord(runtime["ibkr"]);
-  activeEvents.push(...buildIbkrDiagnosticEvents(ibkrRaw, ibkrMetrics));
+  const ibkrEvents = buildIbkrDiagnosticEvents(ibkrRaw, ibkrMetrics);
+  activeEvents.push(...ibkrEvents);
+  const staleTunnelEvent = ibkrEvents.find(
+    (event) => event.code === "ibkr_bridge_stale_tunnel",
+  );
+  const staleTunnelRootCauseIncidentKey = staleTunnelEvent
+    ? incidentKey(staleTunnelEvent)
+    : null;
+  const withBridgeRootCause = (dimensions: JsonRecord = {}): JsonRecord =>
+    staleTunnelRootCauseIncidentKey
+      ? {
+          ...dimensions,
+          dependencyBlocked: true,
+          rootCauseIncidentKey: staleTunnelRootCauseIncidentKey,
+          rootCauseCode: "ibkr_bridge_stale_tunnel",
+        }
+      : dimensions;
+  const bridgeDependentSeverity = (
+    defaultSeverity: DiagnosticSeverity,
+  ): DiagnosticSeverity =>
+    staleTunnelRootCauseIncidentKey && defaultSeverity === "critical"
+      ? "warning"
+      : defaultSeverity;
   activeEvents.push(
     ...buildChartHydrationDiagnosticEvents(
       chartHydration.metrics,
@@ -3127,8 +3260,9 @@ export async function collectDiagnosticSnapshot(
       subsystem: "market-data",
       category: "stream",
       code: "bridge_quote_stream_error",
-      severity: "critical",
+      severity: bridgeDependentSeverity("critical"),
       message: marketDataLastError,
+      dimensions: withBridgeRootCause(),
       raw: asJsonRecord(probes["marketData"]),
     });
   }
@@ -3138,8 +3272,9 @@ export async function collectDiagnosticSnapshot(
       subsystem: orderFailures > 0 ? "orders" : "accounts",
       category: "visibility",
       code: "read_probe_failed",
-      severity: "critical",
+      severity: bridgeDependentSeverity("critical"),
       message: "Read-only account/order diagnostics probe failed",
+      dimensions: withBridgeRootCause(),
       raw: probes,
     });
   }
@@ -3151,6 +3286,7 @@ export async function collectDiagnosticSnapshot(
       code: "read_probe_degraded",
       severity: "warning",
       message: "Open-orders snapshot timed out; using cached order stream.",
+      dimensions: withBridgeRootCause(),
       raw: asJsonRecord(probes["orders"]),
     });
   }
@@ -3202,14 +3338,15 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "gateway-readiness",
       code: "signal_options_gateway_blocked",
-      severity:
+      severity: bridgeDependentSeverity(
         (numeric(automation.metrics["gatewayBlockedCount"]) ?? 0) >= 3
           ? "critical"
           : "warning",
+      ),
       message: "Signal-options scans are blocked by IB Gateway readiness.",
-      dimensions: {
+      dimensions: withBridgeRootCause({
         gatewayBlockedCount: automation.metrics["gatewayBlockedCount"],
-      },
+      }),
       raw: automation.raw,
     });
   }
@@ -3219,34 +3356,68 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "worker",
       code: "signal_options_worker_failure",
-      severity:
+      severity: bridgeDependentSeverity(
         (numeric(automation.metrics["failureCount"]) ?? 0) >= 3
           ? "critical"
           : "warning",
+      ),
       message:
         textValue(automation.metrics["latestError"]) ??
         "Signal-options worker scans are failing.",
-      dimensions: {
+      dimensions: withBridgeRootCause({
         failureCount: automation.metrics["failureCount"],
-      },
+      }),
       raw: automation.raw,
     });
   }
 
+  const enabledAutomationDeployments =
+    numeric(automation.metrics["enabledDeployments"]) ?? 0;
+  const inactiveStaleScanCount =
+    numeric(automation.metrics["inactiveStaleScanCount"]) ??
+    numeric(automation.metrics["staleScanCount"]) ??
+    0;
+  const activeLongScanCount =
+    numeric(automation.metrics["activeLongScanCount"]) ?? 0;
+
   if (
-    (numeric(automation.metrics["enabledDeployments"]) ?? 0) > 0 &&
-    ((numeric(automation.metrics["staleScanCount"]) ?? 0) > 0 ||
+    enabledAutomationDeployments > 0 &&
+    (inactiveStaleScanCount > 0 ||
       automation.metrics["workerRunning"] !== true)
   ) {
     activeEvents.push({
       subsystem: "automation",
       category: "freshness",
       code: "signal_options_scan_stale",
-      severity: automationSeverity === "critical" ? "critical" : "warning",
+      severity: bridgeDependentSeverity(
+        automationSeverity === "critical" ? "critical" : "warning",
+      ),
       message: "Signal-options worker scans are stale or the worker is stopped.",
-      dimensions: {
+      dimensions: withBridgeRootCause({
         staleScanCount: automation.metrics["staleScanCount"],
+        inactiveStaleScanCount,
         latestScanAgeMs: automation.metrics["latestScanAgeMs"],
+        workerRunning: automation.metrics["workerRunning"],
+        tickRunning: automation.metrics["tickRunning"],
+        activeDeploymentCount: automation.metrics["activeDeploymentCount"],
+      }),
+      raw: automation.raw,
+    });
+  }
+
+  if (enabledAutomationDeployments > 0 && activeLongScanCount > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "worker",
+      code: "signal_options_scan_long_running",
+      severity: "warning",
+      message:
+        "Signal-options worker scan is still running past the freshness window.",
+      dimensions: {
+        activeLongScanCount,
+        activeMaxScanAgeMs: automation.metrics["activeMaxScanAgeMs"],
+        latestScanAgeMs: automation.metrics["latestScanAgeMs"],
+        lastScanDurationMs: automation.metrics["lastScanDurationMs"],
       },
       raw: automation.raw,
     });
@@ -3367,7 +3538,17 @@ export async function collectDiagnosticSnapshot(
   memorySnapshots.push(...snapshots);
   trimMemorySnapshots();
   await Promise.all(snapshots.map((snapshot) => persistSnapshot(snapshot)));
-  const activeThresholdKeys = await evaluateThresholds(snapshots);
+  const suppressedThresholdMetricKeys = staleTunnelRootCauseIncidentKey
+    ? new Set([
+        "automation.latest_scan_age_ms",
+        "automation.gateway_blocked_count",
+        "automation.failure_count",
+      ])
+    : new Set<string>();
+  const activeThresholdKeys = await evaluateThresholds(
+    snapshots,
+    suppressedThresholdMetricKeys,
+  );
   activeThresholdKeys.forEach((key) => activeIncidentKeys.add(key));
   await resolveInactiveCollectorEvents(activeIncidentKeys);
   await safeDb(

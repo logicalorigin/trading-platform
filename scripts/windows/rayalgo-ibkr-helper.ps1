@@ -14,8 +14,12 @@ param(
     [Parameter(Position = 0)]
     [string]$ProtocolUrl,
     [switch]$Install,
+    [switch]$InstallAgent,
+    [switch]$Agent,
     [string]$ActivationUrl,
     [string]$LaunchUrl,
+    [string]$ApiBaseUrl,
+    [int]$AgentPollSeconds = 5,
     [string]$RepoDir = (Join-Path $env:USERPROFILE 'rayalgo-trading-platform'),
     [string]$RepoUrl = 'https://github.com/logicalorigin/trading-platform.git',
     [string]$Branch = 'main',
@@ -32,16 +36,61 @@ $BridgeTokenFile = Join-Path $StateDir 'bridge-token.txt'
 $BuildRefFile = Join-Path $StateDir 'bridge-build-ref.txt'
 $BridgeBundleHashFile = Join-Path $StateDir 'bridge-bundle.sha256'
 $LockHashFile = Join-Path $StateDir 'pnpm-lock.sha256'
+$DesktopAgentTaskName = 'RayAlgo IBKR Desktop Agent'
+$DesktopIdFile = Join-Path $StateDir 'desktop-id.txt'
+$DesktopSecretFile = Join-Path $StateDir 'desktop-secret.txt'
+$DesktopAgentConfigFile = Join-Path $StateDir 'desktop-agent.json'
+$DesktopAgentPidFile = Join-Path $StateDir 'desktop-agent.pid'
+$DesktopAgentStartupFileName = 'RayAlgo IBKR Desktop Agent.cmd'
+$AutoLoginDir = Join-Path $StateDir 'auto-login'
+$AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
+$AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
+$AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-05-19.gateway-progress-v14'
+$HelperVersion = '2026-05-20.remote-desktop-agent-v19'
+$LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
+$script:SensitiveValues = New-Object System.Collections.Generic.List[string]
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
 
+function Register-SensitiveValue([string]$Value) {
+    if (-not $Value) {
+        return
+    }
+
+    $trimmed = $Value.Trim()
+    if ($trimmed.Length -lt 3) {
+        return
+    }
+
+    if (-not $script:SensitiveValues.Contains($trimmed)) {
+        $script:SensitiveValues.Add($trimmed) | Out-Null
+    }
+}
+
+function Redact-Message([string]$Message) {
+    if (-not $Message) {
+        return ''
+    }
+
+    $safe = [string]$Message
+    foreach ($value in ($script:SensitiveValues | Sort-Object Length -Descending)) {
+        if ($value) {
+            $safe = $safe -replace [regex]::Escape($value), '[redacted]'
+        }
+    }
+
+    $safe = $safe -replace '(?i)(IbPassword|TWSPASSWORD|password)\s*=\s*[^;\s]+', '$1=[redacted]'
+    $safe = $safe -replace '(?i)(IbLoginId|TWSUSERID|username)\s*=\s*[^;\s]+', '$1=[redacted]'
+    return $safe
+}
+
 function Write-Log([string]$Message) {
-    $line = '{0} {1}' -f (Get-Date).ToString('s'), $Message
+    $safeMessage = Redact-Message $Message
+    $line = '{0} {1}' -f (Get-Date).ToString('s'), $safeMessage
     Add-Content -Path $RunLog -Value $line
-    Write-Host $Message
+    Write-Host $safeMessage
 }
 
 function Truncate-Message([string]$Text, [int]$MaxLength = 360) {
@@ -72,17 +121,17 @@ function Read-LogTail([string]$Path, [int]$LineCount = 80) {
 function Get-BridgeAttemptDetail([string]$OutPath, [string]$ErrPath, $HealthResult) {
     $parts = @()
     if ($HealthResult -and $HealthResult.LastError) {
-        $parts += "last health check: $($HealthResult.LastError)"
+        $parts += "last health check: $(Redact-Message $HealthResult.LastError)"
     }
 
     $errTail = Read-LogTail -Path $ErrPath -LineCount 60
     if ($errTail) {
-        $parts += "stderr:`n$errTail"
+        $parts += "stderr:`n$(Redact-Message $errTail)"
     }
 
     $outTail = Read-LogTail -Path $OutPath -LineCount 60
     if ($outTail) {
-        $parts += "stdout:`n$outTail"
+        $parts += "stdout:`n$(Redact-Message $outTail)"
     }
 
     if ($parts.Count -eq 0) {
@@ -107,17 +156,17 @@ function New-HexToken([int]$ByteCount) {
 function Get-OrCreate-BridgeToken {
     param([string]$PreferredToken = '')
 
-    if ($PreferredToken -and $PreferredToken.Trim().Length -ge 24) {
-        $token = $PreferredToken.Trim()
-        Set-Content -Path $BridgeTokenFile -Value $token
-        return $token
-    }
-
     if (Test-Path $BridgeTokenFile) {
         $existing = (Get-Content $BridgeTokenFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($existing -and $existing.Trim().Length -ge 24) {
             return $existing.Trim()
         }
+    }
+
+    if ($PreferredToken -and $PreferredToken.Trim().Length -ge 24) {
+        $token = $PreferredToken.Trim()
+        Set-Content -Path $BridgeTokenFile -Value $token
+        return $token
     }
 
     $token = New-HexToken -ByteCount 16
@@ -156,6 +205,294 @@ function Install-ProtocolHandler {
     Set-Item -Path $commandKey -Value $command
 
     Write-Log "Installed rayalgo-ibkr:// protocol handler."
+}
+
+function Read-DesktopAgentConfig {
+    if (-not (Test-Path $DesktopAgentConfigFile)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -Path $DesktopAgentConfigFile -Raw -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        Write-Log "Could not read desktop agent config: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Save-DesktopAgentConfig([string]$BaseUrl) {
+    if (-not $BaseUrl) {
+        return
+    }
+
+    $normalized = $BaseUrl.Trim().TrimEnd('/')
+    if (-not $normalized) {
+        return
+    }
+
+    $config = @{
+        apiBaseUrl = $normalized
+        helperVersion = $HelperVersion
+        updatedAt = (Get-Date).ToString('o')
+    }
+    $config | ConvertTo-Json -Depth 4 | Set-Content -Path $DesktopAgentConfigFile
+}
+
+function Resolve-DesktopAgentApiBaseUrl([string]$PreferredBaseUrl = '') {
+    if ($PreferredBaseUrl -and $PreferredBaseUrl.Trim()) {
+        return $PreferredBaseUrl.Trim().TrimEnd('/')
+    }
+
+    $config = Read-DesktopAgentConfig
+    if ($config -and $config.apiBaseUrl) {
+        return ([string]$config.apiBaseUrl).Trim().TrimEnd('/')
+    }
+
+    throw 'Desktop agent API URL is not configured. Run the IBKR launcher once from this Windows computer, then retry mobile launch.'
+}
+
+function Get-OrCreate-DesktopAgentIdentity {
+    $desktopId = Read-FirstLine -Path $DesktopIdFile
+    $desktopSecret = Read-FirstLine -Path $DesktopSecretFile
+
+    if (-not $desktopId -or $desktopId.Trim().Length -lt 12) {
+        $desktopId = "desktop-$($env:COMPUTERNAME)-$(New-HexToken -ByteCount 8)"
+        Set-Content -Path $DesktopIdFile -Value $desktopId
+    } else {
+        $desktopId = $desktopId.Trim()
+    }
+
+    if (-not $desktopSecret -or $desktopSecret.Trim().Length -lt 24) {
+        $desktopSecret = New-HexToken -ByteCount 32
+        Set-Content -Path $DesktopSecretFile -Value $desktopSecret
+    } else {
+        $desktopSecret = $desktopSecret.Trim()
+    }
+
+    return @{
+        desktopId = $desktopId
+        desktopSecret = $desktopSecret
+    }
+}
+
+function Get-DesktopAgentLabel {
+    if ($env:COMPUTERNAME -and $env:USERNAME) {
+        return "$($env:COMPUTERNAME)\$($env:USERNAME)"
+    }
+    if ($env:COMPUTERNAME) {
+        return $env:COMPUTERNAME
+    }
+    return 'Windows desktop'
+}
+
+function Invoke-DesktopAgentPost([string]$BaseUrl, [string]$Path, [hashtable]$Body, [int]$TimeoutSec = 15) {
+    $json = $Body | ConvertTo-Json -Depth 8 -Compress
+    return Invoke-RestMethod `
+        -Method Post `
+        -Uri "$BaseUrl$Path" `
+        -ContentType 'application/json' `
+        -Body $json `
+        -TimeoutSec $TimeoutSec
+}
+
+function Register-DesktopAgent([string]$BaseUrl, [string]$ActivationId = '', [string]$CallbackSecret = '') {
+    $identity = Get-OrCreate-DesktopAgentIdentity
+    $body = @{
+        desktopId = $identity['desktopId']
+        desktopSecret = $identity['desktopSecret']
+        helperVersion = $HelperVersion
+        label = Get-DesktopAgentLabel
+    }
+    if ($ActivationId -and $CallbackSecret) {
+        $body.activationId = $ActivationId
+        $body.callbackSecret = $CallbackSecret
+    }
+
+    $result = Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/register' -Body $body
+    Write-Log "Desktop agent registered for remote IBKR launches."
+    return $result
+}
+
+function Send-DesktopAgentHeartbeat([string]$BaseUrl) {
+    $identity = Get-OrCreate-DesktopAgentIdentity
+    $body = @{
+        desktopId = $identity['desktopId']
+        desktopSecret = $identity['desktopSecret']
+        helperVersion = $HelperVersion
+        label = Get-DesktopAgentLabel
+    }
+    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/heartbeat' -Body $body -TimeoutSec 10
+}
+
+function Claim-DesktopAgentLaunchJob([string]$BaseUrl) {
+    $identity = Get-OrCreate-DesktopAgentIdentity
+    $body = @{
+        desktopId = $identity['desktopId']
+        desktopSecret = $identity['desktopSecret']
+        helperVersion = $HelperVersion
+        label = Get-DesktopAgentLabel
+    }
+    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 10
+}
+
+function Complete-DesktopAgentJob([string]$BaseUrl, [string]$JobId, [string]$CompletionToken, [bool]$Ok, [string]$Message) {
+    if (-not $BaseUrl -or -not $JobId -or -not $CompletionToken) {
+        return
+    }
+
+    try {
+        $body = @{
+            jobId = $JobId
+            completionToken = $CompletionToken
+            ok = $Ok
+            message = $Message
+        }
+        Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/complete' -Body $body -TimeoutSec 10 | Out-Null
+    } catch {
+        Write-Log "Desktop agent job completion callback failed: $($_.Exception.Message)"
+    }
+}
+
+function Start-BridgeLaunchProcess([string]$LaunchUrl) {
+    $target = Resolve-OwnScriptPath
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Start-Process -FilePath $powershell `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $target, '-LaunchUrl', $LaunchUrl) `
+        | Out-Null
+}
+
+function Test-DesktopAgentProcessRunning {
+    $pidValue = Read-FirstLine -Path $DesktopAgentPidFile
+    if (-not $pidValue -or $pidValue -notmatch '^\d+$') {
+        return $false
+    }
+
+    $pidNumber = [int]$pidValue
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $pidNumber" -ErrorAction SilentlyContinue
+        if ($process -and $process.CommandLine -match 'rayalgo-ibkr-helper\.ps1' -and $process.CommandLine -match '\s-Agent(\s|$)') {
+            return $true
+        }
+    } catch {
+        $process = Get-Process -Id $pidNumber -ErrorAction SilentlyContinue
+        if ($process -and @('powershell', 'pwsh') -contains ([string]$process.ProcessName).ToLowerInvariant()) {
+            return $true
+        }
+    }
+
+    Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
+    return $false
+}
+
+function Start-DesktopAgentProcess([string]$BaseUrl) {
+    if (Test-DesktopAgentProcessRunning) {
+        Write-Log 'RayAlgo IBKR desktop agent is already running.'
+        return
+    }
+
+    $target = Join-Path $StateDir 'rayalgo-ibkr-helper.ps1'
+    if (-not (Test-Path $target)) {
+        $target = Resolve-OwnScriptPath
+    }
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $process = Start-Process -FilePath $powershell `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $target, '-Agent', '-ApiBaseUrl', $BaseUrl) `
+        -WindowStyle Hidden `
+        -PassThru
+    Set-Content -Path $DesktopAgentPidFile -Value $process.Id
+    Write-Log "Started RayAlgo IBKR desktop agent process $($process.Id)."
+}
+
+function Install-DesktopAgentStartupFallback([string]$BaseUrl) {
+    $startupDir = [Environment]::GetFolderPath('Startup')
+    if (-not $startupDir) {
+        $startupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+    }
+    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+
+    $target = Join-Path $StateDir 'rayalgo-ibkr-helper.ps1'
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $startupFile = Join-Path $startupDir $DesktopAgentStartupFileName
+    $lines = @(
+        '@echo off',
+        'setlocal',
+        "set ""RAYALGO_IBKR_API_BASE_URL=$BaseUrl""",
+        "set ""RAYALGO_IBKR_HELPER=$target""",
+        "start """" /min ""$powershell"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""%RAYALGO_IBKR_HELPER%"" -Agent -ApiBaseUrl ""%RAYALGO_IBKR_API_BASE_URL%"""
+    )
+    Set-Content -Path $startupFile -Value $lines -Encoding ASCII
+    Write-Log "Installed RayAlgo IBKR desktop agent Startup fallback at $startupFile."
+}
+
+function Install-DesktopAgent([string]$BaseUrl) {
+    $resolvedBaseUrl = Resolve-DesktopAgentApiBaseUrl -PreferredBaseUrl $BaseUrl
+    Save-DesktopAgentConfig -BaseUrl $resolvedBaseUrl
+    Install-ProtocolHandler
+
+    try {
+        $target = Join-Path $StateDir 'rayalgo-ibkr-helper.ps1'
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$target`" -Agent -ApiBaseUrl `"$resolvedBaseUrl`""
+        $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments
+        $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+        Register-ScheduledTask `
+            -TaskName $DesktopAgentTaskName `
+            -Action $action `
+            -Trigger $trigger `
+            -Settings $settings `
+            -Description 'Keeps RayAlgo IBKR launch requests on this Windows desktop.' `
+            -Force `
+            | Out-Null
+        Start-ScheduledTask -TaskName $DesktopAgentTaskName -ErrorAction Stop
+        Write-Log "Installed RayAlgo IBKR desktop agent scheduled task."
+    } catch {
+        Write-Log "Desktop agent scheduled task install failed: $($_.Exception.Message). Using current-user Startup fallback."
+        Install-DesktopAgentStartupFallback -BaseUrl $resolvedBaseUrl
+        Start-DesktopAgentProcess -BaseUrl $resolvedBaseUrl
+    }
+}
+
+function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
+    $baseUrl = Resolve-DesktopAgentApiBaseUrl -PreferredBaseUrl $PreferredBaseUrl
+    Save-DesktopAgentConfig -BaseUrl $baseUrl
+    Set-Content -Path $DesktopAgentPidFile -Value $PID -ErrorAction SilentlyContinue
+    Write-Log "RayAlgo IBKR desktop agent polling $baseUrl."
+
+    while ($true) {
+        try {
+            Register-DesktopAgent -BaseUrl $baseUrl | Out-Null
+            Send-DesktopAgentHeartbeat -BaseUrl $baseUrl | Out-Null
+            $job = Claim-DesktopAgentLaunchJob -BaseUrl $baseUrl
+            if ($job -and $job.ready -eq $true) {
+                $jobAction = [string]$job.action
+                if (-not $jobAction -and $job.launchUrl) {
+                    $jobAction = 'launch'
+                }
+
+                if ($jobAction -eq 'shutdown') {
+                    Write-Log "Desktop agent claimed IBKR shutdown job $($job.jobId)."
+                    try {
+                        Stop-IBKRDesktopBridgeAndGateway
+                        Complete-DesktopAgentJob -BaseUrl $baseUrl -JobId ([string]$job.jobId) -CompletionToken ([string]$job.completionToken) -Ok $true -Message 'IBKR bridge, tunnel, and Gateway shutdown completed.'
+                    } catch {
+                        Complete-DesktopAgentJob -BaseUrl $baseUrl -JobId ([string]$job.jobId) -CompletionToken ([string]$job.completionToken) -Ok $false -Message $_.Exception.Message
+                        throw
+                    }
+                } elseif ($jobAction -eq 'launch' -and $job.launchUrl) {
+                    Write-Log "Desktop agent claimed IBKR launch job $($job.jobId)."
+                    Start-BridgeLaunchProcess -LaunchUrl ([string]$job.launchUrl)
+                } else {
+                    Write-Log "Desktop agent ignored unsupported IBKR job $($job.jobId) action '$jobAction'."
+                }
+            }
+        } catch {
+            Write-Log "Desktop agent polling failed: $($_.Exception.Message)"
+        }
+
+        $sleepSeconds = [Math]::Max(2, [Math]::Min(30, $AgentPollSeconds))
+        Start-Sleep -Seconds $sleepSeconds
+    }
 }
 
 function Refresh-Path {
@@ -239,6 +576,9 @@ function Parse-LaunchUrl([string]$RawUrl) {
     }
 
     $params = @{}
+    if ($uri.Host) {
+        $params['action'] = $uri.Host
+    }
     foreach ($pair in $uri.Query.TrimStart('?').Split('&')) {
         if (-not $pair) {
             continue
@@ -304,7 +644,11 @@ function Invoke-HelperSelfUpdateIfNeeded($Params, [string]$RawLaunchUrl) {
 }
 
 function Invoke-BridgeAttach([hashtable]$Body) {
-    $uri = "$script:ApiBaseUrl/api/ibkr/bridge/attach"
+    if ($script:ActivationId) {
+        $uri = "$script:ApiBaseUrl/api/ibkr/activation/$script:ActivationId/complete"
+    } else {
+        $uri = "$script:ApiBaseUrl/api/ibkr/bridge/attach"
+    }
     $json = $Body | ConvertTo-Json -Depth 8 -Compress
     return Invoke-RestMethod -Method Post -Uri $uri -ContentType 'application/json' -Body $json -TimeoutSec 30
 }
@@ -315,11 +659,12 @@ function Send-BridgeProgress(
     [string]$Message,
     [string]$BridgeUrl = $null
 ) {
+    $safeMessage = Redact-Message $Message
     $suffix = ''
     if ($BridgeUrl) {
         $suffix = " ($BridgeUrl)"
     }
-    Write-Log "$Step`: $Message$suffix"
+    Write-Log "$Step`: $safeMessage$suffix"
 
     if (-not $script:ApiBaseUrl -or -not $script:ActivationId -or -not $script:CallbackSecret) {
         return
@@ -330,7 +675,7 @@ function Send-BridgeProgress(
             callbackSecret = $script:CallbackSecret
             status = $Status
             step = $Step
-            message = $Message
+            message = $safeMessage
             helperVersion = $HelperVersion
         }
         if ($BridgeUrl) {
@@ -349,8 +694,41 @@ function Send-BridgeProgress(
     }
 }
 
+function Test-ActivationCanceled {
+    if (-not $script:ApiBaseUrl -or -not $script:ActivationId -or -not $script:CallbackSecret) {
+        return $false
+    }
+
+    try {
+        $body = @{
+            callbackSecret = $script:CallbackSecret
+        }
+        $json = $body | ConvertTo-Json -Depth 4 -Compress
+        $result = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$script:ApiBaseUrl/api/ibkr/activation/$script:ActivationId/status" `
+            -ContentType 'application/json' `
+            -Body $json `
+            -TimeoutSec 5
+        return ($result -and $result.canceled -eq $true)
+    } catch {
+        $message = [string]$_.Exception.Message
+        if ($message -match 'superseded|not found|canceled') {
+            return $true
+        }
+        return $false
+    }
+}
+
+function Assert-ActivationNotCanceled {
+    if (Test-ActivationCanceled) {
+        throw 'IB Gateway bridge launch was canceled from RayAlgo.'
+    }
+}
+
 function Complete-BridgeAttach([string]$BridgeUrl) {
     $body = @{
+        callbackSecret = $script:CallbackSecret
         bridgeUrl = $BridgeUrl
         bridgeToken = $script:BridgeToken
         managementToken = $script:ManagementToken
@@ -438,6 +816,73 @@ function Get-IBGatewayProcessSummary {
     }
 }
 
+function Get-IBGatewayProcessIds {
+    $ids = New-Object System.Collections.Generic.HashSet[int]
+
+    try {
+        $processes = @(Get-Process -Name ibgateway -ErrorAction SilentlyContinue)
+        foreach ($process in $processes) {
+            [void]$ids.Add([int]$process.Id)
+        }
+    } catch {
+        Write-Log "IB Gateway process scan skipped: $($_.Exception.Message)"
+    }
+
+    try {
+        $candidateFilter = "Name = 'ibgateway.exe' OR Name = 'java.exe' OR Name = 'javaw.exe'"
+        $cimProcesses = @(Get-CimInstance Win32_Process -Filter $candidateFilter -OperationTimeoutSec 3 -ErrorAction Stop)
+        foreach ($process in $cimProcesses) {
+            $processName = [string]$process.Name
+            $commandLine = [string]$process.CommandLine
+            $executablePath = [string]$process.ExecutablePath
+            $haystack = "$processName $commandLine $executablePath"
+            $looksLikeGateway = (
+                $processName -ieq 'ibgateway.exe' -or
+                $haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)' -or
+                $haystack -match '(?i)(\\|/)ibgateway(\\|/)' -or
+                $haystack -match '(?i)\bibgateway(\.exe)?\b'
+            )
+
+            if ($looksLikeGateway) {
+                [void]$ids.Add([int]$process.ProcessId)
+            }
+        }
+    } catch {
+        Write-Log "IB Gateway command-line process scan skipped: $($_.Exception.Message)"
+    }
+
+    return @($ids | Where-Object { $_ -and $_ -ne $PID })
+}
+
+function Stop-IBGatewayProcesses {
+    $processIds = @(Get-IBGatewayProcessIds)
+    if ($processIds.Count -eq 0) {
+        Write-Log 'No IB Gateway process was found to stop.'
+        return
+    }
+
+    foreach ($processId in $processIds) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if (-not $process) {
+            continue
+        }
+
+        Write-Log "Stopping IB Gateway process $processId ($($process.ProcessName))."
+        try {
+            if ($process.MainWindowHandle -and $process.MainWindowHandle -ne 0) {
+                [void]$process.CloseMainWindow()
+                if ($process.WaitForExit(5000)) {
+                    continue
+                }
+            }
+        } catch {
+            Write-Log "IB Gateway graceful close skipped for process ${processId}: $($_.Exception.Message)"
+        }
+
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Find-IBGatewayExecutable {
     if ($env:IB_GATEWAY_EXE -and (Test-Path $env:IB_GATEWAY_EXE)) {
         return $env:IB_GATEWAY_EXE
@@ -485,6 +930,916 @@ function Find-IBGatewayExecutable {
     return $null
 }
 
+function Start-IBGatewayExecutable([string]$GatewayPath) {
+    if (-not $GatewayPath -or -not (Test-Path $GatewayPath)) {
+        throw 'IB Gateway executable was not found.'
+    }
+
+    $workingDirectory = Split-Path -Path $GatewayPath -Parent
+    Start-Process -FilePath $GatewayPath -WorkingDirectory $workingDirectory -WindowStyle Normal | Out-Null
+}
+
+function Protect-PathForCurrentUser([string]$Path) {
+    return
+}
+
+function Ensure-AutoLoginDirectory {
+    New-Item -ItemType Directory -Force -Path $AutoLoginDir | Out-Null
+    Protect-PathForCurrentUser -Path $AutoLoginDir
+}
+
+function Find-IBCStartGatewayScript {
+    if ($env:RAYALGO_IBC_START_GATEWAY -and (Test-Path $env:RAYALGO_IBC_START_GATEWAY)) {
+        return $env:RAYALGO_IBC_START_GATEWAY
+    }
+
+    $settings = Read-AutoLoginSettings
+    if ($settings -and $settings.ibcStartGatewayPath -and (Test-Path ([string]$settings.ibcStartGatewayPath))) {
+        return [string]$settings.ibcStartGatewayPath
+    }
+
+    $knownCandidates = @(
+        'C:\IBC\StartGateway.bat',
+        (Join-Path $env:USERPROFILE 'IBC\StartGateway.bat'),
+        (Join-Path $env:USERPROFILE 'Documents\IBC\StartGateway.bat'),
+        (Join-Path $env:USERPROFILE 'Downloads\IBC\StartGateway.bat'),
+        (Join-Path $env:USERPROFILE 'Desktop\IBC\StartGateway.bat')
+    )
+
+    foreach ($candidate in $knownCandidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-MaskedUsername([string]$Username) {
+    if (-not $Username) {
+        return ''
+    }
+
+    $trimmed = $Username.Trim()
+    if ($trimmed.Length -le 2) {
+        return ('*' * $trimmed.Length)
+    }
+
+    return ('{0}{1}{2}' -f $trimmed.Substring(0, 1), ('*' * [Math]::Min(6, $trimmed.Length - 2)), $trimmed.Substring($trimmed.Length - 1, 1))
+}
+
+function Convert-SecureStringToPlainText([System.Security.SecureString]$SecureString) {
+    if (-not $SecureString) {
+        return ''
+    }
+
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        if ($bstr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+}
+
+function ConvertTo-ProtectedString([string]$Value) {
+    $secure = ConvertTo-SecureString -String $Value -AsPlainText -Force
+    return ConvertFrom-SecureString -SecureString $secure
+}
+
+function ConvertFrom-ProtectedString([string]$ProtectedValue) {
+    if (-not $ProtectedValue) {
+        return ''
+    }
+
+    $secure = ConvertTo-SecureString -String $ProtectedValue
+    return Convert-SecureStringToPlainText -SecureString $secure
+}
+
+function Read-AutoLoginSettings {
+    if (-not (Test-Path $AutoLoginSettingsFile)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -Path $AutoLoginSettingsFile -Raw -ErrorAction Stop | ConvertFrom-Json
+    } catch {
+        Write-Log "Could not read IB Gateway auto-login settings: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Read-AutoLoginCredential {
+    if (-not (Test-Path $AutoLoginCredentialFile)) {
+        return $null
+    }
+
+    try {
+        $record = Get-Content -Path $AutoLoginCredentialFile -Raw -ErrorAction Stop | ConvertFrom-Json
+        $username = ConvertFrom-ProtectedString -ProtectedValue ([string]$record.usernameProtected)
+        $password = ConvertFrom-ProtectedString -ProtectedValue ([string]$record.passwordProtected)
+        if (-not $username -or -not $password) {
+            return $null
+        }
+        Register-SensitiveValue -Value $username
+        Register-SensitiveValue -Value $password
+        return @{
+            username = $username
+            password = $password
+        }
+    } catch {
+        Write-Log "Could not read IB Gateway auto-login credential: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Save-AutoLoginCredential([string]$Username, [System.Security.SecureString]$Password) {
+    $plainPassword = Convert-SecureStringToPlainText -SecureString $Password
+    if (-not $Username -or -not $plainPassword) {
+        throw 'IBKR username and password are required to configure auto-login.'
+    }
+
+    Register-SensitiveValue -Value $Username
+    Register-SensitiveValue -Value $plainPassword
+
+    $record = @{
+        version = 1
+        usernameProtected = ConvertTo-ProtectedString -Value $Username
+        passwordProtected = ConvertTo-ProtectedString -Value $plainPassword
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    $record | ConvertTo-Json -Depth 4 | Set-Content -Path $AutoLoginCredentialFile -Encoding UTF8
+    Protect-PathForCurrentUser -Path $AutoLoginCredentialFile
+}
+
+function Configure-IBGatewayAutoLogin {
+    Ensure-AutoLoginDirectory
+
+    Write-Host ''
+    Write-Host 'RayAlgo IB Gateway auto-login setup'
+    Write-Host 'Credentials stay on this Windows user profile using DPAPI. RayAlgo does not send them to the API or browser.'
+    Write-Host ''
+
+    $detectedIbc = Find-IBCStartGatewayScript
+    if ($detectedIbc) {
+        $ibcPrompt = "Path to IBC StartGateway.bat [$detectedIbc]"
+        $ibcStart = Read-Host $ibcPrompt
+        if (-not $ibcStart) {
+            $ibcStart = $detectedIbc
+        }
+    } else {
+        $ibcStart = Read-Host 'Path to IBC StartGateway.bat'
+    }
+
+    $ibcStart = ([string]$ibcStart).Trim().Trim('"')
+    if (-not $ibcStart -or -not (Test-Path $ibcStart)) {
+        throw 'IBC StartGateway.bat was not found. Install IBC, then run Configure auto-login again.'
+    }
+
+    $gateway = Find-IBGatewayExecutable
+    $username = Read-Host 'IBKR live username'
+    $password = Read-Host 'IBKR live password' -AsSecureString
+    Save-AutoLoginCredential -Username $username -Password $password
+
+    $settings = @{
+        version = 1
+        enabled = $true
+        mode = 'ib-gateway-live'
+        tradingMode = 'live'
+        apiPort = 4001
+        ibcStartGatewayPath = $ibcStart
+        gatewayPath = $gateway
+        usernameMasked = Get-MaskedUsername -Username $username
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    $settings | ConvertTo-Json -Depth 4 | Set-Content -Path $AutoLoginSettingsFile -Encoding UTF8
+    Protect-PathForCurrentUser -Path $AutoLoginSettingsFile
+
+    Write-Log "IB Gateway auto-login configured for $(Get-MaskedUsername -Username $username) using IBC StartGateway.bat at $ibcStart."
+    Write-Host ''
+    Write-Host 'Auto-login is configured. Launch with auto-login from RayAlgo, then approve the IBKR Mobile/2FA prompt.'
+}
+
+function ConvertTo-JavaPropertyValue([string]$Value) {
+    if ($null -eq $Value) {
+        return ''
+    }
+    if ($Value -match "[`r`n]") {
+        throw 'IBC config values cannot contain newline characters.'
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Value.Length; $i++) {
+        $char = [char]$Value[$i]
+        $code = [int]$char
+
+        if ($char -eq '\') {
+            [void]$builder.Append('\\')
+            continue
+        }
+        if ($char -eq ' ') {
+            [void]$builder.Append('\ ')
+            continue
+        }
+        if ($char -eq ':' -or $char -eq '=' -or $char -eq '#' -or $char -eq '!') {
+            [void]$builder.Append('\')
+            [void]$builder.Append($char)
+            continue
+        }
+        if ($code -lt 32 -or $code -gt 126) {
+            [void]$builder.Append(('\u{0:x4}' -f $code))
+            continue
+        }
+
+        [void]$builder.Append($char)
+    }
+
+    return $builder.ToString()
+}
+
+function ConvertTo-Base64Url([byte[]]$Bytes) {
+    return ([Convert]::ToBase64String($Bytes)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function ConvertFrom-Base64Text([string]$Value) {
+    $normalized = ([string]$Value).Trim().Replace('-', '+').Replace('_', '/')
+    switch ($normalized.Length % 4) {
+        2 { $normalized += '==' }
+        3 { $normalized += '=' }
+        1 { throw 'Invalid base64 payload.' }
+    }
+
+    return [Convert]::FromBase64String($normalized)
+}
+
+function New-LoginHandoffKey {
+    $rsa = $null
+    try {
+        try {
+            $rsa = New-Object System.Security.Cryptography.RSACng 4096
+        } catch {
+            $rsa = [System.Security.Cryptography.RSA]::Create()
+            $rsa.KeySize = 4096
+        }
+
+        $parameters = $rsa.ExportParameters($false)
+        $modulus = ConvertTo-Base64Url -Bytes $parameters.Modulus
+        $exponent = ConvertTo-Base64Url -Bytes $parameters.Exponent
+        $helperInstanceId = New-HexToken -ByteCount 16
+        $publicKeyJwk = @{
+            kty = 'RSA'
+            n = $modulus
+            e = $exponent
+            alg = 'RSA-OAEP-256'
+            ext = $true
+            'key_ops' = @('encrypt')
+        }
+
+        return @{
+            helperInstanceId = $helperInstanceId
+            rsa = $rsa
+            publicKeyJwk = $publicKeyJwk
+        }
+    } catch {
+        if ($rsa) {
+            $rsa.Dispose()
+        }
+        throw
+    }
+}
+
+function Publish-LoginHandoffKey($Handoff) {
+    $body = @{
+        callbackSecret = $script:CallbackSecret
+        helperInstanceId = [string]$Handoff.helperInstanceId
+        algorithm = $LoginHandoffAlgorithm
+        publicKeyJwk = $Handoff.publicKeyJwk
+    }
+    $json = $body | ConvertTo-Json -Depth 12 -Compress
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri "$script:ApiBaseUrl/api/ibkr/activation/$script:ActivationId/login-key" `
+        -ContentType 'application/json' `
+        -Body $json `
+        -TimeoutSec 10 `
+        | Out-Null
+}
+
+function Claim-LoginHandoffEnvelope([string]$HelperInstanceId) {
+    $deadline = (Get-Date).AddSeconds(240)
+    while ((Get-Date) -lt $deadline) {
+        Assert-ActivationNotCanceled
+        $body = @{
+            callbackSecret = $script:CallbackSecret
+            helperInstanceId = $HelperInstanceId
+        }
+        $json = $body | ConvertTo-Json -Depth 6 -Compress
+        $result = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$script:ApiBaseUrl/api/ibkr/activation/$script:ActivationId/login-envelope/claim" `
+            -ContentType 'application/json' `
+            -Body $json `
+            -TimeoutSec 10
+
+        if ($result -and $result.ready -eq $true) {
+            return $result.envelope
+        }
+        if ($result -and $result.canceled -eq $true) {
+            throw 'IB Gateway bridge launch was canceled from RayAlgo.'
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    throw 'Timed out waiting for encrypted IBKR credentials from RayAlgo.'
+}
+
+function ConvertFrom-LoginHandoffEnvelope($Envelope, $Rsa) {
+    if (-not $Envelope) {
+        throw 'IBKR credential envelope was empty.'
+    }
+    if ([string]$Envelope.algorithm -ne $LoginHandoffAlgorithm) {
+        throw "Unsupported IBKR credential envelope algorithm '$([string]$Envelope.algorithm)'."
+    }
+
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    $padding = [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256
+    foreach ($chunk in @($Envelope.ciphertextChunks)) {
+        $ciphertext = ConvertFrom-Base64Text -Value ([string]$chunk)
+        $plaintext = $Rsa.Decrypt($ciphertext, $padding)
+        foreach ($byte in $plaintext) {
+            $bytes.Add($byte) | Out-Null
+        }
+    }
+
+    $json = [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
+    $credential = $json | ConvertFrom-Json
+    $username = ([string]$credential.username).Trim()
+    $password = [string]$credential.password
+    if (-not $username -or -not $password) {
+        throw 'IBKR username and password are required for auto-login.'
+    }
+
+    Register-SensitiveValue -Value $username
+    Register-SensitiveValue -Value $password
+
+    return @{
+        username = $username
+        password = $password
+        ibcStartGatewayPath = ([string]$credential.ibcStartGatewayPath).Trim().Trim('"')
+        tradingMode = 'live'
+    }
+}
+
+function Receive-OneTimeAutoLoginCredential {
+    if (-not $script:ActivationId -or -not $script:CallbackSecret -or -not $script:ApiBaseUrl) {
+        throw 'IB Gateway auto-login requires an active RayAlgo bridge activation.'
+    }
+
+    $handoff = New-LoginHandoffKey
+    try {
+        Publish-LoginHandoffKey -Handoff $handoff
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_secure_credentials' -Message 'Waiting for encrypted IBKR credentials from RayAlgo.'
+        $envelope = Claim-LoginHandoffEnvelope -HelperInstanceId ([string]$handoff.helperInstanceId)
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'credentials_delivered' -Message 'Encrypted IBKR credentials were delivered to the Windows helper.'
+        return ConvertFrom-LoginHandoffEnvelope -Envelope $envelope -Rsa $handoff.rsa
+    } finally {
+        if ($handoff -and $handoff.rsa) {
+            $handoff.rsa.Dispose()
+        }
+    }
+}
+
+function New-IBCRuntimeFiles($Settings, $Credential) {
+    $runtimeDir = Join-Path $AutoLoginRuntimeRoot (New-HexToken -ByteCount 8)
+    New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+    Protect-PathForCurrentUser -Path $runtimeDir
+
+    $configPath = Join-Path $runtimeDir 'config.ini'
+    $logPath = Join-Path $runtimeDir 'logs'
+    New-Item -ItemType Directory -Force -Path $logPath | Out-Null
+    Protect-PathForCurrentUser -Path $logPath
+
+    $configLines = @(
+        'FIX=no',
+        ('IbLoginId={0}' -f (ConvertTo-JavaPropertyValue ([string]$Credential.username))),
+        ('IbPassword={0}' -f (ConvertTo-JavaPropertyValue ([string]$Credential.password))),
+        'TradingMode=live',
+        'SecondFactorDevice=',
+        'ReloginAfterSecondFactorAuthenticationTimeout=no',
+        'SecondFactorAuthenticationTimeout=180',
+        'ExitAfterSecondFactorAuthenticationTimeout=no',
+        'AcceptNonBrokerageAccountWarning=no',
+        'ReadOnlyLogin=no',
+        'ReadOnlyApi=no',
+        'AcceptIncomingConnectionAction=reject',
+        'AllowBlindTrading=no',
+        'CommandServerPort=0',
+        'IncludeStackTraceForExceptions=no'
+    )
+    $configLines | Set-Content -Path $configPath -Encoding ASCII
+    Protect-PathForCurrentUser -Path $configPath
+
+    $sourceStart = [string]$Settings.ibcStartGatewayPath
+    $ibcPath = Split-Path -Path $sourceStart -Parent
+    $startScript = Join-Path $runtimeDir 'StartGateway.RayAlgo.bat'
+    $scriptText = Get-Content -Path $sourceStart -Raw -ErrorAction Stop
+    $scriptText = $scriptText -replace '(?m)^set\s+CONFIG=.*$', ('set "CONFIG={0}"' -f $configPath)
+    $scriptText = $scriptText -replace '(?m)^set\s+TRADING_MODE=.*$', 'set "TRADING_MODE=live"'
+    $scriptText = $scriptText -replace '(?m)^set\s+TWOFA_TIMEOUT_ACTION=.*$', 'set "TWOFA_TIMEOUT_ACTION=exit"'
+    $scriptText = $scriptText -replace '(?m)^set\s+IBC_PATH=.*$', ('set "IBC_PATH={0}"' -f $ibcPath)
+    $scriptText = $scriptText -replace '(?m)^set\s+LOG_PATH=.*$', ('set "LOG_PATH={0}"' -f $logPath)
+    $scriptText = $scriptText -replace '(?m)^set\s+TWSUSERID=.*$', 'set "TWSUSERID="'
+    $scriptText = $scriptText -replace '(?m)^set\s+TWSPASSWORD=.*$', 'set "TWSPASSWORD="'
+    $scriptText | Set-Content -Path $startScript -Encoding ASCII
+    Protect-PathForCurrentUser -Path $startScript
+
+    return @{
+        runtimeDir = $runtimeDir
+        configPath = $configPath
+        startScript = $startScript
+    }
+}
+
+function Clear-IBCRuntimeSecrets($RuntimeFiles) {
+    if (-not $RuntimeFiles) {
+        return
+    }
+
+    Remove-Item -Path $RuntimeFiles.configPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $RuntimeFiles.startScript -Force -ErrorAction SilentlyContinue
+}
+
+function Initialize-WindowApi {
+    if ('RayAlgoWin32Window' -as [type]) {
+        return
+    }
+
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class RayAlgoWin32Window {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}
+"@
+}
+
+function Get-ProcessCommandText([int]$ProcessId) {
+    try {
+        $process = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -OperationTimeoutSec 2 -ErrorAction Stop
+        return ("{0} {1} {2}" -f ([string]$process.Name), ([string]$process.CommandLine), ([string]$process.ExecutablePath))
+    } catch {
+        return ''
+    }
+}
+
+function Get-VisibleTopLevelWindows {
+    try {
+        Initialize-WindowApi
+        $windows = New-Object System.Collections.Generic.List[object]
+        $callback = [RayAlgoWin32Window+EnumWindowsProc]{
+            param([IntPtr]$handle, [IntPtr]$state)
+
+            if (-not [RayAlgoWin32Window]::IsWindowVisible($handle)) {
+                return $true
+            }
+
+            $titleBuilder = New-Object System.Text.StringBuilder 512
+            [void][RayAlgoWin32Window]::GetWindowText($handle, $titleBuilder, $titleBuilder.Capacity)
+            [uint32]$processId = 0
+            [void][RayAlgoWin32Window]::GetWindowThreadProcessId($handle, [ref]$processId)
+            if ($processId -le 0) {
+                return $true
+            }
+
+            $processName = ''
+            $processPath = ''
+            try {
+                $process = Get-Process -Id ([int]$processId) -ErrorAction Stop
+                $processName = [string]$process.ProcessName
+                try {
+                    $processPath = [string]$process.Path
+                } catch {}
+            } catch {}
+
+            $windows.Add([pscustomobject]@{
+                Handle = $handle
+                ProcessId = [int]$processId
+                ProcessName = $processName
+                ProcessPath = $processPath
+                CommandText = ''
+                Title = $titleBuilder.ToString()
+            }) | Out-Null
+            return $true
+        }
+
+        [void][RayAlgoWin32Window]::EnumWindows($callback, [IntPtr]::Zero)
+        return $windows.ToArray()
+    } catch {
+        Write-Log "Visible window enumeration skipped: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Test-IBGatewayWindowCandidate($Window) {
+    if (-not $Window) {
+        return $false
+    }
+
+    $title = [string]$Window.Title
+    foreach ($pattern in @('IB Gateway', 'IBKR', 'Interactive Brokers', 'Trader Workstation', 'Login', 'Log In', 'Gateway')) {
+        if ($title -like "*$pattern*") {
+            return $true
+        }
+    }
+
+    $processName = [string]$Window.ProcessName
+    $processPath = [string]$Window.ProcessPath
+    if ($processName -ieq 'ibgateway') {
+        return $true
+    }
+    if ($processPath -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)') {
+        return $true
+    }
+    if ($processPath -match '(?i)(\\|/)ibgateway(\\|/)') {
+        return $true
+    }
+
+    if ($processName -notin @('java', 'javaw')) {
+        return $false
+    }
+
+    $commandText = [string]$Window.CommandText
+    if (-not $commandText) {
+        $commandText = Get-ProcessCommandText -ProcessId ([int]$Window.ProcessId)
+        $Window.CommandText = $commandText
+    }
+
+    $haystack = "$processName $processPath $commandText"
+    if ($haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)') {
+        return $true
+    }
+    if ($haystack -match '(?i)(\\|/)ibgateway(\\|/)') {
+        return $true
+    }
+    if ($haystack -match '(?i)\bibgateway(\.exe)?\b') {
+        return $true
+    }
+
+    return $false
+}
+
+function Get-IBGatewayWindowCandidate {
+    $windows = @(Get-VisibleTopLevelWindows | Where-Object { Test-IBGatewayWindowCandidate $_ })
+    if ($windows.Count -eq 0) {
+        return $null
+    }
+
+    $titled = @($windows | Where-Object { [string]$_.Title })
+    if ($titled.Count -gt 0) {
+        return $titled | Select-Object -First 1
+    }
+
+    return $windows | Select-Object -First 1
+}
+
+function Activate-IBGatewayWindowCandidate($Window) {
+    if (-not $Window) {
+        return $false
+    }
+
+    try {
+        Initialize-WindowApi
+        [void][RayAlgoWin32Window]::ShowWindowAsync($Window.Handle, 9)
+        Start-Sleep -Milliseconds 150
+        if ([RayAlgoWin32Window]::SetForegroundWindow($Window.Handle)) {
+            Start-Sleep -Milliseconds 250
+            return $true
+        }
+    } catch {
+        Write-Log "Could not activate IB Gateway window handle $($Window.Handle): $($_.Exception.Message)"
+    }
+
+    return $false
+}
+
+function Initialize-KeyInputApi {
+    if ('RayAlgoKeyInput' -as [type]) {
+        return
+    }
+
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class RayAlgoKeyInput {
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+}
+"@
+}
+
+function Invoke-KeyDown([byte]$VirtualKey) {
+    Initialize-KeyInputApi
+    [RayAlgoKeyInput]::keybd_event($VirtualKey, 0, 0, [UIntPtr]::Zero)
+}
+
+function Invoke-KeyUp([byte]$VirtualKey) {
+    Initialize-KeyInputApi
+    [RayAlgoKeyInput]::keybd_event($VirtualKey, 0, 2, [UIntPtr]::Zero)
+}
+
+function Invoke-KeyTap([byte]$VirtualKey, [int]$AfterMilliseconds = 180) {
+    Invoke-KeyDown -VirtualKey $VirtualKey
+    Start-Sleep -Milliseconds 80
+    Invoke-KeyUp -VirtualKey $VirtualKey
+    Start-Sleep -Milliseconds $AfterMilliseconds
+}
+
+function Invoke-ControlKey([byte]$VirtualKey, [int]$AfterMilliseconds = 250) {
+    Invoke-KeyDown -VirtualKey 0x11
+    Start-Sleep -Milliseconds 80
+    Invoke-KeyTap -VirtualKey $VirtualKey -AfterMilliseconds 80
+    Start-Sleep -Milliseconds 80
+    Invoke-KeyUp -VirtualKey 0x11
+    Start-Sleep -Milliseconds $AfterMilliseconds
+}
+
+function Get-IBGatewayWindowProcess {
+    try {
+        $window = Get-IBGatewayWindowCandidate
+        if ($window) {
+            return Get-Process -Id ([int]$window.ProcessId) -ErrorAction SilentlyContinue
+        }
+
+        $patterns = @('IB Gateway', 'IBKR', 'Interactive Brokers', 'Trader Workstation', 'Login', 'Log In', 'Gateway')
+        $matches = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $title = [string]$_.MainWindowTitle
+            $matched = $false
+            if ($title) {
+                foreach ($pattern in $patterns) {
+                    if ($title -like "*$pattern*") {
+                        $matched = $true
+                        break
+                    }
+                }
+            }
+            $matched
+        }
+
+        return $matches | Select-Object -First 1
+    } catch {
+        return $null
+    }
+}
+
+function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroundFallback) {
+    $shell = New-Object -ComObject WScript.Shell
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastProgressAt = [DateTime]::MinValue
+    while ((Get-Date) -lt $deadline) {
+        Assert-ActivationNotCanceled
+        $window = Get-IBGatewayWindowCandidate
+        if ($window) {
+            Write-Log "Activating IB Gateway window handle=$($window.Handle) pid=$($window.ProcessId) process='$($window.ProcessName)' title='$($window.Title)'."
+            if (Activate-IBGatewayWindowCandidate -Window $window) {
+                return $shell
+            }
+        }
+
+        $process = Get-IBGatewayWindowProcess
+        if ($process) {
+            try {
+                Write-Log "Activating IB Gateway window pid=$($process.Id) title='$($process.MainWindowTitle)'."
+                if ($shell.AppActivate([int]$process.Id)) {
+                    Start-Sleep -Seconds 1
+                    return $shell
+                }
+            } catch {
+                Write-Log "Could not activate IB Gateway window by PID $($process.Id): $($_.Exception.Message)"
+            }
+        }
+
+        foreach ($title in @('IB Gateway', 'IBKR', 'Interactive Brokers', 'Trader Workstation', 'Login', 'Log In')) {
+            try {
+                if ($shell.AppActivate($title)) {
+                    Start-Sleep -Seconds 1
+                    return $shell
+                }
+            } catch {}
+        }
+
+        if (((Get-Date) - $lastProgressAt).TotalSeconds -ge 10) {
+            $lastProgressAt = Get-Date
+            $runningGateway = Get-IBGatewayProcessSummary
+            if ($runningGateway) {
+                Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message "Waiting for the IB Gateway login window to become active ($runningGateway)."
+            } else {
+                Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message 'Waiting for the IB Gateway login window to become active.'
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if ($AllowForegroundFallback) {
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_foreground_fallback' -Message 'Could not confirm the Gateway window title. Click the IB Gateway username field now; RayAlgo will type credentials in 5 seconds.'
+        Write-Host ''
+        Write-Host 'RayAlgo could not confirm the IB Gateway login window.'
+        Write-Host 'Click the IB Gateway username field now. RayAlgo will type credentials in 5 seconds.'
+        for ($i = 0; $i -lt 10; $i++) {
+            Assert-ActivationNotCanceled
+            Start-Sleep -Milliseconds 500
+        }
+        return $shell
+    }
+
+    throw 'Timed out waiting for the IB Gateway login window.'
+}
+
+function Invoke-SendKeysPaste($Shell, [string]$Text) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.Clipboard]::SetText($Text)
+        Start-Sleep -Milliseconds 350
+        Invoke-ControlKey -VirtualKey 0x56 -AfterMilliseconds 450
+    } catch {
+        $Shell.SendKeys((ConvertTo-SendKeysLiteral -Value $Text))
+        Start-Sleep -Milliseconds 450
+    }
+}
+
+function ConvertTo-SendKeysLiteral([string]$Value) {
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $Value.Length; $i++) {
+        $char = [string]$Value[$i]
+        if ($char -eq "`r" -or $char -eq "`n") {
+            continue
+        }
+        if (@('+', '^', '%', '~', '(', ')', '{', '}', '[', ']') -contains $char) {
+            [void]$builder.Append('{')
+            [void]$builder.Append($char)
+            [void]$builder.Append('}')
+        } else {
+            [void]$builder.Append($char)
+        }
+    }
+
+    return $builder.ToString()
+}
+
+function Invoke-IBGatewayCredentialTyping($Credential) {
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_wait' -Message 'Preparing to type one-time credentials into IB Gateway.'
+    Assert-ActivationNotCanceled
+
+    $gatewayProcessSummary = Get-IBGatewayProcessSummary
+    $gatewayWindow = Get-IBGatewayWindowCandidate
+    $startedGateway = $false
+    if (-not $gatewayProcessSummary -and -not $gatewayWindow) {
+        $gatewayPath = Find-IBGatewayExecutable
+        if (-not $gatewayPath -or -not (Test-Path $gatewayPath)) {
+            throw 'IB Gateway was not running and ibgateway.exe was not found. Start IB Gateway manually or install it under C:\Jts, then retry.'
+        }
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'starting_gateway' -Message 'Starting IB Gateway.'
+        Start-IBGatewayExecutable -GatewayPath $gatewayPath
+        $startedGateway = $true
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_process_started' -Message 'IB Gateway process start requested; waiting for the login window.'
+        Start-Sleep -Seconds 3
+        Assert-ActivationNotCanceled
+    } elseif (-not $gatewayWindow) {
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_running_waiting_login' -Message "IB Gateway is running; waiting for the login window to accept credentials ($gatewayProcessSummary)."
+    }
+
+    $windowWaitSeconds = 20
+    if ($startedGateway) {
+        $windowWaitSeconds = 45
+    }
+    $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
+    $clipboardText = $null
+    $hadClipboardText = $false
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        try {
+            $clipboardText = [System.Windows.Forms.Clipboard]::GetText()
+            $hadClipboardText = $true
+        } catch {}
+
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Typing IBKR credentials into IB Gateway.'
+        Start-Sleep -Milliseconds 1500
+        Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
+        Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.username)
+        Invoke-KeyTap -VirtualKey 0x09 -AfterMilliseconds 500
+        Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
+        Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.password)
+        Invoke-KeyTap -VirtualKey 0x0D -AfterMilliseconds 250
+    } finally {
+        try {
+            if ($hadClipboardText) {
+                [System.Windows.Forms.Clipboard]::SetText($clipboardText)
+            } else {
+                [System.Windows.Forms.Clipboard]::Clear()
+            }
+        } catch {}
+    }
+
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.'
+    $deadline = (Get-Date).AddSeconds(300)
+    while ((Get-Date) -lt $deadline) {
+        Assert-ActivationNotCanceled
+        if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
+            Send-BridgeProgress -Status 'launched' -Step 'gateway_socket_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
+            return
+        }
+        if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
+            throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    throw 'Timed out waiting for IB Gateway live API socket 4001 after typing credentials. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.'
+}
+
+function Start-IBGatewayWithIbc($Credential, [string]$IbcStartGatewayPath) {
+    if (-not $IbcStartGatewayPath -or -not (Test-Path $IbcStartGatewayPath)) {
+        throw 'IBC StartGateway.bat was not found.'
+    }
+
+    $settings = @{
+        version = 1
+        enabled = $true
+        mode = 'ib-gateway-live'
+        tradingMode = 'live'
+        apiPort = 4001
+        ibcStartGatewayPath = $IbcStartGatewayPath
+        gatewayPath = Find-IBGatewayExecutable
+        usernameMasked = Get-MaskedUsername -Username ([string]$credential.username)
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+
+    $runtimeFiles = $null
+    $process = $null
+    try {
+        $runtimeFiles = New-IBCRuntimeFiles -Settings $settings -Credential $credential
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'starting_ibc' -Message 'Starting IBC for IB Gateway live mode.'
+        $process = Start-Process -FilePath $runtimeFiles.startScript -ArgumentList @('/INLINE') -WorkingDirectory $runtimeFiles.runtimeDir -PassThru
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'credentials_submitted' -Message 'IBC started with one-time credentials from RayAlgo.'
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.'
+
+        $deadline = (Get-Date).AddSeconds(300)
+        while ((Get-Date) -lt $deadline) {
+            Assert-ActivationNotCanceled
+            if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
+                Send-BridgeProgress -Status 'launched' -Step 'gateway_socket_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
+                return
+            }
+            if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
+                throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
+            }
+            if ($process -and $process.HasExited) {
+                throw "IBC exited before IB Gateway live API socket 4001 opened. Exit code: $($process.ExitCode)."
+            }
+            Start-Sleep -Seconds 2
+        }
+
+        throw 'Timed out waiting for IB Gateway live API socket 4001 after starting IBC. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.'
+    } finally {
+        Clear-IBCRuntimeSecrets -RuntimeFiles $runtimeFiles
+    }
+}
+
+function Start-IBGatewayWithAutoLogin {
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'autologin_preflight' -Message 'Preparing one-time IB Gateway auto-login handoff.'
+    Ensure-AutoLoginDirectory
+
+    $credential = Receive-OneTimeAutoLoginCredential
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_window_login' -Message 'Using IB Gateway window login for one-time credentials.'
+    Invoke-IBGatewayCredentialTyping -Credential $credential
+}
+
 function Ensure-IBGatewaySocket {
     Send-BridgeProgress -Status 'waiting_gateway' -Step 'checking_gateway_socket' -Message 'Checking IB Gateway live API socket on 127.0.0.1:4001.'
 
@@ -497,11 +1852,19 @@ function Ensure-IBGatewaySocket {
         throw 'IB Gateway paper API socket is reachable on 127.0.0.1:4002, but RayAlgo live bridge launch requires the live API socket on 127.0.0.1:4001. Switch Gateway to live mode or enable live API port 4001, then retry the bridge launch.'
     }
 
+    if ($script:UseAutoLogin) {
+        Start-IBGatewayWithAutoLogin
+        return
+    }
+
     $runningGateway = Get-IBGatewayProcessSummary
     if ($runningGateway) {
-        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_running_waiting_socket' -Message "IB Gateway is already running ($runningGateway). Waiting for live API socket 4001; log in and enable API socket port 4001 if prompted."
+        if (-not $script:UseAutoLogin) {
+            Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_running_waiting_socket' -Message "IB Gateway is already running ($runningGateway). Waiting for live API socket 4001; log in and enable API socket port 4001 if prompted."
+        }
         $existingDeadline = (Get-Date).AddSeconds(180)
         while ((Get-Date) -lt $existingDeadline) {
+            Assert-ActivationNotCanceled
             if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
                 Send-BridgeProgress -Status 'launched' -Step 'gateway_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
                 return
@@ -519,13 +1882,14 @@ function Ensure-IBGatewaySocket {
     $gateway = Find-IBGatewayExecutable
     if ($gateway) {
         Write-Log "Launching IB Gateway from $gateway."
-        Start-Process -FilePath $gateway | Out-Null
+        Start-IBGatewayExecutable -GatewayPath $gateway
     } else {
         Write-Log 'IB Gateway executable was not found automatically.'
     }
 
     $deadline = (Get-Date).AddSeconds(180)
     while ((Get-Date) -lt $deadline) {
+        Assert-ActivationNotCanceled
         if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
             Send-BridgeProgress -Status 'launched' -Step 'gateway_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
             return
@@ -658,7 +2022,7 @@ function Get-BridgeHeaders {
     return @{ Authorization = "Bearer $script:BridgeToken" }
 }
 
-function Get-BridgeHealthResult([string]$BaseUrl) {
+function Get-BridgeHealthResult([string]$BaseUrl, [switch]$Quiet) {
     try {
         $health = Invoke-RestMethod -Uri "$BaseUrl/healthz" -Headers (Get-BridgeHeaders) -TimeoutSec 15
         $target = [string]$health.connectionTarget
@@ -701,7 +2065,9 @@ function Get-BridgeHealthResult([string]$BaseUrl) {
             AccountsLoaded = $accountsLoaded
         }
     } catch {
-        Write-Log "Bridge check failed for $BaseUrl`: $($_.Exception.Message)"
+        if (-not $Quiet) {
+            Write-Log "Bridge check failed for $BaseUrl`: $($_.Exception.Message)"
+        }
         return @{
             Healthy = $false
             Competing = $false
@@ -733,12 +2099,12 @@ function Test-BridgeReady([string]$BaseUrl) {
     }
 }
 
-function Test-BridgeUrl([string]$BaseUrl) {
-    $result = Get-BridgeHealthResult -BaseUrl $BaseUrl
+function Test-BridgeUrl([string]$BaseUrl, [switch]$Quiet) {
+    $result = Get-BridgeHealthResult -BaseUrl $BaseUrl -Quiet:$Quiet
     return ($result.Healthy -eq $true)
 }
 
-function Stop-ProcessFromPidFile([string]$PidFile) {
+function Stop-ProcessFromPidFile([string]$PidFile, [string[]]$AllowedProcessNames = @()) {
     if (-not (Test-Path $PidFile)) {
         return
     }
@@ -747,8 +2113,16 @@ function Stop-ProcessFromPidFile([string]$PidFile) {
     if ($pidValue -match '^\d+$') {
         $process = Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue
         if ($process) {
-            Write-Log "Stopping stale bridge process $($process.Id) from PID file."
-            Stop-Process -Id $process.Id -Force
+            $processName = [string]$process.ProcessName
+            if (
+                $AllowedProcessNames.Count -gt 0 -and
+                -not ($AllowedProcessNames | Where-Object { $_ -ieq $processName })
+            ) {
+                Write-Log "PID file $PidFile points to $processName process $($process.Id); leaving it running."
+            } else {
+                Write-Log "Stopping stale $processName process $($process.Id) from PID file."
+                Stop-Process -Id $process.Id -Force
+            }
         }
     }
     Remove-Item $PidFile -ErrorAction SilentlyContinue
@@ -795,6 +2169,47 @@ function Stop-BridgePortProcess {
     }
 }
 
+function Stop-StaleBridgeNodeProcesses {
+    try {
+        $repoPattern = [regex]::Escape($RepoDir)
+        $entryPattern = 'artifacts(\\|/)ibkr-bridge(\\|/)dist(\\|/)index\.mjs'
+        $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'nodejs.exe'" -OperationTimeoutSec 3 -ErrorAction Stop)
+        foreach ($process in $processes) {
+            $commandLine = [string]$process.CommandLine
+            if (-not $commandLine) {
+                continue
+            }
+            $normalized = $commandLine -replace '/', '\'
+            $looksLikeBridge = (
+                $normalized -match $entryPattern -or
+                ($normalized -match $repoPattern -and $normalized -match 'ibkr-bridge')
+            )
+            if (-not $looksLikeBridge) {
+                continue
+            }
+            $pidValue = [int]$process.ProcessId
+            Write-Log "Stopping stale RayAlgo local bridge node process $pidValue."
+            Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Log "Stale bridge node process scan skipped: $($_.Exception.Message)"
+    }
+}
+
+function Stop-BridgeLaunchChildProcesses {
+    Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
+    Stop-ProcessFromPidFile -PidFile $BridgePidFile -AllowedProcessNames @('node', 'nodejs')
+    Stop-BridgePortProcess
+    Stop-StaleBridgeNodeProcesses
+}
+
+function Stop-IBKRDesktopBridgeAndGateway {
+    Write-Log 'Stopping RayAlgo IBKR bridge, Cloudflare tunnel, and IB Gateway.'
+    Stop-BridgeLaunchChildProcesses
+    Remove-Item $TunnelUrlFile -ErrorAction SilentlyContinue
+    Stop-IBGatewayProcesses
+}
+
 function Ensure-LocalBridge {
     $localBaseUrl = "http://127.0.0.1:$BridgePort"
     $localHealth = Get-BridgeHealthResult -BaseUrl $localBaseUrl
@@ -823,8 +2238,9 @@ function Ensure-LocalBridge {
 
     foreach ($clientId in 101..105) {
         Send-BridgeProgress -Status 'starting_bridge' -Step 'preparing_bridge' -Message "Preparing the local IB Gateway bridge with client ID $clientId."
-        Stop-ProcessFromPidFile -PidFile $BridgePidFile
+        Stop-ProcessFromPidFile -PidFile $BridgePidFile -AllowedProcessNames @('node', 'nodejs')
         Stop-BridgePortProcess
+        Stop-StaleBridgeNodeProcesses
         Send-BridgeProgress -Status 'starting_bridge' -Step 'starting_bridge' -Message "Starting the local IB Gateway bridge with client ID $clientId."
         Remove-Item $out, $err -ErrorAction SilentlyContinue
 
@@ -837,6 +2253,7 @@ function Ensure-LocalBridge {
         $env:IBKR_TWS_MODE = 'live'
         $env:IBKR_TWS_MARKET_DATA_TYPE = '1'
         $env:IBKR_BRIDGE_API_TOKEN = $script:BridgeToken
+        $env:IBKR_BRIDGE_TOKEN = $script:BridgeToken
         $env:IBKR_BRIDGE_PREWARM_SYMBOLS = ''
         $env:IBKR_BRIDGE_RUNTIME_BUILD = [string]$script:BridgeBundleHash
 
@@ -851,6 +2268,7 @@ function Ensure-LocalBridge {
         $deadline = (Get-Date).AddSeconds(50)
         $lastHealthResult = $null
         while ((Get-Date) -lt $deadline) {
+            Assert-ActivationNotCanceled
             if (-not (Test-BridgeReady -BaseUrl $localBaseUrl)) {
                 if ($process.HasExited) {
                     $detail = Get-BridgeAttemptDetail -OutPath $out -ErrPath $err -HealthResult $lastHealthResult
@@ -865,9 +2283,9 @@ function Ensure-LocalBridge {
             $lastHealthResult = $result
             if ($result.Healthy -eq $true) {
                 if ($result.StrictReady -eq $true) {
-                    Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_ready' -Message "Local IB Gateway bridge is connected and streaming with client ID $clientId."
+                    Send-BridgeProgress -Status 'starting_bridge' -Step 'local_bridge_ready' -Message "Local IB Gateway bridge is ready and streaming with client ID $clientId; publishing the RayAlgo tunnel."
                 } else {
-                    Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_ready' -Message "Local IB Gateway bridge is connected with client ID $clientId; waiting for fresh stream proof in the app."
+                    Send-BridgeProgress -Status 'starting_bridge' -Step 'local_bridge_ready' -Message "Local IB Gateway bridge is ready with client ID $clientId; publishing the RayAlgo tunnel."
                 }
                 return $localBaseUrl
             }
@@ -889,7 +2307,7 @@ function Ensure-LocalBridge {
         $detail = Get-BridgeAttemptDetail -OutPath $out -ErrPath $err -HealthResult $lastHealthResult
         Write-Log "Local bridge did not become healthy for client ID $clientId. $detail"
         Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_unhealthy' -Message (Truncate-Message "Local bridge did not become healthy for client ID $clientId. $detail")
-        Stop-ProcessFromPidFile -PidFile $BridgePidFile
+        Stop-ProcessFromPidFile -PidFile $BridgePidFile -AllowedProcessNames @('node', 'nodejs')
         Stop-BridgePortProcess
     }
 
@@ -900,7 +2318,7 @@ function Ensure-CloudflareTunnel([string]$LocalBaseUrl) {
     if ($script:ForceFreshTunnel) {
         Write-Log 'Fresh tunnel requested; clearing cached Cloudflare quick tunnel state.'
         Remove-Item $TunnelUrlFile -ErrorAction SilentlyContinue
-        Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile
+        Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     } elseif (Test-Path $TunnelUrlFile) {
         $storedUrl = (Get-Content $TunnelUrlFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($storedUrl -and (Test-BridgeUrl -BaseUrl $storedUrl)) {
@@ -909,10 +2327,10 @@ function Ensure-CloudflareTunnel([string]$LocalBaseUrl) {
         }
         Write-Log 'Cached Cloudflare quick tunnel is stale; clearing it before launching a new tunnel.'
         Remove-Item $TunnelUrlFile -ErrorAction SilentlyContinue
-        Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile
+        Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     }
 
-    Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile
+    Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     Send-BridgeProgress -Status 'starting_tunnel' -Step 'starting_tunnel' -Message 'Starting a Cloudflare quick tunnel.'
 
     $out = Join-Path $LogDir 'cloudflared.out.log'
@@ -929,6 +2347,7 @@ function Ensure-CloudflareTunnel([string]$LocalBaseUrl) {
     $publicUrl = $null
     $deadline = (Get-Date).AddSeconds(75)
     while ((Get-Date) -lt $deadline -and -not $publicUrl) {
+        Assert-ActivationNotCanceled
         Start-Sleep -Seconds 1
         $text = ''
         if (Test-Path $out) {
@@ -953,21 +2372,37 @@ function Ensure-CloudflareTunnel([string]$LocalBaseUrl) {
     Send-BridgeProgress -Status 'validating' -Step 'validating_tunnel' -Message 'Validating the public Cloudflare tunnel.' -BridgeUrl $publicUrl
 
     $validateDeadline = (Get-Date).AddSeconds(45)
+    $lastValidationProgressAt = [DateTime]::MinValue
     while ((Get-Date) -lt $validateDeadline) {
-        if (Test-BridgeUrl -BaseUrl $publicUrl) {
+        Assert-ActivationNotCanceled
+        if (Test-BridgeUrl -BaseUrl $publicUrl -Quiet) {
             return $publicUrl
+        }
+        if (((Get-Date) - $lastValidationProgressAt).TotalSeconds -ge 10) {
+            $lastValidationProgressAt = Get-Date
+            Send-BridgeProgress -Status 'validating' -Step 'waiting_tunnel_dns' -Message 'Waiting for the Cloudflare tunnel DNS and health check to become reachable.' -BridgeUrl $publicUrl
         }
         Start-Sleep -Seconds 2
     }
 
     Remove-Item $TunnelUrlFile -ErrorAction SilentlyContinue
-    Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile
+    Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     throw 'Cloudflare quick tunnel is published but the bridge health check is not passing yet.'
 }
 
 try {
     if ($Install) {
         Install-ProtocolHandler
+    }
+
+    if ($InstallAgent) {
+        Install-DesktopAgent -BaseUrl $ApiBaseUrl
+        exit 0
+    }
+
+    if ($Agent) {
+        Start-DesktopAgent -PreferredBaseUrl $ApiBaseUrl
+        exit 0
     }
 
     $rawLaunchUrl = $LaunchUrl
@@ -984,13 +2419,43 @@ try {
     }
 
     $params = Parse-LaunchUrl -RawUrl $rawLaunchUrl
+    $action = [string]$params['action']
+    if ($action -eq 'configure-autologin') {
+        throw 'Local stored IB Gateway auto-login setup is no longer used. Start auto-login from RayAlgo and enter credentials in the app.'
+    }
+    if ($action -and $action -ne 'launch') {
+        throw "Unsupported rayalgo-ibkr action '$action'."
+    }
+
     $script:ActivationId = [string]$params['activationId']
     $script:CallbackSecret = [string]$params['callbackSecret']
     $script:ApiBaseUrl = (Get-RequiredParam -Params $params -Name 'apiBaseUrl').TrimEnd('/')
+    Save-DesktopAgentConfig -BaseUrl $script:ApiBaseUrl
     Invoke-HelperSelfUpdateIfNeeded -Params $params -RawLaunchUrl $rawLaunchUrl
+    if (Test-TruthyParam $params['shutdown']) {
+        Write-Log 'IBKR shutdown requested by RayAlgo.'
+        $shutdownJobId = [string]$params['jobId']
+        $shutdownCompletionToken = [string]$params['completionToken']
+        try {
+            Stop-IBKRDesktopBridgeAndGateway
+            Complete-DesktopAgentJob -BaseUrl $script:ApiBaseUrl -JobId $shutdownJobId -CompletionToken $shutdownCompletionToken -Ok $true -Message 'IBKR bridge, tunnel, and Gateway shutdown completed.'
+        } catch {
+            Complete-DesktopAgentJob -BaseUrl $script:ApiBaseUrl -JobId $shutdownJobId -CompletionToken $shutdownCompletionToken -Ok $false -Message $_.Exception.Message
+            throw
+        }
+        exit 0
+    }
+
     $script:BridgeToken = Get-OrCreate-BridgeToken -PreferredToken (Get-RequiredParam -Params $params -Name 'bridgeToken')
     $script:ManagementToken = [string]$params['managementToken']
     $script:ForceFreshTunnel = Test-TruthyParam $params['forceFreshTunnel']
+    $script:UseAutoLogin = Test-TruthyParam $params['autoLogin']
+    if ($script:UseAutoLogin -and $params['autoLoginMode'] -and [string]$params['autoLoginMode'] -ne 'ib-gateway-live') {
+        throw "Unsupported IB Gateway auto-login mode '$($params['autoLoginMode'])'."
+    }
+    if ($script:UseAutoLogin -and [string]$params['loginMode'] -ne 'ui-onetime') {
+        throw 'IB Gateway auto-login now requires the RayAlgo one-time credential handoff. Start auto-login again from the current app UI.'
+    }
 
     if ($params['repoUrl']) {
         $RepoUrl = [string]$params['repoUrl']
@@ -1004,16 +2469,40 @@ try {
     }
 
     Send-BridgeProgress -Status 'launched' -Step 'helper_launched' -Message 'Windows bridge helper launched.'
+    $desktopAgentPaired = $false
+    try {
+        Register-DesktopAgent -BaseUrl $script:ApiBaseUrl -ActivationId $script:ActivationId -CallbackSecret $script:CallbackSecret | Out-Null
+        $desktopAgentPaired = $true
+    } catch {
+        Write-Log "Desktop agent registration failed: $($_.Exception.Message)"
+    }
     Ensure-IBGatewaySocket
     Ensure-RepoAndBridgeBuild
     $localBaseUrl = Ensure-LocalBridge
     $publicUrl = Ensure-CloudflareTunnel -LocalBaseUrl $localBaseUrl
     Complete-BridgeAttach -BridgeUrl $publicUrl
     Send-BridgeProgress -Status 'connected' -Step 'connected' -Message 'IB Gateway bridge attached.' -BridgeUrl $publicUrl
+    try {
+        Install-DesktopAgent -BaseUrl $script:ApiBaseUrl
+    } catch {
+        Write-Log "Desktop agent install failed: $($_.Exception.Message)"
+        if ($desktopAgentPaired) {
+            try {
+                Write-Log 'Attempting current-user Startup fallback for the paired desktop agent.'
+                Install-DesktopAgentStartupFallback -BaseUrl $script:ApiBaseUrl
+                Start-DesktopAgentProcess -BaseUrl $script:ApiBaseUrl
+            } catch {
+                Write-Log "Desktop agent Startup fallback failed: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Log 'Desktop agent Startup fallback skipped because this desktop did not pair with the API.'
+        }
+    }
     Write-Log "IB Gateway bridge attached with $publicUrl."
 } catch {
     $message = $_.Exception.Message
     Write-Log "IB Gateway bridge launch failed: $message"
+    Stop-BridgeLaunchChildProcesses
     Send-BridgeProgress -Status 'error' -Step 'error' -Message $message
     throw
 }

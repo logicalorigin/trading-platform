@@ -95,6 +95,10 @@ export type BridgeLaneSettingsRequest = {
   limits?: Record<string, number | null | undefined>;
 };
 
+type BridgeRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
+
 type BridgeConnectionHealthSnapshot = {
   transport: "tws";
   role: "market_data";
@@ -531,6 +535,22 @@ export class IbkrBridgeClient {
     0,
     Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "12000"),
   );
+  private readonly optionMetadataRequestTimeoutMs = readPositiveIntegerEnv(
+    "IBKR_BRIDGE_OPTION_METADATA_REQUEST_TIMEOUT_MS",
+    Math.max(45_000, this.requestTimeoutMs),
+  );
+  private readonly historicalRequestTimeoutMs = readPositiveIntegerEnv(
+    "IBKR_BRIDGE_HISTORICAL_REQUEST_TIMEOUT_MS",
+    Math.max(30_000, this.requestTimeoutMs),
+  );
+  private readonly optionQuoteRequestTimeoutMs = readPositiveIntegerEnv(
+    "IBKR_BRIDGE_OPTION_QUOTE_REQUEST_TIMEOUT_MS",
+    Math.max(30_000, this.requestTimeoutMs),
+  );
+  private readonly quotePrewarmRequestTimeoutMs = readPositiveIntegerEnv(
+    "IBKR_BRIDGE_QUOTE_PREWARM_REQUEST_TIMEOUT_MS",
+    Math.max(30_000, this.requestTimeoutMs),
+  );
   private readonly quoteStreamStallMs = readPositiveIntegerEnv(
     "IBKR_QUOTE_STREAM_STALL_MS",
     45_000,
@@ -590,19 +610,20 @@ export class IbkrBridgeClient {
 
   private request<T>(
     path: string,
-    init: RequestInit = {},
+    init: BridgeRequestInit = {},
     params: Record<string, QueryValue> = {},
   ): Promise<T> {
     const config = this.getConfig();
     const controller = new AbortController();
-    const inputSignal = init.signal;
+    const { timeoutMs = this.requestTimeoutMs, ...requestInit } = init;
+    const inputSignal = requestInit.signal;
     let didTimeout = false;
     const timeout =
-      this.requestTimeoutMs > 0
+      timeoutMs > 0
         ? setTimeout(() => {
             didTimeout = true;
             controller.abort();
-          }, this.requestTimeoutMs)
+          }, timeoutMs)
         : null;
     const abortFromInput = () => controller.abort(inputSignal?.reason);
 
@@ -613,11 +634,11 @@ export class IbkrBridgeClient {
     }
 
     return this.requestJson<T>(path, this.buildUrl(config, path, params), {
-      ...init,
+      ...requestInit,
       headers: this.buildHeaders(config, {
         Accept: "application/json",
-        ...(init.headers
-          ? Object.fromEntries(new Headers(init.headers).entries())
+        ...(requestInit.headers
+          ? Object.fromEntries(new Headers(requestInit.headers).entries())
           : {}),
       }),
       signal: controller.signal,
@@ -626,7 +647,7 @@ export class IbkrBridgeClient {
         if (didTimeout) {
           throw new HttpError(
             504,
-            `IBKR bridge request to ${path} timed out after ${this.requestTimeoutMs}ms.`,
+            `IBKR bridge request to ${path} timed out after ${timeoutMs}ms.`,
             {
               code: "ibkr_bridge_request_timeout",
               cause: error,
@@ -891,13 +912,20 @@ export class IbkrBridgeClient {
     return payload.executions.map(hydrateExecution);
   }
 
-  async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+  async getQuoteSnapshots(
+    symbols: string[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<QuoteSnapshot[]> {
     const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
     const payload = await this.request<{
       quotes: Array<
         Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }
       >;
-    }>("/quotes/snapshot", {}, { symbols: bridgeSymbols.join(",") });
+    }>(
+      "/quotes/snapshot",
+      { signal: options.signal },
+      { symbols: bridgeSymbols.join(",") },
+    );
     return payload.quotes.map(hydrateQuote);
   }
 
@@ -932,7 +960,7 @@ export class IbkrBridgeClient {
       >;
     }>(
       "/options/quotes",
-      {},
+      { timeoutMs: this.optionQuoteRequestTimeoutMs },
       {
         underlying: input.underlying ?? undefined,
         contracts: normalizedProviderContractIds.join(","),
@@ -941,17 +969,25 @@ export class IbkrBridgeClient {
     return payload.quotes.map(hydrateQuote);
   }
 
-  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+  async prewarmQuoteSubscriptions(
+    symbols: string[],
+    owner?: string | null,
+  ): Promise<void> {
     const normalizedSymbols = normalizeBridgeStockSymbols(symbols);
+    const normalizedOwner = typeof owner === "string" ? owner.trim() : "";
 
     await this.request<{ symbols: string[]; updatedAt: string }>(
       "/quotes/prewarm",
       {
         method: "POST",
+        timeoutMs: this.quotePrewarmRequestTimeoutMs,
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ symbols: normalizedSymbols }),
+        body: JSON.stringify({
+          symbols: normalizedSymbols,
+          ...(normalizedOwner ? { owner: normalizedOwner } : {}),
+        }),
       },
     );
   }
@@ -1445,6 +1481,7 @@ export class IbkrBridgeClient {
       outsideRth?: boolean;
       source?: HistoryDataSource;
       exchange?: string | null;
+      priority?: number;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,
@@ -1462,6 +1499,7 @@ export class IbkrBridgeClient {
           : undefined,
       source: input.source,
       exchange: input.exchange,
+      priority: input.priority,
     });
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
@@ -1688,6 +1726,7 @@ export class IbkrBridgeClient {
     source?: HistoryDataSource;
     exchange?: string | null;
     signal?: AbortSignal;
+    priority?: number;
   }): Promise<BrokerBarSnapshot[]> {
     const bridgeSymbol = toBridgeStockSymbolForRequest(input);
     const payload = await this.request<{
@@ -1699,7 +1738,7 @@ export class IbkrBridgeClient {
       >;
     }>(
       "/bars",
-      { signal: input.signal },
+      { signal: input.signal, timeoutMs: this.historicalRequestTimeoutMs },
       {
         symbol: bridgeSymbol,
         timeframe: input.timeframe,
@@ -1711,6 +1750,7 @@ export class IbkrBridgeClient {
         outsideRth: input.outsideRth,
         source: input.source,
         exchange: input.exchange,
+        priority: input.priority,
       },
     );
     return payload.bars.map((bar) => ({
@@ -1735,6 +1775,7 @@ export class IbkrBridgeClient {
       "/options/chains",
       {
         signal: input.signal,
+        timeoutMs: this.optionMetadataRequestTimeoutMs,
       },
       {
         underlying: input.underlying,
@@ -1758,6 +1799,7 @@ export class IbkrBridgeClient {
       "/options/expirations",
       {
         signal: input.signal,
+        timeoutMs: this.optionMetadataRequestTimeoutMs,
       },
       {
         underlying: input.underlying,

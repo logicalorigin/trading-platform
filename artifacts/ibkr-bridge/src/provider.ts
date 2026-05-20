@@ -176,6 +176,7 @@ export interface IbkrBridgeProvider {
     outsideRth?: boolean;
     source?: HistoryDataSource;
     exchange?: string | null;
+    priority?: number;
   }): Promise<BrokerBarSnapshot[]>;
   getOptionChain(input: {
     underlying: string;
@@ -232,7 +233,10 @@ export interface IbkrBridgeProvider {
     limit?: number;
     signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }>;
-  prewarmQuoteSubscriptions?(symbols: string[]): Promise<void>;
+  prewarmQuoteSubscriptions?(
+    symbols: string[],
+    owner?: string | null,
+  ): Promise<void>;
   subscribeQuoteStream?(
     symbols: string[],
     onQuote: (quote: QuoteSnapshot) => void,
@@ -257,6 +261,7 @@ export interface IbkrBridgeProvider {
       outsideRth?: boolean;
       source?: HistoryDataSource;
       exchange?: string | null;
+      priority?: number;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,

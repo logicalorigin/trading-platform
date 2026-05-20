@@ -1,24 +1,113 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { HttpError } from "../lib/errors";
 import {
   clearIbkrBridgeRuntimeOverride,
   getIbkrBridgeRuntimeOverride,
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
+import { primeBridgeHealthForSession } from "./platform-bridge-health";
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
-const BRIDGE_HELPER_VERSION = "2026-05-19.gateway-progress-v14";
+const REMOTE_DESKTOP_STALE_MS = 90_000;
+const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
+const BRIDGE_HELPER_VERSION = "2026-05-20.remote-desktop-agent-v19";
+const LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
+const REMOTE_DESKTOPS_FILE_ENV_NAMES = [
+  "IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
+  "RAYALGO_IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
+];
 
 type LauncherResult = {
   activationId: string;
   apiBaseUrl: string;
+  autoLoginConfigured: boolean | null;
+  autoLoginLaunchUrl: string;
+  autoLoginMode: "ib-gateway-live";
+  autoLoginSupported: true;
   bridgeToken: string;
   bundleUrl: string | null;
+  credentialHandoff: {
+    algorithm: typeof LOGIN_HANDOFF_ALGORITHM;
+    expiresAt: string;
+    mode: "ui-onetime";
+  };
   helperUrl: string;
   helperVersion: string;
   launchUrl: string;
   managementToken: string;
+};
+
+type IbkrRemoteDesktop = {
+  desktopId: string;
+  helperVersion: string | null;
+  lastHeartbeatAt: number | null;
+  label: string | null;
+  lastSeenAt: number;
+  registeredAt: number;
+  secretHash: string;
+};
+
+type IbkrRemoteDesktopSummary = {
+  desktopId: string;
+  helperVersion: string | null;
+  label: string | null;
+  lastSeenAt: string;
+  online: boolean;
+  registeredAt: string;
+};
+
+type IbkrRemoteLaunchJob = {
+  action: "launch" | "shutdown";
+  activationId: string | null;
+  claimedAt: number | null;
+  completedAt: number | null;
+  completionMessage: string | null;
+  completionTokenHash: string | null;
+  createdAt: number;
+  desktopId: string;
+  expiresAt: number;
+  failedAt: number | null;
+  jobId: string;
+  launchUrl: string | null;
+  statusTokenHash: string | null;
+};
+
+type RemoteLauncherResult = LauncherResult & {
+  remoteLaunch: {
+    desktop: IbkrRemoteDesktopSummary;
+    expiresAt: string;
+    jobId: string;
+    mode: "desktop-agent";
+  };
+};
+
+type RemoteShutdownResult = {
+  helperVersion: string;
+  shutdown: {
+    action: "shutdown";
+    desktop: IbkrRemoteDesktopSummary;
+    expiresAt: string;
+    jobId: string;
+    mode: "desktop-agent";
+    statusToken: string;
+  };
+};
+
+type RemoteDesktopJobStatusResult = {
+  action: "launch" | "shutdown";
+  claimedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  expiresAt: string;
+  failedAt: string | null;
+  jobId: string;
+  message: string | null;
+  ok: true;
+  state: "queued" | "claimed" | "completed" | "failed" | "expired";
 };
 
 type AttachIbkrBridgeRuntimeResult = {
@@ -34,13 +123,71 @@ type AttachIbkrBridgeRuntimeResult = {
 type LegacyBridgeActivation = {
   callbackSecret: string;
   bridgeToken: string;
+  canceledAt: number | null;
+  loginHandoff: LegacyBridgeLoginHandoff | null;
   managementToken: string;
   issuedAt: number;
   expiresAt: number;
 };
 
+type LegacyBridgeLoginEnvelope = {
+  algorithm: typeof LOGIN_HANDOFF_ALGORITHM;
+  ciphertextChunks: string[];
+  submittedAt: number;
+};
+
+type LegacyBridgeLoginHandoff = {
+  algorithm: typeof LOGIN_HANDOFF_ALGORITHM;
+  helperInstanceId: string;
+  publicKeyJwk: unknown;
+  createdAt: number;
+  envelope: LegacyBridgeLoginEnvelope | null;
+};
+
+type LegacyBridgeActivationProgress = {
+  activationId: string;
+  status: string | null;
+  step: string | null;
+  message: string | null;
+  helperVersion: string | null;
+  bridgeUrl: string | null;
+  updatedAt: Date;
+};
+
+type LegacyBridgeLoginKeyReadResult =
+  | {
+      ready: false;
+    }
+  | {
+      algorithm: typeof LOGIN_HANDOFF_ALGORITHM;
+      expiresAt: string;
+      helperInstanceId: string;
+      publicKeyJwk: unknown;
+      ready: true;
+    };
+
+type LegacyBridgeLoginEnvelopeClaimResult =
+  | {
+      ready: false;
+      canceled?: boolean;
+    }
+  | {
+      envelope: {
+        algorithm: typeof LOGIN_HANDOFF_ALGORITHM;
+        ciphertextChunks: string[];
+      };
+      ready: true;
+    };
+
 const legacyBridgeActivations = new Map<string, LegacyBridgeActivation>();
+const legacyBridgeActivationProgress = new Map<
+  string,
+  LegacyBridgeActivationProgress[]
+>();
 let latestLegacyBridgeActivationId: string | null = null;
+const ibkrRemoteDesktops = new Map<string, IbkrRemoteDesktop>();
+const ibkrRemoteLaunchJobs = new Map<string, IbkrRemoteLaunchJob>();
+let ibkrRemoteDesktopsLoaded = false;
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -109,7 +256,157 @@ function readOptionalString(value: unknown, maxLength = 512): string | null {
   return value.trim().slice(0, maxLength);
 }
 
+function getIbkrRemoteDesktopsFile(): string {
+  for (const name of REMOTE_DESKTOPS_FILE_ENV_NAMES) {
+    const value = process.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return join(tmpdir(), "rayalgo", "ibkr-remote-desktops.json");
+}
+
+function loadIbkrRemoteDesktops(): void {
+  if (ibkrRemoteDesktopsLoaded) {
+    return;
+  }
+  ibkrRemoteDesktopsLoaded = true;
+
+  try {
+    const parsed = JSON.parse(readFileSync(getIbkrRemoteDesktopsFile(), "utf8")) as
+      | {
+          desktops?: unknown;
+        }
+      | unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return;
+    }
+
+    const desktops = (parsed as { desktops?: unknown }).desktops;
+    if (!Array.isArray(desktops)) {
+      return;
+    }
+
+    for (const item of desktops) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const record = item as Record<string, unknown>;
+      const desktopId = readOptionalString(record.desktopId, 160);
+      const secretHash = readOptionalString(record.secretHash, 160);
+      if (!desktopId || !secretHash) {
+        continue;
+      }
+
+      const registeredAt =
+        typeof record.registeredAt === "string" ||
+        record.registeredAt instanceof Date
+          ? new Date(record.registeredAt).getTime()
+          : typeof record.registeredAt === "number"
+            ? record.registeredAt
+            : Date.now();
+      const lastSeenAt =
+        typeof record.lastSeenAt === "string" ||
+        record.lastSeenAt instanceof Date
+          ? new Date(record.lastSeenAt).getTime()
+          : typeof record.lastSeenAt === "number"
+            ? record.lastSeenAt
+            : registeredAt;
+      const lastHeartbeatAt =
+        typeof record.lastHeartbeatAt === "string" ||
+        record.lastHeartbeatAt instanceof Date
+          ? new Date(record.lastHeartbeatAt).getTime()
+          : typeof record.lastHeartbeatAt === "number"
+            ? record.lastHeartbeatAt
+            : null;
+
+      ibkrRemoteDesktops.set(desktopId, {
+        desktopId,
+        helperVersion: readOptionalString(record.helperVersion, 120),
+        lastHeartbeatAt: Number.isFinite(lastHeartbeatAt)
+          ? lastHeartbeatAt
+          : null,
+        label: readOptionalString(record.label, 160),
+        lastSeenAt: Number.isFinite(lastSeenAt) ? lastSeenAt : Date.now(),
+        registeredAt: Number.isFinite(registeredAt) ? registeredAt : Date.now(),
+        secretHash,
+      });
+    }
+  } catch {
+    return;
+  }
+}
+
+function persistIbkrRemoteDesktops(): void {
+  const path = getIbkrRemoteDesktopsFile();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        version: 1,
+        desktops: Array.from(ibkrRemoteDesktops.values()).map((desktop) => ({
+          desktopId: desktop.desktopId,
+          helperVersion: desktop.helperVersion,
+          lastHeartbeatAt:
+            desktop.lastHeartbeatAt == null
+              ? null
+              : new Date(desktop.lastHeartbeatAt).toISOString(),
+          label: desktop.label,
+          lastSeenAt: new Date(desktop.lastSeenAt).toISOString(),
+          registeredAt: new Date(desktop.registeredAt).toISOString(),
+          secretHash: desktop.secretHash,
+        })),
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+}
+
+function readStringArray(
+  value: unknown,
+  fieldName: string,
+  maxItems = 16,
+  maxItemLength = 1_024,
+): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > maxItems) {
+    throw new HttpError(400, `${fieldName} is invalid.`, {
+      code: "invalid_ibkr_bridge_payload",
+    });
+  }
+
+  return value.map((item) => asString(item, fieldName, maxItemLength));
+}
+
+function readJsonObject(value: unknown, fieldName: string): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, `${fieldName} is required.`, {
+      code: "invalid_ibkr_bridge_payload",
+    });
+  }
+
+  const serialized = JSON.stringify(value);
+  if (!serialized || serialized.length > 8_192) {
+    throw new HttpError(400, `${fieldName} is too large.`, {
+      code: "invalid_ibkr_bridge_payload",
+    });
+  }
+
+  return value;
+}
+
 function hashManagementToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function hashDesktopSecret(secret: string): string {
+  return createHash("sha256").update(secret).digest("hex");
+}
+
+function hashRemoteJobToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -126,6 +423,7 @@ function pruneLegacyBridgeActivations(now = Date.now()): void {
   for (const [activationId, activation] of legacyBridgeActivations) {
     if (activation.expiresAt <= now) {
       legacyBridgeActivations.delete(activationId);
+      legacyBridgeActivationProgress.delete(activationId);
       if (latestLegacyBridgeActivationId === activationId) {
         latestLegacyBridgeActivationId = null;
       }
@@ -133,10 +431,166 @@ function pruneLegacyBridgeActivations(now = Date.now()): void {
   }
 }
 
+function pruneIbkrRemoteLaunchJobs(now = Date.now()): void {
+  for (const [jobId, job] of ibkrRemoteLaunchJobs) {
+    if (job.expiresAt <= now) {
+      ibkrRemoteLaunchJobs.delete(jobId);
+    }
+  }
+}
+
+function summarizeIbkrRemoteJobStatus(
+  job: IbkrRemoteLaunchJob,
+  now = Date.now(),
+): RemoteDesktopJobStatusResult {
+  const state =
+    job.completedAt != null
+      ? "completed"
+      : job.failedAt != null
+        ? "failed"
+        : job.expiresAt <= now
+          ? "expired"
+          : job.claimedAt != null
+            ? "claimed"
+            : "queued";
+
+  return {
+    action: job.action,
+    claimedAt: job.claimedAt == null ? null : new Date(job.claimedAt).toISOString(),
+    completedAt:
+      job.completedAt == null ? null : new Date(job.completedAt).toISOString(),
+    createdAt: new Date(job.createdAt).toISOString(),
+    expiresAt: new Date(job.expiresAt).toISOString(),
+    failedAt: job.failedAt == null ? null : new Date(job.failedAt).toISOString(),
+    jobId: job.jobId,
+    message: job.completionMessage,
+    ok: true,
+    state,
+  };
+}
+
+function summarizeIbkrRemoteDesktop(
+  desktop: IbkrRemoteDesktop,
+  now = Date.now(),
+): IbkrRemoteDesktopSummary {
+  return {
+    desktopId: desktop.desktopId,
+    helperVersion: desktop.helperVersion,
+    label: desktop.label,
+    lastSeenAt: new Date(desktop.lastSeenAt).toISOString(),
+    online:
+      desktop.lastHeartbeatAt != null &&
+      now - desktop.lastHeartbeatAt <= REMOTE_DESKTOP_STALE_MS,
+    registeredAt: new Date(desktop.registeredAt).toISOString(),
+  };
+}
+
+function readIbkrRemoteDesktopAuth(body: unknown): {
+  desktopId: string;
+  desktopSecret: string;
+} {
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Desktop agent payload is required.", {
+      code: "invalid_ibkr_desktop_agent_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  return {
+    desktopId: asString(payload.desktopId, "desktopId", 160),
+    desktopSecret: asString(payload.desktopSecret, "desktopSecret", 256),
+  };
+}
+
+function assertIbkrRemoteDesktopAuthenticated(
+  body: unknown,
+): IbkrRemoteDesktop {
+  loadIbkrRemoteDesktops();
+  pruneIbkrRemoteLaunchJobs();
+  const auth = readIbkrRemoteDesktopAuth(body);
+  const desktop = ibkrRemoteDesktops.get(auth.desktopId);
+  if (
+    !desktop ||
+    !safeStringEquals(desktop.secretHash, hashDesktopSecret(auth.desktopSecret))
+  ) {
+    throw new HttpError(401, "Desktop agent authentication failed.", {
+      code: "invalid_ibkr_desktop_agent_secret",
+    });
+  }
+
+  desktop.lastSeenAt = Date.now();
+  return desktop;
+}
+
+function selectIbkrRemoteDesktop(
+  requestedDesktopId: string | null,
+): IbkrRemoteDesktop {
+  loadIbkrRemoteDesktops();
+  pruneIbkrRemoteLaunchJobs();
+  const now = Date.now();
+  const candidates = Array.from(ibkrRemoteDesktops.values())
+    .filter(
+      (desktop) =>
+        desktop.lastHeartbeatAt != null &&
+        now - desktop.lastHeartbeatAt <= REMOTE_DESKTOP_STALE_MS,
+    )
+    .sort((left, right) => right.lastSeenAt - left.lastSeenAt);
+
+  if (requestedDesktopId) {
+    const desktop = candidates.find(
+      (candidate) => candidate.desktopId === requestedDesktopId,
+    );
+    if (desktop) {
+      return desktop;
+    }
+  } else if (candidates[0]) {
+    return candidates[0];
+  }
+
+  throw new HttpError(
+    409,
+    "No paired Windows desktop agent is online. Run the IBKR launcher once from the Windows computer, then retry from mobile.",
+    {
+      code: "ibkr_remote_desktop_unavailable",
+    },
+  );
+}
+
+function isIbkrRemoteLaunchJobCurrent(job: IbkrRemoteLaunchJob): boolean {
+  if (job.action === "shutdown") {
+    return true;
+  }
+  if (!job.activationId) {
+    return false;
+  }
+  const activation = legacyBridgeActivations.get(job.activationId);
+  if (!activation || activation.canceledAt) {
+    return false;
+  }
+
+  try {
+    assertLegacyBridgeActivationIsCurrent(job.activationId, activation);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function assertLegacyBridgeActivationIsCurrent(
   activationId: string,
   activation: LegacyBridgeActivation,
+  options: { allowCanceled?: boolean } = {},
 ): void {
+  if (activation.canceledAt && !options.allowCanceled) {
+    throw new HttpError(
+      409,
+      "IB Gateway bridge activation was canceled.",
+      {
+        code: "ibkr_bridge_activation_canceled",
+      },
+    );
+  }
+
   if (
     latestLegacyBridgeActivationId &&
     latestLegacyBridgeActivationId !== activationId
@@ -178,10 +632,13 @@ function createLegacyBridgeActivation(input: {
   legacyBridgeActivations.set(activationId, {
     callbackSecret,
     bridgeToken: input.bridgeToken,
+    canceledAt: null,
+    loginHandoff: null,
     managementToken: input.managementToken,
     issuedAt: Date.now(),
     expiresAt: Date.now() + LEGACY_ACTIVATION_TTL_MS,
   });
+  legacyBridgeActivationProgress.set(activationId, []);
   latestLegacyBridgeActivationId = activationId;
 
   return {
@@ -193,6 +650,7 @@ function createLegacyBridgeActivation(input: {
 function readLegacyBridgeActivation(
   activationId: string,
   body: unknown,
+  options: { allowCanceled?: boolean } = {},
 ): LegacyBridgeActivation {
   pruneLegacyBridgeActivations();
   if (!body || typeof body !== "object") {
@@ -214,7 +672,37 @@ function readLegacyBridgeActivation(
       code: "invalid_ibkr_bridge_activation_secret",
     });
   }
-  assertLegacyBridgeActivationIsCurrent(activationId, activation);
+  assertLegacyBridgeActivationIsCurrent(activationId, activation, options);
+
+  return activation;
+}
+
+function readLegacyBridgeActivationByManagementToken(
+  activationId: string,
+  body: unknown,
+  options: { allowCanceled?: boolean } = {},
+): LegacyBridgeActivation {
+  pruneLegacyBridgeActivations();
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Bridge activation management payload is required.", {
+      code: "invalid_ibkr_bridge_activation_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  const managementToken = asString(payload.managementToken, "managementToken", 160);
+  const activation = legacyBridgeActivations.get(activationId);
+  if (!activation) {
+    throw new HttpError(404, "IB Gateway bridge activation is no longer active.", {
+      code: "ibkr_bridge_activation_not_found",
+    });
+  }
+  if (!safeStringEquals(activation.managementToken, managementToken)) {
+    throw new HttpError(401, "IB Gateway bridge management token is invalid.", {
+      code: "invalid_ibkr_bridge_management_token",
+    });
+  }
+  assertLegacyBridgeActivationIsCurrent(activationId, activation, options);
 
   return activation;
 }
@@ -393,6 +881,7 @@ function assertBridgeHealth(health: unknown): void {
 function buildProtocolLaunchUrl(input: {
   activationId: string;
   apiBaseUrl: string;
+  autoLogin?: boolean;
   bridgeToken: string;
   bundleUrl: string | null;
   callbackSecret: string;
@@ -407,8 +896,13 @@ function buildProtocolLaunchUrl(input: {
     managementToken: input.managementToken,
     helperUrl: input.helperUrl,
     helperVersion: BRIDGE_HELPER_VERSION,
-    forceFreshTunnel: "1",
   });
+
+  if (input.autoLogin) {
+    params.set("autoLogin", "1");
+    params.set("autoLoginMode", "ib-gateway-live");
+    params.set("loginMode", "ui-onetime");
+  }
 
   if (input.bundleUrl) {
     params.set("bundleUrl", input.bundleUrl);
@@ -428,7 +922,37 @@ function buildProtocolLaunchUrl(input: {
   return `rayalgo-ibkr://launch?${params.toString()}`;
 }
 
-export function getIbkrBridgeLauncher(input: {
+function buildProtocolShutdownUrl(input: {
+  apiBaseUrl: string;
+  completionToken: string;
+  helperUrl: string;
+  jobId: string;
+}): string {
+  const params = new URLSearchParams({
+    apiBaseUrl: input.apiBaseUrl,
+    completionToken: input.completionToken,
+    helperUrl: input.helperUrl,
+    helperVersion: BRIDGE_HELPER_VERSION,
+    jobId: input.jobId,
+    shutdown: "1",
+  });
+
+  return `rayalgo-ibkr://launch?${params.toString()}`;
+}
+
+function readProtocolUrlParam(rawUrl: string | null, name: string): string | null {
+  if (!rawUrl) {
+    return null;
+  }
+
+  try {
+    return new URL(rawUrl).searchParams.get(name);
+  } catch {
+    return null;
+  }
+}
+
+function createIbkrBridgeLauncher(input: {
   apiBaseUrl: string;
   bundleUrl?: string | null;
 }): LauncherResult {
@@ -450,8 +974,26 @@ export function getIbkrBridgeLauncher(input: {
   return {
     activationId: legacyActivation.activationId,
     apiBaseUrl,
+    autoLoginConfigured: null,
+    autoLoginLaunchUrl: buildProtocolLaunchUrl({
+      activationId: legacyActivation.activationId,
+      apiBaseUrl,
+      autoLogin: true,
+      bridgeToken,
+      bundleUrl,
+      callbackSecret: legacyActivation.callbackSecret,
+      helperUrl,
+      managementToken,
+    }),
+    autoLoginMode: "ib-gateway-live",
+    autoLoginSupported: true,
     bridgeToken,
     bundleUrl,
+    credentialHandoff: {
+      algorithm: LOGIN_HANDOFF_ALGORITHM,
+      expiresAt: new Date(Date.now() + LEGACY_ACTIVATION_TTL_MS).toISOString(),
+      mode: "ui-onetime",
+    },
     helperUrl,
     helperVersion: BRIDGE_HELPER_VERSION,
     launchUrl: buildProtocolLaunchUrl({
@@ -467,14 +1009,690 @@ export function getIbkrBridgeLauncher(input: {
   };
 }
 
+export function getIbkrBridgeLauncher(input: {
+  apiBaseUrl: string;
+  bundleUrl?: string | null;
+}): LauncherResult {
+  return createIbkrBridgeLauncher(input);
+}
+
+export function listIbkrRemoteDesktops(): {
+  desktops: IbkrRemoteDesktopSummary[];
+  helperVersion: string;
+  onlineCount: number;
+} {
+  loadIbkrRemoteDesktops();
+  pruneIbkrRemoteLaunchJobs();
+  const now = Date.now();
+  const desktops = Array.from(ibkrRemoteDesktops.values())
+    .sort((left, right) => right.lastSeenAt - left.lastSeenAt)
+    .map((desktop) => summarizeIbkrRemoteDesktop(desktop, now));
+
+  return {
+    desktops,
+    helperVersion: BRIDGE_HELPER_VERSION,
+    onlineCount: desktops.filter((desktop) => desktop.online).length,
+  };
+}
+
+export function registerIbkrRemoteDesktop(body: unknown): {
+  desktop: IbkrRemoteDesktopSummary;
+  helperVersion: string;
+  ok: true;
+} {
+  loadIbkrRemoteDesktops();
+  pruneIbkrRemoteLaunchJobs();
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Desktop agent registration payload is required.", {
+      code: "invalid_ibkr_desktop_agent_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  const desktopId = asString(payload.desktopId, "desktopId", 160);
+  const desktopSecret = asString(payload.desktopSecret, "desktopSecret", 256);
+  if (desktopSecret.length < 24) {
+    throw new HttpError(400, "Desktop agent secret is too short.", {
+      code: "invalid_ibkr_desktop_agent_secret",
+    });
+  }
+
+  const existing = ibkrRemoteDesktops.get(desktopId);
+  if (
+    existing &&
+    !safeStringEquals(existing.secretHash, hashDesktopSecret(desktopSecret))
+  ) {
+    throw new HttpError(401, "Desktop agent authentication failed.", {
+      code: "invalid_ibkr_desktop_agent_secret",
+    });
+  }
+
+  if (!existing) {
+    const activationId = readOptionalString(payload.activationId, 160);
+    const callbackSecret = readOptionalString(payload.callbackSecret, 160);
+    if (!activationId || !callbackSecret) {
+      throw new HttpError(
+        401,
+        "New desktop agents must be paired by a live Windows launcher activation.",
+        {
+          code: "ibkr_desktop_agent_pairing_required",
+        },
+      );
+    }
+    readLegacyBridgeActivation(
+      activationId,
+      { callbackSecret },
+      { allowCanceled: true },
+    );
+  }
+
+  const now = Date.now();
+  const desktop: IbkrRemoteDesktop = {
+    desktopId,
+    helperVersion: readOptionalString(payload.helperVersion, 120),
+    lastHeartbeatAt: existing?.lastHeartbeatAt ?? null,
+    label: readOptionalString(payload.label, 160),
+    lastSeenAt: now,
+    registeredAt: existing?.registeredAt ?? now,
+    secretHash: hashDesktopSecret(desktopSecret),
+  };
+  ibkrRemoteDesktops.set(desktopId, desktop);
+  if (
+    !existing ||
+    existing.helperVersion !== desktop.helperVersion ||
+    existing.label !== desktop.label ||
+    existing.secretHash !== desktop.secretHash
+  ) {
+    persistIbkrRemoteDesktops();
+  }
+
+  return {
+    desktop: summarizeIbkrRemoteDesktop(desktop, now),
+    helperVersion: BRIDGE_HELPER_VERSION,
+    ok: true,
+  };
+}
+
+export function heartbeatIbkrRemoteDesktop(body: unknown): {
+  desktop: IbkrRemoteDesktopSummary;
+  helperVersion: string;
+  ok: true;
+  pendingJobCount: number;
+} {
+  const desktop = assertIbkrRemoteDesktopAuthenticated(body);
+  const payload = body as Record<string, unknown>;
+  desktop.helperVersion =
+    readOptionalString(payload.helperVersion, 120) ?? desktop.helperVersion;
+  desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
+  const now = Date.now();
+  desktop.lastHeartbeatAt = now;
+  desktop.lastSeenAt = now;
+  const pendingJobCount = Array.from(ibkrRemoteLaunchJobs.values()).filter(
+    (job) =>
+      job.desktopId === desktop.desktopId &&
+      !job.claimedAt &&
+      job.expiresAt > now &&
+      isIbkrRemoteLaunchJobCurrent(job),
+  ).length;
+
+  return {
+    desktop: summarizeIbkrRemoteDesktop(desktop, now),
+    helperVersion: BRIDGE_HELPER_VERSION,
+    ok: true,
+    pendingJobCount,
+  };
+}
+
+export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
+  | {
+      helperVersion: string;
+      ready: false;
+    }
+  | {
+      action: "launch";
+      activationId: string;
+      expiresAt: string;
+      helperVersion: string;
+      jobId: string;
+      launchUrl: string;
+    ready: true;
+    }
+  | {
+      action: "shutdown";
+      completionToken: string | null;
+      expiresAt: string;
+      helperVersion: string;
+      jobId: string;
+      launchUrl: string;
+      ready: true;
+    } {
+  const desktop = assertIbkrRemoteDesktopAuthenticated(body);
+  const payload = body as Record<string, unknown>;
+  desktop.helperVersion =
+    readOptionalString(payload.helperVersion, 120) ?? desktop.helperVersion;
+  desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
+  const now = Date.now();
+  desktop.lastHeartbeatAt = now;
+  desktop.lastSeenAt = now;
+  const jobs = Array.from(ibkrRemoteLaunchJobs.values())
+    .filter((job) => job.desktopId === desktop.desktopId && !job.claimedAt)
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  for (const job of jobs) {
+    if (job.expiresAt <= now || !isIbkrRemoteLaunchJobCurrent(job)) {
+      ibkrRemoteLaunchJobs.delete(job.jobId);
+      continue;
+    }
+    job.claimedAt = now;
+    if (job.action === "shutdown") {
+      if (!job.launchUrl) {
+        ibkrRemoteLaunchJobs.delete(job.jobId);
+        continue;
+      }
+
+      return {
+        action: "shutdown",
+        completionToken: readProtocolUrlParam(job.launchUrl, "completionToken"),
+        expiresAt: new Date(job.expiresAt).toISOString(),
+        helperVersion: BRIDGE_HELPER_VERSION,
+        jobId: job.jobId,
+        launchUrl: job.launchUrl,
+        ready: true,
+      };
+    }
+
+    if (!job.activationId || !job.launchUrl) {
+      ibkrRemoteLaunchJobs.delete(job.jobId);
+      continue;
+    }
+
+    return {
+      action: "launch",
+      activationId: job.activationId,
+      expiresAt: new Date(job.expiresAt).toISOString(),
+      helperVersion: BRIDGE_HELPER_VERSION,
+      jobId: job.jobId,
+      launchUrl: job.launchUrl,
+      ready: true,
+    };
+  }
+
+  return {
+    helperVersion: BRIDGE_HELPER_VERSION,
+    ready: false,
+  };
+}
+
+export function createIbkrRemoteBridgeLaunch(input: {
+  apiBaseUrl: string;
+  body?: unknown;
+  bundleUrl?: string | null;
+}): RemoteLauncherResult {
+  const payload =
+    input.body && typeof input.body === "object"
+      ? (input.body as Record<string, unknown>)
+      : {};
+  const useAutoLogin = payload.autoLogin === true;
+  const desktop = selectIbkrRemoteDesktop(
+    readOptionalString(payload.desktopId, 160),
+  );
+  const launcher = createIbkrBridgeLauncher({
+    apiBaseUrl: input.apiBaseUrl,
+    bundleUrl: input.bundleUrl,
+  });
+  const now = Date.now();
+  for (const [jobId, job] of ibkrRemoteLaunchJobs) {
+    if (job.desktopId === desktop.desktopId && !job.claimedAt) {
+      ibkrRemoteLaunchJobs.delete(jobId);
+    }
+  }
+
+  const jobId = randomBytes(16).toString("hex");
+  const job: IbkrRemoteLaunchJob = {
+    action: "launch",
+    activationId: launcher.activationId,
+    claimedAt: null,
+    completedAt: null,
+    completionMessage: null,
+    completionTokenHash: null,
+    createdAt: now,
+    desktopId: desktop.desktopId,
+    expiresAt: now + REMOTE_LAUNCH_JOB_TTL_MS,
+    failedAt: null,
+    jobId,
+    launchUrl: useAutoLogin ? launcher.autoLoginLaunchUrl : launcher.launchUrl,
+    statusTokenHash: null,
+  };
+  ibkrRemoteLaunchJobs.set(jobId, job);
+
+  return {
+    ...launcher,
+    remoteLaunch: {
+      desktop: summarizeIbkrRemoteDesktop(desktop, now),
+      expiresAt: new Date(job.expiresAt).toISOString(),
+      jobId,
+      mode: "desktop-agent",
+    },
+  };
+}
+
+export function createIbkrRemoteBridgeShutdown(input: {
+  apiBaseUrl: string;
+  body?: unknown;
+}): RemoteShutdownResult {
+  const apiBaseUrl = normalizeBaseUrl(input.apiBaseUrl);
+  const payload =
+    input.body && typeof input.body === "object"
+      ? (input.body as Record<string, unknown>)
+      : {};
+  const managementToken = readOptionalString(payload.managementToken, 160);
+  const force = payload.force === true;
+  const currentOverride = getIbkrBridgeRuntimeOverride();
+  if (currentOverride?.managementTokenHash) {
+    if (
+      !managementToken ||
+      !safeStringEquals(
+        currentOverride.managementTokenHash,
+        hashManagementToken(managementToken),
+      )
+    ) {
+      if (!force) {
+        throw new HttpError(401, "IB Gateway shutdown token is invalid.", {
+          code: "invalid_ibkr_bridge_shutdown_token",
+        });
+      }
+    }
+  } else if (!force && !managementToken) {
+    throw new HttpError(400, "IB Gateway shutdown requires a management token.", {
+      code: "invalid_ibkr_bridge_shutdown_payload",
+    });
+  }
+
+  const desktop = selectIbkrRemoteDesktop(
+    readOptionalString(payload.desktopId, 160),
+  );
+  const helperUrl = `${apiBaseUrl}/api/ibkr/bridge/helper.ps1`;
+
+  const now = Date.now();
+  for (const [jobId, job] of ibkrRemoteLaunchJobs) {
+    if (
+      job.desktopId === desktop.desktopId &&
+      !job.claimedAt &&
+      job.action === "shutdown"
+    ) {
+      ibkrRemoteLaunchJobs.delete(jobId);
+    }
+  }
+
+  const jobId = randomBytes(16).toString("hex");
+  const completionToken = randomBytes(32).toString("hex");
+  const statusToken = randomBytes(32).toString("hex");
+  const shutdownLaunchUrl = buildProtocolShutdownUrl({
+    apiBaseUrl,
+    completionToken,
+    helperUrl,
+    jobId,
+  });
+  const job: IbkrRemoteLaunchJob = {
+    action: "shutdown",
+    activationId: null,
+    claimedAt: null,
+    completedAt: null,
+    completionMessage: null,
+    completionTokenHash: hashRemoteJobToken(completionToken),
+    createdAt: now,
+    desktopId: desktop.desktopId,
+    expiresAt: now + REMOTE_LAUNCH_JOB_TTL_MS,
+    failedAt: null,
+    jobId,
+    launchUrl: shutdownLaunchUrl,
+    statusTokenHash: hashRemoteJobToken(statusToken),
+  };
+  ibkrRemoteLaunchJobs.set(jobId, job);
+
+  return {
+    helperVersion: BRIDGE_HELPER_VERSION,
+    shutdown: {
+      action: "shutdown",
+      desktop: summarizeIbkrRemoteDesktop(desktop, now),
+      expiresAt: new Date(job.expiresAt).toISOString(),
+      jobId,
+      mode: "desktop-agent",
+      statusToken,
+    },
+  };
+}
+
+export function readIbkrRemoteDesktopJobStatus(
+  body: unknown,
+): RemoteDesktopJobStatusResult {
+  pruneIbkrRemoteLaunchJobs();
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Desktop job status payload is required.", {
+      code: "invalid_ibkr_desktop_job_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  const jobId = asString(payload.jobId, "jobId", 160);
+  const statusToken = asString(payload.statusToken, "statusToken", 160);
+  const job = ibkrRemoteLaunchJobs.get(jobId);
+  if (!job || !job.statusTokenHash) {
+    throw new HttpError(404, "Desktop job was not found.", {
+      code: "ibkr_desktop_job_not_found",
+    });
+  }
+  if (!safeStringEquals(job.statusTokenHash, hashRemoteJobToken(statusToken))) {
+    throw new HttpError(401, "Desktop job status token is invalid.", {
+      code: "invalid_ibkr_desktop_job_status_token",
+    });
+  }
+
+  return summarizeIbkrRemoteJobStatus(job);
+}
+
+export function completeIbkrRemoteDesktopJob(
+  body: unknown,
+): RemoteDesktopJobStatusResult {
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Desktop job completion payload is required.", {
+      code: "invalid_ibkr_desktop_job_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  const jobId = asString(payload.jobId, "jobId", 160);
+  const completionToken = asString(payload.completionToken, "completionToken", 160);
+  const job = ibkrRemoteLaunchJobs.get(jobId);
+  if (!job || !job.completionTokenHash) {
+    throw new HttpError(404, "Desktop job was not found.", {
+      code: "ibkr_desktop_job_not_found",
+    });
+  }
+  if (
+    !safeStringEquals(
+      job.completionTokenHash,
+      hashRemoteJobToken(completionToken),
+    )
+  ) {
+    throw new HttpError(401, "Desktop job completion token is invalid.", {
+      code: "invalid_ibkr_desktop_job_completion_token",
+    });
+  }
+
+  const now = Date.now();
+  const ok = payload.ok !== false;
+  const message =
+    readOptionalString(payload.message, 1_000) ??
+    (ok ? "Desktop job completed." : "Desktop job failed.");
+  job.completionMessage = message;
+  if (ok) {
+    job.completedAt = job.completedAt ?? now;
+    job.failedAt = null;
+  } else {
+    job.failedAt = job.failedAt ?? now;
+  }
+
+  return summarizeIbkrRemoteJobStatus(job, now);
+}
+
 export function recordLegacyIbkrBridgeActivationProgress(
   activationId: string,
   body: unknown,
 ): { ok: true } {
-  readLegacyBridgeActivation(activationId, body);
+  const activation = readLegacyBridgeActivation(activationId, body, {
+    allowCanceled: true,
+  });
+  const payload = body as Record<string, unknown>;
+  const events = legacyBridgeActivationProgress.get(activationId) ?? [];
+  events.push({
+    activationId,
+    status: readOptionalString(payload.status, 80),
+    step: readOptionalString(payload.step, 120),
+    message: readOptionalString(payload.message, 1_000),
+    helperVersion: readOptionalString(payload.helperVersion, 120),
+    bridgeUrl: readOptionalString(payload.bridgeUrl, 256),
+    updatedAt: new Date(),
+  });
+  legacyBridgeActivationProgress.set(activationId, events.slice(-20));
+
+  if (activation.canceledAt) {
+    throw new HttpError(409, "IB Gateway bridge activation was canceled.", {
+      code: "ibkr_bridge_activation_canceled",
+    });
+  }
 
   return {
     ok: true,
+  };
+}
+
+export function readLegacyIbkrBridgeActivationStatus(
+  activationId: string,
+  body: unknown,
+): { active: boolean; canceled: boolean; expiresAt: string } {
+  pruneLegacyBridgeActivations();
+  if (!body || typeof body !== "object") {
+    throw new HttpError(400, "Bridge activation callback payload is required.", {
+      code: "invalid_ibkr_bridge_activation_payload",
+    });
+  }
+
+  const payload = body as Record<string, unknown>;
+  const callbackSecret = readOptionalString(payload.callbackSecret, 160);
+  const managementToken = readOptionalString(payload.managementToken, 160);
+  if (!callbackSecret && !managementToken) {
+    throw new HttpError(400, "Bridge activation status token is required.", {
+      code: "invalid_ibkr_bridge_activation_payload",
+    });
+  }
+  const activation = legacyBridgeActivations.get(activationId);
+  if (!activation) {
+    throw new HttpError(404, "IB Gateway bridge activation is no longer active.", {
+      code: "ibkr_bridge_activation_not_found",
+    });
+  }
+  const callbackMatches =
+    callbackSecret != null &&
+    safeStringEquals(activation.callbackSecret, callbackSecret);
+  const managementMatches =
+    managementToken != null &&
+    safeStringEquals(activation.managementToken, managementToken);
+  if (!callbackMatches && !managementMatches) {
+    throw new HttpError(401, "IB Gateway bridge activation token is invalid.", {
+      code: "invalid_ibkr_bridge_activation_token",
+    });
+  }
+  assertLegacyBridgeActivationIsCurrent(activationId, activation, {
+    allowCanceled: true,
+  });
+
+  return {
+    active: true,
+    canceled: Boolean(activation.canceledAt),
+    expiresAt: new Date(activation.expiresAt).toISOString(),
+  };
+}
+
+export function cancelLegacyIbkrBridgeActivation(
+  activationId: string,
+  body: unknown,
+): { ok: true; canceled: true } {
+  const activation = readLegacyBridgeActivationByManagementToken(
+    activationId,
+    body,
+    { allowCanceled: true },
+  );
+  if (!activation.canceledAt) {
+    activation.canceledAt = Date.now();
+    const events = legacyBridgeActivationProgress.get(activationId) ?? [];
+    events.push({
+      activationId,
+      status: "canceled",
+      step: "cancel_requested",
+      message: "IB Gateway bridge launch was canceled from RayAlgo.",
+      helperVersion: BRIDGE_HELPER_VERSION,
+      bridgeUrl: null,
+      updatedAt: new Date(),
+    });
+    legacyBridgeActivationProgress.set(activationId, events.slice(-20));
+  }
+
+  return { ok: true, canceled: true };
+}
+
+export function submitLegacyIbkrBridgeLoginKey(
+  activationId: string,
+  body: unknown,
+): { ok: true } {
+  const activation = readLegacyBridgeActivation(activationId, body);
+  const payload = body as Record<string, unknown>;
+  const helperInstanceId = asString(
+    payload.helperInstanceId,
+    "helperInstanceId",
+    160,
+  );
+  const algorithm = asString(payload.algorithm, "algorithm", 80);
+  if (algorithm !== LOGIN_HANDOFF_ALGORITHM) {
+    throw new HttpError(400, "IB Gateway login handoff algorithm is unsupported.", {
+      code: "unsupported_ibkr_bridge_login_handoff_algorithm",
+    });
+  }
+
+  activation.loginHandoff = {
+    algorithm: LOGIN_HANDOFF_ALGORITHM,
+    createdAt: Date.now(),
+    envelope: null,
+    helperInstanceId,
+    publicKeyJwk: readJsonObject(payload.publicKeyJwk, "publicKeyJwk"),
+  };
+
+  return { ok: true };
+}
+
+export function readLegacyIbkrBridgeLoginKey(
+  activationId: string,
+  body: unknown,
+): LegacyBridgeLoginKeyReadResult {
+  const activation = readLegacyBridgeActivationByManagementToken(
+    activationId,
+    body,
+  );
+  const handoff = activation.loginHandoff;
+  if (!handoff) {
+    return { ready: false };
+  }
+
+  return {
+    algorithm: handoff.algorithm,
+    expiresAt: new Date(activation.expiresAt).toISOString(),
+    helperInstanceId: handoff.helperInstanceId,
+    publicKeyJwk: handoff.publicKeyJwk,
+    ready: true,
+  };
+}
+
+export function submitLegacyIbkrBridgeLoginEnvelope(
+  activationId: string,
+  body: unknown,
+): { ok: true } {
+  const activation = readLegacyBridgeActivationByManagementToken(
+    activationId,
+    body,
+  );
+  const payload = body as Record<string, unknown>;
+  const helperInstanceId = asString(
+    payload.helperInstanceId,
+    "helperInstanceId",
+    160,
+  );
+  const algorithm = asString(payload.algorithm, "algorithm", 80);
+  if (algorithm !== LOGIN_HANDOFF_ALGORITHM) {
+    throw new HttpError(400, "IB Gateway login handoff algorithm is unsupported.", {
+      code: "unsupported_ibkr_bridge_login_handoff_algorithm",
+    });
+  }
+
+  const handoff = activation.loginHandoff;
+  if (!handoff) {
+    throw new HttpError(409, "IB Gateway helper is not ready for credentials.", {
+      code: "ibkr_bridge_login_key_not_ready",
+    });
+  }
+  if (!safeStringEquals(handoff.helperInstanceId, helperInstanceId)) {
+    throw new HttpError(409, "IB Gateway credential handoff helper changed.", {
+      code: "ibkr_bridge_login_handoff_mismatch",
+    });
+  }
+  if (handoff.envelope) {
+    throw new HttpError(409, "IB Gateway credentials were already submitted.", {
+      code: "ibkr_bridge_login_envelope_already_submitted",
+    });
+  }
+
+  handoff.envelope = {
+    algorithm: LOGIN_HANDOFF_ALGORITHM,
+    ciphertextChunks: readStringArray(payload.ciphertextChunks, "ciphertextChunks"),
+    submittedAt: Date.now(),
+  };
+
+  return { ok: true };
+}
+
+export function claimLegacyIbkrBridgeLoginEnvelope(
+  activationId: string,
+  body: unknown,
+): LegacyBridgeLoginEnvelopeClaimResult {
+  const activation = readLegacyBridgeActivation(activationId, body, {
+    allowCanceled: true,
+  });
+  const payload = body as Record<string, unknown>;
+  if (activation.canceledAt) {
+    return { ready: false, canceled: true };
+  }
+  const helperInstanceId = asString(
+    payload.helperInstanceId,
+    "helperInstanceId",
+    160,
+  );
+  const handoff = activation.loginHandoff;
+  if (!handoff || !safeStringEquals(handoff.helperInstanceId, helperInstanceId)) {
+    return { ready: false };
+  }
+  if (!handoff.envelope) {
+    return { ready: false };
+  }
+
+  const envelope = handoff.envelope;
+  activation.loginHandoff = null;
+  return {
+    envelope: {
+      algorithm: envelope.algorithm,
+      ciphertextChunks: envelope.ciphertextChunks,
+    },
+    ready: true,
+  };
+}
+
+export function getIbkrBridgeActivationDiagnostics(): {
+  activeCount: number;
+  latestActivationId: string | null;
+  latestProgress: LegacyBridgeActivationProgress | null;
+  recentProgress: LegacyBridgeActivationProgress[];
+} {
+  pruneLegacyBridgeActivations();
+  const activeCount = Array.from(legacyBridgeActivations.values()).filter(
+    (activation) => !activation.canceledAt,
+  ).length;
+  const recentProgress = latestLegacyBridgeActivationId
+    ? (legacyBridgeActivationProgress.get(latestLegacyBridgeActivationId) ?? [])
+    : [];
+
+  return {
+    activeCount,
+    latestActivationId: latestLegacyBridgeActivationId,
+    latestProgress: recentProgress.at(-1) ?? null,
+    recentProgress,
   };
 }
 
@@ -508,22 +1726,21 @@ export async function attachLegacyIbkrBridgeRuntime(
   const activation = readLegacyBridgeActivation(activationId, body);
   const payload = body as Record<string, unknown>;
   const suppliedBridgeToken = readOptionalString(payload.bridgeToken, 160);
-  if (
-    suppliedBridgeToken &&
-    !safeStringEquals(suppliedBridgeToken, activation.bridgeToken)
-  ) {
-    throw new HttpError(401, "IB Gateway bridge token is invalid.", {
-      code: "invalid_ibkr_bridge_token",
-    });
-  }
+  const bridgeToken = suppliedBridgeToken ?? activation.bridgeToken;
 
   const result = await attachIbkrBridgeRuntime({
     bridgeUrl: asString(payload.bridgeUrl, "bridgeUrl"),
-    bridgeToken: activation.bridgeToken,
+    bridgeToken,
     managementToken: activation.managementToken,
-    bridgeId: activationId,
+    bridgeId: safeStringEquals(bridgeToken, activation.bridgeToken)
+      ? activationId
+      : null,
   });
   legacyBridgeActivations.delete(activationId);
+  legacyBridgeActivationProgress.delete(activationId);
+  if (latestLegacyBridgeActivationId === activationId) {
+    latestLegacyBridgeActivationId = null;
+  }
 
   return result;
 }
@@ -561,9 +1778,13 @@ export async function attachIbkrBridgeRuntime(
       }
     } else {
       assertLegacyBridgeActivationIsCurrent(bridgeId, activation);
+      const managementTokenMatchesActivation =
+        Boolean(managementToken) &&
+        safeStringEquals(managementToken ?? "", activation.managementToken);
       if (
         bridgeToken &&
-        !safeStringEquals(bridgeToken, activation.bridgeToken)
+        !safeStringEquals(bridgeToken, activation.bridgeToken) &&
+        !managementTokenMatchesActivation
       ) {
         throw new HttpError(401, "Bridge token is invalid.", {
           code: "invalid_ibkr_bridge_token",
@@ -589,6 +1810,7 @@ export async function attachIbkrBridgeRuntime(
     bridgeToken,
   );
   assertBridgeHealth(health);
+  primeBridgeHealthForSession(health);
   const accounts = await fetchBridgeJson<unknown>(
     bridgeUrl,
     "/accounts",
@@ -609,6 +1831,7 @@ export async function attachIbkrBridgeRuntime(
   );
   if (bridgeId) {
     legacyBridgeActivations.delete(bridgeId);
+    legacyBridgeActivationProgress.delete(bridgeId);
     if (latestLegacyBridgeActivationId === bridgeId) {
       latestLegacyBridgeActivationId = null;
     }
@@ -678,5 +1901,10 @@ export function verifyIbkrBridgeManagementToken(body: unknown): void {
 export function resetIbkrBridgeRuntimeStateForTests(): void {
   clearIbkrBridgeRuntimeOverride();
   legacyBridgeActivations.clear();
+  legacyBridgeActivationProgress.clear();
   latestLegacyBridgeActivationId = null;
+  ibkrRemoteDesktops.clear();
+  ibkrRemoteLaunchJobs.clear();
+  ibkrRemoteDesktopsLoaded = true;
+  rmSync(getIbkrRemoteDesktopsFile(), { force: true });
 }

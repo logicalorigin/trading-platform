@@ -42,6 +42,12 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.equal(snapshot.admission.activeLineCount, 1);
   assert.equal(snapshot.admission.accountMonitorLineCount, 0);
   assert.equal(snapshot.admission.budget.accountMonitorLineCap, 10);
+  assert.equal(snapshot.policy.maxLines, 200);
+  assert.equal(snapshot.policy.reserveLines, 0);
+  assert.equal(snapshot.policy.targetFillLines, 200);
+  assert.equal(snapshot.allocation.activeLineCount, 1);
+  assert.equal(snapshot.allocation.remainingToTargetLineCount, 199);
+  assert.equal(snapshot.allocation.fillerLineCount, 0);
   assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 10);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
   assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");
@@ -87,6 +93,9 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
   assert.equal(snapshot.admission.budget.maxLines, 190);
   assert.equal(snapshot.admission.budget.configuredMaxLines, 200);
   assert.equal(snapshot.admission.budget.budgetSource, "bridge-diagnostics");
+  assert.equal(snapshot.policy.targetFillLines, 190);
+  assert.equal(snapshot.allocation.bridgeLineBudget, 190);
+  assert.equal(snapshot.allocation.remainingToTargetLineCount, 188);
   assert.equal(snapshot.drift.admissionVsBridgeLineDelta, -1);
   assert.equal(snapshot.drift.reconciliation.status, "mixed");
   assert.equal(snapshot.drift.reconciliation.matchedLineCount, 1);

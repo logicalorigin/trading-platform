@@ -345,6 +345,62 @@ function buildWarmupCoverage(input: {
   };
 }
 
+function buildLineUsagePolicy(input: {
+  admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>;
+  bridgeLineBudget: number | null;
+}) {
+  const budget = input.admission.budget;
+  return {
+    policy: input.admission.pressure.policy,
+    maxLines: budget.maxLines,
+    reserveLines: budget.reserveLines,
+    usableLines: budget.usableLines,
+    targetFillLines: budget.targetFillLines,
+    configuredMaxLines: budget.configuredMaxLines,
+    bridgeLineBudget: input.bridgeLineBudget ?? budget.bridgeLineBudget,
+    bridgeLineBudgetObservedAt: budget.bridgeLineBudgetObservedAt,
+    budgetSource: budget.budgetSource,
+    executionLineCap: budget.poolLineCaps.execution,
+    accountMonitorLineCap: budget.accountMonitorLineCap,
+    automationLineCap: budget.automationLineCap,
+    scannerStaticLineCap: budget.flowScannerLineCap,
+  };
+}
+
+function buildLineAllocation(input: {
+  admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>;
+  bridgeActiveLineCount: number | null;
+  bridgeLineBudget: number | null;
+}) {
+  const admission = input.admission;
+  const pressure = admission.pressure;
+  const targetFillLines = readNumber(admission.budget.targetFillLines);
+  const activeLineCount = readNumber(admission.activeLineCount);
+  const remainingToTargetLineCount =
+    targetFillLines === null || activeLineCount === null
+      ? null
+      : Math.max(0, targetFillLines - activeLineCount);
+
+  return {
+    activeLineCount,
+    targetFillLines,
+    remainingToTargetLineCount,
+    usableRemainingLineCount: readNumber(admission.usableRemainingLineCount),
+    protectedLineCount: readNumber(pressure.protectedLineCount),
+    visibleLineCount: readNumber(pressure.visibleLineCount),
+    scannerActiveLineCount: readNumber(pressure.scannerActiveLineCount),
+    scannerEffectiveLineCap: readNumber(pressure.scannerEffectiveLineCap),
+    scannerRemainingLineCount: readNumber(pressure.scannerRemainingLineCount),
+    scannerConstrainedByActiveDemand: Boolean(
+      pressure.scannerConstrainedByActiveDemand,
+    ),
+    convenienceLineCount: readNumber(admission.convenienceLineCount),
+    fillerLineCount: readNumber(admission.fillerLineCount),
+    bridgeActiveLineCount: input.bridgeActiveLineCount,
+    bridgeLineBudget: input.bridgeLineBudget,
+  };
+}
+
 export async function getIbkrLineUsageSnapshot() {
   ensureIbkrLaneRuntimeOverridesLoaded();
   const bridge = await getCachedBridgeLaneDiagnostics();
@@ -368,6 +424,15 @@ export async function getIbkrLineUsageSnapshot() {
   return {
     updatedAt: new Date().toISOString(),
     admission,
+    policy: buildLineUsagePolicy({
+      admission,
+      bridgeLineBudget,
+    }),
+    allocation: buildLineAllocation({
+      admission,
+      bridgeActiveLineCount: bridgeActiveLines,
+      bridgeLineBudget,
+    }),
     bridge: {
       diagnostics: bridge.value,
       error: bridge.error,

@@ -55,7 +55,14 @@ const orderSnapshotCache = new Map<
   string,
   { payload: OrderSnapshotPayload; cachedAt: number }
 >();
-const accountMonitorPrewarmSignatures = new Map<string, string>();
+type BridgePrewarmSyncState = {
+  signature: string;
+  syncedAt: number;
+};
+const accountMonitorPrewarmSignatures = new Map<
+  string,
+  BridgePrewarmSyncState
+>();
 const accountMonitorSnapshots = new Map<
   string,
   {
@@ -93,6 +100,13 @@ function orderSnapshotTimeoutMs(): number {
   return readPositiveIntegerEnv(
     "IBKR_ORDER_STREAM_TIMEOUT_MS",
     readPositiveIntegerEnv("IBKR_ORDER_READ_TIMEOUT_MS", 5_000),
+  );
+}
+
+function accountMonitorPrewarmBridgeResyncMs(): number {
+  return readPositiveIntegerEnv(
+    "IBKR_ACCOUNT_MONITOR_PREWARM_BRIDGE_RESYNC_MS",
+    15_000,
   );
 }
 
@@ -175,14 +189,25 @@ function prewarmAccountMonitorQuotes(
     ),
   ).sort();
   const signature = symbols.join(",");
-  if (!signature || accountMonitorPrewarmSignatures.get(owner) === signature) {
+  if (!signature) {
     return;
   }
-  accountMonitorPrewarmSignatures.set(owner, signature);
+  const previousSync = accountMonitorPrewarmSignatures.get(owner);
+  const now = Date.now();
+  if (
+    previousSync?.signature === signature &&
+    now - previousSync.syncedAt < accountMonitorPrewarmBridgeResyncMs()
+  ) {
+    return;
+  }
+  accountMonitorPrewarmSignatures.set(owner, {
+    signature,
+    syncedAt: now,
+  });
 
   void runBridgeWork(
     "quotes",
-    () => bridgeClient.prewarmQuoteSubscriptions(symbols),
+    () => bridgeClient.prewarmQuoteSubscriptions(symbols, owner),
     { recordFailure: false },
   ).catch((error) => {
     accountMonitorPrewarmSignatures.delete(owner);
@@ -403,6 +428,7 @@ export async function fetchHistoricalBarSnapshotPayload(input: {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: HistoryDataSource;
+  priority?: number;
 }): Promise<HistoricalBarSnapshotPayload> {
   const bars = await bridgeClient.getHistoricalBars({
     symbol: normalizeSymbol(input.symbol),
@@ -412,6 +438,7 @@ export async function fetchHistoricalBarSnapshotPayload(input: {
     providerContractId: input.providerContractId ?? null,
     outsideRth: input.outsideRth,
     source: input.source,
+    priority: input.priority,
   });
 
   return {
@@ -635,6 +662,7 @@ export function subscribeHistoricalBarSnapshots(
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    priority?: number;
   },
   onSnapshot: (payload: HistoricalBarSnapshotPayload) => void,
   onStreamError?: (error: unknown) => void,
@@ -653,6 +681,7 @@ export function subscribeHistoricalBarSnapshots(
         providerContractId: input.providerContractId ?? null,
         outsideRth: input.outsideRth,
         source: input.source,
+        priority: input.priority,
       },
       (bar) => {
         onSnapshot({

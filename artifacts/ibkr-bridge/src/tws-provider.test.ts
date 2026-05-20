@@ -20,6 +20,7 @@ import {
 } from "./tws-provider";
 import {
   __resetBridgeSchedulerForTests,
+  getBridgeSchedulerConfigSnapshot,
   getBridgeSchedulerDiagnostics,
   runBridgeLane,
 } from "./work-scheduler";
@@ -34,13 +35,91 @@ test.afterEach(() => {
 });
 
 test("bridge runtime defaults reflect the line booster live quote allowance", () => {
-  assert.equal(BRIDGE_RUNTIME_LIMITS.maxMarketDataLines.defaultValue, 190);
-  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveEquityLines.defaultValue, 90);
+  assert.equal(BRIDGE_RUNTIME_LIMITS.maxMarketDataLines.defaultValue, 200);
+  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveEquityLines.defaultValue, 0);
   assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveOptionLines.defaultValue, 100);
   assert.equal(
     BRIDGE_RUNTIME_LIMITS.optionQuoteVisibleContractLimit.defaultValue,
     100,
   );
+});
+
+test("market subscription lane has enough budget for watchlist prewarm batches", () => {
+  const snapshot = getBridgeSchedulerConfigSnapshot()["market-subscriptions"];
+
+  assert.equal(snapshot.timeoutMs, 30_000);
+  assert.equal(snapshot.defaults.timeoutMs, 30_000);
+});
+
+test("quote prewarm groups merge instead of replacing each other", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    ensureQuoteSubscriptionsForSymbols(symbols: string[]): Promise<Map<string, string>>;
+    getSubscriptionDiagnostics(): {
+      prewarmSymbolCount: number;
+      prewarmSymbols: string[];
+      prewarmGroups: Array<{
+        owner: string;
+        symbolCount: number;
+        symbols: string[];
+      }>;
+    };
+    trimUnusedQuoteSubscriptions(): void;
+  };
+  const ensureCalls: string[][] = [];
+  let trimCalls = 0;
+
+  internals.ensureQuoteSubscriptionsForSymbols = async (symbols) => {
+    ensureCalls.push([...symbols]);
+    return new Map(symbols.map((symbol) => [symbol, symbol]));
+  };
+  internals.trimUnusedQuoteSubscriptions = () => {
+    trimCalls += 1;
+  };
+
+  await provider.prewarmQuoteSubscriptions(["SPY", "QQQ"], "watchlist-prewarm");
+  await provider.prewarmQuoteSubscriptions(["AAPL"], "account-monitor:paper:all");
+
+  assert.deepEqual(ensureCalls, [
+    ["QQQ", "SPY"],
+    ["AAPL"],
+  ]);
+  assert.deepEqual(internals.getSubscriptionDiagnostics().prewarmGroups, [
+    {
+      owner: "account-monitor:paper:all",
+      symbolCount: 1,
+      symbols: ["AAPL"],
+    },
+    {
+      owner: "watchlist-prewarm",
+      symbolCount: 2,
+      symbols: ["QQQ", "SPY"],
+    },
+  ]);
+  assert.deepEqual(internals.getSubscriptionDiagnostics().prewarmSymbols, [
+    "AAPL",
+    "QQQ",
+    "SPY",
+  ]);
+  assert.equal(internals.getSubscriptionDiagnostics().prewarmSymbolCount, 3);
+
+  await provider.prewarmQuoteSubscriptions([], "watchlist-prewarm");
+  assert.deepEqual(
+    internals.getSubscriptionDiagnostics().prewarmSymbols,
+    ["AAPL"],
+  );
+  assert.equal(trimCalls, 3);
+
+  await provider.prewarmQuoteSubscriptions([], "account-monitor:paper:all");
+  assert.equal(internals.getSubscriptionDiagnostics().prewarmSymbolCount, 0);
+  assert.equal(trimCalls, 4);
 });
 
 test("option quote market data type switches live config to frozen outside regular session", () => {
@@ -346,6 +425,85 @@ test("bridge scheduler pressure ignores historical queue rejections after recove
 
   const diagnostics = getBridgeSchedulerDiagnostics().control;
   assert.equal(diagnostics.rejected, 1);
+  assert.equal(diagnostics.pressure, "normal");
+});
+
+test("bridge scheduler expires stale queued lane work", async () => {
+  __resetBridgeSchedulerForTests();
+
+  const blocked = runBridgeLane(
+    "control",
+    () => new Promise(() => {}),
+    { timeoutMs: 50 },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const queued = runBridgeLane("control", async () => "queued", {
+    timeoutMs: 5,
+  });
+
+  await assert.rejects(queued, /while queued/);
+
+  const queuedDiagnostics = getBridgeSchedulerDiagnostics().control;
+  assert.equal(queuedDiagnostics.queued, 0);
+  assert.equal(queuedDiagnostics.timedOut, 1);
+
+  await assert.rejects(blocked, /Lane timed out/);
+});
+
+test("bridge scheduler lets high-priority work preempt queued background work", async () => {
+  __resetBridgeSchedulerForTests();
+
+  const blocked = runBridgeLane(
+    "control",
+    () => new Promise(() => {}),
+    { timeoutMs: 25 },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const lowPriority = runBridgeLane("control", async () => "background", {
+    timeoutMs: 100,
+    priority: 0,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const lowPriorityRejected = assert.rejects(lowPriority, /preempted/);
+
+  const highPriority = runBridgeLane("control", async () => "chart", {
+    timeoutMs: 100,
+    priority: 10,
+  });
+
+  await lowPriorityRejected;
+  await assert.rejects(blocked, /Lane timed out/);
+  assert.equal(await highPriority, "chart");
+
+  const diagnostics = getBridgeSchedulerDiagnostics().control;
+  assert.equal(diagnostics.rejected, 1);
+  assert.equal(diagnostics.pressure, "normal");
+});
+
+test("bridge scheduler can ignore request-scoped historical failures for lane health", async () => {
+  __resetBridgeSchedulerForTests();
+
+  await assert.rejects(
+    runBridgeLane(
+      "historical",
+      async () => {
+        throw new Error(
+          "Historical Market Data Service error message:HMDS query returned no data: AGGA@OVERNIGHT Trades",
+        );
+      },
+      {
+        timeoutMs: 50,
+        countsAgainstLaneHealth: () => false,
+      },
+    ),
+    /HMDS query returned no data/,
+  );
+
+  const diagnostics = getBridgeSchedulerDiagnostics().historical;
+  assert.equal(diagnostics.failureCount, 0);
+  assert.equal(diagnostics.lastFailure, null);
   assert.equal(diagnostics.pressure, "normal");
 });
 
@@ -919,7 +1077,7 @@ test("selectRelevantOptionStrikes preserves full coverage requests", () => {
   );
 });
 
-test("metadata option chains skip per-contract quote snapshots and retain underlying price", async () => {
+test("metadata option chains skip market-lane and per-contract quote snapshots", async () => {
   const provider = new TwsIbkrBridgeProvider({
     host: "127.0.0.1",
     port: 4002,
@@ -943,9 +1101,11 @@ test("metadata option chains skip per-contract quote snapshots and retain underl
       strike: number;
       right: "call" | "put";
     }): Promise<Record<string, unknown>>;
-    getContractQuoteSnapshot(): Promise<Record<string, unknown> | null>;
+    getContractQuoteSnapshot(input: {
+      symbol: string;
+    }): Promise<Record<string, unknown> | null>;
   };
-  let quoteSnapshotCalls = 0;
+  const directQuoteSnapshotSymbols: string[] = [];
   let optionContractDetailCalls = 0;
 
   internals.refreshSession = async () => null;
@@ -960,14 +1120,9 @@ test("metadata option chains skip per-contract quote snapshots and retain underl
     contract: { conId: 756733, symbol: "SPY", secType: SecType.STK },
     cachedAt: Date.now(),
   });
-  internals.getQuoteSnapshots = async () => [
-    {
-      symbol: "SPY",
-      price: 502,
-      bid: 501.95,
-      ask: 502.05,
-    },
-  ];
+  internals.getQuoteSnapshots = async () => {
+    throw new Error("metadata chains should not wait on market subscriptions");
+  };
   internals.getOptionParametersForStock = async (_symbol, resolvedUnderlying) => ({
     resolvedUnderlying,
     optionParams: [{ expirations: ["20990501"], strikes: [500] }],
@@ -976,9 +1131,16 @@ test("metadata option chains skip per-contract quote snapshots and retain underl
     optionContractDetailCalls += 1;
     throw new Error("metadata chains should not perform per-contract details");
   };
-  internals.getContractQuoteSnapshot = async () => {
-    quoteSnapshotCalls += 1;
-    return null;
+  internals.getContractQuoteSnapshot = async (input: { symbol: string }) => {
+    directQuoteSnapshotSymbols.push(input.symbol);
+    return input.symbol === "SPY"
+      ? {
+          symbol: "SPY",
+          price: 502,
+          bid: 501.95,
+          ask: 502.05,
+        }
+      : null;
   };
 
   const contracts = await provider.getOptionChain({
@@ -988,7 +1150,7 @@ test("metadata option chains skip per-contract quote snapshots and retain underl
     quoteHydration: "metadata",
   });
 
-  assert.equal(quoteSnapshotCalls, 0);
+  assert.deepEqual(directQuoteSnapshotSymbols, ["SPY"]);
   assert.equal(optionContractDetailCalls, 0);
   assert.equal(contracts.length, 2);
   assert.ok(contracts[0]?.contract.providerContractId?.startsWith("twsopt:"));
@@ -1026,8 +1188,12 @@ test("metadata option chains fall back to aggregate TWS secdef strikes", async (
       strike: number;
       right: "call" | "put";
     }): Promise<Record<string, unknown>>;
+    getContractQuoteSnapshot(input: {
+      symbol: string;
+    }): Promise<Record<string, unknown> | null>;
   };
-  let quoteSnapshotCalls = 0;
+  let marketLaneQuoteSnapshotCalls = 0;
+  let directQuoteSnapshotCalls = 0;
   let optionContractDetailCalls = 0;
 
   internals.refreshSession = async () => null;
@@ -1043,8 +1209,12 @@ test("metadata option chains fall back to aggregate TWS secdef strikes", async (
     cachedAt: Date.now(),
   });
   internals.getQuoteSnapshots = async () => {
-    quoteSnapshotCalls += 1;
+    marketLaneQuoteSnapshotCalls += 1;
     return [];
+  };
+  internals.getContractQuoteSnapshot = async () => {
+    directQuoteSnapshotCalls += 1;
+    return null;
   };
   internals.getOptionParametersForStock = async (_symbol, resolvedUnderlying) => ({
     resolvedUnderlying,
@@ -1072,7 +1242,8 @@ test("metadata option chains fall back to aggregate TWS secdef strikes", async (
     quoteHydration: "metadata",
   });
 
-  assert.equal(quoteSnapshotCalls, 1);
+  assert.equal(marketLaneQuoteSnapshotCalls, 0);
+  assert.equal(directQuoteSnapshotCalls, 1);
   assert.equal(optionContractDetailCalls, 0);
   assert.equal(contracts.length, 3);
   assert.deepEqual(
@@ -1475,6 +1646,18 @@ test("request-scoped market data errors do not poison connected bridge health", 
   internals.recordError(
     new Error(
       "Lane timed out after 2000ms. | IBKR bridge lane control lane timed out after 2000ms.",
+    ),
+  );
+  assert.equal(internals.lastError, null);
+  internals.recordError(
+    new Error(
+      "Historical Market Data Service error message:HMDS query returned no data: AGGA@OVERNIGHT Trades",
+    ),
+  );
+  assert.equal(internals.lastError, null);
+  internals.recordError(
+    new Error(
+      "Requested market data is not subscribed. Check API status by selecting the Account menu then under Management choose Market Data Subscription Manager and/or availability of delayed data.",
     ),
   );
   assert.equal(internals.lastError, null);

@@ -53,10 +53,11 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
   },
   maxLiveEquityLines: {
     envName: "IBKR_MAX_LIVE_EQUITY_LINES",
-    defaultValue: 90,
+    defaultValue: 0,
     min: 0,
     max: 500,
-    description: "Dedicated live equity quote line budget. Zero uses total budget.",
+    description:
+      "Dedicated live equity quote line budget. Zero shares the total live market-data budget.",
   },
   maxLiveOptionLines: {
     envName: "IBKR_MAX_LIVE_OPTION_LINES",
@@ -67,7 +68,7 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
   },
   maxMarketDataLines: {
     envName: "IBKR_MAX_MARKET_DATA_LINES",
-    defaultValue: 190,
+    defaultValue: 200,
     min: 1,
     max: 500,
     description: "Total live market data line budget used by bridge subscriptions.",

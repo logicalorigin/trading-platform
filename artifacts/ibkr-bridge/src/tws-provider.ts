@@ -1365,6 +1365,14 @@ function resolveMarketDataFreshness(
   return "unavailable";
 }
 
+function hasUsableQuotePrice(
+  quote: QuoteSnapshot | null | undefined,
+): quote is QuoteSnapshot {
+  return [quote?.price, quote?.bid, quote?.ask].some(
+    (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+}
+
 function isLikelyUsEquitySession(now = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -1564,6 +1572,17 @@ export function isHistoricalDataReconnectableError(error: unknown): boolean {
   return message.includes("historical") && hasConnectionLossMessage(error);
 }
 
+function isHistoricalDataRequestUnavailableError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    (message.includes("historical market data service") &&
+      message.includes("query returned no data")) ||
+    message.includes("hmds query returned no data") ||
+    message.includes("no security definition has been found") ||
+    message.includes("requested market data is not subscribed")
+  );
+}
+
 function isTickerScopedTwsError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   return message.includes("can't find eid") && /ticker\s*id/.test(message);
@@ -1574,7 +1593,7 @@ function isRequestScopedTwsError(error: unknown): boolean {
   return (
     isSnapshotGenericTickError(error) ||
     isHistoricalDataReconnectableError(error) ||
-    message.includes("no security definition has been found") ||
+    isHistoricalDataRequestUnavailableError(error) ||
     isTickerScopedTwsError(error) ||
     message.includes("ibkr_bridge_lane_timeout") ||
     message.includes("lane timed out after") ||
@@ -1585,6 +1604,11 @@ function isRequestScopedTwsError(error: unknown): boolean {
     message.includes("ticker limit") ||
     message.includes("subscription limit")
   );
+}
+
+function normalizePrewarmOwner(owner: string | null | undefined): string {
+  const normalized = typeof owner === "string" ? owner.trim() : "";
+  return normalized || "default";
 }
 
 const TWS_SERVER_CONNECTIVITY_LOST_CODES = new Set([1100, 1300, 2110]);
@@ -1848,7 +1872,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     string,
     QuoteSnapshot
   >();
-  private readonly prewarmQuoteSymbols = new Set<string>();
+  private readonly prewarmQuoteSymbolGroups = new Map<string, Set<string>>();
   private readonly quoteStreamListeners = new Map<
     number,
     QuoteStreamListener
@@ -2267,6 +2291,24 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       : configured;
   }
 
+  private getPrewarmQuoteSymbols(): Set<string> {
+    const symbols = new Set<string>();
+    this.prewarmQuoteSymbolGroups.forEach((groupSymbols) => {
+      groupSymbols.forEach((symbol) => symbols.add(symbol));
+    });
+    return symbols;
+  }
+
+  private getPrewarmQuoteGroupDiagnostics() {
+    return Array.from(this.prewarmQuoteSymbolGroups.entries())
+      .map(([owner, symbols]) => ({
+        owner,
+        symbolCount: symbols.size,
+        symbols: Array.from(symbols).sort(),
+      }))
+      .sort((left, right) => left.owner.localeCompare(right.owner));
+  }
+
   private getSubscriptionDiagnostics() {
     const subscriptions = Array.from(this.quoteSubscriptions.values());
     const equitySubscriptions = subscriptions.filter(
@@ -2275,6 +2317,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     const optionSubscriptions = subscriptions.filter(
       (subscription) => subscription.assetClass === "option",
     );
+    const prewarmSymbols = this.getPrewarmQuoteSymbols();
     const now = Date.now();
 
     return {
@@ -2297,8 +2340,9 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       quoteListenerCount: this.quoteStreamListeners.size,
       barStreamCount: this.barStreamSubscriptions.size,
       depthSubscriptionCount: this.depthSubscriptions.size,
-      prewarmSymbolCount: this.prewarmQuoteSymbols.size,
-      prewarmSymbols: Array.from(this.prewarmQuoteSymbols).sort(),
+      prewarmSymbolCount: prewarmSymbols.size,
+      prewarmSymbols: Array.from(prewarmSymbols).sort(),
+      prewarmGroups: this.getPrewarmQuoteGroupDiagnostics(),
       cachedQuoteCount: this.quotesByProviderContractId.size,
       quoteEventCount: this.quoteEventCount,
       optionQuoteEventCount: this.optionQuoteEventCount,
@@ -2369,7 +2413,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     this.quoteStreamListeners.forEach((listener) => {
       listener.symbols.forEach((symbol) => desiredSymbols.add(symbol));
     });
-    this.prewarmQuoteSymbols.forEach((symbol) => desiredSymbols.add(symbol));
+    this.getPrewarmQuoteSymbols().forEach((symbol) => desiredSymbols.add(symbol));
 
     return desiredSymbols;
   }
@@ -3611,8 +3655,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
               this.config.marketDataType,
             ),
           );
-          this.quotesByProviderContractId.set(providerContractId, quote);
-          this.emitQuote(quote);
+          if (hasUsableQuotePrice(quote)) {
+            this.quotesByProviderContractId.set(providerContractId, quote);
+            this.emitQuote(quote);
+          }
         },
         error: (error) => {
           this.recordError(error);
@@ -3783,9 +3829,13 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
 
     for (const providerContractId of allowedProviderContractIds) {
-      resolvedProviderContractIds.push(
-        await this.ensureOptionQuoteSubscription(providerContractId),
-      );
+      try {
+        resolvedProviderContractIds.push(
+          await this.ensureOptionQuoteSubscription(providerContractId),
+        );
+      } catch (error) {
+        this.recordError(error);
+      }
     }
 
     this.trimUnusedQuoteSubscriptions(budgeted.symbols, budgeted.providerContractIds);
@@ -3883,6 +3933,43 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         finish(latest);
       }
     });
+  }
+
+  private async getUnderlyingQuoteForOptionChain(input: {
+    symbol: string;
+    resolvedUnderlying: CachedStockContract;
+  }): Promise<QuoteSnapshot | null> {
+    const providerContractId =
+      input.resolvedUnderlying.resolved.providerContractId ?? null;
+    const cachedQuote = providerContractId
+      ? this.quotesByProviderContractId.get(providerContractId)
+      : null;
+    if (hasUsableQuotePrice(cachedQuote)) {
+      return cachedQuote;
+    }
+
+    try {
+      const quote = await this.getContractQuoteSnapshot({
+        contract: {
+          ...input.resolvedUnderlying.contract,
+          conId: input.resolvedUnderlying.resolved.conid,
+          exchange: "SMART",
+        },
+        symbol:
+          normalizeSymbol(input.resolvedUnderlying.resolved.symbol) ||
+          normalizeSymbol(input.symbol),
+        providerContractId,
+      });
+
+      if (hasUsableQuotePrice(quote) && providerContractId) {
+        this.quotesByProviderContractId.set(providerContractId, quote);
+      }
+
+      return quote;
+    } catch (error) {
+      this.recordError(error);
+      return null;
+    }
   }
 
   private buildOrderContractPayload(
@@ -4377,14 +4464,17 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
       if (liveProviderContractIdsBySymbol.has(symbol)) {
         await this.waitForCondition(
-          () => this.quotesByProviderContractId.has(providerContractId),
+          () =>
+            hasUsableQuotePrice(
+              this.quotesByProviderContractId.get(providerContractId),
+            ),
           400,
           50,
         );
 
         const liveQuote =
           this.quotesByProviderContractId.get(providerContractId);
-        if (liveQuote) {
+        if (hasUsableQuotePrice(liveQuote)) {
           results.push(this.decorateQuoteForEmit(liveQuote));
           continue;
         }
@@ -4400,7 +4490,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         providerContractId,
       });
 
-      if (fallbackQuote) {
+      if (hasUsableQuotePrice(fallbackQuote)) {
         this.quotesByProviderContractId.set(providerContractId, fallbackQuote);
         results.push(this.decorateQuoteForEmit(fallbackQuote));
       }
@@ -4455,22 +4545,32 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
   }
 
-  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+  async prewarmQuoteSubscriptions(
+    symbols: string[],
+    owner?: string | null,
+  ): Promise<void> {
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
     );
-
-    this.prewarmQuoteSymbols.clear();
-    normalizedSymbols.forEach((symbol) => this.prewarmQuoteSymbols.add(symbol));
+    const prewarmOwner = normalizePrewarmOwner(owner);
 
     if (normalizedSymbols.length === 0) {
+      this.prewarmQuoteSymbolGroups.delete(prewarmOwner);
+    } else {
+      this.prewarmQuoteSymbolGroups.set(prewarmOwner, new Set(normalizedSymbols));
+    }
+
+    const desiredPrewarmSymbols = Array.from(this.getPrewarmQuoteSymbols()).sort();
+
+    if (desiredPrewarmSymbols.length === 0) {
       this.trimUnusedQuoteSubscriptions();
       return;
     }
 
+    const prewarmSymbolsToEnsure = [...normalizedSymbols].sort();
     const providerContractIdsBySymbol =
-      await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
-    const subscribedSymbols = normalizedSymbols.filter((symbol) =>
+      await this.ensureQuoteSubscriptionsForSymbols(prewarmSymbolsToEnsure);
+    const subscribedSymbols = prewarmSymbolsToEnsure.filter((symbol) =>
       providerContractIdsBySymbol.has(symbol),
     );
 
@@ -4485,7 +4585,9 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           const providerContractId = providerContractIdsBySymbol.get(symbol);
           return Boolean(
             providerContractId &&
-              this.quotesByProviderContractId.has(providerContractId),
+              hasUsableQuotePrice(
+                this.quotesByProviderContractId.get(providerContractId),
+              ),
           );
         }),
       600,
@@ -4520,17 +4622,16 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       const cachedQuotes = this.collectQuotesBySymbol();
       normalizedSymbols.forEach((symbol) => {
         const quote = cachedQuotes.get(symbol);
-        if (quote) {
+        if (hasUsableQuotePrice(quote)) {
           onQuote(this.decorateQuoteForEmit(quote));
         }
       });
 
       await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
 
-      const nextCachedQuotes = this.collectQuotesBySymbol();
-      normalizedSymbols.forEach((symbol) => {
-        const quote = nextCachedQuotes.get(symbol);
-        if (quote) {
+      const bootstrapQuotes = await this.getQuoteSnapshots(normalizedSymbols);
+      bootstrapQuotes.forEach((quote) => {
+        if (hasUsableQuotePrice(quote)) {
           onQuote(this.decorateQuoteForEmit(quote));
         }
       });
@@ -4568,45 +4669,49 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
 
     for (const providerContractId of normalizedProviderContractIds) {
-      const resolved =
-        await this.resolveOptionContractByProviderContractId(
-          providerContractId,
-        );
-      const ensuredProviderContractId = providerContractId.trim();
+      try {
+        const resolved =
+          await this.resolveOptionContractByProviderContractId(
+            providerContractId,
+          );
+        const ensuredProviderContractId = providerContractId.trim();
 
-      if (liveProviderContractIds.has(ensuredProviderContractId)) {
-        await this.waitForCondition(
-          () => this.quotesByProviderContractId.has(ensuredProviderContractId),
-          Math.max(1_000, this.genericTickSampleMs * 2),
-          50,
-        );
+        if (liveProviderContractIds.has(ensuredProviderContractId)) {
+          await this.waitForCondition(
+            () => this.quotesByProviderContractId.has(ensuredProviderContractId),
+            Math.max(1_000, this.genericTickSampleMs * 2),
+            50,
+          );
 
-        const liveQuote = this.quotesByProviderContractId.get(
-          ensuredProviderContractId,
-        );
-        if (liveQuote) {
-          results.push(this.decorateQuoteForEmit(liveQuote));
-          continue;
+          const liveQuote = this.quotesByProviderContractId.get(
+            ensuredProviderContractId,
+          );
+          if (liveQuote) {
+            results.push(this.decorateQuoteForEmit(liveQuote));
+            continue;
+          }
         }
-      }
 
-      const fallbackQuote = await this.getContractQuoteSnapshot({
-        contract: {
-          ...resolved.contract,
-          exchange: "SMART",
-        },
-        symbol: resolved.optionContract.ticker,
-        providerContractId: ensuredProviderContractId,
-        genericTickList: "100,101,106",
-        marketDataType: this.getOptionQuoteMarketDataType(),
-      });
+        const fallbackQuote = await this.getContractQuoteSnapshot({
+          contract: {
+            ...resolved.contract,
+            exchange: "SMART",
+          },
+          symbol: resolved.optionContract.ticker,
+          providerContractId: ensuredProviderContractId,
+          genericTickList: "100,101,106",
+          marketDataType: this.getOptionQuoteMarketDataType(),
+        });
 
-      if (fallbackQuote) {
-        this.quotesByProviderContractId.set(
-          ensuredProviderContractId,
-          fallbackQuote,
-        );
-        results.push(this.decorateQuoteForEmit(fallbackQuote));
+        if (fallbackQuote) {
+          this.quotesByProviderContractId.set(
+            ensuredProviderContractId,
+            fallbackQuote,
+          );
+          results.push(this.decorateQuoteForEmit(fallbackQuote));
+        }
+      } catch (error) {
+        this.recordError(error);
       }
     }
 
@@ -4755,13 +4860,18 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       outsideRth?: boolean;
       source?: HistoryDataSource;
       exchange?: string | null;
+      priority?: number;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,
   ): Promise<() => void> {
-    await runBridgeLane("historical", async () => {
-      await this.refreshSession();
-    });
+    await runBridgeLane(
+      "historical",
+      async () => {
+        await this.refreshSession();
+      },
+      { priority: input.priority },
+    );
 
     const streamKey = this.buildHistoricalBarStreamKey(input);
     let subscription = this.barStreamSubscriptions.get(streamKey);
@@ -4912,63 +5022,72 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     outsideRth?: boolean;
     source?: HistoryDataSource;
     exchange?: string | null;
+    priority?: number;
   }): Promise<BrokerBarSnapshot[]> {
-    return runBridgeLane("historical", async () => {
-      await this.refreshSession();
-      const outsideRth = input.outsideRth !== false;
+    return runBridgeLane(
+      "historical",
+      async () => {
+        await this.refreshSession();
+        const outsideRth = input.outsideRth !== false;
 
-      const { contract, providerContractId } =
-        await this.resolveHistoricalBarContract(input);
+        const { contract, providerContractId } =
+          await this.resolveHistoricalBarContract(input);
 
-      const requestedBars = resolveRequestedHistoryBars(input);
-      const bars = await this.withHistoricalDataRecovery(
-        {
-          operation: "historical_bars",
-          symbol: input.symbol,
-          timeframe: input.timeframe,
-          assetClass: input.assetClass,
-          providerContractId: input.providerContractId,
-          exchange: input.exchange,
-        },
-        () =>
-          this.api.getHistoricalData(
-            contract,
-            formatHistoryEndDate(input.to ?? new Date()),
-            buildHistoryDuration(
-              input.timeframe,
-              requestedBars,
+        const requestedBars = resolveRequestedHistoryBars(input);
+        const bars = await this.withHistoricalDataRecovery(
+          {
+            operation: "historical_bars",
+            symbol: input.symbol,
+            timeframe: input.timeframe,
+            assetClass: input.assetClass,
+            providerContractId: input.providerContractId,
+            exchange: input.exchange,
+          },
+          () =>
+            this.api.getHistoricalData(
+              contract,
+              formatHistoryEndDate(input.to ?? new Date()),
+              buildHistoryDuration(
+                input.timeframe,
+                requestedBars,
+                outsideRth,
+              ),
+              HISTORY_BAR_SIZE[input.timeframe],
+              HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
+              outsideRth ? 0 : 1,
+              2,
+            ),
+        );
+
+        return compact(
+          bars.map((bar) =>
+            toBrokerBarSnapshotFromHistoricalBar({
+              bar,
+              providerContractId,
               outsideRth,
-            ),
-            HISTORY_BAR_SIZE[input.timeframe],
-            HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
-            outsideRth ? 0 : 1,
-            2,
+              partial: false,
+              delayed:
+                this.config.marketDataType === 3 ||
+                this.config.marketDataType === 4,
+              marketDataMode: resolveIbkrMarketDataMode(
+                this.config.marketDataType,
+              ),
+            }),
           ),
-      );
-
-      return compact(
-        bars.map((bar) =>
-          toBrokerBarSnapshotFromHistoricalBar({
-            bar,
-            providerContractId,
-            outsideRth,
-            partial: false,
-            delayed:
-              this.config.marketDataType === 3 ||
-              this.config.marketDataType === 4,
-            marketDataMode: resolveIbkrMarketDataMode(
-              this.config.marketDataType,
-            ),
-          }),
-        ),
-      )
-        .filter(
-          (bar) =>
-            (!input.from || bar.timestamp >= input.from) &&
-            (!input.to || bar.timestamp <= input.to),
         )
-        .slice(-Math.max(1, input.limit ?? requestedBars));
-    });
+          .filter(
+            (bar) =>
+              (!input.from || bar.timestamp >= input.from) &&
+              (!input.to || bar.timestamp <= input.to),
+          )
+          .slice(-Math.max(1, input.limit ?? requestedBars));
+      },
+      {
+        priority: input.priority,
+        countsAgainstLaneHealth: (error) =>
+          !isHistoricalDataRequestUnavailableError(error),
+      },
+    );
   }
 
   async getOptionChain(input: {
@@ -5001,8 +5120,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         await this.refreshSession();
         const resolvedUnderlying =
           await this.resolveStockContract(input.underlying);
-        const underlyingQuote =
-          (await this.getQuoteSnapshots([input.underlying]))[0] ?? null;
+        const underlyingQuote = await this.getUnderlyingQuoteForOptionChain({
+          symbol: input.underlying,
+          resolvedUnderlying,
+        });
         const spotPrice =
           underlyingQuote?.price ??
           underlyingQuote?.bid ??

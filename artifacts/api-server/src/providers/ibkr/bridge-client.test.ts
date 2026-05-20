@@ -523,3 +523,186 @@ test("option quote streams treat bridge heartbeats as stream activity", async (t
     cleanup();
   }
 });
+
+test("option metadata bridge calls use the metadata timeout budget", async (t) => {
+  const previousRequestTimeout = process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+  const previousOptionMetadataTimeout =
+    process.env["IBKR_BRIDGE_OPTION_METADATA_REQUEST_TIMEOUT_MS"];
+  process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = "5";
+  process.env["IBKR_BRIDGE_OPTION_METADATA_REQUEST_TIMEOUT_MS"] = "40";
+  t.after(() => {
+    if (previousRequestTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = previousRequestTimeout;
+    }
+    if (previousOptionMetadataTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_OPTION_METADATA_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_OPTION_METADATA_REQUEST_TIMEOUT_MS"] =
+        previousOptionMetadataTimeout;
+    }
+  });
+
+  const server = http.createServer((_req, _res) => {
+    // Intentionally hold the socket open so the client-side timeout decides.
+  });
+  const port = await listen(server);
+  useTempBridgeRuntimeOverride(t);
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: `http://127.0.0.1:${port}`,
+    apiToken: null,
+  });
+  t.after(() => {
+    server.close();
+  });
+
+  const client = new IbkrBridgeClient();
+
+  await assert.rejects(
+    () => client.getOptionChain({ underlying: "SPY" }),
+    /IBKR bridge request to \/options\/chains timed out after 40ms\./,
+  );
+});
+
+test("historical bars and option quotes do not use the generic bridge timeout budget", async (t) => {
+  const previousRequestTimeout = process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+  const previousHistoricalTimeout =
+    process.env["IBKR_BRIDGE_HISTORICAL_REQUEST_TIMEOUT_MS"];
+  const previousOptionQuoteTimeout =
+    process.env["IBKR_BRIDGE_OPTION_QUOTE_REQUEST_TIMEOUT_MS"];
+  process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = "5";
+  process.env["IBKR_BRIDGE_HISTORICAL_REQUEST_TIMEOUT_MS"] = "35";
+  process.env["IBKR_BRIDGE_OPTION_QUOTE_REQUEST_TIMEOUT_MS"] = "45";
+  t.after(() => {
+    if (previousRequestTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = previousRequestTimeout;
+    }
+    if (previousHistoricalTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_HISTORICAL_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_HISTORICAL_REQUEST_TIMEOUT_MS"] =
+        previousHistoricalTimeout;
+    }
+    if (previousOptionQuoteTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_OPTION_QUOTE_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_OPTION_QUOTE_REQUEST_TIMEOUT_MS"] =
+        previousOptionQuoteTimeout;
+    }
+  });
+
+  const server = http.createServer((_req, _res) => {
+    // Intentionally hold the socket open so the endpoint-specific timeout decides.
+  });
+  const port = await listen(server);
+  useTempBridgeRuntimeOverride(t);
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: `http://127.0.0.1:${port}`,
+    apiToken: null,
+  });
+  t.after(() => {
+    server.close();
+  });
+
+  const client = new IbkrBridgeClient();
+
+  await assert.rejects(
+    () => client.getHistoricalBars({ symbol: "SPY", timeframe: "1m" }),
+    /IBKR bridge request to \/bars timed out after 35ms\./,
+  );
+  await assert.rejects(
+    () =>
+      client.getOptionQuoteSnapshots({
+        underlying: "SPY",
+        providerContractIds: ["12345"],
+      }),
+    /IBKR bridge request to \/options\/quotes timed out after 45ms\./,
+  );
+});
+
+test("quote prewarm uses the subscription timeout budget", async (t) => {
+  const previousRequestTimeout = process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+  const previousQuotePrewarmTimeout =
+    process.env["IBKR_BRIDGE_QUOTE_PREWARM_REQUEST_TIMEOUT_MS"];
+  process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = "5";
+  process.env["IBKR_BRIDGE_QUOTE_PREWARM_REQUEST_TIMEOUT_MS"] = "35";
+  t.after(() => {
+    if (previousRequestTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] = previousRequestTimeout;
+    }
+    if (previousQuotePrewarmTimeout === undefined) {
+      delete process.env["IBKR_BRIDGE_QUOTE_PREWARM_REQUEST_TIMEOUT_MS"];
+    } else {
+      process.env["IBKR_BRIDGE_QUOTE_PREWARM_REQUEST_TIMEOUT_MS"] =
+        previousQuotePrewarmTimeout;
+    }
+  });
+
+  const server = http.createServer((_req, _res) => {
+    // Intentionally hold the socket open so the endpoint-specific timeout decides.
+  });
+  const port = await listen(server);
+  useTempBridgeRuntimeOverride(t);
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: `http://127.0.0.1:${port}`,
+    apiToken: null,
+  });
+  t.after(() => {
+    server.close();
+  });
+
+  const client = new IbkrBridgeClient();
+
+  await assert.rejects(
+    () => client.prewarmQuoteSubscriptions(["SPY", "QQQ"]),
+    /IBKR bridge request to \/quotes\/prewarm timed out after 35ms\./,
+  );
+});
+
+test("quote prewarm forwards the owner group to the bridge", async (t) => {
+  const requests: unknown[] = [];
+  const server = http.createServer((req, res) => {
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, "/quotes/prewarm");
+    let rawBody = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+    req.on("end", () => {
+      const body = JSON.parse(rawBody) as unknown;
+      requests.push(body);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          symbols: ["QQQ", "SPY"],
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    });
+  });
+  const port = await listen(server);
+  useTempBridgeRuntimeOverride(t);
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: `http://127.0.0.1:${port}`,
+    apiToken: null,
+  });
+  t.after(() => {
+    server.close();
+  });
+
+  const client = new IbkrBridgeClient();
+  await client.prewarmQuoteSubscriptions(["SPY", "QQQ"], "watchlist-prewarm");
+
+  assert.deepEqual(requests, [
+    {
+      symbols: ["QQQ", "SPY"],
+      owner: "watchlist-prewarm",
+    },
+  ]);
+});

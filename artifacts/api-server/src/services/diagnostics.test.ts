@@ -20,6 +20,7 @@ const {
   recordApiRequest,
   recordBrowserDiagnosticEvent,
   recordClientDiagnosticsMetrics,
+  recordServerDiagnosticEvent,
 } = diagnosticsModule;
 const {
   __resetStorageHealthForTests,
@@ -49,6 +50,34 @@ function registerEmptySignalOptionsWorkerSnapshot() {
     maintenance: emptyWorkerMaintenanceSnapshot(),
     deployments: [],
   }));
+}
+
+function healthyDiagnosticInput(now = new Date().toISOString()) {
+  return {
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: true,
+        strictReady: true,
+        strictReason: null,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        lastTickleAt: now,
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  };
 }
 
 test.beforeEach(() => {
@@ -158,6 +187,16 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
 
   assert.equal((api?.metrics.requestCount5m as number) >= 2, true);
   assert.equal(api?.metrics.errorCount5m, 1);
+  assert.equal(
+    Array.isArray(api?.metrics.errorRoutes) &&
+      api.metrics.errorRoutes.some(
+        (route) =>
+          route.path === "/api/slow" && route.errorCount5m === 1,
+      ),
+    true,
+  );
+  assert.equal(api?.metrics.dominantErrorRoute, "/api/slow");
+  assert.equal(api?.metrics.dominantErrorRouteCount, 1);
   assert.equal(ibkr?.status, "ok");
   assert.equal(marketData?.status, "ok");
   assert.equal(browser?.metrics.warningCount5m, 0);
@@ -180,6 +219,9 @@ test("diagnostics treat recovered signal-options worker failures as historical",
         failedUntilMs: 0,
         lastSuccessAt: new Date().toISOString(),
         lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 1_000,
         scanCount: 4,
         totalFailureCount: 3,
         failureCount: 0,
@@ -249,6 +291,9 @@ test("diagnostics surface stale signal-options scan inputs", async () => {
         failedUntilMs: 0,
         lastSuccessAt: new Date().toISOString(),
         lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 1_000,
         scanCount: 4,
         totalFailureCount: 0,
         failureCount: 0,
@@ -320,6 +365,9 @@ test("diagnostics do not treat inactive but current signals as degraded input", 
         failedUntilMs: 0,
         lastSuccessAt: now,
         lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 1_000,
         scanCount: 4,
         totalFailureCount: 0,
         failureCount: 0,
@@ -368,6 +416,104 @@ test("diagnostics do not treat inactive but current signals as degraded input", 
 
   assert.equal(automation?.status, "ok");
   assert.equal(automation?.metrics.notFreshSignalCount, 8);
+});
+
+test("diagnostics resolve inactive automation collector incidents", async () => {
+  const staleEvents = await Promise.all([
+    recordServerDiagnosticEvent({
+      subsystem: "automation",
+      category: "deployment",
+      code: "signal_options_deployment_missing",
+      severity: "critical",
+      message: "stale deployment incident",
+    }),
+    recordServerDiagnosticEvent({
+      subsystem: "automation",
+      category: "ledger-maintenance",
+      code: "signal_options_orphan_shadow_options",
+      severity: "critical",
+      message: "stale ledger incident",
+    }),
+    recordServerDiagnosticEvent({
+      subsystem: "automation",
+      category: "signal-freshness",
+      code: "signal_options_signal_scan_degraded",
+      severity: "warning",
+      message: "stale signal freshness incident",
+    }),
+  ]);
+  const staleIncidentKeys = new Set(
+    staleEvents.map((event) => event.incidentKey),
+  );
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const openEvents = await listDiagnosticEvents({
+    from: new Date(Date.now() - 60_000),
+    to: new Date(Date.now() + 60_000),
+    subsystem: "automation",
+    status: "open",
+  });
+
+  assert.equal(
+    collected.events.some((event) => staleIncidentKeys.has(event.incidentKey)),
+    false,
+  );
+  assert.equal(
+    openEvents.events.some((event) => staleIncidentKeys.has(event.incidentKey)),
+    false,
+  );
+});
+
+test("diagnostics separate long-running scans from stopped stale scans", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: true,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 150_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 150_000).toISOString(),
+        lastError: null,
+        currentScanStartedAt: new Date(nowMs - 150_000).toISOString(),
+        currentScanAgeMs: 150_000,
+        lastScanDurationMs: 12_000,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 150_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 150_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+  const longScanEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_long_running",
+  );
+  const stoppedScanEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_stale",
+  );
+
+  assert.equal(automation?.status, "degraded");
+  assert.equal(automation?.metrics.activeLongScanCount, 1);
+  assert.equal(automation?.metrics.inactiveStaleScanCount, 0);
+  assert.equal(longScanEvent?.severity, "warning");
+  assert.equal(stoppedScanEvent, undefined);
 });
 
 test("diagnostics classify configured Postgres outages as storage events only", async () => {
@@ -538,6 +684,112 @@ test("diagnostics preserve stale tunnel root cause while bridge health is backed
   assert.equal(backoffOnly, undefined);
 });
 
+test("diagnostics link bridge-dependent symptoms to stale tunnel root cause", async () => {
+  const nowMs = Date.now();
+  const rootFailure =
+    "HTTP 502 Bad Gateway: 502 Bad Gateway\nUnable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared";
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 420_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 420_000).toISOString(),
+        lastError: "IB Gateway is required for algorithm execution.",
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 1_000,
+        scanCount: 4,
+        totalFailureCount: 9,
+        failureCount: 9,
+        lastFailureAt: new Date(nowMs - 20_000).toISOString(),
+        lastSignalCount: 10,
+        lastFreshSignalCount: 10,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 420_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 420_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: false,
+        connected: false,
+        authenticated: false,
+        competing: false,
+        healthFresh: false,
+        healthError: "IBKR bridge health is temporarily backed off.",
+        healthErrorCode: "ibkr_bridge_health_backoff",
+        healthErrorStatusCode: 503,
+        healthErrorDetail: "Bridge health checks are backed off for 5716ms.",
+        governor: {
+          health: {
+            lastFailure: rootFailure,
+          },
+        },
+      },
+    },
+    probes: {
+      marketData: {
+        activeConsumerCount: 3,
+        unionSymbolCount: 30,
+        cachedQuoteCount: 20,
+        eventCount: 50,
+        lastEventAgeMs: 620_000,
+        freshnessAgeMs: 620_000,
+        streamGapCount: 5,
+        maxGapMs: 62_000,
+        lastError: "IBKR bridge quote stream failed with HTTP 502.",
+      },
+      accounts: { ok: false, error: "bridge unavailable" },
+      positions: { ok: false, error: "bridge unavailable" },
+      orders: { ok: false, error: "bridge unavailable" },
+    },
+  });
+
+  const staleTunnel = collected.events.find(
+    (event) => event.code === "ibkr_bridge_stale_tunnel",
+  );
+  const dependentEvents = [
+    "bridge_quote_stream_error",
+    "read_probe_failed",
+    "signal_options_worker_failure",
+    "signal_options_scan_stale",
+  ].map((code) => collected.events.find((event) => event.code === code));
+  const suppressedAutomationThresholds = collected.events.filter(
+    (event) =>
+      event.category === "threshold" &&
+      [
+        "automation.latest_scan_age_ms",
+        "automation.gateway_blocked_count",
+        "automation.failure_count",
+      ].includes(event.code ?? ""),
+  );
+
+  assert.equal(staleTunnel?.severity, "critical");
+  assert.ok(staleTunnel?.incidentKey);
+  dependentEvents.forEach((event) => {
+    assert.equal(event?.severity, "warning");
+    assert.equal(event?.dimensions.dependencyBlocked, true);
+    assert.equal(event?.dimensions.rootCauseIncidentKey, staleTunnel?.incidentKey);
+    assert.equal(event?.dimensions.rootCauseCode, "ibkr_bridge_stale_tunnel");
+  });
+  assert.deepEqual(suppressedAutomationThresholds, []);
+});
+
 test("diagnostics keep recovered market-data gaps visible without alerting current health", async () => {
   const collected = await collectDiagnosticSnapshot({
     runtime: {
@@ -589,6 +841,54 @@ test("diagnostics keep recovered market-data gaps visible without alerting curre
   assert.equal(marketData?.metrics.rawLastError, "IBKR bridge quote stream ended.");
   assert.equal(marketData?.metrics.rawMaxGapMs, 64_075);
   assert.equal(marketData?.metrics.rawStreamGapCount, 9);
+});
+
+test("diagnostics do not flap IBKR status between normal bridge tickles", async () => {
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: true,
+        strictReady: true,
+        strictReason: null,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        lastStreamEventAgeMs: 150,
+        lastTickleAt: new Date(Date.now() - 120_000).toISOString(),
+      },
+    },
+    probes: {
+      marketData: {
+        activeConsumerCount: 2,
+        unionSymbolCount: 25,
+        cachedQuoteCount: 25,
+        eventCount: 1_000,
+        lastEventAgeMs: 150,
+        freshnessAgeMs: 150,
+        streamGapCount: 0,
+        maxGapMs: null,
+        reconnectCount: 0,
+      },
+      accounts: { ok: true, count: 2 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const ibkr = collected.snapshots.find((snapshot) => snapshot.subsystem === "ibkr");
+  const ibkrEvents = collected.events.filter(
+    (event) => event.subsystem === "ibkr",
+  );
+
+  assert.equal(ibkr?.status, "ok");
+  assert.equal(ibkrEvents.length, 0);
 });
 
 test("diagnostics treat quiet market stream as healthy", async () => {

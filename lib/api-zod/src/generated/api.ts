@@ -473,12 +473,197 @@ export const ExportDiagnosticsResponse = zod.record(zod.string(), zod.unknown())
 export const GetIbkrBridgeLauncherResponse = zod.object({
   "activationId": zod.string(),
   "apiBaseUrl": zod.string(),
+  "autoLoginConfigured": zod.boolean().nullable(),
+  "autoLoginLaunchUrl": zod.string(),
+  "autoLoginMode": zod.enum(['ib-gateway-live']),
+  "autoLoginSupported": zod.boolean(),
   "bridgeToken": zod.string(),
   "bundleUrl": zod.string().nullable(),
+  "credentialHandoff": zod.object({
+  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
+  "expiresAt": zod.coerce.date(),
+  "mode": zod.enum(['ui-onetime'])
+}),
   "helperUrl": zod.string(),
   "helperVersion": zod.string(),
   "launchUrl": zod.string(),
   "managementToken": zod.string()
+})
+
+
+/**
+ * @summary List paired Windows desktop agents for remote IBKR bridge launch
+ */
+export const ListIbkrRemoteDesktopsResponse = zod.object({
+  "desktops": zod.array(zod.object({
+  "desktopId": zod.string(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+})),
+  "helperVersion": zod.string(),
+  "onlineCount": zod.number()
+})
+
+
+/**
+ * @summary Register a Windows desktop agent for remote IBKR bridge launch
+ */
+export const RegisterIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unknown())
+
+export const RegisterIbkrRemoteDesktopResponse = zod.object({
+  "desktop": zod.object({
+  "desktopId": zod.string(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),
+  "helperVersion": zod.string(),
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Record a Windows desktop agent heartbeat
+ */
+export const HeartbeatIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unknown())
+
+export const HeartbeatIbkrRemoteDesktopResponse = zod.object({
+  "desktop": zod.object({
+  "desktopId": zod.string(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),
+  "helperVersion": zod.string(),
+  "ok": zod.boolean(),
+  "pendingJobCount": zod.number()
+})
+
+
+/**
+ * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
+ */
+export const ClaimIbkrRemoteDesktopLaunchJobBody = zod.record(zod.string(), zod.unknown())
+
+export const ClaimIbkrRemoteDesktopLaunchJobResponse = zod.object({
+  "activationId": zod.string().optional(),
+  "expiresAt": zod.coerce.date().optional(),
+  "helperVersion": zod.string(),
+  "jobId": zod.string().optional(),
+  "launchUrl": zod.string().optional(),
+  "completionToken": zod.string().nullish(),
+  "action": zod.enum(['launch', 'shutdown']).optional(),
+  "ready": zod.boolean()
+})
+
+
+/**
+ * @summary Mark an IBKR desktop job complete from the Windows helper
+ */
+export const CompleteIbkrRemoteDesktopJobBody = zod.record(zod.string(), zod.unknown())
+
+export const CompleteIbkrRemoteDesktopJobResponse = zod.object({
+  "action": zod.enum(['launch', 'shutdown']),
+  "claimedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date(),
+  "failedAt": zod.coerce.date().nullable(),
+  "jobId": zod.string(),
+  "message": zod.string().nullable(),
+  "ok": zod.boolean(),
+  "state": zod.enum(['queued', 'claimed', 'completed', 'failed', 'expired'])
+})
+
+
+/**
+ * @summary Read a queued IBKR desktop job status
+ */
+export const ReadIbkrRemoteDesktopJobStatusBody = zod.record(zod.string(), zod.unknown())
+
+export const ReadIbkrRemoteDesktopJobStatusResponse = zod.object({
+  "action": zod.enum(['launch', 'shutdown']),
+  "claimedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date(),
+  "failedAt": zod.coerce.date().nullable(),
+  "jobId": zod.string(),
+  "message": zod.string().nullable(),
+  "ok": zod.boolean(),
+  "state": zod.enum(['queued', 'claimed', 'completed', 'failed', 'expired'])
+})
+
+
+/**
+ * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
+ */
+export const CreateIbkrRemoteBridgeLaunchBody = zod.record(zod.string(), zod.unknown())
+
+export const CreateIbkrRemoteBridgeLaunchResponse = zod.object({
+  "activationId": zod.string(),
+  "apiBaseUrl": zod.string(),
+  "autoLoginConfigured": zod.boolean().nullable(),
+  "autoLoginLaunchUrl": zod.string(),
+  "autoLoginMode": zod.enum(['ib-gateway-live']),
+  "autoLoginSupported": zod.boolean(),
+  "bridgeToken": zod.string(),
+  "bundleUrl": zod.string().nullable(),
+  "credentialHandoff": zod.object({
+  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
+  "expiresAt": zod.coerce.date(),
+  "mode": zod.enum(['ui-onetime'])
+}),
+  "helperUrl": zod.string(),
+  "helperVersion": zod.string(),
+  "launchUrl": zod.string(),
+  "managementToken": zod.string()
+}).and(zod.object({
+  "remoteLaunch": zod.object({
+  "desktop": zod.object({
+  "desktopId": zod.string(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),
+  "expiresAt": zod.coerce.date(),
+  "jobId": zod.string(),
+  "mode": zod.enum(['desktop-agent'])
+})
+}))
+
+
+/**
+ * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
+ */
+export const CreateIbkrRemoteBridgeShutdownBody = zod.record(zod.string(), zod.unknown())
+
+export const CreateIbkrRemoteBridgeShutdownResponse = zod.object({
+  "helperVersion": zod.string(),
+  "shutdown": zod.object({
+  "action": zod.enum(['shutdown']),
+  "desktop": zod.object({
+  "desktopId": zod.string(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),
+  "expiresAt": zod.coerce.date(),
+  "jobId": zod.string(),
+  "mode": zod.enum(['desktop-agent']),
+  "statusToken": zod.string()
+})
 })
 
 
@@ -493,6 +678,101 @@ export const RecordIbkrBridgeActivationProgressBody = zod.record(zod.string(), z
 
 export const RecordIbkrBridgeActivationProgressResponse = zod.object({
   "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Read IBKR bridge activation cancellation status
+ */
+export const ReadIbkrBridgeActivationStatusParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const ReadIbkrBridgeActivationStatusBody = zod.record(zod.string(), zod.unknown())
+
+export const ReadIbkrBridgeActivationStatusResponse = zod.object({
+  "active": zod.boolean(),
+  "canceled": zod.boolean(),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Cancel a pending IBKR bridge activation
+ */
+export const CancelIbkrBridgeActivationParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const CancelIbkrBridgeActivationBody = zod.record(zod.string(), zod.unknown())
+
+export const CancelIbkrBridgeActivationResponse = zod.object({
+  "canceled": zod.boolean(),
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Publish the helper public key for one-time IBKR credential handoff
+ */
+export const SubmitIbkrBridgeLoginKeyParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const SubmitIbkrBridgeLoginKeyBody = zod.record(zod.string(), zod.unknown())
+
+export const SubmitIbkrBridgeLoginKeyResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Read the helper public key for one-time IBKR credential handoff
+ */
+export const ReadIbkrBridgeLoginKeyParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const ReadIbkrBridgeLoginKeyBody = zod.record(zod.string(), zod.unknown())
+
+export const ReadIbkrBridgeLoginKeyResponse = zod.object({
+  "ready": zod.boolean(),
+  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']).optional(),
+  "expiresAt": zod.coerce.date().optional(),
+  "helperInstanceId": zod.string().optional(),
+  "publicKeyJwk": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Submit encrypted one-time IBKR credentials for the helper to claim
+ */
+export const SubmitIbkrBridgeLoginEnvelopeParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const SubmitIbkrBridgeLoginEnvelopeBody = zod.record(zod.string(), zod.unknown())
+
+export const SubmitIbkrBridgeLoginEnvelopeResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
+ * @summary Claim encrypted one-time IBKR credentials from the helper
+ */
+export const ClaimIbkrBridgeLoginEnvelopeParams = zod.object({
+  "activationId": zod.coerce.string()
+})
+
+export const ClaimIbkrBridgeLoginEnvelopeBody = zod.record(zod.string(), zod.unknown())
+
+export const ClaimIbkrBridgeLoginEnvelopeResponse = zod.object({
+  "ready": zod.boolean(),
+  "envelope": zod.object({
+  "algorithm": zod.enum(['RSA-OAEP-256-CHUNKED']),
+  "ciphertextChunks": zod.array(zod.string())
+}).optional()
 })
 
 
@@ -4191,11 +4471,24 @@ export const UpdateAlgoDeploymentStrategySettingsParams = zod.object({
 export const updateAlgoDeploymentStrategySettingsBodyTimeHorizonMin = 2;
 export const updateAlgoDeploymentStrategySettingsBodyTimeHorizonMax = 50;
 
+export const updateAlgoDeploymentStrategySettingsBodyChochAtrBufferMin = 0;
+export const updateAlgoDeploymentStrategySettingsBodyChochAtrBufferMax = 20;
+
+export const updateAlgoDeploymentStrategySettingsBodyChochBodyExpansionAtrMin = 0;
+export const updateAlgoDeploymentStrategySettingsBodyChochBodyExpansionAtrMax = 20;
+
+export const updateAlgoDeploymentStrategySettingsBodyChochVolumeGateMin = 0;
+export const updateAlgoDeploymentStrategySettingsBodyChochVolumeGateMax = 20;
+
 
 
 export const UpdateAlgoDeploymentStrategySettingsBody = zod.object({
   "signalTimeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "timeHorizon": zod.number().min(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMin).max(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMax)
+  "timeHorizon": zod.number().min(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMin).max(updateAlgoDeploymentStrategySettingsBodyTimeHorizonMax),
+  "bosConfirmation": zod.enum(['close', 'wicks']).optional(),
+  "chochAtrBuffer": zod.number().min(updateAlgoDeploymentStrategySettingsBodyChochAtrBufferMin).max(updateAlgoDeploymentStrategySettingsBodyChochAtrBufferMax).optional(),
+  "chochBodyExpansionAtr": zod.number().min(updateAlgoDeploymentStrategySettingsBodyChochBodyExpansionAtrMin).max(updateAlgoDeploymentStrategySettingsBodyChochBodyExpansionAtrMax).optional(),
+  "chochVolumeGate": zod.number().min(updateAlgoDeploymentStrategySettingsBodyChochVolumeGateMin).max(updateAlgoDeploymentStrategySettingsBodyChochVolumeGateMax).optional()
 })
 
 export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({

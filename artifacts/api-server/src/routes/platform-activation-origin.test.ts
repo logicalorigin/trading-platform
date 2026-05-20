@@ -120,6 +120,37 @@ test("IBKR bridge launcher origin uses Replit dev domain when proxy headers are 
   assert.equal(origin, "https://abc-00-example.riker.replit.dev");
 });
 
+test("IBKR bridge launcher origin avoids Replit workspace shell hosts", () => {
+  process.env["REPLIT_DEV_DOMAIN"] =
+    "abc-00-example.riker.replit.dev";
+
+  const forwardedOrigin = getIbkrBridgeRequestOrigin(
+    makeRequest({
+      protocol: "http",
+      headers: {
+        host: "127.0.0.1:8080",
+        "x-forwarded-host": "replit.com",
+        "x-forwarded-proto": "https",
+        origin: "https://replit.com",
+      },
+    }),
+  );
+
+  assert.equal(forwardedOrigin, "https://abc-00-example.riker.replit.dev");
+
+  const browserOrigin = getIbkrBridgeRequestOrigin(
+    makeRequest({
+      protocol: "http",
+      headers: {
+        host: "127.0.0.1:8080",
+        origin: "https://replit.com",
+      },
+    }),
+  );
+
+  assert.equal(browserOrigin, "https://abc-00-example.riker.replit.dev");
+});
+
 test("IBKR bridge launcher origin can use a non-loopback browser origin", () => {
   const origin = getIbkrBridgeRequestOrigin(
     makeRequest({

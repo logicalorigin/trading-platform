@@ -263,6 +263,16 @@ export function isTransientBridgeWorkError(error: unknown): boolean {
   if (!(error instanceof HttpError)) {
     return false;
   }
+  const upstreamCode =
+    error.data && typeof error.data === "object"
+      ? (error.data as Record<string, unknown>)["code"]
+      : null;
+  if (
+    error.code === "upstream_http_error" &&
+    upstreamCode === "ibkr_bridge_lane_backoff"
+  ) {
+    return false;
+  }
   const cause = error.cause;
   const causeCode = cause instanceof HttpError ? cause.code : null;
   if (

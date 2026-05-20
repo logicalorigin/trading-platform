@@ -111,9 +111,20 @@ import type {
   GetUniverseLogosParams,
   GexDashboardResponse,
   HealthStatus,
+  IbkrBridgeActivationCancelResponse,
+  IbkrBridgeActivationStatusResponse,
   IbkrBridgeAttachResponse,
   IbkrBridgeDetachResponse,
   IbkrBridgeLauncherResponse,
+  IbkrBridgeLoginEnvelopeClaimResponse,
+  IbkrBridgeLoginKeyReadResponse,
+  IbkrBridgeRemoteLauncherResponse,
+  IbkrBridgeRemoteShutdownResponse,
+  IbkrRemoteDesktopHeartbeatResponse,
+  IbkrRemoteDesktopJobStatusResponse,
+  IbkrRemoteDesktopLaunchClaimResponse,
+  IbkrRemoteDesktopRegisterResponse,
+  IbkrRemoteDesktopsResponse,
   JsonObject,
   ListAccountsParams,
   ListAggregateFlowEventsParams,
@@ -2078,6 +2089,578 @@ export function useGetIbkrBridgeLauncher<TData = Awaited<ReturnType<typeof getIb
 
 
 /**
+ * @summary List paired Windows desktop agents for remote IBKR bridge launch
+ */
+export const getListIbkrRemoteDesktopsUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktops`
+}
+
+export const listIbkrRemoteDesktops = async ( options?: RequestInit): Promise<IbkrRemoteDesktopsResponse> => {
+
+  return customFetch<IbkrRemoteDesktopsResponse>(getListIbkrRemoteDesktopsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListIbkrRemoteDesktopsQueryKey = () => {
+    return [
+    `/api/ibkr/desktops`
+    ] as const;
+    }
+
+
+export const getListIbkrRemoteDesktopsQueryOptions = <TData = Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListIbkrRemoteDesktopsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>> = ({ signal }) => listIbkrRemoteDesktops({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListIbkrRemoteDesktopsQueryResult = NonNullable<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>>
+export type ListIbkrRemoteDesktopsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List paired Windows desktop agents for remote IBKR bridge launch
+ */
+
+export function useListIbkrRemoteDesktops<TData = Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listIbkrRemoteDesktops>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListIbkrRemoteDesktopsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Register a Windows desktop agent for remote IBKR bridge launch
+ */
+export const getRegisterIbkrRemoteDesktopUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktop/register`
+}
+
+export const registerIbkrRemoteDesktop = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopRegisterResponse> => {
+
+  return customFetch<IbkrRemoteDesktopRegisterResponse>(getRegisterIbkrRemoteDesktopUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getRegisterIbkrRemoteDesktopMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['registerIbkrRemoteDesktop'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerIbkrRemoteDesktop(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterIbkrRemoteDesktopMutationResult = NonNullable<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>>
+    export type RegisterIbkrRemoteDesktopMutationBody = BodyType<JsonObject>
+    export type RegisterIbkrRemoteDesktopMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Register a Windows desktop agent for remote IBKR bridge launch
+ */
+export const useRegisterIbkrRemoteDesktop = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof registerIbkrRemoteDesktop>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getRegisterIbkrRemoteDesktopMutationOptions(options));
+    }
+
+/**
+ * @summary Record a Windows desktop agent heartbeat
+ */
+export const getHeartbeatIbkrRemoteDesktopUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktop/heartbeat`
+}
+
+export const heartbeatIbkrRemoteDesktop = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopHeartbeatResponse> => {
+
+  return customFetch<IbkrRemoteDesktopHeartbeatResponse>(getHeartbeatIbkrRemoteDesktopUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getHeartbeatIbkrRemoteDesktopMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['heartbeatIbkrRemoteDesktop'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  heartbeatIbkrRemoteDesktop(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type HeartbeatIbkrRemoteDesktopMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>>
+    export type HeartbeatIbkrRemoteDesktopMutationBody = BodyType<JsonObject>
+    export type HeartbeatIbkrRemoteDesktopMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Record a Windows desktop agent heartbeat
+ */
+export const useHeartbeatIbkrRemoteDesktop = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof heartbeatIbkrRemoteDesktop>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getHeartbeatIbkrRemoteDesktopMutationOptions(options));
+    }
+
+/**
+ * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
+ */
+export const getClaimIbkrRemoteDesktopLaunchJobUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktop/jobs/claim`
+}
+
+export const claimIbkrRemoteDesktopLaunchJob = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopLaunchClaimResponse> => {
+
+  return customFetch<IbkrRemoteDesktopLaunchClaimResponse>(getClaimIbkrRemoteDesktopLaunchJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getClaimIbkrRemoteDesktopLaunchJobMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['claimIbkrRemoteDesktopLaunchJob'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  claimIbkrRemoteDesktopLaunchJob(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimIbkrRemoteDesktopLaunchJobMutationResult = NonNullable<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>>
+    export type ClaimIbkrRemoteDesktopLaunchJobMutationBody = BodyType<JsonObject>
+    export type ClaimIbkrRemoteDesktopLaunchJobMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Claim a pending IBKR bridge desktop job for a Windows desktop agent
+ */
+export const useClaimIbkrRemoteDesktopLaunchJob = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof claimIbkrRemoteDesktopLaunchJob>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getClaimIbkrRemoteDesktopLaunchJobMutationOptions(options));
+    }
+
+/**
+ * @summary Mark an IBKR desktop job complete from the Windows helper
+ */
+export const getCompleteIbkrRemoteDesktopJobUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktop/jobs/complete`
+}
+
+export const completeIbkrRemoteDesktopJob = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopJobStatusResponse> => {
+
+  return customFetch<IbkrRemoteDesktopJobStatusResponse>(getCompleteIbkrRemoteDesktopJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getCompleteIbkrRemoteDesktopJobMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['completeIbkrRemoteDesktopJob'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  completeIbkrRemoteDesktopJob(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompleteIbkrRemoteDesktopJobMutationResult = NonNullable<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>>
+    export type CompleteIbkrRemoteDesktopJobMutationBody = BodyType<JsonObject>
+    export type CompleteIbkrRemoteDesktopJobMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Mark an IBKR desktop job complete from the Windows helper
+ */
+export const useCompleteIbkrRemoteDesktopJob = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof completeIbkrRemoteDesktopJob>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getCompleteIbkrRemoteDesktopJobMutationOptions(options));
+    }
+
+/**
+ * @summary Read a queued IBKR desktop job status
+ */
+export const getReadIbkrRemoteDesktopJobStatusUrl = () => {
+
+
+
+
+  return `/api/ibkr/desktop/jobs/status`
+}
+
+export const readIbkrRemoteDesktopJobStatus = async (jsonObject: JsonObject, options?: RequestInit): Promise<IbkrRemoteDesktopJobStatusResponse> => {
+
+  return customFetch<IbkrRemoteDesktopJobStatusResponse>(getReadIbkrRemoteDesktopJobStatusUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getReadIbkrRemoteDesktopJobStatusMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['readIbkrRemoteDesktopJobStatus'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  readIbkrRemoteDesktopJobStatus(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReadIbkrRemoteDesktopJobStatusMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>>
+    export type ReadIbkrRemoteDesktopJobStatusMutationBody = BodyType<JsonObject>
+    export type ReadIbkrRemoteDesktopJobStatusMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Read a queued IBKR desktop job status
+ */
+export const useReadIbkrRemoteDesktopJobStatus = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof readIbkrRemoteDesktopJobStatus>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getReadIbkrRemoteDesktopJobStatusMutationOptions(options));
+    }
+
+/**
+ * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
+ */
+export const getCreateIbkrRemoteBridgeLaunchUrl = () => {
+
+
+
+
+  return `/api/ibkr/remote-launch`
+}
+
+export const createIbkrRemoteBridgeLaunch = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeRemoteLauncherResponse> => {
+
+  return customFetch<IbkrBridgeRemoteLauncherResponse>(getCreateIbkrRemoteBridgeLaunchUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getCreateIbkrRemoteBridgeLaunchMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['createIbkrRemoteBridgeLaunch'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createIbkrRemoteBridgeLaunch(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateIbkrRemoteBridgeLaunchMutationResult = NonNullable<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>>
+    export type CreateIbkrRemoteBridgeLaunchMutationBody = BodyType<JsonObject>
+    export type CreateIbkrRemoteBridgeLaunchMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
+ */
+export const useCreateIbkrRemoteBridgeLaunch = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createIbkrRemoteBridgeLaunch>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getCreateIbkrRemoteBridgeLaunchMutationOptions(options));
+    }
+
+/**
+ * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
+ */
+export const getCreateIbkrRemoteBridgeShutdownUrl = () => {
+
+
+
+
+  return `/api/ibkr/remote-shutdown`
+}
+
+export const createIbkrRemoteBridgeShutdown = async (jsonObject?: JsonObject, options?: RequestInit): Promise<IbkrBridgeRemoteShutdownResponse> => {
+
+  return customFetch<IbkrBridgeRemoteShutdownResponse>(getCreateIbkrRemoteBridgeShutdownUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getCreateIbkrRemoteBridgeShutdownMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['createIbkrRemoteBridgeShutdown'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, {data: BodyType<JsonObject>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createIbkrRemoteBridgeShutdown(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateIbkrRemoteBridgeShutdownMutationResult = NonNullable<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>>
+    export type CreateIbkrRemoteBridgeShutdownMutationBody = BodyType<JsonObject>
+    export type CreateIbkrRemoteBridgeShutdownMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Queue an IBKR bridge and Gateway shutdown on a paired Windows desktop agent
+ */
+export const useCreateIbkrRemoteBridgeShutdown = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>, TError,{data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createIbkrRemoteBridgeShutdown>>,
+        TError,
+        {data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getCreateIbkrRemoteBridgeShutdownMutationOptions(options));
+    }
+
+/**
  * @summary Record IBKR bridge activation progress
  */
 export const getRecordIbkrBridgeActivationProgressUrl = (activationId: string,) => {
@@ -2147,6 +2730,438 @@ export const useRecordIbkrBridgeActivationProgress = <TError = ErrorType<unknown
         TContext
       > => {
       return useMutation(getRecordIbkrBridgeActivationProgressMutationOptions(options));
+    }
+
+/**
+ * @summary Read IBKR bridge activation cancellation status
+ */
+export const getReadIbkrBridgeActivationStatusUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/status`
+}
+
+export const readIbkrBridgeActivationStatus = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeActivationStatusResponse> => {
+
+  return customFetch<IbkrBridgeActivationStatusResponse>(getReadIbkrBridgeActivationStatusUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getReadIbkrBridgeActivationStatusMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['readIbkrBridgeActivationStatus'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  readIbkrBridgeActivationStatus(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReadIbkrBridgeActivationStatusMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>>
+    export type ReadIbkrBridgeActivationStatusMutationBody = BodyType<JsonObject>
+    export type ReadIbkrBridgeActivationStatusMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Read IBKR bridge activation cancellation status
+ */
+export const useReadIbkrBridgeActivationStatus = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof readIbkrBridgeActivationStatus>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getReadIbkrBridgeActivationStatusMutationOptions(options));
+    }
+
+/**
+ * @summary Cancel a pending IBKR bridge activation
+ */
+export const getCancelIbkrBridgeActivationUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/cancel`
+}
+
+export const cancelIbkrBridgeActivation = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeActivationCancelResponse> => {
+
+  return customFetch<IbkrBridgeActivationCancelResponse>(getCancelIbkrBridgeActivationUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getCancelIbkrBridgeActivationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['cancelIbkrBridgeActivation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  cancelIbkrBridgeActivation(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelIbkrBridgeActivationMutationResult = NonNullable<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>>
+    export type CancelIbkrBridgeActivationMutationBody = BodyType<JsonObject>
+    export type CancelIbkrBridgeActivationMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Cancel a pending IBKR bridge activation
+ */
+export const useCancelIbkrBridgeActivation = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelIbkrBridgeActivation>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getCancelIbkrBridgeActivationMutationOptions(options));
+    }
+
+/**
+ * @summary Publish the helper public key for one-time IBKR credential handoff
+ */
+export const getSubmitIbkrBridgeLoginKeyUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/login-key`
+}
+
+export const submitIbkrBridgeLoginKey = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getSubmitIbkrBridgeLoginKeyUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getSubmitIbkrBridgeLoginKeyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['submitIbkrBridgeLoginKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  submitIbkrBridgeLoginKey(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitIbkrBridgeLoginKeyMutationResult = NonNullable<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>>
+    export type SubmitIbkrBridgeLoginKeyMutationBody = BodyType<JsonObject>
+    export type SubmitIbkrBridgeLoginKeyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Publish the helper public key for one-time IBKR credential handoff
+ */
+export const useSubmitIbkrBridgeLoginKey = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitIbkrBridgeLoginKey>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getSubmitIbkrBridgeLoginKeyMutationOptions(options));
+    }
+
+/**
+ * @summary Read the helper public key for one-time IBKR credential handoff
+ */
+export const getReadIbkrBridgeLoginKeyUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/login-key/read`
+}
+
+export const readIbkrBridgeLoginKey = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeLoginKeyReadResponse> => {
+
+  return customFetch<IbkrBridgeLoginKeyReadResponse>(getReadIbkrBridgeLoginKeyUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getReadIbkrBridgeLoginKeyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['readIbkrBridgeLoginKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  readIbkrBridgeLoginKey(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReadIbkrBridgeLoginKeyMutationResult = NonNullable<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>>
+    export type ReadIbkrBridgeLoginKeyMutationBody = BodyType<JsonObject>
+    export type ReadIbkrBridgeLoginKeyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Read the helper public key for one-time IBKR credential handoff
+ */
+export const useReadIbkrBridgeLoginKey = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof readIbkrBridgeLoginKey>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getReadIbkrBridgeLoginKeyMutationOptions(options));
+    }
+
+/**
+ * @summary Submit encrypted one-time IBKR credentials for the helper to claim
+ */
+export const getSubmitIbkrBridgeLoginEnvelopeUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/login-envelope`
+}
+
+export const submitIbkrBridgeLoginEnvelope = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<OkResponse> => {
+
+  return customFetch<OkResponse>(getSubmitIbkrBridgeLoginEnvelopeUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getSubmitIbkrBridgeLoginEnvelopeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['submitIbkrBridgeLoginEnvelope'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  submitIbkrBridgeLoginEnvelope(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitIbkrBridgeLoginEnvelopeMutationResult = NonNullable<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>>
+    export type SubmitIbkrBridgeLoginEnvelopeMutationBody = BodyType<JsonObject>
+    export type SubmitIbkrBridgeLoginEnvelopeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Submit encrypted one-time IBKR credentials for the helper to claim
+ */
+export const useSubmitIbkrBridgeLoginEnvelope = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitIbkrBridgeLoginEnvelope>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getSubmitIbkrBridgeLoginEnvelopeMutationOptions(options));
+    }
+
+/**
+ * @summary Claim encrypted one-time IBKR credentials from the helper
+ */
+export const getClaimIbkrBridgeLoginEnvelopeUrl = (activationId: string,) => {
+
+
+
+
+  return `/api/ibkr/activation/${activationId}/login-envelope/claim`
+}
+
+export const claimIbkrBridgeLoginEnvelope = async (activationId: string,
+    jsonObject: JsonObject, options?: RequestInit): Promise<IbkrBridgeLoginEnvelopeClaimResponse> => {
+
+  return customFetch<IbkrBridgeLoginEnvelopeClaimResponse>(getClaimIbkrBridgeLoginEnvelopeUrl(activationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      jsonObject,)
+  }
+);}
+
+
+
+
+export const getClaimIbkrBridgeLoginEnvelopeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext> => {
+
+const mutationKey = ['claimIbkrBridgeLoginEnvelope'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, {activationId: string;data: BodyType<JsonObject>}> = (props) => {
+          const {activationId,data} = props ?? {};
+
+          return  claimIbkrBridgeLoginEnvelope(activationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ClaimIbkrBridgeLoginEnvelopeMutationResult = NonNullable<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>>
+    export type ClaimIbkrBridgeLoginEnvelopeMutationBody = BodyType<JsonObject>
+    export type ClaimIbkrBridgeLoginEnvelopeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Claim encrypted one-time IBKR credentials from the helper
+ */
+export const useClaimIbkrBridgeLoginEnvelope = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>, TError,{activationId: string;data: BodyType<JsonObject>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof claimIbkrBridgeLoginEnvelope>>,
+        TError,
+        {activationId: string;data: BodyType<JsonObject>},
+        TContext
+      > => {
+      return useMutation(getClaimIbkrBridgeLoginEnvelopeMutationOptions(options));
     }
 
 /**

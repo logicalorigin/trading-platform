@@ -264,17 +264,222 @@ export interface OkResponse {
   ok: boolean;
 }
 
+export type IbkrBridgeLauncherResponseAutoLoginMode = typeof IbkrBridgeLauncherResponseAutoLoginMode[keyof typeof IbkrBridgeLauncherResponseAutoLoginMode];
+
+
+export const IbkrBridgeLauncherResponseAutoLoginMode = {
+  'ib-gateway-live': 'ib-gateway-live',
+} as const;
+
+export type IbkrBridgeCredentialHandoffAlgorithm = typeof IbkrBridgeCredentialHandoffAlgorithm[keyof typeof IbkrBridgeCredentialHandoffAlgorithm];
+
+
+export const IbkrBridgeCredentialHandoffAlgorithm = {
+  'RSA-OAEP-256-CHUNKED': 'RSA-OAEP-256-CHUNKED',
+} as const;
+
+export type IbkrBridgeCredentialHandoffMode = typeof IbkrBridgeCredentialHandoffMode[keyof typeof IbkrBridgeCredentialHandoffMode];
+
+
+export const IbkrBridgeCredentialHandoffMode = {
+  'ui-onetime': 'ui-onetime',
+} as const;
+
+export interface IbkrBridgeCredentialHandoff {
+  algorithm: IbkrBridgeCredentialHandoffAlgorithm;
+  expiresAt: string;
+  mode: IbkrBridgeCredentialHandoffMode;
+}
+
 export interface IbkrBridgeLauncherResponse {
   activationId: string;
   apiBaseUrl: string;
+  /** @nullable */
+  autoLoginConfigured: boolean | null;
+  autoLoginLaunchUrl: string;
+  autoLoginMode: IbkrBridgeLauncherResponseAutoLoginMode;
+  autoLoginSupported: boolean;
   bridgeToken: string;
   /** @nullable */
   bundleUrl: string | null;
+  credentialHandoff: IbkrBridgeCredentialHandoff;
   helperUrl: string;
   helperVersion: string;
   launchUrl: string;
   managementToken: string;
 }
+
+export interface IbkrRemoteDesktop {
+  desktopId: string;
+  /** @nullable */
+  helperVersion: string | null;
+  /** @nullable */
+  label: string | null;
+  lastSeenAt: string;
+  online: boolean;
+  registeredAt: string;
+}
+
+export interface IbkrRemoteDesktopsResponse {
+  desktops: IbkrRemoteDesktop[];
+  helperVersion: string;
+  onlineCount: number;
+}
+
+export interface IbkrRemoteDesktopRegisterResponse {
+  desktop: IbkrRemoteDesktop;
+  helperVersion: string;
+  ok: boolean;
+}
+
+export interface IbkrRemoteDesktopHeartbeatResponse {
+  desktop: IbkrRemoteDesktop;
+  helperVersion: string;
+  ok: boolean;
+  pendingJobCount: number;
+}
+
+export type IbkrRemoteDesktopLaunchClaimResponseAction = typeof IbkrRemoteDesktopLaunchClaimResponseAction[keyof typeof IbkrRemoteDesktopLaunchClaimResponseAction];
+
+
+export const IbkrRemoteDesktopLaunchClaimResponseAction = {
+  launch: 'launch',
+  shutdown: 'shutdown',
+} as const;
+
+export interface IbkrRemoteDesktopLaunchClaimResponse {
+  activationId?: string;
+  expiresAt?: string;
+  helperVersion: string;
+  jobId?: string;
+  launchUrl?: string;
+  completionToken?: string | null;
+  action?: IbkrRemoteDesktopLaunchClaimResponseAction;
+  ready: boolean;
+}
+
+export type IbkrBridgeRemoteLaunchMode = typeof IbkrBridgeRemoteLaunchMode[keyof typeof IbkrBridgeRemoteLaunchMode];
+
+
+export const IbkrBridgeRemoteLaunchMode = {
+  'desktop-agent': 'desktop-agent',
+} as const;
+
+export interface IbkrBridgeRemoteLaunch {
+  desktop: IbkrRemoteDesktop;
+  expiresAt: string;
+  jobId: string;
+  mode: IbkrBridgeRemoteLaunchMode;
+}
+
+export type IbkrBridgeRemoteLauncherResponse = IbkrBridgeLauncherResponse & {
+  remoteLaunch: IbkrBridgeRemoteLaunch;
+};
+
+export type IbkrBridgeRemoteShutdownAction = typeof IbkrBridgeRemoteShutdownAction[keyof typeof IbkrBridgeRemoteShutdownAction];
+
+
+export const IbkrBridgeRemoteShutdownAction = {
+  shutdown: 'shutdown',
+} as const;
+
+export type IbkrBridgeRemoteShutdownMode = typeof IbkrBridgeRemoteShutdownMode[keyof typeof IbkrBridgeRemoteShutdownMode];
+
+
+export const IbkrBridgeRemoteShutdownMode = {
+  'desktop-agent': 'desktop-agent',
+} as const;
+
+export interface IbkrBridgeRemoteShutdown {
+  action: IbkrBridgeRemoteShutdownAction;
+  desktop: IbkrRemoteDesktop;
+  expiresAt: string;
+  jobId: string;
+  mode: IbkrBridgeRemoteShutdownMode;
+  statusToken: string;
+}
+
+export interface IbkrBridgeRemoteShutdownResponse {
+  helperVersion: string;
+  shutdown: IbkrBridgeRemoteShutdown;
+}
+
+export type IbkrRemoteDesktopJobStatusResponseAction = typeof IbkrRemoteDesktopJobStatusResponseAction[keyof typeof IbkrRemoteDesktopJobStatusResponseAction];
+
+
+export const IbkrRemoteDesktopJobStatusResponseAction = {
+  launch: 'launch',
+  shutdown: 'shutdown',
+} as const;
+
+export type IbkrRemoteDesktopJobStatusResponseState = typeof IbkrRemoteDesktopJobStatusResponseState[keyof typeof IbkrRemoteDesktopJobStatusResponseState];
+
+
+export const IbkrRemoteDesktopJobStatusResponseState = {
+  queued: 'queued',
+  claimed: 'claimed',
+  completed: 'completed',
+  failed: 'failed',
+  expired: 'expired',
+} as const;
+
+export interface IbkrRemoteDesktopJobStatusResponse {
+  action: IbkrRemoteDesktopJobStatusResponseAction;
+  claimedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  expiresAt: string;
+  failedAt: string | null;
+  jobId: string;
+  message: string | null;
+  ok: boolean;
+  state: IbkrRemoteDesktopJobStatusResponseState;
+}
+
+export interface IbkrBridgeActivationStatusResponse {
+  active: boolean;
+  canceled: boolean;
+  expiresAt: string;
+}
+
+export interface IbkrBridgeActivationCancelResponse {
+  canceled: boolean;
+  ok: boolean;
+}
+
+export type IbkrBridgeLoginKeyReadResponseAlgorithm = typeof IbkrBridgeLoginKeyReadResponseAlgorithm[keyof typeof IbkrBridgeLoginKeyReadResponseAlgorithm];
+
+
+export const IbkrBridgeLoginKeyReadResponseAlgorithm = {
+  'RSA-OAEP-256-CHUNKED': 'RSA-OAEP-256-CHUNKED',
+} as const;
+
+export interface IbkrBridgeLoginKeyReadResponse {
+  ready: boolean;
+  algorithm?: IbkrBridgeLoginKeyReadResponseAlgorithm;
+  expiresAt?: string;
+  helperInstanceId?: string;
+  publicKeyJwk?: JsonObject;
+  [key: string]: unknown;
+ }
+
+export type IbkrBridgeLoginEnvelopeClaimResponseEnvelopeAlgorithm = typeof IbkrBridgeLoginEnvelopeClaimResponseEnvelopeAlgorithm[keyof typeof IbkrBridgeLoginEnvelopeClaimResponseEnvelopeAlgorithm];
+
+
+export const IbkrBridgeLoginEnvelopeClaimResponseEnvelopeAlgorithm = {
+  'RSA-OAEP-256-CHUNKED': 'RSA-OAEP-256-CHUNKED',
+} as const;
+
+export type IbkrBridgeLoginEnvelopeClaimResponseEnvelope = {
+  algorithm: IbkrBridgeLoginEnvelopeClaimResponseEnvelopeAlgorithm;
+  ciphertextChunks: string[];
+};
+
+export interface IbkrBridgeLoginEnvelopeClaimResponse {
+  ready: boolean;
+  envelope?: IbkrBridgeLoginEnvelopeClaimResponseEnvelope;
+  [key: string]: unknown;
+ }
 
 export interface IbkrBridgeAttachResponse {
   runtimeOverrideActive: boolean;
@@ -3151,6 +3356,14 @@ export interface AlgoDeploymentsResponse {
   deployments: AlgoDeployment[];
 }
 
+export type UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation = typeof UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation[keyof typeof UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation];
+
+
+export const UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation = {
+  close: 'close',
+  wicks: 'wicks',
+} as const;
+
 export interface UpdateAlgoDeploymentStrategySettingsRequest {
   signalTimeframe: SignalMonitorTimeframe;
   /**
@@ -3158,6 +3371,22 @@ export interface UpdateAlgoDeploymentStrategySettingsRequest {
    * @maximum 50
    */
   timeHorizon: number;
+  bosConfirmation?: UpdateAlgoDeploymentStrategySettingsRequestBosConfirmation;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochAtrBuffer?: number;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochBodyExpansionAtr?: number;
+  /**
+   * @minimum 0
+   * @maximum 20
+   */
+  chochVolumeGate?: number;
 }
 
 export interface SignalMonitorProfile {

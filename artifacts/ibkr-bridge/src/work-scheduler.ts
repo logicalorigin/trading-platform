@@ -51,7 +51,11 @@ type LaneState = {
 
 type QueuedWork = {
   resolve: () => void;
+  reject: (error: Error) => void;
   queuedAt: number;
+  timeout: NodeJS.Timeout | null;
+  priority: number;
+  sequence: number;
 };
 
 export type BridgeSchedulerDiagnostics = Record<
@@ -72,7 +76,7 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
 > = {
   control: {
     concurrency: 1,
-    timeoutMs: 2_000,
+    timeoutMs: 5_000,
     queueCap: 1,
     backoffMs: 5_000,
     failureThreshold: 3,
@@ -86,28 +90,28 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
   },
   "market-subscriptions": {
     concurrency: 1,
-    timeoutMs: 6_000,
+    timeoutMs: 30_000,
     queueCap: 4,
     backoffMs: 8_000,
     failureThreshold: 3,
   },
   historical: {
     concurrency: 1,
-    timeoutMs: 12_000,
+    timeoutMs: 30_000,
     queueCap: 8,
     backoffMs: 15_000,
     failureThreshold: 3,
   },
   "options-meta": {
     concurrency: 1,
-    timeoutMs: 20_000,
+    timeoutMs: 45_000,
     queueCap: 4,
-    backoffMs: 60_000,
-    failureThreshold: 1,
+    backoffMs: 15_000,
+    failureThreshold: 3,
   },
   "option-quotes": {
     concurrency: 1,
-    timeoutMs: 8_000,
+    timeoutMs: 30_000,
     queueCap: 6,
     backoffMs: 10_000,
     failureThreshold: 3,
@@ -131,6 +135,7 @@ const queues: Record<BridgeWorkLane, QueuedWork[]> = {
   "options-meta": [],
   "option-quotes": [],
 };
+let queueSequence = 0;
 
 function emptyState(): LaneState {
   return {
@@ -350,11 +355,41 @@ function releaseLane(lane: BridgeWorkLane): void {
   const current = state[lane];
   current.active = Math.max(0, current.active - 1);
   const next = queues[lane].shift();
+  if (next?.timeout) {
+    clearTimeout(next.timeout);
+    next.timeout = null;
+  }
   refreshQueueState(lane);
   next?.resolve();
 }
 
-async function acquireLane(lane: BridgeWorkLane): Promise<void> {
+function removeQueuedWork(lane: BridgeWorkLane, queuedWork: QueuedWork): boolean {
+  const queue = queues[lane];
+  const index = queue.indexOf(queuedWork);
+  if (index < 0) {
+    return false;
+  }
+  queue.splice(index, 1);
+  refreshQueueState(lane);
+  return true;
+}
+
+function normalizePriority(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortLaneQueue(lane: BridgeWorkLane): void {
+  queues[lane].sort(
+    (left, right) => right.priority - left.priority || left.sequence - right.sequence,
+  );
+  refreshQueueState(lane);
+}
+
+async function acquireLane(
+  lane: BridgeWorkLane,
+  options: { timeoutMs: number; priority?: number },
+): Promise<void> {
   if (isBackedOff(lane)) {
     state[lane].rejected += 1;
     throw laneError(
@@ -372,19 +407,70 @@ async function acquireLane(lane: BridgeWorkLane): Promise<void> {
     return;
   }
 
+  const priority = normalizePriority(options.priority);
   if (queues[lane].length >= config.queueCap) {
+    const lowest = queues[lane].reduce<QueuedWork | null>((candidate, item) => {
+      if (!candidate) return item;
+      if (item.priority < candidate.priority) return item;
+      if (item.priority === candidate.priority && item.sequence > candidate.sequence) {
+        return item;
+      }
+      return candidate;
+    }, null);
+
+    if (!lowest || priority <= lowest.priority) {
+      current.rejected += 1;
+      throw laneError(
+        lane,
+        429,
+        "ibkr_bridge_lane_queue_full",
+        "Lane queue is full.",
+      );
+    }
+
+    removeQueuedWork(lane, lowest);
+    if (lowest.timeout) {
+      clearTimeout(lowest.timeout);
+      lowest.timeout = null;
+    }
     current.rejected += 1;
-    throw laneError(
-      lane,
-      429,
-      "ibkr_bridge_lane_queue_full",
-      "Lane queue is full.",
+    lowest.reject(
+      laneError(
+        lane,
+        429,
+        "ibkr_bridge_lane_preempted",
+        "Lane work was preempted by higher priority work.",
+      ),
     );
   }
 
-  await new Promise<void>((resolve) => {
-    queues[lane].push({ resolve, queuedAt: Date.now() });
-    refreshQueueState(lane);
+  await new Promise<void>((resolve, reject) => {
+    const queuedWork: QueuedWork = {
+      resolve,
+      reject,
+      queuedAt: Date.now(),
+      timeout: null,
+      priority,
+      sequence: queueSequence,
+    };
+    queueSequence += 1;
+    queuedWork.timeout = setTimeout(() => {
+      queuedWork.timeout = null;
+      if (!removeQueuedWork(lane, queuedWork)) {
+        return;
+      }
+      const error = laneError(
+        lane,
+        504,
+        "ibkr_bridge_lane_timeout",
+        `Lane timed out after ${options.timeoutMs}ms while queued.`,
+      );
+      state[lane].timedOut += 1;
+      queuedWork.reject(error);
+    }, options.timeoutMs);
+    queuedWork.timeout.unref?.();
+    queues[lane].push(queuedWork);
+    sortLaneQueue(lane);
   });
 
   if (isBackedOff(lane)) {
@@ -422,11 +508,15 @@ function recordLaneSuccess(lane: BridgeWorkLane): void {
 export async function runBridgeLane<T>(
   lane: BridgeWorkLane,
   work: (signal: AbortSignal) => Promise<T>,
-  options: { timeoutMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    priority?: number;
+    countsAgainstLaneHealth?: (error: unknown) => boolean;
+  } = {},
 ): Promise<T> {
-  await acquireLane(lane);
   const config = configFor(lane);
   const timeoutMs = Math.max(1, options.timeoutMs ?? config.timeoutMs);
+  await acquireLane(lane, { timeoutMs, priority: options.priority });
   const controller = new AbortController();
   let settled = false;
   let didTimeout = false;
@@ -475,7 +565,9 @@ export async function runBridgeLane<T>(
         operation.catch(() => {});
       }
     }
-    recordLaneFailure(lane, error);
+    if (didTimeout || options.countsAgainstLaneHealth?.(error) !== false) {
+      recordLaneFailure(lane, error);
+    }
     throw error;
   } finally {
     clearTimeout(timeout);

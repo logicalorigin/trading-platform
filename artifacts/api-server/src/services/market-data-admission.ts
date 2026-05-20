@@ -59,6 +59,10 @@ type AdmissionEvent = {
   fallbackProvider?: MarketDataFallbackProvider | null;
 };
 
+export type MarketDataLeaseChangeEvent = AdmissionEvent & {
+  lease: MarketDataLease;
+};
+
 type AdmissionCounters = {
   admitted: number;
   rejected: number;
@@ -81,6 +85,7 @@ export type MarketDataAdmissionResult = {
     reserveLines: number;
     usableLines: number;
     configuredMaxLines: number;
+    targetFillLines: number;
     bridgeLineBudget: number | null;
     bridgeLineBudgetObservedAt: string | null;
     budgetSource: "app-config" | "bridge-diagnostics";
@@ -147,7 +152,7 @@ const STRICT_POOL_IDS = new Set<MarketDataPoolId>([
 
 const MAX_RECENT_EVENTS = 100;
 const DEFAULT_MAX_LINES = 200;
-const DEFAULT_RESERVE_LINES = 15;
+const DEFAULT_RESERVE_LINES = 0;
 const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
 const DEFAULT_EXECUTION_LINES = 12;
 const DEFAULT_ACCOUNT_MONITOR_LINES = 10;
@@ -158,6 +163,7 @@ const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = 100;
 const BRIDGE_LINE_BUDGET_TTL_MS = 30_000;
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV = "OPTIONS_FLOW_SCANNER_LINE_BUDGET";
 const OPTIONS_FLOW_SCANNER_CONCURRENCY_ENV = "OPTIONS_FLOW_SCANNER_CONCURRENCY";
+const TARGET_FILL_LINES_ENV = "IBKR_MARKET_DATA_TARGET_FILL_LINES";
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   execution: "IBKR_MARKET_DATA_EXECUTION_LINES",
@@ -171,6 +177,9 @@ const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
 const leases = new Map<string, MarketDataLease>();
 const countersByIntent = new Map<MarketDataIntent, AdmissionCounters>();
 const recentEvents: AdmissionEvent[] = [];
+const leaseChangeListeners = new Set<
+  (event: MarketDataLeaseChangeEvent) => void
+>();
 let nextLeaseId = 1;
 let runtimeFlowScannerLineBudget: number | null = null;
 let runtimeFlowScannerConcurrency: number | null = null;
@@ -342,6 +351,10 @@ export function getMarketDataAdmissionBudget() {
     bridgeLineBudget === null
       ? configuredMaxLines
       : Math.min(configuredMaxLines, bridgeLineBudget.value);
+  const targetFillLines = Math.min(
+    maxLines,
+    readPositiveIntegerEnv(TARGET_FILL_LINES_ENV, maxLines),
+  );
   const reserveLines = Math.min(
     maxLines - 1,
     readNonNegativeIntegerEnv(
@@ -364,6 +377,7 @@ export function getMarketDataAdmissionBudget() {
     reserveLines,
     usableLines,
     configuredMaxLines,
+    targetFillLines,
     bridgeLineBudget: bridgeLineBudget?.value ?? null,
     bridgeLineBudgetObservedAt: bridgeLineBudget
       ? new Date(bridgeLineBudget.observedAt).toISOString()
@@ -404,17 +418,45 @@ function getCounters(intent: MarketDataIntent): AdmissionCounters {
   return created;
 }
 
-function recordEvent(event: Omit<AdmissionEvent, "at">): void {
-  recentEvents.push({
+function recordEvent(event: Omit<AdmissionEvent, "at">): AdmissionEvent {
+  const recorded = {
     at: new Date().toISOString(),
     ...event,
-  });
+  };
+  recentEvents.push(recorded);
   if (recentEvents.length > MAX_RECENT_EVENTS) {
     recentEvents.splice(0, recentEvents.length - MAX_RECENT_EVENTS);
   }
 
   const counters = getCounters(event.intent);
   counters[event.action] += 1;
+  return recorded;
+}
+
+function cloneLease(lease: MarketDataLease): MarketDataLease {
+  return {
+    ...lease,
+    lineIds: [...lease.lineIds],
+  };
+}
+
+function notifyLeaseChange(event: MarketDataLeaseChangeEvent): void {
+  leaseChangeListeners.forEach((listener) => {
+    try {
+      listener(event);
+    } catch {
+      // Lease observers are maintenance hooks; they must not affect admission.
+    }
+  });
+}
+
+export function subscribeMarketDataLeaseChanges(
+  listener: (event: MarketDataLeaseChangeEvent) => void,
+): () => void {
+  leaseChangeListeners.add(listener);
+  return () => {
+    leaseChangeListeners.delete(listener);
+  };
 }
 
 function normalizeProviderContractId(value: string | null | undefined): string {
@@ -494,9 +536,21 @@ function activeLineIds(
   return result;
 }
 
+function activeLineIdsForOwnerPrefix(ownerPrefix: string): Set<string> {
+  expireMarketDataLeases();
+  const result = new Set<string>();
+  leases.forEach((lease) => {
+    if (!lease.owner.startsWith(ownerPrefix)) {
+      return;
+    }
+    lease.lineIds.forEach((id) => result.add(id));
+  });
+  return result;
+}
+
 function releaseLease(lease: MarketDataLease, action: AdmissionEvent["action"], reason: string): void {
   leases.delete(lease.id);
-  recordEvent({
+  const event = recordEvent({
     action,
     owner: lease.owner,
     intent: lease.intent,
@@ -505,6 +559,10 @@ function releaseLease(lease: MarketDataLease, action: AdmissionEvent["action"], 
     lineCost: lease.lineCost,
     reason,
     fallbackProvider: lease.fallbackProvider,
+  });
+  notifyLeaseChange({
+    ...event,
+    lease: cloneLease(lease),
   });
 }
 
@@ -714,9 +772,25 @@ export function admitMarketDataLeases(input: {
     let neededLineCount = newLineIds.length;
 
     if (STRICT_POOL_IDS.has(pool) && neededLineCount > 0) {
-      const poolLines = activeLineIds({ pool });
-      const newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
-      const poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
+      let poolLines = activeLineIds({ pool });
+      let newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+      let poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
+      if (
+        pool === "flow-scanner" &&
+        poolLines.size + newPoolLineIds.length > poolCap
+      ) {
+        demoted.push(
+          ...demoteLowerPriorityLeases({
+            owner: input.owner,
+            priority,
+            neededLineCount: newPoolLineIds.length,
+            intent: input.intent,
+          }),
+        );
+        poolLines = activeLineIds({ pool });
+        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
+      }
       if (poolLines.size + newPoolLineIds.length > poolCap) {
         const reason = pool === "automation" ? "automation-cap" : "pool-cap";
         rejected.push({ request, reason, fallbackProvider });
@@ -781,7 +855,7 @@ export function admitMarketDataLeases(input: {
     };
     leases.set(lease.id, lease);
     admitted.push(lease);
-    recordEvent({
+    const event = recordEvent({
       action: "admitted",
       owner: lease.owner,
       intent: lease.intent,
@@ -789,6 +863,10 @@ export function admitMarketDataLeases(input: {
       instrumentKey: lease.instrumentKey,
       lineCost: lease.lineCost,
       fallbackProvider: lease.fallbackProvider,
+    });
+    notifyLeaseChange({
+      ...event,
+      lease: cloneLease(lease),
     });
   });
 
@@ -863,6 +941,8 @@ export function getMarketDataAdmissionDiagnostics() {
   const automationLines = activeLineIds({ intent: "automation-live" });
   const accountMonitorLines = activeLineIds({ intent: "account-monitor-live" });
   const flowScannerLines = activeLineIds({ intent: "flow-scanner-live" });
+  const convenienceLines = activeLineIds({ pool: "convenience" });
+  const fillerLines = activeLineIdsForOwnerPrefix("watchlist-prewarm-filler");
   const intentUsage = Object.fromEntries(
     (Object.keys(INTENT_PRIORITY) as MarketDataIntent[]).map((intent) => [
       intent,
@@ -933,6 +1013,8 @@ export function getMarketDataAdmissionDiagnostics() {
       0,
       budget.flowScannerLineCap - flowScannerLines.size,
     ),
+    convenienceLineCount: convenienceLines.size,
+    fillerLineCount: fillerLines.size,
     poolUsage,
     leaseCount: leases.size,
     intentUsage,

@@ -142,6 +142,35 @@ function normalizeProviderContractIds(providerContractIds: string[]): string[] {
   ).sort();
 }
 
+function isIbkrResolvableOptionProviderContractId(
+  providerContractId: string,
+): boolean {
+  if (providerContractId.startsWith("O:")) {
+    return false;
+  }
+  if (!providerContractId.startsWith("twsopt:")) {
+    return true;
+  }
+  try {
+    const payload = JSON.parse(
+      Buffer.from(providerContractId.slice("twsopt:".length), "base64url").toString(
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    return payload["v"] === 1;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeResolvableProviderContractIds(
+  providerContractIds: string[],
+): string[] {
+  return normalizeProviderContractIds(providerContractIds).filter(
+    isIbkrResolvableOptionProviderContractId,
+  );
+}
+
 function normalizeUnderlying(value: string | null | undefined): string | null {
   const normalized = normalizeSymbol(value ?? "");
   return normalized || null;
@@ -563,7 +592,7 @@ export function getCurrentBridgeOptionQuoteSnapshots(input: {
   providerContractIds: string[];
 }): OptionQuoteWithSource[] {
   return getPayloadForProviderContractIds(
-    input.providerContractIds,
+    normalizeResolvableProviderContractIds(input.providerContractIds),
     normalizeUnderlying(input.underlying),
   ).quotes;
 }
@@ -579,8 +608,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
 }): Promise<OptionQuoteSnapshotPayload> {
   const requestedAt = Date.now();
   const underlying = normalizeUnderlying(input.underlying);
-  const normalizedProviderContractIds = normalizeProviderContractIds(
+  const requestedProviderContractIds = normalizeProviderContractIds(
     input.providerContractIds,
+  );
+  const normalizedProviderContractIds = requestedProviderContractIds.filter(
+    isIbkrResolvableOptionProviderContractId,
   );
   const owner =
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
@@ -594,6 +626,31 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "polygon";
   const requiresGreeks = input.requiresGreeks ?? true;
+  if (!normalizedProviderContractIds.length) {
+    return {
+      underlying,
+      quotes: [],
+      transport: null,
+      delayed: false,
+      fallbackUsed: false,
+      debug: {
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        requestedCount: requestedProviderContractIds.length,
+        acceptedCount: 0,
+        rejectedCount: requestedProviderContractIds.length,
+        returnedCount: 0,
+        bridgeChunks: 0,
+        providerMode: null,
+        liveMarketDataAvailable: null,
+        errorMessage: requestedProviderContractIds.length
+          ? "No IBKR-resolvable option providerContractIds were requested."
+          : null,
+        acceptedProviderContractIds: [],
+        missingProviderContractIds: requestedProviderContractIds,
+      },
+    };
+  }
   const admission = admitMarketDataLeases({
     owner,
     intent,
@@ -645,10 +702,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       debug: {
         totalMs: Math.max(0, Date.now() - requestedAt),
         upstreamMs: null,
-        requestedCount: normalizedProviderContractIds.length,
+        requestedCount: requestedProviderContractIds.length,
         acceptedCount: admittedProviderContractIds.length,
         rejectedCount:
-          normalizedProviderContractIds.length - admittedProviderContractIds.length,
+          requestedProviderContractIds.length - admittedProviderContractIds.length,
         returnedCount: cachedQuotes.quotes.length,
         bridgeChunks: bridgeChunks.length,
         ...providerDebug,
@@ -736,10 +793,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         hydrateProviderContractIds.length > 0
           ? Math.max(0, Date.now() - upstreamStartedAt)
           : null,
-      requestedCount: normalizedProviderContractIds.length,
+      requestedCount: requestedProviderContractIds.length,
       acceptedCount: admittedProviderContractIds.length,
       rejectedCount:
-        normalizedProviderContractIds.length - admittedProviderContractIds.length,
+        requestedProviderContractIds.length - admittedProviderContractIds.length,
       returnedCount: payload.quotes.length,
       bridgeChunks: bridgeChunks.length,
       ...providerDebug,
@@ -763,7 +820,7 @@ export function subscribeBridgeOptionQuoteSnapshots(
   },
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ): () => void {
-  const normalizedProviderContractIds = normalizeProviderContractIds(
+  const normalizedProviderContractIds = normalizeResolvableProviderContractIds(
     input.providerContractIds,
   );
   if (!normalizedProviderContractIds.length) {

@@ -5,13 +5,21 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { IbkrBridgeCredentialHandoff } from './ibkrBridgeCredentialHandoff';
+import type { IbkrBridgeLauncherResponseAutoLoginMode } from './ibkrBridgeLauncherResponseAutoLoginMode';
 
 export interface IbkrBridgeLauncherResponse {
   activationId: string;
   apiBaseUrl: string;
+  /** @nullable */
+  autoLoginConfigured: boolean | null;
+  autoLoginLaunchUrl: string;
+  autoLoginMode: IbkrBridgeLauncherResponseAutoLoginMode;
+  autoLoginSupported: boolean;
   bridgeToken: string;
   /** @nullable */
   bundleUrl: string | null;
+  credentialHandoff: IbkrBridgeCredentialHandoff;
   helperUrl: string;
   helperVersion: string;
   launchUrl: string;

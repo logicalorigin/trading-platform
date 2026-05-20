@@ -53,6 +53,22 @@ function optionQuote(
   };
 }
 
+function structuredOptionProviderContractId(): string {
+  return `twsopt:${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      u: "META",
+      e: "20260522",
+      s: 605,
+      r: "C",
+      x: "SMART",
+      tc: "META",
+      m: 100,
+    }),
+    "utf8",
+  ).toString("base64url")}`;
+}
+
 test.afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __setBridgeOptionQuoteClientForTests(null);
@@ -228,6 +244,93 @@ test("option quote snapshots expose custom admission results for background call
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 0);
   assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("option quote snapshots ignore Polygon option tickers before bridge hydration", async () => {
+  const bridgeRequests: string[][] = [];
+  const structuredProviderContractId = structuredOptionProviderContractId();
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "META",
+    providerContractIds: [
+      "O:META260522C00605000",
+      "1001",
+      structuredProviderContractId,
+    ],
+    owner: "flow-scanner:META",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.deepEqual(bridgeRequests, [["1001", structuredProviderContractId]]);
+  assert.equal(payload.debug?.requestedCount, 3);
+  assert.equal(payload.debug?.acceptedCount, 2);
+  assert.equal(payload.debug?.rejectedCount, 1);
+  assert.deepEqual(payload.debug?.acceptedProviderContractIds, [
+    "1001",
+    structuredProviderContractId,
+  ]);
+  assert.deepEqual(
+    payload.quotes.map((quote) => quote.providerContractId),
+    ["1001", structuredProviderContractId],
+  );
+});
+
+test("option quote stream subscriptions do not admit Polygon option tickers", async () => {
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [];
+    },
+    streamOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return () => {};
+    },
+  });
+
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    {
+      underlying: "META",
+      providerContractIds: ["O:META260522C00605000", "1001"],
+      owner: "trade-option-visible:META",
+    },
+    () => {},
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  unsubscribe();
+
+  assert.deepEqual(bridgeRequests, [["1001"]]);
+  assert.equal(diagnostics.activeOptionLineCount, 1);
+  assert.equal(diagnostics.activeLineCount, 2);
 });
 
 test("flow scanner option quote snapshots are not blocked by option-chain governor backoff", async () => {

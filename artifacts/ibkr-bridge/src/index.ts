@@ -44,7 +44,7 @@ const server = app.listen(port, (err) => {
   if (prewarmSymbols.length > 0) {
     setTimeout(() => {
       void ibkrBridgeService
-        .prewarmQuoteSubscriptions(prewarmSymbols)
+        .prewarmQuoteSubscriptions(prewarmSymbols, "bridge-startup")
         .catch((error) => {
           logger.warn({ err: error }, "IBKR bridge prewarm scheduling failed");
         });

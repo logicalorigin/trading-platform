@@ -49,6 +49,19 @@ export function __setIbkrBridgeClientFactoryForTests(
   lastBridgeHealthRefreshPromise = null;
 }
 
+export function primeBridgeHealthForSession(health: unknown): void {
+  if (!health || typeof health !== "object") {
+    return;
+  }
+
+  const snapshot = { ...(health as Record<string, unknown>) };
+  if (!snapshot.updatedAt) {
+    snapshot.updatedAt = new Date().toISOString();
+  }
+  lastKnownBridgeHealth = snapshot as BridgeHealthSnapshot;
+  lastBridgeHealthRefreshPromise = null;
+}
+
 function positiveEnvInt(name: string, fallback: number): number {
   const configured = Number.parseInt(process.env[name] ?? String(fallback), 10);
   return Number.isFinite(configured) && configured > 0 ? configured : fallback;
@@ -72,6 +85,10 @@ function sessionBridgeHealthStaleTimeoutMs(): number {
 
 function bridgeHealthFreshMs(): number {
   return positiveEnvInt("IBKR_BRIDGE_HEALTH_FRESH_MS", 30_000);
+}
+
+function bridgeUnhealthyCacheMs(): number {
+  return positiveEnvInt("IBKR_BRIDGE_UNHEALTHY_CACHE_MS", 2_000);
 }
 
 function bridgeStreamFreshMs(): number {
@@ -180,6 +197,49 @@ function hasCurrentBridgeDiagnostics(health: BridgeHealthSnapshot): boolean {
   return Boolean(health.diagnostics && typeof health.diagnostics === "object");
 }
 
+function bridgeHealthAgeMs(health: BridgeHealthSnapshot): number | null {
+  const updatedAtMs = timestampMs(health.updatedAt);
+  return updatedAtMs === null ? null : Math.max(0, Date.now() - updatedAtMs);
+}
+
+function isOperationalBridgeHealth(health: BridgeHealthSnapshot): boolean {
+  const brokerServerConnected =
+    health.brokerServerConnected ?? Boolean(health.connected);
+  const accountsLoaded =
+    brokerServerConnected &&
+    Array.isArray(health.accounts) &&
+    health.accounts.length > 0;
+  const configuredLiveMarketDataMode =
+    health.marketDataMode === "live" ||
+    (health.marketDataMode == null && health.liveMarketDataAvailable === true);
+
+  return Boolean(
+    health.connected &&
+      brokerServerConnected &&
+      health.authenticated &&
+      accountsLoaded &&
+      configuredLiveMarketDataMode,
+  );
+}
+
+function bridgeHealthCacheMs(health: BridgeHealthSnapshot): number {
+  return isOperationalBridgeHealth(health)
+    ? bridgeHealthFreshMs()
+    : bridgeUnhealthyCacheMs();
+}
+
+function shouldRefreshCachedBridgeHealth(health: BridgeHealthSnapshot): boolean {
+  const ageMs = bridgeHealthAgeMs(health);
+  return ageMs === null || ageMs > bridgeHealthCacheMs(health);
+}
+
+function shouldScheduleCachedBridgeHealthRefresh(
+  health: BridgeHealthSnapshot,
+): boolean {
+  const ageMs = bridgeHealthAgeMs(health);
+  return ageMs === null || ageMs > Math.floor(bridgeHealthCacheMs(health) / 2);
+}
+
 function annotateBridgeHealth(
   health: BridgeHealthSnapshot,
   options: {
@@ -201,21 +261,19 @@ function annotateBridgeHealth(
     "subscriptions" in health.diagnostics
       ? (health.diagnostics as Record<string, unknown>)["subscriptions"]
       : null;
-  const bridgeQuoteStreamAgeMs =
+  const bridgeQuoteDataAgeMs =
     options.bridgeQuoteDiagnostics?.streamActive === true
-      ? (options.bridgeQuoteDiagnostics.lastSignalAgeMs ??
+      ? (options.bridgeQuoteDiagnostics.dataFreshnessAgeMs ??
         options.bridgeQuoteDiagnostics.lastEventAgeMs)
       : null;
   const desiredSymbolCount = Math.max(
     options.bridgeQuoteDiagnostics?.unionSymbolCount ?? 0,
-    numericRecordValue(subscriptions, "activeQuoteSubscriptions") ?? 0,
-    numericRecordValue(subscriptions, "prewarmSymbolCount") ?? 0,
     numericRecordValue(subscriptions, "quoteListenerCount") ?? 0,
   );
   const lastStreamEventAgeMs = minFinite(
     numericRecordValue(subscriptions, "lastQuoteAgeMs"),
     numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
-    bridgeQuoteStreamAgeMs,
+    bridgeQuoteDataAgeMs,
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
@@ -379,8 +437,7 @@ export async function getBridgeHealthForSession(): Promise<AnnotatedBridgeHealth
     bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
   });
   if (
-    (annotated.healthAgeMs === null ||
-      annotated.healthAgeMs > bridgeHealthFreshMs()) &&
+    shouldRefreshCachedBridgeHealth(lastKnownBridgeHealth) &&
     !lastBridgeHealthRefreshPromise &&
     !isBridgeWorkBackedOff("health")
   ) {
@@ -394,10 +451,7 @@ export async function getBridgeHealthForSession(): Promise<AnnotatedBridgeHealth
       });
     }
   }
-  if (
-    annotated.healthAgeMs === null ||
-    annotated.healthAgeMs > Math.floor(bridgeHealthFreshMs() / 2)
-  ) {
+  if (shouldScheduleCachedBridgeHealthRefresh(lastKnownBridgeHealth)) {
     scheduleBridgeHealthRefreshForSession("session_background");
   }
 
@@ -427,17 +481,21 @@ export async function getRuntimeBridgeHealthState() {
   const cachedBridgeHealthAgeMs =
     lastKnownBridgeHealth == null
       ? null
-      : (() => {
-          const updatedAtMs = timestampMs(lastKnownBridgeHealth.updatedAt);
-          return updatedAtMs === null ? null : Math.max(0, Date.now() - updatedAtMs);
-        })();
+      : bridgeHealthAgeMs(lastKnownBridgeHealth);
+  const cachedBridgeHealthMaxAgeMs =
+    lastKnownBridgeHealth === null
+      ? 0
+      : isOperationalBridgeHealth(lastKnownBridgeHealth)
+        ? runtimeDiagnosticsStaleHealthCacheMs()
+        : bridgeUnhealthyCacheMs();
   const useCachedBridgeHealth =
     lastKnownBridgeHealth !== null &&
     cachedBridgeHealthAgeMs !== null &&
-    cachedBridgeHealthAgeMs <= runtimeDiagnosticsStaleHealthCacheMs();
+    cachedBridgeHealthAgeMs <= cachedBridgeHealthMaxAgeMs;
   if (
     useCachedBridgeHealth &&
-    cachedBridgeHealthAgeMs > Math.floor(bridgeHealthFreshMs() / 2)
+    lastKnownBridgeHealth !== null &&
+    shouldScheduleCachedBridgeHealthRefresh(lastKnownBridgeHealth)
   ) {
     scheduleBridgeHealthRefreshForSession("runtime_background");
   }

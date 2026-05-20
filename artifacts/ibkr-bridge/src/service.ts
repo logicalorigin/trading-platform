@@ -358,6 +358,7 @@ export class IbkrBridgeService {
     outsideRth?: boolean;
     source?: HistoryDataSource;
     exchange?: string | null;
+    priority?: number;
   }): Promise<BrokerBarSnapshot[]> {
     return this.ensureProvider().getHistoricalBars(input);
   }
@@ -447,9 +448,12 @@ export class IbkrBridgeService {
     return this.ensureProvider().searchTickers(input);
   }
 
-  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+  async prewarmQuoteSubscriptions(
+    symbols: string[],
+    owner?: string | null,
+  ): Promise<void> {
     if (!this.provider?.prewarmQuoteSubscriptions) return;
-    await this.provider.prewarmQuoteSubscriptions(symbols);
+    await this.provider.prewarmQuoteSubscriptions(symbols, owner);
   }
 
   async subscribeQuoteStream(
@@ -499,6 +503,7 @@ export class IbkrBridgeService {
       outsideRth?: boolean;
       source?: HistoryDataSource;
       exchange?: string | null;
+      priority?: number;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,

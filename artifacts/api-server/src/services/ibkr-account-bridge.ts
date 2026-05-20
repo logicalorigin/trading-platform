@@ -11,6 +11,7 @@ import {
   isTransientBridgeWorkError,
   runBridgeWork,
 } from "./bridge-governor";
+import { getBridgeHealthForSession } from "./platform-bridge-health";
 
 type CacheEntry<T> = {
   payload: T;
@@ -94,6 +95,29 @@ async function runCachedAccountRead<T extends unknown[]>({
     isUsableStale(cached, staleTtlMs)
   ) {
     return cached.payload;
+  }
+
+  const health = await getBridgeHealthForSession().catch(() => null);
+  const accountBridgeReady = Boolean(
+    health?.bridgeReachable &&
+      health.socketConnected &&
+      health.brokerServerConnected &&
+      health.authenticated &&
+      health.accountsLoaded,
+  );
+  if (!accountBridgeReady) {
+    if (cached && isUsableStale(cached, staleTtlMs)) {
+      return cached.payload;
+    }
+    logger.debug(
+      {
+        label,
+        key,
+        strictReason: health?.strictReason ?? "health_unavailable",
+      },
+      "Skipping IBKR account bridge read until Gateway is ready",
+    );
+    return [] as unknown as T;
   }
 
   const promise = runBridgeWork("account", work)

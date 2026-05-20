@@ -67,9 +67,13 @@ export function isRequestScopedBridgeHealthError(value: unknown): boolean {
     (message.includes("error validating request") &&
       message.includes("market data")) ||
     message.includes("no security definition has been found") ||
+    message.includes("requested market data is not subscribed") ||
     (message.includes("can't find eid") && message.includes("tickerid")) ||
     message.includes("ibkr_bridge_lane_timeout") ||
     message.includes("lane timed out after") ||
+    (message.includes("historical market data service") &&
+      message.includes("query returned no data")) ||
+    message.includes("hmds query returned no data") ||
     (message.includes("historical market data service") &&
       message.includes("query cancelled")) ||
     isCapacityPressureBridgeError(message)
