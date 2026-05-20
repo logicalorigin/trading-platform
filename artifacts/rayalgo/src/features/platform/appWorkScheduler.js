@@ -47,6 +47,7 @@ export const buildPlatformWorkSchedule = ({
   brokerAuthenticated = false,
   automationEnabled = false,
   tradingEnabled = false,
+  backgroundResumeReady = false,
 } = {}) => {
   const screen = normalizeScreen(activeScreen);
   const visible = Boolean(pageVisible);
@@ -81,13 +82,16 @@ export const buildPlatformWorkSchedule = ({
   const flow = screen === "flow";
   const trade = screen === "trade";
   const account = screen === "account";
+  const historyScreen = market || flow || trade || account;
+  const broadFlowAggregateReaderAllowed = Boolean(
+    backgroundResumeReady && memoryAllowsForeground,
+  );
   const broadFlowAllowed = Boolean(
     sessionReady &&
-      firstScreenReady &&
       visible &&
-      (market || flow) &&
-      backgroundIbkr,
+      (flow || broadFlowAggregateReaderAllowed),
   );
+  const backgroundHistoryReady = screenWarmupPhase === "ready";
   const accountRealtimeCritical = Boolean(
     criticalIbkr &&
       (account ||
@@ -96,6 +100,7 @@ export const buildPlatformWorkSchedule = ({
         tradingEnabled ||
         foregroundIbkr),
   );
+  const watchlistQuoteStream = Boolean(sessionReady && foregroundIbkr);
 
   return {
     pressure: ibkrWorkPressure,
@@ -123,6 +128,7 @@ export const buildPlatformWorkSchedule = ({
       memoryAllowsBackground,
     },
     streams: {
+      watchlistQuoteStream,
       marketStockAggregates: Boolean(foregroundIbkr && market),
       accountRealtime: accountRealtimeCritical,
       accountRealtimeCritical,
@@ -130,7 +136,7 @@ export const buildPlatformWorkSchedule = ({
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
       lowPriorityHistory: Boolean(
-        sessionReady && backgroundIbkr && firstScreenReady,
+        sessionReady && backgroundIbkr && backgroundHistoryReady && historyScreen,
       ),
     },
     resume: {
@@ -140,7 +146,7 @@ export const buildPlatformWorkSchedule = ({
     },
     hiddenScreenPreload: {
       codeOnly: Boolean(sessionReady && firstScreenReady && memoryAllowsForeground),
-      mountScreens: Boolean(backgroundIbkr && firstScreenReady),
+      mountScreens: false,
     },
   };
 };

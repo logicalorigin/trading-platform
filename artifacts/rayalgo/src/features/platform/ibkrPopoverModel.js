@@ -75,6 +75,26 @@ const HEALTHY_STATUS_KEYS = new Set([
   "quiet",
 ]);
 
+const CONNECTION_PRIORITY_ISSUES = new Set([
+  "misconfigured",
+  "competing",
+  "offline",
+  "login-required",
+  "checking",
+  "legacy-env",
+]);
+
+const STREAM_PRIORITY_ISSUES = new Set([
+  "capacity-limited",
+  "delayed",
+  "market-closed",
+  "no-subscribers",
+  "quote-stream-reconnecting",
+  "quiet",
+  "stale",
+  "stream-gaps",
+]);
+
 const POLYGON_STATUS_META = {
   ok: { label: "OK", tone: T.green },
   degraded: { label: "Degraded", tone: T.amber },
@@ -99,6 +119,10 @@ const buildLineUsageRows = (admission, lineUsageSnapshot) => {
   return {
     available: normalized.available,
     summary: normalized.summary,
+    activeLineCount: normalized.activeLineCount,
+    requestedLineCount: normalized.requestedLineCount,
+    pendingLineCount: normalized.pendingLineCount,
+    requestedSummary: normalized.requestedSummary,
     demandSummary: normalized.demandSummary,
     bridgeSummary: normalized.bridgeSummary,
     warnings: normalized.warnings,
@@ -106,7 +130,51 @@ const buildLineUsageRows = (admission, lineUsageSnapshot) => {
     bridge: normalized.bridge,
     drift: normalized.drift,
     warmup: normalized.warmup,
+    allocation: normalized.allocation,
     pressure: normalized.pressure,
+  };
+};
+
+const buildCompactLineUsage = (lineUsage) => {
+  if (!lineUsage?.available) {
+    return null;
+  }
+
+  const totalRow =
+    lineUsage.rows?.find((row) => row.id === "total") ||
+    lineUsage.rows?.find((row) => Number.isFinite(row.used));
+  const source = totalRow || lineUsage.bridge;
+  const used = Number.isFinite(source?.used) ? Math.max(0, source.used) : null;
+  const allocation = lineUsage.allocation || {};
+  const capSource =
+    allocation.targetFillLines ??
+    source?.effectiveCap ??
+    source?.cap;
+  const cap = Number.isFinite(capSource) ? Math.max(0, capSource) : null;
+  const freeSource =
+    allocation.remainingToTargetLineCount ??
+    source?.free ??
+    (cap != null && used != null ? cap - used : null);
+  const free = Number.isFinite(freeSource) ? Math.max(0, freeSource) : null;
+  const percent =
+    cap && used != null
+      ? Math.max(0, Math.min(100, (used / cap) * 100))
+      : 0;
+  const state =
+    lineUsage.bridge?.streamState ||
+    source?.streamState ||
+    (free != null && free <= 0 ? "capacity-limited" : "healthy");
+
+  return {
+    used,
+    cap,
+    free,
+    percent,
+    summary:
+      Number.isFinite(used) && Number.isFinite(cap)
+        ? `${formatHeaderCount(used)} / ${formatHeaderCount(cap)}`
+        : lineUsage.summary,
+    tone: source?.tone || streamStateTokenVar(state),
   };
 };
 
@@ -139,6 +207,42 @@ const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
       wrap: polygon?.status === "degraded",
     },
   ];
+};
+
+const getIssueSeverity = (issue) => {
+  if (!issue || issue.key === "healthy" || issue.iconKey !== "alert") {
+    return "healthy";
+  }
+  if (
+    issue.key === "stream-gaps" ||
+    issue.key === "quote-stream-reconnecting" ||
+    issue.key === "legacy-env"
+  ) {
+    return "warning";
+  }
+  return "error";
+};
+
+const getPriorityDetailGroup = ({ issue, healthStatus, streamStateReason }) => {
+  if (!issue || issue.severity === "healthy") {
+    return null;
+  }
+  if (
+    issue.key === "reconnecting" &&
+    /^gateway_/.test(String(streamStateReason || ""))
+  ) {
+    return "connection";
+  }
+  if (CONNECTION_PRIORITY_ISSUES.has(issue.key) || CONNECTION_PRIORITY_ISSUES.has(healthStatus)) {
+    return "connection";
+  }
+  if (STREAM_PRIORITY_ISSUES.has(issue.key) || STREAM_PRIORITY_ISSUES.has(healthStatus)) {
+    return "stream";
+  }
+  if (issue.key === "reconnecting") {
+    return "stream";
+  }
+  return null;
 };
 
 export const buildHeaderIbkrPopoverModel = ({
@@ -296,6 +400,7 @@ export const buildHeaderIbkrPopoverModel = ({
     canonicalStreamState === "quiet" && !streamQuoteStandby && !streamMarketClosed;
   const streamCapacityLimited = canonicalStreamState === "capacity-limited";
   const streamReconnecting = canonicalStreamState === "reconnecting";
+  const streamChecking = canonicalStreamState === "checking";
   const streamStale =
     canonicalStreamState === "stale" ||
     streamCapacityLimited ||
@@ -312,6 +417,15 @@ export const buildHeaderIbkrPopoverModel = ({
     canonicalStreamState === "healthy" ||
     streamFreshByCounters ||
     (streamActive && streamFresh === true);
+  const streamCountAvailable =
+    Number.isFinite(streamConsumerCount) &&
+    Number.isFinite(streamSymbolCount) &&
+    (streamConsumerCount > 0 || streamSymbolCount > 0);
+  const streamLiveValue = streamCountAvailable
+    ? `${formatHeaderCount(streamConsumerCount)} / ${formatHeaderCount(
+        streamSymbolCount,
+      )}`
+    : "Live";
   if (canonicalizeStreamState(health.status, "offline") === "no-subscribers" && streamLiveActive) {
     health = {
       status: "healthy",
@@ -344,6 +458,7 @@ export const buildHeaderIbkrPopoverModel = ({
       selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
       lineUsageSnapshot,
     );
+  const compactLineUsage = buildCompactLineUsage(lineUsage);
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {
@@ -374,6 +489,14 @@ export const buildHeaderIbkrPopoverModel = ({
       iconKey: "alert",
       autoOpenDetails: false,
     };
+  } else if (streamReconnecting && streamActive && streamFresh !== true) {
+    issue = {
+      key: "quote-stream-reconnecting",
+      label: "Gateway is connected, but the quote stream is reconnecting and has not delivered fresh quotes.",
+      tone: T.amber,
+      iconKey: "alert",
+      autoOpenDetails: false,
+    };
   } else if (runtime?.legacyIbkrEnvPresent) {
     issue = {
       key: "legacy-env",
@@ -383,6 +506,15 @@ export const buildHeaderIbkrPopoverModel = ({
       autoOpenDetails: true,
     };
   }
+  issue = {
+    ...issue,
+    severity: getIssueSeverity(issue),
+  };
+  const priorityDetailGroup = getPriorityDetailGroup({
+    issue,
+    healthStatus: health.status,
+    streamStateReason,
+  });
 
   const tiles = [
     {
@@ -421,23 +553,19 @@ export const buildHeaderIbkrPopoverModel = ({
       value:
         liveMarketDataAvailable === false
           ? "Delayed"
-          : streamLiveActive || strictReady === true
-            ? "Live"
-            : streamQuiet
-              ? "Quiet stream"
-              : streamReconnecting
-                ? "Reconnecting"
-                : streamStale
-                  ? "Stale stream"
-                  : liveDataLabel,
+          : liveMarketDataAvailable === true ||
+              marketDataMode === "live" ||
+              strictReady === true
+            ? "Live mode"
+            : liveDataLabel,
       tone:
         liveMarketDataAvailable === false
           ? streamStateTokenVar("delayed")
-          : streamStale || streamReconnecting
-            ? streamStateTokenVar("stale")
-            : canonicalStreamState === "healthy" || strictReady === true
-              ? streamStateTokenVar("healthy")
-              : T.textDim,
+          : liveMarketDataAvailable === true ||
+              marketDataMode === "live" ||
+              strictReady === true
+            ? streamStateTokenVar("healthy")
+            : T.textDim,
       iconKey: "activity",
     },
     {
@@ -446,15 +574,15 @@ export const buildHeaderIbkrPopoverModel = ({
         Number.isFinite(streamGapCount) && streamGapCount > 0
           ? `${Math.round(streamGapCount)} gaps`
           : streamLiveActive
-            ? `${formatHeaderCount(streamConsumerCount)} / ${formatHeaderCount(
-                streamSymbolCount,
-              )}`
+            ? streamLiveValue
           : streamQuoteStandby
-            ? "No quote subscribers"
+            ? "Standby"
           : streamMarketClosed
             ? "Market closed"
           : streamQuiet
             ? "Quiet stream"
+          : streamChecking
+            ? "Starting"
           : streamReconnecting
             ? "Reconnecting"
           : streamStale && Number.isFinite(stream.lastEventAgeMs)
@@ -471,6 +599,8 @@ export const buildHeaderIbkrPopoverModel = ({
           ? streamStateTokenVar("stale")
           : streamStale || streamReconnecting
             ? streamStateTokenVar("stale")
+          : streamChecking
+            ? streamStateTokenVar("checking")
           : streamConfirmedFresh
             ? streamStateTokenVar("healthy")
             : T.textDim,
@@ -585,6 +715,14 @@ export const buildHeaderIbkrPopoverModel = ({
         { label: "Mode", value: sessionMode },
         { label: "Account", value: accountValue },
         { label: "Market data", value: marketDataMode },
+        ...providerRows
+          .filter((row) => row.label === "Polygon")
+          .map((row) => ({
+            label: row.label,
+            value: row.detail ? `${row.value} · ${row.detail}` : row.value,
+            tone: row.tone,
+            wrap: row.wrap,
+          })),
         {
           label: "Live data",
           value: formatHeaderBool(liveMarketDataAvailable),
@@ -641,7 +779,7 @@ export const buildHeaderIbkrPopoverModel = ({
         {
           label: "Stream state",
           value: streamQuoteStandby
-            ? "no quote-stream subscribers"
+            ? "standby"
             : streamMarketClosed
               ? "market closed"
               : streamLiveActive
@@ -717,7 +855,9 @@ export const buildHeaderIbkrPopoverModel = ({
     tiles,
     providerRows,
     lineUsage,
+    compactLineUsage,
     detailGroups,
+    priorityDetailGroup,
     autoOpenDetails: issue.autoOpenDetails,
   };
 };

@@ -301,6 +301,7 @@ async function mockShellApi(
     accountFixture = null,
     barsRequests = [],
     bridgeLauncherRequests = [],
+    diagnosticsClientEvents = [],
     diagnosticsEventRequests = [],
     diagnosticsHistoryRequests = [],
     runtimeDiagnosticsRequests = [],
@@ -308,10 +309,12 @@ async function mockShellApi(
     ibkrLineUsageRequests = [],
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
+    algoSetupDelayMs = 0,
   }: {
     accountFixture?: Record<string, unknown> | null;
     barsRequests?: Array<Record<string, string>>;
     bridgeLauncherRequests?: Array<Record<string, string>>;
+    diagnosticsClientEvents?: Array<Record<string, unknown>>;
     diagnosticsEventRequests?: Array<Record<string, string>>;
     diagnosticsHistoryRequests?: Array<Record<string, string>>;
     runtimeDiagnosticsRequests?: Array<Record<string, string>>;
@@ -319,6 +322,7 @@ async function mockShellApi(
     ibkrLineUsageRequests?: Array<Record<string, string>>;
     runtimeLineUsage?: MockMarketDataAdmission | null;
     shadowBacktestRequests?: Array<Record<string, unknown>>;
+    algoSetupDelayMs?: number;
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -683,10 +687,13 @@ async function mockShellApi(
       body = { events: [] };
     } else if (url.pathname === "/api/diagnostics/thresholds") {
       body = { thresholds: [] };
-    } else if (
-      url.pathname === "/api/diagnostics/client-events" ||
-      url.pathname === "/api/diagnostics/client-metrics"
-    ) {
+    } else if (url.pathname === "/api/diagnostics/client-events") {
+      diagnosticsClientEvents.push(
+        (route.request().postDataJSON() as Record<string, unknown> | null) ??
+          {},
+      );
+      body = { ok: true };
+    } else if (url.pathname === "/api/diagnostics/client-metrics") {
       body = { ok: true };
     } else if (url.pathname === "/api/backtests/strategies") {
       body = {
@@ -732,8 +739,14 @@ async function mockShellApi(
     } else if (url.pathname === "/api/backtests/jobs") {
       body = { jobs: [] };
     } else if (url.pathname === "/api/backtests/drafts") {
+      if (algoSetupDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, algoSetupDelayMs));
+      }
       body = { drafts: [] };
     } else if (url.pathname === "/api/algo/deployments") {
+      if (algoSetupDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, algoSetupDelayMs));
+      }
       body = { deployments: [] };
     } else if (url.pathname === "/api/algo/events") {
       body = { events: [] };
@@ -1014,12 +1027,87 @@ function makeAccountDensityFixture(): Record<string, unknown> {
       strategyLabel: "Mean Revert",
     },
   ];
+  const activities = [
+    {
+      id: "cash-deposit",
+      date: "2026-05-01",
+      type: "Deposit",
+      description: "Wire deposit",
+      amount: 1200,
+      currency: "USD",
+      source: "FLEX",
+      sourceType: "manual",
+    },
+    {
+      id: "cash-dividend-spy",
+      date: "2026-04-30",
+      type: "Dividend",
+      description: "SPY quarterly dividend",
+      amount: 41.28,
+      currency: "USD",
+      source: "FLEX",
+      sourceType: "watchlist_backtest",
+      strategyLabel: "Backtest",
+    },
+    {
+      id: "cash-fee",
+      date: "2026-04-29",
+      type: "Fee",
+      description: "Commission and exchange fees",
+      amount: -2.2,
+      currency: "USD",
+      source: "FLEX",
+      sourceType: "automation",
+      strategyLabel: "Momentum",
+    },
+  ];
+  const dividends = [
+    {
+      id: "div-spy",
+      symbol: "SPY",
+      exDate: "2026-04-28",
+      payDate: "2026-04-30",
+      amount: 41.28,
+      currency: "USD",
+    },
+  ];
+  const updatedAt = new Date(mockNow).toISOString();
+  const metric = (value: number | null, currency: string | null, source: string, field: string) => ({
+    value,
+    currency,
+    source,
+    field,
+    updatedAt,
+  });
 
   return {
+    accountId: "DU1234567",
+    currency: "USD",
     accounts: [{ accountId: "DU1234567", id: "DU1234567", label: "Paper DU1234567" }],
+    metrics: {
+      netLiquidation: metric(45930, "USD", "IBKR_ACCOUNT_SUMMARY", "NetLiquidation"),
+      totalCash: metric(3200, "USD", "IBKR_ACCOUNT_SUMMARY", "TotalCashValue"),
+      buyingPower: metric(12800, "USD", "IBKR_ACCOUNT_SUMMARY", "BuyingPower"),
+      marginUsed: metric(7710, "USD", "IBKR_ACCOUNT_SUMMARY", "FullInitMarginReq"),
+      maintenanceMargin: metric(4820, "USD", "IBKR_ACCOUNT_SUMMARY", "FullMaintMarginReq"),
+      maintenanceMarginCushionPercent: metric(78.4, null, "IBKR_ACCOUNT_SUMMARY", "Cushion"),
+      dayPnl: metric(86.4, "USD", "IBKR_POSITIONS", "QuoteChange"),
+      dayPnlPercent: metric(0.19, null, "IBKR_POSITIONS", "QuoteChange/NetLiquidation"),
+      totalPnl: metric(1010, "USD", "FLEX", "ChangeInNAV"),
+      totalPnlPercent: metric(2.25, null, "FLEX", "ChangeInNAV/StartingNAV"),
+    },
     positions,
     orders,
     trades,
+    settledCash: 3200,
+    unsettledCash: 0,
+    totalCash: 3200,
+    dividendsYtd: 41.28,
+    dividendsMonth: 41.28,
+    interestPaidEarnedYtd: 3.7,
+    feesYtd: -2.2,
+    activities,
+    dividends,
     points: [
       { date: "2026-04-29", netLiquidation: 45000, dailyPnl: 80, cumulativePnl: 80 },
       { date: "2026-04-30", netLiquidation: 45210, dailyPnl: 210, cumulativePnl: 290 },
@@ -1076,6 +1164,20 @@ async function openScreen(page: Page, label: string, screenId: string) {
     "aria-hidden",
     "false",
   );
+}
+
+async function expectNoVerticalInnerScroll(
+  locator: ReturnType<Page["getByTestId"]>,
+  label: string,
+) {
+  const dimensions = await locator.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(
+    dimensions.scrollHeight,
+    `${label} should grow with its table rows instead of creating vertical inner scroll`,
+  ).toBeLessThanOrEqual(dimensions.clientHeight + 1);
 }
 
 async function selectChartInterval(
@@ -1171,6 +1273,31 @@ async function expectSpotBarsRequestForInterval(
   ).toBe(true);
 }
 
+test("platform app loads without root crash diagnostics", async ({ page }) => {
+  const pageErrors: string[] = [];
+  const diagnosticsClientEvents: Array<Record<string, unknown>> = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await disableStreamingSources(page);
+  await mockShellApi(page, { diagnosticsClientEvents });
+  await page.goto("/");
+
+  await expect(page.getByTestId("market-workspace")).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.waitForTimeout(1_000);
+
+  expect(pageErrors).toEqual([]);
+  expect(
+    diagnosticsClientEvents.filter(
+      (event) =>
+        event.category === "react-root-crash" ||
+        (event.raw as Record<string, unknown> | undefined)?.kind ===
+          "rayalgo-root-crash",
+    ),
+  ).toEqual([]);
+});
+
 test("platform shell keeps shared chrome while switching primary screens", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -1205,7 +1332,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await disableStreamingSources(page);
-  await mockShellApi(page);
+  await mockShellApi(page, { accountFixture: makeAccountDensityFixture() });
   await page.goto("/");
   await expect(page.getByTestId("footer-memory-pressure-indicator")).toBeVisible();
   await openScreen(page, "Market", "market");
@@ -1232,14 +1359,37 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByTestId("account-screen")).toBeVisible();
   await page.getByTestId("account-section-shadow").click();
   await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
-    "aria-pressed",
+    "aria-selected",
     "true",
   );
   await page.getByTestId("account-section-real").click();
   await expect(page.getByTestId("account-section-real")).toHaveAttribute(
-    "aria-pressed",
+    "aria-selected",
     "true",
   );
+  const accountHero = page.getByTestId("account-hero-block");
+  await expect(accountHero).toBeVisible();
+  const accountHeaderLayout = await accountHero.evaluate((heroElement) => {
+    const stripElement = heroElement.nextElementSibling;
+    const heroBox = heroElement.getBoundingClientRect();
+    const stripBox = stripElement?.getBoundingClientRect();
+    return {
+      heroHeight: heroBox.height,
+      combinedHeight: stripBox ? stripBox.bottom - heroBox.top : heroBox.height,
+      heroHasAllTime: heroElement.textContent?.includes("All-time") ?? false,
+      stripHasReal: Boolean(
+        stripElement?.querySelector('[data-testid="account-section-real"]'),
+      ),
+      stripHasShadow: Boolean(
+        stripElement?.querySelector('[data-testid="account-section-shadow"]'),
+      ),
+    };
+  });
+  expect(accountHeaderLayout.heroHeight).toBeLessThanOrEqual(36);
+  expect(accountHeaderLayout.combinedHeight).toBeLessThanOrEqual(72);
+  expect(accountHeaderLayout.heroHasAllTime).toBe(false);
+  expect(accountHeaderLayout.stripHasReal).toBe(true);
+  expect(accountHeaderLayout.stripHasShadow).toBe(true);
 
   await openScreen(page, "Research", "research");
   await expect(page.getByTestId("research-screen")).toBeVisible();
@@ -1256,7 +1406,8 @@ test("platform pages render page-by-page and keep primary controls interactive",
 
   await openScreen(page, "Algo", "algo");
   await expect(page.getByTestId("algo-screen")).toBeVisible();
-  await expect(page.getByTestId("algo-primary-tabs")).toBeVisible();
+  await expect(page.getByTestId("algo-status-bar")).toBeVisible();
+  await expect(page.getByTestId("algo-live-content")).toBeVisible();
   await expect(page.getByText("No promoted draft strategies").first()).toBeVisible();
 
   await openScreen(page, "Backtest", "backtest");
@@ -1280,6 +1431,89 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("settings-search-input").fill("");
   await page.getByTestId("settings-tab-workspace").click();
   await expect(page.getByText("Workspace Defaults")).toBeVisible();
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("algo setup keeps loading copy until deployment inputs settle", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await disableStreamingSources(page);
+  await mockShellApi(page, { algoSetupDelayMs: 3_000 });
+  await page.goto("/");
+
+  await openScreen(page, "Algo", "algo");
+  await expect(page.getByTestId("algo-screen")).toBeVisible();
+  await expect(page.getByTestId("algo-live-content")).toBeVisible();
+  await expect(page.getByTestId("algo-setup-loading")).toBeVisible({
+    timeout: 6_000,
+  });
+  await expect(page.getByText("No promoted draft strategies").first()).toBeHidden();
+  await expect(page.getByText("No promoted draft strategies").first()).toBeVisible({
+    timeout: 8_000,
+  });
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("account desktop tables grow without vertical inner scroll caps", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await disableStreamingSources(page);
+  await mockShellApi(page, {
+    accountFixture: makeAccountDensityFixture(),
+    ibkrReady: true,
+  });
+  await page.goto("/");
+  await openScreen(page, "Account", "account");
+
+  const positionsPanel = page.getByTestId("account-deferred-positions");
+  await positionsPanel.scrollIntoViewIfNeeded();
+  await expect(positionsPanel).toHaveAttribute("data-deferred-render", "mounted");
+  await expect(page.getByTestId("account-positions-table-scroll")).toBeVisible();
+  await expectNoVerticalInnerScroll(
+    page.getByTestId("account-positions-table-scroll"),
+    "Positions table",
+  );
+
+  const tradesOrdersPanel = page.getByTestId("account-deferred-trades-orders");
+  await tradesOrdersPanel.scrollIntoViewIfNeeded();
+  await expect(tradesOrdersPanel).toHaveAttribute(
+    "data-deferred-render",
+    "mounted",
+  );
+  await expect(page.getByTestId("account-orders-table-scroll")).toBeVisible();
+  await expect(page.getByTestId("account-closed-trades-table-scroll")).toBeVisible();
+  await expectNoVerticalInnerScroll(
+    page.getByTestId("account-orders-table-scroll"),
+    "Orders table",
+  );
+  await expectNoVerticalInnerScroll(
+    page.getByTestId("account-closed-trades-table-scroll"),
+    "Closed trades table",
+  );
+
+  const supportPanel = page.getByTestId("account-deferred-support");
+  await supportPanel.scrollIntoViewIfNeeded();
+  await expect(supportPanel).toHaveAttribute("data-deferred-render", "mounted");
+  await expect(page.getByTestId("account-cash-activity-table-scroll")).toBeVisible();
+  await expectNoVerticalInnerScroll(
+    page.getByTestId("account-cash-activity-table-scroll"),
+    "Cash activity table",
+  );
+
+  const overflow = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(overflow.scrollWidth, "Account density pass should not create document-overflow").toBeLessThanOrEqual(
+    overflow.viewportWidth + 1,
+  );
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -1328,10 +1562,23 @@ test("platform phone layout navigates all primary screens without document overf
   const watchlistRows = page.getByTestId("watchlist-row");
   await expect(watchlistRows.first()).toBeVisible();
   await expect(page.getByTestId("watchlist-manage-toggle")).toBeVisible();
+  await expect(
+    page.getByTestId("watchlist-mobile-sparkline").first().locator("svg"),
+  ).toBeVisible();
   const maxWatchlistRowHeight = await watchlistRows.evaluateAll((elements) =>
     Math.max(...elements.map((element) => element.getBoundingClientRect().height)),
   );
   expect(maxWatchlistRowHeight).toBeLessThanOrEqual(48);
+  const overflowingWatchlistRows = await watchlistRows.evaluateAll((elements) =>
+    elements
+      .map((element) => ({
+        symbol: element.getAttribute("data-symbol"),
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }))
+      .filter((row) => row.scrollWidth > row.clientWidth + 1),
+  );
+  expect(overflowingWatchlistRows).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("mobile-watchlist-drawer")).toBeHidden();
 
@@ -1417,6 +1664,31 @@ test("account phone layout renders dense scan rows for positions trades and orde
   });
   await page.goto("/");
   await openScreen(page, "Account", "account");
+  await expect(page.getByTestId("account-screen")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("account-hero-block")).toBeVisible();
+  await expect(page.getByTestId("account-hero-block")).toContainText("$45.9K", {
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("account-section-real")).toBeVisible();
+  await expect(page.getByTestId("account-section-shadow")).toBeVisible();
+  const accountToggleLayout = await page
+    .getByTestId("account-section-shadow")
+    .evaluate((toggleElement) => {
+      const stripElement = toggleElement.closest("section");
+      const toggleBox = toggleElement.getBoundingClientRect();
+      const stripBox = stripElement?.getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        stripRight: stripBox?.right ?? 0,
+        toggleRight: toggleBox.right,
+      };
+    });
+  expect(accountToggleLayout.stripRight).toBeLessThanOrEqual(
+    accountToggleLayout.viewportWidth + 1,
+  );
+  expect(accountToggleLayout.toggleRight).toBeLessThanOrEqual(
+    accountToggleLayout.stripRight + 1,
+  );
 
   const positionsPanel = page.getByTestId("account-deferred-positions");
   await positionsPanel.scrollIntoViewIfNeeded();
@@ -1427,7 +1699,7 @@ test("account phone layout renders dense scan rows for positions trades and orde
   const positionRows = page.getByTestId("account-position-scan-row");
   await expect(positionRows.first()).toBeVisible({ timeout: 30_000 });
   await expect(positionRows).toHaveCount(4);
-  expect(await maxCollapsedHeight(positionRows)).toBeLessThanOrEqual(56);
+  expect(await maxCollapsedHeight(positionRows)).toBeLessThanOrEqual(42);
   await positionRows.first().click();
   await expect(page.getByTestId("account-position-expanded-details").first()).toBeVisible();
 
@@ -1441,7 +1713,7 @@ test("account phone layout renders dense scan rows for positions trades and orde
   const tradeRows = page.getByTestId("account-trade-scan-row");
   await expect(tradeRows.first()).toBeVisible({ timeout: 30_000 });
   await expect(tradeRows).toHaveCount(2);
-  expect(await maxCollapsedHeight(tradeRows)).toBeLessThanOrEqual(56);
+  expect(await maxCollapsedHeight(tradeRows)).toBeLessThanOrEqual(42);
   await tradeRows.first().click();
   await expect(page.getByTestId("account-trade-expanded-details").first()).toBeVisible();
 
@@ -1449,7 +1721,7 @@ test("account phone layout renders dense scan rows for positions trades and orde
   const orderRows = page.getByTestId("account-order-scan-row");
   await expect(orderRows.first()).toBeVisible({ timeout: 30_000 });
   await expect(orderRows).toHaveCount(2);
-  expect(await maxCollapsedHeight(orderRows)).toBeLessThanOrEqual(56);
+  expect(await maxCollapsedHeight(orderRows)).toBeLessThanOrEqual(42);
   await orderRows.first().click();
   await expect(page.getByTestId("account-order-expanded-details").first()).toBeVisible();
 
@@ -1474,7 +1746,7 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
   await openScreen(page, "Account", "account");
   await page.getByTestId("account-section-shadow").click();
   await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
-    "aria-pressed",
+    "aria-selected",
     "true",
   );
 
@@ -1486,7 +1758,7 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
-    "aria-pressed",
+    "aria-selected",
     "true",
   );
   expect(runtimeIssues).toEqual([]);
@@ -1560,7 +1832,7 @@ test("account shadow watchlist backtest posts today and week ranges", async ({
   await openScreen(page, "Account", "account");
   await page.getByTestId("account-section-shadow").click();
   await expect(page.getByTestId("account-section-shadow")).toHaveAttribute(
-    "aria-pressed",
+    "aria-selected",
     "true",
   );
   const supportPanel = page.getByTestId("account-deferred-support");

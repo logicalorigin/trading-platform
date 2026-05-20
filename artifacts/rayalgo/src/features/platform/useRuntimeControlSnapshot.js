@@ -7,33 +7,10 @@ import { platformJsonRequest } from "./platformJsonRequest";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
 
 const readLineUsageSnapshot = () =>
-  platformJsonRequest("/api/settings/ibkr-line-usage", { timeoutMs: 3_000 });
+  platformJsonRequest("/api/settings/ibkr-line-usage");
 
-const readRuntimeDiagnosticsSnapshot = async (timeoutMs = 6_500) => {
-  const controller =
-    timeoutMs > 0 && typeof AbortController !== "undefined"
-      ? new AbortController()
-      : null;
-  const timeoutId =
-    controller && timeoutMs > 0
-      ? window.setTimeout(() => controller.abort(), timeoutMs)
-      : null;
-
-  try {
-    return await getRuntimeDiagnostics(
-      controller ? { signal: controller.signal } : undefined,
-    );
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error(`Request timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeoutId != null) {
-      window.clearTimeout(timeoutId);
-    }
-  }
-};
+const readRuntimeDiagnosticsSnapshot = (signal) =>
+  getRuntimeDiagnostics(signal ? { signal } : undefined);
 
 export const useRuntimeControlSnapshot = ({
   enabled = true,
@@ -55,7 +32,7 @@ export const useRuntimeControlSnapshot = ({
   );
   const runtimeDiagnosticsQuery = useQuery({
     queryKey: ["platform-runtime-diagnostics", runtimeDiagnosticsQueryKey],
-    queryFn: () => readRuntimeDiagnosticsSnapshot(6_500),
+    queryFn: ({ signal }) => readRuntimeDiagnosticsSnapshot(signal),
     enabled: shouldFetchRuntimeDiagnostics,
     refetchInterval: shouldFetchRuntimeDiagnostics
       ? runtimeDiagnosticsRefetchInterval

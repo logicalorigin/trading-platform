@@ -55,6 +55,7 @@ export const MarketDataSubscriptionProvider = ({
   sparklineSymbols,
   streamedQuoteSymbols,
   streamedAggregateSymbols,
+  quoteStreamRuntimeEnabled = false,
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
   lowPriorityHistoryEnabled = true,
@@ -89,7 +90,10 @@ export const MarketDataSubscriptionProvider = ({
   const sparklineHistoryEnabled = Boolean(
     lowPriorityHistoryEnabled && sparklineSymbols.length > 0,
   );
-  const marketStreamRuntimeEnabled = Boolean(
+  const quoteStreamRuntimeActive = Boolean(
+    pageVisible && quoteStreamRuntimeEnabled && streamedQuoteSymbols.length > 0,
+  );
+  const marketAggregateStreamRuntimeActive = Boolean(
     pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
   );
 
@@ -97,8 +101,9 @@ export const MarketDataSubscriptionProvider = ({
     "market:subscription-streams",
     Boolean(
       pageVisible &&
-        marketStreamRuntimeEnabled &&
-        streamedQuoteSymbols.length > 0,
+        (quoteStreamRuntimeActive ||
+          (marketAggregateStreamRuntimeActive &&
+            streamedAggregateSymbols.length > 0)),
     ),
     {
       kind: "stream",
@@ -213,14 +218,12 @@ export const MarketDataSubscriptionProvider = ({
 
   useIbkrQuoteSnapshotStream({
     symbols: streamedQuoteSymbols,
-    enabled: Boolean(
-      marketStreamRuntimeEnabled && streamedQuoteSymbols.length > 0,
-    ),
+    enabled: quoteStreamRuntimeActive,
   });
   useBrokerStockAggregateStream({
     symbols: streamedAggregateSymbols,
     enabled: Boolean(
-      marketStreamRuntimeEnabled && streamedAggregateSymbols.length > 0,
+      marketAggregateStreamRuntimeActive && streamedAggregateSymbols.length > 0,
     ),
   });
 

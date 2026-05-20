@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -8,6 +9,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)
 const apiPort = process.env.RAYALGO_API_PORT || "8080";
 const webPort = process.env.RAYALGO_FRONTEND_PORT || process.env.PORT || "18747";
 const apiHealthUrl = `http://127.0.0.1:${apiPort}/api/healthz`;
+const apiPortHex = Number(apiPort).toString(16).toUpperCase().padStart(4, "0");
 
 let shuttingDown = false;
 const children = new Set();
@@ -46,6 +48,119 @@ function killChild(child, signal) {
   }
 }
 
+function inodesListeningOnPortHex(portHex) {
+  const inodes = new Set();
+  let inspected = false;
+
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text;
+    try {
+      text = readFileSync(file, "utf8");
+      inspected = true;
+    } catch {
+      continue;
+    }
+
+    for (const line of text.split("\n").slice(1)) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 10) continue;
+      const localAddr = parts[1];
+      const state = parts[3];
+      const inode = parts[9];
+      if (state === "0A" && localAddr?.endsWith(`:${portHex}`)) {
+        inodes.add(inode);
+      }
+    }
+  }
+
+  return inspected ? inodes : null;
+}
+
+function pidsHoldingInodes(inodes) {
+  const pids = new Set();
+  if (!inodes || inodes.size === 0) return pids;
+
+  let entries;
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return null;
+  }
+
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+
+    let fdEntries;
+    try {
+      fdEntries = readdirSync(`/proc/${entry}/fd`);
+    } catch {
+      continue;
+    }
+
+    for (const fd of fdEntries) {
+      let target;
+      try {
+        target = readlinkSync(`/proc/${entry}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      const match = target.match(/^socket:\[(\d+)\]$/);
+      if (match && inodes.has(match[1])) {
+        pids.add(Number(entry));
+        break;
+      }
+    }
+  }
+
+  return pids;
+}
+
+function processGroupId(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    return Number(fields[2]);
+  } catch {
+    return null;
+  }
+}
+
+function apiPortOwnerStatus(apiRootPid) {
+  // Replit may briefly overlap workflow executions; only accept health from
+  // the API process group spawned by this supervisor.
+  const inodes = inodesListeningOnPortHex(apiPortHex);
+  if (inodes === null) {
+    return { owned: true, detail: "port ownership unavailable" };
+  }
+  if (inodes.size === 0) {
+    return { owned: false, detail: `no listener on ${apiPort}` };
+  }
+
+  const pids = pidsHoldingInodes(inodes);
+  if (pids === null) {
+    return { owned: true, detail: "port owner lookup unavailable" };
+  }
+  if (pids.size === 0) {
+    return { owned: false, detail: `no owning pid found for ${apiPort}` };
+  }
+
+  const owners = [...pids].map((pid) => ({
+    pid,
+    processGroupId: processGroupId(pid),
+  }));
+  const currentOwner = owners.find((owner) => owner.processGroupId === apiRootPid);
+  if (currentOwner) {
+    return { owned: true, detail: `pid ${currentOwner.pid}` };
+  }
+
+  return {
+    owned: false,
+    detail: `listener owned by ${owners
+      .map((owner) => `${owner.pid}/pgid=${owner.processGroupId ?? "unknown"}`)
+      .join(", ")}`,
+  };
+}
+
 async function shutdown(status = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -55,7 +170,7 @@ async function shutdown(status = 0) {
   process.exit(status);
 }
 
-async function waitForApi(childExit) {
+async function waitForApi(childExit, apiRootPid) {
   const deadline = Date.now() + 90_000;
   let lastError = "not ready";
 
@@ -74,8 +189,14 @@ async function waitForApi(childExit) {
     }
 
     if (exited.type === "health" && exited.ok) {
-      console.log(`[rayalgo-dev] API healthy at ${apiHealthUrl}`);
-      return;
+      const ownerStatus = apiPortOwnerStatus(apiRootPid);
+      if (ownerStatus.owned) {
+        console.log(`[rayalgo-dev] API healthy at ${apiHealthUrl}`);
+        return;
+      }
+      lastError = `healthy response came from a previous API process (${ownerStatus.detail})`;
+      await delay(500);
+      continue;
     }
 
     lastError =
@@ -100,7 +221,7 @@ try {
     { PORT: apiPort, LOG_LEVEL: process.env.LOG_LEVEL || "warn" },
   );
   const apiExit = exitPromise("API", api);
-  await waitForApi(apiExit);
+  await waitForApi(apiExit, api.pid);
 
   const web = spawnService(
     "RayAlgo web",

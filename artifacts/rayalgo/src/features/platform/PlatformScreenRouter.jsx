@@ -28,6 +28,7 @@ export const PlatformScreenRouter = ({
   watchlistSymbols,
   runtimeWatchlistSymbols,
   signalMonitorSymbols,
+  signalMatrixStates,
   marketScreenActive,
   flowScreenActive,
   researchConfigured,
@@ -50,7 +51,11 @@ export const PlatformScreenRouter = ({
   onJumpToTradeFromSignalOptionsCandidate,
   onToggleTheme,
   onToggleSidebar,
+  onScreenReadiness,
 }) => {
+  const buildReadinessHandler = (screenId) => (readiness) =>
+    onScreenReadiness?.(screenId, readiness);
+
   const renderMarketScreen = () => (
     <MemoMarketScreen
       sym={sym}
@@ -70,6 +75,7 @@ export const PlatformScreenRouter = ({
       onChangeMonitorTimeframe={onChangeMonitorTimeframe}
       onChangeMonitorWatchlist={onChangeMonitorWatchlist}
       watchlists={watchlists}
+      onReadinessChange={buildReadinessHandler("market")}
     />
   );
 
@@ -84,6 +90,7 @@ export const PlatformScreenRouter = ({
           symbols={runtimeWatchlistSymbols}
           isVisible={flowScreenActive}
           onJumpToTrade={onJumpToTradeFromFlow}
+          onReadinessChange={buildReadinessHandler("flow")}
         />
       );
     case "gex":
@@ -92,6 +99,7 @@ export const PlatformScreenRouter = ({
           sym={sym}
           isVisible={screen === "gex"}
           onSelectSymbol={onSelectSymbol}
+          onReadinessChange={buildReadinessHandler("gex")}
         />
       );
     case "trade":
@@ -108,6 +116,7 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "trade"}
           isRetained={screen !== "trade"}
+          onReadinessChange={buildReadinessHandler("trade")}
         />
       );
     case "account":
@@ -124,6 +133,7 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "account"}
           onJumpToTrade={onJumpToTradeFromAccount}
+          onReadinessChange={buildReadinessHandler("account")}
         />
       );
     case "research":
@@ -131,6 +141,7 @@ export const PlatformScreenRouter = ({
         <MemoResearchScreen
           isVisible={screen === "research"}
           onJumpToTrade={onJumpToTradeFromResearch}
+          onReadinessChange={buildReadinessHandler("research")}
         />
       );
     case "algo":
@@ -140,8 +151,10 @@ export const PlatformScreenRouter = ({
           environment={environment}
           accounts={accounts}
           selectedAccountId={primaryAccountId}
+          signalMatrixStates={signalMatrixStates}
           isVisible={screen === "algo"}
           onJumpToTradeCandidate={onJumpToTradeFromSignalOptionsCandidate}
+          onReadinessChange={buildReadinessHandler("algo")}
         />
       );
     case "backtest":
@@ -150,6 +163,7 @@ export const PlatformScreenRouter = ({
           watchlists={watchlists}
           defaultWatchlistId={defaultWatchlist?.id || null}
           isVisible={screen === "backtest"}
+          onReadinessChange={buildReadinessHandler("backtest")}
         />
       );
     case "diagnostics":

@@ -3,9 +3,16 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
+const configRequire = createRequire(import.meta.url);
+const resolvePackageRoot = (packageName: string): string =>
+  path.dirname(configRequire.resolve(`${packageName}/package.json`));
+const reactQueryRequire = createRequire(
+  configRequire.resolve("@tanstack/react-query/package.json"),
+);
 
 const readGitValue = (args: string[]): string => {
   try {
@@ -72,6 +79,12 @@ const DEFERRED_MODULE_PRELOAD_PATTERNS = [
 const isolationMode = process.env.RAYALGO_CROSS_ORIGIN_ISOLATION || "report-only";
 const coopPolicy = process.env.RAYALGO_COOP_POLICY || "same-origin";
 const coepPolicy = process.env.RAYALGO_COEP_POLICY || "require-corp";
+const reactRoot = resolvePackageRoot("react");
+const reactDomRoot = resolvePackageRoot("react-dom");
+const reactQueryRoot = resolvePackageRoot("@tanstack/react-query");
+const queryCoreRoot = path.dirname(
+  reactQueryRequire.resolve("@tanstack/query-core/package.json"),
+);
 const sourceTreeDirty = readGitValue(["status", "--short"]).length > 0;
 const runtimeBuildFingerprint = {
   packageName: "@workspace/rayalgo",
@@ -131,10 +144,41 @@ export default defineConfig({
       : []),
   ],
   resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "src"),
-    },
-    dedupe: ["react", "react-dom"],
+    alias: [
+      {
+        find: "@",
+        replacement: path.resolve(import.meta.dirname, "src"),
+      },
+      {
+        find: "react/jsx-runtime",
+        replacement: configRequire.resolve("react/jsx-runtime"),
+      },
+      {
+        find: "react/jsx-dev-runtime",
+        replacement: configRequire.resolve("react/jsx-dev-runtime"),
+      },
+      {
+        find: "react-dom/client",
+        replacement: configRequire.resolve("react-dom/client"),
+      },
+      {
+        find: "react",
+        replacement: reactRoot,
+      },
+      {
+        find: "react-dom",
+        replacement: reactDomRoot,
+      },
+      {
+        find: "@tanstack/react-query",
+        replacement: reactQueryRoot,
+      },
+      {
+        find: "@tanstack/query-core",
+        replacement: queryCoreRoot,
+      },
+    ],
+    dedupe: ["react", "react-dom", "@tanstack/react-query", "@tanstack/query-core"],
   },
   root: path.resolve(import.meta.dirname),
   build: {
@@ -271,8 +315,7 @@ export default defineConfig({
             normalizedId.includes("/src/features/charting/ResearchChartSurface") ||
             normalizedId.includes("/src/features/charting/ResearchChartFrame") ||
             normalizedId.includes("/src/features/charting/ResearchChartWidgetChrome") ||
-            normalizedId.includes("/src/features/charting/RayReplicaSettingsMenu") ||
-            normalizedId.includes("/src/features/charting/TradingViewWidgetReference")
+            normalizedId.includes("/src/features/charting/RayReplicaSettingsMenu")
           ) {
             return "feature-charting-surface";
           }

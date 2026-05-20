@@ -50,6 +50,9 @@ test("normalizes complete market data admission pools", () => {
   assert.equal(normalized.flowScanner.used, 34);
   assert.equal(normalized.pools.visible.cap, 88);
   assert.equal(normalized.total.free, 100);
+  assert.equal(normalized.allocation.targetFillLines, 200);
+  assert.equal(normalized.allocation.remainingToTargetLineCount, 100);
+  assert.equal(normalized.allocation.fillerLineCount, 0);
 });
 
 test("normalizes top-level automation counts when pool rows are absent", () => {
@@ -88,6 +91,30 @@ test("adds flow scanner runtime detail when active leases are zero", () => {
   );
 });
 
+test("shows active flow scanner work ahead of a stale skip reason", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      lastSkippedReason: "transport-unavailable",
+      deepScanner: {
+        activeCount: 2,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "2 option chains scanning; quotes next",
+  );
+});
+
 test("explains queued flow scanner work without active quote leases", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 80,
@@ -109,11 +136,11 @@ test("explains queued flow scanner work without active quote leases", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "3 metadata scans active; quote leases pending",
+    "3 option chains scanning; quotes next",
   );
 });
 
-test("reports flow scanner background pauses ahead of queued work", () => {
+test("reports queued flow scanner work ahead of background pauses", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 80,
     flowScannerLineCount: 0,
@@ -132,7 +159,53 @@ test("reports flow scanner background pauses ahead of queued work", () => {
     },
   });
 
+  assert.equal(normalized.flowScanner.detail, "7 scans queued");
+});
+
+test("reports flow scanner background pauses when no scanner work is active", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "options-lane-backoff",
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+      },
+    },
+  });
+
   assert.equal(normalized.flowScanner.detail, "paused: options lane backoff");
+});
+
+test("reports live warmup as a temporary foreground-allowed scanner hold", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "live-warmup",
+      backgroundHoldRemainingMs: 61_000,
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "warming live watchlist (2m); foreground scans allowed",
+  );
 });
 
 test("normalizes line pressure and scanner effective cap", () => {
@@ -175,7 +248,7 @@ test("normalizes line pressure and scanner effective cap", () => {
   assert.equal(normalized.flowScanner.free, 15);
 });
 
-test("prefers bridge active summary while retaining API demand summary", () => {
+test("uses API-active lines as canonical while retaining bridge reconciliation", () => {
   const normalized = normalizeAdmissionDiagnostics(
     {
       activeLineCount: 143,
@@ -227,7 +300,11 @@ test("prefers bridge active summary while retaining API demand summary", () => {
     },
   );
 
-  assert.equal(normalized.summary, "15 / 190");
+  assert.equal(normalized.summary, "143 / 190");
+  assert.equal(normalized.activeLineCount, 143);
+  assert.equal(normalized.requestedLineCount, 143);
+  assert.equal(normalized.pendingLineCount, 128);
+  assert.equal(normalized.requestedSummary, "143 / 190");
   assert.equal(normalized.demandSummary, "143 / 190");
   assert.equal(normalized.bridge.summary, "15 / 190");
   assert.equal(normalized.bridge.activeOptions, 1);

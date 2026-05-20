@@ -1,13 +1,12 @@
 import { useSearchUniverseTickers } from "@workspace/api-client-react";
-import { ChevronDown, GripVertical, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { ChevronDown, GripVertical, ListChecks, Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { SignalDots } from "../../components/platform/signal-language";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
 import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
-  fmtCompactNumber,
   formatQuotePrice,
-  formatRelativeTimeShort,
   formatSignedPercent,
   isFiniteNumber,
 } from "../../lib/formatters";
@@ -21,12 +20,11 @@ import { useNumberTick } from "../../lib/numberTick.js";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
-import { MarketIdentityChips, MarketIdentityMark } from "./marketIdentity";
+import { MarketIdentityMark } from "./marketIdentity";
 import { useSignalMonitorStateForSymbol } from "./signalMonitorStore";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 import {
   WATCHLIST_SORT_MODE,
-  WATCHLIST_SIGNAL_TIMEFRAMES,
   buildSignalMatrixBySymbol,
   buildWatchlistRows,
   countWatchlistSymbols,
@@ -39,89 +37,79 @@ import { AppTooltip } from "@/components/ui/tooltip";
 // MicroSparkline + extractSparklineValues are exported from
 // components/platform/primitives.jsx — imported above.
 
-const fmtQuoteVolume = (value) =>
-  value == null || Number.isNaN(value) ? MISSING_VALUE : fmtCompactNumber(value);
+const buildFallbackSparklineData = (symbol, priceValue, previousPrice) => {
+  const pointCount = 32;
+  const start = isFiniteNumber(previousPrice) ? previousPrice : priceValue * 0.997;
+  const end = priceValue;
+  const span = Math.max(Math.abs(end - start), Math.abs(end) * 0.0015, 0.01);
+  const seed = String(symbol || "")
+    .split("")
+    .reduce((sum, char, index) => sum + char.charCodeAt(0) * (index + 1), 0);
 
-const formatSignedPrice = (value, digits = 2) => {
-  if (!isFiniteNumber(value)) return MISSING_VALUE;
-  const prefix = value > 0 ? "+" : "";
-  return `${prefix}${value.toFixed(digits)}`;
+  return Array.from({ length: pointCount }, (_, index) => {
+    const t = index / (pointCount - 1);
+    const trend = start + (end - start) * t;
+    const wave =
+      Math.sin(t * Math.PI * 3 + seed * 0.17) * span * 0.18 +
+      Math.cos(t * Math.PI * 5 + seed * 0.11) * span * 0.08;
+
+    return {
+      i: index,
+      v: index === 0 ? start : index === pointCount - 1 ? end : trend + wave,
+    };
+  });
+};
+
+const resolveSparklineData = (symbol, snapshot, fallback, priceValue) => {
+  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
+    return snapshot.sparkBars;
+  }
+  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
+    return snapshot.spark;
+  }
+  if (Array.isArray(fallback?.sparkBars) && fallback.sparkBars.length >= 2) {
+    return fallback.sparkBars;
+  }
+  if (Array.isArray(fallback?.spark) && fallback.spark.length >= 2) {
+    return fallback.spark;
+  }
+
+  if (!isFiniteNumber(priceValue)) {
+    return [];
+  }
+
+  const change = isFiniteNumber(snapshot?.chg)
+    ? snapshot.chg
+    : isFiniteNumber(snapshot?.change)
+      ? snapshot.change
+      : null;
+  const percent = isFiniteNumber(snapshot?.pct)
+    ? snapshot.pct
+    : isFiniteNumber(snapshot?.changePercent)
+      ? snapshot.changePercent
+      : null;
+  const previousPrice = isFiniteNumber(change)
+    ? priceValue - change
+    : isFiniteNumber(percent) && percent !== -100
+      ? priceValue / (1 + percent / 100)
+      : priceValue * 0.997;
+
+  return buildFallbackSparklineData(symbol, priceValue, previousPrice);
 };
 const WATCHLIST_SORT_OPTIONS = [
   { id: WATCHLIST_SORT_MODE.MANUAL, label: "Manual" },
   { id: WATCHLIST_SORT_MODE.SIGNAL, label: "Signal" },
   { id: WATCHLIST_SORT_MODE.PERCENT, label: "% Chg" },
-  { id: WATCHLIST_SORT_MODE.VOLUME, label: "Volume" },
   { id: WATCHLIST_SORT_MODE.ALPHA, label: "A-Z" },
 ];
 
 const WATCHLIST_DIRECTION_SORTS = new Set([
   WATCHLIST_SORT_MODE.PERCENT,
-  WATCHLIST_SORT_MODE.VOLUME,
   WATCHLIST_SORT_MODE.ALPHA,
 ]);
 
 const isWatchlistSignalDirection = (value) =>
   value === "buy" || value === "sell";
-
-const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
-  if (!fallbackState || fallbackState.timeframe !== timeframe) return null;
-  return fallbackState;
-};
-
-const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onSelect }) => (
-  <span
-    data-testid="watchlist-signal-dots"
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: sp(3),
-      minWidth: dim(34),
-    }}
-  >
-    {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe) => {
-      const state =
-        statesByTimeframe?.[timeframe] ||
-        getFallbackSignalForTimeframe(fallbackState, timeframe);
-      const direction = state?.currentSignalDirection;
-      const hasDirection = isWatchlistSignalDirection(direction);
-      const color = direction === "buy" ? T.blue : direction === "sell" ? T.red : T.textMuted;
-      const fresh = Boolean(state?.fresh);
-      const status = state?.status || "unknown";
-      const label = hasDirection
-        ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
-        : `${timeframe} no signal - ${status}`;
-
-      return (
-        <AppTooltip key={timeframe} content={state?.lastError ? `${label} - ${state.lastError}` : label}><button
-          key={timeframe}
-          type="button"
-          data-testid={`watchlist-signal-dot-${timeframe}`}
-          data-timeframe={timeframe}
-          data-direction={hasDirection ? direction : "none"}
-          aria-label={label}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (hasDirection) {
-              onSelect?.(state);
-            }
-          }}
-          style={{
-            width: dim(7),
-            height: dim(7),
-            borderRadius: dim(RADII.pill),
-            border: `1px solid ${hasDirection ? color : T.borderLight}`,
-            background: hasDirection ? color : "transparent",
-            opacity: hasDirection ? (fresh ? 1 : 0.42) : 0.55,
-            boxShadow: hasDirection && fresh ? `0 0 0 2px ${color}20` : "none",
-            cursor: hasDirection ? "pointer" : "default",
-            padding: 0,
-          }}
-        /></AppTooltip>
-      );
-    })}
-  </span>
-);
 
 const WatchlistRow = memo(
   ({
@@ -137,11 +125,13 @@ const WatchlistRow = memo(
     onDragEnd,
     onSelect,
     onAddSymbol,
-    onRemoveSymbol,
+    onToggleSelection,
     onSignalAction,
     signalStatesByTimeframe = {},
     busy = false,
     density = "default",
+    selectionMode = false,
+    selectedForRemoval = false,
   }) => {
     const fallback = useMemo(
       () =>
@@ -154,6 +144,7 @@ const WatchlistRow = memo(
       signalStatesByTimeframe,
       signalState,
     );
+    const rowSelectable = Boolean(item.canRemove && item.id);
     const selectedRow = selected === item.sym;
     const signalDirection = bestSignalState?.currentSignalDirection;
     const hasSignal =
@@ -176,11 +167,6 @@ const WatchlistRow = memo(
 	    const animatedPrice = useNumberTick(priceValue, 380);
 	    const displayedPrice = animatedPrice ?? priceValue;
 	    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
-    const quoteAge = formatRelativeTimeShort(
-      snapshot?.updatedAt ||
-        signalState?.latestBarAt ||
-        signalState?.lastEvaluatedAt,
-    );
     const identityItem = {
       ticker: item.sym,
       name: displayName,
@@ -191,15 +177,154 @@ const WatchlistRow = memo(
       industry: item.industry,
       logoUrl: item.logoUrl,
     };
-    const activeActionDisabled = busy || !item.canRemove || !item.id;
+    const addActionDisabled = busy;
     const rowBackground = dragging
       ? `${T.accent}10`
       : dragOver
         ? `${T.accent}18`
+        : selectedForRemoval
+          ? `${T.accent}18`
         : selectedRow
           ? T.bg3
           : "transparent";
     const mobileDense = density === "mobile-dense";
+    const sparklineData = resolveSparklineData(item.sym, snapshot, fallback, priceValue);
+    const handleRowClick = () => {
+      if (selectionMode) {
+        if (rowSelectable) {
+          onToggleSelection?.(item.id);
+        }
+        return;
+      }
+      onSelect?.(item.sym);
+    };
+    const renderSelectionControl = () => (
+      <button
+        type="button"
+        role="checkbox"
+        data-testid="watchlist-row-select"
+        aria-checked={selectedForRemoval ? "true" : "false"}
+        aria-label={
+          rowSelectable
+            ? `${selectedForRemoval ? "Deselect" : "Select"} ${item.sym}`
+            : `${item.sym} cannot be selected for removal`
+        }
+        disabled={!rowSelectable || busy}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (rowSelectable) {
+            onToggleSelection?.(item.id);
+          }
+        }}
+        style={{
+          width: dim(18),
+          height: dim(18),
+          display: "grid",
+          placeItems: "center",
+          borderRadius: dim(RADII.xs),
+          border: `1px solid ${
+            selectedForRemoval ? T.accent : rowSelectable ? T.border : T.borderLight
+          }`,
+          background: selectedForRemoval ? T.accent : "transparent",
+          color: selectedForRemoval ? T.onAccent : T.textMuted,
+          cursor: rowSelectable && !busy ? "pointer" : "default",
+          padding: 0,
+          flexShrink: 0,
+          opacity: rowSelectable ? 1 : 0.42,
+          fontFamily: T.sans,
+          fontSize: fs(11),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
+        }}
+      >
+        {selectedForRemoval ? (
+          <span
+            aria-hidden="true"
+            style={{
+              width: dim(7),
+              height: dim(4),
+              borderLeft: `1.5px solid ${T.onAccent}`,
+              borderBottom: `1.5px solid ${T.onAccent}`,
+              transform: "rotate(-45deg)",
+              marginTop: dim(-1),
+            }}
+          />
+        ) : null}
+      </button>
+    );
+    const renderDayChange = (style = null) => (
+      <span
+        data-testid="watchlist-day-change"
+        style={{
+          color:
+            pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
+          fontFamily: T.sans,
+          fontSize: textSize("body"),
+          fontVariantNumeric: "tabular-nums",
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+          ...style,
+        }}
+      >
+        {formatSignedPercent(snapshot?.pct)}
+      </span>
+    );
+    const renderSignalPill = () =>
+      hasSignal ? (
+        <AppTooltip
+          content={`${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal - ${bestSignalState?.timeframe || "monitor"} - ${bestSignalState?.barsSinceSignal ?? MISSING_VALUE} bars`}
+        >
+          <button
+            type="button"
+            data-testid="watchlist-signal-pill"
+            data-fresh={signalFresh ? "true" : "false"}
+            className={signalFresh ? "ra-status-pulse" : "ra-interactive"}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSignalAction?.(item.sym, bestSignalState);
+            }}
+            style={{
+              border: `1px solid ${signalFresh ? signalColor : `${signalColor}88`}`,
+              background: signalFresh ? `${signalColor}24` : `${signalColor}14`,
+              color: signalFresh ? signalColor : `${signalColor}d0`,
+              cursor: "pointer",
+              fontFamily: T.sans,
+              fontSize: fs(7),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "-0.005em",
+              lineHeight: 1,
+              padding: sp("2px 5px"),
+              borderRadius: dim(RADII.pill),
+              boxShadow: signalFresh ? `0 0 0 2px ${signalColor}20` : "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {signalDirection.toUpperCase()}
+          </button>
+        </AppTooltip>
+      ) : null;
+    const renderSignalCluster = (style = null) => (
+      <span
+        data-testid="watchlist-signal-cluster"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(4),
+          minWidth: 0,
+          ...style,
+        }}
+      >
+        <SignalDots
+          statesByTimeframe={signalStatesByTimeframe}
+          fallbackState={signalState}
+          onSelect={(state) => onSignalAction?.(item.sym, state)}
+          style={{ minWidth: dim(34), gap: sp(3) }}
+        />
+        {renderSignalPill()}
+      </span>
+    );
 
     if (mobileDense) {
       return (
@@ -212,7 +337,7 @@ const WatchlistRow = memo(
             "ra-interactive",
             selectedRow && "ra-focus-rail",
           )}
-          onClick={() => onSelect?.(item.sym)}
+          onClick={handleRowClick}
           style={{
             ...motionRowStyle(itemIndex, 7, 140),
             ...motionVars({
@@ -227,16 +352,17 @@ const WatchlistRow = memo(
                       : T.red,
             }),
             width: "100%",
-            minHeight: `clamp(${dim(56)}px, 14vw, ${dim(68)}px)`,
+            height: 44,
+            minHeight: 44,
             display: "flex",
             flexDirection: "column",
-            gap: sp(6),
-            padding: `clamp(${sp(10)}px, 2.5vw, ${sp(14)}px) clamp(${sp(12)}px, 3vw, ${sp(16)}px)`,
+            gap: 2,
+            padding: "4px 8px",
             border: "none",
             background:
               selectedRow || dragOver ? `${T.accent}12` : rowBackground,
             color: T.text,
-            cursor: "pointer",
+            cursor: selectionMode ? (rowSelectable ? "pointer" : "default") : "pointer",
             textAlign: "left",
             fontFamily: T.sans,
             opacity: dragging ? 0.55 : 1,
@@ -246,12 +372,15 @@ const WatchlistRow = memo(
             style={{
               display: "flex",
               alignItems: "center",
-              gap: sp(10),
+              gap: 6,
               minWidth: 0,
+              lineHeight: 1,
             }}
           >
-            <MarketIdentityMark item={identityItem} size={22} />
+            {selectionMode ? renderSelectionControl() : null}
+            <MarketIdentityMark item={identityItem} size={18} showCountryBadge={false} />
             <span
+              data-testid="watchlist-row-symbol"
               className={priceFlashClassName}
               style={{
                 minWidth: 0,
@@ -260,67 +389,57 @@ const WatchlistRow = memo(
                 whiteSpace: "nowrap",
                 color: T.text,
                 fontFamily: T.sans,
-                fontSize: textSize("paragraph"),
+                fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "-0.01em",
+                lineHeight: 1,
               }}
             >
               {item.sym}
             </span>
-            <WatchlistSignalDots
-              statesByTimeframe={signalStatesByTimeframe}
-              fallbackState={signalState}
-              onSelect={(state) => onSignalAction?.(item.sym, state)}
-            />
-            <span
-              className={priceFlashClassName}
-              style={{
-                marginLeft: "auto",
-                color: T.text,
-                fontFamily: T.sans,
-                fontSize: textSize("paragraph"),
-                fontVariantNumeric: "tabular-nums",
-                fontWeight: FONT_WEIGHTS.medium,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {formatQuotePrice(displayedPrice)}
-            </span>
+            {renderDayChange()}
+            {renderSignalCluster({ marginLeft: "auto", flexShrink: 0 })}
           </div>
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: sp(10),
+              gap: 6,
               minWidth: 0,
+              lineHeight: 1,
             }}
           >
             <span
+              data-testid="watchlist-mobile-sparkline"
               style={{
-                color:
-                  pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
+                width: dim(40),
+                height: dim(14),
+                minWidth: dim(40),
+                marginLeft: "auto",
+                overflow: "hidden",
+                flexShrink: 0,
+              }}
+            >
+              <MicroSparkline
+                data={sparklineData}
+                positive={pctPositive}
+                width={40}
+                height={14}
+                style={{ width: "100%", height: "100%" }}
+              />
+            </span>
+            <span
+              className={priceFlashClassName}
+              style={{
+                color: T.text,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontVariantNumeric: "tabular-nums",
                 fontWeight: FONT_WEIGHTS.medium,
+                lineHeight: 1,
                 whiteSpace: "nowrap",
               }}
             >
-              {formatSignedPercent(snapshot?.pct)}
-            </span>
-            <span
-              style={{
-                marginLeft: "auto",
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                fontVariantNumeric: "tabular-nums",
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {fmtQuoteVolume(snapshot?.volume)}
+              {formatQuotePrice(displayedPrice)}
             </span>
           </div>
         </div>
@@ -357,7 +476,7 @@ const WatchlistRow = memo(
           onDrop?.(item.id);
         }}
         onDragEnd={onDragEnd}
-        onClick={() => onSelect?.(item.sym)}
+        onClick={handleRowClick}
         style={{
           ...motionRowStyle(itemIndex, 7, 140),
           ...motionVars({
@@ -372,24 +491,29 @@ const WatchlistRow = memo(
                     : T.red,
           }),
           display: "grid",
-          gridTemplateColumns: `minmax(0,1fr) ${dim(64)}px`,
-          gap: sp(10),
-          padding: sp("12px 16px"),
-          cursor: "pointer",
+          gridTemplateColumns: [
+            selectionMode ? `${dim(20)}px` : null,
+            "minmax(0,1fr)",
+            item.monitoredOnly ? `${dim(26)}px` : null,
+          ].filter(Boolean).join(" "),
+          gap: sp(4),
+          padding: sp("9px 6px"),
+          cursor: selectionMode ? (rowSelectable ? "pointer" : "default") : "pointer",
           alignItems: "center",
           background:
             selectedRow || dragOver ? `${T.accent}12` : rowBackground,
           opacity: dragging ? 0.55 : 1,
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        {selectionMode ? renderSelectionControl() : null}
+        <div style={{ minWidth: 0, overflow: "hidden" }}>
           <div
             style={{
               display: "grid",
               gridTemplateColumns:
-                "16px 18px minmax(42px, auto) auto auto auto minmax(0, 1fr)",
+                "16px 18px minmax(0,1fr) auto",
               alignItems: "center",
-              gap: sp(4),
+              gap: sp(3),
               minWidth: 0,
             }}
           >
@@ -402,209 +526,121 @@ const WatchlistRow = memo(
                 cursor: canDrag ? "grab" : "default",
               }}
             />
-            <MarketIdentityMark item={identityItem} size={20} />
-	            <span
-	              className={priceFlashClassName}
-	              style={{
-	                display: "inline-flex",
-	                alignItems: "center",
-	                fontSize: textSize("paragraph"),
-	                fontWeight: FONT_WEIGHTS.medium,
-	                fontFamily: T.sans,
-	                color: T.text,
-	                letterSpacing: "-0.005em",
-	                overflow: "hidden",
-	                textOverflow: "ellipsis",
-	                whiteSpace: "nowrap",
-	                padding: sp("1px 3px"),
-	                borderRadius: dim(RADII.xs),
-	              }}
-	            >
-	              {item.sym}
-	            </span>
-            {item.monitoredOnly ? (
-              <AppTooltip content="Signal-monitor symbol"><span
+            <MarketIdentityMark item={identityItem} size={18} showCountryBadge={false} />
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(3),
+                gridColumn: "3 / 4",
+                minWidth: 0,
+                overflow: "hidden",
+              }}
+            >
+              <span
+                data-testid="watchlist-row-symbol"
+                className={priceFlashClassName}
                 style={{
-                  border: `1px solid ${T.borderLight}`,
-                  borderRadius: dim(RADII.sm),
-                  color: T.textSec,
-                  fontFamily: T.sans,
-                  fontSize: fs(7),
+                  minWidth: 0,
+                  flex: "0 0 auto",
+                  fontSize: textSize("paragraph"),
                   fontWeight: FONT_WEIGHTS.medium,
-                  letterSpacing: "0.04em",
-                  lineHeight: 1,
-                  padding: sp("2px 5px"),
+                  fontFamily: T.sans,
+                  color: T.text,
+                  letterSpacing: "-0.005em",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  padding: sp("1px 3px"),
+                  borderRadius: dim(RADII.xs),
                 }}
               >
-                MON
-              </span></AppTooltip>
-            ) : null}
-            <WatchlistSignalDots
-              statesByTimeframe={signalStatesByTimeframe}
-              fallbackState={signalState}
-              onSelect={(state) => onSignalAction?.(item.sym, state)}
-            />
-            {hasSignal ? (
-              <AppTooltip
-                content={`${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal - ${bestSignalState?.timeframe || "monitor"} - ${bestSignalState?.barsSinceSignal ?? MISSING_VALUE} bars`}
-              >
-                <button
-                  type="button"
-                  data-testid="watchlist-signal-pill"
-                  data-fresh={signalFresh ? "true" : "false"}
-                  className={signalFresh ? "ra-status-pulse" : "ra-interactive"}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSignalAction?.(item.sym, bestSignalState);
-                  }}
-                  style={{
-                    border: `1px solid ${signalFresh ? signalColor : `${signalColor}88`}`,
-                    background: signalFresh ? `${signalColor}24` : `${signalColor}14`,
-                    color: signalFresh ? signalColor : `${signalColor}d0`,
-                    cursor: "pointer",
-                    fontFamily: T.sans,
-                    fontSize: fs(7),
-                    fontWeight: FONT_WEIGHTS.medium,
-                    letterSpacing: "-0.005em",
-                    lineHeight: 1,
-                    padding: sp("3px 7px"),
-                    borderRadius: dim(RADII.pill),
-                    boxShadow: signalFresh
-                      ? `0 0 0 3px ${signalColor}24`
-                      : "none",
-                  }}
-                >
-                  {signalDirection.toUpperCase()}
-                </button>
-              </AppTooltip>
-            ) : null}
-	            <span
-	              className={priceFlashClassName}
-	              style={{
-	                display: "inline-flex",
-	                alignItems: "center",
-	                justifyContent: "flex-end",
-	                color: T.text,
-	                fontFamily: T.sans,
-	                fontSize: textSize("paragraphMuted"),
-	                fontVariantNumeric: "tabular-nums",
-	                fontWeight: FONT_WEIGHTS.regular,
-	                textAlign: "right",
-	                justifySelf: "end",
-	                minWidth: dim(58),
-	                padding: sp("1px 3px"),
-	                borderRadius: dim(RADII.xs),
-	              }}
-	            >
-              {formatQuotePrice(displayedPrice)}
+                {item.sym}
+              </span>
+              {renderDayChange({ flex: "0 0 auto" })}
             </span>
+            {renderSignalCluster({ justifySelf: "end" })}
           </div>
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) auto auto auto",
+              gridTemplateColumns: "minmax(44px,92px) auto",
               alignItems: "center",
-              gap: sp(10),
+              justifyContent: "end",
+              gap: sp(4),
               marginTop: sp(6),
               minWidth: 0,
             }}
           >
-            <AppTooltip content={displayName}><span
-              style={{
-                fontSize: textSize("body"),
-                color: T.textSec,
-                fontFamily: T.sans,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {displayName}
-            </span></AppTooltip>
             <span
+              data-testid="watchlist-row-sparkline"
               style={{
-                fontSize: textSize("body"),
-                color:
-                  pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
-                fontFamily: T.sans,
-                fontVariantNumeric: "tabular-nums",
-                fontWeight: FONT_WEIGHTS.medium,
-                whiteSpace: "nowrap",
+                width: "100%",
+                minWidth: dim(44),
+                maxWidth: dim(92),
+                height: dim(22),
+                overflow: "hidden",
               }}
             >
-              {formatSignedPercent(snapshot?.pct)}
+              <MicroSparkline
+                data={sparklineData}
+                positive={pctPositive}
+                width={92}
+                height={22}
+                style={{ width: "100%", height: "100%" }}
+              />
             </span>
-            <MicroSparkline
-              data={
-                snapshot?.sparkBars?.length
-                  ? snapshot.sparkBars
-                  : snapshot?.spark || fallback.spark
-              }
-              positive={pctPositive}
-              width={92}
-              height={22}
-            />
-            <AppTooltip content={`Volume: ${fmtQuoteVolume(snapshot?.volume)} · ${quoteAge}`}><span
+            <span
+              className={priceFlashClassName}
               style={{
-                color: T.textMuted,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                color: T.text,
                 fontFamily: T.sans,
-                fontSize: textSize("caption"),
+                fontSize: textSize("paragraphMuted"),
                 fontVariantNumeric: "tabular-nums",
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
+                fontWeight: FONT_WEIGHTS.regular,
+                textAlign: "right",
+                justifySelf: "end",
+                padding: sp("1px 2px"),
+                borderRadius: dim(RADII.xs),
                 whiteSpace: "nowrap",
               }}
             >
-              {fmtQuoteVolume(snapshot?.volume)}
-            </span></AppTooltip>
+              {formatQuotePrice(displayedPrice)}
+            </span>
           </div>
         </div>
-        <AppTooltip content={
-            item.monitoredOnly
-              ? `Add ${item.sym} to watchlist`
-              : item.canRemove
-                ? `Remove ${item.sym}`
-                : `${item.sym} cannot be removed from this source`
-          }><button
-          type="button"
-          data-testid={
-            item.monitoredOnly ? "watchlist-add-symbol" : "watchlist-remove-symbol"
-          }
-          className="ra-interactive"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (item.monitoredOnly) {
-              onAddSymbol?.(item.sym, displayName, item);
-              return;
-            }
-            if (!activeActionDisabled) {
-              onRemoveSymbol?.(item.id, item.sym);
-            }
-          }}
-          disabled={item.monitoredOnly ? busy : activeActionDisabled}
-          style={{
-            width: dim(28),
-            height: dim(28),
-            justifySelf: "end",
-            display: "grid",
-            placeItems: "center",
-            border: "none",
-            borderRadius: dim(RADII.sm),
-            background: item.monitoredOnly ? T.accent : "transparent",
-            color: item.monitoredOnly
-              ? T.onAccent
-              : activeActionDisabled
-                ? T.textMuted
-                : T.textSec,
-            cursor:
-              (item.monitoredOnly && !busy) || !activeActionDisabled
-                ? "pointer"
-                : "default",
-            transition: "background 0.18s ease",
-          }}
-        >
-          {item.monitoredOnly ? <Plus size={14} /> : <Trash2 size={13} />}
-        </button></AppTooltip>
+        {item.monitoredOnly ? (
+          <AppTooltip content={`Add ${item.sym} to watchlist`}>
+            <button
+              type="button"
+              data-testid="watchlist-add-symbol"
+              className="ra-interactive"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAddSymbol?.(item.sym, displayName, item);
+              }}
+              disabled={addActionDisabled}
+              style={{
+                width: dim(26),
+                height: dim(26),
+                justifySelf: "end",
+                display: "grid",
+                placeItems: "center",
+                border: "none",
+                borderRadius: dim(RADII.sm),
+                background: T.accent,
+                color: T.onAccent,
+                cursor: addActionDisabled ? "default" : "pointer",
+                transition: "background 0.18s ease",
+              }}
+            >
+              <Plus size={13} />
+            </button>
+          </AppTooltip>
+        ) : null}
       </div>
     );
   },
@@ -629,6 +665,7 @@ export const Watchlist = ({
   onSignalAction,
   busy = false,
   density = "default",
+  headerAccessory = null,
 }) => {
   const rootRef = useRef(null);
   const [search, setSearch] = useState("");
@@ -640,6 +677,8 @@ export const Watchlist = ({
   const [sortDirection, setSortDirection] = useState("desc");
   const [draggedItemId, setDraggedItemId] = useState(null);
   const [dragOverItemId, setDragOverItemId] = useState(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState(() => new Set());
   const deferredAddQuery = useDeferredValue(addQuery.trim());
   const activeWatchlist =
     activeWatchlistId != null
@@ -733,6 +772,19 @@ export const Watchlist = ({
     () => items.filter((item) => item.monitoredOnly).length,
     [items],
   );
+  const removableItems = useMemo(
+    () => items.filter((item) => item.canRemove && item.id),
+    [items],
+  );
+  const removableItemIds = useMemo(
+    () => new Set(removableItems.map((item) => item.id)),
+    [removableItems],
+  );
+  const selectedRemovableItems = useMemo(
+    () => removableItems.filter((item) => selectedItemIds.has(item.id)),
+    [removableItems, selectedItemIds],
+  );
+  const selectedRemovalCount = selectedRemovableItems.length;
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
   const mobileDense = density === "mobile-dense";
   const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
@@ -766,6 +818,48 @@ export const Watchlist = ({
     }
     setAddMode(nextOpen);
   };
+  const startSelectionMode = () => {
+    closeWatchlistMenu();
+    closeAddMode();
+    setDraggedItemId(null);
+    setDragOverItemId(null);
+    setSelectedItemIds(new Set());
+    setSelectionMode(true);
+  };
+  const cancelSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedItemIds(new Set());
+  };
+  const toggleSelectionMode = () => {
+    if (selectionMode) {
+      cancelSelectionMode();
+      return;
+    }
+    startSelectionMode();
+  };
+  const toggleItemSelection = (itemId) => {
+    if (!removableItemIds.has(itemId)) {
+      return;
+    }
+    setSelectedItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+  const handleRemoveSelected = () => {
+    if (!selectedRemovableItems.length || busy) {
+      return;
+    }
+    selectedRemovableItems.forEach((item) => {
+      onRemoveSymbol?.(item.id, item.sym);
+    });
+    cancelSelectionMode();
+  };
 
   useEffect(() => {
     if (
@@ -789,6 +883,18 @@ export const Watchlist = ({
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [addMode, watchlistMenuOpen]);
+
+  useEffect(() => {
+    setSelectedItemIds((current) => {
+      const next = new Set(
+        [...current].filter((itemId) => removableItemIds.has(itemId)),
+      );
+      if (next.size === current.size) {
+        return current;
+      }
+      return next;
+    });
+  }, [removableItemIds]);
 
   const handleCreateWatchlist = () => {
     const nextName = window.prompt("New watchlist name");
@@ -831,7 +937,7 @@ export const Watchlist = ({
     setSortMode(nextMode);
     if (nextMode === WATCHLIST_SORT_MODE.ALPHA) {
       setSortDirection("asc");
-    } else if (nextMode === WATCHLIST_SORT_MODE.PERCENT || nextMode === WATCHLIST_SORT_MODE.VOLUME) {
+    } else if (nextMode === WATCHLIST_SORT_MODE.PERCENT) {
       setSortDirection("desc");
     }
     setDraggedItemId(null);
@@ -996,9 +1102,46 @@ export const Watchlist = ({
               ))}
             </div>
           ) : null}
+          <button
+            type="button"
+            data-testid="watchlist-select-toggle"
+            aria-pressed={selectionMode ? "true" : "false"}
+            aria-label={selectionMode ? "Done selecting watchlist rows" : "Select watchlist rows"}
+            onClick={toggleSelectionMode}
+            disabled={!removableItems.length || busy}
+            style={{
+              minWidth: dim(selectionMode || mobileDense ? 54 : 32),
+              height: dim(32),
+              display: "grid",
+              placeItems: "center",
+              borderRadius: dim(RADII.sm),
+              background: selectionMode ? `${T.accent}16` : "transparent",
+              border: `1px solid ${selectionMode ? T.accent : T.border}`,
+              color: selectionMode ? T.accent : T.textSec,
+              cursor: removableItems.length && !busy ? "pointer" : "default",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+              opacity: removableItems.length ? 1 : 0.5,
+            }}
+            className="ra-interactive"
+          >
+            {selectionMode ? (
+              "Done"
+            ) : mobileDense ? (
+              "Select"
+            ) : (
+              <ListChecks size={15} strokeWidth={1.9} />
+            )}
+          </button>
           <AppTooltip content={mobileDense ? "Manage watchlist" : "New watchlist"}><button
             type="button"
-            data-testid={mobileDense ? "watchlist-manage-toggle" : undefined}
+            data-testid={
+              mobileDense ? "watchlist-manage-toggle" : "watchlist-create-watchlist"
+            }
             onClick={mobileDense ? openManageSheet : handleCreateWatchlist}
             style={{
               width: dim(32),
@@ -1015,6 +1158,18 @@ export const Watchlist = ({
           >
             {mobileDense ? <SlidersHorizontal size={16} /> : <Plus size={16} />}
           </button></AppTooltip>
+          {headerAccessory ? (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              {headerAccessory}
+            </span>
+          ) : null}
         </div>
 
         {!mobileDense ? (
@@ -1088,11 +1243,68 @@ export const Watchlist = ({
         </div>
         ) : null}
 
+        {selectionMode ? (
+          <div
+            data-testid="watchlist-selection-toolbar"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+              alignItems: "center",
+              gap: sp(8),
+              padding: sp("6px 8px"),
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.sm),
+              background: `${T.accent}0f`,
+            }}
+          >
+            <span
+              data-testid="watchlist-selection-count"
+              style={{
+                minWidth: 0,
+                color: T.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {selectedRemovalCount} selected
+            </span>
+            <button
+              type="button"
+              data-testid="watchlist-remove-selected"
+              onClick={handleRemoveSelected}
+              disabled={!selectedRemovalCount || busy}
+              style={{
+                minHeight: dim(26),
+                padding: sp("4px 9px"),
+                border: `1px solid ${selectedRemovalCount ? T.red : T.border}`,
+                borderRadius: dim(RADII.sm),
+                background: selectedRemovalCount ? `${T.red}18` : "transparent",
+                color: selectedRemovalCount ? T.red : T.textMuted,
+                cursor: selectedRemovalCount && !busy ? "pointer" : "default",
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ) : null}
+
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
             gap: sp(4),
+            minWidth: 0,
           }}
         >
           {WATCHLIST_SORT_OPTIONS.map((option) => {
@@ -1343,6 +1555,7 @@ export const Watchlist = ({
           const canDrag =
             sortMode === WATCHLIST_SORT_MODE.MANUAL &&
             Boolean(item.canReorder && item.id) &&
+            !selectionMode &&
             !busy;
           return (
             <WatchlistRow
@@ -1363,11 +1576,13 @@ export const Watchlist = ({
               onDragEnd={clearDragState}
               onSelect={onSelect}
               onAddSymbol={onAddSymbol}
-              onRemoveSymbol={onRemoveSymbol}
+              onToggleSelection={toggleItemSelection}
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               busy={busy}
               density={density}
+              selectionMode={selectionMode}
+              selectedForRemoval={Boolean(item.id && selectedItemIds.has(item.id))}
             />
           );
         })}

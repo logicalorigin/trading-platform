@@ -8,7 +8,9 @@ import {
   ELEVATION,
   MAX_WIDTHS,
   RADII,
+  T,
   THEMES,
+  TYPOGRAPHY,
   TYPOGRAPHY_SIZES,
   dim,
   fs,
@@ -117,6 +119,13 @@ test("TYPOGRAPHY_SIZES exposes the public-style display roles", () => {
     TYPOGRAPHY_SIZES.displayLarge > TYPOGRAPHY_SIZES.displayMedium,
     "displayLarge should be larger than displayMedium",
   );
+});
+
+test("legacy data typography tokens resolve to the app IBM Plex stack", () => {
+  assert.equal(TYPOGRAPHY.data, TYPOGRAPHY.sans);
+  assert.equal(TYPOGRAPHY.code, TYPOGRAPHY.sans);
+  assert.equal(TYPOGRAPHY.mono, TYPOGRAPHY.sans);
+  assert.equal(T.mono, T.sans);
 });
 
 test("textSize returns a positive number for known and unknown roles", () => {

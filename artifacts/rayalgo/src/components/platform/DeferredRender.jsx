@@ -63,7 +63,12 @@ const DeferredRender = ({
       className={["ra-deferred-render", className].filter(Boolean).join(" ")}
       data-testid={testId}
       data-deferred-render={shouldRender ? "mounted" : "pending"}
-      style={{ minHeight }}
+      style={{
+        minHeight,
+        contain: "layout paint style",
+        contentVisibility: "auto",
+        containIntrinsicSize: `${minHeight}px`,
+      }}
     >
       {shouldRender ? (
         children

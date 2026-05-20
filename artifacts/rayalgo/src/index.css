@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&display=swap");
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
@@ -6,7 +5,7 @@
 :root {
   --ra-font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ra-font-display: var(--ra-font-sans);
-  --ra-font-data: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Menlo, Consolas, monospace;
+  --ra-font-data: var(--ra-font-sans);
   --ra-font-code: var(--ra-font-data);
   --ra-accent-500: #E08F76;
   --ra-blue-500: #7CA7D9;
@@ -360,12 +359,32 @@ body * {
   font-family: inherit;
 }
 
+svg,
+svg text,
+svg tspan {
+  font-family: inherit;
+}
+
+.recharts-text,
+.recharts-cartesian-axis-tick-value,
+.recharts-cartesian-axis-tick,
+.recharts-label,
+.recharts-legend-item-text,
+.recharts-tooltip-label,
+.recharts-tooltip-item,
+.recharts-default-tooltip {
+  font-family: var(--ra-font-sans);
+}
+
 button,
 input,
 select,
-textarea {
+textarea,
+option,
+optgroup {
   max-width: 100%;
   font: inherit;
+  font-family: inherit;
 }
 
 @media (max-width: 767px) {
@@ -526,10 +545,20 @@ html[data-rayalgo-reduced-motion="on"] .ra-error-shake {
 
 /* Screen-switch entrance — short fade + 4px translateY rise. Reads as
    "this screen just arrived" without being slow enough to delay user
-   interaction. Re-played from JS via classList.remove + reflow + add
-   each time a screen becomes active (works for retainInactive screens
-   that stay mounted between switches). */
+   interaction. Re-played from JS by toggling between equivalent
+   animation names, avoiding synchronous layout reads on screen switch. */
 @keyframes raScreenEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes raScreenEnterAlt {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -542,6 +571,10 @@ html[data-rayalgo-reduced-motion="on"] .ra-error-shake {
 
 .ra-screen-enter {
   animation: raScreenEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+.ra-screen-enter-alt {
+  animation-name: raScreenEnterAlt;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -603,6 +636,26 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
   50% {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes raSignalHotGlow {
+  0%, 100% {
+    box-shadow: inset 3px 0 0 var(--ra-motion-accent);
+  }
+  45% {
+    box-shadow:
+      inset 3px 0 0 var(--ra-motion-accent),
+      0 0 12px -2px var(--ra-motion-accent);
+  }
+}
+
+@keyframes raSignalGlyphFresh {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
   }
 }
 
@@ -956,6 +1009,40 @@ summary,
 .ra-status-pulse {
   animation: raStatusPulse 1450ms var(--ra-motion-ease) infinite;
   transform-origin: center;
+}
+
+.ra-signal-row-glow {
+  animation: raSignalHotGlow 620ms var(--ra-motion-enter) 1;
+}
+
+.ra-signal-glyph-fresh {
+  animation: raSignalGlyphFresh 220ms var(--ra-motion-enter) 1;
+  transform-origin: center;
+}
+
+.ra-signal-row-focus {
+  position: relative;
+}
+
+.ra-signal-row-focus:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  box-shadow:
+    inset 4px 0 0 var(--ra-color-cyan, currentColor),
+    0 0 0 1px var(--ra-color-cyan, currentColor);
+}
+
+.ra-signal-row-focus:focus-visible::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--ra-color-cyan, currentColor);
+  transform: translateY(-50%);
 }
 
 .ra-focus-rail {
@@ -1453,6 +1540,10 @@ textarea:disabled:not([data-ra-keep-opacity]) {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
+  [data-testid="algo-screen"][data-layout="phone"] [data-algo-pocket-grid="two"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
   [data-testid="account-screen"] {
     min-width: 0;
     max-width: 100vw;
@@ -1534,6 +1625,8 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-panel-enter,
   .ra-popover-enter,
   .ra-row-enter,
+  .ra-signal-row-glow,
+  .ra-signal-glyph-fresh,
   .ra-value-flash-up,
   .ra-value-flash-down,
   .ra-status-pulse,
@@ -1573,6 +1666,8 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 html[data-rayalgo-reduced-motion="on"] .ra-panel-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-popover-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-row-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-signal-row-glow,
+html[data-rayalgo-reduced-motion="on"] .ra-signal-glyph-fresh,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-up,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-down,
 html[data-rayalgo-reduced-motion="on"] .ra-status-pulse,

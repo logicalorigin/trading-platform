@@ -63,6 +63,37 @@ const isQuoteStandbyState = (proof) =>
   proof?.streamState === "quiet" &&
   proof?.streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON;
 
+const GATEWAY_DISCONNECT_REASONS = new Set([
+  "bridge_unreachable",
+  "gateway_socket_disconnected",
+  "gateway_server_disconnected",
+  "gateway_login_required",
+]);
+
+const STREAM_LIFECYCLE_ONLY_STATES = new Set(["checking", "reconnecting"]);
+
+const hasGatewayConnectionProof = (proof) =>
+  Boolean(
+    proof?.healthFresh === true &&
+      proof?.authenticated === true &&
+      proof?.accountsLoaded !== false &&
+      proof?.configuredLiveMarketDataMode !== false &&
+      proof?.brokerServerConnected !== false &&
+      (proof?.bridgeReachable === true || proof?.socketConnected === true),
+  );
+
+const isGatewayDisconnectReason = (value) =>
+  GATEWAY_DISCONNECT_REASONS.has(String(value || ""));
+
+const isStreamLifecycleOnlyState = (proof, streamMeta) =>
+  Boolean(
+    streamMeta &&
+      STREAM_LIFECYCLE_ONLY_STATES.has(streamMeta.status) &&
+      hasGatewayConnectionProof(proof) &&
+      !isGatewayDisconnectReason(proof?.strictReason) &&
+      !isGatewayDisconnectReason(proof?.streamStateReason),
+  );
+
 // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
 
 const resolveConnectionProof = (connection, runtime) => {
@@ -248,11 +279,11 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
     streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON
   ) {
     return {
-      label: "no quote subscribers",
+      label: "standby",
       status: state,
-      healthLabel: "No Quote Subscribers",
+      healthLabel: "Standing By",
       detail:
-        "Gateway is connected; no UI panel is subscribed to the stock quote stream",
+        "Gateway is connected; the stock quote stream will start when a live panel requests it",
       color: tokenColor,
       background: tokenBackground,
       Icon: RadioTower,
@@ -469,6 +500,14 @@ export const getIbkrConnectionTone = (connection) => {
     proof.streamState,
     proof.streamStateReason,
   );
+  if (isStreamLifecycleOnlyState(proof, streamMeta)) {
+    return {
+      label: "online",
+      color: T.green,
+      Icon: CircleCheck,
+      wave: "fast",
+    };
+  }
   if (streamMeta?.status === "reconnecting") {
     return {
       label: streamMeta.label,
@@ -540,7 +579,31 @@ export const getIbkrConnectionTone = (connection) => {
       };
     }
 
+    if (
+      streamMeta?.status === "no-subscribers" &&
+      proof.healthFresh === true &&
+      proof.bridgeReachable === true &&
+      proof.socketConnected === true &&
+      proof.authenticated === true &&
+      proof.accountsLoaded === true
+    ) {
+      return {
+        label: "online",
+        color: T.green,
+        Icon: CircleCheck,
+        wave: "fast",
+      };
+    }
+
     if (streamMeta) {
+      if (isStreamLifecycleOnlyState(proof, streamMeta)) {
+        return {
+          label: "online",
+          color: T.green,
+          Icon: CircleCheck,
+          wave: "fast",
+        };
+      }
       return {
         label: streamMeta.label,
         color: streamMeta.color,
@@ -613,7 +676,11 @@ export const isIbkrWaveActive = (connection) => {
       (connected &&
         (streamState === "healthy" ||
           streamState === "quiet" ||
-          isQuoteStandbyState(proof))),
+          isQuoteStandbyState(proof) ||
+          isStreamLifecycleOnlyState(
+            proof,
+            getIbkrStreamStateMeta(proof.streamState, proof.streamStateReason),
+          ))),
   );
 };
 
@@ -769,6 +836,17 @@ export const resolveIbkrGatewayHealth = ({
     proof.streamState,
     proof.streamStateReason,
   );
+  if (isStreamLifecycleOnlyState(proof, streamMeta)) {
+    return {
+      status: "healthy",
+      label: "Ready",
+      color: streamStateTokenVar("healthy"),
+      detail:
+        streamMeta.status === "reconnecting"
+          ? "Gateway is authenticated; quote stream is reconnecting"
+          : "Gateway is authenticated; quote stream is starting",
+    };
+  }
   if (streamMeta && streamMeta.status !== "login-required" && streamMeta.status !== "offline") {
     return {
       status: streamMeta.status,

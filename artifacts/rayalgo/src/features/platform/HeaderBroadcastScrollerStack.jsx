@@ -926,7 +926,7 @@ const HeaderBroadcastLane = ({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: sp("0px 8px"),
+        padding: sp(compactSettings ? "0px 8px" : "0px 4px"),
         border: "none",
         background: settingsOpen ? `${T.accent}14` : "transparent",
         color: settingsOpen ? T.accent : T.textDim,
@@ -949,9 +949,9 @@ const HeaderBroadcastLane = ({
         display: "grid",
         gridTemplateColumns: compactSettings
           ? `${dim(26)}px minmax(0, 1fr) auto`
-          : "72px minmax(0, 1fr) auto",
+          : "56px minmax(0, 1fr) auto",
         alignItems: "center",
-        minHeight: dim(compactSettings ? 18 : 22),
+        minHeight: dim(compactSettings ? 18 : 20),
         minWidth: 0,
       }}
     >
@@ -973,7 +973,7 @@ const HeaderBroadcastLane = ({
           minWidth: 0,
           overflowX: shouldScroll ? "hidden" : "auto",
           overflowY: "hidden",
-          padding: sp(compactSettings ? "1px 6px" : "1px 8px"),
+          padding: sp(compactSettings ? "1px 6px" : "1px 6px"),
         }}
       >
         {items.length ? (
@@ -983,7 +983,7 @@ const HeaderBroadcastLane = ({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: sp(8),
+              gap: sp(compactSettings ? 8 : 6),
               minWidth: "max-content",
               animation: shouldScroll
                 ? `headerBroadcastScroll ${durationSeconds}s linear infinite`
@@ -1015,14 +1015,15 @@ const HeaderBroadcastLane = ({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              height: dim(compactSettings ? 16 : 22),
+              gap: sp(4),
+              height: dim(compactSettings ? 16 : 18),
               paddingLeft: sp(4),
             }}
           >
             <span
               style={{
-                width: dim(8),
-                height: dim(8),
+                width: dim(compactSettings ? 8 : 7),
+                height: dim(compactSettings ? 8 : 7),
                 borderRadius: dim(RADII.pill),
                 background: emptyTone || T.textMuted,
                 boxShadow: emptyTone
@@ -1030,6 +1031,17 @@ const HeaderBroadcastLane = ({
                   : "none",
               }}
             />
+            <span
+              style={{
+                color: emptyTone || T.textMuted,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                fontFamily: T.sans,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {emptyLabel}
+            </span>
           </span>
         )}
       </div>
@@ -1037,7 +1049,7 @@ const HeaderBroadcastLane = ({
       <div
         style={{
           height: "100%",
-          minWidth: dim(28),
+          minWidth: dim(compactSettings ? 28 : 22),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -1089,6 +1101,14 @@ export const HeaderBroadcastScrollerStack = memo(({
     [flowTapeFilters],
   );
   const broadScanSnapshotActive = broadScanEnabled && broadScanOwnerActive;
+  const broadScanSnapshotHasEvents = Boolean(
+    broadFlowSnapshot.flowEvents?.length,
+  );
+  const broadScanSnapshotVisible = Boolean(
+    broadScanSnapshotActive ||
+      (broadScanEnabled &&
+        (broadScanSnapshotHasEvents || broadFlowSnapshot.staleFlowEvents)),
+  );
   const [openSettingsLane, setOpenSettingsLane] = useState(null);
   const [speedPreset, setSpeedPreset] = useState(() =>
     resolveHeaderBroadcastSpeedPreset(_initialState.headerBroadcastSpeedPreset),
@@ -1212,10 +1232,10 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalStateSummary = signalStatusSnapshot.stateSummary;
   const rawUnusualEvents = useMemo(
     () =>
-      broadScanSnapshotActive
+      broadScanSnapshotVisible
         ? broadFlowSnapshot.flowEvents || []
         : [],
-    [broadFlowSnapshot.flowEvents, broadScanSnapshotActive],
+    [broadFlowSnapshot.flowEvents, broadScanSnapshotVisible],
   );
   const unusualEvents = useMemo(
     () =>
@@ -1281,10 +1301,12 @@ export const HeaderBroadcastScrollerStack = memo(({
     ? "live"
     : rawUnusualEvents.length
       ? "live"
-    : broadScanSnapshotActive
+    : broadScanSnapshotVisible
       ? broadFlowSnapshot.flowStatus
+      : broadScanEnabled
+        ? "loading"
       : "empty";
-  const flowProviderSummary = broadScanSnapshotActive
+  const flowProviderSummary = broadScanSnapshotVisible
     ? broadFlowSnapshot.providerSummary
     : null;
   const flowHasError =
@@ -1293,12 +1315,15 @@ export const HeaderBroadcastScrollerStack = memo(({
     Boolean(flowProviderSummary?.failures?.length);
   const flowDegraded =
     providerSummaryHasVisibleFlowDegradation(flowProviderSummary);
-  const flowScanHasError = Boolean(broadScanSnapshotActive && flowHasError);
+  const flowScanStale = Boolean(
+    broadScanEnabled && !broadScanOwnerActive && broadScanSnapshotHasEvents,
+  );
+  const flowScanHasError = Boolean(broadScanOwnerActive && flowHasError);
   const flowScanDegraded = Boolean(
-    broadScanSnapshotActive && !flowScanHasError && flowDegraded,
+    broadScanOwnerActive && !flowScanHasError && flowDegraded,
   );
   const flowScanBusy = Boolean(
-    broadScanSnapshotActive &&
+    broadScanOwnerActive &&
       !flowScanHasError &&
       !flowScanDegraded &&
       (flowStatus === "loading" || flowProviderSummary?.coverage?.isFetching),
@@ -1323,6 +1348,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? T.amber
     : flowScanBusy
       ? T.accent
+    : flowScanStale
+      ? T.amber
       : broadScanSnapshotActive
         ? T.green
         : broadScanEnabled
@@ -1334,6 +1361,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "DEGRADED"
     : flowScanBusy
       ? "SCANNING"
+    : flowScanStale
+      ? "STALE"
       : broadScanSnapshotActive
         ? "SCAN ON"
         : broadScanEnabled
@@ -1345,6 +1374,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "Flow scan degraded"
     : flowScanBusy
       ? "Flow scan updating"
+    : flowScanStale
+      ? "Flow scan paused; showing last snapshot"
       : broadScanSnapshotActive
         ? "Flow scan active"
         : broadScanEnabled
@@ -1435,7 +1466,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             testId="header-signal-scan-settings-toggle"
             tone={signalScanTone}
           >
-            {signalScanEnabled ? "On" : "Off"}
+            {signalScanEnabled ? "Signal Scan On" : "Signal Scan Off"}
           </HeaderLaneToggleButton>
         </HeaderLanePairRow>
         <HeaderLaneChipRow
@@ -1517,17 +1548,55 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const unusualCoverage = flowProviderSummary?.coverage || null;
   const unusualCurrentBatch = unusualCoverage?.currentBatch || [];
+  const unusualLastScannedCount =
+    unusualCoverage?.lastScannedAt && typeof unusualCoverage.lastScannedAt === "object"
+      ? Object.keys(unusualCoverage.lastScannedAt).length
+      : 0;
+  const unusualScannedCount = Math.max(
+    0,
+    Math.round(
+      Number.isFinite(unusualCoverage?.cycleScannedSymbols)
+        ? unusualCoverage.cycleScannedSymbols
+        : Number.isFinite(unusualCoverage?.scannedSymbols)
+          ? unusualCoverage.scannedSymbols
+          : unusualLastScannedCount,
+    ),
+  );
+  const unusualTargetCount = Math.max(
+    0,
+    Math.round(
+      Number.isFinite(unusualCoverage?.activeTargetSize)
+        ? unusualCoverage.activeTargetSize
+        : Number.isFinite(unusualCoverage?.totalSymbols)
+          ? unusualCoverage.totalSymbols
+          : Number.isFinite(unusualCoverage?.targetSize)
+            ? unusualCoverage.targetSize
+            : Number.isFinite(unusualCoverage?.selectedSymbols)
+              ? unusualCoverage.selectedSymbols
+              : flowScannerConfig.maxSymbols,
+    ),
+  );
+  const unusualCoverageLabel = unusualCoverage
+    ? unusualScannedCount > 0 || unusualTargetCount > 0
+      ? `${unusualScannedCount}/${unusualTargetCount || unusualScannedCount}`
+      : unusualCurrentBatch.length
+        ? `warming ${unusualCurrentBatch.length}`
+        : MISSING_VALUE
+    : MISSING_VALUE;
+  const unusualEventsLabel = flowEventsFilteredOut
+    ? `${unusualItems.length}/${rawUnusualEvents.length}`
+    : `${unusualItems.length}`;
   const unusualScanningNow = unusualCurrentBatch.length
     ? unusualCurrentBatch.slice(0, 4).join(" ")
     : MISSING_VALUE;
-  const unusualLineDetail =
-    unusualCoverage && Number.isFinite(unusualCoverage.cycleScannedSymbols)
-      ? `${unusualCoverage.cycleScannedSymbols}/${unusualCoverage.totalSymbols || unusualCoverage.activeTargetSize || unusualCoverage.cycleScannedSymbols}`
-      : MISSING_VALUE;
   const unusualBatchSize =
     unusualCoverage?.batchSize ?? flowScannerConfig.batchSize;
   const unusualConcurrency =
     unusualCoverage?.concurrency ?? flowScannerConfig.concurrency;
+  const unusualLineDetail =
+    Number.isFinite(unusualBatchSize) || Number.isFinite(unusualConcurrency)
+      ? `${unusualBatchSize} batch / ${unusualConcurrency} conc`
+      : MISSING_VALUE;
   const unusualSettings = (
     <HeaderLaneSettingsPopover
       testId="header-unusual-settings-popover"
@@ -1700,12 +1769,14 @@ export const HeaderBroadcastScrollerStack = memo(({
         testId="header-unusual-status-section"
       >
         <HeaderLaneInfoRow
+          label="Events"
+          value={unusualEventsLabel}
+          tone={flowEventsFilteredOut ? T.amber : T.textSec}
+        />
+        <HeaderLaneInfoRow
           label="Coverage"
-          value={
-            unusualCoverage
-              ? `${unusualItems.length} · ${unusualCoverage.scannedSymbols}/${unusualCoverage.totalSymbols}`
-              : `${unusualItems.length}`
-          }
+          value={unusualCoverageLabel}
+          tone={unusualScannedCount > 0 ? T.textSec : T.amber}
         />
         <HeaderLaneInfoRow
           label="Scanning"
@@ -1805,9 +1876,9 @@ export const HeaderBroadcastScrollerStack = memo(({
               disabled={signalBusy || !onToggleSignalScan}
               onClick={onToggleSignalScan}
               style={{
-                width: dim(24),
-                height: dim(22),
-                minHeight: dim(22),
+                width: dim(isPhone ? 24 : 22),
+                height: dim(isPhone ? 22 : 20),
+                minHeight: dim(isPhone ? 22 : 20),
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -1876,9 +1947,9 @@ export const HeaderBroadcastScrollerStack = memo(({
               aria-pressed={broadScanEnabled}
               onClick={toggleBroadScan}
               style={{
-                width: dim(24),
-                height: dim(22),
-                minHeight: dim(22),
+                width: dim(isPhone ? 24 : 22),
+                height: dim(isPhone ? 22 : 20),
+                minHeight: dim(isPhone ? 22 : 20),
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",

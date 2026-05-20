@@ -4,7 +4,6 @@ import {
   useRef,
   useCallback,
   useMemo,
-  startTransition,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -87,6 +86,7 @@ import {
 import {
   OPERATIONAL_SCREEN_PRELOAD_ORDER,
   buildMountedScreenState,
+  preloadScreenModule,
 } from "./screenRegistry.jsx";
 import {
   getMarketFlowStoreEntryCount,
@@ -175,6 +175,16 @@ input[type=range]{accent-color:#E08F76}
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["2m", "5m", "15m"];
+const SCREEN_CRITICAL_READY_FALLBACK_MS = 2_500;
+const SCREEN_BACKGROUND_READY_FALLBACK_MS = 6_000;
+const OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS = 120;
+const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
+const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
+const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
+const BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS = 1_500;
+const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 3_000;
+const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
+const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -201,6 +211,19 @@ const scheduleIdleWork = (callback, timeout = 1_500) => {
   }
   const timerId = window.setTimeout(callback, 180);
   return () => window.clearTimeout(timerId);
+};
+
+const EMPTY_SCREEN_READINESS = {
+  criticalReady: false,
+  derivedReady: false,
+  backgroundAllowed: false,
+};
+
+const EMPTY_BACKGROUND_RESUME_READY = {
+  screen: null,
+  broadFlow: false,
+  signalDisplay: false,
+  signalMatrix: false,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -243,10 +266,24 @@ export default function PlatformApp() {
   );
   const [firstScreenReady, setFirstScreenReady] = useState(false);
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
+  const [screenReadiness, setScreenReadiness] = useState({});
+  const [backgroundResumeReady, setBackgroundResumeReady] = useState(
+    EMPTY_BACKGROUND_RESUME_READY,
+  );
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
   );
+  const [watchlistSidebarWidth, setWatchlistSidebarWidth] = useState(() => {
+    const persistedWidth = Number(_initialState.watchlistSidebarWidth);
+    return Number.isFinite(persistedWidth)
+      ? clampNumber(
+          persistedWidth,
+          WATCHLIST_SIDEBAR_WIDTH_MIN,
+          WATCHLIST_SIDEBAR_WIDTH_MAX,
+        )
+      : WATCHLIST_SIDEBAR_WIDTH_DEFAULT;
+  });
   const [theme, setTheme] = useState(() => {
     const initialTheme = resolveEffectiveThemeFromState(_initialState);
     setCurrentTheme(initialTheme);
@@ -275,7 +312,8 @@ export default function PlatformApp() {
   const [selectedAccountId, setSelectedAccountId] = useState(
     _initialState.selectedAccountId || null,
   );
-  const screenWarmupStartedRef = useRef(false);
+  const screenCodePreloadCompleteRef = useRef(false);
+  const researchWorkspacePreloadCompleteRef = useRef(false);
   // Pending sym hand-off to Trade tab — bumped each time a watchlist item is clicked
   // so TradeScreen can react even when the same sym is clicked twice
   const [tradeSymPing, setTradeSymPing] = useState({
@@ -287,6 +325,55 @@ export default function PlatformApp() {
     sym: _initialState.sym || "SPY",
     n: 0,
   });
+
+  const handleScreenReadiness = useCallback((screenId, patch = {}) => {
+    if (!screenId) return;
+    setScreenReadiness((current) => {
+      const previous = current[screenId] || EMPTY_SCREEN_READINESS;
+      const next = {
+        criticalReady:
+          patch.criticalReady == null
+            ? previous.criticalReady
+            : Boolean(patch.criticalReady),
+        derivedReady:
+          patch.derivedReady == null
+            ? previous.derivedReady
+            : Boolean(patch.derivedReady),
+        backgroundAllowed:
+          patch.backgroundAllowed == null
+            ? previous.backgroundAllowed
+            : Boolean(patch.backgroundAllowed),
+      };
+
+      if (next.derivedReady || next.backgroundAllowed) {
+        next.criticalReady = true;
+      }
+
+      if (
+        previous.criticalReady === next.criticalReady &&
+        previous.derivedReady === next.derivedReady &&
+        previous.backgroundAllowed === next.backgroundAllowed
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [screenId]: {
+          ...next,
+          updatedAt: Date.now(),
+        },
+      };
+    });
+  }, []);
+
+  const updateBackgroundResumeReady = useCallback((key, value) => {
+    setBackgroundResumeReady((current) =>
+      current.screen === screen && current[key] === value
+        ? current
+        : { ...current, screen, [key]: value },
+    );
+  }, [screen]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -305,6 +392,10 @@ export default function PlatformApp() {
       window.removeEventListener(SCREEN_READY_EVENT, handleScreenReady);
     };
   }, []);
+
+  useEffect(() => {
+    setBackgroundResumeReady({ ...EMPTY_BACKGROUND_RESUME_READY, screen });
+  }, [pageVisible, screen]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -452,6 +543,71 @@ export default function PlatformApp() {
   const marketScreenWarm = Boolean(mountedScreens.market);
   const marketScreenActive = screen === "market";
   const flowScreenActive = screen === "flow";
+  const activeScreenReadiness =
+    screenReadiness[screen] || EMPTY_SCREEN_READINESS;
+  const activeScreenCriticalReady = Boolean(
+    activeScreenReadiness.criticalReady,
+  );
+  const activeScreenBackgroundAllowed = Boolean(
+    activeScreenReadiness.backgroundAllowed,
+  );
+  useEffect(() => {
+    if (!pageVisible || !activeScreenCriticalReady) {
+      updateBackgroundResumeReady("broadFlow", false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(
+      () => updateBackgroundResumeReady("broadFlow", true),
+      flowScreenActive ? 0 : BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    activeScreenCriticalReady,
+    flowScreenActive,
+    pageVisible,
+    screen,
+    updateBackgroundResumeReady,
+  ]);
+  useEffect(() => {
+    if (!pageVisible || !activeScreenCriticalReady) {
+      updateBackgroundResumeReady("signalDisplay", false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(
+      () => updateBackgroundResumeReady("signalDisplay", true),
+      SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    activeScreenCriticalReady,
+    pageVisible,
+    screen,
+    updateBackgroundResumeReady,
+  ]);
+  useEffect(() => {
+    if (
+      !pageVisible ||
+      !activeScreenBackgroundAllowed ||
+      screenWarmupPhase !== "ready"
+    ) {
+      updateBackgroundResumeReady("signalMatrix", false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(
+      () => updateBackgroundResumeReady("signalMatrix", true),
+      SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    activeScreenBackgroundAllowed,
+    pageVisible,
+    screen,
+    screenWarmupPhase,
+    updateBackgroundResumeReady,
+  ]);
   const tradeWarmTicker = useMemo(
     () =>
       normalizeTickerSymbol(
@@ -462,14 +618,20 @@ export default function PlatformApp() {
   const memoryPressureObserved = Boolean(
     memoryPressureSignal?.observedAt || memoryPressureSignal?.measurement,
   );
+  const memoryPressureLevel = memoryPressureSignal?.level || "normal";
+  const memoryBlocksOperationalPreload = memoryPressureLevel === "critical";
   const memoryAllowsBackgroundWarmup = Boolean(
     memoryPressureObserved && memoryPressureSignal?.level === "normal",
   );
   const memoryAllowsIdlePrefetch = Boolean(
     firstScreenReady && memoryAllowsBackgroundWarmup,
   );
-  const tradeBackgroundWarmupReady = Boolean(
-    firstScreenReady && sessionMetadataSettled && memoryAllowsBackgroundWarmup,
+  const operationalCodePreloadReady = Boolean(
+    pageVisible &&
+      firstScreenReady &&
+      activeScreenCriticalReady &&
+      sessionMetadataSettled &&
+      !memoryBlocksOperationalPreload,
   );
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
@@ -480,27 +642,60 @@ export default function PlatformApp() {
       to: formatIsoDate(to),
     };
   }, []);
+  const visibleWatchlistMarketDataSymbols = useMemo(
+    () => watchlistSymbols.slice(0, INITIAL_MARKET_DATA_WATCHLIST_LIMIT),
+    [watchlistSymbols],
+  );
+  const broadMarketDataHydrationReady = Boolean(
+    pageVisible &&
+      activeScreenBackgroundAllowed &&
+      screenWarmupPhase === "ready" &&
+      !memoryBlocksOperationalPreload,
+  );
   const quoteSymbols = useMemo(() => {
     return [
       ...new Set(
         [
-          ...watchlistSymbols,
+          sym,
           ...HEADER_KPI_SYMBOLS,
-          ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
+          ...visibleWatchlistMarketDataSymbols,
+          ...(broadMarketDataHydrationReady ? watchlistSymbols : []),
+          ...(marketScreenActive && broadMarketDataHydrationReady
+            ? MARKET_SNAPSHOT_SYMBOLS
+            : []),
         ].filter(Boolean),
       ),
     ];
-  }, [marketScreenActive, watchlistSymbols]);
+  }, [
+    broadMarketDataHydrationReady,
+    marketScreenActive,
+    sym,
+    visibleWatchlistMarketDataSymbols,
+    watchlistSymbols,
+  ]);
   const sparklineSymbols = useMemo(() => {
-    const indexSymbols = marketScreenActive ? INDICES.map((item) => item.sym) : [];
+    const indexSymbols =
+      marketScreenActive && broadMarketDataHydrationReady
+        ? INDICES.map((item) => item.sym)
+        : [];
     return [
       ...new Set(
-        [...watchlistSymbols, ...indexSymbols, ...HEADER_KPI_SYMBOLS].filter(
-          Boolean,
-        ),
+        [
+          sym,
+          ...visibleWatchlistMarketDataSymbols,
+          ...HEADER_KPI_SYMBOLS,
+          ...(broadMarketDataHydrationReady ? watchlistSymbols : []),
+          ...indexSymbols,
+        ].filter(Boolean),
       ),
     ];
-  }, [marketScreenActive, watchlistSymbols]);
+  }, [
+    broadMarketDataHydrationReady,
+    marketScreenActive,
+    sym,
+    visibleWatchlistMarketDataSymbols,
+    watchlistSymbols,
+  ]);
   const streamedQuoteSymbols = useMemo(
     () => [
       ...new Set(
@@ -515,15 +710,25 @@ export default function PlatformApp() {
     () => [
       ...new Set(
         [
-          ...watchlistSymbols,
+          sym,
           ...HEADER_KPI_SYMBOLS,
-          ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
+          ...visibleWatchlistMarketDataSymbols,
+          ...(broadMarketDataHydrationReady ? watchlistSymbols : []),
+          ...(marketScreenActive && broadMarketDataHydrationReady
+            ? MARKET_SNAPSHOT_SYMBOLS
+            : []),
         ]
           .map(normalizeTickerSymbol)
           .filter(Boolean),
       ),
     ],
-    [marketScreenActive, watchlistSymbols],
+    [
+      broadMarketDataHydrationReady,
+      marketScreenActive,
+      sym,
+      visibleWatchlistMarketDataSymbols,
+      watchlistSymbols,
+    ],
   );
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },
@@ -542,21 +747,6 @@ export default function PlatformApp() {
       sessionQuery.data?.ibkrBridge?.healthFresh !== false &&
       marketScreenActive,
   );
-  const accountRealtimeEnabled = Boolean(
-    pageVisible &&
-      sessionQuery.data?.configured?.ibkr &&
-      sessionQuery.data?.ibkrBridge?.authenticated,
-  );
-  useIbkrAccountSnapshotStream({
-    accountId: null,
-    mode: sessionQuery.data?.environment || "paper",
-    enabled: accountRealtimeEnabled,
-  });
-  useIbkrOrderSnapshotStream({
-    accountId: null,
-    mode: sessionQuery.data?.environment || "paper",
-    enabled: accountRealtimeEnabled,
-  });
 
   useEffect(() => {
     if (!accounts.length) {
@@ -995,6 +1185,36 @@ export default function PlatformApp() {
   }, [mountedScreens, screen]);
 
   useEffect(() => {
+    const criticalTimer = activeScreenCriticalReady
+      ? null
+      : window.setTimeout(() => {
+          handleScreenReadiness(screen, { criticalReady: true });
+        }, SCREEN_CRITICAL_READY_FALLBACK_MS);
+    const backgroundTimer = activeScreenBackgroundAllowed
+      ? null
+      : window.setTimeout(() => {
+          handleScreenReadiness(screen, {
+            criticalReady: true,
+            backgroundAllowed: true,
+          });
+        }, SCREEN_BACKGROUND_READY_FALLBACK_MS);
+
+    return () => {
+      if (criticalTimer != null) {
+        window.clearTimeout(criticalTimer);
+      }
+      if (backgroundTimer != null) {
+        window.clearTimeout(backgroundTimer);
+      }
+    };
+  }, [
+    activeScreenBackgroundAllowed,
+    activeScreenCriticalReady,
+    handleScreenReadiness,
+    screen,
+  ]);
+
+  useEffect(() => {
     INACTIVE_HEAVY_QUERY_PREFIXES.forEach((queryKey) => {
       queryClient.removeQueries({
         queryKey,
@@ -1005,58 +1225,107 @@ export default function PlatformApp() {
   }, [queryClient, screen]);
 
   useEffect(() => {
-    if (!tradeBackgroundWarmupReady) {
-      screenWarmupStartedRef.current = false;
-      return;
+    if (
+      !operationalCodePreloadReady ||
+      screenCodePreloadCompleteRef.current
+    ) {
+      return undefined;
     }
 
-    if (screenWarmupStartedRef.current) {
-      return;
+    let completed = false;
+    const warmingTimers = OPERATIONAL_SCREEN_PRELOAD_ORDER.map((screenId, index) =>
+      window.setTimeout(() => {
+        preloadScreenModule(screenId);
+      }, OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS * (index + 1)),
+    );
+    const readyTimer = window.setTimeout(() => {
+      completed = true;
+      screenCodePreloadCompleteRef.current = true;
+      setScreenWarmupPhase("ready");
+    }, OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS * (OPERATIONAL_SCREEN_PRELOAD_ORDER.length + 1));
+
+    setScreenWarmupPhase((current) =>
+      current === "ready" ? current : "warming",
+    );
+
+    return () => {
+      warmingTimers.forEach((timerId) => window.clearTimeout(timerId));
+      window.clearTimeout(readyTimer);
+      if (!completed) {
+        screenCodePreloadCompleteRef.current = false;
+      }
+    };
+  }, [operationalCodePreloadReady]);
+
+  useEffect(() => {
+    if (
+      !operationalCodePreloadReady ||
+      screenWarmupPhase !== "ready" ||
+      memoryBlocksOperationalPreload ||
+      researchWorkspacePreloadCompleteRef.current
+    ) {
+      return undefined;
     }
-    screenWarmupStartedRef.current = true;
 
     let cancelled = false;
-    const cleanups = [];
-    const queueMount = (screenId) => {
+    const timers = [];
+    const idleCleanups = [];
+    const queueIdlePreload = (delayMs, callback, timeoutMs = 8_000) => {
+      const timerId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        const cancelIdle = scheduleIdleWork(() => {
+          if (!cancelled) {
+            callback();
+          }
+        }, timeoutMs);
+        idleCleanups.push(cancelIdle);
+      }, delayMs);
+      timers.push(timerId);
+    };
+
+    researchWorkspacePreloadCompleteRef.current = true;
+    queueIdlePreload(0, () => {
+      preloadScreenModule("research");
+    }, 5_000);
+    queueIdlePreload(1_500, () => {
+      void import("../research/data/runtime.js")
+        .then(({ loadResearchRuntimeMeta }) => loadResearchRuntimeMeta())
+        .catch(() => {});
+    });
+    queueIdlePreload(3_000, () => {
+      void import("../research/data/runtime.js")
+        .then(({ loadResearchThemeDataset }) => loadResearchThemeDataset("ai"))
+        .catch(() => {});
+    });
+    queueIdlePreload(4_500, () => {
       if (cancelled) {
         return;
       }
-      startTransition(() => {
-        setMountedScreens((current) =>
-          current[screenId] ? current : { ...current, [screenId]: true },
-        );
-      });
-    };
-
-    const warmingTimers = OPERATIONAL_SCREEN_PRELOAD_ORDER.map((screenId, index) =>
-      window.setTimeout(() => {
-        if (screenId !== screen) {
-          queueMount(screenId);
-        }
-      }, 140 * (index + 1)),
-    );
-    cleanups.push(() => warmingTimers.forEach((timerId) => window.clearTimeout(timerId)));
-
-    // Mark the warmup as ready shortly after the last operational preload
-    // fires — `lowPriorityHistoryEnabled` keys off this phase so historical
-    // backfill can start. We no longer auto-mount Research / Backtest.
-    const readyTimer = window.setTimeout(() => {
-      if (!cancelled) {
-        setScreenWarmupPhase("ready");
-      }
-    }, 140 * (OPERATIONAL_SCREEN_PRELOAD_ORDER.length + 1));
-    cleanups.push(() => window.clearTimeout(readyTimer));
-
-    setScreenWarmupPhase("warming");
+      preloadDynamicImport(
+        () => import("../research/PhotonicsObservatory.jsx"),
+        { label: "PhotonicsObservatoryPrefetch" },
+      );
+    }, 10_000);
 
     return () => {
       cancelled = true;
-      cleanups.forEach((cleanup) => cleanup());
+      timers.forEach((timerId) => window.clearTimeout(timerId));
+      idleCleanups.forEach((cleanup) => cleanup());
     };
-  }, [screen, tradeBackgroundWarmupReady]);
+  }, [
+    memoryBlocksOperationalPreload,
+    operationalCodePreloadReady,
+    screenWarmupPhase,
+  ]);
 
   useEffect(() => {
-    if (!sessionMetadataSettled || !memoryAllowsIdlePrefetch) {
+    if (
+      !sessionMetadataSettled ||
+      !memoryAllowsIdlePrefetch ||
+      !activeScreenBackgroundAllowed
+    ) {
       return undefined;
     }
 
@@ -1078,7 +1347,12 @@ export default function PlatformApp() {
         ),
       );
 
-      if (researchConfigured && preloadCalendarWindow.from && preloadCalendarWindow.to) {
+      if (
+        screen === "research" &&
+        researchConfigured &&
+        preloadCalendarWindow.from &&
+        preloadCalendarWindow.to
+      ) {
         queryClient.prefetchQuery(
           getGetResearchEarningsCalendarQueryOptions(
             preloadCalendarWindow,
@@ -1103,31 +1377,37 @@ export default function PlatformApp() {
           },
         ),
       );
-      queryClient.prefetchQuery(
-        getListBacktestDraftStrategiesQueryOptions({
-          query: {
-            ...QUERY_DEFAULTS,
-            retry: false,
-            gcTime: 5 * 60_000,
-          },
-        }),
-      );
-      queryClient.prefetchQuery(
-        getListAlgoDeploymentsQueryOptions(
-          { mode: environment },
-          {
+      if (screen === "backtest") {
+        queryClient.prefetchQuery(
+          getListBacktestDraftStrategiesQueryOptions({
             query: {
               ...QUERY_DEFAULTS,
               retry: false,
               gcTime: 5 * 60_000,
             },
-          },
-        ),
-      );
-      preloadDynamicImport(
-        () => import("../research/PhotonicsObservatory.jsx"),
-        { label: "PhotonicsObservatoryPrefetch" },
-      );
+          }),
+        );
+      }
+      if (screen === "algo") {
+        queryClient.prefetchQuery(
+          getListAlgoDeploymentsQueryOptions(
+            { mode: environment },
+            {
+              query: {
+                ...QUERY_DEFAULTS,
+                retry: false,
+                gcTime: 5 * 60_000,
+              },
+            },
+          ),
+        );
+      }
+      if (screen === "research") {
+        preloadDynamicImport(
+          () => import("../research/PhotonicsObservatory.jsx"),
+          { label: "PhotonicsObservatoryPrefetch" },
+        );
+      }
     }, 1_000);
 
     return () => {
@@ -1136,10 +1416,12 @@ export default function PlatformApp() {
     };
   }, [
     environment,
+    activeScreenBackgroundAllowed,
     memoryAllowsIdlePrefetch,
     preloadCalendarWindow,
     queryClient,
     researchConfigured,
+    screen,
     sessionMetadataSettled,
     tradeWarmTicker,
   ]);
@@ -1289,8 +1571,13 @@ export default function PlatformApp() {
           signalMonitorProfile?.enabled && !signalMonitorProfileDegraded,
         ),
         tradingEnabled: Boolean(gatewayTradingReady),
+        backgroundResumeReady:
+          backgroundResumeReady.screen === screen &&
+          backgroundResumeReady.broadFlow,
       }),
     [
+      backgroundResumeReady.broadFlow,
+      backgroundResumeReady.screen,
       brokerConfigured,
       gatewayTradingReady,
       ibkrWorkPressure,
@@ -1304,6 +1591,16 @@ export default function PlatformApp() {
       signalMonitorProfile?.enabled,
     ],
   );
+  useIbkrAccountSnapshotStream({
+    accountId: null,
+    mode: environment,
+    enabled: workSchedule.streams.accountRealtime,
+  });
+  useIbkrOrderSnapshotStream({
+    accountId: null,
+    mode: environment,
+    enabled: workSchedule.streams.accountRealtime,
+  });
   useEffect(() => {
     setHydrationPressureState(workSchedule.hydrationPressure);
   }, [workSchedule.hydrationPressure]);
@@ -1318,16 +1615,34 @@ export default function PlatformApp() {
     15_000,
     3_600_000,
   );
+  const signalWorkFastScreen = Boolean(
+    marketScreenActive ||
+      flowScreenActive ||
+      screen === "trade" ||
+      screen === "algo",
+  );
   const signalMonitorDisplayPollMs = Math.min(
     signalMonitorPollMs,
     SIGNAL_MONITOR_DISPLAY_POLL_MS,
+  );
+  const signalMonitorRuntimePollMs = signalWorkFastScreen
+    ? signalMonitorDisplayPollMs
+    : Math.max(signalMonitorPollMs, 60_000);
+  const signalMonitorDisplayReady = Boolean(
+    pageVisible &&
+      signalMonitorProfile?.enabled &&
+      backgroundResumeReady.screen === screen &&
+      backgroundResumeReady.signalDisplay,
   );
   const signalMonitorStateQuery = useGetSignalMonitorState(
     signalMonitorParams,
     {
       query: {
+        enabled: signalMonitorDisplayReady,
         staleTime: 15_000,
-        refetchInterval: pageVisible ? signalMonitorDisplayPollMs : false,
+        refetchInterval: signalMonitorDisplayReady
+          ? signalMonitorRuntimePollMs
+          : false,
         retry: false,
       },
     },
@@ -1336,8 +1651,11 @@ export default function PlatformApp() {
     signalMonitorEventsParams,
     {
       query: {
+        enabled: signalMonitorDisplayReady,
         staleTime: 15_000,
-        refetchInterval: pageVisible ? signalMonitorDisplayPollMs : false,
+        refetchInterval: signalMonitorDisplayReady
+          ? signalMonitorRuntimePollMs
+          : false,
         retry: false,
       },
     },
@@ -1352,11 +1670,11 @@ export default function PlatformApp() {
   );
   useRuntimeWorkloadFlag(
     "signal-monitor:display",
-    Boolean(pageVisible && signalMonitorProfile?.enabled),
+    signalMonitorDisplayReady,
     {
       kind: "poll",
       label: "Signal display",
-      detail: `${Math.round(signalMonitorDisplayPollMs / 1000)}s`,
+      detail: `${Math.round(signalMonitorRuntimePollMs / 1000)}s`,
       priority: 4,
     },
   );
@@ -1455,9 +1773,21 @@ export default function PlatformApp() {
       ],
     [signalMonitorStates],
   );
+  const signalMatrixWideScreen = Boolean(
+    flowScreenActive || screen === "trade" || screen === "algo",
+  );
   const signalMatrixSymbols = useMemo(
-    () => [...new Set(watchlistSymbols)].slice(0, 250),
-    [watchlistSymbols],
+    () => {
+      const sourceSymbols =
+        signalMatrixWideScreen || !signalMonitorSymbols.length
+          ? watchlistSymbols
+          : signalMonitorSymbols;
+      return [...new Set(sourceSymbols)].slice(
+        0,
+        signalMatrixWideScreen ? 250 : 48,
+      );
+    },
+    [signalMatrixWideScreen, signalMonitorSymbols, watchlistSymbols],
   );
   const signalMatrixSymbolsKey = useMemo(
     () => signalMatrixSymbols.join(","),
@@ -1498,8 +1828,16 @@ export default function PlatformApp() {
     signalMatrixSymbols,
     signalMatrixSymbolsKey,
   ]);
+  const signalMatrixRuntimeReady = Boolean(
+    pageVisible &&
+      signalMatrixSymbols.length &&
+      signalMonitorDisplayReady &&
+      backgroundResumeReady.screen === screen &&
+      backgroundResumeReady.signalMatrix &&
+      (signalWorkFastScreen || screenWarmupPhase === "ready"),
+  );
   useEffect(() => {
-    if (!pageVisible || !signalMatrixSymbols.length) {
+    if (!signalMatrixRuntimeReady) {
       return undefined;
     }
 
@@ -1507,8 +1845,8 @@ export default function PlatformApp() {
     const interval = window.setInterval(runSignalMatrixEvaluation, signalMonitorPollMs);
     return () => window.clearInterval(interval);
   }, [
-    pageVisible,
     runSignalMatrixEvaluation,
+    signalMatrixRuntimeReady,
     signalMonitorPollMs,
     signalMatrixSymbolsKey,
     signalMatrixSymbols.length,
@@ -1531,28 +1869,28 @@ export default function PlatformApp() {
     [evaluateSignalMonitorMutation.mutate, signalMonitorEnvironment],
   );
   const runtimeWatchlistSymbols = useMemo(
-    () => [...new Set([...watchlistSymbols, ...signalMonitorSymbols])],
-    [signalMonitorSymbols, watchlistSymbols],
+    () => [...new Set(watchlistSymbols)],
+    [watchlistSymbols],
   );
   const broadFlowWatchlistSymbols = useMemo(
     () => [...new Set(allWatchlistSymbolList.filter(Boolean))],
     [allWatchlistSymbolList],
   );
   const runtimeQuoteSymbols = useMemo(
-    () => [...new Set([...quoteSymbols, ...signalMonitorSymbols])],
-    [quoteSymbols, signalMonitorSymbols],
+    () => [...new Set(quoteSymbols)],
+    [quoteSymbols],
   );
   const runtimeSparklineSymbols = useMemo(
-    () => [...new Set([...sparklineSymbols, ...signalMonitorSymbols])],
-    [signalMonitorSymbols, sparklineSymbols],
+    () => [...new Set(sparklineSymbols)],
+    [sparklineSymbols],
   );
   const runtimeStreamedQuoteSymbols = useMemo(
-    () => [...new Set([...streamedQuoteSymbols, ...signalMonitorSymbols])],
-    [signalMonitorSymbols, streamedQuoteSymbols],
+    () => [...new Set(streamedQuoteSymbols)],
+    [streamedQuoteSymbols],
   );
   const runtimeStreamedAggregateSymbols = useMemo(
-    () => [...new Set([...streamedAggregateSymbols, ...signalMonitorSymbols])],
-    [signalMonitorSymbols, streamedAggregateSymbols],
+    () => [...new Set(streamedAggregateSymbols)],
+    [streamedAggregateSymbols],
   );
   useEffect(() => {
     publishSignalMonitorSnapshot({
@@ -1585,6 +1923,9 @@ export default function PlatformApp() {
   useEffect(() => {
     persistState({ sidebarCollapsed });
   }, [sidebarCollapsed]);
+  useEffect(() => {
+    persistState({ watchlistSidebarWidth });
+  }, [watchlistSidebarWidth]);
   useEffect(() => {
     persistState({ theme });
   }, [theme]);
@@ -1949,7 +2290,7 @@ export default function PlatformApp() {
     setScreen("trade");
   }, [handleSelectSymbol]);
 
-  const renderScreenById = (screenId) => (
+  const renderScreenById = useCallback((screenId) => (
     <PlatformScreenRouter
       screenId={screenId}
       screen={screen}
@@ -1968,6 +2309,7 @@ export default function PlatformApp() {
       watchlistSymbols={watchlistSymbols}
       runtimeWatchlistSymbols={runtimeWatchlistSymbols}
       signalMonitorSymbols={signalMonitorSymbols}
+      signalMatrixStates={signalMatrixSnapshot.states}
       marketScreenActive={marketScreenActive}
       flowScreenActive={flowScreenActive}
       researchConfigured={researchConfigured}
@@ -1992,8 +2334,49 @@ export default function PlatformApp() {
       }
       onToggleTheme={toggleTheme}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
+      onScreenReadiness={handleScreenReadiness}
     />
-  );
+  ), [
+    accounts,
+    brokerAuthenticated,
+    brokerConfigured,
+    defaultWatchlist,
+    effectiveGatewayTradingBlockReason,
+    effectiveGatewayTradingMessage,
+    effectiveGatewayTradingReady,
+    environment,
+    flowScreenActive,
+    handleAccountJumpToTrade,
+    handleChangeSignalMonitorTimeframe,
+    handleChangeSignalMonitorWatchlist,
+    handleFocusMarketChart,
+    handleJumpToTradeFromFlow,
+    handleJumpToTradeFromResearch,
+    handleJumpToTradeFromSignalOptionsCandidate,
+    handleRunSignalMonitorNow,
+    handleScreenReadiness,
+    handleSelectSymbol,
+    handleSignalAction,
+    handleToggleSignalMonitor,
+    marketScreenActive,
+    marketSymPing,
+    primaryAccountId,
+    researchConfigured,
+    runtimeWatchlistSymbols,
+    screen,
+    session,
+    sidebarCollapsed,
+    signalMatrixSnapshot.states,
+    signalMonitorSymbols,
+    stockAggregateStreamingEnabled,
+    sym,
+    theme,
+    toggleTheme,
+    tradeSymPing,
+    watchlistSidebarWidth,
+    watchlistSymbols,
+    watchlists,
+  ]);
 
   return (
     <PlatformProviders
@@ -2016,6 +2399,7 @@ export default function PlatformApp() {
         sparklineSymbols={runtimeSparklineSymbols}
         streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
+        quoteStreamRuntimeEnabled={workSchedule.streams.watchlistQuoteStream}
         marketStockAggregateStreamingEnabled={
           workSchedule.streams.marketStockAggregates
         }
@@ -2026,6 +2410,7 @@ export default function PlatformApp() {
           marketScreenActive || flowScreenActive ? 10_000 : 30_000
         }
         broadFlowRuntimeEnabled={workSchedule.streams.broadFlowRuntime}
+        broadFlowStartupDelayMs={0}
       >
         <PlatformShell
             activeScreen={screen}
@@ -2051,6 +2436,8 @@ export default function PlatformApp() {
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}
             setSidebarCollapsed={setSidebarCollapsed}
+            watchlistSidebarWidth={watchlistSidebarWidth}
+            setWatchlistSidebarWidth={setWatchlistSidebarWidth}
             onSelectSymbol={handleSelectSymbol}
             onFocusMarketChart={handleFocusMarketChart}
             onSelectWatchlist={handleSelectWatchlist}

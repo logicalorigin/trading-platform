@@ -90,17 +90,14 @@ const fetchAggregateFlowEvents = async ({
   minPremium,
   maxDte,
 }) => {
-  return listAggregateFlowEventsRequest(
-    {
-      limit,
-      scope,
-      unusualThreshold,
-      lineBudget,
-      minPremium,
-      maxDte,
-    },
-    { timeoutMs: 4_000 },
-  );
+  return listAggregateFlowEventsRequest({
+    limit,
+    scope,
+    unusualThreshold,
+    lineBudget,
+    minPremium,
+    maxDte,
+  });
 };
 
 let liveMarketFlowInstanceCounter = 0;

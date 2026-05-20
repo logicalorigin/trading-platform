@@ -119,7 +119,7 @@ test("getIbkrConnectionTone maps configured connection states", () => {
       streamStateReason: "no_active_quote_consumers",
       strictReady: true,
     }).label,
-    "no quote subscribers",
+    "online",
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -130,10 +130,12 @@ test("getIbkrConnectionTone maps configured connection states", () => {
       configuredLiveMarketDataMode: true,
       streamFresh: false,
       streamState: "reconnecting",
+      streamStateReason: "quote_stream_error",
       accountsLoaded: true,
       strictReady: false,
+      strictReason: "stream_not_fresh",
     }).label,
-    "reconnecting",
+    "online",
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -352,6 +354,52 @@ test("bridgeRuntimeTone keeps reconnect-needed streams out of generic offline to
   assert.equal(tone.pulse, true);
 });
 
+test("bridgeRuntimeTone treats quote standby as connected once Gateway proof is ready", () => {
+  const tone = bridgeRuntimeTone({
+    configured: { ibkr: true },
+    ibkrBridge: {
+      connected: true,
+      authenticated: true,
+      healthFresh: true,
+      bridgeReachable: true,
+      socketConnected: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      liveMarketDataAvailable: true,
+      streamState: "quiet",
+      streamStateReason: "no_active_quote_consumers",
+      strictReady: true,
+    },
+  });
+
+  assert.equal(tone.label, "live");
+  assert.equal(tone.color, T.green);
+});
+
+test("bridgeRuntimeTone keeps Gateway live when only the quote stream is cycling", () => {
+  const tone = bridgeRuntimeTone({
+    configured: { ibkr: true },
+    ibkrBridge: {
+      connected: true,
+      authenticated: true,
+      healthFresh: true,
+      bridgeReachable: true,
+      socketConnected: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      liveMarketDataAvailable: true,
+      streamFresh: false,
+      streamState: "reconnecting",
+      streamStateReason: "quote_stream_error",
+      strictReady: false,
+      strictReason: "stream_not_fresh",
+    },
+  });
+
+  assert.equal(tone.label, "live");
+  assert.equal(tone.color, T.green);
+});
+
 test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
   assert.deepEqual(
     [
@@ -364,7 +412,7 @@ test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
       getIbkrStreamStateMeta("reconnecting", "quote_stream_error").label,
     ],
     [
-      "no quote subscribers",
+      "standby",
       "market closed",
       "quiet stream",
       "online",
@@ -603,6 +651,25 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
       },
     }).status,
     "capacity-limited",
+  );
+  assert.equal(
+    resolveIbkrGatewayHealth({
+      connection: {
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        liveMarketDataAvailable: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streamFresh: false,
+        streamState: "reconnecting",
+        streamStateReason: "quote_stream_error",
+        strictReady: false,
+        strictReason: "stream_not_fresh",
+      },
+    }).status,
+    "healthy",
   );
   assert.equal(
     resolveIbkrGatewayHealth({
@@ -882,6 +949,8 @@ test("buildHeaderIbkrPopoverModel separates reachable bridge tunnels from discon
   });
 
   assert.equal(model.issue.key, "reconnecting");
+  assert.equal(model.issue.severity, "error");
+  assert.equal(model.priorityDetailGroup, "connection");
   assert.match(model.issue.label, /IB Gateway\/TWS is disconnected/);
   assert.doesNotMatch(model.issue.label, /not reachable/);
   assert.equal(findPopoverDetailRow(model, "Bridge HTTP").value, "reachable");
@@ -978,11 +1047,23 @@ test("buildHeaderIbkrPopoverModel keeps token state in details unless it causes 
 });
 
 test("buildHeaderIbkrPopoverModel prioritizes ready-state stream and legacy warnings", () => {
-  assert.equal(
-    buildHeaderIbkrPopoverModel({
-      connection: {
+  const streamGapModel = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      ibkr: {
         configured: true,
         reachable: true,
+        connected: true,
         authenticated: true,
         liveMarketDataAvailable: true,
         healthFresh: true,
@@ -990,30 +1071,18 @@ test("buildHeaderIbkrPopoverModel prioritizes ready-state stream and legacy warn
         configuredLiveMarketDataMode: true,
         streamFresh: true,
         strictReady: true,
+        legacyIbkrEnvPresent: true,
       },
-      runtimeDiagnostics: {
-        ibkr: {
-          configured: true,
-          reachable: true,
-          connected: true,
-          authenticated: true,
-          liveMarketDataAvailable: true,
-          healthFresh: true,
-          accountsLoaded: true,
-          configuredLiveMarketDataMode: true,
-          streamFresh: true,
-          strictReady: true,
-          legacyIbkrEnvPresent: true,
-        },
+    },
+    latencyStats: {
+      stream: {
+        streamGapCount: 3,
       },
-      latencyStats: {
-        stream: {
-          streamGapCount: 3,
-        },
-      },
-    }).issue.key,
-    "stream-gaps",
-  );
+    },
+  });
+  assert.equal(streamGapModel.issue.key, "stream-gaps");
+  assert.equal(streamGapModel.issue.severity, "warning");
+  assert.equal(streamGapModel.priorityDetailGroup, "stream");
 
   assert.notEqual(
     buildHeaderIbkrPopoverModel({
@@ -1068,6 +1137,8 @@ test("buildHeaderIbkrPopoverModel prioritizes ready-state stream and legacy warn
   });
 
   assert.equal(legacyModel.issue.key, "legacy-env");
+  assert.equal(legacyModel.issue.severity, "warning");
+  assert.equal(legacyModel.priorityDetailGroup, "connection");
   assert.equal(legacyModel.autoOpenDetails, true);
 });
 
@@ -1175,7 +1246,7 @@ test("buildHeaderIbkrPopoverModel separates connected Gateway from stale data st
     [
       ["Gateway", "Connected"],
       ["Auth", "Yes"],
-      ["Data", "Stale stream"],
+      ["Data", "Live mode"],
       ["Stream", "Silent"],
     ],
   );
@@ -1183,7 +1254,7 @@ test("buildHeaderIbkrPopoverModel separates connected Gateway from stale data st
   assert.equal(findPopoverDetailRow(model, "Stream state").value, "stale");
 });
 
-test("buildHeaderIbkrPopoverModel preserves full reconnecting Gateway error text", () => {
+test("buildHeaderIbkrPopoverModel keeps quote-stream reconnects out of Gateway loss state", () => {
   const lastError =
     "Error validating request.-'bO' : cause - Snapshot market data subscription is not applicable to generic ticks";
   const model = buildHeaderIbkrPopoverModel({
@@ -1229,10 +1300,13 @@ test("buildHeaderIbkrPopoverModel preserves full reconnecting Gateway error text
     },
   });
 
-  assert.equal(model.issue.key, "reconnecting");
-  assert.match(model.issue.label, /Gateway is authenticated and the quote stream is reconnecting/);
-  assert.match(model.issue.label, /Snapshot market data subscription is not applicable to generic ticks/);
-  assert.doesNotMatch(model.issue.label, /\.\.\.$/);
+  assert.equal(model.health.status, "healthy");
+  assert.equal(model.issue.key, "quote-stream-reconnecting");
+  assert.equal(model.issue.severity, "warning");
+  assert.match(model.issue.label, /quote stream is reconnecting/i);
+  assert.equal(model.tiles.find((tile) => tile.label === "Gateway").value, "Connected");
+  assert.equal(model.tiles.find((tile) => tile.label === "Data").value, "Live mode");
+  assert.equal(model.tiles.find((tile) => tile.label === "Stream").value, "Reconnecting");
   assert.equal(findPopoverDetailRow(model, "Last error").value, lastError);
 });
 
@@ -1285,7 +1359,7 @@ test("buildHeaderIbkrPopoverModel gives market-closed stream a unique connected 
     [
       ["Gateway", "Connected"],
       ["Auth", "Yes"],
-      ["Data", "Live"],
+      ["Data", "Live mode"],
       ["Stream", "Market closed"],
     ],
   );
@@ -1377,6 +1451,11 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
     ],
   );
   assert.equal(model.lineUsage.summary, "77 / 200");
+  assert.equal(model.compactLineUsage.used, 77);
+  assert.equal(model.compactLineUsage.cap, 200);
+  assert.equal(model.compactLineUsage.free, 123);
+  assert.equal(model.compactLineUsage.percent, 38.5);
+  assert.equal(findPopoverDetailRow(model, "Polygon").value.startsWith("OK · last "), true);
   assert.deepEqual(
     model.lineUsage.rows
       .filter((row) =>
@@ -1454,7 +1533,7 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
   );
 });
 
-test("buildHeaderIbkrPopoverModel distinguishes bridge active lines from API demand", () => {
+test("buildHeaderIbkrPopoverModel uses one active line meter with pending reconciliation", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,
@@ -1526,9 +1605,17 @@ test("buildHeaderIbkrPopoverModel distinguishes bridge active lines from API dem
     },
   });
 
-  assert.equal(model.lineUsage.summary, "15 / 190");
+  assert.equal(model.lineUsage.summary, "143 / 190");
+  assert.equal(model.lineUsage.activeLineCount, 143);
+  assert.equal(model.lineUsage.requestedLineCount, 143);
+  assert.equal(model.lineUsage.pendingLineCount, 128);
+  assert.equal(model.lineUsage.requestedSummary, "143 / 190");
   assert.equal(model.lineUsage.demandSummary, "143 / 190");
   assert.equal(model.lineUsage.bridge.summary, "15 / 190");
+  assert.equal(model.compactLineUsage.used, 143);
+  assert.equal(model.compactLineUsage.cap, 190);
+  assert.equal(model.compactLineUsage.free, 47);
+  assert.equal(model.compactLineUsage.summary, "143 / 190");
   assert.equal(model.lineUsage.drift.label, "pending bridge");
   assert.equal(model.lineUsage.warmup.pendingLineCount, 27);
   assert.equal(model.lineUsage.warmup.accountPendingLineCount, 1);
@@ -1599,7 +1686,7 @@ test("buildHeaderIbkrPopoverModel fills account monitor line usage for legacy di
   );
 });
 
-test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote stream subscribers are active", () => {
+test("buildHeaderIbkrPopoverModel shows stream standby when no quote stream is requested", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,
@@ -1648,15 +1735,15 @@ test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote 
     [
       ["Gateway", "Connected"],
       ["Auth", "Yes"],
-      ["Data", "Live"],
-      ["Stream", "No quote subscribers"],
+      ["Data", "Live mode"],
+      ["Stream", "Standby"],
     ],
   );
   assert.equal(model.issue.key, "no-subscribers");
-  assert.match(model.issue.label, /no UI panel is subscribed/i);
+  assert.match(model.issue.label, /will start when a live panel requests it/i);
   assert.equal(
     findPopoverDetailRow(model, "Stream state").value,
-    "no quote-stream subscribers",
+    "standby",
   );
   assert.equal(
     findPopoverDetailRow(model, "State reason").value,
@@ -1664,7 +1751,7 @@ test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote 
   );
 });
 
-test("buildHeaderIbkrPopoverModel does not show missing quote subscribers when stream counters are live", () => {
+test("buildHeaderIbkrPopoverModel does not show stream standby when stream counters are live", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,
@@ -1713,14 +1800,63 @@ test("buildHeaderIbkrPopoverModel does not show missing quote subscribers when s
     [
       ["Gateway", "Connected"],
       ["Auth", "Yes"],
-      ["Data", "Live"],
+      ["Data", "Live mode"],
       ["Stream", "3 / 79"],
     ],
   );
   assert.equal(findPopoverDetailRow(model, "Stream state").value, "live");
 });
 
-test("buildHeaderIbkrPopoverModel keeps delayed data distinct from missing quote subscribers", () => {
+test("buildHeaderIbkrPopoverModel avoids empty live stream count labels", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      streamState: "live",
+      streamStateReason: "fresh_stream_event",
+      strictReady: true,
+      strictReason: null,
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        liveMarketDataAvailable: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streamFresh: true,
+        streamState: "live",
+        streamStateReason: "fresh_stream_event",
+        strictReady: true,
+        strictReason: null,
+      },
+    },
+    latencyStats: {
+      stream: {},
+    },
+  });
+
+  assert.deepEqual(
+    model.tiles.map((tile) => [tile.label, tile.value]),
+    [
+      ["Gateway", "Connected"],
+      ["Auth", "Yes"],
+      ["Data", "Live mode"],
+      ["Stream", "Live"],
+    ],
+  );
+});
+
+test("buildHeaderIbkrPopoverModel keeps delayed data distinct from stream standby", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,
@@ -1770,12 +1906,12 @@ test("buildHeaderIbkrPopoverModel keeps delayed data distinct from missing quote
       ["Gateway", "Connected"],
       ["Auth", "Yes"],
       ["Data", "Delayed"],
-      ["Stream", "No quote subscribers"],
+      ["Stream", "Standby"],
     ],
   );
   assert.equal(model.issue.key, "delayed");
   assert.equal(
     findPopoverDetailRow(model, "Stream state").value,
-    "no quote-stream subscribers",
+    "standby",
   );
 });

@@ -3,9 +3,7 @@ import {
   Activity,
   AlertTriangle,
   ChevronDown,
-  CircleCheck,
   Gauge,
-  Power,
   RadioTower,
   RefreshCw,
   ShieldCheck,
@@ -26,22 +24,17 @@ import {
   formatPreferenceTimeZoneLabel,
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
-import { bridgeRuntimeMessage } from "./bridgeRuntimeModel";
 import {
   formatIbkrPingMs,
   getIbkrConnection,
   getIbkrConnectionTone,
-  getIbkrGatewayBadges,
   IbkrPingWavelength,
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus";
-import {
-  streamStateBackgroundVar,
-  streamStateBorderVar,
-  streamStateTokenVar,
-} from "./streamSemantics";
+import { streamStateTokenVar } from "./streamSemantics";
 import {
   IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
+  IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS,
   IBKR_BRIDGE_SESSION_KEYS,
   clearIbkrBridgeSessionValues,
   closeIbkrProtocolLauncher,
@@ -50,6 +43,7 @@ import {
   openIbkrProtocolLauncher,
   readIbkrBridgeSessionValue,
   removeIbkrBridgeSessionValue,
+  shouldUseRemoteIbkrLaunchBrowser,
   writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
@@ -58,6 +52,134 @@ import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
+const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
+const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 4_000;
+const IBKR_LOGIN_HANDOFF_WAIT_MS = 240_000;
+const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
+const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
+const IBKR_DESKTOP_JOB_POLL_MS = 750;
+const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
+
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const bytesToBase64 = (bytes) => {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return window.btoa(binary);
+};
+
+const encryptIbkrLoginEnvelope = async ({ publicKeyJwk, payload }) => {
+  if (!window.crypto?.subtle || typeof TextEncoder === "undefined") {
+    throw new Error("This browser cannot encrypt the IBKR credential handoff.");
+  }
+
+  const publicKey = await window.crypto.subtle.importKey(
+    "jwk",
+    publicKeyJwk,
+    {
+      name: "RSA-OAEP",
+      hash: "SHA-256",
+    },
+    false,
+    ["encrypt"],
+  );
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertextChunks = [];
+  for (let offset = 0; offset < encoded.length; offset += IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE) {
+    const chunk = encoded.slice(offset, offset + IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE);
+    const encrypted = await window.crypto.subtle.encrypt(
+      { name: "RSA-OAEP" },
+      publicKey,
+      chunk,
+    );
+    ciphertextChunks.push(bytesToBase64(new Uint8Array(encrypted)));
+  }
+
+  return {
+    algorithm: IBKR_LOGIN_HANDOFF_ALGORITHM,
+    ciphertextChunks,
+  };
+};
+
+const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
+  const deadline = Date.now() + IBKR_LOGIN_HANDOFF_WAIT_MS;
+  let lastTransientError = null;
+  while (Date.now() < deadline) {
+    try {
+      const payload = await platformJsonRequest(
+        `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-key/read`,
+        {
+          method: "POST",
+          body: { managementToken },
+          timeoutMs: IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS,
+        },
+      );
+      if (payload?.ready) {
+        if (payload.algorithm !== IBKR_LOGIN_HANDOFF_ALGORITHM) {
+          throw new Error("The Windows helper advertised an unsupported credential handoff.");
+        }
+        return {
+          completedWithoutCredentials: false,
+          key: payload,
+        };
+      }
+      lastTransientError = null;
+    } catch (error) {
+      if (error?.code === "ibkr_bridge_activation_not_found") {
+        return {
+          completedWithoutCredentials: true,
+          key: null,
+        };
+      }
+      if (!error?.status && !error?.code) {
+        lastTransientError = error;
+        await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
+        continue;
+      }
+      throw error;
+    }
+
+    await sleep(IBKR_LOGIN_HANDOFF_POLL_MS);
+  }
+
+  throw new Error(
+    lastTransientError instanceof Error
+      ? `Timed out waiting for the Windows helper secure credential handoff. Last request error: ${lastTransientError.message}`
+      : "Timed out waiting for the Windows helper secure credential handoff.",
+  );
+};
+
+const waitForIbkrDesktopJob = async ({ jobId, statusToken }) => {
+  if (!jobId || !statusToken) {
+    return null;
+  }
+
+  const deadline = Date.now() + IBKR_DESKTOP_SHUTDOWN_WAIT_MS;
+  while (Date.now() < deadline) {
+    const payload = await platformJsonRequest("/api/ibkr/desktop/jobs/status", {
+      method: "POST",
+      body: { jobId, statusToken },
+      timeoutMs: 0,
+    });
+    if (payload?.state === "completed") {
+      return payload;
+    }
+    if (payload?.state === "failed") {
+      throw new Error(
+        payload.message || "The Windows desktop could not stop IB Gateway.",
+      );
+    }
+    if (payload?.state === "expired") {
+      throw new Error("The Windows desktop did not claim the IB Gateway shutdown request.");
+    }
+    await sleep(IBKR_DESKTOP_JOB_POLL_MS);
+  }
+
+  throw new Error("Timed out waiting for the Windows desktop to stop IB Gateway.");
+};
 
 const ET_CLOCK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -204,106 +326,6 @@ const resolveHeaderIbkrPingMs = (connection, latencyStats) => {
   return candidates.find((value) => Number.isFinite(value)) ?? null;
 };
 
-const resolveHeaderDataModeLabel = (session) => {
-  const liveAvailable = session?.ibkrBridge?.liveMarketDataAvailable;
-  if (liveAvailable === false) return "DELAYED DATA";
-  if (liveAvailable === true) return "LIVE DATA";
-  const provider = session?.marketDataProviders?.live;
-  return provider ? "LIVE DATA" : MISSING_VALUE;
-};
-
-const HeaderIbkrStatusChip = ({
-  label,
-  connection,
-  tone,
-  latencyStats,
-}) => {
-  const Icon = tone.Icon;
-  const health = resolveIbkrGatewayHealth({ connection });
-  const badges = getIbkrGatewayBadges({ connection, latencyStats, health })
-    .filter((badge) => !["LIVE", "NO SUBS", "CLOSED", "QUIET STREAM"].includes(badge.label))
-    .slice(0, 1);
-  const pulse = Boolean(tone.pulse);
-  const pingMs = resolveHeaderIbkrPingMs(connection, latencyStats);
-
-  return (
-    <span
-      data-ibkr-state-pulse={pulse ? "true" : undefined}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(8),
-        minWidth: 0,
-        animation: pulse ? "ibkrStatusPulse 1.8s ease-in-out infinite" : "none",
-      }}
-    >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: dim(20),
-          height: dim(20),
-          borderRadius: dim(RADII.pill),
-          background: `${tone.color}14`,
-          flexShrink: 0,
-        }}
-      >
-        <Icon size={dim(12)} strokeWidth={2.3} color={tone.color} />
-      </span>
-      {label ? (
-        <span
-          style={{
-            fontSize: textSize("body"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontFamily: T.sans,
-            color: tone.color,
-            letterSpacing: "0.04em",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {label}
-        </span>
-      ) : null}
-      {badges.map((badge) => (
-        <span
-          key={badge.label}
-          style={{
-            borderRadius: dim(RADII.pill),
-            background: badge.background,
-            color: badge.color,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontFamily: T.sans,
-            lineHeight: 1,
-            padding: sp("3px 8px"),
-            letterSpacing: "0.04em",
-            textTransform: "uppercase",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {badge.label}
-        </span>
-      ))}
-      <IbkrPingWavelength connection={connection} tone={tone} />
-      <span
-        style={{
-          color: T.textSec,
-          fontSize: textSize("body"),
-          fontWeight: FONT_WEIGHTS.medium,
-          fontFamily: T.sans,
-          fontVariantNumeric: "tabular-nums",
-          minWidth: dim(38),
-          textAlign: "right",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {formatIbkrPingMs(pingMs)}
-      </span>
-    </span>
-  );
-};
-
 const HeaderIbkrDetailRow = ({
   label,
   value,
@@ -314,11 +336,11 @@ const HeaderIbkrDetailRow = ({
     className="ra-hairline-bottom"
     style={{
       display: "grid",
-      gridTemplateColumns: `minmax(${dim(96)}px, 0.78fr) minmax(0, 1.22fr)`,
-      gap: sp(12),
+      gridTemplateColumns: "minmax(0, 0.74fr) minmax(0, 1.26fr)",
+      gap: sp(8),
       alignItems: "baseline",
       minWidth: 0,
-      padding: sp("8px 0"),
+      padding: sp("3px 0"),
       fontFamily: T.sans,
     }}
   >
@@ -329,6 +351,9 @@ const HeaderIbkrDetailRow = ({
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.04em",
         textTransform: "uppercase",
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
         whiteSpace: "nowrap",
       }}
     >
@@ -364,191 +389,364 @@ const HEADER_IBKR_ICON_COMPONENTS = {
 const getHeaderIbkrIcon = (iconKey) =>
   HEADER_IBKR_ICON_COMPONENTS[iconKey] || Activity;
 
-const HeaderIbkrMetricTile = ({ tile }) => {
-  const Icon = getHeaderIbkrIcon(tile.iconKey);
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "auto minmax(0, 1fr)",
-        alignItems: "center",
-        gap: sp(10),
-        minWidth: 0,
-        padding: sp("10px 12px"),
-        background: T.bg1,
-        border: `1px solid ${T.borderLight}`,
-        borderRadius: dim(RADII.sm),
-      }}
-    >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: dim(28),
-          height: dim(28),
-          borderRadius: dim(RADII.pill),
-          background: `${tile.tone}14`,
-          flexShrink: 0,
-        }}
-      >
-        <Icon size={dim(15)} strokeWidth={2.2} color={tile.tone} />
-      </span>
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: sp(1) }}>
-        <div
-          style={{
-            color: T.textMuted,
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.04em",
-            lineHeight: 1,
-            textTransform: "uppercase",
-          }}
-        >
-          {tile.label}
-        </div>
-        <div
-          style={{
-            color: tile.tone,
-            fontFamily: T.sans,
-            fontSize: textSize("paragraphMuted"),
-            fontWeight: FONT_WEIGHTS.medium,
-            fontVariantNumeric: "tabular-nums",
-            lineHeight: 1.2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {tile.value ?? MISSING_VALUE}
-        </div>
-        {tile.detail ? (
-          <div
-            style={{
-              color: T.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              lineHeight: 1.2,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tile.detail}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-};
-
-const HeaderProviderRows = ({ rows = [] }) => (
+const HeaderIbkrMetricRail = ({ tiles = [] }) => (
   <div
     style={{
       display: "grid",
-      gap: sp(8),
-      marginBottom: sp(12),
-      padding: sp("12px 14px"),
-      background: T.bg1,
-      border: `1px solid ${T.borderLight}`,
-      borderRadius: dim(RADII.sm),
+      gridTemplateColumns: `repeat(auto-fit, minmax(${dim(132)}px, 1fr))`,
+      alignItems: "stretch",
+      gap: sp(5),
+      minWidth: 0,
     }}
   >
-    <div
-      style={{
-        color: T.textMuted,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
-        textTransform: "uppercase",
-      }}
-    >
-      Providers
-    </div>
-    {rows.map((row) => (
-      <div
-        key={row.label}
-        style={{
-          display: "grid",
-          gridTemplateColumns: `minmax(${dim(72)}px, 0.5fr) minmax(0, 0.9fr) minmax(0, 1.3fr)`,
-          gap: sp(10),
-          alignItems: "baseline",
-          minWidth: 0,
-          fontFamily: T.sans,
-          fontSize: textSize("body"),
-        }}
-      >
-        <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.medium }}>{row.label}</span>
-        <span style={{ color: row.tone, fontWeight: FONT_WEIGHTS.medium }}>{row.value}</span>
-        <span
-          style={{
-            color: T.textMuted,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: row.wrap ? "clip" : "ellipsis",
-            whiteSpace: row.wrap ? "normal" : "nowrap",
-            overflowWrap: row.wrap ? "anywhere" : "normal",
-            textAlign: "right",
-          }}
+    {tiles.map((tile) => {
+      const Icon = getHeaderIbkrIcon(tile.iconKey);
+      const label = `${tile.label}: ${tile.value ?? MISSING_VALUE}`;
+      return (
+        <AppTooltip
+          key={tile.label}
+          content={tile.detail ? `${label} · ${tile.detail}` : label}
         >
-          {row.detail ?? MISSING_VALUE}
-        </span>
-      </div>
-    ))}
+          <span
+            aria-label={label}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto minmax(0, 1fr)",
+              alignItems: "center",
+              columnGap: sp(6),
+              rowGap: sp(1),
+              minWidth: 0,
+              padding: sp("5px 7px"),
+              borderRadius: dim(RADII.sm),
+              background: `${tile.tone}0f`,
+              color: tile.tone,
+              fontFamily: T.sans,
+              fontSize: textSize("paragraphMuted"),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            <Icon
+              size={dim(12)}
+              strokeWidth={2.2}
+              color={tile.tone}
+              style={{ gridRow: "1 / span 2" }}
+            />
+            <span
+              style={{
+                minWidth: 0,
+                color: T.textMuted,
+                fontSize: fs(8),
+                fontWeight: FONT_WEIGHTS.regular,
+                letterSpacing: "0.04em",
+                lineHeight: 1,
+                textTransform: "uppercase",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {tile.label}
+            </span>
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {tile.value ?? MISSING_VALUE}
+            </span>
+          </span>
+        </AppTooltip>
+      );
+    })}
   </div>
 );
 
-const HeaderMarketDataLineUsage = ({ lineUsage }) => {
-  if (!lineUsage?.available) {
-    return null;
-  }
+const getHeaderIbkrTile = (model, label) =>
+  model?.tiles?.find((tile) => tile.label === label) || null;
 
-  const warmup = lineUsage.warmup || {};
-  const warmupPending = Number(warmup.pendingLineCount) > 0;
+const HeaderIbkrTriggerMetric = ({ label, value, tone }) => (
+  <span
+    style={{
+      display: "grid",
+      gap: sp(1),
+      minWidth: 0,
+      padding: sp("4px 6px"),
+      borderRadius: dim(RADII.sm),
+      background: `${tone || T.textSec}0f`,
+      fontFamily: T.sans,
+      lineHeight: 1.05,
+    }}
+  >
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: fs(8),
+        fontWeight: FONT_WEIGHTS.regular,
+        letterSpacing: "0.04em",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: tone || T.textSec,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        fontVariantNumeric: "tabular-nums",
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value ?? MISSING_VALUE}
+    </span>
+  </span>
+);
 
-  const summaryChips = [
-    lineUsage.bridge?.available
-      ? { label: "Bridge", value: lineUsage.bridge.summary, tone: lineUsage.bridge.tone }
-      : null,
-    {
-      label: "API demand",
-      value: lineUsage.demandSummary || lineUsage.summary,
-      tone: T.text,
-    },
-    lineUsage.drift?.status && lineUsage.drift.status !== "unknown"
-      ? { label: "Drift", value: lineUsage.drift.label, tone: lineUsage.drift.tone }
-      : null,
-    warmup.available && warmup.state !== "idle"
+const HeaderIbkrTriggerSummary = ({
+  model,
+  connection,
+  tone,
+  latencyStats,
+  compact,
+  dense = false,
+}) => {
+  const health = model?.health || resolveIbkrGatewayHealth({ connection });
+  const issueActive = Boolean(
+    model?.issue?.severity && model.issue.severity !== "healthy",
+  );
+  const statusTone = issueActive ? model.issue.tone : health.color || tone.color;
+  const StatusIcon = issueActive
+    ? getHeaderIbkrIcon(model.issue.iconKey)
+    : tone.Icon;
+  const pingMs = resolveHeaderIbkrPingMs(connection, latencyStats);
+  const dataTile = getHeaderIbkrTile(model, "Data");
+  const streamTile = getHeaderIbkrTile(model, "Stream");
+  const lineUsage = model?.lineUsage;
+  const compactLineUsage = model?.compactLineUsage;
+  const pendingLineCount = Number.isFinite(lineUsage?.pendingLineCount)
+    ? Math.max(0, lineUsage.pendingLineCount)
+    : 0;
+  const lineValue = compactLineUsage?.summary || lineUsage?.summary || MISSING_VALUE;
+  const lineDisplayValue =
+    pendingLineCount > 0
+      ? `${lineValue} · ${Math.round(pendingLineCount).toLocaleString()} pending`
+      : lineValue;
+  const statusLabel = issueActive
+    ? model.issue.severity === "warning"
+      ? "Attention"
+      : "Action needed"
+    : health.label || tone.label;
+  const metrics = [
+    compact || dense ? null : dataTile,
+    dense ? null : streamTile,
+    dense
+      ? null
+      : lineUsage?.available
       ? {
-          label: "Warm-up",
-          value: warmupPending ? warmup.pendingSummary : warmup.label,
-          tone: warmup.tone,
+          label: "Lines",
+          value: lineDisplayValue,
+          tone: compactLineUsage?.tone || T.textSec,
         }
       : null,
   ].filter(Boolean);
 
   return (
+    <span
+      data-testid="header-ibkr-trigger-summary"
+      data-ibkr-state-pulse={tone.pulse ? "true" : undefined}
+      style={{
+        display: "grid",
+        gap: sp(dense ? 0 : 5),
+        minWidth: 0,
+        width: compact ? dim(156) : dense ? dim(198) : dim(286),
+        animation: tone.pulse ? "ibkrStatusPulse 1.8s ease-in-out infinite" : "none",
+      }}
+    >
+      <span
+        style={{
+          display: "grid",
+          gridTemplateColumns: dense
+            ? "auto auto minmax(0, 1fr) auto"
+            : "auto auto minmax(0, 1fr) auto auto",
+          alignItems: "center",
+          gap: sp(dense ? 4 : 6),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: dim(dense ? 18 : 20),
+            height: dim(dense ? 18 : 20),
+            borderRadius: dim(RADII.sm),
+            background: `${statusTone}14`,
+            flexShrink: 0,
+          }}
+        >
+          <StatusIcon size={dim(12)} strokeWidth={2.3} color={statusTone} />
+        </span>
+        <span
+          style={{
+            color: T.textMuted,
+            fontSize: textSize(dense ? "micro" : "caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontFamily: T.sans,
+            letterSpacing: dense ? 0 : "0.04em",
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          IBKR
+        </span>
+        <span
+          style={{
+            color: statusTone,
+            fontSize: textSize(dense ? "body" : "paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontFamily: T.sans,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {statusLabel}
+        </span>
+        {dense ? null : (
+          <IbkrPingWavelength connection={connection} tone={{ ...tone, color: statusTone }} />
+        )}
+        <span
+          style={{
+            color: T.textSec,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontFamily: T.sans,
+            fontVariantNumeric: "tabular-nums",
+            minWidth: dim(34),
+            textAlign: "right",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatIbkrPingMs(pingMs)}
+        </span>
+      </span>
+      {metrics.length ? (
+        <span
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.min(metrics.length, compact ? 2 : 3)}, minmax(0, 1fr))`,
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {metrics.map((metric) => (
+            <HeaderIbkrTriggerMetric
+              key={metric.label}
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+            />
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
+  if (!lineUsage?.available) {
+    return null;
+  }
+
+  const warmup = lineUsage.warmup || {};
+  const pendingLineCount = Number.isFinite(lineUsage.pendingLineCount)
+    ? Math.max(0, lineUsage.pendingLineCount)
+    : Number.isFinite(warmup.pendingLineCount)
+      ? Math.max(0, warmup.pendingLineCount)
+      : 0;
+  const warmupPending = pendingLineCount > 0;
+  const compact = compactLineUsage;
+  const driftStatus = lineUsage.drift?.status || "unknown";
+  const driftActionable =
+    driftStatus &&
+    !["ok", "unknown", "matched", "api_active_bridge_missing"].includes(driftStatus);
+  const autoOpenBreakdown = Boolean(
+    driftActionable ||
+    (warmup.available && warmup.state !== "idle") ||
+    warmupPending,
+  );
+  const [breakdownOpen, setBreakdownOpen] = useState(autoOpenBreakdown);
+
+  useEffect(() => {
+    if (autoOpenBreakdown) {
+      setBreakdownOpen(true);
+    }
+  }, [autoOpenBreakdown]);
+
+  const summaryItems = [
+    warmupPending
+      ? {
+          label: "Pending",
+          value: `${Math.round(pendingLineCount).toLocaleString()} line${
+            Math.round(pendingLineCount) === 1 ? "" : "s"
+          }`,
+          tone: warmup.tone,
+        }
+      : null,
+    driftActionable
+      ? {
+          label: "Reconcile",
+          value: lineUsage.drift.label,
+          tone: lineUsage.drift.tone,
+        }
+      : null,
+  ].filter(Boolean);
+  const used = compact?.used;
+  const cap = compact?.cap;
+  const free = compact?.free;
+  const percent = Number.isFinite(compact?.percent)
+    ? Math.max(0, Math.min(100, compact.percent))
+    : 0;
+  const tone = compact?.tone || lineUsage.bridge?.tone || T.textSec;
+  const summaryText =
+    Number.isFinite(used) && Number.isFinite(cap)
+      ? `${Math.round(used)} / ${Math.round(cap)} · ${
+          Number.isFinite(free) ? `${Math.round(free)} free` : lineUsage.summary
+        }`
+      : lineUsage.summary;
+
+  return (
     <div
       style={{
         display: "grid",
-        gap: sp(12),
-        marginBottom: sp(12),
-        padding: sp("14px 16px"),
-        background: T.bg1,
-        border: `1px solid ${T.borderLight}`,
-        borderRadius: dim(RADII.md),
+        gap: sp(7),
+        marginBottom: sp(8),
+        padding: sp("6px 8px"),
+        background: "transparent",
+        borderTop: `1px solid ${T.borderLight}`,
+        borderBottom: `1px solid ${T.borderLight}`,
         fontFamily: T.sans,
       }}
     >
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          gap: sp(10),
+          display: "grid",
+          gridTemplateColumns: `auto minmax(${dim(70)}px, 1fr) auto auto`,
+          alignItems: "center",
+          gap: sp(8),
+          minWidth: 0,
         }}
       >
         <span
@@ -560,7 +758,27 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
             textTransform: "uppercase",
           }}
         >
-          IBKR Line Usage
+          Lines
+        </span>
+        <span
+          aria-hidden="true"
+          style={{
+            minWidth: 0,
+            height: dim(4),
+            borderRadius: dim(RADII.pill),
+            background: T.borderLight,
+            overflow: "hidden",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              width: `${percent}%`,
+              height: "100%",
+              borderRadius: dim(RADII.pill),
+              background: tone,
+            }}
+          />
         </span>
         <span
           style={{
@@ -568,309 +786,248 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
             fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
           }}
         >
-          {lineUsage.summary}
+          {summaryText}
         </span>
+        <button
+          type="button"
+          onClick={() => setBreakdownOpen((current) => !current)}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: T.textMuted,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            padding: 0,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {breakdownOpen ? "Hide" : "Breakdown"}{" "}
+          <ChevronDown
+            size={dim(10)}
+            strokeWidth={2.2}
+            style={{
+              display: "inline-block",
+              transform: breakdownOpen ? "rotate(180deg)" : "rotate(-90deg)",
+              transition: "transform 0.12s ease",
+              verticalAlign: "-1px",
+            }}
+          />
+        </button>
       </div>
-      {summaryChips.length ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
-          {summaryChips.map((chip) => (
-            <span
-              key={chip.label}
+      {breakdownOpen && summaryItems.length ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(auto-fit, minmax(${dim(118)}px, 1fr))`,
+            gap: sp(5),
+            minWidth: 0,
+          }}
+        >
+          {summaryItems.map((item) => (
+            <div
+              key={item.label}
               style={{
-                display: "inline-flex",
-                alignItems: "baseline",
-                gap: sp(6),
-                padding: sp("4px 10px"),
-                borderRadius: dim(RADII.pill),
-                background: `${chip.tone}10`,
-                color: chip.tone,
-                fontSize: textSize("caption"),
+                display: "grid",
+                gap: sp(2),
+                minWidth: 0,
+                padding: sp("5px 7px"),
+                borderRadius: dim(RADII.sm),
+                background: `${item.tone}0d`,
+                color: item.tone,
+                fontSize: textSize("paragraphMuted"),
                 fontWeight: FONT_WEIGHTS.medium,
-                whiteSpace: "nowrap",
+                lineHeight: 1.15,
               }}
             >
               <span
                 style={{
                   color: T.textMuted,
+                  fontSize: fs(8),
+                  fontWeight: FONT_WEIGHTS.regular,
                   letterSpacing: "0.04em",
                   textTransform: "uppercase",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {chip.label}
+                {item.label}
               </span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{chip.value}</span>
-            </span>
+              <span
+                style={{
+                  minWidth: 0,
+                  fontVariantNumeric: "tabular-nums",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {item.value}
+              </span>
+            </div>
           ))}
         </div>
       ) : null}
-      <div style={{ display: "grid", gap: 0 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
-            gap: sp(10),
-            color: T.textMuted,
-            fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.04em",
-            textTransform: "uppercase",
-            paddingBottom: sp(6),
-            borderBottom: `1px solid ${T.borderLight}`,
-          }}
-        >
-          <span>API Pool</span>
-          <span style={{ textAlign: "right" }}>Used</span>
-          <span style={{ textAlign: "right" }}>Cap</span>
-          <span style={{ textAlign: "right" }}>Free</span>
-        </div>
-        {lineUsage.rows.map((row, index) => (
+      {breakdownOpen ? (
+        <div style={{ display: "grid", gap: 0 }}>
           <div
-            key={row.id}
-            data-testid={`header-market-data-line-row-${row.id}`}
             style={{
               display: "grid",
               gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
               gap: sp(10),
-              alignItems: "baseline",
-              fontSize: textSize("paragraphMuted"),
-              padding: sp("8px 0"),
-              borderBottom:
-                index < lineUsage.rows.length - 1
-                  ? `1px solid ${T.borderLight}`
-                  : "none",
+              color: T.textMuted,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              paddingBottom: sp(6),
+              borderBottom: `1px solid ${T.borderLight}`,
             }}
           >
-            <span
-              style={{
-                color: row.id === "total" ? T.text : T.textSec,
-                minWidth: 0,
-                fontWeight:
-                  row.id === "total" ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-              }}
-            >
-              <span>{row.label}</span>
-              {row.detail ? (
-                <span
-                  style={{
-                    display: "block",
-                    marginTop: sp(3),
-                    color: row.tone,
-                    fontSize: textSize("caption"),
-                    fontWeight: FONT_WEIGHTS.regular,
-                    lineHeight: 1.4,
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {row.detail}
-                </span>
-              ) : null}
-            </span>
-            <span
-              style={{
-                textAlign: "right",
-                color: row.tone,
-                fontWeight: FONT_WEIGHTS.medium,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
-            </span>
-            <span
-              style={{
-                textAlign: "right",
-                color: T.textSec,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {Number.isFinite(row.effectiveCap ?? row.cap)
-                ? Math.round(row.effectiveCap ?? row.cap)
-                : MISSING_VALUE}
-            </span>
-            <span
-              style={{
-                textAlign: "right",
-                color: T.textSec,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {Number.isFinite(row.free) ? Math.round(row.free) : MISSING_VALUE}
-            </span>
+            <span>Pool</span>
+            <span style={{ textAlign: "right" }}>Used</span>
+            <span style={{ textAlign: "right" }}>Cap</span>
+            <span style={{ textAlign: "right" }}>Free</span>
           </div>
-        ))}
-      </div>
+          {lineUsage.rows.map((row, index) => (
+            <div
+              key={row.id}
+              data-testid={`header-market-data-line-row-${row.id}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
+                gap: sp(10),
+                alignItems: "baseline",
+                fontSize: textSize("paragraphMuted"),
+                padding: sp("8px 0"),
+                borderBottom:
+                  index < lineUsage.rows.length - 1
+                    ? `1px solid ${T.borderLight}`
+                    : "none",
+              }}
+            >
+              <span
+                style={{
+                  color: row.id === "total" ? T.text : T.textSec,
+                  minWidth: 0,
+                  fontWeight:
+                    row.id === "total"
+                      ? FONT_WEIGHTS.medium
+                      : FONT_WEIGHTS.regular,
+                }}
+              >
+                <span>{row.label}</span>
+                {row.detail ? (
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: sp(3),
+                      color: row.tone,
+                      fontSize: textSize("caption"),
+                      fontWeight: FONT_WEIGHTS.regular,
+                      lineHeight: 1.4,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {row.detail}
+                  </span>
+                ) : null}
+              </span>
+              <span
+                style={{
+                  textAlign: "right",
+                  color: row.tone,
+                  fontWeight: FONT_WEIGHTS.medium,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
+              </span>
+              <span
+                style={{
+                  textAlign: "right",
+                  color: T.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {Number.isFinite(row.effectiveCap ?? row.cap)
+                  ? Math.round(row.effectiveCap ?? row.cap)
+                  : MISSING_VALUE}
+              </span>
+              <span
+                style={{
+                  textAlign: "right",
+                  color: T.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {Number.isFinite(row.free) ? Math.round(row.free) : MISSING_VALUE}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
-  );
-};
-
-const HeaderMarketDataLineBadge = ({ lineUsage }) => {
-  if (!lineUsage?.available) {
-    return null;
-  }
-
-  const totalRow = lineUsage.rows?.find((row) => row.id === "total");
-  const warmup = lineUsage.warmup || {};
-  const warmupPending = Number(warmup.pendingLineCount) > 0;
-  const state = lineUsage.bridge?.available
-    ? lineUsage.bridge.streamState
-    : totalRow?.streamState || "no-subscribers";
-  const tone = streamStateTokenVar(state);
-  const label = lineUsage.bridge?.available ? "BRIDGE" : "LINES";
-  const baseTooltip = lineUsage.bridge?.available
-    ? `Bridge active ${lineUsage.bridge.summary}; API demand ${lineUsage.demandSummary || lineUsage.summary}`
-    : `Market data lines ${lineUsage.summary}`;
-  const tooltip = warmupPending
-    ? `${baseTooltip}; bridge pending ${Math.round(warmup.pendingLineCount).toLocaleString()} live line${Math.round(warmup.pendingLineCount) === 1 ? "" : "s"}`
-    : baseTooltip;
-
-  return (
-    <AppTooltip content={tooltip}><span
-      data-testid="header-market-data-line-usage"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        minWidth: 0,
-        border: `1px solid ${streamStateBorderVar(state)}`,
-        background: streamStateBackgroundVar(state),
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: fs(7),
-        fontWeight: FONT_WEIGHTS.regular,
-        lineHeight: 1,
-        padding: sp("2px 4px"),
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ color: T.textMuted }}>{label}</span>
-      <span>{lineUsage.summary}</span>
-    </span></AppTooltip>
   );
 };
 
 const HeaderIbkrConnectionSummary = ({ model }) => {
   const IssueIcon = getHeaderIbkrIcon(model.issue.iconKey);
+  const showIssue = model.issue?.severity && model.issue.severity !== "healthy";
 
   return (
     <div
       style={{
         display: "grid",
-        gap: sp(8),
+        gap: sp(6),
         marginBottom: sp(8),
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(8),
-          minWidth: 0,
-        }}
-      >
+      {showIssue ? (
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 1fr)",
             gap: sp(8),
-            minWidth: 0,
-            color: model.health.color,
+            alignItems: "start",
+            padding: sp("8px 10px"),
+            background: T.bg1,
+            border: `1px solid ${model.issue.tone}55`,
+            borderRadius: dim(RADII.sm),
+            color: model.issue.tone,
             fontFamily: T.sans,
             fontSize: textSize("paragraphMuted"),
-            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.35,
           }}
         >
+          <IssueIcon size={dim(14)} strokeWidth={2.2} color={model.issue.tone} />
           <span
             style={{
-              width: dim(8),
-              height: dim(8),
-              borderRadius: dim(RADII.pill),
-              background: model.health.color,
-              boxShadow: `0 0 0 3px ${model.health.color}24`,
-              flexShrink: 0,
+              minWidth: 0,
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
             }}
-          />
-          <span>{model.health.label}</span>
+          >
+            {model.issue.label}
+          </span>
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: sp(6),
-            minWidth: 0,
-            flexWrap: "wrap",
-          }}
-        >
-          {model.badges.map((badge) => (
-            <span
-              key={badge.label}
-              style={{
-                borderRadius: dim(RADII.pill),
-                background: badge.background,
-                color: badge.color,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.medium,
-                padding: sp("3px 8px"),
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {badge.label}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto minmax(0, 1fr)",
-          gap: sp(10),
-          alignItems: "start",
-          padding: sp("10px 12px"),
-          background: T.bg1,
-          border: `1px solid ${model.issue.tone}55`,
-          borderRadius: dim(RADII.sm),
-          color: model.issue.tone,
-          fontFamily: T.sans,
-          fontSize: textSize("paragraphMuted"),
-          lineHeight: 1.4,
-        }}
-      >
-        <IssueIcon size={dim(15)} strokeWidth={2.2} color={model.issue.tone} />
-        <span
-          style={{
-            minWidth: 0,
-            whiteSpace: "normal",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {model.issue.label}
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: sp(6),
-        }}
-      >
-        {model.tiles.map((tile) => (
-          <HeaderIbkrMetricTile key={tile.label} tile={tile} />
-        ))}
-      </div>
+      ) : null}
+      <HeaderIbkrMetricRail tiles={model.tiles} />
     </div>
   );
 };
 
 const HeaderIbkrAdvancedDetails = ({ model }) => {
-  const [open, setOpen] = useState(() => Boolean(model.autoOpenDetails));
-  const openSourceRef = useRef(model.autoOpenDetails ? "auto" : "default");
+  const initialMode = model.autoOpenDetails
+    ? "all"
+    : model.priorityDetailGroup
+      ? "priority"
+      : "closed";
+  const [openMode, setOpenMode] = useState(initialMode);
+  const openSourceRef = useRef(initialMode === "closed" ? "default" : "auto");
   const lastIssueKeyRef = useRef(model.issue.key);
 
   useEffect(() => {
@@ -879,39 +1036,57 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
       lastIssueKeyRef.current = model.issue.key;
     }
 
-    if (model.autoOpenDetails) {
+    const nextAutoMode = model.autoOpenDetails
+      ? "all"
+      : model.priorityDetailGroup
+        ? "priority"
+        : "closed";
+
+    if (nextAutoMode !== "closed") {
       if (issueChanged || openSourceRef.current !== "user") {
         openSourceRef.current = "auto";
-        setOpen(true);
+        setOpenMode(nextAutoMode);
       }
       return;
     }
 
     if (issueChanged && openSourceRef.current === "auto") {
       openSourceRef.current = "default";
-      setOpen(false);
+      setOpenMode("closed");
     }
-  }, [model.autoOpenDetails, model.issue.key]);
+  }, [model.autoOpenDetails, model.issue.key, model.priorityDetailGroup]);
 
   const handleDetailsToggle = useCallback(() => {
     openSourceRef.current = "user";
-    setOpen((current) => !current);
+    setOpenMode((current) => (current === "all" ? "closed" : "all"));
   }, []);
+  const open = openMode !== "closed";
+  const expandedGroupTitle =
+    openMode === "priority" && model.priorityDetailGroup
+      ? model.priorityDetailGroup
+      : null;
 
   return (
-    <div style={{ marginTop: sp(7), display: "grid", gap: sp(6) }}>
+    <div
+      style={{
+        marginTop: sp(6),
+        display: "grid",
+        gap: sp(6),
+        borderTop: `1px solid ${T.borderLight}`,
+      }}
+    >
       <button
         type="button"
         onClick={handleDetailsToggle}
         style={{
-          minHeight: dim(26),
+          minHeight: dim(24),
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: sp(8),
-          padding: sp("4px 7px"),
+          padding: sp("6px 2px 0"),
           border: "none",
-          background: T.bg1,
+          background: "transparent",
           color: T.textDim,
           cursor: "pointer",
           fontFamily: T.sans,
@@ -923,7 +1098,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
       >
         <span>Details</span>
         <ChevronDown
-          size={dim(12)}
+          size={dim(11)}
           strokeWidth={2.2}
           style={{
             transform: open ? "rotate(180deg)" : "rotate(0deg)",
@@ -936,37 +1111,70 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
         <div
           style={{
             display: "grid",
-            gap: sp(8),
-            padding: sp("7px 8px"),
-            background: T.bg1,
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: sp(6),
+            padding: 0,
+            background: "transparent",
             border: "none",
           }}
         >
-          {model.detailGroups.map((group) => (
-            <div key={group.title} style={{ display: "grid", gap: sp(2) }}>
+          {model.detailGroups.map((group) => {
+            const groupKey = group.title.toLowerCase();
+            const groupOpen =
+              !expandedGroupTitle || groupKey === expandedGroupTitle;
+            return (
               <div
+                key={group.title}
                 style={{
-                  color: T.textMuted,
-                  fontFamily: T.sans,
-                  fontSize: fs(8),
-                  fontWeight: FONT_WEIGHTS.regular,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
+                  display: "grid",
+                  alignContent: "start",
+                  gap: sp(3),
+                  minWidth: 0,
+                  padding: sp("6px 8px"),
+                  border: `1px solid ${T.borderLight}`,
+                  borderRadius: dim(RADII.sm),
+                  background: T.bg1,
                 }}
               >
-                {group.title}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(4),
+                    color: T.textMuted,
+                    fontFamily: T.sans,
+                    fontSize: fs(8),
+                    fontWeight: FONT_WEIGHTS.regular,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <span>{group.title}</span>
+                  {expandedGroupTitle ? (
+                    <ChevronDown
+                      size={dim(10)}
+                      strokeWidth={2.2}
+                      style={{
+                        transform: groupOpen ? "rotate(180deg)" : "rotate(-90deg)",
+                      }}
+                    />
+                  ) : null}
+                </div>
+                {groupOpen
+                  ? group.rows.map((row) => (
+                      <HeaderIbkrDetailRow
+                        key={`${group.title}:${row.label}`}
+                        label={row.label}
+                        value={row.value}
+                        tone={row.tone}
+                        wrap={row.wrap}
+                      />
+                    ))
+                  : null}
               </div>
-              {group.rows.map((row) => (
-                <HeaderIbkrDetailRow
-                  key={`${group.title}:${row.label}`}
-                  label={row.label}
-                  value={row.value}
-                  tone={row.tone}
-                  wrap={row.wrap}
-                />
-              ))}
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -980,16 +1188,24 @@ export const HeaderStatusCluster = ({
   theme,
   onToggleTheme,
   compact = false,
+  dense = false,
 }) => {
+  const isDense = dense && !compact;
   const queryClient = useQueryClient();
   const { preferences } = useUserPreferences();
   const bridgeTriggerRef = useRef(null);
   const bridgePopoverRef = useRef(null);
+  const bridgeRecognitionRefreshTimerRef = useRef(null);
+  const bridgeLaunchCancelRequestedRef = useRef(false);
+  const runtimeControlReloadRef = useRef(null);
   const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
   const [bridgePopoverOpen, setBridgePopoverOpen] = useState(false);
   const [bridgePopoverPosition, setBridgePopoverPosition] = useState(null);
-  const [bridgeLaunchUrl, setBridgeLaunchUrl] = useState(() =>
+  const [, setBridgeLaunchUrl] = useState(() =>
     readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchUrl),
+  );
+  const [bridgeActivationId, setBridgeActivationId] = useState(() =>
+    readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.activationId),
   );
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(
     () =>
@@ -1003,8 +1219,12 @@ export const HeaderStatusCluster = ({
     useState(() =>
       readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.managementToken),
     );
+  const [bridgeActivationActive, setBridgeActivationActive] = useState(false);
   const [bridgeLauncherBusy, setBridgeLauncherBusy] = useState(false);
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
+  const [bridgeLauncherNotice, setBridgeLauncherNotice] = useState(null);
+  const [autoLoginUsername, setAutoLoginUsername] = useState("");
+  const [autoLoginPassword, setAutoLoginPassword] = useState("");
   useEffect(() => {
     const timer = window.setInterval(() => setMarketClockNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -1045,6 +1265,9 @@ export const HeaderStatusCluster = ({
       priority: 7,
     },
   );
+  useEffect(() => {
+    runtimeControlReloadRef.current = runtimeControl.reload;
+  }, [runtimeControl.reload]);
   const gatewayRuntimeError =
     runtimeControl.runtimeError instanceof Error
       ? runtimeControl.runtimeError.message
@@ -1093,51 +1316,45 @@ export const HeaderStatusCluster = ({
   const gatewayReconnectNeeded = Boolean(
     session?.configured?.ibkr && !gatewayConnectedForBridge,
   );
-  const gatewayBlockingIssueMessage =
-    gatewayPopoverModel.issue?.iconKey === "alert" &&
-    gatewayPopoverModel.issue?.key !== "stream-gaps" &&
-    gatewayPopoverModel.issue?.key !== "legacy-env"
-      ? gatewayPopoverModel.issue.label
-      : null;
-  const bridgeLauncherMessage =
+  const bridgePopoverMessage =
     bridgeLauncherError ||
+    bridgeLauncherNotice ||
     (bridgeLaunchInFlight
       ? "IB Gateway activation is running from the Windows helper. Wait for the bridge to attach before launching again."
-      : null) ||
-    (bridgeLaunchUrl && !gatewayConnectedForBridge
-      ? "Your browser should ask to open the RayAlgo IBKR PowerShell launcher."
-      : null) ||
-    gatewayBlockingIssueMessage ||
-    bridgeRuntimeMessage(session);
-  const bridgeActionLabel =
-    bridgeLauncherBusy
+      : null);
+  const popoverLatencyMs = Number.isFinite(gatewayConnection?.lastPingMs)
+    ? gatewayConnection.lastPingMs
+    : gatewayLatencyStats?.totalMs?.p95;
+  const popoverLatencyLabel = formatIbkrPingMs(popoverLatencyMs);
+  const bridgeLaunchCancelable = Boolean(
+    !gatewayConnectedForBridge &&
+      bridgeActivationId &&
+      bridgeManagementToken &&
+      (bridgeActivationActive || bridgeLaunchInFlight || bridgeLauncherBusy),
+  );
+  const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser();
+  const autoLoginActionDisabled = Boolean(
+    gatewayConnectedForBridge ||
+      (!bridgeLaunchCancelable && (bridgeLauncherBusy || bridgeLaunchInFlight)),
+  );
+  const autoLoginActionLabel = bridgeLaunchCancelable
+    ? "Cancel launch"
+    : bridgeLauncherBusy
       ? "Preparing"
       : bridgeLaunchInFlight
-        ? "Launching"
-      : gatewayConnectedForBridge
-          ? "Connected"
-          : gatewayReconnectNeeded
-            ? "Reconnect"
-            : "Launch";
-  const bridgeActionColor = gatewayConnectedForBridge
-    ? T.green
-    : bridgeLauncherBusy || bridgeLaunchInFlight
-      ? T.accent
+      ? "Launching"
       : gatewayReconnectNeeded
-        ? T.amber
-        : T.accent;
-  const bridgeActionDisabled = Boolean(
-    bridgeLauncherBusy ||
-      bridgeLaunchInFlight ||
-      gatewayConnectedForBridge,
-  );
-  const headerDataModeLabel = resolveHeaderDataModeLabel(session);
+        ? "Reconnect with credentials"
+        : remoteDesktopLaunchBrowser
+          ? "Launch on desktop"
+          : "Launch with credentials";
+  const showCredentialForm = !gatewayConnectedForBridge;
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
-    gap: sp(compact ? 4 : 6),
-    minHeight: dim(compact ? 28 : 38),
-    padding: sp(compact ? "3px 8px" : "6px 12px"),
+    gap: sp(compact ? 4 : isDense ? 4 : 6),
+    minHeight: dim(compact ? 28 : isDense ? 30 : 38),
+    padding: sp(compact ? "3px 8px" : isDense ? "3px 10px" : "6px 12px"),
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: dim(RADII.sm),
@@ -1184,13 +1401,173 @@ export const HeaderStatusCluster = ({
     });
   }, []);
 
+  const refreshIbkrConnectionStatus = useCallback(() => {
+    const pending = [
+      queryClient.refetchQueries({
+        queryKey: ["/api/session"],
+        exact: true,
+        type: "active",
+      }),
+      queryClient.refetchQueries({
+        queryKey: ["platform-runtime-diagnostics"],
+        exact: false,
+        type: "active",
+      }),
+    ];
+    if (runtimeControlReloadRef.current) {
+      pending.push(runtimeControlReloadRef.current());
+    }
+    return Promise.allSettled(pending);
+  }, [queryClient]);
+
+  const stopBridgeRecognitionRefresh = useCallback(() => {
+    if (
+      bridgeRecognitionRefreshTimerRef.current !== null &&
+      typeof window !== "undefined"
+    ) {
+      window.clearInterval(bridgeRecognitionRefreshTimerRef.current);
+    }
+    bridgeRecognitionRefreshTimerRef.current = null;
+  }, []);
+
+  const clearBridgeLaunchSessionState = useCallback(() => {
+    setBridgeActivationActive(false);
+    setBridgeLaunchInFlightUntil(0);
+    setBridgeActivationId(null);
+    setBridgeManagementToken(null);
+    setBridgeLaunchUrl(null);
+    removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.activationId);
+    removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchInFlightUntil);
+    removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchUrl);
+    removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.managementToken);
+    stopBridgeRecognitionRefresh();
+    invalidateIbkrRuntimeQueries(queryClient);
+  }, [queryClient, stopBridgeRecognitionRefresh]);
+
+  const startBridgeRecognitionRefresh = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    stopBridgeRecognitionRefresh();
+    const deadline = Date.now() + IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS;
+    const refresh = () => {
+      if (Date.now() >= deadline) {
+        stopBridgeRecognitionRefresh();
+        return;
+      }
+      void refreshIbkrConnectionStatus();
+    };
+
+    refresh();
+    bridgeRecognitionRefreshTimerRef.current = window.setInterval(
+      refresh,
+      IBKR_BRIDGE_RECOGNITION_POLL_MS,
+    );
+  }, [
+    refreshIbkrConnectionStatus,
+    stopBridgeRecognitionRefresh,
+  ]);
+
+  useEffect(() => {
+    if (!bridgeActivationId || !bridgeManagementToken || gatewayConnectedForBridge) {
+      setBridgeActivationActive(false);
+      return undefined;
+    }
+    if (bridgeLaunchInFlightUntil <= Date.now()) {
+      const staleActivationId = bridgeActivationId;
+      const staleManagementToken = bridgeManagementToken;
+      clearBridgeLaunchSessionState();
+      void platformJsonRequest(
+        `/api/ibkr/activation/${encodeURIComponent(staleActivationId)}/cancel`,
+        {
+          method: "POST",
+          body: {
+            managementToken: staleManagementToken,
+          },
+          timeoutMs: 0,
+        },
+      ).catch(() => {});
+      return undefined;
+    }
+
+    let canceled = false;
+    const validateActivation = async () => {
+      try {
+        const payload = await platformJsonRequest(
+          `/api/ibkr/activation/${encodeURIComponent(bridgeActivationId)}/status`,
+          {
+            method: "POST",
+            body: {
+              managementToken: bridgeManagementToken,
+            },
+            timeoutMs: 0,
+          },
+        );
+        if (canceled) {
+          return;
+        }
+        if (payload?.active && !payload.canceled) {
+          setBridgeActivationActive(true);
+          return;
+        }
+        clearBridgeLaunchSessionState();
+      } catch (error) {
+        if (canceled) {
+          return;
+        }
+        if (
+          error?.status === 404 ||
+          error?.code === "ibkr_bridge_activation_not_found" ||
+          error?.code === "ibkr_bridge_activation_superseded" ||
+          error?.code === "ibkr_bridge_activation_canceled"
+        ) {
+          clearBridgeLaunchSessionState();
+          return;
+        }
+        setBridgeActivationActive(false);
+      }
+    };
+
+    void validateActivation();
+    return () => {
+      canceled = true;
+    };
+  }, [
+    bridgeActivationId,
+    bridgeLaunchInFlightUntil,
+    bridgeManagementToken,
+    clearBridgeLaunchSessionState,
+    gatewayConnectedForBridge,
+  ]);
+
   useEffect(() => {
     if (!gatewayConnectedForBridge || bridgeLaunchInFlightUntil <= 0) {
       return;
     }
-    setBridgeLaunchInFlightUntil(0);
-    removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchInFlightUntil);
-  }, [bridgeLaunchInFlightUntil, gatewayConnectedForBridge]);
+    setBridgeLauncherNotice(null);
+    setBridgeLauncherError(null);
+    clearBridgeLaunchSessionState();
+  }, [
+    bridgeLaunchInFlightUntil,
+    clearBridgeLaunchSessionState,
+    gatewayConnectedForBridge,
+  ]);
+
+  useEffect(() => {
+    if (!bridgeLaunchInFlight || gatewayConnectedForBridge) {
+      return;
+    }
+    startBridgeRecognitionRefresh();
+    return stopBridgeRecognitionRefresh;
+  }, [
+    bridgeLaunchInFlight,
+    gatewayConnectedForBridge,
+    startBridgeRecognitionRefresh,
+    stopBridgeRecognitionRefresh,
+  ]);
+
+  useEffect(() => stopBridgeRecognitionRefresh, [stopBridgeRecognitionRefresh]);
 
   useEffect(() => {
     if (!bridgePopoverOpen) {
@@ -1232,57 +1609,213 @@ export const HeaderStatusCluster = ({
     };
   }, [bridgePopoverOpen, updateBridgePopoverPosition]);
 
-  const handleStartBridgeLauncher = useCallback(async () => {
-    const protocolLauncher = openIbkrProtocolLauncher();
+  const handleClearCredentialForm = useCallback(() => {
+    if (bridgeLauncherBusy) {
+      return;
+    }
+    setAutoLoginUsername("");
+    setAutoLoginPassword("");
+  }, [bridgeLauncherBusy]);
+
+  const handleSubmitAutoLogin = useCallback(async (event) => {
+    event.preventDefault();
+    bridgeLaunchCancelRequestedRef.current = false;
+    const username = autoLoginUsername.trim();
+    const password = autoLoginPassword;
+    if (!username || !password) {
+      setBridgeLauncherError("IBKR username and password are required.");
+      return;
+    }
+
+    const useRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser();
+    const protocolLauncher = useRemoteDesktopLaunch ? null : openIbkrProtocolLauncher();
     setBridgePopoverOpen(true);
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
+    setBridgeLauncherNotice(
+      useRemoteDesktopLaunch
+        ? "Sending the IBKR launch request to the paired Windows desktop."
+        : "Preparing the Windows helper secure credential handoff.",
+    );
 
     try {
-      const payload = await platformJsonRequest("/api/ibkr/bridge/launcher", {
-        timeoutMs: 0,
-      });
+      const payload = await platformJsonRequest(
+        useRemoteDesktopLaunch ? "/api/ibkr/remote-launch" : "/api/ibkr/bridge/launcher",
+        {
+          method: useRemoteDesktopLaunch ? "POST" : "GET",
+          body: useRemoteDesktopLaunch ? { autoLogin: true } : undefined,
+          timeoutMs: 0,
+        },
+      );
+      const selectedLaunchUrl = payload.autoLoginLaunchUrl || payload.launchUrl;
+      setBridgeActivationId(payload.activationId || null);
       setBridgeManagementToken(payload.managementToken || null);
-      setBridgeLaunchUrl(payload.launchUrl || null);
+      setBridgeLaunchUrl(selectedLaunchUrl || null);
+      writeIbkrBridgeSessionValue(
+        IBKR_BRIDGE_SESSION_KEYS.activationId,
+        payload.activationId,
+      );
       writeIbkrBridgeSessionValue(
         IBKR_BRIDGE_SESSION_KEYS.managementToken,
         payload.managementToken,
       );
       writeIbkrBridgeSessionValue(
         IBKR_BRIDGE_SESSION_KEYS.launchUrl,
-        payload.launchUrl,
+        selectedLaunchUrl,
       );
-      const launched = navigateIbkrProtocolLauncher(
-        protocolLauncher,
-        payload.launchUrl,
-      );
+      const launched = useRemoteDesktopLaunch
+        ? Boolean(payload.remoteLaunch?.jobId)
+        : navigateIbkrProtocolLauncher(
+            protocolLauncher,
+            selectedLaunchUrl,
+          );
       if (launched) {
-        const inFlightUntil = Date.now() + IBKR_BRIDGE_LAUNCH_COOLDOWN_MS;
+        setBridgeActivationActive(true);
+        const inFlightUntil = Date.now() + IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS;
         setBridgeLaunchInFlightUntil(inFlightUntil);
         writeIbkrBridgeSessionValue(
           IBKR_BRIDGE_SESSION_KEYS.launchInFlightUntil,
           String(inFlightUntil),
         );
+        setBridgeLauncherNotice(
+          useRemoteDesktopLaunch
+            ? "Waiting for the Windows desktop helper to request encrypted credentials."
+            : "Waiting for the Windows helper to request encrypted credentials.",
+        );
       } else {
         setBridgeLauncherError(
-          "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
+          useRemoteDesktopLaunch
+            ? "No paired Windows desktop accepted the IBKR launch request."
+            : "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
+        );
+        return;
+      }
+
+      const handoff = await waitForIbkrLoginKey({
+        activationId: payload.activationId,
+        managementToken: payload.managementToken,
+      });
+      if (handoff.completedWithoutCredentials) {
+        setBridgeLauncherNotice(
+          "IB Gateway was already ready or the bridge attached before credentials were needed.",
+        );
+        clearBridgeLaunchSessionState();
+        setAutoLoginPassword("");
+        return;
+      }
+
+      const envelope = await encryptIbkrLoginEnvelope({
+        publicKeyJwk: handoff.key.publicKeyJwk,
+        payload: {
+          version: 1,
+          username,
+          password,
+          tradingMode: "live",
+        },
+      });
+      await platformJsonRequest(
+        `/api/ibkr/activation/${encodeURIComponent(payload.activationId)}/login-envelope`,
+        {
+          method: "POST",
+          body: {
+            managementToken: payload.managementToken,
+            helperInstanceId: handoff.key.helperInstanceId,
+            ...envelope,
+          },
+          timeoutMs: 0,
+        },
+      );
+      setAutoLoginPassword("");
+      setBridgeActivationActive(true);
+      setBridgeLauncherNotice(
+        "Encrypted credentials delivered. Approve the IBKR Mobile/2FA prompt.",
+      );
+    } catch (error) {
+      if (protocolLauncher) {
+        closeIbkrProtocolLauncher(protocolLauncher);
+      }
+      if (
+        bridgeLaunchCancelRequestedRef.current ||
+        error?.code === "ibkr_bridge_activation_canceled"
+      ) {
+        setBridgeLauncherNotice("IB Gateway launch canceled.");
+        setBridgeLauncherError(null);
+        clearBridgeLaunchSessionState();
+        return;
+      }
+      setBridgeLauncherError(
+        error instanceof Error ? error.message : "IBKR auto-login failed.",
+      );
+    } finally {
+      setAutoLoginPassword("");
+      setBridgeLauncherBusy(false);
+    }
+  }, [autoLoginPassword, autoLoginUsername, clearBridgeLaunchSessionState]);
+
+  const handleCancelBridgeLaunch = useCallback(async () => {
+    if (!bridgeActivationId || !bridgeManagementToken) {
+      setBridgeLauncherError("No active IB Gateway launch can be canceled.");
+      return;
+    }
+
+    bridgeLaunchCancelRequestedRef.current = true;
+    setBridgeLauncherBusy(true);
+    setBridgeLauncherError(null);
+    try {
+      await platformJsonRequest(
+        `/api/ibkr/activation/${encodeURIComponent(bridgeActivationId)}/cancel`,
+        {
+          method: "POST",
+          body: {
+            managementToken: bridgeManagementToken,
+          },
+          timeoutMs: 0,
+        },
+      );
+      setBridgeLauncherNotice("IB Gateway launch canceled.");
+      clearBridgeLaunchSessionState();
+    } catch (error) {
+      if (
+        error?.status === 404 ||
+        error?.code === "ibkr_bridge_activation_not_found" ||
+        error?.code === "ibkr_bridge_activation_superseded"
+      ) {
+        setBridgeLauncherNotice("No active IB Gateway launch remained.");
+        clearBridgeLaunchSessionState();
+      } else {
+        setBridgeLauncherError(
+          error instanceof Error ? error.message : "Cancel launch failed.",
         );
       }
-    } catch (error) {
-      closeIbkrProtocolLauncher(protocolLauncher);
-      setBridgeLauncherError(
-        error instanceof Error ? error.message : "Bridge launcher failed.",
-      );
     } finally {
       setBridgeLauncherBusy(false);
     }
-  }, []);
+  }, [
+    bridgeActivationId,
+    bridgeManagementToken,
+    clearBridgeLaunchSessionState,
+  ]);
 
   const handleDeactivate = useCallback(async () => {
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
+    setBridgeLauncherNotice(null);
 
     try {
+      const shutdown = await platformJsonRequest("/api/ibkr/remote-shutdown", {
+        method: "POST",
+        body: bridgeManagementToken
+          ? { managementToken: bridgeManagementToken }
+          : { force: true },
+      });
+      if (shutdown?.shutdown?.jobId && shutdown?.shutdown?.statusToken) {
+        setBridgeLauncherNotice("Waiting for the Windows desktop to stop IB Gateway.");
+        await waitForIbkrDesktopJob({
+          jobId: shutdown.shutdown.jobId,
+          statusToken: shutdown.shutdown.statusToken,
+        });
+      }
+
       if (bridgeManagementToken) {
         try {
           await platformJsonRequest("/api/ibkr/bridge/detach", {
@@ -1313,10 +1846,12 @@ export const HeaderStatusCluster = ({
         );
       }
       setBridgeManagementToken(null);
+      setBridgeActivationId(null);
       clearIbkrBridgeSessionValues();
       setBridgeLaunchUrl(null);
       setBridgeLaunchInFlightUntil(0);
       invalidateIbkrRuntimeQueries(queryClient);
+      setBridgeLauncherNotice("IB Gateway stopped on the Windows desktop.");
     } catch (error) {
       setBridgeLauncherError(
         error instanceof Error ? error.message : "Deactivate failed.",
@@ -1333,7 +1868,7 @@ export const HeaderStatusCluster = ({
         display: "flex",
         alignItems: "stretch",
         justifyContent: "flex-end",
-        gap: sp(compact ? 2 : 4),
+        gap: sp(compact ? 2 : isDense ? 3 : 4),
         flexWrap: "nowrap",
         minWidth: 0,
       }}
@@ -1347,11 +1882,13 @@ export const HeaderStatusCluster = ({
           onClick={() => setBridgePopoverOpen((current) => !current)}
           style={{
             ...surfaceStyle,
+            display: "grid",
             alignItems: "center",
-            flexDirection: "row",
-            justifyContent: "center",
-            minWidth: compact ? dim(104) : dim(220),
-            gap: sp(compact ? 3 : 5),
+            justifyContent: "stretch",
+            minWidth: compact ? dim(174) : isDense ? dim(222) : dim(312),
+            maxWidth: compact ? dim(196) : isDense ? dim(240) : dim(348),
+            padding: sp(compact ? "5px 18px 5px 7px" : isDense ? "4px 14px 4px 7px" : "7px 20px 7px 9px"),
+            position: "relative",
             color: T.text,
             appearance: "none",
             font: "inherit",
@@ -1364,22 +1901,25 @@ export const HeaderStatusCluster = ({
             event.currentTarget.style.borderColor = T.border;
           }}
         >
-          <span style={microLabelStyle}>IBKR</span>
-          <HeaderIbkrStatusChip
-            label={bridgeTone.label.toUpperCase()}
+          <HeaderIbkrTriggerSummary
+            model={gatewayPopoverModel}
             connection={gatewayConnection}
             tone={gatewayTone}
             latencyStats={gatewayLatencyStats}
+            compact={compact}
+            dense={isDense}
           />
-          {compact ? null : (
-            <HeaderMarketDataLineBadge lineUsage={gatewayPopoverModel.lineUsage} />
-          )}
-          {compact ? null : (
-            <span style={{ ...microLabelStyle, color: T.textDim }}>
-              {environment.toUpperCase()} | {headerDataModeLabel}
-            </span>
-          )}
-          <ChevronDown size={dim(12)} color={T.textMuted} strokeWidth={2.3} />
+          <ChevronDown
+            size={dim(12)}
+            color={T.textMuted}
+            strokeWidth={2.3}
+            style={{
+              position: "absolute",
+              right: dim(5),
+              top: dim(5),
+              pointerEvents: "none",
+            }}
+          />
         </button>
 
         {bridgePopoverOpen ? (
@@ -1394,10 +1934,13 @@ export const HeaderStatusCluster = ({
               zIndex: 60,
               width: bridgePopoverPosition?.width ?? dim(408),
               maxWidth: `calc(100vw - ${dim(16)}px)`,
-              maxHeight: bridgePopoverPosition?.maxHeight ?? dim(520),
+              maxHeight: Math.min(
+                bridgePopoverPosition?.maxHeight ?? dim(420),
+                dim(420),
+              ),
               overflowY: "auto",
               boxSizing: "border-box",
-              padding: sp(10),
+              padding: sp(8),
               background: T.bg0,
               border: "none",
               boxShadow: ELEVATION.lg,
@@ -1407,162 +1950,104 @@ export const HeaderStatusCluster = ({
           >
             <div
               style={{
-                display: "flex",
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto auto",
                 alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(8),
-                marginBottom: sp(8),
+                gap: sp(6),
+                marginBottom: sp(6),
               }}
             >
               <div
                 style={{
                   minWidth: 0,
                   display: "flex",
-                  flexDirection: "column",
-                  gap: sp(2),
+                  alignItems: "baseline",
+                  gap: sp(5),
+                  whiteSpace: "nowrap",
                 }}
               >
                 <span
                   style={{
-                    color: T.textMuted,
-                    fontSize: textSize("caption"),
+                    color: T.text,
+                    fontSize: textSize("paragraph"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    lineHeight: 1,
+                    lineHeight: 1.15,
                   }}
                 >
                   IB Gateway
                 </span>
+                <span style={{ color: T.textMuted, fontSize: textSize("paragraphMuted") }}>
+                  ·
+                </span>
                 <span
                   style={{
                     color: bridgeTone.color,
-                    fontSize: textSize("displaySmall"),
+                    fontSize: textSize("paragraph"),
                     fontWeight: FONT_WEIGHTS.label,
                     fontFamily: T.sans,
-                    letterSpacing: "-0.015em",
-                    lineHeight: 1.1,
+                    lineHeight: 1.15,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {bridgeTone.label}
                 </span>
               </div>
-              <AppTooltip content="Close"><button
-                type="button"
-                onClick={() => setBridgePopoverOpen(false)}
+              <span
                 style={{
-                  width: dim(32),
-                  height: dim(32),
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(RADII.sm),
-                  background: T.bg1,
                   color: T.textSec,
-                  cursor: "pointer",
-                  transition: "border-color 0.12s ease",
-                }}
-                onMouseEnter={(event) => {
-                  event.currentTarget.style.borderColor = T.accent;
-                }}
-                onMouseLeave={(event) => {
-                  event.currentTarget.style.borderColor = T.border;
-                }}
-              >
-                <X size={dim(15)} strokeWidth={2.2} />
-              </button></AppTooltip>
-            </div>
-
-            <div
-              style={{
-                minHeight: dim(32),
-                marginBottom: sp(12),
-                padding: sp("10px 12px"),
-                background: T.bg1,
-                border: `1px solid ${T.borderLight}`,
-                borderRadius: dim(RADII.sm),
-                color: bridgeLauncherError
-                  ? T.red
-                  : gatewayBlockingIssueMessage
-                    ? gatewayPopoverModel.issue.tone
-                    : T.textSec,
-                fontSize: textSize("paragraphMuted"),
-                lineHeight: 1.4,
-                fontFamily: T.sans,
-                whiteSpace: "normal",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {bridgeLauncherMessage}
-            </div>
-
-            <HeaderIbkrConnectionSummary model={gatewayPopoverModel} />
-            <HeaderProviderRows rows={gatewayPopoverModel.providerRows} />
-            <HeaderMarketDataLineUsage lineUsage={gatewayPopoverModel.lineUsage} />
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: canDeactivate ? "1fr 1fr" : "1fr",
-                gap: sp(6),
-              }}
-            >
-              <button
-                type="button"
-                onClick={handleStartBridgeLauncher}
-                disabled={bridgeActionDisabled}
-                aria-disabled={bridgeActionDisabled}
-                style={{
-                  minHeight: dim(38),
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: sp(8),
-                  padding: sp("8px 14px"),
-                  border: `1px solid ${bridgeActionColor}`,
-                  borderRadius: dim(RADII.sm),
-                  background: `${bridgeActionColor}18`,
-                  color: bridgeActionColor,
-                  cursor: bridgeActionDisabled ? "default" : "pointer",
                   fontSize: textSize("paragraphMuted"),
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
-                  letterSpacing: "-0.005em",
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {bridgeLauncherBusy ? (
-                  <RefreshCw
-                    data-ibkr-bridge-spinner
-                    size={dim(13)}
-                    strokeWidth={2.2}
-                    style={{
-                      animation: "premiumFlowSpin 820ms linear infinite",
-                    }}
-                  />
-                ) : gatewayConnectedForBridge ? (
-                  <CircleCheck size={dim(13)} strokeWidth={2.2} />
-                ) : gatewayReconnectNeeded ? (
-                  <RefreshCw size={dim(13)} strokeWidth={2.2} />
-                ) : (
-                  <Power size={dim(13)} strokeWidth={2.2} />
-                )}
-                {bridgeActionLabel}
-              </button>
+                {popoverLatencyLabel}
+              </span>
+              <AppTooltip content="Close">
+                <button
+                  type="button"
+                  onClick={() => setBridgePopoverOpen(false)}
+                  style={{
+                    width: dim(22),
+                    height: dim(22),
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    border: "none",
+                    borderRadius: dim(RADII.sm),
+                    background: "transparent",
+                    color: T.textSec,
+                    cursor: "pointer",
+                  }}
+                >
+                  <X size={dim(13)} strokeWidth={2.2} />
+                </button>
+              </AppTooltip>
+            </div>
 
-              {canDeactivate ? (
+            {canDeactivate && !showCredentialForm ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr",
+                  gap: sp(6),
+                  marginBottom: sp(8),
+                }}
+              >
                 <button
                   type="button"
                   onClick={handleDeactivate}
                   disabled={bridgeLauncherBusy}
                   style={{
-                    minHeight: dim(38),
+                    minHeight: dim(32),
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: sp(8),
-                    padding: sp("8px 14px"),
+                    gap: sp(6),
+                    padding: sp("6px 12px"),
                     border: `1px solid ${T.border}`,
                     borderRadius: dim(RADII.sm),
                     background: T.bg1,
@@ -1574,11 +2059,176 @@ export const HeaderStatusCluster = ({
                     letterSpacing: "-0.005em",
                   }}
                 >
-                  <X size={dim(15)} strokeWidth={2.2} />
+                  <X size={dim(12)} strokeWidth={2.2} />
                   Deactivate
                 </button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
+
+            {showCredentialForm ? (
+              <form
+                onSubmit={handleSubmitAutoLogin}
+                style={{
+                  display: "grid",
+                  gap: sp(5),
+                  marginBottom: sp(8),
+                  padding: sp(8),
+                  background: T.bg1,
+                  border: `1px solid ${T.borderLight}`,
+                  borderRadius: dim(RADII.sm),
+                }}
+              >
+                <label
+                  style={{
+                    display: "grid",
+                    gap: sp(4),
+                    color: T.textSec,
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.medium,
+                  }}
+                >
+                  IBKR username
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    value={autoLoginUsername}
+                    onChange={(event) => setAutoLoginUsername(event.target.value)}
+                    disabled={bridgeLauncherBusy}
+                    style={{
+                      minHeight: dim(28),
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(RADII.sm),
+                      background: T.bg0,
+                      color: T.text,
+                      padding: sp("5px 8px"),
+                      font: "inherit",
+                    }}
+                  />
+                </label>
+                <label
+                  style={{
+                    display: "grid",
+                    gap: sp(4),
+                    color: T.textSec,
+                    fontSize: textSize("caption"),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.medium,
+                  }}
+                >
+                  IBKR password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={autoLoginPassword}
+                    onChange={(event) => setAutoLoginPassword(event.target.value)}
+                    disabled={bridgeLauncherBusy}
+                    style={{
+                      minHeight: dim(28),
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(RADII.sm),
+                      background: T.bg0,
+                      color: T.text,
+                      padding: sp("5px 8px"),
+                      font: "inherit",
+                    }}
+                  />
+                </label>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gap: sp(6),
+                  }}
+                >
+                  <button
+                    type={bridgeLaunchCancelable ? "button" : "submit"}
+                    onClick={
+                      bridgeLaunchCancelable
+                        ? handleCancelBridgeLaunch
+                        : undefined
+                    }
+                    disabled={autoLoginActionDisabled}
+                    aria-disabled={autoLoginActionDisabled}
+                    style={{
+                      minHeight: dim(28),
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: sp(6),
+                      border: `1px solid ${T.accent}`,
+                      borderRadius: dim(RADII.sm),
+                      background: `${T.accent}18`,
+                      color: T.accent,
+                      cursor: autoLoginActionDisabled ? "default" : "pointer",
+                      fontSize: textSize("paragraphMuted"),
+                      fontWeight: FONT_WEIGHTS.medium,
+                      fontFamily: T.sans,
+                    }}
+                  >
+                    {bridgeLauncherBusy || bridgeLaunchInFlight ? (
+                      <RefreshCw
+                        data-ibkr-bridge-spinner
+                        size={dim(12)}
+                        strokeWidth={2.2}
+                        style={{
+                          animation: "premiumFlowSpin 820ms linear infinite",
+                        }}
+                      />
+                    ) : null}
+                    {autoLoginActionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearCredentialForm}
+                    disabled={bridgeLauncherBusy}
+                    aria-disabled={bridgeLauncherBusy}
+                    style={{
+                      minHeight: dim(28),
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(RADII.sm),
+                      background: T.bg0,
+                      color: T.textSec,
+                      cursor: bridgeLauncherBusy ? "default" : "pointer",
+                      fontSize: textSize("paragraphMuted"),
+                      fontWeight: FONT_WEIGHTS.medium,
+                      fontFamily: T.sans,
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {bridgePopoverMessage?.trim() ? (
+              <div
+                style={{
+                  minHeight: dim(32),
+                  marginBottom: sp(8),
+                  padding: sp("10px 12px"),
+                  background: T.bg1,
+                  border: `1px solid ${T.borderLight}`,
+                  borderRadius: dim(RADII.sm),
+                  color: bridgeLauncherError
+                    ? T.red
+                    : T.textSec,
+                  fontSize: textSize("paragraphMuted"),
+                  lineHeight: 1.4,
+                  fontFamily: T.sans,
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {bridgePopoverMessage}
+              </div>
+            ) : null}
+
+            <HeaderIbkrConnectionSummary model={gatewayPopoverModel} />
+            <HeaderMarketDataLineUsage
+              lineUsage={gatewayPopoverModel.lineUsage}
+              compactLineUsage={gatewayPopoverModel.compactLineUsage}
+            />
 
             <HeaderIbkrAdvancedDetails model={gatewayPopoverModel} />
           </div>
@@ -1589,11 +2239,13 @@ export const HeaderStatusCluster = ({
       <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.label}`}><div
         style={{
           ...surfaceStyle,
-          flexDirection: "column",
-          alignItems: "flex-start",
+          flexDirection: isDense ? "row" : "column",
+          alignItems: isDense ? "center" : "flex-start",
           justifyContent: "center",
-          minWidth: dim(92),
-          gap: 0,
+          minWidth: dim(isDense ? 112 : 92),
+          maxWidth: isDense ? dim(124) : undefined,
+          gap: sp(isDense ? 4 : 0),
+          overflow: "hidden",
         }}
         onMouseEnter={(event) => {
           event.currentTarget.style.borderColor = T.accent;
@@ -1633,9 +2285,13 @@ export const HeaderStatusCluster = ({
             fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             whiteSpace: "nowrap",
+            overflow: isDense ? "hidden" : undefined,
+            textOverflow: isDense ? "ellipsis" : undefined,
           }}
         >
-          {marketClock.label} {marketClock.timerLabel}
+          {isDense
+            ? `${marketClock.label.replace(/^Market /, "")} ${marketClock.timerLabel}`
+            : `${marketClock.label} ${marketClock.timerLabel}`}
         </div>
       </div></AppTooltip>
       )}
@@ -1647,8 +2303,8 @@ export const HeaderStatusCluster = ({
         type="button"
         onClick={onToggleTheme}
         style={{
-          width: dim(38),
-          minHeight: dim(38),
+          width: dim(isDense ? 30 : 38),
+          minHeight: dim(isDense ? 30 : 38),
           padding: 0,
           background: T.bg1,
           border: `1px solid ${T.border}`,

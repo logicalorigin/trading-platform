@@ -1,6 +1,6 @@
 export const platformJsonRequest = async (
   path,
-  { method = "GET", body, timeoutMs = 8_000 } = {},
+  { method = "GET", body, timeoutMs = 0 } = {},
 ) => {
   const controller =
     timeoutMs > 0 && typeof AbortController !== "undefined"

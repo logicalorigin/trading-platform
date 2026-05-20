@@ -9,12 +9,14 @@ export const PlatformRuntimeLayer = ({
   sparklineSymbols,
   streamedQuoteSymbols,
   streamedAggregateSymbols,
+  quoteStreamRuntimeEnabled,
   marketStockAggregateStreamingEnabled,
   marketScreenActive,
   lowPriorityHistoryEnabled,
   flowRuntimeEnabled,
   flowRuntimeIntervalMs,
   broadFlowRuntimeEnabled,
+  broadFlowStartupDelayMs,
   children,
 }) => (
   <MarketDataSubscriptionProviderComponent
@@ -24,6 +26,7 @@ export const PlatformRuntimeLayer = ({
     sparklineSymbols={sparklineSymbols}
     streamedQuoteSymbols={streamedQuoteSymbols}
     streamedAggregateSymbols={streamedAggregateSymbols}
+    quoteStreamRuntimeEnabled={quoteStreamRuntimeEnabled}
     marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
     marketScreenActive={marketScreenActive}
     lowPriorityHistoryEnabled={lowPriorityHistoryEnabled}
@@ -36,6 +39,7 @@ export const PlatformRuntimeLayer = ({
     <BroadFlowScannerRuntimeComponent
       symbols={broadFlowWatchlistSymbols}
       enabled={broadFlowRuntimeEnabled}
+      startupDelayMs={broadFlowStartupDelayMs}
     />
     {children}
   </MarketDataSubscriptionProviderComponent>

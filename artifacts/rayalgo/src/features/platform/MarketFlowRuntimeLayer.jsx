@@ -75,6 +75,7 @@ export const SharedMarketFlowRuntime = memo(({
 export const BroadFlowScannerRuntime = memo(({
   symbols = [],
   enabled = true,
+  startupDelayMs = BROAD_FLOW_STARTUP_DELAY_MS,
 }) => {
   const ownerTokenRef = useRef(Symbol("broad-flow-scanner-runtime"));
   const flowScannerControl = useFlowScannerControlState();
@@ -87,12 +88,18 @@ export const BroadFlowScannerRuntime = memo(({
       return undefined;
     }
 
+    const delay = Math.max(0, Number(startupDelayMs) || 0);
+    if (delay <= 0) {
+      setStartupReady(true);
+      return undefined;
+    }
+
     setStartupReady(false);
     const timer = setTimeout(() => {
       setStartupReady(true);
-    }, BROAD_FLOW_STARTUP_DELAY_MS);
+    }, delay);
     return () => clearTimeout(timer);
-  }, [enabled, symbols.length, symbolsKey]);
+  }, [enabled, startupDelayMs, symbols.length, symbolsKey]);
   const runtimeActive = Boolean(enabled && scannerEnabled && startupReady);
   const broadScannerConfig = useMemo(
     () =>
@@ -124,7 +131,6 @@ export const BroadFlowScannerRuntime = memo(({
 
   useEffect(() => {
     if (!runtimeActive) {
-      clearMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY);
       return undefined;
     }
     publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, snapshot);

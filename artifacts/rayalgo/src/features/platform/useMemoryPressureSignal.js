@@ -42,26 +42,8 @@ const readResourceSnapshot = (payload) =>
   payload?.snapshots?.find?.((entry) => entry?.subsystem === "resource-pressure") ||
   null;
 
-const readLatestDiagnosticsSnapshot = async (timeoutMs = 4_000) => {
-  const controller =
-    timeoutMs > 0 && typeof AbortController !== "undefined"
-      ? new AbortController()
-      : null;
-  const timeoutId =
-    controller && timeoutMs > 0
-      ? window.setTimeout(() => controller.abort(), timeoutMs)
-      : null;
-
-  try {
-    return await getLatestDiagnostics(
-      controller ? { signal: controller.signal } : undefined,
-    );
-  } finally {
-    if (timeoutId != null) {
-      window.clearTimeout(timeoutId);
-    }
-  }
-};
+const readLatestDiagnosticsSnapshot = (signal) =>
+  getLatestDiagnostics(signal ? { signal } : undefined);
 
 const readQueryDiagnostics = () => {
   try {
@@ -104,7 +86,7 @@ export const useMemoryPressureMonitor = () => {
         nextServerRefreshAtRef.current =
           now + jitterMs(SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal);
         try {
-          const diagnosticsPayload = await readLatestDiagnosticsSnapshot(4_000);
+          const diagnosticsPayload = await readLatestDiagnosticsSnapshot();
           if (!cancelled) {
             const resourceSnapshot = readResourceSnapshot(diagnosticsPayload);
             serverSummary =

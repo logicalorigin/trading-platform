@@ -1,10 +1,12 @@
 export const IBKR_BRIDGE_SESSION_KEYS = {
+  activationId: "rayalgo.ibkrBridgeActivationId",
   launchUrl: "rayalgo.ibkrBridgeLaunchUrl",
   launchInFlightUntil: "rayalgo.ibkrBridgeLaunchInFlightUntil",
   managementToken: "rayalgo.ibkrBridgeManagementToken",
 };
 
 export const IBKR_BRIDGE_LAUNCH_COOLDOWN_MS = 90_000;
+export const IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS = 10 * 60_000;
 
 export const openIbkrProtocolLauncher = () => {
   return null;
@@ -12,6 +14,87 @@ export const openIbkrProtocolLauncher = () => {
 
 export const closeIbkrProtocolLauncher = (launcher) => {
   void launcher;
+};
+
+export const isMobileIbkrLaunchBrowser = () => {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent || "";
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(userAgent)) {
+    return true;
+  }
+
+  return window.matchMedia?.("(pointer: coarse)")?.matches === true &&
+    window.innerWidth <= 900;
+};
+
+const isReplitHost = (value) => {
+  const hostname = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, "");
+
+  return (
+    hostname === "replit.com" ||
+    hostname.endsWith(".replit.com") ||
+    hostname === "replit.dev" ||
+    hostname.endsWith(".replit.dev") ||
+    hostname === "replit.app" ||
+    hostname.endsWith(".replit.app") ||
+    hostname === "replitusercontent.com" ||
+    hostname.endsWith(".replitusercontent.com") ||
+    hostname === "repl.co" ||
+    hostname.endsWith(".repl.co")
+  );
+};
+
+const readHostname = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
+};
+
+export const isReplitPreviewIbkrLaunchBrowser = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const locationHost = window.location?.hostname;
+  if (isReplitHost(locationHost)) {
+    return true;
+  }
+
+  const referrer = window.document?.referrer;
+  return isReplitHost(readHostname(referrer));
+};
+
+export const isWindowsIbkrLaunchBrowser = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgentDataPlatform = navigator.userAgentData?.platform || "";
+  const platform = navigator.platform || "";
+  const userAgent = navigator.userAgent || "";
+  return /windows|win32|win64|wow64/i.test(
+    `${userAgentDataPlatform} ${platform} ${userAgent}`,
+  );
+};
+
+export const shouldUseRemoteIbkrLaunchBrowser = () => {
+  if (isMobileIbkrLaunchBrowser()) {
+    return true;
+  }
+
+  return isReplitPreviewIbkrLaunchBrowser() && !isWindowsIbkrLaunchBrowser();
 };
 
 export const navigateIbkrProtocolLauncher = (launcher, url) => {

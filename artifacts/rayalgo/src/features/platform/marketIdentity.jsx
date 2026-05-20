@@ -344,6 +344,7 @@ export function MarketIdentityMark({
   ticker,
   size = 22,
   showMarketIcon = false,
+  showCountryBadge = true,
   style = {},
   title,
 }) {
@@ -447,7 +448,7 @@ export function MarketIdentityMark({
       ) : (
         identity.fallbackText
       )}
-      {identity.flag && size >= 20 && !logoReady ? (
+      {showCountryBadge && identity.flag && size >= 20 && !logoReady ? (
         <span
           aria-hidden="true"
           style={{

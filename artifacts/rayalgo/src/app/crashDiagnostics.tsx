@@ -6,6 +6,7 @@ import {
   buildRayalgoRuntimeFingerprint,
   type RayalgoRuntimeFingerprint,
 } from "./runtimeDiagnostics";
+import { FONT_CSS_VAR } from "../lib/typography";
 
 const RAYALGO_STORAGE_KEY = "rayalgo:state:v1";
 const LAST_CRASH_KEY = "rayalgo:last-crash-diagnostics:v1";
@@ -249,7 +250,9 @@ const buttonStyle = {
   background: "#232227",
   color: "#F2EFE9",
   padding: "7px 11px",
-  font: "600 12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  fontFamily: FONT_CSS_VAR.sans,
+  fontSize: 12,
+  fontWeight: 600,
   cursor: "pointer",
 } as const;
 
@@ -324,7 +327,7 @@ export function RootCrashDiagnosticsFallback({
         padding: 24,
         background: "#16151A",
         color: "#F2EFE9",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontFamily: FONT_CSS_VAR.sans,
       }}
     >
       <section

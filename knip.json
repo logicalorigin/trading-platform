@@ -34,8 +34,13 @@
         "src/main.jsx",
         "index.html",
         "vite.config.ts",
+        "scripts/runDevApp.mjs",
+        "scripts/visual-review.mjs",
         "scripts/runUnitTests.mjs",
-        "src/**/*.test.{ts,tsx,js,jsx,mjs}"
+        "src/**/*.test.{ts,tsx,js,jsx,mjs}",
+        "src/components/ui/CockpitHeader.jsx",
+        "src/components/ui/tabs.jsx",
+        "src/features/charting/ChartMobileToolbar.tsx"
       ],
       "project": ["src/**/*.{ts,tsx,js,jsx}", "scripts/**/*.mjs"],
       "ignoreDependencies": ["tailwindcss"]

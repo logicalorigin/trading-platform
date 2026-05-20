@@ -34,6 +34,7 @@ export const extractSparklineValues = (data = []) =>
  *   data       — array of points (any of the shapes extractSparklineValues handles)
  *   positive   — boolean override; null/undefined infers from first-vs-last value
  *   width/height — SVG viewBox size in dim() units before scaling
+ *   style      — optional SVG style overrides for responsive sizing
  *
  * Returns null when fewer than 2 valid points are available so callers
  * don't have to feature-check.
@@ -43,6 +44,7 @@ export const MicroSparkline = ({
   positive = null,
   width = 64,
   height = 24,
+  style = null,
 }) => {
   const values = useMemo(() => extractSparklineValues(data), [data]);
   const uid = useId().replace(/:/g, "");
@@ -78,7 +80,7 @@ export const MicroSparkline = ({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
-      style={{ display: "block" }}
+      style={{ display: "block", ...style }}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -621,6 +623,7 @@ export const SegmentedControl = ({
   options,
   value,
   onChange,
+  onOptionIntent,
   ariaLabel,
   buttonTestId,
 }) => {
@@ -705,6 +708,8 @@ export const SegmentedControl = ({
                 : option.testId
             }
             className="ra-interactive"
+            onFocus={() => onOptionIntent?.(option.value)}
+            onMouseEnter={() => onOptionIntent?.(option.value)}
             onClick={() => onChange(option.value)}
             style={{
               position: "relative",
@@ -1359,6 +1364,8 @@ export const TableExpandableRow = ({
   borderTone = T.border,
   selectionAccent = T.accent,
   row,
+  rowClassName,
+  rowStyle,
   expandedContent,
   dataTestId,
 }) => (
@@ -1373,6 +1380,7 @@ export const TableExpandableRow = ({
     <div
       role="button"
       tabIndex={0}
+      className={rowClassName}
       onClick={onToggle}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -1390,6 +1398,7 @@ export const TableExpandableRow = ({
         paddingLeft: expanded ? 0 : 3,
         minWidth: 0,
         transition: "background 120ms ease, border-color 120ms ease",
+        ...rowStyle,
       }}
     >
       {row}

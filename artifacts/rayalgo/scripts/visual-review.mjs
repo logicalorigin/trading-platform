@@ -107,12 +107,44 @@ try {
     // Falls back to direct navigation if the tab isn't found (Settings
     // is sometimes behind an overflow menu on narrower viewports).
     try {
-      const button = page.locator(
+      const desktopButton = page.locator(
         `[data-testid="platform-screen-nav"] button:has-text("${screen.label}")`,
       );
-      const visible = await button.first().isVisible().catch(() => false);
-      if (visible) {
-        await button.first().click();
+      const desktopVisible = await desktopButton.first().isVisible().catch(() => false);
+      if (desktopVisible) {
+        await desktopButton.first().click();
+      } else {
+        // Mobile viewport: try the primary bottom-nav button first.
+        const mobilePrimary = page.locator(
+          `[data-testid="mobile-bottom-nav-${screen.id}"]`,
+        );
+        const mobilePrimaryVisible = await mobilePrimary
+          .first()
+          .isVisible()
+          .catch(() => false);
+        if (mobilePrimaryVisible) {
+          await mobilePrimary.first().click();
+        } else {
+          // Mobile + non-primary screen: open the More sheet and click inside.
+          const moreButton = page.locator(
+            `[data-testid="mobile-bottom-nav-more"]`,
+          );
+          const moreVisible = await moreButton.first().isVisible().catch(() => false);
+          if (moreVisible) {
+            await moreButton.first().click();
+            await page.waitForTimeout(300);
+            const sheetButton = page.locator(
+              `[data-testid="mobile-more-screen-${screen.id}"]`,
+            );
+            const sheetVisible = await sheetButton
+              .first()
+              .isVisible()
+              .catch(() => false);
+            if (sheetVisible) {
+              await sheetButton.first().click();
+            }
+          }
+        }
       }
     } catch (_e) {
       // Screen-nav click failed; carry on with whatever screen is up.

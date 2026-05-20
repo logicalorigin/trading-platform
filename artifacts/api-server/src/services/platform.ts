@@ -34,6 +34,7 @@ import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
+import { getIbkrBridgeActivationDiagnostics } from "./ibkr-bridge-runtime";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { normalizeSymbol } from "../lib/values";
 import {
@@ -115,7 +116,6 @@ import {
 } from "./bridge-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import {
-  getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
@@ -148,6 +148,7 @@ import {
   recordMarketDataFallback,
   releaseMarketDataLeases,
   setMarketDataAdmissionRuntimeDefaults,
+  subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import {
   normalizeUniverseMarket,
@@ -638,17 +639,80 @@ async function getWatchlistById(
   return watchlist ?? null;
 }
 
-let lastIbkrWatchlistPrewarmSignature: string | null = null;
 let pendingIbkrWatchlistPrewarmSignature: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
 let liveWarmupBackgroundHoldUntil = 0;
 const watchlistDbBackoff = createTransientPostgresBackoff();
 const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
-const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
-  15_000,
-  Number.parseInt(process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "120000", 10) ||
-    120_000,
+const IBKR_WATCHLIST_PREWARM_FILLER_OWNER = "watchlist-prewarm-filler";
+const IBKR_WATCHLIST_PREWARM_DEFAULT_SYMBOLS = 30;
+const IBKR_WATCHLIST_PREWARM_FILLER_TTL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env["IBKR_MARKET_DATA_FILLER_TTL_MS"] ?? "30000", 10) ||
+    30_000,
 );
+const IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS = readPositiveIntegerEnv(
+  "IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS",
+  15_000,
+);
+const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "15000", 10) ||
+    15_000,
+);
+
+export function resolveIbkrWatchlistPrewarmSymbolLimit(
+  candidateSymbolCount: number,
+): number {
+  const normalizedCandidateSymbolCount = Math.max(
+    0,
+    Math.floor(Number.isFinite(candidateSymbolCount) ? candidateSymbolCount : 0),
+  );
+  const configuredLimit = readOptionalPositiveIntegerEnv(
+    "IBKR_WATCHLIST_PREWARM_MAX_SYMBOLS",
+  );
+  return configuredLimit === null
+    ? Math.min(
+        normalizedCandidateSymbolCount,
+        IBKR_WATCHLIST_PREWARM_DEFAULT_SYMBOLS,
+      )
+    : Math.min(normalizedCandidateSymbolCount, configuredLimit);
+}
+
+export function resolveIbkrWatchlistFillerSymbolLimit(input: {
+  candidateSymbolCount: number;
+  targetFillLines: number;
+  nonFillerLineCount: number;
+  bridgeEquityLineBudget: number | null;
+  nonFillerEquityLineCount: number;
+}): number {
+  const candidateSymbolCount = Math.max(
+    0,
+    Math.floor(
+      Number.isFinite(input.candidateSymbolCount)
+        ? input.candidateSymbolCount
+        : 0,
+    ),
+  );
+  const totalLineSlack = Math.max(
+    0,
+    Math.floor(input.targetFillLines - input.nonFillerLineCount),
+  );
+  const equityLineSlack =
+    input.bridgeEquityLineBudget === null
+      ? candidateSymbolCount
+      : Math.max(
+          0,
+          Math.floor(
+            input.bridgeEquityLineBudget - input.nonFillerEquityLineCount,
+          ),
+        );
+
+  return Math.max(
+    0,
+    Math.min(candidateSymbolCount, totalLineSlack, equityLineSlack),
+  );
+}
 
 function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   return Array.from(
@@ -711,11 +775,53 @@ function orderWarmupSymbols(input: {
   return result;
 }
 
-function holdBackgroundWorkForLiveWarmup(): void {
-  liveWarmupBackgroundHoldUntil = Math.max(
-    liveWarmupBackgroundHoldUntil,
-    Date.now() + LIVE_WARMUP_BACKGROUND_HOLD_MS,
-  );
+function countActiveLinesExcludingOwner(owner: string): number {
+  const lineIds = new Set<string>();
+  getMarketDataLeasesSnapshot()
+    .filter((lease) => lease.owner !== owner)
+    .forEach((lease) => {
+      lease.lineIds.forEach((lineId) => lineIds.add(lineId));
+    });
+  return lineIds.size;
+}
+
+function activeEquitySymbolsExcludingOwner(owner: string): Set<string> {
+  const symbols = new Set<string>();
+  getMarketDataLeasesSnapshot()
+    .filter((lease) => lease.owner !== owner)
+    .forEach((lease) => {
+      lease.lineIds.forEach((lineId) => {
+        if (lineId.startsWith("equity:")) {
+          symbols.add(lineId.slice("equity:".length).toUpperCase());
+        }
+      });
+    });
+  return symbols;
+}
+
+function readBridgeEquityLineBudget(health: unknown): number | null {
+  if (!isRecord(health) || !isRecord(health.diagnostics)) {
+    return null;
+  }
+  const subscriptions = health.diagnostics.subscriptions;
+  if (!isRecord(subscriptions)) {
+    return null;
+  }
+  const value = subscriptions.equityLineBudget;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
+}
+
+function leaseSymbolsForOwner(owner: string): string[] {
+  return Array.from(
+    new Set(
+      getMarketDataLeasesSnapshot()
+        .filter((lease) => lease.owner === owner)
+        .map((lease) => normalizeSymbol(lease.symbol ?? "").toUpperCase())
+        .filter(Boolean),
+    ),
+  ).sort();
 }
 
 function isLiveWarmupHoldingBackgroundWork(): boolean {
@@ -726,18 +832,106 @@ function getLiveWarmupBackgroundHoldRemainingMs(): number {
   return Math.max(0, liveWarmupBackgroundHoldUntil - Date.now());
 }
 
-function getOptionsFlowScannerBackgroundBlockReason(): string | null {
-  if (isLiveWarmupHoldingBackgroundWork()) {
+function getOptionsFlowScannerSchedulableLineCap(): number {
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  const staticLineCap =
+    diagnostics.pressure.scannerStaticLineCap ??
+    diagnostics.budget.flowScannerLineCap;
+  const effectiveLineCap = diagnostics.pressure.scannerEffectiveLineCap ?? 0;
+  return Math.max(
+    0,
+    Math.min(
+      staticLineCap,
+      effectiveLineCap + diagnostics.convenienceLineCount,
+    ),
+  );
+}
+
+function getOptionsFlowScannerBackgroundBlockReason(input: {
+  ignoreLiveWarmup?: boolean;
+  ignoreOptionsBackoff?: boolean;
+  ignoreLineCapacity?: boolean;
+} = {}): string | null {
+  if (!input.ignoreLiveWarmup && isLiveWarmupHoldingBackgroundWork()) {
     return "live-warmup";
   }
+  if (!input.ignoreLineCapacity) {
+    if (getOptionsFlowScannerSchedulableLineCap() <= 0) {
+      return "line-cap-exhausted";
+    }
+  }
   const optionsLane = getBridgeGovernorSnapshot().options;
-  if (optionsLane.circuitOpen) {
+  if (!input.ignoreOptionsBackoff && optionsLane.circuitOpen) {
     return "options-lane-backoff";
   }
-  if (optionsLane.queued > 0) {
+  if (!input.ignoreOptionsBackoff && optionsLane.queued > 0) {
     return "options-lane-queued";
   }
   return null;
+}
+
+type BridgePrewarmSyncState = {
+  signature: string | null;
+  syncedAt: number;
+};
+
+const lastBridgePrimaryPrewarmSync: BridgePrewarmSyncState = {
+  signature: null,
+  syncedAt: 0,
+};
+const lastBridgeFillerPrewarmSync: BridgePrewarmSyncState = {
+  signature: null,
+  syncedAt: 0,
+};
+
+function shouldSyncBridgePrewarmGroup(
+  signature: string,
+  state: BridgePrewarmSyncState,
+  now = Date.now(),
+): boolean {
+  return (
+    signature !== state.signature ||
+    now - state.syncedAt >= IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS
+  );
+}
+
+async function syncWatchlistPrewarmBridgeGroups(input: {
+  primarySymbols: string[];
+  fillerSymbols: string[];
+}): Promise<void> {
+  const groups = [
+    {
+      owner: IBKR_WATCHLIST_PREWARM_OWNER,
+      symbols: input.primarySymbols,
+      state: lastBridgePrimaryPrewarmSync,
+    },
+    {
+      owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+      symbols: input.fillerSymbols,
+      state: lastBridgeFillerPrewarmSync,
+    },
+  ];
+  const now = Date.now();
+
+  await Promise.all(
+    groups.map(async (group) => {
+      const signature = group.symbols.join(",");
+      if (!shouldSyncBridgePrewarmGroup(signature, group.state, now)) {
+        return;
+      }
+      const client = getIbkrClient();
+      if (typeof client.prewarmQuoteSubscriptions !== "function") {
+        return;
+      }
+      await runBridgeWork(
+        "quotes",
+        () => client.prewarmQuoteSubscriptions(group.symbols, group.owner),
+        { recordFailure: false },
+      );
+      group.state.signature = signature;
+      group.state.syncedAt = Date.now();
+    }),
+  );
 }
 
 function scheduleIbkrWatchlistPrewarm(
@@ -763,69 +957,165 @@ function scheduleIbkrWatchlistPrewarm(
     defaultSymbols,
     accountSymbols,
   });
-  const admission = admitMarketDataLeases({
-    owner: IBKR_WATCHLIST_PREWARM_OWNER,
-    intent: "visible-live",
-    requests: warmupSymbols.map((symbol) => ({
-      assetClass: "equity" as const,
-      symbol,
-    })),
-    fallbackProvider: "polygon",
-  });
-  const admittedSymbols = admission.admitted
-    .map((lease) => lease.symbol)
-    .filter((symbol): symbol is string => Boolean(symbol));
-  if (!admittedSymbols.length) {
+  const warmupLimit = Math.max(
+    1,
+    resolveIbkrWatchlistPrewarmSymbolLimit(warmupSymbols.length),
+  );
+  const cappedWarmupSymbols = warmupSymbols.slice(0, warmupLimit);
+  const prewarmDroppedSymbols = warmupSymbols.slice(warmupLimit);
+  const requestedSignature = cappedWarmupSymbols.join(",");
+  if (!requestedSignature) {
     releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
+    releaseMarketDataLeases(
+      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+      "prewarm_empty",
+    );
+    void syncWatchlistPrewarmBridgeGroups({
+      primarySymbols: [],
+      fillerSymbols: [],
+    }).catch((error) => {
+      logger.warn({ err: error, reason }, "IBKR bridge prewarm clear failed");
+    });
     return;
   }
-  const signature = admittedSymbols.join(",");
 
-  if (
-    signature === lastIbkrWatchlistPrewarmSignature ||
-    signature === pendingIbkrWatchlistPrewarmSignature
-  ) {
+  if (requestedSignature === pendingIbkrWatchlistPrewarmSignature) {
     return;
   }
 
   const sequence = ibkrWatchlistPrewarmSequence + 1;
   ibkrWatchlistPrewarmSequence = sequence;
-  pendingIbkrWatchlistPrewarmSignature = signature;
-  holdBackgroundWorkForLiveWarmup();
+  pendingIbkrWatchlistPrewarmSignature = requestedSignature;
 
-  void runBridgeWork(
-    "quotes",
-    () => getIbkrClient().prewarmQuoteSubscriptions(admittedSymbols),
-    { recordFailure: false },
-  )
-    .then(() => {
+  void getBridgeHealthForSession()
+    .then((health) => {
       if (sequence !== ibkrWatchlistPrewarmSequence) {
         return;
       }
+      if (!health?.strictReady) {
+        releaseMarketDataLeases(
+          IBKR_WATCHLIST_PREWARM_OWNER,
+          "prewarm_gateway_not_ready",
+        );
+        releaseMarketDataLeases(
+          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+          "prewarm_gateway_not_ready",
+        );
+        logger.debug(
+          {
+            reason,
+            strictReason: health?.strictReason ?? "health_unavailable",
+          },
+          "IBKR bridge watchlist prewarm skipped until Gateway is ready",
+        );
+        return syncWatchlistPrewarmBridgeGroups({
+          primarySymbols: [],
+          fillerSymbols: [],
+        });
+      }
 
-      lastIbkrWatchlistPrewarmSignature = signature;
-      liveWarmupBackgroundHoldUntil = Math.max(
-        liveWarmupBackgroundHoldUntil,
-        Date.now() + 15_000,
+      const primaryAdmission = admitMarketDataLeases({
+        owner: IBKR_WATCHLIST_PREWARM_OWNER,
+        intent: "convenience-live",
+        requests: cappedWarmupSymbols.map((symbol) => ({
+          assetClass: "equity" as const,
+          symbol,
+        })),
+        fallbackProvider: "polygon",
+      });
+      const admittedSymbols = primaryAdmission.admitted
+        .map((lease) => lease.symbol)
+        .filter((symbol): symbol is string => Boolean(symbol));
+      if (!admittedSymbols.length) {
+        releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
+        releaseMarketDataLeases(
+          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+          "prewarm_primary_empty",
+        );
+        return syncWatchlistPrewarmBridgeGroups({
+          primarySymbols: [],
+          fillerSymbols: [],
+        });
+      }
+      const nonFillerLineCount = countActiveLinesExcludingOwner(
+        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
       );
-      logger.info(
-        {
-          symbols: admittedSymbols,
-          accountSymbols,
-          defaultSymbols,
-          droppedSymbols: resolvedSymbols.droppedSymbols,
-          reason,
-        },
-        "IBKR bridge watchlist prewarm synced",
+      const targetFillLines =
+        primaryAdmission.budget.targetFillLines ?? primaryAdmission.budget.maxLines;
+      const coveredNonFillerEquities = activeEquitySymbolsExcludingOwner(
+        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
       );
+      const fillerCandidates = prewarmDroppedSymbols.filter((symbol) => {
+        const normalized = normalizeSymbol(symbol).toUpperCase();
+        return normalized && !coveredNonFillerEquities.has(normalized);
+      });
+      const fillerSymbolLimit = resolveIbkrWatchlistFillerSymbolLimit({
+        candidateSymbolCount: fillerCandidates.length,
+        targetFillLines,
+        nonFillerLineCount,
+        bridgeEquityLineBudget: readBridgeEquityLineBudget(health),
+        nonFillerEquityLineCount: coveredNonFillerEquities.size,
+      });
+      if (fillerSymbolLimit > 0) {
+        admitMarketDataLeases({
+          owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+          intent: "delayed-ok",
+          requests: fillerCandidates
+            .slice(0, fillerSymbolLimit)
+            .map((symbol) => ({
+              assetClass: "equity" as const,
+              symbol,
+            })),
+          ttlMs: IBKR_WATCHLIST_PREWARM_FILLER_TTL_MS,
+          fallbackProvider: "polygon",
+        });
+      } else {
+        releaseMarketDataLeases(
+          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+          "filler_no_slack",
+        );
+      }
+
+      const primarySymbols = leaseSymbolsForOwner(IBKR_WATCHLIST_PREWARM_OWNER);
+      const fillerSymbols = leaseSymbolsForOwner(
+        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+      );
+
+      return syncWatchlistPrewarmBridgeGroups({
+        primarySymbols,
+        fillerSymbols,
+      }).then(() => {
+        if (sequence !== ibkrWatchlistPrewarmSequence) {
+          return;
+        }
+
+        logger.info(
+          {
+            symbols: primarySymbols,
+            fillerSymbols,
+            accountSymbols,
+            defaultSymbols,
+            droppedSymbols: [
+              ...resolvedSymbols.droppedSymbols,
+              ...prewarmDroppedSymbols,
+            ],
+            prewarmLimit: warmupLimit,
+            reason,
+          },
+          "IBKR bridge watchlist prewarm synced",
+        );
+      });
     })
     .catch((error) => {
       if (sequence === ibkrWatchlistPrewarmSequence) {
         releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_failed");
-        lastIbkrWatchlistPrewarmSignature = null;
+        releaseMarketDataLeases(
+          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+          "prewarm_failed",
+        );
       }
       logger.warn(
-        { err: error, symbols: admittedSymbols, reason },
+        { err: error, symbols: cappedWarmupSymbols, reason },
         "IBKR bridge watchlist prewarm failed",
       );
     })
@@ -834,6 +1124,12 @@ function scheduleIbkrWatchlistPrewarm(
         pendingIbkrWatchlistPrewarmSignature = null;
       }
     });
+}
+
+export function __holdOptionsFlowScannerBackgroundForTests(
+  durationMs = LIVE_WARMUP_BACKGROUND_HOLD_MS,
+): void {
+  liveWarmupBackgroundHoldUntil = Date.now() + Math.max(0, durationMs);
 }
 
 function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
@@ -852,6 +1148,26 @@ function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
       );
     });
 }
+
+let ibkrWatchlistPrewarmResyncTimer: NodeJS.Timeout | null = null;
+
+function scheduleIbkrWatchlistPrewarmFromDbSoon(reason: string): void {
+  if (!getProviderConfiguration().ibkr || ibkrWatchlistPrewarmResyncTimer) {
+    return;
+  }
+  ibkrWatchlistPrewarmResyncTimer = setTimeout(() => {
+    ibkrWatchlistPrewarmResyncTimer = null;
+    scheduleIbkrWatchlistPrewarmFromDb(reason);
+  }, 1_000);
+  ibkrWatchlistPrewarmResyncTimer.unref?.();
+}
+
+subscribeMarketDataLeaseChanges((event) => {
+  if (!["released", "demoted", "expired"].includes(event.action)) {
+    return;
+  }
+  scheduleIbkrWatchlistPrewarmFromDbSoon(`lease_${event.action}`);
+});
 
 async function ensureInstrumentForSymbol({
   symbol,
@@ -1038,6 +1354,11 @@ function getMarketDataConnectionCapabilities(): string[] {
 
 const FLOW_EVENTS_CACHE_TTL_MS = 60_000;
 const FLOW_EVENTS_CACHE_STALE_TTL_MS = 5 * 60_000;
+const HISTORICAL_FLOW_TIMEOUT_COOLDOWN_MS = 30_000;
+const HISTORICAL_FLOW_REFRESHING_REASON =
+  "options_flow_historical_refreshing";
+const HISTORICAL_FLOW_PROVIDER_TIMEOUT_REASON =
+  "options_flow_historical_provider_timeout";
 const FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS = 45_000;
 const FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS = 10 * 60_000;
 const FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT = 10;
@@ -1113,6 +1434,11 @@ const flowEventsCache = new Map<
   { value: FlowEventsResult; expiresAt: number; staleExpiresAt: number }
 >();
 const flowEventsInFlight = new Map<string, Promise<FlowEventsResult>>();
+const historicalFlowCooldowns = new Map<
+  string,
+  { value: FlowEventsResult; expiresAt: number }
+>();
+let lastHistoricalFlowCooldownPruneMs = 0;
 let flowEventsOnDemandActive = 0;
 
 export type FlowPremiumDistributionStatus =
@@ -1573,6 +1899,73 @@ function deferredFlowEventsResult(input: DeferredFlowEventsResultInput): FlowEve
   });
 }
 
+function historicalFlowEventsTransientResult(input: {
+  unusualThreshold?: number;
+  reason: string;
+}): FlowEventsResult {
+  return {
+    events: [],
+    source: flowSource({
+      provider: "polygon",
+      status: "empty",
+      attemptedProviders: ["polygon"],
+      unusualThreshold: input.unusualThreshold ?? 1,
+      ibkrStatus: "empty",
+      ibkrReason: input.reason,
+    }),
+  };
+}
+
+function isHistoricalFlowProviderTimeoutResult(value: FlowEventsResult): boolean {
+  return (
+    value.events.length === 0 &&
+    value.source.ibkrReason === HISTORICAL_FLOW_PROVIDER_TIMEOUT_REASON
+  );
+}
+
+function pruneHistoricalFlowCooldowns(requestedAt: number): void {
+  if (
+    requestedAt - lastHistoricalFlowCooldownPruneMs <
+    HISTORICAL_FLOW_TIMEOUT_COOLDOWN_MS
+  ) {
+    return;
+  }
+  lastHistoricalFlowCooldownPruneMs = requestedAt;
+  historicalFlowCooldowns.forEach((cooldown, cacheKey) => {
+    if (cooldown.expiresAt <= requestedAt) {
+      historicalFlowCooldowns.delete(cacheKey);
+    }
+  });
+}
+
+function getHistoricalFlowCooldown(
+  cacheKey: string,
+  requestedAt: number,
+): FlowEventsResult | null {
+  pruneHistoricalFlowCooldowns(requestedAt);
+  const cooldown = historicalFlowCooldowns.get(cacheKey);
+  if (!cooldown) {
+    return null;
+  }
+  if (cooldown.expiresAt > requestedAt) {
+    return cooldown.value;
+  }
+  historicalFlowCooldowns.delete(cacheKey);
+  return null;
+}
+
+function recordHistoricalFlowCooldown(
+  cacheKey: string,
+  value: FlowEventsResult,
+  settledAt: number,
+): void {
+  pruneHistoricalFlowCooldowns(settledAt);
+  historicalFlowCooldowns.set(cacheKey, {
+    value,
+    expiresAt: settledAt + HISTORICAL_FLOW_TIMEOUT_COOLDOWN_MS,
+  });
+}
+
 function shouldDeferOnDemandFlowRefresh(): string | null {
   if (flowEventsOnDemandActive >= FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE) {
     return "options_flow_on_demand_saturated";
@@ -1594,7 +1987,7 @@ function queueOptionsFlowScannerRefresh(input: {
   if (!getOptionsFlowRuntimeConfig().scannerEnabled) {
     return false;
   }
-  if (getOptionsFlowScannerBackgroundBlockReason()) {
+  if (getOptionsFlowScannerBackgroundBlockReason({ ignoreOptionsBackoff: true })) {
     return false;
   }
   syncOptionsFlowScannerEffectiveConcurrency();
@@ -1976,6 +2369,7 @@ export async function getRuntimeDiagnostics() {
       bridgeTokenConfigured: Boolean(bridgeConfig?.apiToken),
       runtimeOverrideActive: Boolean(bridgeOverride),
       runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
+      activation: getIbkrBridgeActivationDiagnostics(),
       ignoredBridgeEnvNames,
       ignoredBridgeEnvConfigured: ignoredBridgeEnvNames.length > 0,
       reachable: Boolean(annotatedHealth?.bridgeReachable),
@@ -5599,6 +5993,7 @@ type NativeGetBarsInput = Omit<GetBarsInput, "timeframe"> & {
 };
 type GetBarsOptions = {
   signal?: AbortSignal;
+  priority?: number;
 };
 
 type BarsHistoryPage = {
@@ -6130,6 +6525,7 @@ const BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS = readPositiveIntegerEnv(
   "BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS",
   750,
 );
+const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 6;
 const BARS_IN_FLIGHT_STALE_MS = readPositiveIntegerEnv(
   "BARS_IN_FLIGHT_STALE_MS",
   Math.max(30_000, BARS_BROKER_BACKFILL_BUDGET_MS * 4),
@@ -6649,6 +7045,24 @@ function resolveWithin<T>(
       options.signal?.removeEventListener("abort", abortListener);
     }
   });
+}
+
+function shouldAttemptFullBrokerHistoryRecovery(
+  options: GetBarsOptions,
+): boolean {
+  const priority = Number(options.priority);
+  return (
+    Number.isFinite(priority) &&
+    priority >= BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY
+  );
+}
+
+function shouldAttemptBrokerLiveEdgeHistory(options: GetBarsOptions): boolean {
+  const priority = Number(options.priority);
+  return (
+    Number.isFinite(priority) &&
+    priority >= BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY
+  );
 }
 
 function delayBarsRetry(ms: number, signal?: AbortSignal): Promise<void> {
@@ -7459,6 +7873,7 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
         source: brokerHistoryInput.source,
         exchange,
         signal: options.signal,
+        priority: options.priority,
       });
 
     const fetchOnce = async () => {
@@ -7530,7 +7945,10 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
         new Date(),
         { historicalSynthesisAvailable },
       );
-      if (brokerHistoryInput) {
+      const skipBackgroundBrokerHistory =
+        brokerHistoryMayBeRecentLimited &&
+        !shouldAttemptBrokerLiveEdgeHistory(options);
+      if (brokerHistoryInput && !skipBackgroundBrokerHistory) {
         attemptedBrokerHistory = true;
         ibkrBars = await fetchBrokerHistory(brokerHistoryInput);
       } else if (brokerHistoryMayBeRecentLimited) {
@@ -7538,7 +7956,9 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
           owner: "bars-history",
           intent: "historical",
           fallbackProvider: polygonClient ? "polygon" : "cache",
-          reason: "outside_recent_live_window",
+          reason: skipBackgroundBrokerHistory
+            ? "background_historical_synthesis"
+            : "outside_recent_live_window",
           instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
         });
       }
@@ -7751,7 +8171,8 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
   if (
     brokerHistoryMayBeRecentLimited &&
     isBrokerHistoryTimeframe &&
-    bars.length < desiredBars
+    bars.length < desiredBars &&
+    shouldAttemptFullBrokerHistoryRecovery(options)
   ) {
     recordMarketDataFallback({
       owner: "bars-history",
@@ -7829,6 +8250,8 @@ type IbkrOptionChainInput = {
   strikeCoverage?: OptionChainStrikeCoverage;
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
+  recordBridgeFailure?: boolean;
+  bypassBridgeBackoff?: boolean;
 };
 type IbkrOptionChainContracts = Awaited<
   ReturnType<IbkrBridgeClient["getOptionChain"]>
@@ -7836,6 +8259,8 @@ type IbkrOptionChainContracts = Awaited<
 type IbkrOptionExpirationsInput = {
   underlying: string;
   maxExpirations?: number;
+  recordBridgeFailure?: boolean;
+  bypassBridgeBackoff?: boolean;
 };
 type IbkrOptionExpirationDates = Awaited<
   ReturnType<IbkrBridgeClient["getOptionExpirations"]>
@@ -7851,6 +8276,16 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
 
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readOptionalPositiveIntegerEnv(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
@@ -8051,7 +8486,7 @@ const OPTIONS_FLOW_SCANNER_LINE_BUDGET = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
   "OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE",
-  "full",
+  "standard",
 );
 const OPTIONS_FLOW_EXPIRATION_SCAN_COUNT = readNonNegativeIntegerEnv(
   "OPTIONS_FLOW_EXPIRATION_SCAN_COUNT",
@@ -8135,19 +8570,17 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
     1,
     Math.floor(config.scannerLineBudget || 1),
   );
-  const admissionBudget = getMarketDataAdmissionBudget();
   const flowScannerLineCap = Math.max(
-    1,
-    Math.floor(
-      getMarketDataPoolEffectiveLineCap("flow-scanner", admissionBudget) ||
-        scannerLineBudget,
-    ),
+    0,
+    Math.floor(getOptionsFlowScannerSchedulableLineCap()),
   );
-  const poolSafeConcurrency = Math.max(
-    1,
-    Math.floor(flowScannerLineCap / scannerLineBudget),
-  );
-  return Math.max(1, Math.min(configuredConcurrency, poolSafeConcurrency));
+  const poolSafeConcurrency =
+    flowScannerLineCap <= 0
+      ? 0
+      : Math.max(1, Math.floor(flowScannerLineCap / scannerLineBudget));
+  return poolSafeConcurrency <= 0
+    ? 0
+    : Math.max(1, Math.min(configuredConcurrency, poolSafeConcurrency));
 }
 
 function syncOptionsFlowScannerEffectiveConcurrency(
@@ -8462,7 +8895,9 @@ export function startOptionsFlowScanner(): void {
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
   optionsFlowScanner.startRotation({
     symbols: () =>
-      getOptionsFlowScannerBackgroundBlockReason() ? [] : resolveScannerSymbols(),
+      getOptionsFlowScannerBackgroundBlockReason({ ignoreOptionsBackoff: true })
+        ? []
+        : resolveScannerSymbols(),
     request: {
       limit: Math.min(config.scannerLimit, config.scannerLineBudget),
       lineBudget: config.scannerLineBudget,
@@ -8665,6 +9100,7 @@ export async function listAggregateFlowEvents(input: {
   };
   const snapshots = optionsFlowScanner.listSnapshots(scannerRequest);
   let queuedSeedRefresh = false;
+  let aggregateSeedBlockReason: string | null = null;
   if (snapshots.length === 0) {
     const diagnostics = optionsFlowScanner.getDiagnostics();
     const currentBatchSymbols = (scannerCoverage.currentBatch ?? [])
@@ -8677,11 +9113,15 @@ export async function listAggregateFlowEvents(input: {
       .map((symbol) => normalizeSymbol(String(symbol || "")))
       .filter(Boolean)
       .slice(0, Math.max(1, runtimeConfig.scannerBatchSize));
+    aggregateSeedBlockReason = getOptionsFlowScannerBackgroundBlockReason({
+      ignoreLiveWarmup: true,
+      ignoreOptionsBackoff: true,
+    });
     if (
       seedSymbols.length > 0 &&
       diagnostics.queuedCount === 0 &&
       !diagnostics.draining &&
-      !getOptionsFlowScannerBackgroundBlockReason()
+      !aggregateSeedBlockReason
     ) {
       queuedSeedRefresh = true;
       syncOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
@@ -8735,6 +9175,8 @@ export async function listAggregateFlowEvents(input: {
           ? scannerCoverage.degradedReason
           : queuedSeedRefresh
             ? "options_flow_scanner_queued"
+            : aggregateSeedBlockReason
+              ? `options_flow_scanner_${aggregateSeedBlockReason.replace(/-/g, "_")}`
             : scannerCoverage.lastScanAt
             ? "options_flow_scanner_no_cached_events"
             : "options_flow_scanner_snapshot_pending",
@@ -9257,7 +9699,11 @@ export function getOptionsFlowScannerDiagnostics() {
     "flow-scanner",
     admissionBudget,
   );
-  const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
+  const schedulableFlowScannerLineCap =
+    getOptionsFlowScannerSchedulableLineCap();
+  const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason({
+    ignoreOptionsBackoff: true,
+  });
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
@@ -9268,6 +9714,7 @@ export function getOptionsFlowScannerDiagnostics() {
     lineUtilization: {
       poolCap: admissionBudget.flowScannerLineCap,
       effectivePoolCap: effectiveFlowScannerLineCap,
+      schedulablePoolCap: schedulableFlowScannerLineCap,
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
       scannerLineBudget: config.scannerLineBudget,
@@ -9358,6 +9805,10 @@ export function __resetOptionChainCachesForTests(input?: {
   });
   flowEventsCache.clear();
   flowEventsInFlight.clear();
+  historicalFlowCooldowns.clear();
+  lastHistoricalFlowCooldownPruneMs = 0;
+  flowEventsOnDemandActive = 0;
+  liveWarmupBackgroundHoldUntil = 0;
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
     optionsFlowScanner.reset();
@@ -10391,7 +10842,11 @@ async function getCachedIbkrOptionChainWithDebug(
     return durable;
   }
 
-  if (!cached && isBridgeWorkBackedOff("options")) {
+  if (
+    !cached &&
+    !normalizedInput.bypassBridgeBackoff &&
+    isBridgeWorkBackedOff("options")
+  ) {
     return (
       durable ?? {
         contracts: [],
@@ -10515,14 +10970,22 @@ function refreshOptionChainCache(
 
   const promise = (async () => {
     try {
-      let ibkrValue = await runBridgeWork("options", () =>
-        getIbkrClient().getOptionChain(input),
+      const bridgeWorkOptions = {
+        bypassBackoff: input.bypassBridgeBackoff === true,
+        recordFailure: input.recordBridgeFailure !== false,
+      };
+      let ibkrValue = await runBridgeWork(
+        "options",
+        () => getIbkrClient().getOptionChain(input),
+        bridgeWorkOptions,
       );
       if (!ibkrValue.length && shouldRetryEmptyOptionChain(input)) {
         for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
           await waitForOptionChainRetry(delayMs);
-          ibkrValue = await runBridgeWork("options", () =>
-            getIbkrClient().getOptionChain(input),
+          ibkrValue = await runBridgeWork(
+            "options",
+            () => getIbkrClient().getOptionChain(input),
+            bridgeWorkOptions,
           );
           if (ibkrValue.length) {
             break;
@@ -10708,7 +11171,11 @@ async function getCachedIbkrOptionExpirationsWithDebug(
     return durable;
   }
 
-  if (!cached && isBridgeWorkBackedOff("options")) {
+  if (
+    !cached &&
+    !input.bypassBridgeBackoff &&
+    isBridgeWorkBackedOff("options")
+  ) {
     return (
       durable ?? {
         expirations: [],
@@ -10769,7 +11236,7 @@ async function getCachedIbkrOptionExpirationsWithDebug(
             upstreamMs: null,
             stale: true,
             degraded: true,
-            reason: isBridgeWorkBackedOff("options")
+            reason: !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
               ? "options_backoff"
               : "options_upstream_failure",
             backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
@@ -10819,7 +11286,7 @@ async function getCachedIbkrOptionExpirationsWithDebug(
           upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
           stale: true,
           degraded: true,
-          reason: isBridgeWorkBackedOff("options")
+          reason: !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
             ? "options_backoff"
             : "options_upstream_failure",
           backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
@@ -10850,8 +11317,13 @@ function refreshOptionExpirationCache(
 
   const promise = (async () => {
     try {
-      const value = await runBridgeWork("options", () =>
-        getIbkrClient().getOptionExpirations(input),
+      const value = await runBridgeWork(
+        "options",
+        () => getIbkrClient().getOptionExpirations(input),
+        {
+          bypassBackoff: input.bypassBridgeBackoff === true,
+          recordFailure: input.recordBridgeFailure !== false,
+        },
       );
       const settledAt = Date.now();
       if (value.length > 0) {
@@ -10955,6 +11427,8 @@ export async function batchOptionChains(input: {
   strikeCoverage?: OptionChainStrikeCoverage;
   quoteHydration?: OptionChainQuoteHydration;
   allowDelayedSnapshotHydration?: boolean;
+  recordBridgeFailure?: boolean;
+  bypassBridgeBackoff?: boolean;
 }): Promise<BatchOptionChainsResult> {
   const requestedAt = Date.now();
   const underlying = normalizeSymbol(input.underlying);
@@ -10993,6 +11467,8 @@ export async function batchOptionChains(input: {
           strikeCoverage: input.strikeCoverage,
           quoteHydration: input.quoteHydration,
           allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
+          recordBridgeFailure: input.recordBridgeFailure,
+          bypassBridgeBackoff: input.bypassBridgeBackoff,
         });
 
         const resultDebug: RequestDebugMetadata =
@@ -12126,6 +12602,7 @@ export async function listFlowEvents(input: {
     }:${flowEventsFilterCacheKey(filters)}:${flowEventsTimeWindowCacheKey(
       timeWindow,
     )}:${historicalBucketSeconds ?? "default"}:historical-window`;
+    const historicalChartWindowRequest = historicalBucketSeconds !== undefined;
     const requestedAt = Date.now();
     let cached = flowEventsCache.get(cacheKey);
     if (cached && !isCacheableFlowEventsResult(cached.value)) {
@@ -12138,15 +12615,21 @@ export async function listFlowEvents(input: {
     const inFlight = flowEventsInFlight.get(cacheKey);
     if (cached && cached.staleExpiresAt > requestedAt) {
       if (!inFlight) {
-        refreshHistoricalFlowEventsCache(cacheKey, {
-          underlying,
-          limit,
-          filters,
-          unusualThreshold,
-          from: timeWindow.from,
-          to: timeWindow.to,
-          historicalBucketSeconds,
-        }).catch(() => {});
+        const cooldown = historicalChartWindowRequest
+          ? getHistoricalFlowCooldown(cacheKey, requestedAt)
+          : null;
+        if (!cooldown) {
+          refreshHistoricalFlowEventsCache(cacheKey, {
+            underlying,
+            limit,
+            filters,
+            unusualThreshold,
+            from: timeWindow.from,
+            to: timeWindow.to,
+            blocking: historicalChartWindowRequest ? false : undefined,
+            historicalBucketSeconds,
+          }).catch(() => {});
+        }
       }
       return cached.value;
     }
@@ -12155,6 +12638,12 @@ export async function listFlowEvents(input: {
     }
     if (inFlight) {
       if (!blocking) {
+        if (historicalChartWindowRequest) {
+          return historicalFlowEventsTransientResult({
+            unusualThreshold,
+            reason: HISTORICAL_FLOW_REFRESHING_REASON,
+          });
+        }
         return listHistoricalFlowEvents({
           underlying,
           providerName: getMarketDataConnectionName(),
@@ -12171,7 +12660,30 @@ export async function listFlowEvents(input: {
       return inFlight;
     }
 
+    if (historicalChartWindowRequest) {
+      const cooldown = getHistoricalFlowCooldown(cacheKey, requestedAt);
+      if (cooldown) {
+        return cooldown;
+      }
+    }
+
     if (!blocking) {
+      if (historicalChartWindowRequest) {
+        refreshHistoricalFlowEventsCache(cacheKey, {
+          underlying,
+          limit,
+          filters,
+          unusualThreshold,
+          from: timeWindow.from,
+          to: timeWindow.to,
+          blocking: false,
+          historicalBucketSeconds,
+        }).catch(() => {});
+        return historicalFlowEventsTransientResult({
+          unusualThreshold,
+          reason: HISTORICAL_FLOW_REFRESHING_REASON,
+        });
+      }
       return listHistoricalFlowEvents({
         underlying,
         providerName: getMarketDataConnectionName(),
@@ -12475,6 +12987,14 @@ function refreshHistoricalFlowEventsCache(
     historicalBucketSeconds: input.historicalBucketSeconds,
   }).then((value) => {
     const settledAt = Date.now();
+    if (
+      input.historicalBucketSeconds !== undefined &&
+      isHistoricalFlowProviderTimeoutResult(value)
+    ) {
+      recordHistoricalFlowCooldown(cacheKey, value, settledAt);
+    } else {
+      historicalFlowCooldowns.delete(cacheKey);
+    }
     const nextValue = shouldPreserveCachedFlowEvents(cached, value, settledAt)
       ? cached!.value
       : value;
@@ -12598,6 +13118,8 @@ async function listFlowEventsUncached(input: {
   try {
     const expirationsResult = await getCachedIbkrOptionExpirationsWithDebug({
       underlying: input.underlying,
+      recordBridgeFailure: false,
+      bypassBridgeBackoff: true,
     });
     ibkrExpirationCount = expirationsResult.expirations.length;
     ibkrReason = expirationsResult.debug.reason ?? null;
@@ -12623,6 +13145,8 @@ async function listFlowEventsUncached(input: {
         ...metadataSelection,
         quoteHydration: "metadata",
         allowDelayedSnapshotHydration: false,
+        recordBridgeFailure: false,
+        bypassBridgeBackoff: true,
       });
       const metadataContracts = batch.results.flatMap((result) => result.contracts);
       ibkrMetadataContractCount = metadataContracts.length;

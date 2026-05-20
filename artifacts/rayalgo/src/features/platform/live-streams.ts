@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getOptionQuoteSnapshots } from "@workspace/api-client-react";
+import {
+  getGetAccountAllocationQueryKey,
+  getGetAccountCashActivityQueryKey,
+  getGetAccountClosedTradesQueryKey,
+  getGetAccountEquityHistoryQueryKey,
+  getGetAccountOrdersQueryKey,
+  getGetAccountPositionsQueryKey,
+  getGetAccountRiskQueryKey,
+  getGetAccountSummaryQueryKey,
+  getGetAccountTradingPatternsQueryKey,
+  getGetFlexHealthQueryKey,
+  getListAlgoDeploymentsQueryKey,
+  getListExecutionEventsQueryKey,
+  getGetAlgoDeploymentCockpitQueryKey,
+  getGetSignalMonitorProfileQueryKey,
+  getGetSignalOptionsAutomationStateQueryKey,
+  getGetSignalOptionsPerformanceQueryKey,
+  getOptionQuoteSnapshots,
+} from "@workspace/api-client-react";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import { usePageVisible } from "./usePageVisible";
 import {
@@ -19,16 +37,34 @@ import type {
   AccountTradingPatternsResponse,
   AccountEquityPoint,
   AccountsResponse,
+  AlgoCockpitSnapshotResponse,
+  AlgoDeploymentsResponse,
   BrokerAccount,
+  ExecutionEventsResponse,
   FlexHealthResponse,
+  GetAccountClosedTradesParams,
   OptionChainResponse,
   OrdersResponse,
   PositionsResponse,
   QuoteSnapshot,
   QuoteSnapshotsResponse,
+  SignalMonitorProfile,
+  SignalOptionsAutomationState,
+  SignalOptionsPerformanceResponse,
 } from "@workspace/api-client-react";
 
 type StreamMode = "paper" | "live";
+
+type AccountTradeFilters = {
+  from: string | null;
+  to: string | null;
+  symbol: string | null;
+  assetClass: string | null;
+  pnlSign: GetAccountClosedTradesParams["pnlSign"] | null;
+  holdDuration: string | null;
+};
+
+type AccountTradeFilterInput = Partial<AccountTradeFilters>;
 
 type QuoteStreamPayload = {
   quotes: QuoteSnapshot[];
@@ -65,14 +101,7 @@ type AccountPageBootstrapPayload = {
   range?: AccountHistoryRangeValue;
   orderTab: "working" | "history";
   assetClass: string | null;
-  tradeFilters: {
-    from: string | null;
-    to: string | null;
-    symbol: string | null;
-    assetClass: string | null;
-    pnlSign: string | null;
-    holdDuration: string | null;
-  };
+  tradeFilters: AccountTradeFilters;
   performanceCalendarFrom: string | null;
   updatedAt: string;
   summary: AccountSummaryResponse;
@@ -106,6 +135,20 @@ type AccountPageLivePayload = {
   risk: AccountRiskResponse;
 };
 
+type AccountPageCriticalPayload = {
+  stream?: "account-page-critical";
+  accountId: string;
+  mode: StreamMode;
+  orderTab: "working" | "history";
+  assetClass: string | null;
+  updatedAt: string;
+  summary: AccountSummaryResponse;
+  allocation: AccountAllocationResponse;
+  positions: AccountPositionsResponse;
+  orders: AccountOrdersResponse;
+  risk: AccountRiskResponse;
+};
+
 type AccountPageDerivedPayload = {
   stream?: "account-page-derived";
   accountId: string;
@@ -122,6 +165,21 @@ type AccountPageDerivedPayload = {
   cashActivity: AccountCashActivityResponse;
   flexHealth: FlexHealthResponse | null;
   tradingPatterns: AccountTradingPatternsResponse | null;
+};
+
+type AlgoCockpitStreamPayload = {
+  stream?: "algo-cockpit-bootstrap" | "algo-cockpit-live";
+  phase?: "critical" | "full";
+  mode: StreamMode;
+  deploymentId: string | null;
+  updatedAt: string;
+  deployments: AlgoDeploymentsResponse;
+  focusedDeployment: AlgoDeploymentsResponse["deployments"][number] | null;
+  events: ExecutionEventsResponse;
+  signalOptionsState: SignalOptionsAutomationState | null;
+  cockpit: AlgoCockpitSnapshotResponse | null;
+  performance: SignalOptionsPerformanceResponse | null;
+  signalMonitorProfile: SignalMonitorProfile | null;
 };
 
 type OrderStreamPayload = {
@@ -208,6 +266,8 @@ const OPTION_QUOTE_WEBSOCKET_STALL_MS = 15_000;
 const ACCOUNT_STREAM_FRESH_MS = 7_000;
 const SHADOW_ACCOUNT_STREAM_FRESH_MS = 7_000;
 const ACCOUNT_PAGE_STREAM_FRESH_MS = 3_000;
+const ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS = 35_000;
+const ALGO_COCKPIT_STREAM_FRESH_MS = 7_000;
 const ORDER_INVALIDATION_THROTTLE_MS = 2_000;
 const ACCOUNT_DERIVED_INVALIDATION_THROTTLE_MS = 10_000;
 
@@ -422,14 +482,7 @@ export const getAccountPageStreamUrl = ({
   range?: string | null;
   orderTab?: string | null;
   assetClass?: string | null;
-  tradeFilters?: {
-    from?: string | null;
-    to?: string | null;
-    symbol?: string | null;
-    assetClass?: string | null;
-    pnlSign?: string | null;
-    holdDuration?: string | null;
-  };
+  tradeFilters?: AccountTradeFilterInput;
   performanceCalendarFrom?: string | null;
 }): string | null =>
   buildStreamUrl("/api/streams/accounts/page", {
@@ -445,6 +498,24 @@ export const getAccountPageStreamUrl = ({
     pnlSign: tradeFilters.pnlSign ?? undefined,
     holdDuration: tradeFilters.holdDuration ?? undefined,
     performanceCalendarFrom: performanceCalendarFrom ?? undefined,
+  });
+
+export const getAlgoCockpitStreamUrl = ({
+  deploymentId,
+  mode,
+  eventLimit,
+}: {
+  deploymentId?: string | null;
+  mode: StreamMode;
+  eventLimit?: number | null;
+}): string | null =>
+  buildStreamUrl("/api/streams/algo/cockpit", {
+    deploymentId: deploymentId ?? undefined,
+    mode,
+    eventLimit:
+      typeof eventLimit === "number" && Number.isFinite(eventLimit)
+        ? String(Math.max(1, Math.floor(eventLimit)))
+        : undefined,
   });
 
 const buildWebSocketUrl = (path: string): string | null => {
@@ -1616,7 +1687,7 @@ const emitAccountLiveSlices = () => {
 };
 
 const applyAccountLivePayloadToSelectorStore = (
-  payload: AccountPageLivePayload,
+  payload: AccountPageCriticalPayload | AccountPageLivePayload,
 ) => {
   const key = accountLiveScopeKey(payload);
   if (!key) {
@@ -2283,10 +2354,244 @@ const performanceCalendarParamsMatch = (
   optionalParamMatches(params, "holdDuration", null) &&
   optionalParamMatches(params, "assetClass", null);
 
+const accountModeParams = (mode: StreamMode) => ({ mode });
+
+const accountPositionsParams = (
+  payload: Pick<AccountPageLivePayload, "mode" | "assetClass">,
+) => ({
+  mode: payload.mode,
+  assetClass: payload.assetClass ?? undefined,
+});
+
+const accountClosedTradeParams = (
+  payload: AccountPageDerivedPayload,
+): GetAccountClosedTradesParams => ({
+  mode: payload.mode,
+  symbol: payload.tradeFilters.symbol ?? undefined,
+  assetClass: payload.tradeFilters.assetClass ?? undefined,
+  pnlSign: payload.tradeFilters.pnlSign ?? undefined,
+  holdDuration: payload.tradeFilters.holdDuration ?? undefined,
+  from: payload.tradeFilters.from ?? undefined,
+  to: payload.tradeFilters.to ?? undefined,
+});
+
+const setAccountPageQueryData = <TValue>(
+  queryClient: ReturnType<typeof useQueryClient>,
+  queryKey: unknown,
+  value: TValue | ((current: TValue | undefined) => TValue | undefined),
+) => {
+  queryClient.setQueryData(queryKey as any, value as any);
+};
+
+const seedAccountPageCriticalQueryKeys = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageCriticalPayload | AccountPageLivePayload,
+) => {
+  const modeParams = accountModeParams(payload.mode);
+
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountSummaryQueryKey(payload.accountId, modeParams),
+    (current: AccountSummaryResponse | undefined) =>
+      reuseEqualJson(current, payload.summary),
+  );
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountAllocationQueryKey(payload.accountId, modeParams),
+    (current: AccountAllocationResponse | undefined) =>
+      reuseEqualJson(current, payload.allocation),
+  );
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountRiskQueryKey(payload.accountId, modeParams),
+    (current: AccountRiskResponse | undefined) =>
+      reuseEqualJson(current, payload.risk),
+  );
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountPositionsQueryKey(payload.accountId, accountPositionsParams(payload)),
+    (current: AccountPositionsResponse | undefined) =>
+      maybeReuseAccountPositionsResponse(current, payload.positions),
+  );
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountOrdersQueryKey(payload.accountId, {
+      mode: payload.mode,
+      tab: payload.orderTab,
+    }),
+    (current: AccountOrdersResponse | undefined) =>
+      maybeReuseAccountOrdersResponse(current, payload.orders),
+  );
+};
+
+const seedAccountPageLiveQueryKeys = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageLivePayload,
+) => {
+  seedAccountPageCriticalQueryKeys(queryClient, payload);
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountEquityHistoryQueryKey(payload.accountId, {
+      mode: payload.mode,
+      range: "1D",
+    }),
+    (current: AccountEquityHistoryResponse | undefined) =>
+      reuseEqualJson(current, payload.intradayEquity),
+  );
+};
+
+const seedAccountPageDerivedQueryKeys = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageDerivedPayload,
+) => {
+  const range = payload.range ?? "ALL";
+  const modeParams = accountModeParams(payload.mode);
+
+  if (range !== "1D") {
+    setAccountPageQueryData(
+      queryClient,
+      getGetAccountEquityHistoryQueryKey(payload.accountId, {
+        mode: payload.mode,
+        range,
+      }),
+      payload.equityHistory,
+    );
+  }
+  (["SPY", "QQQ", "DIA"] as const).forEach((benchmark) => {
+    const benchmarkPayload = payload.benchmarkEquityHistory[benchmark];
+    if (!benchmarkPayload) {
+      return;
+    }
+    setAccountPageQueryData(
+      queryClient,
+      getGetAccountEquityHistoryQueryKey(payload.accountId, {
+        mode: payload.mode,
+        range,
+        benchmark,
+      }),
+      benchmarkPayload,
+    );
+  });
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountEquityHistoryQueryKey(payload.accountId, {
+      mode: payload.mode,
+      range: "1Y",
+    }),
+    payload.performanceCalendarEquity,
+  );
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountClosedTradesQueryKey(
+      payload.accountId,
+      accountClosedTradeParams(payload),
+    ),
+    payload.closedTrades,
+  );
+  if (payload.performanceCalendarFrom) {
+    setAccountPageQueryData(
+      queryClient,
+      getGetAccountClosedTradesQueryKey(payload.accountId, {
+        ...modeParams,
+        from: payload.performanceCalendarFrom,
+      }),
+      payload.performanceCalendarTrades,
+    );
+  }
+  setAccountPageQueryData(
+    queryClient,
+    getGetAccountCashActivityQueryKey(payload.accountId, modeParams),
+    payload.cashActivity,
+  );
+  if (payload.flexHealth) {
+    setAccountPageQueryData(
+      queryClient,
+      getGetFlexHealthQueryKey(),
+      payload.flexHealth,
+    );
+  }
+  if (payload.tradingPatterns) {
+    setAccountPageQueryData(
+      queryClient,
+      getGetAccountTradingPatternsQueryKey(payload.accountId, {
+        range,
+        snapshotId: "latest",
+      }),
+      payload.tradingPatterns,
+    );
+  }
+};
+
+export const applyAccountPageCriticalPayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountPageCriticalPayload,
+) => {
+  seedAccountPageCriticalQueryKeys(queryClient, payload);
+  queryClient
+    .getQueryCache()
+    .findAll({
+      predicate: (query) => {
+        const path = queryKeyPath(query.queryKey);
+        return Boolean(path?.startsWith(`/api/accounts/${payload.accountId}/`));
+      },
+    })
+    .forEach((query) => {
+      const path = queryKeyPath(query.queryKey);
+      const params = readQueryParams(query.queryKey);
+
+      if (!matchesMode(params, payload.mode)) {
+        return;
+      }
+      if (typeof params?.source === "string") {
+        return;
+      }
+
+      if (path === `/api/accounts/${payload.accountId}/summary`) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountSummaryResponse | undefined) =>
+            reuseEqualJson(current, payload.summary),
+        );
+      } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountAllocationResponse | undefined) =>
+            reuseEqualJson(current, payload.allocation),
+        );
+      } else if (path === `/api/accounts/${payload.accountId}/risk`) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountRiskResponse | undefined) =>
+            reuseEqualJson(current, payload.risk),
+        );
+      } else if (
+        path === `/api/accounts/${payload.accountId}/positions` &&
+        assetClassParamMatches(params, payload.assetClass)
+      ) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountPositionsResponse | undefined) =>
+            maybeReuseAccountPositionsResponse(current, payload.positions),
+        );
+      } else if (
+        path === `/api/accounts/${payload.accountId}/orders` &&
+        orderTabParamMatches(params, payload.orderTab)
+      ) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountOrdersResponse | undefined) =>
+            maybeReuseAccountOrdersResponse(current, payload.orders),
+        );
+      }
+    });
+  applyAccountLivePayloadToSelectorStore(payload);
+};
+
 export const applyAccountPageLivePayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageLivePayload,
 ) => {
+  seedAccountPageLiveQueryKeys(queryClient, payload);
   queryClient
     .getQueryCache()
     .findAll({
@@ -2344,6 +2649,13 @@ export const applyAccountPageLivePayloadToCache = (
         );
       } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
         const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";
+        const benchmark =
+          typeof params?.benchmark === "string" && params.benchmark.trim()
+            ? params.benchmark.trim().toUpperCase()
+            : null;
+        if (benchmark) {
+          return;
+        }
         if (range === "1D") {
           queryClient.setQueryData(
             query.queryKey,
@@ -2366,6 +2678,7 @@ export const applyAccountPageDerivedPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageDerivedPayload,
 ) => {
+  seedAccountPageDerivedQueryKeys(queryClient, payload);
   queryClient
     .getQueryCache()
     .findAll({
@@ -2480,6 +2793,12 @@ type QueuedAccountPagePayload =
       queueKey: string;
     }
   | {
+      kind: "critical";
+      queryClient: ReturnType<typeof useQueryClient>;
+      payload: AccountPageCriticalPayload;
+      queueKey: string;
+    }
+  | {
       kind: "live";
       queryClient: ReturnType<typeof useQueryClient>;
       payload: AccountPageLivePayload;
@@ -2501,11 +2820,12 @@ const accountPagePayloadQueueKey = (
   kind: QueuedAccountPagePayload["kind"],
   payload:
     | AccountPageBootstrapPayload
+    | AccountPageCriticalPayload
     | AccountPageLivePayload
     | AccountPageDerivedPayload,
 ): string => {
-  if (kind === "live") {
-    const livePayload = payload as AccountPageLivePayload;
+  if (kind === "critical" || kind === "live") {
+    const livePayload = payload as AccountPageCriticalPayload | AccountPageLivePayload;
     return [
       kind,
       livePayload.accountId,
@@ -2560,6 +2880,8 @@ export const flushAccountPagePayloadQueue = () => {
   queued.forEach((item) => {
     if (item.kind === "bootstrap") {
       applyAccountPagePayloadToCache(item.queryClient, item.payload);
+    } else if (item.kind === "critical") {
+      applyAccountPageCriticalPayloadToCache(item.queryClient, item.payload);
     } else if (item.kind === "live") {
       applyAccountPageLivePayloadToCache(item.queryClient, item.payload);
     } else {
@@ -2598,6 +2920,11 @@ export function queueAccountPagePayloadToCache(
 ): void;
 export function queueAccountPagePayloadToCache(
   queryClient: ReturnType<typeof useQueryClient>,
+  kind: "critical",
+  payload: AccountPageCriticalPayload,
+): void;
+export function queueAccountPagePayloadToCache(
+  queryClient: ReturnType<typeof useQueryClient>,
   kind: "live",
   payload: AccountPageLivePayload,
 ): void;
@@ -2611,6 +2938,7 @@ export function queueAccountPagePayloadToCache(
   kind: QueuedAccountPagePayload["kind"],
   payload:
     | AccountPageBootstrapPayload
+    | AccountPageCriticalPayload
     | AccountPageLivePayload
     | AccountPageDerivedPayload,
 ) {
@@ -3134,6 +3462,7 @@ export const useIbkrAccountSnapshotStream = ({
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
+        kind?: "live" | "derived";
         degraded?: boolean;
         stale?: boolean;
       }>(event.data);
@@ -3195,6 +3524,7 @@ export const useShadowAccountSnapshotStream = ({
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
+        kind?: "live" | "derived";
         degraded?: boolean;
         stale?: boolean;
       }>(event.data);
@@ -3241,19 +3571,15 @@ export const useAccountPageSnapshotStream = ({
   range?: string | null;
   orderTab?: "working" | "history";
   assetClass?: string | null;
-  tradeFilters?: {
-    from?: string | null;
-    to?: string | null;
-    symbol?: string | null;
-    assetClass?: string | null;
-    pnlSign?: string | null;
-    holdDuration?: string | null;
-  };
+  tradeFilters?: AccountTradeFilterInput;
   performanceCalendarFrom?: string | null;
   enabled?: boolean;
 }) => {
   const queryClient = useQueryClient();
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [lastCriticalEventAt, setLastCriticalEventAt] = useState<number | null>(null);
+  const [lastLiveEventAt, setLastLiveEventAt] = useState<number | null>(null);
+  const [lastDerivedEventAt, setLastDerivedEventAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const streamUrl = useMemo(
     () =>
@@ -3274,6 +3600,7 @@ export const useAccountPageSnapshotStream = ({
       performanceCalendarFrom,
       range,
       tradeFilters?.from,
+      tradeFilters?.assetClass,
       tradeFilters?.holdDuration,
       tradeFilters?.pnlSign,
       tradeFilters?.symbol,
@@ -3284,6 +3611,9 @@ export const useAccountPageSnapshotStream = ({
   useEffect(() => {
     if (!enabled) {
       setLastEventAt(null);
+      setLastCriticalEventAt(null);
+      setLastLiveEventAt(null);
+      setLastDerivedEventAt(null);
       return undefined;
     }
     const interval = setInterval(() => setNow(Date.now()), 1_000);
@@ -3300,9 +3630,23 @@ export const useAccountPageSnapshotStream = ({
       return undefined;
     }
 
-    const markFresh = () => {
+    setLastEventAt(null);
+    setLastCriticalEventAt(null);
+    setLastLiveEventAt(null);
+    setLastDerivedEventAt(null);
+
+    const markFresh = (kind: "critical" | "live" | "derived" | "both" = "both") => {
       const timestamp = Date.now();
       setLastEventAt(timestamp);
+      if (kind === "critical" || kind === "live" || kind === "both") {
+        setLastCriticalEventAt(timestamp);
+      }
+      if (kind === "live" || kind === "both") {
+        setLastLiveEventAt(timestamp);
+      }
+      if (kind === "derived" || kind === "both") {
+        setLastDerivedEventAt(timestamp);
+      }
       setNow(timestamp);
     };
     const source = new EventSource(streamUrl);
@@ -3311,15 +3655,23 @@ export const useAccountPageSnapshotStream = ({
       if (!payload || payload.stream !== "account-page-bootstrap") {
         return;
       }
-      markFresh();
+      markFresh("both");
       queueAccountPagePayloadToCache(queryClient, "bootstrap", payload);
+    };
+    const handleCritical = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<AccountPageCriticalPayload>(event.data);
+      if (!payload || payload.stream !== "account-page-critical") {
+        return;
+      }
+      markFresh("critical");
+      queueAccountPagePayloadToCache(queryClient, "critical", payload);
     };
     const handleLive = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<AccountPageLivePayload>(event.data);
       if (!payload || payload.stream !== "account-page-live") {
         return;
       }
-      markFresh();
+      markFresh("live");
       queueAccountPagePayloadToCache(queryClient, "live", payload);
     };
     const handleDerived = (event: MessageEvent<string>) => {
@@ -3327,12 +3679,13 @@ export const useAccountPageSnapshotStream = ({
       if (!payload || payload.stream !== "account-page-derived") {
         return;
       }
-      markFresh();
+      markFresh("derived");
       queueAccountPagePayloadToCache(queryClient, "derived", payload);
     };
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
+        kind?: "critical" | "live" | "derived";
         degraded?: boolean;
         stale?: boolean;
       }>(event.data);
@@ -3344,20 +3697,26 @@ export const useAccountPageSnapshotStream = ({
       ) {
         return;
       }
-      markFresh();
+      markFresh(
+        payload.kind === "critical" ||
+          payload.kind === "live" ||
+          payload.kind === "derived"
+          ? payload.kind
+          : "both",
+      );
     };
 
     source.addEventListener("bootstrap", handleBootstrap as EventListener);
+    source.addEventListener("critical", handleCritical as EventListener);
     source.addEventListener("live", handleLive as EventListener);
     source.addEventListener("derived", handleDerived as EventListener);
     source.addEventListener("freshness", handleFreshness as EventListener);
-    source.addEventListener("ready", markFresh as EventListener);
     return () => {
       source.removeEventListener("bootstrap", handleBootstrap as EventListener);
+      source.removeEventListener("critical", handleCritical as EventListener);
       source.removeEventListener("live", handleLive as EventListener);
       source.removeEventListener("derived", handleDerived as EventListener);
       source.removeEventListener("freshness", handleFreshness as EventListener);
-      source.removeEventListener("ready", markFresh as EventListener);
       source.close();
     };
   }, [enabled, queryClient, streamUrl]);
@@ -3366,6 +3725,174 @@ export const useAccountPageSnapshotStream = ({
     accountLastEventAt: lastEventAt,
     accountFresh:
       lastEventAt != null && now - lastEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
+    accountCriticalFresh:
+      lastCriticalEventAt != null &&
+      now - lastCriticalEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
+    accountLiveFresh:
+      lastLiveEventAt != null && now - lastLiveEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
+    accountDerivedFresh:
+      lastDerivedEventAt != null &&
+      now - lastDerivedEventAt <= ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS,
+  };
+};
+
+export const applyAlgoCockpitPayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AlgoCockpitStreamPayload,
+) => {
+  queryClient.setQueryData(getListAlgoDeploymentsQueryKey(), payload.deployments);
+
+  const deploymentId = payload.deploymentId;
+  const eventLimit = 20;
+  queryClient.setQueryData(
+    deploymentId
+      ? getListExecutionEventsQueryKey({ deploymentId, limit: eventLimit })
+      : getListExecutionEventsQueryKey({ limit: eventLimit }),
+    payload.events,
+  );
+
+  if (deploymentId && payload.signalOptionsState) {
+    queryClient.setQueryData(
+      getGetSignalOptionsAutomationStateQueryKey(deploymentId),
+      payload.signalOptionsState,
+    );
+  }
+  if (deploymentId && payload.cockpit) {
+    queryClient.setQueryData(
+      getGetAlgoDeploymentCockpitQueryKey(deploymentId),
+      payload.cockpit,
+    );
+  }
+  if (deploymentId && payload.performance) {
+    queryClient.setQueryData(
+      getGetSignalOptionsPerformanceQueryKey(deploymentId),
+      payload.performance,
+    );
+  }
+  if (payload.signalMonitorProfile) {
+    queryClient.setQueryData(
+      getGetSignalMonitorProfileQueryKey({ environment: payload.mode }),
+      payload.signalMonitorProfile,
+    );
+  }
+};
+
+export const useAlgoCockpitStream = ({
+  deploymentId,
+  mode,
+  eventLimit = 20,
+  enabled = true,
+}: {
+  deploymentId?: string | null;
+  mode: StreamMode;
+  eventLimit?: number;
+  enabled?: boolean;
+}) => {
+  const queryClient = useQueryClient();
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [lastCriticalEventAt, setLastCriticalEventAt] = useState<number | null>(null);
+  const [lastFullEventAt, setLastFullEventAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const streamUrl = useMemo(
+    () => getAlgoCockpitStreamUrl({ deploymentId, mode, eventLimit }),
+    [deploymentId, eventLimit, mode],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setLastEventAt(null);
+      setLastCriticalEventAt(null);
+      setLastFullEventAt(null);
+      return undefined;
+    }
+    const interval = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(interval);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    setLastEventAt(null);
+    setLastCriticalEventAt(null);
+    setLastFullEventAt(null);
+
+    const markFresh = (kind: "critical" | "full" | "heartbeat" = "heartbeat") => {
+      const timestamp = Date.now();
+      setLastEventAt(timestamp);
+      if (kind === "critical" || kind === "full") {
+        setLastCriticalEventAt(timestamp);
+      }
+      if (kind === "full") {
+        setLastFullEventAt(timestamp);
+      }
+      setNow(timestamp);
+    };
+    const source = new EventSource(streamUrl);
+    const applyPayload = (
+      event: MessageEvent<string>,
+      expectedStream: AlgoCockpitStreamPayload["stream"],
+    ) => {
+      const payload = parseJsonPayload<AlgoCockpitStreamPayload>(event.data);
+      if (!payload || payload.stream !== expectedStream) {
+        return;
+      }
+      markFresh(payload.phase === "full" ? "full" : "critical");
+      applyAlgoCockpitPayloadToCache(queryClient, payload);
+    };
+    const handleBootstrap = (event: MessageEvent<string>) => {
+      applyPayload(event, "algo-cockpit-bootstrap");
+    };
+    const handleLive = (event: MessageEvent<string>) => {
+      applyPayload(event, "algo-cockpit-live");
+    };
+    const handleFreshness = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<{
+        stream?: string;
+        stale?: boolean;
+        degraded?: boolean;
+      }>(event.data);
+      if (
+        !payload ||
+        payload.stream !== "algo-cockpit" ||
+        payload.stale ||
+        payload.degraded
+      ) {
+        return;
+      }
+      markFresh("full");
+    };
+    const handleReady = () => {
+      markFresh("heartbeat");
+    };
+
+    source.addEventListener("bootstrap", handleBootstrap as EventListener);
+    source.addEventListener("live", handleLive as EventListener);
+    source.addEventListener("freshness", handleFreshness as EventListener);
+    source.addEventListener("ready", handleReady as EventListener);
+    return () => {
+      source.removeEventListener("bootstrap", handleBootstrap as EventListener);
+      source.removeEventListener("live", handleLive as EventListener);
+      source.removeEventListener("freshness", handleFreshness as EventListener);
+      source.removeEventListener("ready", handleReady as EventListener);
+      source.close();
+    };
+  }, [enabled, queryClient, streamUrl]);
+
+  return {
+    algoLastEventAt: lastEventAt,
+    algoFresh:
+      lastEventAt != null && now - lastEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
+    algoCriticalFresh:
+      lastCriticalEventAt != null && now - lastCriticalEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
+    algoFullFresh:
+      lastFullEventAt != null && now - lastFullEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
   };
 };
 

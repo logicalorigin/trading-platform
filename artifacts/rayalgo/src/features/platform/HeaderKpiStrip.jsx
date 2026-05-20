@@ -26,7 +26,8 @@ export const HEADER_KPI_SYMBOLS = HEADER_KPI_CONFIG.map((item) => item.symbol);
 // (single source of truth — was previously duplicated here and in
 // PlatformWatchlist.jsx).
 
-const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false, isFirst = false }) => {
+const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false, dense = false, isFirst = false }) => {
+  const isDense = dense && !compact;
   const fallback = useMemo(
     () => buildFallbackWatchlistItem(symbol, index, label),
     [index, label, symbol],
@@ -45,13 +46,13 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
       onClick={() => onSelect?.(symbol)}
       className="ra-header-kpi"
       style={{
-        flex: compact ? "0 0 auto" : `1 1 ${dim(110)}px`,
-        minWidth: dim(compact ? 90 : 108),
-        minHeight: dim(compact ? 28 : 38),
-        padding: sp(compact ? "2px 10px 2px 8px" : "4px 14px 4px 10px"),
+        flex: isDense ? "0 0 auto" : compact ? "0 0 auto" : `1 1 ${dim(110)}px`,
+        minWidth: dim(isDense ? 132 : compact ? 90 : 108),
+        minHeight: dim(isDense ? 30 : compact ? 28 : 38),
+        padding: sp(isDense ? "3px 10px 3px 8px" : compact ? "2px 10px 2px 8px" : "4px 14px 4px 10px"),
         display: "flex",
         alignItems: "center",
-        gap: sp(8),
+        gap: sp(isDense ? 6 : 8),
         background: "transparent",
         border: "none",
         borderLeft: isFirst ? "none" : `1px solid ${T.borderLight}`,
@@ -68,113 +69,209 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
         event.currentTarget.style.color = T.text;
       }}
     >
-      <span
-        style={{
-          minWidth: 0,
-          flex: 1,
-          textAlign: "left",
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(1),
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(6),
-            minWidth: 0,
-          }}
-        >
+      {isDense ? (
+        <>
           <span
             style={{
-              display: "block",
-              fontSize: textSize(compact ? "micro" : "caption"),
-              color: T.textMuted,
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
+              minWidth: 0,
+              flex: "1 1 auto",
+              textAlign: "left",
+              display: "inline-flex",
+              alignItems: "baseline",
+              gap: sp(5),
               whiteSpace: "nowrap",
               overflow: "hidden",
-              textOverflow: "ellipsis",
             }}
           >
-            {label}
+            <span
+              style={{
+                display: "block",
+                maxWidth: dim(58),
+                fontSize: textSize("caption"),
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                flexShrink: 1,
+              }}
+            >
+              {label}
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                color: T.textSec,
+                fontFamily: T.sans,
+                lineHeight: 1.1,
+                letterSpacing: 0,
+                flexShrink: 0,
+              }}
+            >
+              {symbol}
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("paragraph"),
+                fontWeight: FONT_WEIGHTS.label,
+                fontFamily: T.sans,
+                color: T.text,
+                lineHeight: 1.15,
+                whiteSpace: "nowrap",
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: 0,
+                flexShrink: 0,
+              }}
+            >
+              {formatQuotePrice(animatedPrice ?? snapshot?.price)}
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.medium,
+                fontFamily: T.sans,
+                color:
+                  positive == null ? T.textDim : positive ? T.green : T.red,
+                lineHeight: 1.15,
+                whiteSpace: "nowrap",
+                fontVariantNumeric: "tabular-nums",
+                flexShrink: 0,
+              }}
+            >
+              {formatSignedPercent(animatedPct ?? snapshot?.pct)}
+            </span>
           </span>
-          <span
-            style={{
-              display: "block",
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.medium,
-              color: T.textSec,
-              fontFamily: T.sans,
-              lineHeight: 1.1,
-              letterSpacing: "0.04em",
-              flexShrink: 0,
-            }}
-          >
-            {symbol}
+          <span style={{ display: "block", flexShrink: 0 }}>
+            <MicroSparkline
+              data={
+                snapshot?.sparkBars?.length
+                  ? snapshot.sparkBars
+                  : snapshot?.spark || fallback.spark
+              }
+              positive={positive}
+              width={36}
+              height={14}
+            />
           </span>
-        </span>
+        </>
+      ) : (
         <span
           style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: sp(6),
             minWidth: 0,
+            flex: 1,
+            textAlign: "left",
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(1),
           }}
         >
           <span
             style={{
-              display: "block",
-              fontSize: textSize("paragraph"),
-              fontWeight: FONT_WEIGHTS.label,
-              fontFamily: T.sans,
-              color: T.text,
-              lineHeight: 1.15,
-              whiteSpace: "nowrap",
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "-0.01em",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(6),
+              minWidth: 0,
             }}
           >
-            {formatQuotePrice(animatedPrice ?? snapshot?.price)}
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize(compact ? "micro" : "caption"),
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {label}
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.medium,
+                color: T.textSec,
+                fontFamily: T.sans,
+                lineHeight: 1.1,
+                letterSpacing: "0.04em",
+                flexShrink: 0,
+              }}
+            >
+              {symbol}
+            </span>
           </span>
           <span
             style={{
-              display: "block",
-              fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.medium,
-              fontFamily: T.sans,
-              color:
-                positive == null ? T.textDim : positive ? T.green : T.red,
-              lineHeight: 1.15,
-              whiteSpace: "nowrap",
-              fontVariantNumeric: "tabular-nums",
+              display: "flex",
+              alignItems: "baseline",
+              gap: sp(6),
+              minWidth: 0,
             }}
           >
-            {formatSignedPercent(animatedPct ?? snapshot?.pct)}
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("paragraph"),
+                fontWeight: FONT_WEIGHTS.label,
+                fontFamily: T.sans,
+                color: T.text,
+                lineHeight: 1.15,
+                whiteSpace: "nowrap",
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: 0,
+              }}
+            >
+              {formatQuotePrice(animatedPrice ?? snapshot?.price)}
+            </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.medium,
+                fontFamily: T.sans,
+                color:
+                  positive == null ? T.textDim : positive ? T.green : T.red,
+                lineHeight: 1.15,
+                whiteSpace: "nowrap",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {formatSignedPercent(animatedPct ?? snapshot?.pct)}
+            </span>
           </span>
         </span>
-      </span>
-      <span style={{ display: "block", flexShrink: 0 }}>
-        <MicroSparkline
-          data={
-            snapshot?.sparkBars?.length
-              ? snapshot.sparkBars
-              : snapshot?.spark || fallback.spark
-          }
-          positive={positive}
-          width={44}
-          height={18}
-        />
-      </span>
+      )}
+      {isDense ? null : (
+        <span style={{ display: "block", flexShrink: 0 }}>
+          <MicroSparkline
+            data={
+              snapshot?.sparkBars?.length
+                ? snapshot.sparkBars
+                : snapshot?.spark || fallback.spark
+            }
+            positive={positive}
+            width={44}
+            height={18}
+          />
+        </span>
+      )}
     </button></AppTooltip>
   );
 });
 
-export const HeaderKpiStrip = memo(({ onSelect, compact = false }) => (
+export const HeaderKpiStrip = memo(({ onSelect, compact = false, dense = false }) => (
   <div
     data-testid="platform-header-kpis"
     style={{
@@ -197,6 +294,7 @@ export const HeaderKpiStrip = memo(({ onSelect, compact = false }) => (
         index={index}
         onSelect={onSelect}
         compact={compact}
+        dense={dense}
         isFirst={index === 0}
       />
     ))}

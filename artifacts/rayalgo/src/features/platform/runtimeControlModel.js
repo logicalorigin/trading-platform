@@ -21,6 +21,17 @@ const firstFiniteNumber = (...values) => {
   return null;
 };
 
+const formatRuntimeDuration = (durationMs) => {
+  const ms = Number(durationMs);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return null;
+  }
+  if (ms < 60_000) {
+    return `${Math.ceil(ms / 1_000)}s`;
+  }
+  return `${Math.ceil(ms / 60_000)}m`;
+};
+
 const formatFlowScannerRuntimeDetail = (admission, used) => {
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
@@ -32,14 +43,30 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   if (scanner.started === false) {
     return "not started";
   }
-  const skipReason = scanner.lastSkippedReason;
-  if (skipReason) {
-    return `skipped: ${skipReason}`;
-  }
   if (Number.isFinite(used) && used === 0) {
+    const activeCount = Number(scanner.deepScanner?.activeCount);
+    if (Number.isFinite(activeCount) && activeCount > 0) {
+      return `${Math.round(activeCount)} option chain${Math.round(activeCount) === 1 ? "" : "s"} scanning; quotes next`;
+    }
+    const queuedCount = Number(scanner.deepScanner?.queuedCount);
+    if (Number.isFinite(queuedCount) && queuedCount > 0) {
+      return `${Math.round(queuedCount)} scan${Math.round(queuedCount) === 1 ? "" : "s"} queued`;
+    }
+    const snapshotCount = Number(scanner.deepScanner?.snapshotCount);
+    if (Number.isFinite(snapshotCount) && snapshotCount > 0) {
+      return `${Math.round(snapshotCount)} flow snapshot${Math.round(snapshotCount) === 1 ? "" : "s"} loaded; refreshing`;
+    }
+    const skipReason = scanner.lastSkippedReason;
+    if (skipReason) {
+      if (skipReason === "line-cap-exhausted") {
+        return "paused: no scanner line capacity";
+      }
+      return `skipped: ${skipReason}`;
+    }
     const blockedReason = scanner.backgroundBlockedReason;
     if (blockedReason === "live-warmup") {
-      return "paused: warming live watchlist";
+      const remaining = formatRuntimeDuration(scanner.backgroundHoldRemainingMs);
+      return `warming live watchlist${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
     }
     if (blockedReason === "options-lane-backoff") {
       return "paused: options lane backoff";
@@ -47,13 +74,8 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (blockedReason === "options-lane-queued") {
       return "paused: options lane queued";
     }
-    const activeCount = Number(scanner.deepScanner?.activeCount);
-    if (Number.isFinite(activeCount) && activeCount > 0) {
-      return `${Math.round(activeCount)} metadata scan${Math.round(activeCount) === 1 ? "" : "s"} active; quote leases pending`;
-    }
-    const queuedCount = Number(scanner.deepScanner?.queuedCount);
-    if (Number.isFinite(queuedCount) && queuedCount > 0) {
-      return `${Math.round(queuedCount)} scan${Math.round(queuedCount) === 1 ? "" : "s"} queued`;
+    if (blockedReason === "line-cap-exhausted") {
+      return "paused: no scanner line capacity";
     }
     if (scanner.deepScanner?.draining) {
       return "deep scan starting";
@@ -234,6 +256,86 @@ const normalizeLinePressure = (admission) => {
   };
 };
 
+const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
+  const allocation =
+    lineUsageSnapshot?.allocation && typeof lineUsageSnapshot.allocation === "object"
+      ? lineUsageSnapshot.allocation
+      : {};
+  const policy =
+    lineUsageSnapshot?.policy && typeof lineUsageSnapshot.policy === "object"
+      ? lineUsageSnapshot.policy
+      : {};
+  const pressure =
+    admission?.pressure && typeof admission.pressure === "object"
+      ? admission.pressure
+      : {};
+  const activeLineCount = firstFiniteNumber(
+    allocation.activeLineCount,
+    admission?.activeLineCount,
+  );
+  const targetFillLines = firstFiniteNumber(
+    allocation.targetFillLines,
+    policy.targetFillLines,
+    admission?.budget?.targetFillLines,
+    admission?.budget?.maxLines,
+  );
+  const remainingToTargetLineCount = firstFiniteNumber(
+    allocation.remainingToTargetLineCount,
+    Number.isFinite(activeLineCount) && Number.isFinite(targetFillLines)
+      ? targetFillLines - activeLineCount
+      : null,
+  );
+
+  return {
+    activeLineCount,
+    targetFillLines,
+    remainingToTargetLineCount:
+      Number.isFinite(remainingToTargetLineCount)
+        ? Math.max(0, remainingToTargetLineCount)
+        : null,
+    protectedLineCount: firstFiniteNumber(
+      allocation.protectedLineCount,
+      pressure.protectedLineCount,
+    ),
+    visibleLineCount: firstFiniteNumber(
+      allocation.visibleLineCount,
+      pressure.visibleLineCount,
+    ),
+    scannerActiveLineCount: firstFiniteNumber(
+      allocation.scannerActiveLineCount,
+      pressure.scannerActiveLineCount,
+      admission?.flowScannerLineCount,
+    ),
+    scannerEffectiveLineCap: firstFiniteNumber(
+      allocation.scannerEffectiveLineCap,
+      pressure.scannerEffectiveLineCap,
+    ),
+    scannerRemainingLineCount: firstFiniteNumber(
+      allocation.scannerRemainingLineCount,
+      pressure.scannerRemainingLineCount,
+    ),
+    convenienceLineCount: firstFiniteNumber(
+      allocation.convenienceLineCount,
+      admission?.convenienceLineCount,
+      admission?.poolUsage?.convenience?.activeLineCount,
+      0,
+    ),
+    fillerLineCount: firstFiniteNumber(
+      allocation.fillerLineCount,
+      admission?.fillerLineCount,
+      0,
+    ),
+    bridgeActiveLineCount: firstFiniteNumber(
+      allocation.bridgeActiveLineCount,
+      lineUsageSnapshot?.bridge?.activeLineCount,
+    ),
+    bridgeLineBudget: firstFiniteNumber(
+      allocation.bridgeLineBudget,
+      lineUsageSnapshot?.bridge?.lineBudget,
+    ),
+  };
+};
+
 export const isOptionsFlowScannerRuntimeActive = (admission) => {
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
@@ -299,6 +401,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, null);
     const drift = normalizeLineDrift(lineUsageSnapshot);
     const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
+    const allocation = normalizeLineAllocation(null, lineUsageSnapshot);
     return {
       schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
       available: false,
@@ -314,6 +417,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       bridge,
       drift,
       warmup,
+      allocation,
       pressure: { state: "unknown", policy: "unknown", budgetSource: "unknown" },
       legacyNormalized: false,
     };
@@ -327,6 +431,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const bridge = normalizeBridgeLineUsage(lineUsageSnapshot, admission);
   const drift = normalizeLineDrift(lineUsageSnapshot);
   const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
+  const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -412,11 +517,23 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   };
   rows.push(total);
   const demandSummary = `${formatRuntimeCount(total.used)} / ${formatRuntimeCount(total.cap)}`;
+  const requestedLineCount = total.used;
+  const activeLineCount = total.used;
+  const pendingLineCount =
+    Number.isFinite(requestedLineCount) && Number.isFinite(bridge.used)
+      ? Math.max(0, requestedLineCount - bridge.used)
+      : Number.isFinite(warmup.pendingLineCount)
+        ? Math.max(0, warmup.pendingLineCount)
+        : 0;
 
   return {
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
     available: true,
-    summary: bridge.available ? bridge.summary : demandSummary,
+    summary: demandSummary,
+    activeLineCount,
+    requestedLineCount,
+    pendingLineCount,
+    requestedSummary: demandSummary,
     demandSummary,
     bridgeSummary: bridge.summary,
     warnings,
@@ -428,6 +545,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     bridge,
     drift,
     warmup,
+    allocation,
     pressure,
     legacyNormalized: legacyAdmission,
   };

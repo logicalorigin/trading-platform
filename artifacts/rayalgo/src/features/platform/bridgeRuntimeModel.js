@@ -1,6 +1,37 @@
 import { T } from "../../lib/uiTokens";
 import { getIbkrStreamStateMeta } from "./IbkrConnectionStatus";
 
+const STREAM_LIFECYCLE_ONLY_STATES = new Set(["checking", "reconnecting"]);
+const GATEWAY_DISCONNECT_REASONS = new Set([
+  "bridge_unreachable",
+  "gateway_socket_disconnected",
+  "gateway_server_disconnected",
+  "gateway_login_required",
+]);
+
+const hasGatewayConnectionProof = (bridge) =>
+  Boolean(
+    bridge?.healthFresh === true &&
+      bridge?.connected === true &&
+      bridge?.authenticated === true &&
+      bridge?.accountsLoaded !== false &&
+      bridge?.configuredLiveMarketDataMode !== false &&
+      bridge?.brokerServerConnected !== false &&
+      (bridge?.bridgeReachable === true || bridge?.socketConnected === true),
+  );
+
+const isGatewayDisconnectReason = (value) =>
+  GATEWAY_DISCONNECT_REASONS.has(String(value || ""));
+
+const isStreamLifecycleOnlyState = (bridge, streamMeta) =>
+  Boolean(
+    streamMeta &&
+      STREAM_LIFECYCLE_ONLY_STATES.has(streamMeta.status) &&
+      hasGatewayConnectionProof(bridge) &&
+      !isGatewayDisconnectReason(bridge?.strictReason) &&
+      !isGatewayDisconnectReason(bridge?.streamStateReason),
+  );
+
 export const bridgeRuntimeTone = (session) => {
   // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
   if (!session?.configured?.ibkr) return { label: "offline", color: T.red };
@@ -12,14 +43,17 @@ export const bridgeRuntimeTone = (session) => {
     bridge?.streamState,
     bridge?.streamStateReason,
   );
-  if (streamMeta?.status === "reconnecting") {
-    return {
-      label: streamMeta.label,
-      color: streamMeta.color,
-      pulse: streamMeta.pulse,
-    };
-  }
   if (bridge?.connected === false) {
+    if (
+      streamMeta?.status === "reconnecting" &&
+      isGatewayDisconnectReason(bridge?.streamStateReason || bridge?.strictReason)
+    ) {
+      return {
+        label: streamMeta.label,
+        color: streamMeta.color,
+        pulse: streamMeta.pulse,
+      };
+    }
     return {
       label: bridge?.lastError || bridge?.lastRecoveryError ? "error" : "offline",
       color: T.red,
@@ -46,6 +80,19 @@ export const bridgeRuntimeTone = (session) => {
       bridge?.liveMarketDataAvailable === false)
   ) {
     return { label: "delayed", color: T.amber };
+  }
+  if (
+    streamMeta?.status === "no-subscribers" &&
+    bridge?.authenticated &&
+    bridge?.healthFresh === true &&
+    bridge?.bridgeReachable === true &&
+    bridge?.socketConnected === true &&
+    bridge?.accountsLoaded !== false
+  ) {
+    return { label: "live", color: T.green };
+  }
+  if (isStreamLifecycleOnlyState(bridge, streamMeta)) {
+    return { label: "live", color: T.green };
   }
   if (streamMeta) {
     return {
@@ -131,7 +178,7 @@ export const bridgeRuntimeMessage = (session) => {
       streamState === "quiet" &&
       bridge?.streamStateReason === "no_active_quote_consumers"
     ) {
-      return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; waiting for a live quote subscription.`;
+      return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; live quote stream is standing by.`;
     }
     if (
       streamState === "quiet" &&

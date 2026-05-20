@@ -12,8 +12,6 @@ import {
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 
-const DIAGNOSTICS_TIMEOUT_MS = 4_000;
-
 const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
   watch: "--ra-pressure-watch",
@@ -270,10 +268,6 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
     let cancelled = false;
     const controller =
       typeof AbortController !== "undefined" ? new AbortController() : null;
-    const timeoutId =
-      controller && typeof setTimeout === "function"
-        ? setTimeout(() => controller.abort(), DIAGNOSTICS_TIMEOUT_MS)
-        : null;
     setDiagnosticsStatus("loading");
     setDiagnosticsPayload(null);
     readLatestDiagnosticsSnapshot(controller?.signal)
@@ -292,9 +286,6 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
     return () => {
       cancelled = true;
       controller?.abort();
-      if (timeoutId != null && typeof clearTimeout === "function") {
-        clearTimeout(timeoutId);
-      }
     };
   }, [open]);
 

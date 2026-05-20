@@ -48,6 +48,33 @@ test("platform root no longer depends on the retired RayAlgoPlatform module", ()
   assert.deepEqual(sourceHits, []);
 });
 
+test("vite keeps React and Query provider dependencies single-instanced", () => {
+  const source = readFileSync(
+    new URL("../../../vite.config.ts", import.meta.url),
+    "utf8",
+  );
+
+  [
+    "react/jsx-runtime",
+    "react/jsx-dev-runtime",
+    "react-dom/client",
+    "@tanstack/react-query",
+    "@tanstack/query-core",
+  ].forEach((moduleName) => {
+    assert.match(source, new RegExp(moduleName.replaceAll("/", "\\/")));
+  });
+
+  const dedupeBlock = source.match(/dedupe:\s*\[[\s\S]*?\]/)?.[0] ?? "";
+  [
+    "react",
+    "react-dom",
+    "@tanstack/react-query",
+    "@tanstack/query-core",
+  ].forEach((moduleName) => {
+    assert.match(dedupeBlock, new RegExp(moduleName.replaceAll("/", "\\/")));
+  });
+});
+
 test("flow scanner threshold changes are part of the live scanner effect contract", () => {
   const source = readFileSync(
     new URL("./useLiveMarketFlow.js", import.meta.url),
@@ -118,6 +145,10 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.match(source, /filterFlowTapeEvents\(rawUnusualEvents,\s*headerFlowTapeFilters\)/);
   assert.match(source, /flowTapeFiltersAreActive\(headerFlowTapeFilters\)/);
   assert.match(source, /FLOW FILTERED/);
+  assert.match(source, /label="Events"/);
+  assert.match(source, /label="Coverage"/);
+  assert.match(source, /unusualCoverageLabel/);
+  assert.doesNotMatch(source, /unusualItems\.length\} · \$\{unusualCoverage\.scannedSymbols/);
   assert.match(source, /mode:\s*FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
   assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
 });
@@ -336,6 +367,7 @@ test("Flow page scanner uses one broad scanner panel and no active-symbol merge"
   assert.match(source, /No prints match Flow filters/);
   assert.match(source, /flowQuality\?\.label === "Degraded"[\s\S]*\? "Degraded"/);
   assert.doesNotMatch(source, /flowStatus === "loading"[\s\S]*: "Degraded";/);
+  assert.doesNotMatch(source, /virtual"\} rows/);
   assert.match(source, /buildFlowTideFromEvents\(filtered\)/);
   assert.match(source, /buildTickerFlowFromEvents\(filtered/);
   assert.match(source, /buildMarketOrderFlowFromEvents\(filtered\)/);
@@ -415,14 +447,18 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
   assert.doesNotMatch(broadRuntime, /activeSymbols/);
   assert.match(broadRuntime, /FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
   assert.doesNotMatch(broadRuntime, /setFlowScannerControlState/);
-  assert.match(broadRuntime, /if \(!runtimeActive\)[\s\S]*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);
+  assert.doesNotMatch(
+    broadRuntime,
+    /if \(!runtimeActive\) \{\s*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/,
+  );
+  assert.match(broadRuntime, /clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);
   assert.match(sharedRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*true/);
   assert.match(broadRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*false/);
   assert.doesNotMatch(runtimeLayerSource, /activeSymbols=\{/);
   assert.doesNotMatch(platformAppSource, /broadFlowActiveSymbols/);
 });
 
-test("Broad scanner owns Flow and Market flow without app-wide always-on runtime", () => {
+test("Broad scanner owns Flow and resumes the header flow lane after startup", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const schedulerSource = readFileSync(
     new URL("./appWorkScheduler.js", import.meta.url),
@@ -451,12 +487,13 @@ test("Broad scanner owns Flow and Market flow without app-wide always-on runtime
   assert.ok(flowRuntimeProp, "PlatformApp must pass flowRuntimeEnabled");
   assert.match(flowRuntimeProp, /workSchedule\.streams\.sharedFlowRuntime/);
   assert.match(schedulerSource, /const firstScreenReady = screenWarmupPhase !== "initial"/);
-  assert.match(
-    schedulerSource,
-    /const broadFlowAllowed = Boolean\([\s\S]*sessionReady[\s\S]*firstScreenReady[\s\S]*visible[\s\S]*\(market \|\| flow\)[\s\S]*backgroundIbkr[\s\S]*\);/,
-  );
+  assert.match(schedulerSource, /backgroundResumeReady = false/);
+  assert.match(schedulerSource, /const broadFlowAggregateReaderAllowed = Boolean/);
+  assert.match(schedulerSource, /backgroundResumeReady && memoryAllowsForeground/);
+  assert.match(schedulerSource, /flow \|\| broadFlowAggregateReaderAllowed/);
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);
+  assert.match(source, /backgroundResumeReady\.broadFlow/);
   assert.match(apiIndexSource, /startOptionsFlowScanner\(\)/);
   assert.match(apiPlatformSource, /const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv\([\s\S]*"OPTIONS_FLOW_SCANNER_ALWAYS_ON"[\s\S]*true/);
   assert.doesNotMatch(source, /flowScanRuntimeEnabled/);
@@ -464,6 +501,8 @@ test("Broad scanner owns Flow and Market flow without app-wide always-on runtime
   assert.doesNotMatch(headerSource, /flowScanRuntimeEnabled/);
   assert.doesNotMatch(headerSource, /broadScanRuntimeActive/);
   assert.match(headerSource, /const broadScanSnapshotActive = broadScanEnabled && broadScanOwnerActive/);
+  assert.match(headerSource, /const broadScanSnapshotVisible = Boolean/);
+  assert.match(headerSource, /flowScanStale/);
   assert.match(
     headerSource,
     /const flowScanTone = flowScanHasError[\s\S]*flowScanDegraded[\s\S]*\? T\.amber[\s\S]*flowScanBusy[\s\S]*\? T\.accent/,
@@ -487,6 +526,67 @@ test("Broad scanner owns Flow and Market flow without app-wide always-on runtime
   assert.doesNotMatch(schedulerSource, /flowScreenActive/);
 });
 
+test("signal monitor symbols do not join live market-data fanout", () => {
+  const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const routerSource = readFileSync(
+    new URL("./PlatformScreenRouter.jsx", import.meta.url),
+    "utf8",
+  );
+  const runtimeSymbolBlock = source.match(
+    /const runtimeWatchlistSymbols = useMemo\([\s\S]*?const runtimeStreamedAggregateSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.ok(runtimeSymbolBlock, "PlatformApp must define runtime market-data symbols");
+  assert.doesNotMatch(runtimeSymbolBlock, /signalMonitorSymbols/);
+  assert.match(
+    routerSource,
+    /signalSuggestionSymbols=\{signalMonitorSymbols\}/,
+    "Signal symbols should stay available for signal UI suggestions",
+  );
+});
+
+test("initial market-data fanout starts with the visible watchlist slice", () => {
+  const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const quoteSymbolsBlock = source.match(
+    /const quoteSymbols = useMemo\(\(\) => \{[\s\S]*?\n  \}\);/,
+  )?.[0];
+  const sparklineSymbolsBlock = source.match(
+    /const sparklineSymbols = useMemo\(\(\) => \{[\s\S]*?\n  \}\);/,
+  )?.[0];
+  const aggregateSymbolsBlock = source.match(
+    /const streamedAggregateSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.match(source, /const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;/);
+  assert.match(
+    source,
+    /watchlistSymbols\.slice\(0,\s*INITIAL_MARKET_DATA_WATCHLIST_LIMIT\)/,
+  );
+  assert.match(source, /const broadMarketDataHydrationReady = Boolean/);
+  assert.match(source, /activeScreenBackgroundAllowed/);
+  assert.match(source, /screenWarmupPhase === "ready"/);
+  assert.match(source, /!memoryBlocksOperationalPreload/);
+  [quoteSymbolsBlock, sparklineSymbolsBlock, aggregateSymbolsBlock].forEach(
+    (block) => {
+      assert.ok(block, "PlatformApp must define staged market-data symbols");
+      assert.match(block, /visibleWatchlistMarketDataSymbols/);
+      assert.match(block, /broadMarketDataHydrationReady \? watchlistSymbols : \[\]/);
+    },
+  );
+  assert.match(
+    quoteSymbolsBlock ?? "",
+    /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? MARKET_SNAPSHOT_SYMBOLS[\s\S]*: \[\]/,
+  );
+  assert.match(
+    aggregateSymbolsBlock ?? "",
+    /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? MARKET_SNAPSHOT_SYMBOLS[\s\S]*: \[\]/,
+  );
+  assert.match(
+    sparklineSymbolsBlock ?? "",
+    /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? INDICES\.map/,
+  );
+});
+
 test("signal monitor display refreshes separately from evaluator cadence", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const stateQuery = source.match(
@@ -498,17 +598,24 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
 
   assert.match(source, /SIGNAL_MONITOR_DISPLAY_POLL_MS\s*=\s*15_000/);
   assert.match(source, /const signalMonitorDisplayPollMs = Math\.min\(/);
+  assert.match(source, /const signalMonitorRuntimePollMs = signalWorkFastScreen/);
+  assert.match(source, /const signalMonitorDisplayReady = Boolean/);
+  assert.match(source, /backgroundResumeReady\.signalDisplay/);
+  assert.match(source, /const signalMatrixWideScreen = Boolean/);
+  assert.match(source, /signalMatrixWideScreen \? 250 : 48/);
+  assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
+  assert.match(source, /backgroundResumeReady\.signalMatrix/);
   assert.match(
     stateQuery ?? "",
-    /refetchInterval:\s*pageVisible\s*\?\s*signalMonitorDisplayPollMs\s*:\s*false/,
+    /enabled:\s*signalMonitorDisplayReady/,
   );
   assert.match(
     eventsQuery ?? "",
-    /refetchInterval:\s*pageVisible\s*\?\s*signalMonitorDisplayPollMs\s*:\s*false/,
+    /enabled:\s*signalMonitorDisplayReady/,
   );
   assert.match(
     source,
-    /detail:\s*`\$\{Math\.round\(signalMonitorDisplayPollMs \/ 1000\)\}s`/,
+    /detail:\s*`\$\{Math\.round\(signalMonitorRuntimePollMs \/ 1000\)\}s`/,
   );
 });
 
@@ -574,7 +681,10 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.match(algoScreenSource, /useUpdateSignalOptionsExecutionProfile/);
   assert.match(algoScreenSource, /getGetSignalOptionsAutomationStateQueryKey/);
   assert.match(algoScreenSource, /getGetSignalOptionsPerformanceQueryKey/);
-  assert.match(algoCorpus, /Signals?\s+→\s+Action|Signals?\s+-&gt;\s+Action/);
+  assert.match(algoScreenSource, /shouldUseRemoteIbkrLaunchBrowser/);
+  assert.match(algoScreenSource, /useRemoteDesktopLaunch[\s\S]*\/api\/ibkr\/remote-launch/);
+  assert.match(algoScreenSource, /body:\s*JSON\.stringify\(\{\s*autoLogin:\s*false\s*\}\)/);
+  assert.match(algoCorpus, /Signals?\s+→\s+Action|Signals?\s+-&gt;\s+Action|Signals?\s+to\s+Action/);
   assert.match(algoCorpus, /signal-options-expanded-capacity/);
   assert.match(algoCorpus, /CREATE SHADOW DEPLOYMENT/);
   assert.match(algoCorpus, /Missing bid\/ask quote/);
@@ -583,6 +693,90 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.doesNotMatch(algoCorpus, /live_previewed/);
   assert.doesNotMatch(algoCorpus, /queryKey:\s*\[\s*"signal-options-state"/);
   assert.doesNotMatch(algoCorpus, /\/api\/algo\/deployments\/.*signal-options/);
+});
+
+test("operational screen warmup preloads code without mounting hidden pages", () => {
+  const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
+  const schedulerSource = readFileSync(new URL("./appWorkScheduler.js", import.meta.url), "utf8");
+  const codeWarmupEffect = appSource.match(
+    /useEffect\(\(\) => \{\s*if \(\s*!operationalCodePreloadReady[\s\S]*?\n  \}, \[operationalCodePreloadReady\]\);/,
+  )?.[0];
+
+  assert.ok(codeWarmupEffect);
+  assert.match(registrySource, /export const preloadScreenModule/);
+  assert.match(registrySource, /OPERATIONAL_SCREEN_PRELOAD_ORDER = \[[\s\S]*"flow"/);
+  assert.doesNotMatch(registrySource, /OPERATIONAL_SCREEN_WARM_MOUNT_ORDER/);
+  assert.match(registrySource, /flow:\s*\{\s*retainInactive:\s*true\s*\}/);
+  assert.match(codeWarmupEffect, /preloadScreenModule\(screenId\)/);
+  assert.match(codeWarmupEffect, /setScreenWarmupPhase\("ready"\)/);
+  assert.doesNotMatch(codeWarmupEffect, /setMountedScreens/);
+  assert.match(schedulerSource, /mountScreens:\s*false/);
+  assert.match(schedulerSource, /const backgroundHistoryReady = screenWarmupPhase === "ready"/);
+});
+
+test("retained hidden screens are isolated from shell and root render churn", () => {
+  const shellSource = readFileSync(new URL("./PlatformShell.jsx", import.meta.url), "utf8");
+  const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+
+  assert.match(shellSource, /const PlatformScreenStack = memo/);
+  assert.match(shellSource, /data-testid="platform-screen-stack"/);
+  assert.match(shellSource, /<PlatformScreenStack/);
+  assert.match(registrySource, /skipStableHiddenScreenRender/);
+  assert.match(
+    registrySource,
+    /prevProps\?\.isVisible === false && nextProps\?\.isVisible === false/,
+  );
+  assert.match(registrySource, /memo\(AccountScreen,\s*skipStableHiddenScreenRender\)/);
+  assert.match(appSource, /const renderScreenById = useCallback/);
+});
+
+test("screen activation animation replay avoids forced layout reads", () => {
+  const shellSource = readFileSync(new URL("./PlatformShell.jsx", import.meta.url), "utf8");
+  const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  assert.match(shellSource, /const \[activationToken, setActivationToken\] = useState\(0\)/);
+  assert.match(shellSource, /setActivationToken\(\(current\) => \(current \+ 1\) % 2\)/);
+  assert.match(shellSource, /activationToken === 1 \? "ra-screen-enter-alt" : null/);
+  assert.doesNotMatch(shellSource, /offsetWidth/);
+  assert.doesNotMatch(shellSource, /classList\.remove\("ra-screen-enter"\)/);
+  assert.match(cssSource, /@keyframes raScreenEnterAlt/);
+  assert.match(cssSource, /\.ra-screen-enter-alt\s*\{[\s\S]*animation-name:\s*raScreenEnterAlt/);
+});
+
+test("platform background work waits for active screen readiness", () => {
+  const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const routerSource = readFileSync(
+    new URL("./PlatformScreenRouter.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(appSource, /const \[screenReadiness, setScreenReadiness\] = useState\(\{\}\)/);
+  assert.match(appSource, /const activeScreenCriticalReady = Boolean/);
+  assert.match(appSource, /const activeScreenBackgroundAllowed = Boolean/);
+  assert.match(
+    appSource,
+    /const operationalCodePreloadReady = Boolean\(\s*pageVisible &&\s*firstScreenReady &&\s*activeScreenCriticalReady &&\s*sessionMetadataSettled/,
+  );
+  assert.match(appSource, /!activeScreenBackgroundAllowed/);
+  assert.match(appSource, /onScreenReadiness=\{handleScreenReadiness\}/);
+
+  [
+    "market",
+    "flow",
+    "gex",
+    "trade",
+    "account",
+    "research",
+    "algo",
+    "backtest",
+  ].forEach((screenId) => {
+    assert.match(
+      routerSource,
+      new RegExp(`onReadinessChange=\\{buildReadinessHandler\\("${screenId}"\\)\\}`),
+    );
+  });
 });
 
 test("platform root polling stops while the page is hidden", () => {
@@ -617,6 +811,106 @@ test("market data subscription provider does not fetch quote snapshots while hid
   assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(pageVisible && quoteSymbols\.length > 0\)/);
 });
 
+test("operational pages defer noncritical presentation work after first paint", () => {
+  const marketSource = readFileSync(
+    new URL("../../screens/MarketScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const flowSource = readFileSync(
+    new URL("../../screens/FlowScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const tradeSource = readFileSync(
+    new URL("../../screens/TradeScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const accountSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+
+  assert.match(flowSource, /const FLOW_ACTIVATION_DELAY_MS = 90/);
+  assert.match(flowSource, /data-testid="flow-screen-activation-shell"/);
+  assert.match(flowSource, /const FLOW_DEFERRED_PANELS_DELAY_MS = 500/);
+  assert.match(flowSource, /requestAnimationFrame\(\(\) => \{\s*secondFrameId = requestAnimationFrame/);
+  assert.match(flowSource, /FLOW_DEFERRED_PANELS_DELAY_MS/);
+  assert.match(tradeSource, /const TradeScreenInner =/);
+  assert.doesNotMatch(tradeSource, /TradeActivationFallback/);
+  assert.doesNotMatch(tradeSource, /data-testid="trade-screen-activation-shell"/);
+  assert.match(tradeSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
+  assert.match(accountSource, /const ACCOUNT_ACTIVATION_DELAY_MS = 90/);
+  assert.match(accountSource, /const AccountScreenInner =/);
+  assert.match(accountSource, /data-testid="account-screen-activation-shell"/);
+  assert.match(marketSource, /const MARKET_ACTIVATION_DELAY_MS = 70/);
+  assert.match(marketSource, /const MarketScreenInner =/);
+  assert.match(marketSource, /data-testid="market-screen-activation-shell"/);
+  assert.match(marketSource, /const LazyMultiChartGrid = lazyWithRetry/);
+  assert.match(marketSource, /const preloadMarketChartModules = \(\) =>/);
+  assert.match(marketSource, /preloadDynamicImport\(loadMultiChartGridModule/);
+  assert.doesNotMatch(marketSource, /preloadDynamicImport\(\(\) => import\("\.\.\/features\/charting\/ResearchChartSurface"\)/);
+  assert.doesNotMatch(marketSource, /preloadDynamicImport\(\(\) => import\("\.\.\/features\/trade\/TradeEquityPanel\.jsx"\)/);
+  assert.match(marketSource, /preloadMarketChartModules\(\)/);
+  assert.match(marketSource, /<Suspense fallback=\{<MarketChartGridFallback \/>\}>/);
+  assert.match(marketSource, /const \[chartGridReady, setChartGridReady\]/);
+  assert.match(marketSource, /if \(!chartGridReady \|\| secondaryPanelsReady\) return undefined;/);
+  assert.match(marketSource, /criticalReady: Boolean\(isVisible && chartGridReady\)/);
+  assert.match(marketSource, /onReady=\{handleMarketChartGridReady\}/);
+  assert.doesNotMatch(marketSource, /onReadinessChange\?\.\(\{ criticalReady: true \}\)/);
+  assert.doesNotMatch(marketSource, /import \{ MultiChartGrid \}/);
+  assert.match(marketSource, /secondaryPanelsReady \? \(\s*<MarketActivityPanelContainer/);
+  assert.match(marketSource, /const LazyMarketActivityPanel = lazyWithRetry/);
+  assert.match(marketSource, /<CardTitle>Market Activity<\/CardTitle>/);
+  assert.match(platformAppSource, /const BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS = 1_500/);
+  assert.match(platformAppSource, /backgroundResumeReady\.broadFlow/);
+  assert.match(platformAppSource, /broadFlowStartupDelayMs=\{0\}/);
+});
+
+test("Trade first render chunk lazy-loads noncritical panels", () => {
+  const tradeSource = readFileSync(
+    new URL("../../screens/TradeScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  [
+    "LazyMiniChartTickerSearch",
+    "LazyTradeOrderTicket",
+    "LazyTradeChainPanel",
+    "LazyTradeStrategyGreeksPanel",
+    "LazyTradeL2Panel",
+    "LazyTradePositionsPanel",
+    "LazyBottomSheet",
+    "LazyDrawer",
+  ].forEach((name) => {
+    assert.match(tradeSource, new RegExp(`const ${name} = lazyWithRetry`));
+  });
+  [
+    "features/trade/TradeOrderTicket.jsx",
+    "features/trade/TradeChainPanel.jsx",
+    "features/trade/TradeStrategyGreeksPanel.jsx",
+    "features/trade/TradeL2Panel.jsx",
+    "features/trade/TradePositionsPanel.jsx",
+    "features/platform/tickerSearch/TickerSearch.jsx",
+    "components/ui/bottom-sheet",
+    "components/ui/drawer",
+  ].forEach((modulePath) => {
+    assert.doesNotMatch(
+      tradeSource,
+      new RegExp(`from\\s+["']\\.\\./.*${modulePath.replaceAll("/", "\\/")}`),
+    );
+  });
+  assert.match(tradeSource, /const TradePanelLoadBoundary =/);
+  assert.match(tradeSource, /<PlatformErrorBoundary[\s\S]*fallbackRender=\{\(\{ resetErrorBoundary \}\) =>/);
+  assert.match(tradeSource, /<Suspense[\s\S]*<TradeDeferredPanel[\s\S]*testId=\{testId\}/);
+  assert.match(tradeSource, /const MemoTradeOrderTicket = memo[\s\S]*<TradePanelLoadBoundary[\s\S]*testId="trade-order-ticket"/);
+  assert.match(tradeSource, /const MemoTradeChainPanel = memo[\s\S]*<TradePanelLoadBoundary[\s\S]*testId="trade-options-chain-panel"/);
+  assert.match(tradeSource, /const MemoTradeL2Panel = memo[\s\S]*<TradePanelLoadBoundary[\s\S]*testId="trade-l2-panel"/);
+  assert.match(tradeSource, /const MemoTradePositionsPanel = memo[\s\S]*<TradePanelLoadBoundary[\s\S]*testId="trade-positions-panel"/);
+  assert.match(tradeSource, /open \? \(\s*<Suspense fallback=\{null\}>[\s\S]*<LazyMiniChartTickerSearch/);
+  assert.match(tradeSource, /phoneTicketSheetOpen \? \(\s*<Suspense fallback=\{null\}>[\s\S]*<LazyBottomSheet/);
+  assert.match(tradeSource, /phoneL2DrawerOpen \? \(\s*<Suspense fallback=\{null\}>[\s\S]*<LazyDrawer/);
+});
+
 test("hidden-mounted Trade keeps execution warm and gates analysis by visibility", () => {
   const tradeScreenSource = readFileSync(
     new URL("../../screens/TradeScreen.jsx", import.meta.url),
@@ -637,8 +931,9 @@ test("hidden-mounted Trade keeps execution warm and gates analysis by visibility
 
   assert.match(platformRouterSource, /isRetained=\{screen !== "trade"\}/);
   assert.match(tradeScreenSource, /const buildTradeRuntimeActivity =/);
-  assert.match(tradeScreenSource, /executionWarm:\s*screenWarm/);
+  assert.match(tradeScreenSource, /executionWarm:\s*Boolean\(isVisible\)/);
   assert.match(tradeScreenSource, /primaryVisible:\s*Boolean\(isVisible\)/);
+  assert.match(tradeScreenSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
   assert.match(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
   assert.match(tradeScreenSource, /const tradeExecutionWorkEnabled = tradeRuntimeActivity\.executionWarm/);
   assert.match(tradeScreenSource, /const tradeAnalysisWorkEnabled = tradeRuntimeActivity\.analysisVisible/);
@@ -646,7 +941,7 @@ test("hidden-mounted Trade keeps execution warm and gates analysis by visibility
   assert.match(tradeScreenSource, /analysisEnabled=\{tradeAnalysisWorkEnabled\}/);
   assert.match(tradeScreenSource, /executionEnabled=\{tradeExecutionBrokerStreamingEnabled\}/);
   assert.match(tradeScreenSource, /visibleEnabled=\{tradeAnalysisBrokerStreamingEnabled\}/);
-  assert.match(tradeScreenSource, /renderTradePanels \?/);
+  assert.match(tradeScreenSource, /const renderTradePanels = tradeRuntimeActivity\.secondaryPanelsVisible/);
   assert.match(tradeScreenSource, /<MemoTradeL2Panel[\s\S]*isVisible=\{isVisible\}/);
   assert.match(tradeScreenSource, /<MemoTradePositionsPanel[\s\S]*isVisible=\{isVisible\}/);
   assert.match(positionsSource, /isVisible = false/);
@@ -674,15 +969,15 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
 
   assert.match(
     algoSource,
-    /const draftsQuery = useListBacktestDraftStrategies\(\{[\s\S]*enabled:\s*Boolean\(isVisible\)/,
+    /const draftsQuery = useListBacktestDraftStrategies\(\{[\s\S]*enabled:\s*algoPostCriticalQueriesEnabled/,
   );
   assert.match(
     algoSource,
-    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*enabled:\s*Boolean\(isVisible\)/,
+    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*enabled:\s*algoCriticalQueriesEnabled/,
   );
   assert.match(
     algoSource,
-    /const eventsQuery = useListExecutionEvents\([\s\S]*enabled:\s*Boolean\(isVisible\)/,
+    /const eventsQuery = useListExecutionEvents\([\s\S]*enabled:\s*algoCriticalQueriesEnabled/,
   );
   assert.equal(
     (backtestSource.match(/useListBacktestDraftStrategies\(\{[\s\S]*?enabled:\s*Boolean\(isVisible\)/g) || []).length,

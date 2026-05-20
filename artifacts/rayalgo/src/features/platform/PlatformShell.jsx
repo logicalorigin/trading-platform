@@ -1,4 +1,5 @@
 import {
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -12,6 +13,7 @@ import {
   Ellipsis,
   LineChart,
   List,
+  PanelLeftClose,
   Tv,
   WalletCards,
 } from "lucide-react";
@@ -37,6 +39,15 @@ import {
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "flow", "trade", "account"];
+const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
+const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
+const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
+
+const clampWatchlistSidebarWidth = (value) =>
+  Math.min(
+    WATCHLIST_SIDEBAR_WIDTH_MAX,
+    Math.max(WATCHLIST_SIDEBAR_WIDTH_MIN, Number(value) || WATCHLIST_SIDEBAR_WIDTH_DEFAULT),
+  );
 const MOBILE_PRIMARY_SCREEN_SET = new Set(MOBILE_PRIMARY_SCREEN_IDS);
 const MOBILE_NAV_ICONS = {
   market: LineChart,
@@ -54,35 +65,31 @@ const BloombergLiveDock = lazyWithRetry(
  * activation, including retainInactive screens that stay mounted between
  * switches.
  *
- * The .ra-screen-enter CSS class carries the raScreenEnter keyframe.
+ * The .ra-screen-enter CSS class carries the screen-enter keyframe.
  * CSS animations don't natively re-fire on display:none → display:flex,
- * so we remove the class, force a layout reflow, and re-add the class
- * inside a useLayoutEffect each time `active` flips true. For initial
- * mount the class is on the element from the start, so the animation
- * fires once on its own.
+ * so activation toggles between two equivalent animation names. That
+ * replays the animation without a synchronous layout read.
  *
  * Honors prefers-reduced-motion / data-rayalgo-reduced-motion via the
  * media-query and html[data-rayalgo-reduced-motion="on"] overrides in
  * index.css — the animation becomes a no-op when motion is reduced.
  */
 const ScreenTransitionHost = ({ screenId, active, children }) => {
-  const ref = useRef(null);
-  useLayoutEffect(() => {
+  const [activationToken, setActivationToken] = useState(0);
+  useEffect(() => {
     if (!active) return;
-    const node = ref.current;
-    if (!node) return;
-    node.classList.remove("ra-screen-enter");
-    // Force reflow so the next class addition restarts the animation
-    // instead of being coalesced with the removal.
-    void node.offsetWidth;
-    node.classList.add("ra-screen-enter");
+    setActivationToken((current) => (current + 1) % 2);
   }, [active]);
   return (
     <div
-      ref={ref}
       data-testid={`screen-host-${screenId}`}
       aria-hidden={!active}
-      className="ra-screen-enter"
+      className={[
+        "ra-screen-enter",
+        activationToken === 1 ? "ra-screen-enter-alt" : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         flex: 1,
         width: "100%",
@@ -115,6 +122,48 @@ const ScreenReadyProbe = ({ screenId, active }) => {
 
   return null;
 };
+
+const PlatformScreenStack = memo(({
+  activeScreen,
+  mountedScreens,
+  renderScreenById,
+}) => (
+  <div
+    data-testid="platform-screen-stack"
+    style={{
+      flex: 1,
+      minWidth: 0,
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+    }}
+  >
+    {SCREENS.map(({ id }) => {
+      const active = activeScreen === id;
+      const renderPolicy = SCREEN_RENDER_POLICIES[id] || {};
+      const retainInactive =
+        renderPolicy.retainInactive === true &&
+        !TRANSIENT_SCREEN_IDS.has(id);
+      const shouldRender =
+        mountedScreens[id] && (active || retainInactive);
+      return shouldRender ? (
+        <ScreenTransitionHost
+          key={id}
+          screenId={id}
+          active={active}
+        >
+          <Suspense
+            fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
+          >
+            {renderScreenById(id)}
+            <ScreenReadyProbe screenId={id} active={active} />
+          </Suspense>
+        </ScreenTransitionHost>
+      ) : null;
+    })}
+  </div>
+));
+PlatformScreenStack.displayName = "PlatformScreenStack";
 
 const BloombergLiveDockLauncher = () => {
   const [mounted, setMounted] = useState(false);
@@ -464,6 +513,8 @@ export const PlatformShell = ({
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
+  watchlistSidebarWidth = WATCHLIST_SIDEBAR_WIDTH_DEFAULT,
+  setWatchlistSidebarWidth,
   onSelectSymbol,
   onFocusMarketChart,
   onSelectWatchlist,
@@ -505,8 +556,10 @@ export const PlatformShell = ({
   const [mobileActivityOpen, setMobileActivityOpen] = useState(false);
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
   const [mobileBloombergMounted, setMobileBloombergMounted] = useState(false);
+  const [watchlistResizing, setWatchlistResizing] = useState(false);
   const mobileAutoCollapseRef = useRef(false);
   const previousActiveScreenRef = useRef(activeScreen);
+  const resizeCleanupRef = useRef(null);
   const handleSetScreen = useCallback(
     (screenId) => {
       if (!screenId || screenId === activeScreen) {
@@ -525,6 +578,53 @@ export const PlatformShell = ({
     previousActiveScreenRef.current = activeScreen;
     markScreenSwitchStart(activeScreen, "programmatic");
   }, [activeScreen]);
+
+  useEffect(() => {
+    return () => {
+      resizeCleanupRef.current?.();
+    };
+  }, []);
+
+  const resolvedWatchlistSidebarWidth = clampWatchlistSidebarWidth(
+    watchlistSidebarWidth,
+  );
+  const handleWatchlistResizeStart = useCallback(
+    (event) => {
+      if (isPhone || sidebarCollapsed || !setWatchlistSidebarWidth) {
+        return;
+      }
+      event.preventDefault();
+      resizeCleanupRef.current?.();
+
+      const startX = event.clientX;
+      const startWidth = resolvedWatchlistSidebarWidth;
+      setWatchlistResizing(true);
+
+      const handlePointerMove = (moveEvent) => {
+        setWatchlistSidebarWidth(
+          clampWatchlistSidebarWidth(startWidth + moveEvent.clientX - startX),
+        );
+      };
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", cleanup);
+        window.removeEventListener("pointercancel", cleanup);
+        resizeCleanupRef.current = null;
+        setWatchlistResizing(false);
+      };
+
+      resizeCleanupRef.current = cleanup;
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", cleanup);
+      window.addEventListener("pointercancel", cleanup);
+    },
+    [
+      isPhone,
+      resolvedWatchlistSidebarWidth,
+      setWatchlistSidebarWidth,
+      sidebarCollapsed,
+    ],
+  );
 
   useEffect(() => {
     if (!isPhone) {
@@ -551,12 +651,12 @@ export const PlatformShell = ({
       : mobileSidebarWidth
     : sidebarCollapsed
       ? 40
-      : 248;
+      : resolvedWatchlistSidebarWidth;
   const headerGridTemplate = isPhone
     ? "minmax(0, 1fr)"
     : isNarrow
       ? "minmax(0, 1fr) auto"
-      : "auto minmax(0, 1fr) auto";
+      : "minmax(380px, 0.8fr) minmax(380px, 1fr) auto";
   const compactAccountId = primaryAccountId || accounts?.[0]?.id || MISSING_VALUE;
   const compactNetLiq = fmtCompactCurrency(
     primaryAccount?.netLiquidation,
@@ -600,8 +700,8 @@ export const PlatformShell = ({
         display: "grid",
         gridTemplateColumns: headerGridTemplate,
         alignItems: "center",
-        gap: sp(isPhone ? 2 : 6),
-        padding: sp(isPhone ? "3px 6px" : "6px 14px"),
+        gap: sp(isPhone ? 2 : 3),
+        padding: sp(isPhone ? "3px 6px" : "3px 8px"),
         minWidth: 0,
         background: T.bg1,
         borderBottom: "none",
@@ -735,8 +835,8 @@ export const PlatformShell = ({
                     ...motionVars({
                       accent: hasAlerts ? alertColor : T.accent,
                     }),
-                    padding: sp("8px 14px"),
-                    minHeight: dim(38),
+                    padding: sp("5px 12px"),
+                    minHeight: dim(30),
                     fontSize: textSize("paragraphMuted"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
@@ -795,7 +895,7 @@ export const PlatformShell = ({
               overflowX: "auto",
             }}
           >
-            <HeaderKpiStripComponent onSelect={onSelectSymbol} />
+            <HeaderKpiStripComponent onSelect={onSelectSymbol} dense />
           </div>
 
           <div
@@ -805,7 +905,7 @@ export const PlatformShell = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "flex-end",
-              gap: sp(4),
+              gap: sp(3),
               minWidth: 0,
               flexWrap: "nowrap",
               overflowX: "auto",
@@ -817,6 +917,7 @@ export const PlatformShell = ({
               primaryAccount={primaryAccount}
               onSelectAccount={onSelectAccount}
               maskValues={maskAccountValues}
+              dense
             />
             <HeaderStatusClusterComponent
               session={session}
@@ -824,6 +925,7 @@ export const PlatformShell = ({
               bridgeTone={bridgeTone}
               theme={theme}
               onToggleTheme={onToggleTheme}
+              dense
             />
           </div>
         </>
@@ -902,9 +1004,10 @@ export const PlatformShell = ({
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
       {!isPhone ? (
       <div
+        data-testid="platform-watchlist-sidebar"
         style={{
           width: sidebarWidth,
-          transition: "width 0.2s",
+          transition: watchlistResizing ? "none" : "width 0.2s",
           flexShrink: 0,
           overflow: "hidden",
           position: isPhone ? "fixed" : undefined,
@@ -947,26 +1050,6 @@ export const PlatformShell = ({
           </div>
         ) : (
           <div style={{ position: "relative", height: "100%" }}>
-            <button
-              onClick={() => setSidebarCollapsed(true)}
-              aria-label={isPhone ? "Close watchlist panel" : "Collapse watchlist"}
-              style={{
-                position: "absolute",
-                top: isPhone ? 10 : 8,
-                right: 6,
-                zIndex: 2,
-                width: dim(isPhone ? 28 : 22),
-                height: dim(isPhone ? 28 : 22),
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(RADII.sm),
-                background: T.bg1,
-                color: T.textSec,
-                cursor: "pointer",
-                fontSize: fs(isPhone ? 13 : 10),
-              }}
-            >
-              {isPhone ? "×" : "◂"}
-            </button>
             <WatchlistComponent
               watchlists={watchlists}
               activeWatchlist={activeWatchlist}
@@ -986,45 +1069,63 @@ export const PlatformShell = ({
               onRemoveSymbol={onRemoveSymbolFromWatchlist}
               onSignalAction={onSignalAction}
               busy={Boolean(watchlistsBusy?.mutating)}
+              headerAccessory={
+                <AppTooltip content="Collapse watchlist">
+                  <button
+                    type="button"
+                    data-testid="watchlist-sidebar-collapse"
+                    onClick={() => setSidebarCollapsed(true)}
+                    aria-label="Collapse watchlist"
+                    style={{
+                      width: dim(28),
+                      height: dim(32),
+                      display: "grid",
+                      placeItems: "center",
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(RADII.sm),
+                      background: "transparent",
+                      color: T.textSec,
+                      cursor: "pointer",
+                      fontFamily: T.sans,
+                      fontSize: fs(11),
+                      lineHeight: 1,
+                    }}
+                    className="ra-interactive"
+                  >
+                    <PanelLeftClose size={14} strokeWidth={1.8} />
+                  </button>
+                </AppTooltip>
+              }
+            />
+            <button
+              type="button"
+              data-testid="watchlist-sidebar-resize-handle"
+              aria-label="Resize watchlist sidebar"
+              onPointerDown={handleWatchlistResizeStart}
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                width: dim(8),
+                height: "100%",
+                border: "none",
+                padding: 0,
+                background: "transparent",
+                cursor: "col-resize",
+                touchAction: "none",
+                zIndex: 3,
+              }}
             />
           </div>
         )}
       </div>
       ) : null}
 
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {SCREENS.map(({ id }) => {
-          const active = activeScreen === id;
-          const renderPolicy = SCREEN_RENDER_POLICIES[id] || {};
-          const retainInactive =
-            renderPolicy.retainInactive === true &&
-            !TRANSIENT_SCREEN_IDS.has(id);
-          const shouldRender =
-            mountedScreens[id] && (active || retainInactive);
-          return shouldRender ? (
-            <ScreenTransitionHost
-              key={id}
-              screenId={id}
-              active={active}
-            >
-              <Suspense
-                fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
-              >
-                {renderScreenById(id)}
-                <ScreenReadyProbe screenId={id} active={active} />
-              </Suspense>
-            </ScreenTransitionHost>
-          ) : null;
-        })}
-      </div>
+      <PlatformScreenStack
+        activeScreen={activeScreen}
+        mountedScreens={mountedScreens}
+        renderScreenById={renderScreenById}
+      />
     </div>
 
     {isPhone ? (

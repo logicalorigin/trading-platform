@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  applyAccountPageCriticalPayloadToCache,
   applyAccountPageLivePayloadToCache,
   applyAccountPagePayloadToCache,
   applyIbkrAccountPayloadToCache,
@@ -9,6 +10,7 @@ import {
   flushAccountPagePayloadQueue,
   getAccountPositionRowSnapshot,
   getAccountPageStreamUrl,
+  getAlgoCockpitStreamUrl,
   getShadowAccountStreamUrl,
   getOptionChainContractExpirationKey,
   groupOptionChainContractsByExpiration,
@@ -81,6 +83,17 @@ test("account page stream URL carries visible account page inputs", () => {
   );
 });
 
+test("algo cockpit stream URL carries mode and focused deployment", () => {
+  assert.equal(
+    getAlgoCockpitStreamUrl({
+      deploymentId: "dep-123",
+      mode: "live",
+      eventLimit: 20,
+    }),
+    "/api/streams/algo/cockpit?deploymentId=dep-123&mode=live&eventLimit=20",
+  );
+});
+
 test("account page stream is owned by the visible account screen", () => {
   const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const accountScreenSource = readFileSync(
@@ -91,12 +104,42 @@ test("account page stream is owned by the visible account screen", () => {
   assert.match(accountScreenSource, /useAccountPageSnapshotStream/);
   assert.doesNotMatch(platformAppSource, /useShadowAccountSnapshotStream/);
   assert.doesNotMatch(accountScreenSource, /useShadowAccountSnapshotStream/);
+  assert.match(platformAppSource, /enabled:\s*workSchedule\.streams\.accountRealtime/);
   assert.match(
     accountScreenSource,
     /enabled:\s*accountPageStreamEnabled/,
   );
   assert.match(accountScreenSource, /isVisible && accountQueriesEnabled/);
-  assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountFresh/);
+  assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountCriticalFresh/);
+  assert.match(accountScreenSource, /const criticalAccountQueriesEnabled = Boolean/);
+  assert.match(accountScreenSource, /const liveAccountQueriesEnabled = Boolean/);
+  assert.match(accountScreenSource, /const derivedAccountQueriesEnabled = Boolean/);
+});
+
+test("account page owns one visible option quote stream for positions surfaces", () => {
+  const accountScreenSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const todaySource = readFileSync(
+    new URL("../../screens/account/TodaySnapshotPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const positionsSource = readFileSync(
+    new URL("../../screens/account/PositionsPanel.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(accountScreenSource, /buildPositionOptionQuoteGroups/);
+  assert.match(accountScreenSource, /buildPositionOptionQuoteGroups\(openAccountPositions\)/);
+  assert.match(accountScreenSource, /currentPositionsCount=\{openAccountPositions\.length\}/);
+  assert.match(accountScreenSource, /<PositionOptionQuoteStreams/);
+  assert.match(accountScreenSource, /groups=\{accountOptionQuoteGroups\}/);
+  assert.match(accountScreenSource, /enabled=\{accountLiveOptionQuotesEnabled\}/);
+  assert.match(accountScreenSource, /streamLiveOptionQuotes=\{false\}/);
+  assert.match(todaySource, /getOpenPositionRows\(positionsQuery\?\.data\?\.positions \|\| \[\]\)/);
+  assert.match(todaySource, /streamLiveOptionQuotes = true/);
+  assert.match(positionsSource, /streamLiveOptionQuotes = true/);
 });
 
 test("broker account and order streams refresh freshness on readiness and poll success", () => {
@@ -125,20 +168,61 @@ test("shadow account stream refreshes freshness on readiness and poll success", 
 
 test("account page stream refreshes freshness on page snapshots", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const accountPageHook = source.match(
+    /export const useAccountPageSnapshotStream = \([\s\S]*?\nexport const applyAlgoCockpitPayloadToCache/,
+  )?.[0];
 
   assert.match(source, /source\.addEventListener\("bootstrap", handleBootstrap as EventListener\)/);
+  assert.match(source, /source\.addEventListener\("critical", handleCritical as EventListener\)/);
   assert.match(source, /source\.addEventListener\("live", handleLive as EventListener\)/);
   assert.match(source, /source\.addEventListener\("derived", handleDerived as EventListener\)/);
   assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "bootstrap", payload\)/);
+  assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "critical", payload\)/);
   assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "live", payload\)/);
   assert.match(source, /queueAccountPagePayloadToCache\(queryClient, "derived", payload\)/);
   assert.match(source, /requestAnimationFrame/);
+  assert.match(source, /tradeFilters\?\.from,\s*tradeFilters\?\.assetClass,/);
   assert.match(source, /payload\.stream !== "account-page-bootstrap"/);
+  assert.match(source, /payload\.stream !== "account-page-critical"/);
   assert.match(source, /payload\.stream !== "account-page-live"/);
   assert.match(source, /payload\.stream !== "account-page-derived"/);
   assert.match(source, /export const useAccountPositionRow/);
   assert.match(source, /export const useAccountSummaryField/);
   assert.match(source, /export const useBrokerFreshnessFor/);
+  assert.ok(accountPageHook);
+  assert.doesNotMatch(accountPageHook, /addEventListener\("ready", markFresh/);
+});
+
+test("account page derived freshness uses the slower derived stream cadence", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS = 35_000;/);
+  assert.match(
+    source,
+    /accountDerivedFresh:[\s\S]*ACCOUNT_PAGE_DERIVED_STREAM_FRESH_MS/,
+  );
+});
+
+test("algo cockpit stream hydrates query caches and gates fallback polling", () => {
+  const liveStreamsSource = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const algoScreenSource = readFileSync(
+    new URL("../../screens/AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(liveStreamsSource, /export const useAlgoCockpitStream/);
+  assert.match(liveStreamsSource, /getListAlgoDeploymentsQueryKey\(\)/);
+  assert.match(liveStreamsSource, /getListExecutionEventsQueryKey/);
+  assert.match(liveStreamsSource, /getGetAlgoDeploymentCockpitQueryKey/);
+  assert.match(liveStreamsSource, /getGetSignalOptionsAutomationStateQueryKey/);
+  assert.match(liveStreamsSource, /getGetSignalOptionsPerformanceQueryKey/);
+  assert.match(liveStreamsSource, /getGetSignalMonitorProfileQueryKey/);
+  assert.match(algoScreenSource, /useAlgoCockpitStream/);
+  assert.match(algoScreenSource, /algoRoutineRefetchInterval/);
+  assert.match(algoScreenSource, /algoCriticalQueriesEnabled/);
+  assert.match(algoScreenSource, /algoDerivedQueriesEnabled/);
+  assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoCriticalFresh/);
+  assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoFullFresh/);
 });
 
 test("platform root subscribes only to coarse broker stream freshness", () => {
@@ -674,6 +758,56 @@ test("queueAccountPagePayloadToCache coalesces account page live writes until fr
   );
 });
 
+test("applyAccountPageCriticalPayloadToCache seeds account operational queries", () => {
+  const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
+  const positionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const ordersKey = [
+    "/api/accounts/combined/orders",
+    { mode: "paper", tab: "working" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([
+    summaryKey,
+    positionsKey,
+    ordersKey,
+    ["/api/accounts/combined/allocation", { mode: "paper" }],
+    ["/api/accounts/combined/risk", { mode: "paper" }],
+  ]);
+
+  applyAccountPageCriticalPayloadToCache(queryClient as any, {
+    stream: "account-page-critical",
+    accountId: "combined",
+    mode: "paper",
+    orderTab: "working",
+    assetClass: "Options",
+    updatedAt: "2026-05-12T00:00:00.000Z",
+    summary: {
+      accountId: "combined",
+      metrics: { netLiquidation: { value: 4 } },
+    },
+    positions: {
+      accountId: "combined",
+      positions: [{ id: "P1", symbol: "SPY", mark: 5 }],
+    },
+    orders: {
+      accountId: "combined",
+      tab: "working",
+      orders: [{ id: "O1", symbol: "SPY", status: "working" }],
+    },
+    allocation: { accountId: "combined", assetClass: [] },
+    risk: { accountId: "combined", margin: {} },
+  } as any);
+
+  assert.equal(
+    (writes.get(JSON.stringify(summaryKey)) as any)?.metrics.netLiquidation.value,
+    4,
+  );
+  assert.equal((writes.get(JSON.stringify(positionsKey)) as any)?.positions[0].id, "P1");
+  assert.equal((writes.get(JSON.stringify(ordersKey)) as any)?.orders[0].id, "O1");
+});
+
 test("applyAccountPageLivePayloadToCache patches performance-calendar equity ranges from live summary", () => {
   const equityKey = [
     "/api/accounts/shadow/equity-history",
@@ -762,6 +896,94 @@ test("applyAccountPageLivePayloadToCache patches performance-calendar equity ran
   assert.equal(patched.liveTerminalIncluded, true);
   assert.equal(patched.terminalPointSource, "shadow_ledger");
   assert.equal(Number(patched.points[1].returnPercent.toFixed(4)), 0.3738);
+});
+
+test("applyAccountPageLivePayloadToCache preserves 1D benchmark overlays", () => {
+  const benchmarkKey = [
+    "/api/accounts/combined/equity-history",
+    { mode: "paper", range: "1D", benchmark: "SPY" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(benchmarkKey),
+      {
+        accountId: "combined",
+        range: "1D",
+        currency: "USD",
+        flexConfigured: true,
+        lastFlexRefreshAt: null,
+        benchmark: "SPY",
+        asOf: "2026-05-13T14:00:00.000Z",
+        latestSnapshotAt: "2026-05-13T14:00:00.000Z",
+        isStale: false,
+        staleReason: null,
+        terminalPointSource: "live_account_summary",
+        liveTerminalIncluded: false,
+        points: [
+          {
+            timestamp: "2026-05-13T14:00:00.000Z",
+            netLiquidation: 100_000,
+            currency: "USD",
+            source: "IBKR_ACCOUNT_SUMMARY",
+            deposits: 0,
+            withdrawals: 0,
+            dividends: 0,
+            fees: 0,
+            returnPercent: 0,
+            benchmarkPercent: 0,
+          },
+        ],
+        events: [],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient([benchmarkKey], initialData);
+
+  applyAccountPageLivePayloadToCache(queryClient as any, {
+    stream: "account-page-live",
+    accountId: "combined",
+    mode: "paper",
+    orderTab: "working",
+    assetClass: null,
+    updatedAt: "2026-05-13T14:00:05.000Z",
+    summary: {
+      accountId: "combined",
+      isCombined: true,
+      mode: "paper",
+      currency: "USD",
+      accounts: [],
+      updatedAt: "2026-05-13T14:00:05.000Z",
+      fx: { baseCurrency: "USD", timestamp: null, rates: {}, warning: null },
+      badges: {},
+      metrics: {
+        netLiquidation: {
+          value: 101_250,
+          currency: "USD",
+          source: "IBKR_ACCOUNT_SUMMARY",
+          field: "netLiquidation",
+          updatedAt: "2026-05-13T14:00:05.000Z",
+        },
+      },
+    },
+    intradayEquity: {
+      accountId: "combined",
+      range: "1D",
+      currency: "USD",
+      benchmark: null,
+      points: [{ timestamp: "intraday-replacement" }],
+      events: [],
+    },
+    allocation: { accountId: "combined", assetClass: [] },
+    positions: { accountId: "combined", positions: [] },
+    orders: { accountId: "combined", tab: "working", orders: [] },
+    risk: { accountId: "combined", margin: {} },
+  } as any);
+
+  const patched = writes.get(JSON.stringify(benchmarkKey)) as any;
+  assert.equal(patched.benchmark, "SPY");
+  assert.equal(patched.points.length, 1);
+  assert.equal(patched.points[0].benchmarkPercent, 0);
+  assert.notEqual(patched.points[0].timestamp, "intraday-replacement");
 });
 
 test("applyIbkrAccountPayloadToCache patches scoped account positions from stream", () => {
