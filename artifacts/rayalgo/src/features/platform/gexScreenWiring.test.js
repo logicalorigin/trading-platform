@@ -11,7 +11,10 @@ test("GEX is registered as a native platform screen", () => {
 
   assert.match(registry, /GexScreen/);
   assert.match(registry, /\{ id: "gex", label: "GEX"/);
-  assert.match(registry, /export const MemoGexScreen = memo\(GexScreen\)/);
+  assert.match(
+    registry,
+    /export const MemoGexScreen = memo\(GexScreen,\s*skipStableHiddenScreenRender\)/,
+  );
   assert.match(router, /case "gex":/);
   assert.match(router, /<MemoGexScreen/);
 });

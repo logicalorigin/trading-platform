@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 const unitTestFiles = [
   "../../lib/account-math/src/index.test.ts",
   "../../lib/backtest-core/src/engine.test.ts",
+  "../../lib/backtest-core/src/signal-options.test.ts",
   "src/lib/runtime.test.ts",
   "src/providers/ibkr/bridge-client.test.ts",
   "src/providers/polygon/market-data.test.ts",

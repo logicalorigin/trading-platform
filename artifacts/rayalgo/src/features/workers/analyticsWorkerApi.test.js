@@ -70,7 +70,7 @@ test("flow chart worker signature changes when event chart times change", () => 
   assert.notEqual(firstSignature, nextSignature);
 });
 
-test("analytics worker flow overlay model renders volume from confirmed trades only", () => {
+test("analytics worker flow overlay model preserves basis-aware volume buckets", () => {
   const { events } = flowEventsToChartEventConversion(
     [
       {
@@ -136,10 +136,12 @@ test("analytics worker flow overlay model renders volume from confirmed trades o
     model,
   });
 
-  assert.equal(overlayModel.buckets.length, 1);
+  assert.equal(overlayModel.buckets.length, 2);
   assert.equal(overlayModel.buckets[0].sourceBasis, "confirmed_trade");
   assert.equal(overlayModel.buckets[0].totalPremium, 125000);
-  assert.equal(overlayModel.tooltips.length, 1);
+  assert.equal(overlayModel.buckets[1].sourceBasis, "snapshot_activity");
+  assert.equal(overlayModel.buckets[1].totalPremium, 10000000);
+  assert.equal(overlayModel.tooltips.length, 2);
   assert.equal(overlayModel.diagnostics.snapshotActivityFlowEventCount, 1);
 });
 
