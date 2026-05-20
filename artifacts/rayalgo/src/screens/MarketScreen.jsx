@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Suspense,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,8 +19,6 @@ import {
   useMarketFlowSnapshotForStoreKey,
 } from "../features/platform/marketFlowStore";
 import { useSignalMonitorSnapshot } from "../features/platform/signalMonitorStore";
-import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
-import { MarketActivityPanel } from "../features/market/MarketActivityPanel";
 import {
   MACRO_TICKERS,
   RATES_PROXIES,
@@ -64,13 +63,102 @@ import {
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 
-
-const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
-  return <MultiChartGrid {...props} />;
-});
 
 const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
+const MARKET_ACTIVATION_DELAY_MS = 70;
+
+const loadMultiChartGridModule = () =>
+  import("../features/market/MultiChartGrid.jsx").then((module) => ({
+    default: module.MultiChartGrid,
+  }));
+
+const loadMarketActivityPanelModule = () =>
+  import("../features/market/MarketActivityPanel").then((module) => ({
+    default: module.MarketActivityPanel,
+  }));
+
+const preloadMarketChartModules = () => {
+  preloadDynamicImport(loadMultiChartGridModule, { label: "MultiChartGrid" });
+};
+
+const LazyMultiChartGrid = lazyWithRetry(
+  loadMultiChartGridModule,
+  { label: "MultiChartGrid" },
+);
+
+const LazyMarketActivityPanel = lazyWithRetry(
+  loadMarketActivityPanelModule,
+  { label: "MarketActivityPanel" },
+);
+
+const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
+  return <LazyMultiChartGrid {...props} />;
+});
+
+const MarketChartGridFallback = () => (
+  <Card
+    style={{
+      minHeight: dim(340),
+      display: "grid",
+      alignContent: "start",
+      gap: sp(10),
+    }}
+  >
+    <CardTitle>Market Charts</CardTitle>
+    <div
+      aria-hidden="true"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gap: sp(8),
+      }}
+    >
+      {[0, 1, 2].map((index) => (
+        <div
+          key={index}
+          style={{
+            minHeight: dim(220),
+            borderRadius: dim(RADII.sm),
+            background: T.bg2,
+          }}
+        />
+      ))}
+    </div>
+  </Card>
+);
+
+const MarketActivityPanelFallback = () => (
+  <Card
+    style={{
+      minHeight: dim(340),
+      display: "grid",
+      alignContent: "start",
+      gap: sp(10),
+    }}
+  >
+    <CardTitle>Market Activity</CardTitle>
+    <div
+      aria-hidden="true"
+      style={{
+        display: "grid",
+        gap: sp(8),
+      }}
+    >
+      {[0, 1, 2, 3].map((index) => (
+        <div
+          key={index}
+          style={{
+            height: dim(index === 0 ? 44 : 32),
+            borderRadius: dim(RADII.sm),
+            background: T.bg2,
+          }}
+        />
+      ))}
+    </div>
+  </Card>
+);
 
 const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer({
   isVisible,
@@ -98,37 +186,56 @@ const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer(
   });
 
   return (
-    <MarketActivityPanel
-      notifications={marketAlertsSnapshot.items}
-      highlightedUnusualFlow={highlightedUnusualFlow}
-      signalEvents={signalMonitorSnapshot.events || []}
-      signalStates={signalMonitorSnapshot.states || []}
-      signalMonitorProfile={signalMonitorSnapshot.profile || null}
-      signalMonitorPending={Boolean(signalMonitorSnapshot.pending)}
-      signalMonitorDegraded={Boolean(signalMonitorSnapshot.degraded)}
-      watchlists={watchlists}
-      newsItems={newsItems}
-      calendarItems={calendarItems}
-      onSymClick={onSymClick}
-      onSignalAction={onSignalAction}
-      onScanNow={onScanNow}
-      onToggleMonitor={onToggleMonitor}
-      onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-      onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-      unusualThreshold={unusualThreshold}
-      onChangeUnusualThreshold={onChangeUnusualThreshold}
-      flowStatus={flowStatus}
-      flowProviderSummary={flowProviderSummary}
-      flowSnapshotSource={flowSnapshotSource}
-      appliedUnusualThreshold={
-        Number.isFinite(unusualThreshold) ? unusualThreshold : null
-      }
-      appliedUnusualThresholdConsistent
-    />
+    <Suspense fallback={<MarketActivityPanelFallback />}>
+      <LazyMarketActivityPanel
+        notifications={marketAlertsSnapshot.items}
+        highlightedUnusualFlow={highlightedUnusualFlow}
+        signalEvents={signalMonitorSnapshot.events || []}
+        signalStates={signalMonitorSnapshot.states || []}
+        signalMonitorProfile={signalMonitorSnapshot.profile || null}
+        signalMonitorPending={Boolean(signalMonitorSnapshot.pending)}
+        signalMonitorDegraded={Boolean(signalMonitorSnapshot.degraded)}
+        watchlists={watchlists}
+        newsItems={newsItems}
+        calendarItems={calendarItems}
+        onSymClick={onSymClick}
+        onSignalAction={onSignalAction}
+        onScanNow={onScanNow}
+        onToggleMonitor={onToggleMonitor}
+        onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+        onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+        unusualThreshold={unusualThreshold}
+        onChangeUnusualThreshold={onChangeUnusualThreshold}
+        flowStatus={flowStatus}
+        flowProviderSummary={flowProviderSummary}
+        flowSnapshotSource={flowSnapshotSource}
+        appliedUnusualThreshold={
+          Number.isFinite(unusualThreshold) ? unusualThreshold : null
+        }
+        appliedUnusualThresholdConsistent
+      />
+    </Suspense>
   );
 });
 
-export const MarketScreen = ({
+const MarketActivationFallback = () => (
+  <div
+    data-testid="market-screen-activation-shell"
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "grid",
+      padding: sp("16px 20px"),
+      background: T.bg0,
+      color: T.textDim,
+      fontFamily: T.sans,
+    }}
+  >
+    <MarketChartGridFallback />
+  </div>
+);
+
+const MarketScreenInner = ({
   sym,
   marketSymPing,
   onSymClick,
@@ -144,6 +251,7 @@ export const MarketScreen = ({
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
   watchlists = [],
+  onReadinessChange,
 }) => {
   const queryClient = useQueryClient();
   const viewportSize = useViewportSize();
@@ -161,12 +269,25 @@ export const MarketScreen = ({
       : 1;
   });
   const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
+  const [chartGridReady, setChartGridReady] = useState(false);
   const [secondaryPanelsReady, setSecondaryPanelsReady] = useState(false);
   useEffect(() => {
-    if (!isVisible || secondaryPanelsReady) return undefined;
+    if (!isVisible) {
+      setChartGridReady(false);
+      setSecondaryPanelsReady(false);
+      return undefined;
+    }
+    if (!chartGridReady || secondaryPanelsReady) return undefined;
     const timerId = window.setTimeout(() => setSecondaryPanelsReady(true), 600);
     return () => window.clearTimeout(timerId);
-  }, [isVisible, secondaryPanelsReady]);
+  }, [chartGridReady, isVisible, secondaryPanelsReady]);
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible && chartGridReady),
+      derivedReady: Boolean(isVisible && chartGridReady && secondaryPanelsReady),
+      backgroundAllowed: Boolean(isVisible && chartGridReady && secondaryPanelsReady),
+    });
+  }, [chartGridReady, isVisible, onReadinessChange, secondaryPanelsReady]);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
   }, [activityPanelWidth]);
@@ -217,6 +338,9 @@ export const MarketScreen = ({
   const handleChangeUnusualThreshold = useCallback((next) => {
     if (!Number.isFinite(next) || next <= 0) return;
     setUnusualThreshold(clampNumber(next, 0.1, 100));
+  }, []);
+  const handleMarketChartGridReady = useCallback(() => {
+    setChartGridReady(true);
   }, []);
   const marketChartResetKey = useMemo(
     () => `${sym || ""}:${symbols.join(",")}:${isVisible ? "visible" : "hidden"}`,
@@ -582,18 +706,21 @@ export const MarketScreen = ({
               }
               minHeight={dim(340)}
             >
-              <MemoMultiChartGrid
-                key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
-                activeSym={sym}
-                externalSelection={marketSymPing}
-                onSymClick={onChartFocus || onSymClick}
-                watchlistSymbols={symbols}
-                popularTickers={stablePopularTickers}
-                signalSuggestionSymbols={signalSuggestionSymbols}
-                stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-                isVisible={isVisible}
-                unusualThreshold={chartFlowUnusualThreshold}
-              />
+              <Suspense fallback={<MarketChartGridFallback />}>
+                <MemoMultiChartGrid
+                  key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
+                  activeSym={sym}
+                  externalSelection={marketSymPing}
+                  onSymClick={onChartFocus || onSymClick}
+                  watchlistSymbols={symbols}
+                  popularTickers={stablePopularTickers}
+                  signalSuggestionSymbols={signalSuggestionSymbols}
+                  stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+                  isVisible={isVisible}
+                  unusualThreshold={chartFlowUnusualThreshold}
+                  onReady={handleMarketChartGridReady}
+                />
+              </Suspense>
             </PlatformErrorBoundary>
           ) : (
             <div style={{ minHeight: dim(340) }} />
@@ -648,24 +775,28 @@ export const MarketScreen = ({
                 }
                 minHeight={dim(340)}
               >
-                <MarketActivityPanelContainer
-                  isVisible={isVisible}
-                  highlightedUnusualFlow={highlightedUnusualFlow}
-                  newsItems={newsItems}
-                  calendarItems={calendarItems}
-                  onSymClick={onSymClick}
-                  onSignalAction={onSignalAction}
-                  onScanNow={onScanNow}
-                  onToggleMonitor={onToggleMonitor}
-                  onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-                  onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-                  watchlists={watchlists}
-                  unusualThreshold={unusualThreshold}
-                  onChangeUnusualThreshold={handleChangeUnusualThreshold}
-                  flowStatus={flowStatus}
-                  flowProviderSummary={flowProviderSummary}
-                  flowSnapshotSource="broad-scanner"
-                />
+                {secondaryPanelsReady ? (
+                  <MarketActivityPanelContainer
+                    isVisible={isVisible}
+                    highlightedUnusualFlow={highlightedUnusualFlow}
+                    newsItems={newsItems}
+                    calendarItems={calendarItems}
+                    onSymClick={onSymClick}
+                    onSignalAction={onSignalAction}
+                    onScanNow={onScanNow}
+                    onToggleMonitor={onToggleMonitor}
+                    onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+                    onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+                    watchlists={watchlists}
+                    unusualThreshold={unusualThreshold}
+                    onChangeUnusualThreshold={handleChangeUnusualThreshold}
+                    flowStatus={flowStatus}
+                    flowProviderSummary={flowProviderSummary}
+                    flowSnapshotSource="broad-scanner"
+                  />
+                ) : (
+                  <MarketActivityPanelFallback />
+                )}
               </PlatformErrorBoundary>
             </div>
           ) : null}
@@ -1192,6 +1323,37 @@ export const MarketScreen = ({
       </div>
     </div>
   );
+};
+
+export const MarketScreen = (props) => {
+  const { isVisible = false, onReadinessChange } = props;
+  const [activationReady, setActivationReady] = useState(false);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setActivationReady(false);
+      return undefined;
+    }
+    if (activationReady) return undefined;
+    preloadMarketChartModules();
+    const timerId = setTimeout(
+      () => setActivationReady(true),
+      MARKET_ACTIVATION_DELAY_MS,
+    );
+    return () => clearTimeout(timerId);
+  }, [activationReady, isVisible]);
+
+  if (!isVisible) {
+    return (
+      <div data-testid="market-screen-suspended" style={{ display: "none" }} />
+    );
+  }
+
+  if (!activationReady) {
+    return <MarketActivationFallback />;
+  }
+
+  return <MarketScreenInner {...props} />;
 };
 
 export default MarketScreen;

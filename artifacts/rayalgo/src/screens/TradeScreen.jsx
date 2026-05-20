@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
 import {
+  Suspense,
   useCallback,
   useEffect,
   Fragment,
@@ -83,13 +84,8 @@ import {
 import { resolveOptionChartSourceState } from "../features/charting/chartApiBars.js";
 import {
   TradeEquityPanel,
-  TradeL2Panel,
-  TradeOrderTicket,
-  TradePositionsPanel,
-} from "../features/trade/TradePanels.jsx";
-import { MiniChartTickerSearch } from "../features/platform/tickerSearch/TickerSearch.jsx";
+} from "../features/trade/TradeEquityPanel.jsx";
 import { mapFlowEventToUi } from "../features/flow/flowEventMapper";
-import { TradeStrategyGreeksPanel } from "../features/trade/TradeStrategyGreeksPanel.jsx";
 import {
   useGexZeroGamma,
   useGexZeroGammaReferenceLine,
@@ -122,7 +118,6 @@ import {
   isFiniteNumber,
   parseExpirationValue,
 } from "../lib/formatters";
-import { TradeChainPanel } from "../features/trade/TradeChainPanel";
 import {
   buildOptionChainRowsFromApi,
   patchOptionChainRowWithQuoteGetter,
@@ -186,8 +181,7 @@ import {
 } from "../lib/motion";
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { BottomSheet } from "../components/platform/BottomSheet.jsx";
-import { Drawer } from "../components/platform/Drawer.jsx";
+import { lazyWithRetry } from "../lib/dynamicImport";
 
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
@@ -199,6 +193,70 @@ const OPTION_CHAIN_QUERY_DEFAULTS = {
   retry: 1,
   gcTime: 5 * 60_000,
 };
+
+const LazyMiniChartTickerSearch = lazyWithRetry(
+  () =>
+    import("../features/platform/tickerSearch/TickerSearch.jsx").then((module) => ({
+      default: module.MiniChartTickerSearch,
+    })),
+  { label: "TradeMiniChartTickerSearch" },
+);
+
+const LazyTradeOrderTicket = lazyWithRetry(
+  () =>
+    import("../features/trade/TradeOrderTicket.jsx").then((module) => ({
+      default: module.TradeOrderTicket,
+    })),
+  { label: "TradeOrderTicket" },
+);
+
+const LazyTradeChainPanel = lazyWithRetry(
+  () =>
+    import("../features/trade/TradeChainPanel.jsx").then((module) => ({
+      default: module.TradeChainPanel,
+    })),
+  { label: "TradeChainPanel" },
+);
+
+const LazyTradeStrategyGreeksPanel = lazyWithRetry(
+  () =>
+    import("../features/trade/TradeStrategyGreeksPanel.jsx").then((module) => ({
+      default: module.TradeStrategyGreeksPanel,
+    })),
+  { label: "TradeStrategyGreeksPanel" },
+);
+
+const LazyTradeL2Panel = lazyWithRetry(
+  () =>
+    import("../features/trade/TradeL2Panel.jsx").then((module) => ({
+      default: module.TradeL2Panel,
+    })),
+  { label: "TradeL2Panel" },
+);
+
+const LazyTradePositionsPanel = lazyWithRetry(
+  () =>
+    import("../features/trade/TradePositionsPanel.jsx").then((module) => ({
+      default: module.TradePositionsPanel,
+    })),
+  { label: "TradePositionsPanel" },
+);
+
+const LazyBottomSheet = lazyWithRetry(
+  () =>
+    import("../components/platform/BottomSheet.jsx").then((module) => ({
+      default: module.BottomSheet,
+    })),
+  { label: "TradeBottomSheet" },
+);
+
+const LazyDrawer = lazyWithRetry(
+  () =>
+    import("../components/platform/Drawer.jsx").then((module) => ({
+      default: module.Drawer,
+    })),
+  { label: "TradeDrawer" },
+);
 
 const OPTION_EXPIRATION_QUERY_DEFAULTS = {
   ...OPTION_CHAIN_QUERY_DEFAULTS,
@@ -1805,7 +1863,17 @@ const MemoTradeEquityPanel = memo(function MemoTradeEquityPanel(props) {
 });
 
 const MemoTradeChainPanel = memo(function MemoTradeChainPanel(props) {
-  return <TradeChainPanel {...props} />;
+  return (
+    <TradePanelLoadBoundary
+      label={`${props?.slot?.ticker || "Trade"} option chain`}
+      title="Chain"
+      testId="trade-options-chain-panel"
+      minHeight={220}
+      resetKeys={[props?.slot?.ticker, props?.expiration]}
+    >
+      <LazyTradeChainPanel {...props} />
+    </TradePanelLoadBoundary>
+  );
 });
 
 const MemoTradeContractDetailPanel = memo(
@@ -1825,38 +1893,162 @@ const MemoTradeOptionsFlowPanel = memo(
 );
 
 const MemoTradeOrderTicket = memo(function MemoTradeOrderTicket(props) {
-  return <TradeOrderTicket {...props} />;
+  return (
+    <TradePanelLoadBoundary
+      label={`${props?.slot?.ticker || "Trade"} order ticket`}
+      title="Ticket"
+      testId="trade-order-ticket"
+      minHeight={240}
+      resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
+    >
+      <LazyTradeOrderTicket {...props} />
+    </TradePanelLoadBoundary>
+  );
 });
 
 const MemoTradeStrategyGreeksPanel = memo(
   function MemoTradeStrategyGreeksPanel(props) {
-    return <TradeStrategyGreeksPanel {...props} />;
+    return (
+      <TradePanelLoadBoundary
+        label={`${props?.slot?.ticker || "Trade"} strategy greeks`}
+        title="Strategy"
+        testId="trade-strategy-greeks-panel"
+        minHeight={200}
+        resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
+      >
+        <LazyTradeStrategyGreeksPanel {...props} />
+      </TradePanelLoadBoundary>
+    );
   },
 );
 
 const MemoTradeL2Panel = memo(function MemoTradeL2Panel(props) {
-  return <TradeL2Panel {...props} />;
+  return (
+    <TradePanelLoadBoundary
+      label={`${props?.slot?.ticker || "Trade"} level 2`}
+      title="L2"
+      testId="trade-l2-panel"
+      minHeight={200}
+      resetKeys={[props?.slot?.ticker, props?.slot?.providerContractId]}
+    >
+      <LazyTradeL2Panel {...props} />
+    </TradePanelLoadBoundary>
+  );
 });
 
 const MemoTradePositionsPanel = memo(function MemoTradePositionsPanel(props) {
-  return <TradePositionsPanel {...props} />;
+  return (
+    <TradePanelLoadBoundary
+      label={`${props?.slot?.ticker || "Trade"} positions`}
+      title="Positions"
+      testId="trade-positions-panel"
+      minHeight={200}
+      resetKeys={[props?.slot?.ticker, props?.accountId]}
+    >
+      <LazyTradePositionsPanel {...props} />
+    </TradePanelLoadBoundary>
+  );
 });
 
-const TradeDeferredPanel = ({ title = "Loading", minHeight = 180 }) => (
+const TradeDeferredPanel = ({
+  title = "Loading",
+  minHeight = 180,
+  testId = null,
+  detail = null,
+  actionLabel = null,
+  onAction = null,
+}) => (
   <TradePanelShell
-    testId={`trade-deferred-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+    testId={
+      testId ||
+      `trade-deferred-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+    }
     title={title}
     fill
   >
     <div
-      aria-hidden="true"
+      aria-hidden={detail ? undefined : "true"}
       style={{
         minHeight: dim(minHeight),
         flex: 1,
+        display: "grid",
+        placeItems: detail ? "center" : "stretch",
+        padding: detail ? sp(10) : 0,
         background: T.bg0,
       }}
-    />
+    >
+      {detail ? (
+        <div
+          style={{
+            display: "grid",
+            gap: sp(8),
+            justifyItems: "center",
+            color: T.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("body"),
+            textAlign: "center",
+          }}
+        >
+          <span>{detail}</span>
+          {actionLabel && typeof onAction === "function" ? (
+            <button
+              type="button"
+              onClick={onAction}
+              style={{
+                padding: sp("4px 8px"),
+                border: `1px solid ${T.border}`,
+                background: T.bg1,
+                color: T.textSec,
+                borderRadius: dim(RADII.xs),
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                cursor: "pointer",
+              }}
+            >
+              {actionLabel}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   </TradePanelShell>
+);
+
+const TradePanelLoadBoundary = ({
+  children,
+  label,
+  title,
+  testId,
+  minHeight = 180,
+  resetKeys = [],
+}) => (
+  <PlatformErrorBoundary
+    label={label}
+    resetKeys={resetKeys}
+    minHeight="100%"
+    fallbackRender={({ resetErrorBoundary }) => (
+      <TradeDeferredPanel
+        title={title}
+        testId={testId}
+        minHeight={minHeight}
+        detail="Panel failed to load."
+        actionLabel="Retry"
+        onAction={resetErrorBoundary}
+      />
+    )}
+  >
+    <Suspense
+      fallback={
+        <TradeDeferredPanel
+          title={title}
+          testId={testId}
+          minHeight={minHeight}
+        />
+      }
+    >
+      {children}
+    </Suspense>
+  </PlatformErrorBoundary>
 );
 
 const TRADE_PHONE_PANELS = [
@@ -2990,21 +3182,20 @@ const TradeOptionQuoteRuntime = ({
 
 const buildTradeRuntimeActivity = ({
   isVisible,
-  isRetained,
   secondaryReady,
   searchOpen,
 } = {}) => {
-  const screenWarm = Boolean(isVisible || isRetained);
   const visibleInteractive = Boolean(isVisible && !searchOpen);
   return {
-    executionWarm: screenWarm,
+    executionWarm: Boolean(isVisible),
     primaryVisible: Boolean(isVisible),
+    secondaryPanelsVisible: Boolean(isVisible && secondaryReady),
     visibleInteractive,
     analysisVisible: Boolean(visibleInteractive && secondaryReady),
   };
 };
 
-export const TradeScreen = ({
+const TradeScreenInner = ({
   sym,
   symPing,
   session,
@@ -3017,6 +3208,7 @@ export const TradeScreen = ({
   gatewayTradingBlockReason = "gateway",
   isVisible = false,
   isRetained = false,
+  onReadinessChange,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -3123,6 +3315,13 @@ export const TradeScreen = ({
     }, 500);
     return () => window.clearTimeout(timerId);
   }, [isVisible, secondaryTradePanelsReady]);
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible && secondaryTradePanelsReady),
+      backgroundAllowed: Boolean(isVisible && secondaryTradePanelsReady),
+    });
+  }, [isVisible, onReadinessChange, secondaryTradePanelsReady]);
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -3153,7 +3352,7 @@ export const TradeScreen = ({
   const tradeExecutionWorkEnabled = tradeRuntimeActivity.executionWarm;
   const tradeAnalysisWorkEnabled = tradeRuntimeActivity.analysisVisible;
   const renderPrimaryTradePanel = tradeRuntimeActivity.primaryVisible;
-  const renderTradePanels = tradeRuntimeActivity.analysisVisible;
+  const renderTradePanels = tradeRuntimeActivity.secondaryPanelsVisible;
   const tradeBrokerStreamingEnabled = Boolean(
     tradeLiveStreamsEnabled && stockAggregateStreamingEnabled,
   );
@@ -3651,16 +3850,20 @@ export const TradeScreen = ({
   );
   const renderTradeTickerSearch = useCallback(
     (open, embedded = true) => (
-      <MiniChartTickerSearch
-        open={open}
-        ticker={activeTicker}
-        recentTickerRows={tradeRecentTickerRows}
-        contextSymbols={recentTickers}
-        embedded={embedded}
-        onClose={closeTradeTickerSearch}
-        onSelectTicker={handleSelectUniverseTicker}
-        onRememberTickerRow={handleRememberTradeTickerRow}
-      />
+      open ? (
+        <Suspense fallback={null}>
+          <LazyMiniChartTickerSearch
+            open={open}
+            ticker={activeTicker}
+            recentTickerRows={tradeRecentTickerRows}
+            contextSymbols={recentTickers}
+            embedded={embedded}
+            onClose={closeTradeTickerSearch}
+            onSelectTicker={handleSelectUniverseTicker}
+            onRememberTickerRow={handleRememberTradeTickerRow}
+          />
+        </Suspense>
+      ) : null
     ),
     [
       activeTicker,
@@ -4162,7 +4365,11 @@ export const TradeScreen = ({
                     {contractDetailPanel}
                   </div>
                 ) : (
-                  <TradeDeferredPanel title="Contract" minHeight={260} />
+                  <TradeDeferredPanel
+                    title="Contract"
+                    testId="trade-contract-chart-panel"
+                    minHeight={260}
+                  />
                 )}
               </div>
             ) : null}
@@ -4180,7 +4387,23 @@ export const TradeScreen = ({
                     {optionsFlowPanel}
                   </>
                 ) : (
-                  <TradeDeferredPanel title="Chain" minHeight={280} />
+                  <>
+                    <TradeDeferredPanel
+                      title="Chain"
+                      testId="trade-options-chain-panel"
+                      minHeight={280}
+                    />
+                    <TradeDeferredPanel
+                      title="Spot Flow"
+                      testId="trade-spot-flow-panel"
+                      minHeight={220}
+                    />
+                    <TradeDeferredPanel
+                      title="Options Flow"
+                      testId="trade-options-flow-panel"
+                      minHeight={220}
+                    />
+                  </>
                 )}
               </div>
             ) : null}
@@ -4194,7 +4417,11 @@ export const TradeScreen = ({
                 {renderTradePanels ? (
                   orderTicketPanel
                 ) : (
-                  <TradeDeferredPanel title="Ticket" minHeight={240} />
+                  <TradeDeferredPanel
+                    title="Ticket"
+                    testId="trade-order-ticket"
+                    minHeight={240}
+                  />
                 )}
               </div>
             ) : null}
@@ -4227,42 +4454,69 @@ export const TradeScreen = ({
                     {strategyGreeksPanel}
                   </>
                 ) : (
-                  <TradeDeferredPanel title="Positions" minHeight={260} />
+                  <>
+                    <TradeDeferredPanel
+                      title="Positions"
+                      testId="trade-positions-panel"
+                      minHeight={260}
+                    />
+                    <TradeDeferredPanel
+                      title="Strategy"
+                      testId="trade-strategy-greeks-panel"
+                      minHeight={220}
+                    />
+                  </>
                 )}
               </div>
             ) : null}
 
-            <BottomSheet
-              open={phoneTicketSheetOpen}
-              onClose={() => setPhoneTicketSheetOpen(false)}
-              title={`${activeTicker} Order Ticket`}
-              maxHeight="88dvh"
-              testId="trade-mobile-ticket-sheet"
-            >
-              <div data-trade-layout="phone" style={{ padding: sp(6) }}>
-                {renderTradePanels ? (
-                  orderTicketPanel
-                ) : (
-                  <TradeDeferredPanel title="Ticket" minHeight={240} />
-                )}
-              </div>
-            </BottomSheet>
-            <Drawer
-              open={phoneL2DrawerOpen}
-              onClose={() => setPhoneL2DrawerOpen(false)}
-              side="right"
-              title={`${activeTicker} L2`}
-              width={390}
-              testId="trade-mobile-l2-drawer"
-            >
-              <div style={{ minHeight: dim(540), padding: sp(6) }}>
-                {renderTradePanels ? (
-                  l2Panel
-                ) : (
-                  <TradeDeferredPanel title="L2" minHeight={360} />
-                )}
-              </div>
-            </Drawer>
+            {phoneTicketSheetOpen ? (
+              <Suspense fallback={null}>
+                <LazyBottomSheet
+                  open={phoneTicketSheetOpen}
+                  onClose={() => setPhoneTicketSheetOpen(false)}
+                  title={`${activeTicker} Order Ticket`}
+                  maxHeight="88dvh"
+                  testId="trade-mobile-ticket-sheet"
+                >
+                  <div data-trade-layout="phone" style={{ padding: sp(6) }}>
+                    {renderTradePanels ? (
+                      orderTicketPanel
+                    ) : (
+                      <TradeDeferredPanel
+                        title="Ticket"
+                        testId="trade-order-ticket"
+                        minHeight={240}
+                      />
+                    )}
+                  </div>
+                </LazyBottomSheet>
+              </Suspense>
+            ) : null}
+            {phoneL2DrawerOpen ? (
+              <Suspense fallback={null}>
+                <LazyDrawer
+                  open={phoneL2DrawerOpen}
+                  onClose={() => setPhoneL2DrawerOpen(false)}
+                  side="right"
+                  title={`${activeTicker} L2`}
+                  width={390}
+                  testId="trade-mobile-l2-drawer"
+                >
+                  <div style={{ minHeight: dim(540), padding: sp(6) }}>
+                    {renderTradePanels ? (
+                      l2Panel
+                    ) : (
+                      <TradeDeferredPanel
+                        title="L2"
+                        testId="trade-l2-panel"
+                        minHeight={360}
+                      />
+                    )}
+                  </div>
+                </LazyDrawer>
+              </Suspense>
+            ) : null}
           </>
         ) : (
           <>
@@ -4351,12 +4605,20 @@ export const TradeScreen = ({
           {renderTradePanels ? (
             contractDetailPanel
           ) : (
-            <TradeDeferredPanel title="Contract" minHeight={340} />
+            <TradeDeferredPanel
+              title="Contract"
+              testId="trade-contract-chart-panel"
+              minHeight={340}
+            />
           )}
           {renderTradePanels ? (
             orderTicketPanel
           ) : (
-            <TradeDeferredPanel title="Ticket" minHeight={340} />
+            <TradeDeferredPanel
+              title="Ticket"
+              testId="trade-order-ticket"
+              minHeight={340}
+            />
           )}
         </div>
         {/* Middle zone: options chain + spot flow + options flow */}
@@ -4381,9 +4643,21 @@ export const TradeScreen = ({
             </>
           ) : (
             <>
-              <TradeDeferredPanel title="Chain" minHeight={220} />
-              <TradeDeferredPanel title="Spot Flow" minHeight={220} />
-              <TradeDeferredPanel title="Options Flow" minHeight={220} />
+              <TradeDeferredPanel
+                title="Chain"
+                testId="trade-options-chain-panel"
+                minHeight={220}
+              />
+              <TradeDeferredPanel
+                title="Spot Flow"
+                testId="trade-spot-flow-panel"
+                minHeight={220}
+              />
+              <TradeDeferredPanel
+                title="Options Flow"
+                testId="trade-options-flow-panel"
+                minHeight={220}
+              />
             </>
           )}
         </div>
@@ -4409,9 +4683,21 @@ export const TradeScreen = ({
             </>
           ) : (
             <>
-              <TradeDeferredPanel title="Strategy" minHeight={200} />
-              <TradeDeferredPanel title="L2" minHeight={200} />
-              <TradeDeferredPanel title="Positions" minHeight={200} />
+              <TradeDeferredPanel
+                title="Strategy"
+                testId="trade-strategy-greeks-panel"
+                minHeight={200}
+              />
+              <TradeDeferredPanel
+                title="L2"
+                testId="trade-l2-panel"
+                minHeight={200}
+              />
+              <TradeDeferredPanel
+                title="Positions"
+                testId="trade-positions-panel"
+                minHeight={200}
+              />
             </>
           )}
         </div>
@@ -4420,6 +4706,18 @@ export const TradeScreen = ({
       </div>
     </div>
   );
+};
+
+export const TradeScreen = (props) => {
+  const { isVisible = false } = props;
+
+  if (!isVisible) {
+    return (
+      <div data-testid="trade-screen-suspended" style={{ display: "none" }} />
+    );
+  }
+
+  return <TradeScreenInner {...props} />;
 };
 
 export default TradeScreen;

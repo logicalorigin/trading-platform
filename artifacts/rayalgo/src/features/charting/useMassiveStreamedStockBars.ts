@@ -496,6 +496,7 @@ const buildHistoricalBarStreamUrl = (input: {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
+  priority?: number;
 }): string | null => {
   const normalizedTimeframe = normalizeChartTimeframe(input.timeframe);
   const streamTimeframe = getChartBaseTimeframe(normalizedTimeframe);
@@ -523,6 +524,9 @@ const buildHistoricalBarStreamUrl = (input: {
   }
   if (input.source) {
     params.set("source", input.source);
+  }
+  if (typeof input.priority === "number" && Number.isFinite(input.priority)) {
+    params.set("priority", String(input.priority));
   }
 
   return `/api/streams/bars?${params.toString()}`;
@@ -1857,8 +1861,17 @@ export const useHistoricalBarStreamState = ({
         providerContractId,
         outsideRth,
         source,
+        priority: streamPriority,
       }),
-    [assetClass, outsideRth, providerContractId, source, symbol, timeframe],
+    [
+      assetClass,
+      outsideRth,
+      providerContractId,
+      source,
+      streamPriority,
+      symbol,
+      timeframe,
+    ],
   );
 
   useEffect(() => {

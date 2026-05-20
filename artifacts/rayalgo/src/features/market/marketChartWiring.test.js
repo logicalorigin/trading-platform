@@ -41,6 +41,11 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.match(source, /listFlowEventsRequest/);
   assert.match(source, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
   assert.match(source, /historicalChartFlowRequests/);
+  assert.match(source, /const chartFlowHydrationReady =/);
+  assert.match(
+    source,
+    /effectiveHydrationSlotLimit >= visibleSlotEntries\.length/,
+  );
   assert.match(source, /historicalBucketSeconds/);
   assert.match(source, /getChartEventLookbackWindow/);
   assert.match(source, /alignMarketChartFlowHistoryWindow/);
@@ -54,6 +59,7 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
   assert.match(scannerCall, /enabled:\s*chartFlowEnabled/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.all/);
+  assert.match(scannerCall, /blocking:\s*false/);
   assert.match(scannerCall, /batchSize:\s*marketChartFlowBatchSize/);
   assert.match(scannerCall, /concurrency:\s*marketChartFlowConcurrency/);
   assert.match(scannerCall, /lineBudget:\s*MARKET_CHART_FLOW_LINE_BUDGET/);
@@ -83,9 +89,13 @@ test("Market activity panel uses the same broad scanner feed as the flow lane", 
 test("Market chart cells delegate rendering to the Trade spot chart path", () => {
   const source = readLocalSource("./MiniChartCell.jsx");
 
-  assert.match(source, /import \{ TradeEquityPanel \}/);
+  assert.match(source, /const LazyTradeEquityPanel = lazyWithRetry/);
+  assert.match(source, /import\("\.\.\/trade\/TradeEquityPanel\.jsx"\)/);
+  assert.match(source, /const LazyMiniChartTickerSearch = lazyWithRetry/);
+  assert.match(source, /import\("\.\.\/platform\/tickerSearch\/TickerSearch\.jsx"\)/);
+  assert.doesNotMatch(source, /import \{ MiniChartTickerSearch \}/);
   assert.match(source, /getChartTimeframeValues\("mini"\)/);
-  assert.match(source, /<TradeEquityPanel/);
+  assert.match(source, /<LazyTradeEquityPanel/);
   assert.match(source, /surfaceUiStateKey=\{`market-spot-chart:\$\{slotId\}:\$\{timeframe\}`\}/);
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
@@ -124,6 +134,36 @@ test("Market mini chart grid uses one-column phone density", () => {
   assert.match(source, /visibleSlotEntries\.length/);
   assert.match(source, /const showGridResizeControl =\s*\n\s*!phoneGrid/);
   assert.match(source, /phoneGrid\s*\?\s*430/);
+});
+
+test("Market mini chart grid staggers candle hydration without hiding chart frames", () => {
+  const gridSource = readLocalSource("./MultiChartGrid.jsx");
+  const cellSource = readLocalSource("./MiniChartCell.jsx");
+
+  assert.match(gridSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 2;/);
+  assert.match(gridSource, /const MARKET_CHART_HYDRATION_STAGGER_MS = 450;/);
+  assert.match(gridSource, /const \[hydrationSlotLimit, setHydrationSlotLimit\]/);
+  assert.match(gridSource, /const readySignaledRef = useRef\(false\)/);
+  assert.match(gridSource, /const handleFirstVisibleChartReady = useCallback/);
+  assert.match(gridSource, /onReady\?\.\(\)/);
+  assert.match(gridSource, /setHydrationSlotLimit\(initialHydrationSlotLimit\)/);
+  assert.match(
+    gridSource,
+    /window\.setTimeout\(\(\) => \{[\s\S]*setHydrationSlotLimit\(\(current\) =>[\s\S]*Math\.max\(current, nextSlotLimit\)/,
+  );
+  assert.match(gridSource, /const chartHydrationEnabled =\s*\n\s*visibleIndex < effectiveHydrationSlotLimit;/);
+  assert.match(gridSource, /historicalDataEnabled=\{chartHydrationEnabled\}/);
+  assert.match(
+    gridSource,
+    /stockAggregateStreamingEnabled=\{\s*stockAggregateStreamingEnabled && chartHydrationEnabled\s*\}/,
+  );
+  assert.match(gridSource, /onReady=\{\s*visibleIndex === 0 && chartHydrationEnabled/);
+  assert.match(cellSource, /historicalDataEnabled = true/);
+  assert.match(cellSource, /const MiniChartReadyProbe =/);
+  assert.match(cellSource, /requestAnimationFrame\(\(\) => \{\s*onReady\(\);/);
+  assert.match(cellSource, /<MiniChartReadyProbe onReady=\{onReady\} \/>/);
+  assert.match(cellSource, /historicalDataEnabled=\{historicalDataEnabled\}/);
+  assert.match(cellSource, /<MiniChartPanelFallback dataTestId=\{dataTestId\} \/>/);
 });
 
 test("Trade spot chart forwards market viewport layout context to the chart surface", () => {
@@ -337,6 +377,10 @@ test("Market chart frames leave viewport ownership inside the Trade spot chart",
   assert.match(cellSource, /chartViewportLayoutKey/);
   assert.match(cellSource, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(gridSource, /clearStoredChartViewportSnapshot/);
+  assert.match(gridSource, /from "\.\.\/charting\/chartViewportStorage"/);
+  assert.doesNotMatch(gridSource, /from "\.\.\/charting\/ResearchChartSurface"/);
+  assert.match(gridSource, /from "\.\.\/platform\/tickerSearch\/model"/);
+  assert.doesNotMatch(gridSource, /from "\.\.\/platform\/tickerSearch\/TickerSearch\.jsx"/);
   assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart",\s*"mini"/);
   assert.doesNotMatch(gridSource, /buildMarketGridViewportRevisionIdentity/);
   assert.doesNotMatch(cellSource, /rangeIdentityKey/);

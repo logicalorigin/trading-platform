@@ -21,7 +21,7 @@ test("chart hydration policy preserves role-specific candle windows", () => {
 
   assert.equal(normalizeChartHydrationRole("unknown"), "primary");
   assert.equal(miniPolicy.role, "mini");
-  assert.equal(miniPolicy.initialLimit, 900);
+  assert.equal(miniPolicy.initialLimit, 240);
   assert.equal(miniPolicy.targetLimit, 900);
   assert.equal(miniPolicy.maxLimit, 1800);
   assert.equal(primaryPolicy.targetLimit, 1800);

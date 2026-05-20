@@ -1,5 +1,4 @@
 import { memo, useMemo } from "react";
-import { APP_FONT_FALLBACK } from "../../lib/typography";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -77,7 +76,7 @@ export const TradingViewWidgetReference = memo(({
         height: 100%;
         overflow: hidden;
         background: ${theme === "dark" ? "#16151A" : "#ffffff"};
-        font-family: ${APP_FONT_FALLBACK};
+        font-family: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       .tradingview-widget-container {
         width: 100%;

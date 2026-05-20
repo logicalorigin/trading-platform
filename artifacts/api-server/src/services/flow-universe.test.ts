@@ -486,6 +486,53 @@ test("flow universe keeps selected symbols when DB selection persistence fails",
   assert.match(coverage.degradedReason || "", /persistence unavailable/i);
 });
 
+test("flow universe clears transient degraded state after scanner persistence recovers", async () => {
+  const dbState = {
+    persistError: transientDbError() as unknown,
+    rows: [
+      {
+        symbol: "AAPL",
+        market: "stocks",
+        price: "200",
+        volume: "1000000",
+        dollarVolume: "200000000",
+        liquidityRank: 1,
+        flowScore: "10",
+        previousSessionFlowScore: "0",
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+    ],
+  };
+  const manager = createFlowUniverseManager({
+    db: createFlowUniverseTestDb(dbState),
+    mode: "market",
+    targetSize: 1,
+    refreshMs: 60_000,
+    markets: ["stocks"],
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    fallbackSymbols: ["SPY"],
+    now: () => new Date("2026-05-08T15:30:00.000Z"),
+  });
+
+  await manager.refresh();
+  assert.match(manager.getCoverage().degradedReason || "", /persistence unavailable/i);
+
+  dbState.persistError = undefined;
+  await manager.recordObservation({
+    symbol: "AAPL",
+    events: [{ premium: 100000, unusualScore: 2, isUnusual: true }],
+  });
+
+  const coverage = manager.getCoverage();
+  assert.equal(coverage.fallbackUsed, false);
+  assert.equal(coverage.degradedReason, null);
+});
+
 test("flow universe coverage reports current-cycle scan timestamps", async () => {
   let current = new Date("2026-05-08T15:05:00.000Z");
   const manager = createFlowUniverseManager({

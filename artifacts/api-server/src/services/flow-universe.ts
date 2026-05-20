@@ -165,6 +165,14 @@ function isMissingFlowUniverseRankingsTableError(error: unknown): boolean {
   );
 }
 
+function isTransientFlowUniverseDegradedReason(reason: string | null): boolean {
+  return Boolean(
+    reason &&
+      (reason.includes("database unavailable") ||
+        reason.includes("persistence unavailable")),
+  );
+}
+
 function scoreObservation(events: FlowUniverseObservation["events"]): number {
   if (!events?.length) {
     return 0;
@@ -838,6 +846,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
             updatedAt: observedAt,
           },
         });
+      if (isTransientFlowUniverseDegradedReason(degradedReason)) {
+        degradedReason = shortfallReason(selectedSymbols.length);
+      }
     } catch {
       // The scanner must keep running even before the DB schema is pushed.
     }

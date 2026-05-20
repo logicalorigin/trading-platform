@@ -251,6 +251,7 @@ export const FlowScannerStatusPanel = ({
   const lineUsage = runtimeControl.lineUsage;
   const scannerUsed = lineUsage.flowScanner?.used;
   const scannerCap = lineUsage.flowScanner?.cap;
+  const scannerRuntimeDetail = lineUsage.flowScanner?.detail;
   const accountMonitorUsed = lineUsage.accountMonitor?.used;
   const accountMonitorCap = lineUsage.accountMonitor?.cap;
   const totalUsed = lineUsage.total?.used;
@@ -446,9 +447,10 @@ export const FlowScannerStatusPanel = ({
           }
           chart={<Sparkline values={linesHistory} color={linesTone} />}
           detail={
-            Number.isFinite(totalUsed) || Number.isFinite(totalCap)
+            scannerRuntimeDetail ||
+            (Number.isFinite(totalUsed) || Number.isFinite(totalCap)
               ? `acct ${formatCount(accountMonitorUsed)}/${formatCount(accountMonitorCap)} · app ${formatCount(totalUsed)}/${formatCount(totalCap)}`
-              : "runtime diagnostics"
+              : "runtime diagnostics")
           }
           tone={linesTone}
         />

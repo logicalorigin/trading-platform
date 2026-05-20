@@ -1,18 +1,40 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { getChartTimeframeValues, normalizeChartTimeframe } from "../charting/timeframes";
-import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
 import {
   useGexZeroGamma,
   useGexZeroGammaReferenceLine,
 } from "../gex/useGexZeroGamma.js";
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
-import { MiniChartTickerSearch } from "../platform/tickerSearch/TickerSearch.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { WATCHLIST } from "./marketReferenceData";
 import { MiniChartPremiumFlowIndicator } from "./MiniChartPremiumFlowIndicator.jsx";
-import { T } from "../../lib/uiTokens.jsx";
+import { RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
+import { lazyWithRetry } from "../../lib/dynamicImport";
 
 const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
+
+const LazyTradeEquityPanel = lazyWithRetry(
+  () =>
+    import("../trade/TradeEquityPanel.jsx").then((module) => ({
+      default: module.TradeEquityPanel,
+    })),
+  { label: "TradeEquityPanel" },
+);
+
+const LazyMiniChartTickerSearch = lazyWithRetry(
+  () =>
+    import("../platform/tickerSearch/TickerSearch.jsx").then((module) => ({
+      default: module.MiniChartTickerSearch,
+    })),
+  { label: "MiniChartTickerSearch" },
+);
 
 const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
   "a[href]",
@@ -46,6 +68,70 @@ const isMarketChartShellControlTarget = (target) =>
   isMarketChartInteractiveTarget(target) && !isMarketChartPlotTarget(target);
 const MARKET_CHART_CLICK_MOVE_TOLERANCE = 6;
 
+const MiniChartPanelFallback = ({ dataTestId }) => (
+  <div
+    data-testid={dataTestId ? `${dataTestId}-surface` : undefined}
+    data-chart-instance-create-count="0"
+    style={{
+      height: "100%",
+      minHeight: 0,
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
+      display: "grid",
+      gridTemplateRows: "auto 1fr",
+      gap: sp(6),
+      padding: sp(8),
+      boxSizing: "border-box",
+    }}
+  >
+    <div
+      style={{
+        height: dim(18),
+        width: "42%",
+        borderRadius: dim(RADII.xs),
+        background: T.bg3,
+      }}
+    />
+    <div
+      style={{
+        minHeight: 0,
+        borderRadius: dim(RADII.xs),
+        background:
+          "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018))",
+      }}
+    />
+  </div>
+);
+
+const MiniChartTickerSearchFallback = () => (
+  <div
+    data-testid="ticker-search-popover-loading"
+    style={{
+      minHeight: dim(220),
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
+    }}
+  />
+);
+
+const MiniChartReadyProbe = ({ onReady }) => {
+  useEffect(() => {
+    if (!onReady) return undefined;
+    if (
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      onReady();
+      return undefined;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      onReady();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [onReady]);
+  return null;
+};
+
 export const MiniChartCell = ({
   slot,
   premiumFlowSummary,
@@ -68,12 +154,14 @@ export const MiniChartCell = ({
   isActive,
   dense = false,
   compactFlow = false,
+  historicalDataEnabled = true,
   stockAggregateStreamingEnabled = false,
   dataTestId,
   slotId = dataTestId || "market-mini-chart",
   chartViewportLayoutKey = null,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
+  onReady,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
   const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
@@ -223,57 +311,75 @@ export const MiniChartCell = ({
       }}
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
-        <TradeEquityPanel
-          ticker={ticker}
-          flowEvents={flowEvents}
-          flowEventsSourceMode="provided"
-          chartHydrationRole="mini"
-          historicalDataEnabled
-          stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-          dataTestId={dataTestId}
-          compact={dense}
-          chartFramePlacement={
-            isActive
-              ? dense
-                ? "compact-active"
-                : "workspace"
-              : dense
-                ? "compact-passive"
-                : "workspace-passive"
-          }
-          surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}
-          viewportLayoutKey={chartViewportLayoutKey}
-          prewarmFavoriteTimeframesEnabled={false}
-          searchOpen={searchOpen}
-          onSearchOpenChange={setSearchOpen}
-          searchContent={
-            <MiniChartTickerSearch
-              open={searchOpen}
+        {historicalDataEnabled ? (
+          <Suspense fallback={<MiniChartPanelFallback dataTestId={dataTestId} />}>
+            <LazyTradeEquityPanel
               ticker={ticker}
-              recentTickerRows={recentTickerRows}
-              watchlistSymbols={watchlistSymbols}
-              popularTickers={popularTickers}
-              contextSymbols={recentTickers}
-              flowSuggestionSymbols={smartSuggestionSymbols}
-              signalSuggestionSymbols={signalSuggestionSymbols}
-              embedded
-              onClose={() => setSearchOpen(false)}
-              onSelectTicker={(result) => {
-                const nextTicker = normalizeTickerSymbol(result?.ticker);
-                if (!nextTicker) {
-                  return;
-                }
-                ensureTradeTickerInfo(nextTicker, result?.name || nextTicker);
-                setPendingTickerSelection({ ticker: nextTicker, result });
-              }}
+              flowEvents={flowEvents}
+              flowEventsSourceMode="provided"
+              chartHydrationRole="mini"
+              historicalDataEnabled={historicalDataEnabled}
+              stockAggregateStreamingEnabled={
+                Boolean(historicalDataEnabled && stockAggregateStreamingEnabled)
+              }
+              dataTestId={dataTestId}
+              compact={dense}
+              chartFramePlacement={
+                isActive
+                  ? dense
+                    ? "compact-active"
+                    : "workspace"
+                  : dense
+                    ? "compact-passive"
+                    : "workspace-passive"
+              }
+              surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}
+              viewportLayoutKey={chartViewportLayoutKey}
+              prewarmFavoriteTimeframesEnabled={false}
+              searchOpen={searchOpen}
+              onSearchOpenChange={setSearchOpen}
+              searchContent={
+                searchOpen ? (
+                  <Suspense fallback={<MiniChartTickerSearchFallback />}>
+                    <LazyMiniChartTickerSearch
+                      open={searchOpen}
+                      ticker={ticker}
+                      recentTickerRows={recentTickerRows}
+                      watchlistSymbols={watchlistSymbols}
+                      popularTickers={popularTickers}
+                      contextSymbols={recentTickers}
+                      flowSuggestionSymbols={smartSuggestionSymbols}
+                      signalSuggestionSymbols={signalSuggestionSymbols}
+                      embedded
+                      onClose={() => setSearchOpen(false)}
+                      onSelectTicker={(result) => {
+                        const nextTicker = normalizeTickerSymbol(result?.ticker);
+                        if (!nextTicker) {
+                          return;
+                        }
+                        ensureTradeTickerInfo(
+                          nextTicker,
+                          result?.name || nextTicker,
+                        );
+                        setPendingTickerSelection({ ticker: nextTicker, result });
+                      }}
+                    />
+                  </Suspense>
+                ) : (
+                  <MiniChartTickerSearchFallback />
+                )
+              }
+              workspaceChart={{ timeframe }}
+              onWorkspaceChartChange={handleWorkspaceChartChange}
+              referenceLines={gexReferenceLines}
+              crosshairSyncGroupId={crosshairSyncGroupId}
+              crosshairSyncInstanceId={crosshairSyncInstanceId}
             />
-          }
-          workspaceChart={{ timeframe }}
-          onWorkspaceChartChange={handleWorkspaceChartChange}
-          referenceLines={gexReferenceLines}
-          crosshairSyncGroupId={crosshairSyncGroupId}
-          crosshairSyncInstanceId={crosshairSyncInstanceId}
-        />
+            <MiniChartReadyProbe onReady={onReady} />
+          </Suspense>
+        ) : (
+          <MiniChartPanelFallback dataTestId={dataTestId} />
+        )}
       </div>
       <MiniChartPremiumFlowIndicator
         symbol={ticker}

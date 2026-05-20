@@ -208,7 +208,6 @@ const SPOT_HISTORY_INITIAL_FETCH_CONCURRENCY = 1;
 const SPOT_HISTORY_EXPANDED_FETCH_CONCURRENCY = 1;
 const SPOT_HISTORY_REFRESH_MS = 5 * 60_000;
 const SPOT_HISTORY_INITIAL_STALE_MS = 10 * 60_000;
-const SPOT_HISTORY_REQUEST_TIMEOUT_MS = 20_000;
 const SPOT_HISTORY_REQUEST_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
 const SPOT_HISTORY_REQUEST_PRIORITY = 8;
 const TRADING_DAYS_PER_YEAR = 252;
@@ -626,7 +625,6 @@ async function fetchSpotHistoryBarsWindow(input: {
         ),
       },
       signal: input.signal,
-      timeoutMs: SPOT_HISTORY_REQUEST_TIMEOUT_MS,
     } as RequestInit,
   );
 

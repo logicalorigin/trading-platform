@@ -5,6 +5,59 @@ import {
   aggregateOptionPremiumDistributionSnapshots,
 } from "./market-data";
 
+test("option chain contracts include day change fields", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/v3/snapshot/options/SPY");
+    return Response.json({
+      results: [
+        {
+          details: {
+            ticker: "O:SPY260522C00640000",
+            underlying_ticker: "SPY",
+            expiration_date: "2026-05-22",
+            strike_price: 640,
+            contract_type: "call",
+            shares_per_contract: 100,
+          },
+          day: {
+            close: 7.16,
+            previous_close: 8.35,
+            change: -1.19,
+            change_percent: -14.3,
+            volume: 100,
+          },
+          last_trade: {
+            price: 7.16,
+            sip_timestamp: Date.parse("2026-05-19T19:59:58.321Z"),
+          },
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const contracts = await client.getOptionChain({
+      underlying: "SPY",
+      expirationDate: new Date("2026-05-22T00:00:00.000Z"),
+      contractType: "call",
+      maxPages: 1,
+    });
+
+    assert.equal(contracts[0]?.contract.ticker, "O:SPY260522C00640000");
+    assert.equal(contracts[0]?.prevClose, 8.35);
+    assert.equal(contracts[0]?.change, -1.19);
+    assert.equal(contracts[0]?.changePercent, -14.3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("aggregates option premium distribution buckets and sides", () => {
   const distribution = aggregateOptionPremiumDistributionSnapshots({
     underlying: "spy",

@@ -475,7 +475,7 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
     limit: 120,
     assetClass: "equity",
     allowHistoricalSynthesis: true,
-  });
+  }, { priority: 8 });
 
   assert.equal(polygonCalls, 1);
   assert.equal(seenBrokerLimits.at(-1), 120);
@@ -484,6 +484,145 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
     "expected recent broker attempt plus full broker recovery",
   );
   assert.equal(result.bars.length, 120);
+  assert.equal(result.historySource, "ibkr-history");
+  assert.equal(result.emptyReason, null);
+});
+
+test("getBarsWithDebug does not use full broker recovery for background synthesis underfills", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  const seenBrokerLimits: Array<number | undefined> = [];
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: { limit?: number }) => {
+          seenBrokerLimits.push(input.limit);
+          return [];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getBarsPage: async () => ({
+          bars: [],
+          nextUrl: null,
+          pageCount: 1,
+          pageLimitReached: false,
+          requestedFrom: null,
+          requestedTo: null,
+        }),
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getBarsWithDebug({
+    symbol: "BKGD",
+    timeframe: "1h",
+    limit: 120,
+    assetClass: "equity",
+    allowHistoricalSynthesis: true,
+  }, { priority: -2 });
+
+  assert.equal(seenBrokerLimits.length, 0);
+  assert.equal(result.bars.length, 0);
+  assert.equal(result.emptyReason, "unsupported-broker-timeframe");
+});
+
+test("getBarsWithDebug does not skip broker history solely because diagnostics report a stalled lane", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  const symbol = `STALLIBKR${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+  const now = Date.now();
+  let brokerCalls = 0;
+  let polygonCalls = 0;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+          diagnostics: {
+            scheduler: {
+              historical: {
+                pressure: "stalled",
+                lastFailure: "Lane timed out after 12000ms.",
+                lastFailureAt: now - 1_000,
+                lastSuccessAt: null,
+              },
+            },
+          },
+        }),
+        getHistoricalBars: async (request: { exchange?: string | null }) => {
+          brokerCalls += 1;
+          if (request.exchange) {
+            return [];
+          }
+          return ["2026-05-11T22:15:00.000Z", "2026-05-11T22:30:00.000Z"].map(
+            (timestamp, index) => ({
+              timestamp: new Date(timestamp),
+              open: 510 + index,
+              high: 511 + index,
+              low: 509 + index,
+              close: 510 + index,
+              volume: 50_000 + index,
+              source: "ibkr-history",
+              providerContractId: null,
+              outsideRth: true,
+              partial: false,
+              transport: "tws",
+              delayed: false,
+              freshness: "live",
+              marketDataMode: "live",
+              dataUpdatedAt: new Date(timestamp),
+              ageMs: null,
+            }));
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getBarsPage: async () => {
+          polygonCalls += 1;
+          return {
+            bars: ["2026-05-11T22:15:00.000Z", "2026-05-11T22:30:00.000Z"].map(
+              (timestamp, index) => ({
+                timestamp: new Date(timestamp),
+                open: 510 + index,
+                high: 511 + index,
+                low: 509 + index,
+                close: 510 + index,
+                volume: 50_000 + index,
+              }),
+            ),
+            nextUrl: null,
+            pageCount: 1,
+            pageLimitReached: false,
+            requestedFrom: null,
+            requestedTo: null,
+          };
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getBarsWithDebug({
+    symbol,
+    timeframe: "15m",
+    limit: 2,
+    assetClass: "equity",
+    outsideRth: true,
+    allowHistoricalSynthesis: true,
+  }, { priority: 8 });
+
+  assert.ok(brokerCalls > 0);
+  assert.equal(polygonCalls, 0);
+  assert.equal(result.bars.length, 2);
   assert.equal(result.historySource, "ibkr-history");
   assert.equal(result.emptyReason, null);
 });
@@ -549,18 +688,26 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
       }) as unknown as PolygonMarketDataClient,
   );
 
+  const backgroundSymbol = `BKGDCHART${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+
   const clipped = await getBarsWithDebug({
-    symbol: "SPY",
+    symbol: backgroundSymbol,
     timeframe: "5m",
     limit: 900,
     assetClass: "equity",
     allowHistoricalSynthesis: true,
   });
-  assert.ok(
-    (seenBrokerLimits[0] ?? 0) < 900,
-    "default synthesis path should still clip the first broker request",
+  assert.equal(
+    seenBrokerLimits.length,
+    0,
+    "default synthesis path should not spend a broker history slot",
   );
-  assert.equal(clipped.bars.length, 900);
+  assert.equal(polygonCalls, 1);
+  assert.ok(
+    clipped.bars.length < 900,
+    "background synthesis should not escalate to a full broker recovery",
+  );
 
   seenBrokerLimits.length = 0;
   polygonCalls = 0;
@@ -573,7 +720,7 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
     assetClass: "equity",
     allowHistoricalSynthesis: true,
     brokerRecentWindowMinutes: 4510,
-  });
+  }, { priority: 8 });
 
   assert.equal(seenBrokerLimits[0], 900);
   assert.equal(polygonCalls, 0);
@@ -660,7 +807,7 @@ test("getBarsWithDebug waits long enough for broker live-edge backfill before sy
     assetClass: "equity",
     outsideRth: true,
     allowHistoricalSynthesis: true,
-  });
+  }, { priority: 8 });
 
   assert.ok(brokerCalls >= 1);
   assert.equal(polygonCalls, 1);
@@ -749,7 +896,7 @@ test("getBarsWithDebug retries quick empty broker live-edge backfill before synt
     assetClass: "equity",
     outsideRth: true,
     allowHistoricalSynthesis: true,
-  });
+  }, { priority: 8 });
 
   assert.equal(primaryBrokerCalls, 2);
   assert.equal(result.historySource, "ibkr-history");
@@ -1012,7 +1159,7 @@ test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async
     assetClass: "equity",
     allowHistoricalSynthesis: true,
     brokerRecentWindowMinutes: 240,
-  });
+  }, { priority: 8 });
 
   assert.equal(result.bars.at(-1)?.source, "ibkr-history");
   assert.equal(result.bars.at(-1)?.close, 605);
@@ -1217,8 +1364,8 @@ test("getBarsWithDebug does not serve cached synthesis-only bars for broker-back
       allowHistoricalSynthesis: true,
     };
 
-    const first = await getBarsWithDebug(input);
-    const second = await getBarsWithDebug(input);
+    const first = await getBarsWithDebug(input, { priority: 8 });
+    const second = await getBarsWithDebug(input, { priority: 8 });
 
     assert.equal(first.debug.cacheStatus, "miss");
     assert.equal(second.debug.cacheStatus, "miss");

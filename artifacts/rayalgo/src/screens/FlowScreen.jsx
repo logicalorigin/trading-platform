@@ -41,6 +41,7 @@ import {
   providerSummaryHasTransientFlowState,
   providerSummaryHasVisibleFlowDegradation,
 } from "../features/platform/flowSourceState.js";
+import { useLiveMarketFlow } from "../features/platform/useLiveMarketFlow";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
 import { FlowDistributionScannerPanel } from "../features/flow/FlowDistributionScannerPanel.jsx";
 import {
@@ -157,6 +158,8 @@ const getDisplayableFlowError = (providerSummary) => {
 };
 const FLOW_PREMIUM_WIDGET_COUNT = 16;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
+const FLOW_DEFERRED_PANELS_DELAY_MS = 500;
+const FLOW_ACTIVATION_DELAY_MS = 90;
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
   ["week", "Week"],
@@ -1315,6 +1318,7 @@ const FlowOverviewPanel = ({
   session,
   symbols = [],
   isVisible = false,
+  onReadinessChange,
 }) => {
   const { preferences: userPreferences } = useUserPreferences();
   const appTimeZoneLabel = getAppTimeZoneLabel(userPreferences);
@@ -1482,12 +1486,32 @@ const FlowOverviewPanel = ({
 
   useEffect(() => {
     if (!isVisible || showDeferredPanels) return undefined;
-    let frameId = null;
+    let firstFrameId = null;
+    let secondFrameId = null;
+    let timerId = null;
     if (typeof requestAnimationFrame === "function") {
-      frameId = requestAnimationFrame(() => setShowDeferredPanels(true));
-      return () => cancelAnimationFrame(frameId);
+      firstFrameId = requestAnimationFrame(() => {
+        secondFrameId = requestAnimationFrame(() => {
+          timerId = setTimeout(
+            () => setShowDeferredPanels(true),
+            FLOW_DEFERRED_PANELS_DELAY_MS,
+          );
+        });
+      });
+      return () => {
+        cancelAnimationFrame(firstFrameId);
+        if (secondFrameId != null) {
+          cancelAnimationFrame(secondFrameId);
+        }
+        if (timerId != null) {
+          clearTimeout(timerId);
+        }
+      };
     }
-    const timeoutId = setTimeout(() => setShowDeferredPanels(true), 16);
+    const timeoutId = setTimeout(
+      () => setShowDeferredPanels(true),
+      FLOW_DEFERRED_PANELS_DELAY_MS,
+    );
     return () => clearTimeout(timeoutId);
   }, [isVisible, showDeferredPanels]);
 
@@ -1544,11 +1568,28 @@ const FlowOverviewPanel = ({
   });
   const flowScannerEnabled = Boolean(flowScannerControl.enabled);
   const flowScannerOwnerActive = Boolean(flowScannerControl.ownerActive);
+  const watchlistSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set((symbols || []).map((symbol) => normalizeTickerSymbol(symbol))),
+      ).filter(Boolean),
+    [symbols],
+  );
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
     { subscribe: isVisible && !livePaused },
   );
-  const liveFlowSnapshot = broadFlowSnapshot;
+  const screenFlowSnapshot = useLiveMarketFlow(watchlistSymbols, {
+    enabled: Boolean(isVisible && !livePaused && flowScannerEnabled),
+    scannerConfig: flowScannerControl.config,
+    blocking: false,
+    workloadLabel: "Flow screen",
+  });
+  const liveFlowSnapshot =
+    screenFlowSnapshot.hasLiveFlow ||
+    (!broadFlowSnapshot.hasLiveFlow && screenFlowSnapshot.flowStatus !== "loading")
+      ? screenFlowSnapshot
+      : broadFlowSnapshot;
   const flowScannerTone = flowScannerEnabled
     ? flowScannerOwnerActive
       ? T.green
@@ -1582,14 +1623,6 @@ const FlowOverviewPanel = ({
     const intervalId = setInterval(() => setFlowNowMs(Date.now()), 1000);
     return () => clearInterval(intervalId);
   }, [flowEvents.length, isVisible]);
-
-  const watchlistSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set((symbols || []).map((symbol) => normalizeTickerSymbol(symbol))),
-      ).filter(Boolean),
-    [symbols],
-  );
 
   const coverage = providerSummary.coverage || {
     totalSymbols: watchlistSymbols.length,
@@ -1675,10 +1708,12 @@ const FlowOverviewPanel = ({
     },
     {
       query: {
-        enabled: isVisible,
+        enabled: Boolean(isVisible && showDeferredPanels),
         staleTime: 15_000,
         refetchInterval:
-          isVisible && !livePaused ? FLOW_PREMIUM_WIDGET_REFRESH_MS : false,
+          isVisible && showDeferredPanels && !livePaused
+            ? FLOW_PREMIUM_WIDGET_REFRESH_MS
+            : false,
         retry: false,
       },
     },
@@ -3853,6 +3888,13 @@ const FlowOverviewPanel = ({
   );
   const isFlowLoadingShell = flowStatus === "loading" && !flowEvents.length;
   const shouldRenderDeferredPanels = showDeferredPanels && !isFlowLoadingShell;
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible && shouldRenderDeferredPanels),
+      backgroundAllowed: Boolean(isVisible && shouldRenderDeferredPanels),
+    });
+  }, [isVisible, onReadinessChange, shouldRenderDeferredPanels]);
 
   if (!isVisible) {
     return (
@@ -4150,7 +4192,7 @@ const FlowOverviewPanel = ({
                   >
                     {isFlowLoadingShell
                       ? "warming flow feed"
-                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} ${isMobileFlowLayout ? "visible" : "virtual"} rows${filtered.length > rowsPerPage ? ` · capped at ${rowsPerPage}` : ""}`}
+                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} prints${filtered.length > rowsPerPage ? ` · capped at ${rowsPerPage}` : ""}`}
                   </span>
                 </div>
                 <div
@@ -5794,18 +5836,78 @@ const FlowOverviewPanel = ({
   );
 };
 
+const FlowActivationFallback = () => (
+  <div
+    data-testid="flow-screen-activation-shell"
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "grid",
+      gridTemplateRows: "auto 1fr",
+      gap: sp(10),
+      padding: sp("16px 20px"),
+      background: T.bg0,
+      color: T.textDim,
+      fontFamily: T.sans,
+    }}
+  >
+    <CardTitle>Flow</CardTitle>
+    <div
+      aria-hidden="true"
+      style={{
+        display: "grid",
+        gridTemplateRows: "52px 1fr",
+        gap: sp(10),
+      }}
+    >
+      <div style={{ borderRadius: dim(RADII.sm), background: T.bg2 }} />
+      <div style={{ borderRadius: dim(RADII.sm), background: T.bg1 }} />
+    </div>
+  </div>
+);
+
 export const FlowScreen = ({
   onJumpToTrade,
   session,
   symbols = [],
   isVisible = false,
-}) => (
-  <FlowOverviewPanel
-    onJumpToTrade={onJumpToTrade}
-    session={session}
-    symbols={symbols}
-    isVisible={isVisible}
-  />
-);
+  onReadinessChange,
+}) => {
+  const [activationReady, setActivationReady] = useState(false);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setActivationReady(false);
+      return undefined;
+    }
+    if (activationReady) return undefined;
+    onReadinessChange?.({ criticalReady: true });
+    const timerId = setTimeout(
+      () => setActivationReady(true),
+      FLOW_ACTIVATION_DELAY_MS,
+    );
+    return () => clearTimeout(timerId);
+  }, [activationReady, isVisible, onReadinessChange]);
+
+  if (!isVisible) {
+    return (
+      <div data-testid="flow-screen-suspended" style={{ display: "none" }} />
+    );
+  }
+
+  if (!activationReady) {
+    return <FlowActivationFallback />;
+  }
+
+  return (
+    <FlowOverviewPanel
+      onJumpToTrade={onJumpToTrade}
+      session={session}
+      symbols={symbols}
+      isVisible={isVisible}
+      onReadinessChange={onReadinessChange}
+    />
+  );
+};
 
 export default FlowScreen;

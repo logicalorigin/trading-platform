@@ -55,9 +55,17 @@ const ResearchLoadingFallback = () => (
   </div>
 );
 
-export const ResearchScreen = ({ onJumpToTrade, isVisible = false }) => (
+export const ResearchScreen = ({
+  onJumpToTrade,
+  isVisible = false,
+  onReadinessChange,
+}) => (
   <Suspense fallback={<ResearchLoadingFallback />}>
-    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} isVisible={isVisible} />
+    <PhotonicsObservatory
+      onJumpToTrade={onJumpToTrade}
+      isVisible={isVisible}
+      onReadinessChange={onReadinessChange}
+    />
   </Suspense>
 );
 

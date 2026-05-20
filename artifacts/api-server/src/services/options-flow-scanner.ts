@@ -751,6 +751,9 @@ export function createOptionsFlowScanner<TEvent>(
   }
 
   function getDiagnostics(): OptionsFlowScannerDiagnostics {
+    const scannerActive = Boolean(
+      drainPromise || queued.size > 0 || activeSymbols.size > 0,
+    );
     return {
       queuedCount: queued.size,
       draining: Boolean(drainPromise),
@@ -764,7 +767,7 @@ export function createOptionsFlowScanner<TEvent>(
       lastScannedSymbols: [...lastRunResult.scannedSymbols],
       lastSkippedSymbols: [...lastRunResult.skippedSymbols],
       lastFailedSymbols: [...lastRunResult.failedSymbols],
-      lastSkippedReason: lastRunResult.skippedReason,
+      lastSkippedReason: scannerActive ? null : lastRunResult.skippedReason,
       lastTransport: lastRunResult.transport,
     };
   }

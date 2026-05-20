@@ -10,6 +10,10 @@ import {
   __resetMarketDataAdmissionForTests,
   admitMarketDataLeases,
 } from "./market-data-admission";
+import {
+  resetBridgeGovernorOverrides,
+  setBridgeGovernorOverrides,
+} from "./bridge-governor";
 import { createOptionsFlowScanner } from "./options-flow-scanner";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
@@ -38,6 +42,7 @@ const platformModule = await import("./platform");
 
 const {
   __resetOptionChainCachesForTests,
+  __holdOptionsFlowScannerBackgroundForTests,
   __runOptionsFlowScannerOnceForTests,
   __setIbkrBridgeClientFactoryForTests,
   __setHistoricalFlowDirectFallbackTimeoutMsForTests,
@@ -193,6 +198,7 @@ test.afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetOptionChainCachesForTests();
   __resetMarketDataAdmissionForTests();
+  resetBridgeGovernorOverrides();
   resetOptionsFlowRuntimeOverrides();
   __setHistoricalFlowStoreDisabledForTests(false);
   __setHistoricalFlowStoreReadTimeoutMsForTests(3_000);
@@ -221,6 +227,7 @@ test("options flow runtime defaults cover the broad scanner cycle", () => {
   assert.equal(config.scannerBatchSize, 25);
   assert.equal(config.scannerLineBudget, 10);
   assert.equal(config.scannerConcurrency, 10);
+  assert.equal(config.scannerStrikeCoverage, "standard");
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 10);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -243,6 +250,7 @@ test("options flow runtime defaults cover the broad scanner cycle", () => {
 test("options flow scanner concurrency shrinks when visible demand uses line headroom", () => {
   const config = getOptionsFlowRuntimeConfig();
 
+  setBridgeGovernorOverrides({ options: { concurrency: 10 } });
   admitMarketDataLeases({
     owner: "active-grid",
     intent: "visible-live",
@@ -252,11 +260,30 @@ test("options flow scanner concurrency shrinks when visible demand uses line hea
     })),
   });
 
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 3);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 5);
   assert.equal(
     getOptionsFlowScannerDiagnostics().deepScanner.maxConcurrency,
-    3,
+    5,
   );
+});
+
+test("options flow scanner reports zero capacity when higher-priority demand consumes all lines", () => {
+  const config = getOptionsFlowRuntimeConfig();
+
+  admitMarketDataLeases({
+    owner: "active-grid",
+    intent: "visible-live",
+    requests: Array.from({ length: 200 }, (_, index) => ({
+      assetClass: "equity" as const,
+      symbol: `VIS${index}`,
+    })),
+  });
+
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 0);
+  assert.equal(diagnostics.backgroundBlockedReason, "line-cap-exhausted");
+  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 0);
+  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 0);
 });
 
 test("options flow scanner skips fan-out when transport is unavailable", async () => {
@@ -524,6 +551,51 @@ test("options flow scanner diagnostics expose active metadata scans", async () =
   assert.equal(scanner.getDiagnostics().drainStartedAt, null);
 });
 
+test("options flow scanner diagnostics suppress stale skip reasons while work is active", async () => {
+  let transportAvailable = false;
+  let releaseScan: () => void = () => {};
+  const scanGate = new Promise<void>((resolve) => {
+    releaseScan = resolve;
+  });
+  const scanner = createOptionsFlowScanner({
+    maxConcurrency: 1,
+    preferredTransport: "tws",
+    getTransport: async () =>
+      transportAvailable
+        ? {
+            transport: "tws",
+            connected: true,
+            configured: true,
+            liveMarketDataAvailable: true,
+          }
+        : null,
+    fetchSymbol: async ({ symbol }) => {
+      await scanGate;
+      return { events: [{ symbol }] };
+    },
+  });
+
+  await scanner.runOnce(["spy"], { limit: 1 });
+  assert.equal(scanner.getDiagnostics().lastSkippedReason, "transport-unavailable");
+
+  transportAvailable = true;
+  const scan = scanner.requestScan(["qqq"], { limit: 1 });
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (scanner.getDiagnostics().activeCount > 0) {
+      break;
+    }
+    await wait(0);
+  }
+
+  const activeDiagnostics = scanner.getDiagnostics();
+  assert.equal(activeDiagnostics.activeCount, 1);
+  assert.equal(activeDiagnostics.lastSkippedReason, null);
+
+  releaseScan();
+  await scan;
+  assert.equal(scanner.getDiagnostics().lastSkippedReason, null);
+});
+
 test("options flow scanner clears drain state after unexpected result-handler failures", async () => {
   const scanner = createOptionsFlowScanner({
     preferredTransport: "tws",
@@ -763,6 +835,49 @@ test("listAggregateFlowEvents seeds the scanner when no current batch exists", a
   assert.ok(warmed.events.length > 0);
   assert.equal(warmed.source.provider, "ibkr");
   assert.equal(warmed.source.ibkrStatus, "loaded");
+});
+
+test("listAggregateFlowEvents seeds foreground aggregate scans during live warmup hold", async () => {
+  const scannedSymbols: string[] = [];
+  setOptionsFlowRuntimeOverrides({ scannerBatchSize: 1 });
+  __holdOptionsFlowScannerBackgroundForTests(60_000);
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async (input: { underlying?: string }) => {
+          const symbol = input.underlying || "SPY";
+          scannedSymbols.push(symbol);
+          return [optionContract(symbol)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const pending = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 5,
+      scope: "all",
+    }),
+  );
+
+  assert.equal(getOptionsFlowScannerDiagnostics().backgroundBlockedReason, "live-warmup");
+  assert.equal(pending.events.length, 0);
+  assert.equal(pending.source.ibkrReason, "options_flow_scanner_queued");
+
+  for (let attempt = 0; attempt < 20 && scannedSymbols.length === 0; attempt += 1) {
+    await wait(50);
+  }
+
+  assert.ok(scannedSymbols.length > 0);
 });
 
 test("listFlowEvents serves partial scanner snapshots to nonblocking callers", async () => {
@@ -1565,6 +1680,154 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
     parsed.source.ibkrReason,
     "options_flow_historical_provider_timeout",
   );
+});
+
+test("listFlowEvents single-flights bucketed nonblocking historical chart reads", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  let polygonCalls = 0;
+  const resolveHistoricalReads: Array<
+    (events: ReturnType<typeof polygonFlowEvent>[]) => void
+  > = [];
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: () => {
+          polygonCalls += 1;
+          return new Promise<ReturnType<typeof polygonFlowEvent>[]>((resolve) => {
+            resolveHistoricalReads.push(resolve);
+          });
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const request = {
+    underlying: "SPY",
+    limit: 1_000,
+    from: new Date("2026-04-24T13:30:00.000Z"),
+    to: new Date("2026-04-24T20:00:00.000Z"),
+    blocking: false,
+    historicalBucketSeconds: 300,
+  };
+  const first = ListFlowEventsResponse.parse(await listFlowEvents(request));
+  const second = ListFlowEventsResponse.parse(await listFlowEvents(request));
+
+  assert.equal(polygonCalls, 1);
+  assert.deepEqual(first.events, []);
+  assert.equal(first.source.ibkrReason, "options_flow_historical_refreshing");
+  assert.deepEqual(second.events, []);
+  assert.equal(second.source.ibkrReason, "options_flow_historical_refreshing");
+
+  resolveHistoricalReads.forEach((resolve) => resolve([]));
+  await wait(5);
+});
+
+test("listFlowEvents cools down bucketed historical provider timeouts by exact key", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests(1);
+  let polygonCalls = 0;
+  const resolveHistoricalReads: Array<
+    (events: ReturnType<typeof polygonFlowEvent>[]) => void
+  > = [];
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: () => {
+          polygonCalls += 1;
+          return new Promise<ReturnType<typeof polygonFlowEvent>[]>((resolve) => {
+            resolveHistoricalReads.push(resolve);
+          });
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const request = {
+    underlying: "SPY",
+    limit: 1_000,
+    from: new Date("2026-04-24T13:30:00.000Z"),
+    to: new Date("2026-04-24T20:00:00.000Z"),
+    blocking: false,
+    historicalBucketSeconds: 300,
+  };
+  const first = ListFlowEventsResponse.parse(await listFlowEvents(request));
+  assert.equal(first.source.ibkrReason, "options_flow_historical_refreshing");
+  assert.equal(polygonCalls, 1);
+
+  let cooled = first;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await wait(5);
+    cooled = ListFlowEventsResponse.parse(await listFlowEvents(request));
+    if (cooled.source.ibkrReason === "options_flow_historical_provider_timeout") {
+      break;
+    }
+  }
+
+  assert.equal(
+    cooled.source.ibkrReason,
+    "options_flow_historical_provider_timeout",
+  );
+  assert.equal(polygonCalls, 1);
+
+  const differentWindow = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      ...request,
+      to: new Date("2026-04-24T20:05:00.000Z"),
+    }),
+  );
+  assert.equal(
+    differentWindow.source.ibkrReason,
+    "options_flow_historical_refreshing",
+  );
+  assert.equal(polygonCalls, 2);
+
+  resolveHistoricalReads.forEach((resolve) => resolve([]));
+  await wait(5);
+});
+
+test("listFlowEvents caches successful bucketed historical refresh after nonblocking primer", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  let polygonCalls = 0;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: async () => {
+          polygonCalls += 1;
+          return [polygonFlowEvent("SPY-CACHED-HISTORY", 75_000)];
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const request = {
+    underlying: "SPY",
+    limit: 1_000,
+    from: new Date("2026-04-24T13:30:00.000Z"),
+    to: new Date("2026-04-24T20:00:00.000Z"),
+    blocking: false,
+    historicalBucketSeconds: 300,
+  };
+  const first = ListFlowEventsResponse.parse(await listFlowEvents(request));
+  assert.equal(first.source.ibkrReason, "options_flow_historical_refreshing");
+
+  let cached = first;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await wait(5);
+    cached = ListFlowEventsResponse.parse(await listFlowEvents(request));
+    if (cached.events.length > 0) {
+      break;
+    }
+  }
+
+  assert.equal(polygonCalls, 1);
+  assert.deepEqual(
+    cached.events.map((event) => event.id),
+    ["SPY-CACHED-HISTORY"],
+  );
+  assert.equal(cached.source.ibkrReason, "options_flow_historical_direct");
 });
 
 test("listFlowEvents falls back to derived historical flow for nonblocking charts", async () => {

@@ -132,6 +132,9 @@ export type OptionChainContract = {
   ask: number;
   last: number;
   mark: number;
+  prevClose: number | null;
+  change: number | null;
+  changePercent: number | null;
   impliedVolatility: number | null;
   delta: number | null;
   gamma: number | null;
@@ -821,6 +824,24 @@ function mapChainContract(
       getNumberPath(day, ["close"]),
       getNumberPath(day, ["c"]),
     ) ?? midpoint(bid, ask, 0);
+  const prevClose =
+    firstDefined(
+      getNumberPath(day, ["previous_close"]),
+      getNumberPath(day, ["prev_close"]),
+      getNumberPath(day, ["previousClose"]),
+      getNumberPath(day, ["prevClose"]),
+    ) ?? null;
+  const change =
+    firstDefined(
+      getNumberPath(day, ["change"]),
+      prevClose !== null ? last - prevClose : null,
+    ) ?? null;
+  const changePercent =
+    firstDefined(
+      getNumberPath(day, ["change_percent"]),
+      getNumberPath(day, ["changePercent"]),
+      prevClose ? ((change ?? last - prevClose) / Math.abs(prevClose)) * 100 : null,
+    ) ?? null;
 
   const updatedAt =
     firstDefined(
@@ -848,6 +869,9 @@ function mapChainContract(
     ask,
     last,
     mark: midpoint(bid, ask, last),
+    prevClose,
+    change,
+    changePercent,
     impliedVolatility: asNumber(record["implied_volatility"]),
     delta: asNumber(greeks?.["delta"]),
     gamma: asNumber(greeks?.["gamma"]),

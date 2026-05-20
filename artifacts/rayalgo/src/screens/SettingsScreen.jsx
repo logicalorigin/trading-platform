@@ -1217,6 +1217,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
     : null;
   const admission = safeRecord(snapshot?.admission);
   const budget = safeRecord(admission.budget);
+  const policy = safeRecord(snapshot?.policy);
+  const allocation = runtimeControl.lineUsage?.allocation || safeRecord(snapshot?.allocation);
   const bridge = safeRecord(snapshot?.bridge);
   const bridgeDiagnostics = safeRecord(bridge.diagnostics);
   const governor = safeRecord(snapshot?.governor || bridge.governor);
@@ -1253,7 +1255,16 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         <div>
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
-          <StateRow label="API demand lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow label="Active app lines" value={formatCount(admission.activeLineCount)} />
+          <StateRow
+            label="Target fill"
+            value={formatCount(policy.targetFillLines ?? budget.targetFillLines ?? allocation.targetFillLines)}
+          />
+          <StateRow
+            label="Remaining to target"
+            value={formatCount(allocation.remainingToTargetLineCount)}
+            tone={Number(allocation.remainingToTargetLineCount) > 0 ? T.amber : T.green}
+          />
           <StateRow
             label="Line pressure"
             value={String(pressure.state || "unknown").toUpperCase()}
@@ -1285,9 +1296,14 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         </div>
         <div>
           <StateRow label="Flow scanner demand" value={`${formatCount(flowScanner.used)} / ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)}`} />
+          {flowScanner.detail ? (
+            <StateRow label="Flow scanner status" value={flowScanner.detail} />
+          ) : null}
           <StateRow label="Scanner effective cap" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow label="Account monitor" value={`${formatCount(accountMonitor.used)} / ${formatCount(accountMonitor.cap)}`} />
           <StateRow label="Automation" value={`${formatCount(automation.used)} / ${formatCount(automation.cap)}`} />
+          <StateRow label="Convenience total" value={formatCount(allocation.convenienceLineCount ?? admission.convenienceLineCount)} />
+          <StateRow label="Convenience filler" value={formatCount(allocation.fillerLineCount ?? admission.fillerLineCount)} />
           <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />

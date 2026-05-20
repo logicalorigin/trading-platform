@@ -1053,7 +1053,12 @@ const tableCellStyle = {
   fontFamily: T.sans,
 };
 
-export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbol }) {
+export default function GexScreen({
+  sym = "SPY",
+  isVisible = true,
+  onSelectSymbol,
+  onReadinessChange,
+}) {
   const initialTicker = normalizeGexTicker(sym);
   const [ticker, setTicker] = useState(initialTicker);
   const [tickerDraft, setTickerDraft] = useState(initialTicker);
@@ -1085,6 +1090,14 @@ export default function GexScreen({ sym = "SPY", isVisible = true, onSelectSymbo
       setMobileFiltersOpen(false);
     }
   }, [isPhone]);
+
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible),
+    });
+  }, [isVisible, onReadinessChange]);
 
   const commitTicker = () => {
     const nextTicker = normalizeGexTicker(tickerDraft);

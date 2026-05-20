@@ -27,6 +27,16 @@ const soakSummaryByPage = new WeakMap<Page, unknown>();
 const liveDiagnosticsByPage = new WeakMap<Page, unknown>();
 const failedRequestLogByPage = new WeakMap<Page, unknown[]>();
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTargetClosedError(error: unknown) {
+  return /target page, context or browser has been closed|browser has been closed|page has been closed|context has been closed|target closed/i.test(
+    errorMessage(error).toLowerCase(),
+  );
+}
+
 test.afterEach(async ({ page }, testInfo) => {
   const runtimeIssues = runtimeIssueLogByPage.get(page) ?? [];
   const soakSummary = soakSummaryByPage.get(page) ?? null;
@@ -612,7 +622,11 @@ async function collectMemorySample(page: Page, label: string) {
       diagnostics,
     };
   } finally {
-    await session.detach();
+    await session.detach().catch((error) => {
+      if (!isTargetClosedError(error)) {
+        throw error;
+      }
+    });
   }
 }
 
@@ -853,12 +867,21 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
   const streamingRuntimeIssues: string[] = [];
   const failedRequests: Array<Record<string, unknown>> = [];
   let crashed = false;
+  let pageClosedDuringSoak = false;
+  let monitorPageClose = true;
   page.on("pageerror", (error) =>
     runtimeIssues.push(error.stack || error.message),
   );
   page.on("crash", () => {
     crashed = true;
     runtimeIssues.push("page crashed");
+  });
+  page.on("close", () => {
+    if (!monitorPageClose) {
+      return;
+    }
+    pageClosedDuringSoak = true;
+    runtimeIssues.push("page closed during soak");
   });
   page.on("console", (message) => {
     if (
@@ -941,6 +964,60 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
   const baseline = await collectMemorySample(page, "baseline");
   const samples = [baseline];
   const liveSamples = [];
+  let finalSample = baseline;
+  let cycle = 0;
+  const recordSoakSummary = () => {
+    const currentPeakHeapMb = Math.max(
+      ...samples.map((sample) => sample.usedHeapMb),
+    );
+    const currentPeakNodes = Math.max(
+      ...samples.map((sample) => sample.nodes),
+    );
+    soakSummaryByPage.set(page, {
+      mode: useLiveApi ? "live-api" : "mock-api",
+      soakMinutes,
+      cycles: cycle,
+      baseline,
+      final: finalSample,
+      peakHeapMb: currentPeakHeapMb,
+      peakNodes: currentPeakNodes,
+      sampleCount: samples.length,
+      liveSampleCount: liveSamples.length,
+      pageClosedDuringSoak,
+      issueBuckets: {
+        appCode: normalizeIssueSet([...runtimeIssues, ...appCodeIssues]),
+        streamingRuntime: normalizeIssueSet(streamingRuntimeIssues),
+      },
+      failedRequests,
+      lastSamples: samples.slice(-5),
+      lastLiveSamples: liveSamples.slice(-5),
+    });
+    if (useLiveApi) {
+      liveDiagnosticsByPage.set(page, {
+        liveSamples,
+        latest: liveSamples.at(-1) ?? null,
+      });
+    }
+  };
+  const collectTrackedMemorySample = async (label: string) => {
+    try {
+      const sample = await collectMemorySample(page, label);
+      samples.push(sample);
+      finalSample = sample;
+      recordSoakSummary();
+      return sample;
+    } catch (error) {
+      if (pageClosedDuringSoak || isTargetClosedError(error)) {
+        const message = `page closed during soak while collecting ${label}: ${errorMessage(error)}`;
+        if (!runtimeIssues.includes(message)) {
+          runtimeIssues.push(message);
+        }
+        recordSoakSummary();
+        throw new Error(message);
+      }
+      throw error;
+    }
+  };
   if (useLiveApi) {
     const baselineLiveSample = await collectLiveSoakSample(page, "baseline");
     if (baselineLiveSample) {
@@ -953,8 +1030,8 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
       ).toBe(true);
     }
   }
+  recordSoakSummary();
   const deadline = Date.now() + soakMs;
-  let cycle = 0;
 
   while (Date.now() < deadline) {
     cycle += 1;
@@ -966,26 +1043,27 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
     await page.waitForTimeout(250);
 
     if (cycle % sampleEveryCycles === 0 || Date.now() >= deadline) {
-      samples.push(await collectMemorySample(page, `cycle-${cycle}`));
+      await collectTrackedMemorySample(`cycle-${cycle}`);
       if (useLiveApi) {
         const liveSample = await collectLiveSoakSample(page, `cycle-${cycle}`);
         if (liveSample) {
           liveSamples.push(liveSample);
           appCodeIssues.push(...liveSample.appCodeIssues);
           streamingRuntimeIssues.push(...liveSample.streamingRuntimeIssues);
+          recordSoakSummary();
         }
       }
     }
   }
 
-  const finalSample = await collectMemorySample(page, "final");
-  samples.push(finalSample);
+  finalSample = await collectTrackedMemorySample("final");
   if (useLiveApi) {
     const finalLiveSample = await collectLiveSoakSample(page, "final");
     if (finalLiveSample) {
       liveSamples.push(finalLiveSample);
       appCodeIssues.push(...finalLiveSample.appCodeIssues);
       streamingRuntimeIssues.push(...finalLiveSample.streamingRuntimeIssues);
+      recordSoakSummary();
     }
   }
   const peakHeapMb = Math.max(...samples.map((sample) => sample.usedHeapMb));
@@ -1024,33 +1102,10 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
       2,
     ),
   );
-  const summary = {
-    mode: useLiveApi ? "live-api" : "mock-api",
-    soakMinutes,
-    cycles: cycle,
-    baseline,
-    final: finalSample,
-    peakHeapMb,
-    peakNodes,
-    sampleCount: samples.length,
-    liveSampleCount: liveSamples.length,
-    issueBuckets: {
-      appCode: normalizeIssueSet([...runtimeIssues, ...appCodeIssues]),
-      streamingRuntime: normalizeIssueSet(streamingRuntimeIssues),
-    },
-    failedRequests,
-    lastSamples: samples.slice(-5),
-    lastLiveSamples: liveSamples.slice(-5),
-  };
-  soakSummaryByPage.set(page, summary);
-  if (useLiveApi) {
-    liveDiagnosticsByPage.set(page, {
-      liveSamples,
-      latest: liveSamples.at(-1) ?? null,
-    });
-  }
+  recordSoakSummary();
 
   expect(crashed, "Chrome page should not crash during soak").toBe(false);
+  expect(pageClosedDuringSoak, "Chrome page should not close during soak").toBe(false);
   expect(runtimeIssues, "Runtime console/page errors should not occur").toEqual([]);
   expect(
     normalizeIssueSet(appCodeIssues),
@@ -1076,4 +1131,5 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
     truncatedHydrationScopes,
     "chart caps should not shrink rendered bars below hydrated bars",
   ).toEqual([]);
+  monitorPageClose = false;
 });

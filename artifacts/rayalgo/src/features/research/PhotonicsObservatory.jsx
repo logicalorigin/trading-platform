@@ -4237,6 +4237,7 @@ function ResearchLoadingState({ theme }) {
 export default function PhotonicsObservatory({
   onJumpToTrade,
   isVisible = false,
+  onReadinessChange,
 }) {
   const [themeId, setThemeId] = useState("ai");
   const {
@@ -4260,6 +4261,15 @@ export default function PhotonicsObservatory({
   const [showSettings, setShowSettings] = useState(false);
   const graphRef = useRef();
   const detailRef = useRef();
+  useEffect(() => {
+    const criticalReady = Boolean(isVisible && researchMetaReady);
+    const derivedReady = Boolean(isVisible && researchDataReady);
+    onReadinessChange?.({
+      criticalReady,
+      derivedReady,
+      backgroundAllowed: derivedReady,
+    });
+  }, [isVisible, onReadinessChange, researchDataReady, researchMetaReady]);
   useRuntimeWorkloadFlag("research:stream", isVisible, {
     kind: "stream",
     label: "Research live quotes",
@@ -4376,7 +4386,7 @@ export default function PhotonicsObservatory({
   });
 
   useEffect(() => {
-    if (!researchStatus.configured || dataStatus !== "live" || !themeUniverse.length) return;
+    if (!isVisible || !researchStatus.configured || dataStatus !== "live" || !themeUniverse.length) return;
 
     const pendingTickers = themeUniverse
       .map((company) => company.t)
@@ -4399,7 +4409,7 @@ export default function PhotonicsObservatory({
     return () => {
       cancelled = true;
     };
-  }, [dataStatus, liveFund, researchStatus.configured, themeUniverse]);
+  }, [dataStatus, isVisible, liveFund, researchStatus.configured, themeUniverse]);
 
   const cos = useMemo(() => {
     let list = themeUniverse;
@@ -4482,7 +4492,7 @@ export default function PhotonicsObservatory({
   }, [apiKey, isVisible, refreshData, researchDataReady]);
 
   useEffect(() => {
-    if (!researchMetaReady || !researchDataReady) return undefined;
+    if (!isVisible || !researchMetaReady || !researchDataReady) return undefined;
     const prefetchIds = themeOrder.filter((candidateThemeId) =>
       candidateThemeId !== themeId && themeMap[candidateThemeId]?.available,
     );
@@ -4492,7 +4502,7 @@ export default function PhotonicsObservatory({
       });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [researchDataReady, researchMetaReady, themeId, themeMap, themeOrder]);
+  }, [isVisible, researchDataReady, researchMetaReady, themeId, themeMap, themeOrder]);
 
   const selCo = activeCompanies.find(c => c.t === sel);
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];

@@ -85,7 +85,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(900, 900, 1_800),
+      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 20_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -98,7 +98,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(720, 900, 1_800),
+      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 10_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -111,7 +111,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(900, 900, 1_800),
+      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 12_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -124,7 +124,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(900, 900, 1_800),
+      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(300, 1_500, 8_000),
       option: defineLimits(240, 720, 1_800),
     },
@@ -137,7 +137,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(720, 900, 1_800),
+      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(300, 1_500, 6_000),
       option: defineLimits(240, 720, 1_800),
     },
@@ -150,7 +150,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(780, 780, 1_000),
+      mini: defineLimits(260, 780, 1_000),
       primary: defineLimits(240, 1_000, 4_000),
       option: defineLimits(240, 720, 1_200),
     },
@@ -163,7 +163,7 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     streamable: true,
     supports: { mini: true, primary: true, option: true },
     limits: {
-      mini: defineLimits(480, 720, 1_000),
+      mini: defineLimits(240, 720, 1_000),
       primary: defineLimits(240, 1_000, 2_500),
       option: defineLimits(180, 480, 1_000),
     },
