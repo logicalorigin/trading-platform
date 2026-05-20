@@ -487,10 +487,9 @@ test("shadow balance snapshots are timestamped from fills and marks", () => {
 test("source-scoped shadow positions require matching source keys and source prefix", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
-  assert.match(
-    source,
-    /sourcePositionKeys!\.has\(position\.positionKey\)\s*&&\s*positionMatchesShadowSource\(position, source\)/,
-  );
+  assert.match(source, /async function readOpenShadowPositionsForSource/);
+  assert.match(source, /sourcePositionKeys\.has\(position\.positionKey\)/);
+  assert.match(source, /positionMatchesShadowSource\(position, source\)/);
 });
 
 test("shadow equity history terminal points only use current time for open positions", () => {
@@ -1802,6 +1801,30 @@ test("shadow live source filters reject replay order sources and forward-test ro
   assert.equal(
     internals.isLiveShadowOrder({
       source: "automation",
+      payload: {
+        replay: { source: "signal_options_replay" },
+        metadata: {
+          positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
+        },
+      },
+    } as any),
+    false,
+  );
+  assert.equal(
+    internals.shadowOrderEffectiveSource({
+      source: "automation",
+      payload: {
+        replay: { source: "signal_options_replay" },
+        metadata: {
+          positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
+        },
+      },
+    } as any),
+    "signal_options_replay",
+  );
+  assert.equal(
+    internals.isLiveShadowOrder({
+      source: "automation",
       payload: { forwardTest: true },
     } as any),
     false,
@@ -1824,7 +1847,7 @@ test("shadow live source filters reject replay order sources and forward-test ro
     internals.isLiveShadowPosition({
       positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
     } as any),
-    true,
+    false,
   );
   assert.equal(
     internals.isLiveShadowPosition({
