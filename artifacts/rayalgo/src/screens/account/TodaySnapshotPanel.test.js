@@ -16,6 +16,12 @@ test("today snapshot panel composes the two content components, not the legacy p
   assert.doesNotMatch(source, /IntradayPnlPanel\s*\}/);
 });
 
+test("today snapshot heatmap uses the same live option rows as positions", () => {
+  assert.match(source, /useLiveOptionPositionRows/);
+  assert.match(source, /PositionOptionQuoteStreams/);
+  assert.match(source, /positions=\{livePositionRows\}/);
+});
+
 test("today snapshot panel handles per-tab loading and error states", () => {
   assert.match(source, /positionsQuery\?\.isLoading/);
   assert.match(source, /positionsQuery\?\.error/);

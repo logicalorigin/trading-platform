@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
 import { sp } from "../../lib/uiTokens.jsx";
 import {
   InlineError,
@@ -6,6 +7,10 @@ import {
   SkeletonRows,
   ToggleGroup,
 } from "./accountUtils";
+import {
+  PositionOptionQuoteStreams,
+  useLiveOptionPositionRows,
+} from "./PositionsPanel";
 import { PositionTreemapContent } from "./PositionTreemapPanel";
 import { IntradayPnlContent } from "./IntradayPnlPanel";
 
@@ -20,8 +25,22 @@ export const TodaySnapshotPanel = ({
   currency,
   maskValues = false,
   emptyHeatmapBody,
+  liveOptionQuotesEnabled = true,
+  streamLiveOptionQuotes = true,
 }) => {
   const [tab, setTab] = useState("heatmap");
+  const openPositionRows = useMemo(
+    () => getOpenPositionRows(positionsQuery?.data?.positions || []),
+    [positionsQuery?.data?.positions],
+  );
+  const {
+    rows: livePositionRows,
+    optionQuoteGroups,
+  } = useLiveOptionPositionRows({
+    rows: openPositionRows,
+    enabled: liveOptionQuotesEnabled,
+    totals: positionsQuery?.data?.totals,
+  });
   return (
     <Panel
       title="Today"
@@ -40,12 +59,20 @@ export const TodaySnapshotPanel = ({
           ) : positionsQuery?.error ? (
             <InlineError error={positionsQuery.error} onRetry={positionsQuery.refetch} />
           ) : (
-            <PositionTreemapContent
-              positions={positionsQuery?.data?.positions || []}
-              currency={currency}
-              maskValues={maskValues}
-              emptyBody={emptyHeatmapBody}
-            />
+            <>
+              {streamLiveOptionQuotes ? (
+                <PositionOptionQuoteStreams
+                  groups={optionQuoteGroups}
+                  enabled={liveOptionQuotesEnabled}
+                />
+              ) : null}
+              <PositionTreemapContent
+                positions={livePositionRows}
+                currency={currency}
+                maskValues={maskValues}
+                emptyBody={emptyHeatmapBody}
+              />
+            </>
           )
         ) : intradayQuery?.isLoading ? (
           <SkeletonRows rows={3} />

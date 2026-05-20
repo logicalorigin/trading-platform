@@ -81,7 +81,7 @@ const mobileFilterRailStyle = {
 
 const mobileRowListStyle = {
   display: "grid",
-  gap: sp(2),
+  gap: sp(1),
 };
 
 const mobileOrdersGrid = "minmax(48px, 0.9fr) minmax(54px, 0.86fr) minmax(58px, 0.92fr) minmax(56px, 0.9fr) 24px";
@@ -130,7 +130,7 @@ const mobileScanShellStyle = (active = false) => ({
 
 const mobileScanRowStyle = (gridTemplateColumns) => ({
   width: "100%",
-  minHeight: dim(44),
+  minHeight: dim(40),
   padding: sp("4px 5px"),
   border: "none",
   background: "transparent",
@@ -210,15 +210,12 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
-  { value: "signal_options_replay", label: "Options BT" },
   { value: "watchlist_backtest", label: "Watchlist BT" },
 ];
 
 const sourceTone = (sourceType) =>
   sourceType === "automation"
     ? "category-automation"
-    : sourceType === "signal_options_replay"
-      ? "category-replay"
     : sourceType === "watchlist_backtest"
       ? "category-backtest"
       : sourceType === "mixed"
@@ -695,7 +692,11 @@ export const OrdersPanel = ({
         })}
       </div>
     ) : (
-      <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
+      <div
+        data-testid="account-orders-table-scroll"
+        className="ra-hide-scrollbar"
+        style={{ overflowX: "auto" }}
+      >
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}>
           <thead>
             <tr style={tableHeaderStyle}>
@@ -1057,7 +1058,11 @@ export const ClosedTradesPanel = ({
             })}
           </div>
         ) : (
-          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 278 }}>
+          <div
+            data-testid="account-closed-trades-table-scroll"
+            className="ra-hide-scrollbar"
+            style={{ overflowX: "auto" }}
+          >
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
               <thead>
                 <tr style={tableHeaderStyle}>

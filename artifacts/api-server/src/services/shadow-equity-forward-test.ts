@@ -527,16 +527,19 @@ async function latestHighWaterMark(input: {
 
 async function recordShadowFillForEvent(input: {
   event: ExecutionEvent;
+  deploymentId: string;
   symbol: string;
   side: "buy" | "sell";
   quantity: number;
   price: number;
   payload: Record<string, unknown>;
 }) {
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  const positionKey = `shadow_equity_forward:${input.deploymentId}:equity:${symbol}`;
   return placeShadowOrder({
     accountId: SHADOW_ACCOUNT_ID,
     mode: "paper",
-    symbol: input.symbol,
+    symbol,
     assetClass: "equity",
     side: input.side,
     type: "market",
@@ -548,8 +551,9 @@ async function recordShadowFillForEvent(input: {
     source: "automation",
     sourceEventId: input.event.id,
     clientOrderId: `shadow-equity-forward-${input.side}-${input.event.id}`,
+    positionKey,
     requestedFillPrice: input.price,
-    payload: input.payload,
+    payload: { ...input.payload, positionKey },
     placedAt: input.event.occurredAt,
   });
 }
@@ -627,6 +631,7 @@ async function processTrailingStops(input: {
       events.push(exitEvent.event);
       await recordShadowFillForEvent({
         event: exitEvent.event,
+        deploymentId: input.deployment.id,
         symbol,
         side: "sell",
         quantity,
@@ -750,6 +755,7 @@ async function processSignalState(input: {
       events.push(exit.event);
       await recordShadowFillForEvent({
         event: exit.event,
+        deploymentId: input.deployment.id,
         symbol,
         side: "sell",
         quantity,
@@ -845,6 +851,7 @@ async function processSignalState(input: {
     events.push(entry.event);
     await recordShadowFillForEvent({
       event: entry.event,
+      deploymentId: input.deployment.id,
       symbol,
       side: "buy",
       quantity,

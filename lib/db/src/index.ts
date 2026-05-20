@@ -33,7 +33,7 @@ if (!resolvedDatabaseUrl) {
 
 const defaultPoolMax = (): number => {
   try {
-    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 3 : 10;
+    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 6 : 10;
   } catch {
     return 10;
   }
@@ -48,7 +48,7 @@ const isHeliumDatabase = (): boolean => {
 };
 
 const heliumDatabase = isHeliumDatabase();
-const defaultConnectionTimeoutMillis = heliumDatabase ? 10_000 : undefined;
+const defaultConnectionTimeoutMillis = heliumDatabase ? 30_000 : undefined;
 
 export const pool = new Pool({
   connectionString: resolvedDatabaseUrl,

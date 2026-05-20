@@ -31,8 +31,8 @@ test("account order ids stay distinct when broker order ids are missing", () => 
 
 test("orders and trades source filters are views within the shadow ledger", () => {
   assert.match(source, /label: "All Sources"/);
-  assert.match(source, /label: "Options BT"/);
   assert.match(source, /label: "Watchlist BT"/);
+  assert.doesNotMatch(source, /label: "Options BT"/);
   assert.doesNotMatch(source, /label: "Live Ledger"/);
 });
 

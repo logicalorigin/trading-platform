@@ -21,6 +21,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
         gap: sp(4),
         minHeight: dim(20),
         minWidth: 0,
+        flexShrink: 0,
         padding: sp("0 6px"),
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -88,15 +89,44 @@ const formatFreshnessAge = (timestamp) => {
   return `${Math.round(ageMs / 60_000)}m`;
 };
 
-const resolveStatus = (brokerAuthenticated, accountFreshness) => {
+const resolveStatus = (
+  brokerAuthenticated,
+  accountFreshness,
+  brokerFreshness = null,
+  shadowMode = false,
+) => {
   const fresh = Boolean(accountFreshness?.accountFresh);
   const lastEventAt = Number(accountFreshness?.accountLastEventAt);
   const lastEventValid = Number.isFinite(lastEventAt);
+  const brokerRealtimeKnown = Boolean(
+    brokerFreshness &&
+      (brokerFreshness.accountLastEventAt != null ||
+        brokerFreshness.orderLastEventAt != null ||
+        brokerFreshness.accountFresh ||
+        brokerFreshness.orderFresh),
+  );
+  const brokerRealtimeFresh = Boolean(
+    brokerFreshness?.accountFresh && brokerFreshness?.orderFresh,
+  );
   if (brokerAuthenticated === false) {
     return { tone: T.red, title: "Bridge offline" };
   }
   if (fresh) {
-    return { tone: T.green, title: "Bridge live · account fresh" };
+    if (shadowMode) {
+      return { tone: T.green, title: "Shadow ledger stream fresh" };
+    }
+    if (brokerRealtimeKnown && !brokerRealtimeFresh) {
+      return {
+        tone: T.amber,
+        title: "Account stream fresh · broker realtime stale",
+      };
+    }
+    return {
+      tone: T.green,
+      title: brokerRealtimeKnown
+        ? "Account stream fresh · broker realtime fresh"
+        : "Account stream fresh",
+    };
   }
   if (lastEventValid) {
     return {
@@ -112,10 +142,18 @@ export const AccountHeaderStrip = ({
   maskValues = false,
   brokerAuthenticated = true,
   accountFreshness = null,
+  brokerFreshness = null,
+  shadowMode = false,
+  sectionControl = null,
 }) => {
   const metrics = summary?.metrics || {};
   const currency = summary?.currency || "USD";
-  const status = resolveStatus(brokerAuthenticated, accountFreshness);
+  const status = resolveStatus(
+    brokerAuthenticated,
+    accountFreshness,
+    brokerFreshness,
+    shadowMode,
+  );
 
   return (
     <section
@@ -125,54 +163,81 @@ export const AccountHeaderStrip = ({
         padding: sp("0 0 2px"),
         display: "flex",
         alignItems: "center",
-        justifyContent: "flex-end",
+        justifyContent: "flex-start",
         gap: 0,
         flexWrap: "nowrap",
-        overflowX: "auto",
+        overflow: "hidden",
         minWidth: 0,
+        width: "100%",
+        maxWidth: "100%",
+        boxSizing: "border-box",
       }}
     >
       <StatusDot tone={status.tone} title={status.title} />
-      {[
-        {
-          label: "Net",
-          value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
-          title: metricTitle(metrics.netLiquidation),
-          strong: true,
-        },
-        {
-          label: "Cash",
-          value: metricValue(metrics.totalCash, currency, "money", maskValues),
-          title: `${metricTitle(metrics.totalCash)}\nSettled: ${metricValue(metrics.settledCash, currency, "money", maskValues)}`,
-        },
-        {
-          label: "BP",
-          value: metricValue(metrics.buyingPower, currency, "money", maskValues),
-          title: metricTitle(metrics.buyingPower),
-        },
-        {
-          label: "Margin",
-          value: metricValue(metrics.marginUsed, currency, "money", maskValues),
-          title: `${metricTitle(metrics.marginUsed)}${
-            metrics.maintenanceMargin
-              ? `\nMaintenance: ${formatAccountMoney(metrics.maintenanceMargin.value, currency, true, maskValues)}`
-              : ""
-          }`,
-        },
-        {
-          label: "Cushion",
-          value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "percent", maskValues),
-          tone:
-            metrics.maintenanceMarginCushionPercent?.value > 50
-              ? T.green
-              : metrics.maintenanceMarginCushionPercent?.value > 25
-                ? T.amber
-                : T.red,
-          title: metricTitle(metrics.maintenanceMarginCushionPercent),
-        },
-      ].map((metric) => (
-        <HeaderMetric key={metric.label} {...metric} />
-      ))}
+      <div
+        className="ra-hide-scrollbar"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          flexWrap: "nowrap",
+          flex: "1 1 0",
+          minWidth: 0,
+          overflowX: "auto",
+        }}
+      >
+        {[
+          {
+            label: "Net",
+            value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
+            title: metricTitle(metrics.netLiquidation),
+            strong: true,
+          },
+          {
+            label: "Cash",
+            value: metricValue(metrics.totalCash, currency, "money", maskValues),
+            title: `${metricTitle(metrics.totalCash)}\nSettled: ${metricValue(metrics.settledCash, currency, "money", maskValues)}`,
+          },
+          {
+            label: "BP",
+            value: metricValue(metrics.buyingPower, currency, "money", maskValues),
+            title: metricTitle(metrics.buyingPower),
+          },
+          {
+            label: "Margin",
+            value: metricValue(metrics.marginUsed, currency, "money", maskValues),
+            title: `${metricTitle(metrics.marginUsed)}${
+              metrics.maintenanceMargin
+                ? `\nMaintenance: ${formatAccountMoney(metrics.maintenanceMargin.value, currency, true, maskValues)}`
+                : ""
+            }`,
+          },
+          {
+            label: "Cushion",
+            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "percent", maskValues),
+            tone:
+              metrics.maintenanceMarginCushionPercent?.value > 50
+                ? T.green
+                : metrics.maintenanceMarginCushionPercent?.value > 25
+                  ? T.amber
+                  : T.red,
+            title: metricTitle(metrics.maintenanceMarginCushionPercent),
+          },
+        ].map((metric) => (
+          <HeaderMetric key={metric.label} {...metric} />
+        ))}
+      </div>
+      {sectionControl ? (
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            flexShrink: 0,
+            marginLeft: sp(6),
+          }}
+        >
+          {sectionControl}
+        </div>
+      ) : null}
     </section>
   );
 };

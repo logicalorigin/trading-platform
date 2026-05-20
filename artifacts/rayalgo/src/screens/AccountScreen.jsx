@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  getGetAccountAllocationQueryOptions,
+  getGetAccountOrdersQueryOptions,
   getGetAccountEquityHistoryQueryOptions,
+  getGetAccountPositionsQueryOptions,
+  getGetAccountRiskQueryOptions,
+  getGetAccountSummaryQueryOptions,
   useCancelAccountOrder,
   useGetAccountAllocation,
   useGetAccountCashActivity,
@@ -34,7 +39,11 @@ import AccountHeroBlock from "./account/AccountHeroBlock";
 import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
 import PortfolioExposurePanel from "./account/PortfolioExposurePanel";
-import PositionsPanel, { PositionsAtDateInspector } from "./account/PositionsPanel";
+import PositionsPanel, {
+  PositionOptionQuoteStreams,
+  PositionsAtDateInspector,
+  buildPositionOptionQuoteGroups,
+} from "./account/PositionsPanel";
 import TradingPatternsPanel from "./account/TradingPatternsPanel";
 import CashFundingPanel from "./account/CashFundingPanel";
 import SetupHealthPanel from "./account/SetupHealthPanel";
@@ -79,6 +88,15 @@ const QUERY_OPTIONS = {
     retry: false,
   },
 };
+const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
+  query: {
+    staleTime: 10_000,
+    retry: false,
+  },
+};
+const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 2_500;
+const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
+const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 8_000;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -366,7 +384,48 @@ const ShadowWatchlistBacktestPanel = ({
   );
 };
 
-export const AccountScreen = ({
+const ACCOUNT_ACTIVATION_DELAY_MS = 90;
+
+const AccountActivationFallback = () => (
+  <div
+    data-testid="account-screen-activation-shell"
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "grid",
+      gridTemplateRows: "auto 1fr",
+      gap: sp(10),
+      padding: sp("16px 20px"),
+      background: T.bg0,
+      color: T.textDim,
+      fontFamily: T.sans,
+    }}
+  >
+    <div
+      style={{
+        color: T.text,
+        fontSize: textSize("section"),
+        fontWeight: FONT_WEIGHTS.semibold,
+        fontFamily: T.sans,
+      }}
+    >
+      Account
+    </div>
+    <div
+      aria-hidden="true"
+      style={{
+        display: "grid",
+        gridTemplateRows: "96px 1fr",
+        gap: sp(10),
+      }}
+    >
+      <div style={{ borderRadius: dim(RADII.sm), background: T.bg2 }} />
+      <div style={{ borderRadius: dim(RADII.sm), background: T.bg1 }} />
+    </div>
+  </div>
+);
+
+const AccountScreenInner = ({
   session,
   accounts = [],
   selectedAccountId,
@@ -378,6 +437,7 @@ export const AccountScreen = ({
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
   onJumpToTrade,
+  onReadinessChange,
 }) => {
   const queryClient = useQueryClient();
   const { preferences: userPreferences } = useUserPreferences();
@@ -465,6 +525,8 @@ export const AccountScreen = ({
 
   const activeAccountId = accountViewId || selectedAccountId || "combined";
   const shadowMode = accountSection === "shadow";
+  const effectiveOrderTab =
+    shadowMode && orderTab === "working" ? "history" : orderTab;
   const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
   const accountQueriesEnabled = Boolean(
     isVisible &&
@@ -514,6 +576,79 @@ export const AccountScreen = ({
     () => buildPerformanceCalendarParams(accountDataParams),
     [accountDataParams],
   );
+  const getAccountSectionRequest = useCallback(
+    (section) => {
+      const nextShadowMode = section === "shadow";
+      const nextAccountId = nextShadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
+      if (!nextAccountId) {
+        return null;
+      }
+      return {
+        accountId: nextAccountId,
+        mode: nextShadowMode ? "paper" : environment || "paper",
+        orderTab: nextShadowMode && orderTab === "working" ? "history" : orderTab,
+        assetClass: assetFilter === "all" ? undefined : assetFilter,
+      };
+    },
+    [activeAccountId, assetFilter, environment, orderTab],
+  );
+  const prefetchAccountSectionLiveQueries = useCallback(
+    (section) => {
+      const target = getAccountSectionRequest(section);
+      if (!target) {
+        return;
+      }
+
+      const mode = { mode: target.mode };
+      const positionsParams = {
+        ...mode,
+        assetClass: target.assetClass,
+      };
+      const queryOptions = [
+        getGetAccountSummaryQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountAllocationQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountRiskQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountPositionsQueryOptions(
+          target.accountId,
+          positionsParams,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountOrdersQueryOptions(
+          target.accountId,
+          {
+            ...mode,
+            tab: target.orderTab,
+          },
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountEquityHistoryQueryOptions(
+          target.accountId,
+          {
+            ...mode,
+            range: "1D",
+          },
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+      ];
+
+      queryOptions.forEach((options) => {
+        queryClient.prefetchQuery(options);
+      });
+    },
+    [getAccountSectionRequest, queryClient],
+  );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
   const accountPageStreamEnabled = Boolean(
     isVisible && accountQueriesEnabled,
@@ -522,7 +657,7 @@ export const AccountScreen = ({
     accountId: accountRequestId,
     mode: modeParams.mode,
     range,
-    orderTab,
+    orderTab: effectiveOrderTab,
     assetClass: assetFilter === "all" ? undefined : assetFilter,
     tradeFilters: {
       from: closedTradeParams.from,
@@ -535,8 +670,96 @@ export const AccountScreen = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: accountPageStreamEnabled,
   });
+  const [accountCriticalFallbackReady, setAccountCriticalFallbackReady] = useState(false);
+  const [accountLiveFallbackReady, setAccountLiveFallbackReady] = useState(false);
+  const [accountDerivedFallbackReady, setAccountDerivedFallbackReady] = useState(false);
+  useEffect(() => {
+    if (!accountPageStreamEnabled || accountPageStreamFreshness.accountCriticalFresh) {
+      setAccountCriticalFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountCriticalFallbackReady(true);
+    }, ACCOUNT_CRITICAL_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [accountPageStreamEnabled, accountPageStreamFreshness.accountCriticalFresh]);
+  useEffect(() => {
+    if (!accountPageStreamEnabled || accountPageStreamFreshness.accountLiveFresh) {
+      setAccountLiveFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountLiveFallbackReady(true);
+    }, ACCOUNT_LIVE_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [accountPageStreamEnabled, accountPageStreamFreshness.accountLiveFresh]);
+  useEffect(() => {
+    if (!accountPageStreamEnabled || accountPageStreamFreshness.accountDerivedFresh) {
+      setAccountDerivedFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountDerivedFallbackReady(true);
+    }, ACCOUNT_DERIVED_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [accountPageStreamEnabled, accountPageStreamFreshness.accountDerivedFresh]);
+  const accountCriticalReady = Boolean(
+    !accountPageStreamEnabled ||
+      accountPageStreamFreshness.accountCriticalFresh ||
+      accountCriticalFallbackReady,
+  );
+  const accountDerivedReady = Boolean(
+    !accountPageStreamEnabled ||
+      accountPageStreamFreshness.accountDerivedFresh ||
+      accountDerivedFallbackReady,
+  );
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible && accountCriticalReady),
+      derivedReady: Boolean(isVisible && accountDerivedReady),
+      backgroundAllowed: Boolean(isVisible && accountDerivedReady),
+    });
+  }, [
+    accountCriticalReady,
+    accountDerivedReady,
+    isVisible,
+    onReadinessChange,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !accountDerivedReady) {
+      return undefined;
+    }
+    const warmSection = shadowMode ? "real" : "shadow";
+    let cancelled = false;
+    const runPrefetch = () => {
+      if (!cancelled) {
+        prefetchAccountSectionLiveQueries(warmSection);
+      }
+    };
+    const idleId =
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(runPrefetch, { timeout: 2_000 })
+        : window.setTimeout(runPrefetch, 800);
+    return () => {
+      cancelled = true;
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [
+    accountDerivedReady,
+    isVisible,
+    prefetchAccountSectionLiveQueries,
+    shadowMode,
+  ]);
   const accountRuntimeControl = useRuntimeControlSnapshot({
-    enabled: accountPageStreamEnabled && !shadowMode,
+    enabled: Boolean(
+      accountPageStreamEnabled &&
+        !shadowMode &&
+        accountCriticalReady,
+    ),
     runtimeDiagnosticsEnabled: false,
     lineUsageEnabled: true,
     lineUsageStreamEnabled: true,
@@ -549,7 +772,7 @@ export const AccountScreen = ({
     () =>
       buildAccountRefreshPolicy({
         isVisible,
-        accountPageStreamFresh: accountPageStreamFreshness.accountFresh,
+        accountPageStreamFresh: accountPageStreamFreshness.accountCriticalFresh,
         accountWarmupPending,
         accountStreamFresh: brokerStreamFreshness.accountFresh,
         orderStreamFresh: brokerStreamFreshness.orderFresh,
@@ -557,7 +780,7 @@ export const AccountScreen = ({
       }),
     [
       accountWarmupPending,
-      accountPageStreamFreshness.accountFresh,
+      accountPageStreamFreshness.accountCriticalFresh,
       brokerStreamFreshness.accountFresh,
       brokerStreamFreshness.orderFresh,
       isVisible,
@@ -569,9 +792,25 @@ export const AccountScreen = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
-  const equityHistoryQueriesEnabled = Boolean(accountQueriesEnabled);
-  const secondaryAccountQueriesEnabled = Boolean(accountQueriesEnabled);
-  const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
+  const criticalAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountCriticalFallbackReady &&
+          !accountPageStreamFreshness.accountCriticalFresh)),
+  );
+  const liveAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountLiveFallbackReady && !accountPageStreamFreshness.accountLiveFresh)),
+  );
+  const derivedAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountDerivedFallbackReady && !accountPageStreamFreshness.accountDerivedFresh)),
+  );
+  const equityHistoryQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
+  const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
+  const benchmarkQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
   const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
     secondaryAccountQueriesEnabled,
   );
@@ -596,7 +835,7 @@ export const AccountScreen = ({
     query: {
       staleTime: 15_000,
       refetchInterval: healthRefreshInterval,
-      enabled: Boolean(isVisible && !shadowMode),
+      enabled: Boolean(!shadowMode && derivedAccountQueriesEnabled),
       retry: false,
     },
   });
@@ -604,7 +843,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: liveRefreshInterval,
-      enabled: accountQueriesEnabled,
+      enabled: criticalAccountQueriesEnabled,
     },
   });
   const equityQuery = useGetAccountEquityHistory(
@@ -633,7 +872,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: liveRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: liveAccountQueriesEnabled,
       },
     },
   );
@@ -692,7 +931,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: secondaryAccountQueriesEnabled,
+      enabled: criticalAccountQueriesEnabled,
     },
   });
   const positionsQuery = useGetAccountPositions(
@@ -705,7 +944,7 @@ export const AccountScreen = ({
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: criticalAccountQueriesEnabled,
       },
     },
   );
@@ -763,13 +1002,13 @@ export const AccountScreen = ({
     accountRequestId,
     {
       ...accountDataParams,
-      tab: orderTab,
+      tab: effectiveOrderTab,
     },
     {
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: criticalAccountQueriesEnabled,
       },
     },
   );
@@ -777,7 +1016,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: secondaryAccountQueriesEnabled,
+      enabled: criticalAccountQueriesEnabled,
     },
   });
   const cashQuery = useGetAccountCashActivity(accountRequestId, accountDataParams, {
@@ -875,49 +1114,69 @@ export const AccountScreen = ({
     if (
       !isVisible ||
       !accountRequestId ||
-      shadowMode
+      shadowMode ||
+      !accountPageStreamFreshness.accountDerivedFresh
     ) {
-      return;
+      return undefined;
     }
 
-    ACCOUNT_RANGES.forEach((prefetchRange) => {
-      queryClient.prefetchQuery(
-        getGetAccountEquityHistoryQueryOptions(
-          accountRequestId,
-          {
-            ...accountDataParams,
-            range: prefetchRange,
-          },
-          {
-            query: equityHistoryQuerySettings,
-          },
-        ),
-      );
-      [
-        ["SPY", "SPY"],
-        ["QQQ", "QQQ"],
-        ["DJIA", "DIA"],
-      ].forEach(([key, benchmark]) => {
-        if (!visibleEquityBenchmarks[key]) {
-          return;
-        }
+    let cancelled = false;
+    const runPrefetch = () => {
+      if (cancelled) {
+        return;
+      }
+      ACCOUNT_RANGES.forEach((prefetchRange) => {
         queryClient.prefetchQuery(
           getGetAccountEquityHistoryQueryOptions(
             accountRequestId,
             {
               ...accountDataParams,
               range: prefetchRange,
-              benchmark,
             },
             {
               query: equityHistoryQuerySettings,
             },
           ),
         );
+        [
+          ["SPY", "SPY"],
+          ["QQQ", "QQQ"],
+          ["DJIA", "DIA"],
+        ].forEach(([key, benchmark]) => {
+          if (!visibleEquityBenchmarks[key]) {
+            return;
+          }
+          queryClient.prefetchQuery(
+            getGetAccountEquityHistoryQueryOptions(
+              accountRequestId,
+              {
+                ...accountDataParams,
+                range: prefetchRange,
+                benchmark,
+              },
+              {
+                query: equityHistoryQuerySettings,
+              },
+            ),
+          );
+        });
       });
-    });
+    };
+    const idleId =
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(runPrefetch, { timeout: 4_000 })
+        : window.setTimeout(runPrefetch, 1_500);
+    return () => {
+      cancelled = true;
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
   }, [
     accountRequestId,
+    accountPageStreamFreshness.accountDerivedFresh,
     equityHistoryQuerySettings,
     isVisible,
     accountDataParams,
@@ -936,6 +1195,13 @@ export const AccountScreen = ({
   const openAccountPositions = useMemo(
     () => getOpenPositionRows(positionsQuery.data?.positions || []),
     [positionsQuery.data],
+  );
+  const accountOptionQuoteGroups = useMemo(
+    () => buildPositionOptionQuoteGroups(openAccountPositions),
+    [openAccountPositions],
+  );
+  const accountLiveOptionQuotesEnabled = Boolean(
+    accountQueriesEnabled && accountCriticalReady,
   );
   const accountTradingAnalysis = useMemo(
     () =>
@@ -1019,15 +1285,11 @@ export const AccountScreen = ({
       backtestPositions: openAccountPositions.filter(
         (position) => position.sourceType === "watchlist_backtest",
       ).length,
-      replayPositions: openAccountPositions.filter(
-        (position) => position.sourceType === "signal_options_replay",
-      ).length,
       mixedPositions: openAccountPositions.filter(
         (position) => position.sourceType === "mixed",
       ).length,
       automationOrders: orders.filter((order) => order.sourceType === "automation").length,
       backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
-      replayOrders: orders.filter((order) => order.sourceType === "signal_options_replay").length,
       manualOrders: orders.filter((order) => order.sourceType === "manual").length,
     };
   }, [openAccountPositions, ordersQuery.data]);
@@ -1127,12 +1389,23 @@ export const AccountScreen = ({
       }),
     );
   };
+  const handleAccountSectionChange = useCallback(
+    (nextSection) => {
+      prefetchAccountSectionLiveQueries(nextSection);
+      if (nextSection === "shadow" && orderTab === "working") {
+        setOrderTab("history");
+      }
+      setAccountSection(nextSection);
+    },
+    [orderTab, prefetchAccountSectionLiveQueries],
+  );
   const accountSectionControl = (
-    <div style={{ marginLeft: "auto" }}>
+    <div>
       <SegmentedControl
         options={ACCOUNT_SECTIONS}
         value={accountSection}
-        onChange={setAccountSection}
+        onChange={handleAccountSectionChange}
+        onOptionIntent={prefetchAccountSectionLiveQueries}
         ariaLabel="Account section"
         buttonTestId="account-section"
       />
@@ -1173,13 +1446,17 @@ export const AccountScreen = ({
           gap: sp(accountIsPhone ? 8 : 12),
         }}
       >
+        <PositionOptionQuoteStreams
+          groups={accountOptionQuoteGroups}
+          enabled={accountLiveOptionQuotesEnabled}
+        />
+
         <AccountHeroBlock
           summary={displaySummaryData}
           currency={currency}
           maskValues={maskAccountValues}
           shadowMode={shadowMode}
           isPhone={accountIsPhone}
-          sectionControl={headerSectionControl}
         />
 
         <div
@@ -1191,6 +1468,9 @@ export const AccountScreen = ({
             backdropFilter: "blur(8px)",
             background: `${T.bg0}e6`,
             paddingBottom: sp(4),
+            marginTop: sp(accountIsPhone ? -4 : -6),
+            minWidth: 0,
+            maxWidth: "100%",
           }}
         >
           <AccountHeaderStrip
@@ -1198,6 +1478,9 @@ export const AccountScreen = ({
             maskValues={maskAccountValues}
             brokerAuthenticated={shadowMode || brokerAuthenticated}
             accountFreshness={accountPageStreamFreshness}
+            brokerFreshness={shadowMode ? null : brokerStreamFreshness}
+            shadowMode={shadowMode}
+            sectionControl={headerSectionControl}
           />
         </div>
 
@@ -1270,6 +1553,8 @@ export const AccountScreen = ({
             intradayQuery={intradayPnlQuery}
             currency={currency}
             maskValues={maskAccountValues}
+            liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+            streamLiveOptionQuotes={false}
             emptyHeatmapBody={
               shadowMode
                 ? "Treemap renders once Shadow ledger positions are opened or marked."
@@ -1299,9 +1584,11 @@ export const AccountScreen = ({
             positionsAtDateQuery={positionsAtDateQuery}
             activeEquityDate={activeEquityInspectionDate}
             pinnedEquityDate={pinnedEquityDate}
-            currentPositionsCount={positionsQuery.data?.positions?.length || 0}
+            currentPositionsCount={openAccountPositions.length}
             onClearEquityPin={() => setPinnedEquityDate(null)}
             isPhone={accountIsPhone}
+            liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+            streamLiveOptionQuotes={false}
           />
         </DeferredRender>
 
@@ -1422,7 +1709,7 @@ export const AccountScreen = ({
             />
             <OrdersPanel
               query={ordersQuery}
-              tab={orderTab}
+              tab={effectiveOrderTab}
               onTabChange={setOrderTab}
               currency={currency}
               onCancelOrder={handleCancelOrder}
@@ -1492,10 +1779,8 @@ export const AccountScreen = ({
                   {[
                     ["Auto Pos", shadowAutomationAudit.automationPositions, T.pink],
                     ["Backtest Pos", shadowAutomationAudit.backtestPositions, T.purple],
-                    ["Options BT Pos", shadowAutomationAudit.replayPositions, T.cyan],
                     ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
                     ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
-                    ["Options BT Orders", shadowAutomationAudit.replayOrders, T.green],
                   ].map(([label, value, color], index) => (
                     <div
                       key={label}
@@ -1532,6 +1817,37 @@ export const AccountScreen = ({
       </div>
     </div>
   );
+};
+
+export const AccountScreen = (props) => {
+  const { isVisible = false, onReadinessChange } = props;
+  const [activationReady, setActivationReady] = useState(false);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setActivationReady(false);
+      return undefined;
+    }
+    if (activationReady) return undefined;
+    onReadinessChange?.({ criticalReady: true });
+    const timerId = setTimeout(
+      () => setActivationReady(true),
+      ACCOUNT_ACTIVATION_DELAY_MS,
+    );
+    return () => clearTimeout(timerId);
+  }, [activationReady, isVisible, onReadinessChange]);
+
+  if (!isVisible) {
+    return (
+      <div data-testid="account-screen-suspended" style={{ display: "none" }} />
+    );
+  }
+
+  if (!activationReady) {
+    return <AccountActivationFallback />;
+  }
+
+  return <AccountScreenInner {...props} />;
 };
 
 export default AccountScreen;

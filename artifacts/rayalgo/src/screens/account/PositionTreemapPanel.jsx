@@ -70,10 +70,75 @@ const TREEMAP_MODES = [
   { value: "UNREAL", label: "Unreal %" },
 ];
 
+const finiteNumber = (value) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const firstFiniteNumber = (...values) => {
+  for (const value of values) {
+    const numeric = finiteNumber(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const rowMultiplier = (row) =>
+  firstFiniteNumber(
+    row?.optionContract?.multiplier,
+    row?.optionContract?.sharesPerContract,
+    1,
+  );
+
+const rowCostBasis = (row) => {
+  const averageCost = finiteNumber(row?.averageCost);
+  const quantity = finiteNumber(row?.quantity);
+  const multiplier = rowMultiplier(row);
+  if (averageCost != null && quantity != null && multiplier != null) {
+    const costBasis = averageCost * quantity * multiplier;
+    if (costBasis !== 0) return Math.abs(costBasis);
+  }
+
+  const marketValue = finiteNumber(row?.marketValue);
+  const unrealizedPnl = finiteNumber(row?.unrealizedPnl);
+  if (marketValue != null && unrealizedPnl != null) {
+    const costBasis = marketValue - unrealizedPnl;
+    if (costBasis !== 0) return Math.abs(costBasis);
+  }
+
+  return null;
+};
+
+const deriveUnrealizedPnlPercent = (row) => {
+  const unrealizedPnl = finiteNumber(row?.unrealizedPnl);
+  const costBasis = rowCostBasis(row);
+  if (unrealizedPnl != null && costBasis != null) {
+    return (unrealizedPnl / costBasis) * 100;
+  }
+  return finiteNumber(row?.unrealizedPnlPercent);
+};
+
+const deriveDayChangePercent = (row) => {
+  const provided = finiteNumber(row?.dayChangePercent);
+  if (provided != null) return provided;
+
+  const dayChange = finiteNumber(row?.dayChange);
+  const marketValue = finiteNumber(row?.marketValue);
+  if (dayChange == null || marketValue == null) return null;
+
+  const previousMarketValue = marketValue - dayChange;
+  return previousMarketValue !== 0
+    ? (dayChange / Math.abs(previousMarketValue)) * 100
+    : null;
+};
+
 export const buildTreemapItems = (positions) =>
   (positions || [])
     .map((row, index) => {
-      const mv = Number(row?.marketValue);
+      const mv = finiteNumber(row?.marketValue);
       if (!Number.isFinite(mv) || mv === 0) return null;
       const symbol = String(row.symbol || "");
       return {
@@ -81,8 +146,8 @@ export const buildTreemapItems = (positions) =>
         symbol,
         value: Math.abs(mv),
         marketValue: mv,
-        dayChangePercent: Number(row?.dayChangePercent) || 0,
-        unrealizedPnlPercent: Number(row?.unrealizedPnlPercent) || 0,
+        dayChangePercent: deriveDayChangePercent(row),
+        unrealizedPnlPercent: deriveUnrealizedPnlPercent(row),
         assetClass: row?.assetClass || "",
       };
     })
@@ -106,7 +171,9 @@ export const PositionTreemapContent = ({
     mode === "DAY" ? rect.dayChangePercent : rect.unrealizedPnlPercent;
 
   const colorFor = (pct) => {
-    const clipped = Math.max(-PCT_CLIP, Math.min(PCT_CLIP, pct));
+    const numeric = finiteNumber(pct);
+    if (numeric == null) return rgba(T.textMuted, 0.18);
+    const clipped = Math.max(-PCT_CLIP, Math.min(PCT_CLIP, numeric));
     const intensity = Math.abs(clipped) / PCT_CLIP;
     const alpha = 0.18 + intensity * 0.72;
     return rgba(clipped >= 0 ? T.green : T.red, alpha);

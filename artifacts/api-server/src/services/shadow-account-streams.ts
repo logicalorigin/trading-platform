@@ -31,9 +31,12 @@ let shadowAccountSnapshotBaseCache:
   | null = null;
 let shadowAccountSnapshotBaseInFlight: Promise<ShadowAccountSnapshotBase> | null =
   null;
+let shadowAccountSnapshotBaseVersion = 0;
 
 export function invalidateShadowAccountSnapshotBaseCache() {
   shadowAccountSnapshotBaseCache = null;
+  shadowAccountSnapshotBaseInFlight = null;
+  shadowAccountSnapshotBaseVersion += 1;
 }
 
 function stableStringify(value: unknown): string {
@@ -169,7 +172,8 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
     return shadowAccountSnapshotBaseInFlight;
   }
 
-  shadowAccountSnapshotBaseInFlight = (async () => {
+  const version = shadowAccountSnapshotBaseVersion;
+  const request = (async () => {
     const [summary, positions, workingOrders, historyOrders, allocation, closedTrades] =
       await Promise.all([
         getShadowAccountSummary(),
@@ -198,17 +202,22 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
       risk,
       updatedAt,
     } satisfies ShadowAccountSnapshotBase;
-    shadowAccountSnapshotBaseCache = {
-      value,
-      expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
-    };
+    if (version === shadowAccountSnapshotBaseVersion) {
+      shadowAccountSnapshotBaseCache = {
+        value,
+        expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
+      };
+    }
     return value;
   })();
+  shadowAccountSnapshotBaseInFlight = request;
 
   try {
-    return await shadowAccountSnapshotBaseInFlight;
+    return await request;
   } finally {
-    shadowAccountSnapshotBaseInFlight = null;
+    if (shadowAccountSnapshotBaseInFlight === request) {
+      shadowAccountSnapshotBaseInFlight = null;
+    }
   }
 }
 

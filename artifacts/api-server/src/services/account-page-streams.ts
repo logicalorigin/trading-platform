@@ -22,6 +22,8 @@ type BenchmarkSymbol = "SPY" | "QQQ" | "DIA";
 
 export const ACCOUNT_PAGE_STREAM_INTERVAL_MS = 1_000;
 export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
+export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 1_500;
+export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 6_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
@@ -74,6 +76,20 @@ export type AccountPageSnapshotPayload = {
   tradingPatterns: Awaited<ReturnType<typeof getShadowTradingPatterns>> | null;
 };
 
+export type AccountPageCriticalPayload = {
+  stream: "account-page-critical";
+  accountId: string;
+  mode: RuntimeMode;
+  orderTab: OrderTab;
+  assetClass: string | null;
+  updatedAt: string;
+  summary: AccountPageSnapshotPayload["summary"];
+  allocation: AccountPageSnapshotPayload["allocation"];
+  positions: AccountPageSnapshotPayload["positions"];
+  orders: AccountPageSnapshotPayload["orders"];
+  risk: AccountPageSnapshotPayload["risk"];
+};
+
 export type AccountPageLivePayload = {
   stream: "account-page-live";
   accountId: string;
@@ -115,6 +131,14 @@ const accountPageSnapshotInflight = new Map<
   string,
   Promise<AccountPageSnapshotPayload>
 >();
+const accountPageCriticalCache = new Map<
+  string,
+  { value: AccountPageCriticalPayload; expiresAt: number }
+>();
+const accountPageCriticalInflight = new Map<
+  string,
+  Promise<AccountPageCriticalPayload>
+>();
 const accountPageLiveCache = new Map<
   string,
   { value: AccountPageLivePayload; expiresAt: number }
@@ -131,6 +155,7 @@ const accountPageDerivedInflight = new Map<
   string,
   Promise<AccountPageDerivedPayload>
 >();
+let accountPageSnapshotCacheVersion = 0;
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -171,8 +196,14 @@ function cacheKeyForInput(input: AccountPageSnapshotInput): string {
 
 export function clearAccountPageSnapshotCache() {
   accountPageSnapshotCache.clear();
+  accountPageCriticalCache.clear();
   accountPageLiveCache.clear();
   accountPageDerivedCache.clear();
+  accountPageSnapshotInflight.clear();
+  accountPageCriticalInflight.clear();
+  accountPageLiveInflight.clear();
+  accountPageDerivedInflight.clear();
+  accountPageSnapshotCacheVersion += 1;
 }
 
 function livePayloadFromBootstrap(
@@ -236,28 +267,15 @@ export async function fetchAccountPageLivePayload(
     return inFlight;
   }
 
+  const version = accountPageSnapshotCacheVersion;
   const request = (async () => {
     const common = {
       accountId: normalized.accountId,
       mode: normalized.mode,
     };
-    const [
-      summary,
-      intradayEquity,
-      allocation,
-      positions,
-      orders,
-      risk,
-    ] = await Promise.all([
-      getAccountSummary(common),
+    const [critical, intradayEquity] = await Promise.all([
+      fetchAccountPageCriticalPayload(normalized),
       getAccountEquityHistory({ ...common, range: "1D" }),
-      getAccountAllocation(common),
-      getAccountPositions({
-        ...common,
-        assetClass: normalized.assetClass,
-      }),
-      getAccountOrders({ ...common, tab: normalized.orderTab }),
-      getAccountRisk(common),
     ]);
 
     const value: AccountPageLivePayload = {
@@ -267,17 +285,19 @@ export async function fetchAccountPageLivePayload(
       orderTab: normalized.orderTab,
       assetClass: normalized.assetClass,
       updatedAt: new Date().toISOString(),
-      summary,
+      summary: critical.summary,
       intradayEquity,
-      allocation,
-      positions,
-      orders,
-      risk,
+      allocation: critical.allocation,
+      positions: critical.positions,
+      orders: critical.orders,
+      risk: critical.risk,
     };
-    accountPageLiveCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
-    });
+    if (version === accountPageSnapshotCacheVersion) {
+      accountPageLiveCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
+      });
+    }
     return value;
   })();
 
@@ -285,7 +305,84 @@ export async function fetchAccountPageLivePayload(
   try {
     return await request;
   } finally {
-    accountPageLiveInflight.delete(cacheKey);
+    if (accountPageLiveInflight.get(cacheKey) === request) {
+      accountPageLiveInflight.delete(cacheKey);
+    }
+  }
+}
+
+export async function fetchAccountPageCriticalPayload(
+  input: AccountPageSnapshotInput,
+): Promise<AccountPageCriticalPayload> {
+  const normalized = normalizeInput(input);
+  const cacheKey = stableStringify({
+    accountId: normalized.accountId,
+    mode: normalized.mode,
+    orderTab: normalized.orderTab,
+    assetClass: normalized.assetClass,
+  });
+  const cached = accountPageCriticalCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  const inFlight = accountPageCriticalInflight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const version = accountPageSnapshotCacheVersion;
+  const request = (async () => {
+    const common = {
+      accountId: normalized.accountId,
+      mode: normalized.mode,
+    };
+    const [
+      summary,
+      allocation,
+      positions,
+      orders,
+      risk,
+    ] = await Promise.all([
+      getAccountSummary(common),
+      getAccountAllocation(common),
+      getAccountPositions({
+        ...common,
+        assetClass: normalized.assetClass,
+      }),
+      getAccountOrders({ ...common, tab: normalized.orderTab }),
+      getAccountRisk(common),
+    ]);
+
+    const value: AccountPageCriticalPayload = {
+      stream: "account-page-critical",
+      accountId: normalized.accountId,
+      mode: normalized.mode,
+      orderTab: normalized.orderTab,
+      assetClass: normalized.assetClass,
+      updatedAt: new Date().toISOString(),
+      summary,
+      allocation,
+      positions,
+      orders,
+      risk,
+    };
+    if (version === accountPageSnapshotCacheVersion) {
+      accountPageCriticalCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
+      });
+    }
+    return value;
+  })();
+
+  accountPageCriticalInflight.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (accountPageCriticalInflight.get(cacheKey) === request) {
+      accountPageCriticalInflight.delete(cacheKey);
+    }
   }
 }
 
@@ -304,6 +401,7 @@ export async function fetchAccountPageDerivedPayload(
     return inFlight;
   }
 
+  const version = accountPageSnapshotCacheVersion;
   const request = (async () => {
     const common = {
       accountId: normalized.accountId,
@@ -380,10 +478,12 @@ export async function fetchAccountPageDerivedPayload(
       flexHealth,
       tradingPatterns,
     };
-    accountPageDerivedCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS,
-    });
+    if (version === accountPageSnapshotCacheVersion) {
+      accountPageDerivedCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS,
+      });
+    }
     return value;
   })();
 
@@ -391,7 +491,9 @@ export async function fetchAccountPageDerivedPayload(
   try {
     return await request;
   } finally {
-    accountPageDerivedInflight.delete(cacheKey);
+    if (accountPageDerivedInflight.get(cacheKey) === request) {
+      accountPageDerivedInflight.delete(cacheKey);
+    }
   }
 }
 
@@ -410,6 +512,7 @@ export async function fetchAccountPageSnapshotPayload(
     return inFlight;
   }
 
+  const version = accountPageSnapshotCacheVersion;
   const request = (async () => {
     const [live, derived] = await Promise.all([
       fetchAccountPageLivePayload(normalized),
@@ -440,10 +543,12 @@ export async function fetchAccountPageSnapshotPayload(
       flexHealth: derived.flexHealth,
       tradingPatterns: derived.tradingPatterns,
     };
-    accountPageSnapshotCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
-    });
+    if (version === accountPageSnapshotCacheVersion) {
+      accountPageSnapshotCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
+      });
+    }
     return value;
   })();
 
@@ -451,7 +556,9 @@ export async function fetchAccountPageSnapshotPayload(
   try {
     return await request;
   } finally {
-    accountPageSnapshotInflight.delete(cacheKey);
+    if (accountPageSnapshotInflight.get(cacheKey) === request) {
+      accountPageSnapshotInflight.delete(cacheKey);
+    }
   }
 }
 
@@ -461,6 +568,11 @@ export function subscribeAccountPageSnapshots(
   onDerived: (payload: AccountPageDerivedPayload) => void,
   options: {
     initialPayload?: AccountPageSnapshotPayload;
+    initialCriticalPayload?: AccountPageCriticalPayload;
+    initialLivePayload?: AccountPageLivePayload;
+    initialDerivedPayload?: AccountPageDerivedPayload;
+    initialLiveDelayMs?: number;
+    initialDerivedDelayMs?: number;
     onPollSuccess?: (input: {
       payload: AccountPageLivePayload | AccountPageDerivedPayload;
       kind: "live" | "derived";
@@ -474,9 +586,13 @@ export function subscribeAccountPageSnapshots(
   let queued = false;
   let lastLiveSignature = options.initialPayload
     ? stableStringify(livePayloadFromBootstrap(options.initialPayload))
+    : options.initialLivePayload
+      ? stableStringify(options.initialLivePayload)
     : "";
   let lastDerivedSignature = options.initialPayload
     ? stableStringify(derivedPayloadFromBootstrap(options.initialPayload))
+    : options.initialDerivedPayload
+      ? stableStringify(options.initialDerivedPayload)
     : "";
 
   const tickLive = async () => {
@@ -533,14 +649,26 @@ export function subscribeAccountPageSnapshots(
     }
   };
 
-  const liveTimer = setInterval(() => {
+  let liveTimer: ReturnType<typeof setInterval> | null = null;
+  let derivedTimer: ReturnType<typeof setInterval> | null = null;
+  const liveDelay = Math.max(0, options.initialLiveDelayMs ?? 0);
+  const derivedDelay = Math.max(0, options.initialDerivedDelayMs ?? 0);
+  const firstLiveTimer = setTimeout(() => {
     void tickLive();
-  }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
-  liveTimer.unref?.();
-  const derivedTimer = setInterval(() => {
+    liveTimer = setInterval(() => {
+      void tickLive();
+    }, ACCOUNT_PAGE_STREAM_INTERVAL_MS);
+    liveTimer.unref?.();
+  }, liveDelay);
+  firstLiveTimer.unref?.();
+  const firstDerivedTimer = setTimeout(() => {
     void tickDerived();
-  }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
-  derivedTimer.unref?.();
+    derivedTimer = setInterval(() => {
+      void tickDerived();
+    }, ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS);
+    derivedTimer.unref?.();
+  }, derivedDelay);
+  firstDerivedTimer.unref?.();
 
   const unsubscribeShadowChanges = isShadowAccountId(input.accountId)
     ? subscribeShadowAccountChanges(() => {
@@ -551,12 +679,16 @@ export function subscribeAccountPageSnapshots(
       })
     : () => undefined;
 
-  void tickLive();
-
   return () => {
     active = false;
-    clearInterval(liveTimer);
-    clearInterval(derivedTimer);
+    clearTimeout(firstLiveTimer);
+    clearTimeout(firstDerivedTimer);
+    if (liveTimer) {
+      clearInterval(liveTimer);
+    }
+    if (derivedTimer) {
+      clearInterval(derivedTimer);
+    }
     unsubscribeShadowChanges();
   };
 }

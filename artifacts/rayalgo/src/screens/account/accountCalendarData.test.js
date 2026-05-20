@@ -58,14 +58,17 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.doesNotMatch(source, /accountShadowSourceFilter/);
   assert.doesNotMatch(source, /SHADOW_SOURCE_FILTERS/);
   assert.doesNotMatch(source, /source:\s*shadowDataSource/);
+  assert.match(source, /const effectiveOrderTab =\s*shadowMode && orderTab === "working" \? "history" : orderTab/);
   assert.match(source, /const accountPageStreamEnabled = Boolean\(/);
   assert.match(source, /isVisible && accountQueriesEnabled/);
+  assert.match(source, /orderTab:\s*effectiveOrderTab/);
   assert.match(source, /useGetAccountSummary\(accountRequestId,\s*accountDataParams/);
+  assert.match(source, /tab:\s*effectiveOrderTab/);
   assert.match(source, /summary: displaySummaryData/);
   assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.from\)/);
   assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.to, \{ endOfDay: true \}\)/);
   assert.match(source, /buildPerformanceCalendarParams\(accountDataParams\)/);
-  assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(accountQueriesEnabled\)/);
+  assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
   assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
   assert.match(source, /visibleEquityBenchmarks/);
   assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.SPY\)/);
@@ -74,6 +77,15 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /visibleEquityBenchmarks\.SPY[\s\S]*spyBenchmarkQuery\.refetch/);
   assert.match(source, /if \(!visibleEquityBenchmarks\[key\]\)/);
   assert.match(source, /setHoveredEquityDate\(null\);[\s\S]*setPinnedEquityDate\(null\);/);
+  assert.match(source, /ACCOUNT_SWITCH_PREFETCH_OPTIONS/);
+  assert.match(source, /const prefetchAccountSectionLiveQueries = useCallback/);
+  assert.match(source, /getGetAccountSummaryQueryOptions/);
+  assert.match(source, /getGetAccountPositionsQueryOptions/);
+  assert.match(source, /getGetAccountOrdersQueryOptions/);
+  assert.match(source, /getGetAccountEquityHistoryQueryOptions/);
+  assert.match(source, /onOptionIntent=\{prefetchAccountSectionLiveQueries\}/);
+  assert.match(source, /const accountCriticalReady = Boolean/);
+  assert.match(source, /onReadinessChange\?\.\(\{/);
 });
 
 test("shadow account treemap empty state does not mention bridge streaming", () => {

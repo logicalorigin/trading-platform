@@ -43,8 +43,6 @@ const typeTone = (type) => {
 const sourceTone = (sourceType) =>
   sourceType === "automation"
     ? "pink"
-    : sourceType === "signal_options_replay"
-      ? "cyan"
     : sourceType === "watchlist_backtest"
       ? "purple"
       : "default";
@@ -111,7 +109,11 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
             alignItems: "start",
           }}
         >
-          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 170 }}>
+          <div
+            data-testid="account-cash-activity-table-scroll"
+            className="ra-hide-scrollbar"
+            style={{ overflowX: "auto" }}
+          >
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}>
               <thead>
                 <tr style={tableHeaderStyle}>

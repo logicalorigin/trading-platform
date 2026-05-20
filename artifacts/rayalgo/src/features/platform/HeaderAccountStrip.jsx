@@ -15,38 +15,42 @@ export const HeaderAccountStrip = ({
   primaryAccount,
   onSelectAccount,
   maskValues = false,
+  dense = false,
 }) => {
   const maskAccountValue = (value) =>
     maskValues ? "****" : primaryAccount ? fmtCompactCurrency(value) : MISSING_VALUE;
   const metricItems = [
     {
       label: "Net Liq",
+      shortLabel: "NLV",
       value: maskAccountValue(primaryAccount?.netLiquidation),
       color: T.text,
     },
     {
       label: "Buying Power",
+      shortLabel: "BP",
       value: maskAccountValue(primaryAccount?.buyingPower),
       color: T.green,
     },
     {
       label: "Cash",
+      shortLabel: "Cash",
       value: maskAccountValue(primaryAccount?.cash),
       color: T.textSec,
     },
   ];
   const labelStyle = {
-    fontSize: textSize("caption"),
+    fontSize: textSize(dense ? "micro" : "caption"),
     color: T.textMuted,
     fontWeight: FONT_WEIGHTS.medium,
-    letterSpacing: "0.04em",
+    letterSpacing: dense ? 0 : "0.04em",
     textTransform: "uppercase",
     fontFamily: T.sans,
     lineHeight: 1.1,
     whiteSpace: "nowrap",
   };
   const valueStyle = {
-    fontSize: textSize("paragraphMuted"),
+    fontSize: textSize(dense ? "body" : "paragraphMuted"),
     fontFamily: T.sans,
     fontVariantNumeric: "tabular-nums",
     fontWeight: FONT_WEIGHTS.medium,
@@ -54,15 +58,18 @@ export const HeaderAccountStrip = ({
     whiteSpace: "nowrap",
   };
   const surfaceStyle = {
-    minWidth: dim(280),
-    minHeight: dim(38),
-    padding: sp("6px 14px"),
+    width: dense ? dim(250) : undefined,
+    minWidth: dim(dense ? 250 : 280),
+    minHeight: dim(dense ? 30 : 38),
+    padding: sp(dense ? "3px 8px" : "6px 14px"),
+    boxSizing: "border-box",
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: dim(RADII.sm),
     display: "flex",
     alignItems: "center",
-    gap: sp(14),
+    gap: sp(dense ? 6 : 14),
+    overflow: "hidden",
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
 
@@ -82,19 +89,23 @@ export const HeaderAccountStrip = ({
       <div
         style={{
           display: "flex",
-          flexDirection: "column",
+          flexDirection: dense ? "row" : "column",
+          alignItems: dense ? "baseline" : "flex-start",
           justifyContent: "center",
+          gap: dense ? sp(4) : 0,
           minWidth: 0,
           flex: "0 1 auto",
         }}
       >
-        <span style={labelStyle}>Account</span>
+        <span style={labelStyle}>{dense ? "Acct" : "Account"}</span>
         {accounts.length ? (
           <select
             value={primaryAccountId || ""}
             onChange={(event) => onSelectAccount(event.target.value || null)}
             style={{
-              width: "100%",
+              width: dense ? "auto" : "100%",
+              maxWidth: dense ? dim(68) : undefined,
+              minWidth: 0,
               background: "transparent",
               border: "none",
               color: T.text,
@@ -104,6 +115,8 @@ export const HeaderAccountStrip = ({
               outline: "none",
               padding: 0,
               lineHeight: 1.2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {accounts.map((account) => (
@@ -123,12 +136,14 @@ export const HeaderAccountStrip = ({
           key={metric.label}
           style={{
             display: "flex",
-            flexDirection: "column",
+            flexDirection: dense ? "row" : "column",
+            alignItems: dense ? "baseline" : "flex-start",
             justifyContent: "center",
+            gap: dense ? sp(4) : 0,
             minWidth: 0,
           }}
         >
-          <span style={labelStyle}>{metric.label}</span>
+          <span style={labelStyle}>{dense ? metric.shortLabel : metric.label}</span>
           <span style={{ ...valueStyle, color: metric.color }}>
             {metric.value}
           </span>

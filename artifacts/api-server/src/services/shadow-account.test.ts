@@ -117,6 +117,91 @@ test("shadow account reads do not synchronously block on mark refresh", () => {
   assert.doesNotMatch(ensureBody, /await refreshShadowPositionMarks/);
 });
 
+test("shadow mark refresh invalidates read caches before stream notification snapshots", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const refreshBody = source.match(
+    /export async function refreshShadowPositionMarks\(\) \{[\s\S]*?\nasync function ensureFreshShadowState/,
+  )?.[0];
+
+  assert.ok(refreshBody);
+  assert.match(
+    refreshBody,
+    /if \(updatedCount\) \{\s*invalidateShadowReadCachesAfterBackgroundMarkRefresh\(\);/,
+  );
+  assert.ok(
+    refreshBody.indexOf("invalidateShadowReadCachesAfterBackgroundMarkRefresh();") <
+      refreshBody.indexOf("await writeShadowBalanceSnapshot("),
+  );
+});
+
+test("shadow account snapshot invalidation clears stale in-flight base reads", () => {
+  const source = readFileSync(
+    new URL("./shadow-account-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const invalidatorBody = source.match(
+    /export function invalidateShadowAccountSnapshotBaseCache\(\) \{[\s\S]*?\n\}/,
+  )?.[0];
+
+  assert.ok(invalidatorBody);
+  assert.match(invalidatorBody, /shadowAccountSnapshotBaseCache = null;/);
+  assert.match(invalidatorBody, /shadowAccountSnapshotBaseInFlight = null;/);
+  assert.match(invalidatorBody, /shadowAccountSnapshotBaseVersion \+= 1;/);
+  assert.match(source, /const version = shadowAccountSnapshotBaseVersion;/);
+  assert.match(
+    source,
+    /if \(version === shadowAccountSnapshotBaseVersion\) \{\s*shadowAccountSnapshotBaseCache = \{/,
+  );
+  assert.match(source, /const request = \(async \(\) => \{/);
+  assert.match(
+    source,
+    /if \(shadowAccountSnapshotBaseInFlight === request\) \{\s*shadowAccountSnapshotBaseInFlight = null;/,
+  );
+});
+
+test("account page stream invalidation clears stale in-flight payloads", () => {
+  const source = readFileSync(
+    new URL("./account-page-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const invalidatorBody = source.match(
+    /export function clearAccountPageSnapshotCache\(\) \{[\s\S]*?\n\}/,
+  )?.[0];
+
+  assert.ok(invalidatorBody);
+  assert.match(invalidatorBody, /accountPageSnapshotInflight\.clear\(\);/);
+  assert.match(invalidatorBody, /accountPageCriticalInflight\.clear\(\);/);
+  assert.match(invalidatorBody, /accountPageLiveInflight\.clear\(\);/);
+  assert.match(invalidatorBody, /accountPageDerivedInflight\.clear\(\);/);
+  assert.match(invalidatorBody, /accountPageSnapshotCacheVersion \+= 1;/);
+  assert.match(source, /const version = accountPageSnapshotCacheVersion;/);
+  assert.match(
+    source,
+    /if \(version === accountPageSnapshotCacheVersion\) \{\s*accountPageLiveCache\.set/,
+  );
+  assert.match(
+    source,
+    /if \(accountPageLiveInflight\.get\(cacheKey\) === request\) \{\s*accountPageLiveInflight\.delete\(cacheKey\);/,
+  );
+});
+
+test("account page SSE emits critical payload before delayed live and derived subscription", () => {
+  const source = readFileSync(
+    new URL("../routes/platform.ts", import.meta.url),
+    "utf8",
+  );
+  const routeBlock = source.match(
+    /await startSse\(req, res, "account-page", async \(\{ writeEvent \}\) => \{[\s\S]*?return subscribeAccountPageSnapshots/,
+  )?.[0];
+
+  assert.ok(routeBlock);
+  assert.match(routeBlock, /fetchAccountPageCriticalPayload\(input\)/);
+  assert.match(routeBlock, /writeEvent\("critical", initialCriticalPayload\)/);
+  assert.match(source, /initialLiveDelayMs:\s*ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS/);
+  assert.match(source, /initialDerivedDelayMs:\s*ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS/);
+  assert.doesNotMatch(routeBlock, /fetchAccountPageSnapshotPayload\(input\)/);
+});
+
 test("shadow benchmark overlays are bounded for responsive equity history", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
@@ -240,6 +325,112 @@ test("buildShadowPositionDayChange uses daily baseline instead of total unrealiz
   assert.equal(Number(changed.dayChangePercent?.toFixed(6)), 2.074689);
 });
 
+test("shadow replay position day changes stay anchored to the current day", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.shadowPositionDayChangeDayStart;
+  const currentWallDayStart = helper(
+    {
+      positionKey: "manual:NVDA",
+      asOf: new Date("2026-05-18T19:59:00.000Z"),
+      updatedAt: new Date("2026-05-18T19:59:00.000Z"),
+    } as any,
+    new Date("2026-05-19T14:00:00.000Z"),
+  );
+  const replayDayStart = helper(
+    {
+      positionKey: "signal_options_replay:2026-05-18:deployment:candidate",
+      asOf: new Date("2026-05-18T19:59:00.000Z"),
+      updatedAt: new Date("2026-05-18T19:59:00.000Z"),
+    } as any,
+    new Date("2026-05-19T14:00:00.000Z"),
+  );
+
+  assert.equal(currentWallDayStart.toISOString(), "2026-05-19T04:00:00.000Z");
+  assert.equal(replayDayStart.toISOString(), "2026-05-19T04:00:00.000Z");
+});
+
+test("buildShadowPositionDayChangeFromQuote uses option previous close when no baseline exists", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChangeFromQuote;
+
+  const changed = helper({
+    quantity: 2,
+    multiplier: 100,
+    quote: {
+      bid: 2.4,
+      ask: 2.6,
+      prevClose: 2,
+      change: 0.5,
+      changePercent: 25,
+    },
+  });
+
+  assert.equal(changed.dayChange, 100);
+  assert.equal(changed.dayChangePercent, 25);
+});
+
+test("polygon option day quotes use session previous close for day change", () => {
+  const quoteHelper =
+    __shadowWatchlistBacktestInternalsForTests.polygonOptionContractDayChangeQuote;
+  const changeHelper =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChangeFromQuote;
+
+  const quote = quoteHelper({
+    contract: {
+      ticker: "O:NVDA260522C00220000",
+      underlying: "NVDA",
+      expirationDate: new Date("2026-05-22T00:00:00.000Z"),
+      strike: 220,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: null,
+    },
+    bid: 0,
+    ask: 0,
+    last: 7.16,
+    mark: 7.16,
+    prevClose: 8.35,
+    change: -1.19,
+    changePercent: -14.3,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    openInterest: 0,
+    volume: 0,
+    updatedAt: new Date("2026-05-19T19:59:58.321Z"),
+  });
+  const changed = changeHelper({
+    quantity: 1,
+    multiplier: 100,
+    quote,
+  });
+
+  assert.equal(Number(changed.dayChange?.toFixed(6)), -119);
+  assert.equal(Number(changed.dayChangePercent?.toFixed(6)), -14.251497);
+});
+
+test("shadow position day changes fall back to option quotes for stale marks", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const helperBody = source.match(
+    /async function readShadowPositionDayChanges\([\s\S]*?\nfunction metric\(/,
+  )?.[0];
+
+  assert.ok(helperBody);
+  assert.match(helperBody, /const currentMarkStale =/);
+  assert.match(
+    helperBody,
+    /\(baselineDayChange\.dayChange == null \|\| currentMarkStale\)/,
+  );
+  assert.match(helperBody, /waitForShadowOptionDayChangeQuotes/);
+  assert.ok(
+    helperBody.indexOf("buildShadowPositionDayChangeFromQuote") <
+      helperBody.indexOf("if (currentMarkStale)"),
+  );
+});
+
 test("selectLatestShadowPositionMarksByPositionId keeps one newest mark per position", () => {
   const helper =
     __shadowWatchlistBacktestInternalsForTests
@@ -276,14 +467,30 @@ test("shadow balance snapshots are timestamped from fills and marks", () => {
   );
   assert.match(
     source,
-    /await writeShadowBalanceSnapshot\(\s*normalized\.source === SIGNAL_OPTIONS_REPLAY_SOURCE\s*\?\s*SIGNAL_OPTIONS_REPLAY_SOURCE\s*:\s*normalized\.source === "automation"\s*\?\s*"automation"\s*:\s*"ledger",\s*now,\s*\)/,
+    /await writeShadowBalanceSnapshot\(\s*normalized\.source === "automation"\s*\?\s*"automation"\s*:\s*"ledger",\s*now,\s*\)/,
   );
   assert.match(
     source,
-    /await writeShadowBalanceSnapshot\(\s*options\.markSource \?\?\s*\(options\.source === SIGNAL_OPTIONS_REPLAY_SOURCE\s*\?\s*SIGNAL_OPTIONS_REPLAY_MARK_SOURCE\s*:\s*"automation_mark"\),\s*event\.occurredAt,\s*\)/,
+    /await writeShadowBalanceSnapshot\(\s*options\.markSource === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE\s*\?\s*"automation_mark"\s*:\s*options\.markSource \?\? "automation_mark",\s*event\.occurredAt,\s*\)/,
   );
   assert.match(source, /shadowMarkSnapshotSourceForPosition\(position\)/);
-  assert.match(source, /SIGNAL_OPTIONS_REPLAY_MARK_SOURCE/);
+  assert.doesNotMatch(
+    source,
+    /normalized\.source === SIGNAL_OPTIONS_REPLAY_SOURCE\s*\?\s*SIGNAL_OPTIONS_REPLAY_SOURCE/,
+  );
+  assert.doesNotMatch(
+    source,
+    /options\.source === SIGNAL_OPTIONS_REPLAY_SOURCE\s*\?\s*SIGNAL_OPTIONS_REPLAY_MARK_SOURCE/,
+  );
+});
+
+test("source-scoped shadow positions require matching source keys and source prefix", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /sourcePositionKeys!\.has\(position\.positionKey\)\s*&&\s*positionMatchesShadowSource\(position, source\)/,
+  );
 });
 
 test("shadow equity history terminal points only use current time for open positions", () => {
@@ -310,14 +517,14 @@ test("shadow equity history terminal points only use current time for open posit
   );
 });
 
-test("shadow mark snapshots preserve simulation source scopes", () => {
+test("shadow mark snapshots keep replay-key positions on the automation ledger", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
 
   assert.equal(
     internals.shadowMarkSnapshotSourceForPosition({
       positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
     } as any),
-    "signal_options_replay_mark",
+    "automation_mark",
   );
   assert.equal(
     internals.shadowMarkSnapshotSourceForPosition({
@@ -1526,7 +1733,7 @@ test("shadow equity history ignores backtest snapshots for default ledger histor
   );
 });
 
-test("shadow equity history includes signal-options replay snapshots in default ledger history", () => {
+test("shadow equity history ignores signal-options replay snapshots in default ledger history", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   const row = (source: string, asOf: string, createdAt = asOf) => ({
     source,
@@ -1549,13 +1756,7 @@ test("shadow equity history includes signal-options replay snapshots in default 
   assert.equal(selected.includeLiveTerminal, true);
   assert.deepEqual(
     selected.rows.map((entry) => entry.source),
-    [
-      "initial",
-      "signal_options_replay",
-      "signal_options_replay_mark",
-      "automation_mark",
-      "ledger",
-    ],
+    ["initial", "automation_mark", "ledger"],
   );
 });
 
@@ -1588,16 +1789,31 @@ test("shadow equity history can select signal-options replay snapshots", () => {
   );
 });
 
-test("shadow live source filters include signal-options replay and reject watchlist simulations", () => {
+test("shadow live source filters reject replay order sources and forward-test rows", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
 
   assert.equal(internals.isSimulationShadowOrderSource("watchlist_backtest"), true);
-  assert.equal(internals.isSimulationShadowOrderSource("signal_options_replay"), false);
+  assert.equal(internals.isSimulationShadowOrderSource("signal_options_replay"), true);
   assert.equal(internals.isSimulationShadowOrderSource("automation"), false);
   assert.equal(internals.isLiveShadowOrder({ source: "automation" } as any), true);
   assert.equal(internals.isLiveShadowOrder({ source: "manual" } as any), true);
   assert.equal(internals.isLiveShadowOrder({ source: "watchlist_backtest" } as any), false);
-  assert.equal(internals.isLiveShadowOrder({ source: "signal_options_replay" } as any), true);
+  assert.equal(internals.isLiveShadowOrder({ source: "signal_options_replay" } as any), false);
+  assert.equal(
+    internals.isLiveShadowOrder({
+      source: "automation",
+      payload: { forwardTest: true },
+    } as any),
+    false,
+  );
+  assert.equal(
+    internals.isLiveShadowOrder({
+      source: "automation",
+      clientOrderId: "shadow-equity-forward-buy-event-1",
+      payload: {},
+    } as any),
+    false,
+  );
   assert.equal(
     internals.isLiveShadowPosition({
       positionKey: "option:NVDA:2026-05-15:222.5:call:twsopt:contract",
@@ -1609,6 +1825,12 @@ test("shadow live source filters include signal-options replay and reject watchl
       positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
     } as any),
     true,
+  );
+  assert.equal(
+    internals.isLiveShadowPosition({
+      positionKey: "shadow_equity_forward:deployment:equity:AAPL",
+    } as any),
+    false,
   );
   assert.equal(
     internals.isLiveShadowPosition({
@@ -1708,6 +1930,86 @@ test("shadow equity history drops snapshots that do not reconcile to live fills"
   assert.deepEqual(
     filtered.map((entry) => entry.source),
     ["initial", "automation_mark"],
+  );
+});
+
+test("default shadow equity history excludes legacy replay projection rows", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const account = { startingBalance: "30000" };
+  const row = (
+    source: string,
+    asOf: string,
+    cash: number,
+    realizedPnl: number,
+    fees: number,
+    netLiquidation: number,
+  ) => ({
+    source,
+    asOf: new Date(asOf),
+    createdAt: new Date(asOf),
+    cash: String(cash),
+    realizedPnl: String(realizedPnl),
+    fees: String(fees),
+    netLiquidation: String(netLiquidation),
+  });
+  const liveFill = {
+    cashDelta: "100",
+    realizedPnl: "20",
+    fees: "1",
+    occurredAt: new Date("2026-05-18T14:01:30.000Z"),
+  };
+
+  const projected = internals.buildDefaultShadowEquityHistoryRows(
+    [
+      row("signal_options_replay_mark", "2026-05-18T14:00:00.000Z", 29900, 0, 1, 30100),
+      row("signal_options_replay_mark", "2026-05-18T14:01:00.000Z", 29900, 0, 1, 30200),
+      row("automation_mark", "2026-05-18T14:02:00.000Z", 30100, 20, 1, 30050),
+    ] as any,
+    {
+      account: account as any,
+      fills: [liveFill] as any,
+      terminalTotals: { netLiquidation: 29900 },
+    },
+  );
+
+  assert.deepEqual(
+    projected.map((entry) => entry.source),
+    ["automation_mark"],
+  );
+  assert.deepEqual(
+    projected.map((entry) => Number(entry.netLiquidation)),
+    [30050],
+  );
+});
+
+test("default shadow equity history ignores replay-only snapshot rows", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const account = { startingBalance: "30000" };
+  const row = (source: string, asOf: string, netLiquidation: number) => ({
+    source,
+    asOf: new Date(asOf),
+    createdAt: new Date(asOf),
+    cash: "30000",
+    realizedPnl: "0",
+    fees: "0",
+    netLiquidation: String(netLiquidation),
+  });
+
+  const projected = internals.buildDefaultShadowEquityHistoryRows(
+    [
+      row("signal_options_replay", "2026-05-18T14:00:00.000Z", 30100),
+      row("signal_options_replay_mark", "2026-05-18T14:01:00.000Z", 30200),
+    ] as any,
+    {
+      account: account as any,
+      fills: [],
+      terminalTotals: { netLiquidation: 30075 },
+    },
+  );
+
+  assert.deepEqual(
+    projected.map((entry) => Number(entry.netLiquidation)),
+    [],
   );
 });
 

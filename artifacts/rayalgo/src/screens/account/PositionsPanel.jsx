@@ -1,7 +1,12 @@
 import { Fragment, memo, useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  getStoredOptionQuoteSnapshot,
+  useIbkrOptionQuoteStream,
+  useStoredOptionQuoteSnapshotVersion,
+} from "../../features/platform/live-streams";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -36,7 +41,6 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
-  { value: "signal_options_replay", label: "Options BT" },
   { value: "watchlist_backtest", label: "Watchlist BT" },
   { value: "mixed", label: "Mixed" },
 ];
@@ -44,8 +48,6 @@ const SOURCE_FILTERS = [
 const sourceTone = (sourceType) =>
   sourceType === "automation"
     ? "category-automation"
-    : sourceType === "signal_options_replay"
-      ? "category-replay"
     : sourceType === "watchlist_backtest"
       ? "category-backtest"
       : sourceType === "mixed"
@@ -116,6 +118,593 @@ const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
 
 const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
+const finiteNumber = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const firstFiniteNumber = (...values) => {
+  for (const value of values) {
+    const numeric = finiteNumber(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const firstText = (...values) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const isInternalOptionIdentifier = (value) =>
+  /^twsopt:/i.test(String(value ?? "").trim());
+
+const firstDisplayText = (...values) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text && !isInternalOptionIdentifier(text)) return text;
+  }
+  return "";
+};
+
+const optionProviderContractId = (contract) =>
+  String(contract?.providerContractId || contract?.conid || "").trim();
+
+const formatOptionRightLabel = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") return "CALL";
+  if (normalized === "put" || normalized === "p") return "PUT";
+  return normalized ? normalized.toUpperCase() : MISSING_VALUE;
+};
+
+const compactOptionDate = (year, month, day) => {
+  const shortYear = String(year).slice(-2).padStart(2, "0");
+  return `${Number(month)}/${Number(day)}/${shortYear}`;
+};
+
+const formatOptionExpiryLabel = (value) => {
+  const text = firstText(value);
+  if (!text) return "";
+
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (isoDate) {
+    return compactOptionDate(isoDate[1], isoDate[2], isoDate[3]);
+  }
+
+  const compactDate = /^(\d{4})(\d{2})(\d{2})$/.exec(text);
+  if (compactDate) {
+    return compactOptionDate(compactDate[1], compactDate[2], compactDate[3]);
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return compactOptionDate(
+      parsed.getUTCFullYear(),
+      parsed.getUTCMonth() + 1,
+      parsed.getUTCDate(),
+    );
+  }
+
+  return text;
+};
+
+const optionContractLabel = (contract) => {
+  const underlying = firstDisplayText(contract?.underlying, contract?.symbol);
+  const expiry = formatOptionExpiryLabel(
+    firstText(contract?.expirationDate, contract?.exp, contract?.expiry),
+  );
+  const strike = contract?.strike == null ? "" : formatNumber(contract.strike, 4);
+  const right = formatOptionRightLabel(contract?.right || contract?.cp);
+  return [underlying, expiry, strike, right]
+    .filter((value) => value && value !== MISSING_VALUE)
+    .join(" ") || MISSING_VALUE;
+};
+
+const formatOptionPrice = (value, maskValues) =>
+  value == null ? MISSING_VALUE : formatAccountPrice(value, 2, maskValues);
+
+const formatQuoteBidAsk = (quote, maskValues) => {
+  const bid = firstFiniteNumber(quote?.bid);
+  const ask = firstFiniteNumber(quote?.ask);
+  if (bid == null && ask == null) return MISSING_VALUE;
+  return `${formatOptionPrice(bid, maskValues)} / ${formatOptionPrice(ask, maskValues)}`;
+};
+
+const quoteMid = (quote) => {
+  const bid = firstFiniteNumber(quote?.bid);
+  const ask = firstFiniteNumber(quote?.ask);
+  return bid != null && ask != null && bid > 0 && ask > 0
+    ? (bid + ask) / 2
+    : null;
+};
+
+const mergeLiveOptionQuote = (quote, liveQuote) => {
+  if (!liveQuote) return quote || null;
+  const current = quote || {};
+  const bid = firstFiniteNumber(liveQuote.bid, current.bid);
+  const ask = firstFiniteNumber(liveQuote.ask, current.ask);
+  const last = firstFiniteNumber(liveQuote.last, liveQuote.price, current.last, current.price);
+  const mid = firstFiniteNumber(liveQuote.mid, current.mid, quoteMid({ bid, ask }));
+  return {
+    ...current,
+    bid,
+    ask,
+    mid,
+    last,
+    price: firstFiniteNumber(liveQuote.price, liveQuote.last, current.price, current.last),
+    mark: firstFiniteNumber(liveQuote.mark, mid, liveQuote.price, liveQuote.last, current.mark),
+    dayChange: firstFiniteNumber(liveQuote.dayChange, liveQuote.change, liveQuote.netChange, current.dayChange),
+    dayChangePercent: firstFiniteNumber(
+      liveQuote.dayChangePercent,
+      liveQuote.changePercent,
+      liveQuote.percentChange,
+      current.dayChangePercent,
+    ),
+    impliedVolatility: firstFiniteNumber(liveQuote.impliedVolatility, current.impliedVolatility),
+    delta: firstFiniteNumber(liveQuote.delta, current.delta),
+    gamma: firstFiniteNumber(liveQuote.gamma, current.gamma),
+    theta: firstFiniteNumber(liveQuote.theta, current.theta),
+    vega: firstFiniteNumber(liveQuote.vega, current.vega),
+    openInterest: firstFiniteNumber(liveQuote.openInterest, current.openInterest),
+    volume: firstFiniteNumber(liveQuote.volume, current.volume),
+    quoteFreshness: firstText(liveQuote.freshness, current.quoteFreshness, current.freshness),
+    marketDataMode: firstText(liveQuote.marketDataMode, current.marketDataMode),
+    quoteUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.quoteUpdatedAt),
+    dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.dataUpdatedAt),
+    updatedAt: firstText(liveQuote.updatedAt, current.updatedAt),
+  };
+};
+
+const applyLiveOptionQuoteToRow = (row, liveQuote) => {
+  if (!liveQuote) return row;
+  const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
+  const mark = firstFiniteNumber(
+    optionQuote?.mark,
+    optionQuote?.mid,
+    quoteMid(optionQuote),
+    optionQuote?.last,
+    optionQuote?.price,
+    row.mark,
+  );
+  const quantity = firstFiniteNumber(row.quantity);
+  const averageCost = firstFiniteNumber(row.averageCost);
+  const multiplier = firstFiniteNumber(
+    row.optionContract?.multiplier,
+    row.optionContract?.sharesPerContract,
+    100,
+  );
+  const marketValue =
+    mark != null && quantity != null && multiplier != null
+      ? mark * quantity * multiplier
+      : row.marketValue;
+  const unrealizedPnl =
+    mark != null && averageCost != null && quantity != null && multiplier != null
+      ? (mark - averageCost) * quantity * multiplier
+      : row.unrealizedPnl;
+  const costBasis =
+    averageCost != null && quantity != null && multiplier != null
+      ? Math.abs(averageCost * quantity * multiplier)
+      : null;
+  const perContractDayChange = firstFiniteNumber(optionQuote?.dayChange);
+  const dayChange =
+    perContractDayChange != null && quantity != null && multiplier != null
+      ? perContractDayChange * quantity * multiplier
+      : row.dayChange;
+  const delta = firstFiniteNumber(optionQuote?.delta);
+
+  return {
+    ...row,
+    optionQuote,
+    mark,
+    dayChange,
+    dayChangePercent: firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent),
+    unrealizedPnl,
+    unrealizedPnlPercent:
+      unrealizedPnl != null && costBasis
+        ? (unrealizedPnl / costBasis) * 100
+        : row.unrealizedPnlPercent,
+    marketValue,
+    betaWeightedDelta:
+      delta != null && quantity != null && multiplier != null
+        ? delta * quantity * multiplier
+        : row.betaWeightedDelta,
+  };
+};
+
+const buildDisplayTotals = (rows, fallbackTotals) => {
+  if (!rows.length) {
+    return fallbackTotals || {};
+  }
+  return rows.reduce(
+    (acc, row) => {
+      const marketValue = firstFiniteNumber(row.marketValue);
+      const unrealizedPnl = firstFiniteNumber(row.unrealizedPnl);
+      const dayChange = firstFiniteNumber(row.dayChange);
+      if (marketValue != null) {
+        acc.netExposure += marketValue;
+        if (marketValue >= 0) acc.grossLong += marketValue;
+        else acc.grossShort += marketValue;
+      }
+      if (unrealizedPnl != null) acc.unrealizedPnl += unrealizedPnl;
+      if (dayChange != null) acc.dayChange += dayChange;
+      return acc;
+    },
+    {
+      netExposure: 0,
+      grossLong: 0,
+      grossShort: 0,
+      unrealizedPnl: 0,
+      dayChange: 0,
+      weightPercent: rows.length ? 100 : null,
+    },
+  );
+};
+
+const applyDisplayWeights = (rows) => {
+  const totalAbsMarketValue = rows.reduce(
+    (sum, row) => sum + Math.abs(firstFiniteNumber(row.marketValue) ?? 0),
+    0,
+  );
+  if (totalAbsMarketValue <= 0) return rows;
+  return rows.map((row) => ({
+    ...row,
+    weightPercent:
+      (Math.abs(firstFiniteNumber(row.marketValue) ?? 0) / totalAbsMarketValue) * 100,
+  }));
+};
+
+const formatQuoteMarkLast = (quote, maskValues) => {
+  const mark = firstFiniteNumber(quote?.mark, quote?.mid);
+  const last = firstFiniteNumber(quote?.last, quote?.price);
+  if (mark == null && last == null) return MISSING_VALUE;
+  return `Mark ${formatOptionPrice(mark, maskValues)} · Last ${formatOptionPrice(last, maskValues)}`;
+};
+
+const formatGreek = (label, value, digits = 2) => {
+  const numeric = finiteNumber(value);
+  return numeric == null ? null : `${label} ${numeric.toFixed(digits)}`;
+};
+
+const formatIv = (value) => {
+  const numeric = finiteNumber(value);
+  if (numeric == null) return null;
+  const pct = Math.abs(numeric) <= 3 ? numeric * 100 : numeric;
+  return `IV ${pct.toFixed(1)}%`;
+};
+
+const formatMetricCount = (value) => {
+  const numeric = finiteNumber(value);
+  if (numeric == null) return MISSING_VALUE;
+  if (Math.abs(numeric) >= 1_000_000) return `${(numeric / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(numeric) >= 1_000) return `${(numeric / 1_000).toFixed(1)}K`;
+  return formatNumber(numeric, 0);
+};
+
+const formatTimestampDetail = (value) => {
+  const text = firstText(value);
+  return text ? formatAppDateTime(text) : "";
+};
+
+const quoteFreshnessDetail = (quote) =>
+  [
+    firstText(quote?.quoteFreshness, quote?.freshness),
+    firstText(quote?.marketDataMode),
+    formatTimestampDetail(
+      firstText(quote?.quoteUpdatedAt, quote?.dataUpdatedAt, quote?.updatedAt),
+    ),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+const optionInlineDetail = (row, maskValues) => {
+  const contract = row?.optionContract || null;
+  if (!contract) {
+    return [
+      row?.description || row?.assetClass || "Position",
+      row?.sector || null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  const quoteBidAsk = formatQuoteBidAsk(row?.optionQuote, maskValues);
+  const underlying = row?.underlyingMarket || null;
+  const underlyingPrice = firstFiniteNumber(underlying?.price);
+  const underlyingBid = firstFiniteNumber(underlying?.bid);
+  const underlyingAsk = firstFiniteNumber(underlying?.ask);
+  const underlyingSymbol = firstDisplayText(underlying?.symbol, contract?.underlying, row?.symbol);
+  const underlyingMarket =
+    underlyingPrice != null && underlyingSymbol
+      ? `${underlyingSymbol} ${formatAccountPrice(underlyingPrice, 2, maskValues)}`
+      : null;
+  const underlyingBidAsk =
+    underlyingBid != null || underlyingAsk != null
+      ? `U bid/ask ${formatOptionPrice(underlyingBid, maskValues)} / ${formatOptionPrice(underlyingAsk, maskValues)}`
+      : null;
+
+  return [
+    optionContractLabel(contract),
+    quoteBidAsk !== MISSING_VALUE ? `Opt ${quoteBidAsk}` : null,
+    underlyingMarket || null,
+    underlyingBidAsk,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
+const optionDetailMetrics = (row, currency, maskValues) => {
+  const contract = row?.optionContract || null;
+  const quote = row?.optionQuote || null;
+  const underlying = row?.underlyingMarket || null;
+  const automation = row?.automationContext || null;
+  if (!contract && !quote && !underlying && !automation) return [];
+
+  const greeksMain = [
+    formatGreek("Δ", quote?.delta, 2),
+    formatIv(quote?.impliedVolatility),
+  ].filter(Boolean);
+  const greeksDetail = [
+    formatGreek("Γ", quote?.gamma, 3),
+    formatGreek("θ", quote?.theta, 3),
+    formatGreek("V", quote?.vega, 3),
+  ].filter(Boolean);
+  const openInterest = formatMetricCount(quote?.openInterest);
+  const volume = formatMetricCount(quote?.volume);
+  const underlyingPrice = firstFiniteNumber(underlying?.price);
+  const underlyingBid = firstFiniteNumber(underlying?.bid);
+  const underlyingAsk = firstFiniteNumber(underlying?.ask);
+
+  return [
+    contract
+      ? {
+          label: "Contract",
+          value: optionContractLabel(contract),
+          detail: [
+            firstDisplayText(contract?.ticker, contract?.localSymbol),
+            contract?.providerContractId ? `conid ${contract.providerContractId}` : null,
+            contract?.multiplier ? `x${formatNumber(contract.multiplier, 0)}` : null,
+          ].filter(Boolean).join(" · "),
+        }
+      : null,
+    quote
+      ? {
+          label: "Bid / Ask",
+          value: formatQuoteBidAsk(quote, maskValues),
+          detail: quoteFreshnessDetail(quote),
+        }
+      : null,
+    quote
+      ? {
+          label: "Mark / Last",
+          value: formatQuoteMarkLast(quote, maskValues),
+          detail: quote?.spreadPctOfMid != null
+            ? `Spread ${formatAccountPercent(quote.spreadPctOfMid, 2, maskValues)}`
+            : quote?.spreadCents != null
+              ? `Spread ${formatNumber(quote.spreadCents, 0)}c`
+              : "",
+        }
+      : null,
+    quote
+      ? {
+          label: "Greeks",
+          value: greeksMain.join(" · ") || MISSING_VALUE,
+          detail: greeksDetail.join(" · "),
+        }
+      : null,
+    quote
+      ? {
+          label: "OI / Vol",
+          value: `OI ${openInterest} · Vol ${volume}`,
+          detail: "",
+        }
+      : null,
+    underlying
+      ? {
+          label: "Underlying",
+          value: [
+            underlying?.symbol,
+            underlyingPrice != null ? formatAccountPrice(underlyingPrice, 2, maskValues) : null,
+          ].filter(Boolean).join(" ") || MISSING_VALUE,
+          detail:
+            underlyingBid != null || underlyingAsk != null
+              ? `Bid / ask ${formatOptionPrice(underlyingBid, maskValues)} / ${formatOptionPrice(underlyingAsk, maskValues)}`
+              : firstText(underlying?.updatedAt),
+        }
+      : null,
+    automation
+      ? {
+          label: "Exit / Risk",
+          value: [
+            automation?.stopPrice != null
+              ? `Stop ${formatAccountPrice(automation.stopPrice, 2, maskValues)}`
+              : null,
+            automation?.premiumAtRisk != null
+              ? `Risk ${formatAccountMoney(automation.premiumAtRisk, currency, true, maskValues)}`
+              : null,
+          ].filter(Boolean).join(" · ") || MISSING_VALUE,
+          detail: [
+            automation?.peakPrice != null
+              ? `Peak ${formatAccountPrice(automation.peakPrice, 2, maskValues)}`
+              : null,
+            automation?.timeframe,
+            automation?.lastMarkedAt
+              ? `Marked ${formatTimestampDetail(automation.lastMarkedAt)}`
+              : null,
+          ].filter(Boolean).join(" · "),
+        }
+      : null,
+  ].filter(Boolean);
+};
+
+const optionDetailGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+  gap: sp(5),
+};
+
+const OptionDetailMetric = ({ metric }) => (
+  <div
+    style={{
+      border: "none",
+      borderRadius: dim(RADII.xs),
+      background: T.bg0,
+      padding: sp("5px 6px"),
+      minWidth: 0,
+    }}
+  >
+    <div style={mutedLabelStyle}>{metric.label}</div>
+    <div
+      style={{
+        marginTop: sp(2),
+        color: T.text,
+        fontFamily: T.data,
+        fontSize: textSize("body"),
+        fontWeight: FONT_WEIGHTS.regular,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {metric.value || MISSING_VALUE}
+    </div>
+    {metric.detail ? (
+      <div
+        style={{
+          marginTop: sp(2),
+          color: T.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {metric.detail}
+      </div>
+    ) : null}
+  </div>
+);
+
+const PositionOptionDetails = ({ row, currency, maskValues, style }) => {
+  const metrics = optionDetailMetrics(row, currency, maskValues);
+  if (!metrics.length) return null;
+  return (
+    <div style={{ ...optionDetailGridStyle, ...style }}>
+      {metrics.map((metric) => (
+        <OptionDetailMetric key={`${row.id}:option:${metric.label}`} metric={metric} />
+      ))}
+    </div>
+  );
+};
+
+export const buildPositionOptionQuoteGroups = (rows) => {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const contract = row?.optionContract;
+    const providerContractId = optionProviderContractId(contract);
+    const underlying = firstDisplayText(
+      contract?.underlying,
+      row?.underlyingMarket?.symbol,
+      row?.symbol,
+    ).toUpperCase();
+    if (!providerContractId || !underlying) return;
+    if (!groups.has(underlying)) groups.set(underlying, new Set());
+    groups.get(underlying).add(providerContractId);
+  });
+  return Array.from(groups, ([underlying, ids]) => ({
+    underlying,
+    providerContractIds: Array.from(ids),
+  }));
+};
+
+const PositionOptionQuoteStreamGroup = ({ underlying, providerContractIds, enabled }) => {
+  useIbkrOptionQuoteStream({
+    underlying,
+    providerContractIds,
+    enabled: Boolean(enabled && underlying && providerContractIds.length),
+    owner: `account-positions:${underlying}`,
+    intent: "account-monitor-live",
+    requiresGreeks: true,
+  });
+  return null;
+};
+
+export const PositionOptionQuoteStreams = ({ groups = [], enabled = true }) => (
+  <>
+    {groups.map((group) => (
+      <PositionOptionQuoteStreamGroup
+        key={group.underlying}
+        underlying={group.underlying}
+        providerContractIds={group.providerContractIds}
+        enabled={enabled}
+      />
+    ))}
+  </>
+);
+
+export const useLiveOptionPositionRows = ({
+  rows: inputRows = [],
+  enabled = true,
+  totals = null,
+} = {}) => {
+  const optionQuoteGroups = useMemo(
+    () => buildPositionOptionQuoteGroups(inputRows),
+    [inputRows],
+  );
+  const providerContractIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          optionQuoteGroups.flatMap((group) => group.providerContractIds),
+        ),
+      ),
+    [optionQuoteGroups],
+  );
+  const quoteVersion = useStoredOptionQuoteSnapshotVersion(
+    enabled ? providerContractIds : [],
+  );
+  const rows = useMemo(() => {
+    if (!enabled || !providerContractIds.length) {
+      return applyDisplayWeights(inputRows);
+    }
+    const liveQuoteByProviderContractId = Object.fromEntries(
+      providerContractIds.map((providerContractId) => [
+        providerContractId,
+        getStoredOptionQuoteSnapshot(providerContractId),
+      ]),
+    );
+    return applyDisplayWeights(
+      inputRows.map((row) =>
+        applyLiveOptionQuoteToRow(
+          row,
+          liveQuoteByProviderContractId[
+            optionProviderContractId(row.optionContract)
+          ],
+        ),
+      ),
+    );
+  }, [
+    enabled,
+    inputRows,
+    providerContractIds,
+    quoteVersion,
+  ]);
+  const displayTotals = useMemo(
+    () => buildDisplayTotals(rows, totals),
+    [rows, totals],
+  );
+
+  return {
+    rows,
+    displayTotals,
+    optionQuoteGroups,
+    providerContractIds,
+  };
+};
+
 const marketForAssetClass = (assetClass) => {
   const normalized = String(assetClass || "").toLowerCase();
   if (normalized === "etf") return "etf";
@@ -136,7 +725,7 @@ const mobileFilterRailStyle = {
 
 const mobileRowListStyle = {
   display: "grid",
-  gap: sp(2),
+  gap: sp(1),
   padding: sp("4px 5px 5px"),
 };
 
@@ -186,7 +775,7 @@ const mobileScanShellStyle = (active = false) => ({
 
 const mobileScanRowStyle = {
   width: "100%",
-  minHeight: dim(44),
+  minHeight: dim(40),
   padding: sp("4px 5px"),
   border: "none",
   background: "transparent",
@@ -293,6 +882,10 @@ const positionMobileRowSignature = (row) =>
     row?.accounts,
     row?.openOrders,
     row?.lots,
+    row?.optionContract,
+    row?.optionQuote,
+    row?.underlyingMarket,
+    row?.automationContext,
   ]);
 
 const MobilePositionRow = memo(({
@@ -317,7 +910,8 @@ const MobilePositionRow = memo(({
       <div style={mobileMinWidthStyle}>
         <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
         <div style={cellSubTextStyle(T.textDim)}>
-          {row.quantity < 0 ? "Short" : "Long"} · {row.assetClass || "Position"}
+          {optionInlineDetail(row, maskValues) ||
+            `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`}
         </div>
       </div>
       <div
@@ -377,6 +971,12 @@ const MobilePositionRow = memo(({
           tone={toneForValue(row.dayChangePercent)}
         />
         <MobileDetailMetric label="Weight" value={formatAccountPercent(row.weightPercent, 2, maskValues)} />
+        <PositionOptionDetails
+          row={row}
+          currency={currency}
+          maskValues={maskValues}
+          style={{ gridColumn: "1 / -1", minWidth: 0 }}
+        />
         <div style={mobileMinWidthStyle}>
           <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Accounts</div>
           <div style={mobilePillWrapStyle}>
@@ -741,10 +1341,14 @@ export const PositionsPanel = ({
   currentPositionsCount,
   onClearEquityPin,
   isPhone = false,
+  showFilters = true,
+  onPositionSelect,
+  liveOptionQuotesEnabled = true,
+  streamLiveOptionQuotes = true,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const rows = useMemo(
+  const sourceFilteredRows = useMemo(
     () =>
       (query.data?.positions || [])
         .filter(isOpenPositionRow)
@@ -753,6 +1357,11 @@ export const PositionsPanel = ({
         ),
     [query.data?.positions, sourceFilter],
   );
+  const { rows, displayTotals, optionQuoteGroups } = useLiveOptionPositionRows({
+    rows: sourceFilteredRows,
+    enabled: liveOptionQuotesEnabled,
+    totals: query.data?.totals,
+  });
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
@@ -790,11 +1399,29 @@ export const PositionsPanel = ({
     });
   }, []);
 
+  const handlePositionToggle = useCallback(
+    (row) => {
+      if (!row?.id) return;
+      onPositionSelect?.(row);
+      toggleExpanded(row.id);
+    },
+    [onPositionSelect, toggleExpanded],
+  );
+
+  const rowById = useMemo(
+    () => new Map(sortedRows.map((row) => [row.id, row])),
+    [sortedRows],
+  );
+
   const handleMobileRowAction = useCallback(
     (event) => {
       const { action, rowId, symbol } = event.currentTarget.dataset;
       if (!rowId) {
         return;
+      }
+      const row = rowById.get(rowId);
+      if (row) {
+        onPositionSelect?.(row);
       }
       if (action === "chart") {
         event.stopPropagation();
@@ -806,7 +1433,7 @@ export const PositionsPanel = ({
       }
       toggleExpanded(rowId);
     },
-    [onJumpToChart, toggleExpanded],
+    [onJumpToChart, onPositionSelect, rowById, toggleExpanded],
   );
 
   const handleMobileRowKeyDown = useCallback(
@@ -832,7 +1459,7 @@ export const PositionsPanel = ({
       onRetry={query.refetch}
       minHeight={rows.length ? 144 : 174}
       noPad
-      action={
+      action={showFilters ? (
         <div style={isPhone ? mobileFilterRailStyle : { display: "flex", gap: sp(4), flexWrap: "wrap" }}>
           <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
           {onSourceFilterChange ? (
@@ -843,8 +1470,14 @@ export const PositionsPanel = ({
             />
           ) : null}
         </div>
-      }
+      ) : null}
     >
+      {streamLiveOptionQuotes ? (
+        <PositionOptionQuoteStreams
+          groups={optionQuoteGroups}
+          enabled={liveOptionQuotesEnabled}
+        />
+      ) : null}
       {!rows.length ? (
         <div style={{ padding: sp(7) }}>
           <EmptyState
@@ -890,9 +1523,9 @@ export const PositionsPanel = ({
           >
             {[
               ["Day", formatAccountMoney(totalDayChange, currency, true, maskValues), toneForValue(totalDayChange)],
-              ["Net", formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues), undefined],
-              ["Unreal", formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, true, maskValues), toneForValue(query.data?.totals?.unrealizedPnl)],
-              ["Weight", formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues), undefined],
+              ["Net", formatAccountMoney(displayTotals.netExposure, currency, true, maskValues), undefined],
+              ["Unreal", formatAccountMoney(displayTotals.unrealizedPnl, currency, true, maskValues), toneForValue(displayTotals.unrealizedPnl)],
+              ["Weight", formatAccountPercent(displayTotals.weightPercent, 2, maskValues), undefined],
             ].map(([label, value, tone], index) => (
               <div
                 key={label}
@@ -909,7 +1542,11 @@ export const PositionsPanel = ({
           </div>
         </div>
       ) : (
-        <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: "34vh" }}>
+        <div
+          data-testid="account-positions-table-scroll"
+          className="ra-hide-scrollbar"
+          style={{ overflowX: "auto" }}
+        >
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
             <thead>
               <tr style={tableHeaderStyle}>
@@ -949,7 +1586,7 @@ export const PositionsPanel = ({
                       cursor: "pointer",
                       background: expandedRows.has(row.id) ? `${T.accent}14` : "transparent",
                     }}
-                    onClick={() => toggleExpanded(row.id)}
+                    onClick={() => handlePositionToggle(row)}
                   >
                     <td style={{ ...tableCellStyle, minWidth: 164 }}>
                       <div style={{ display: "flex", alignItems: "flex-start", gap: sp(6) }}>
@@ -957,7 +1594,7 @@ export const PositionsPanel = ({
                           type="button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            toggleExpanded(row.id);
+                            handlePositionToggle(row);
                           }}
                           aria-expanded={expandedRows.has(row.id)}
                           style={{
@@ -980,6 +1617,7 @@ export const PositionsPanel = ({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              onPositionSelect?.(row);
                               onJumpToChart?.(row.symbol);
                             }}
                             style={{
@@ -1015,12 +1653,7 @@ export const PositionsPanel = ({
                               lineHeight: 1.25,
                             }}
                           >
-                            {[
-                              row.description || row.assetClass || "Position",
-                              row.sector || null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
+                            {optionInlineDetail(row, maskValues)}
                           </div>
                         </div>
                       </div>
@@ -1067,8 +1700,8 @@ export const PositionsPanel = ({
                           background: `${T.accent}08`,
                         }}
                       >
-                        <div style={{ display: "grid", gap: sp(6) }}>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+                          <div style={{ display: "grid", gap: sp(6) }}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
                             {(row.accounts || []).map((accountId) => (
                               <Pill key={`${row.id}:${accountId}`} tone="cyan">
                                 {accountId}
@@ -1084,10 +1717,16 @@ export const PositionsPanel = ({
                               <Pill tone={row.attributionStatus === "mixed" ? "amber" : "default"}>
                                 {row.attributionStatus}
                               </Pill>
-                            ) : null}
-                          </div>
+                              ) : null}
+                            </div>
 
-                          <div
+                            <PositionOptionDetails
+                              row={row}
+                              currency={currency}
+                              maskValues={maskValues}
+                            />
+
+                            <div
                             style={{
                               display: "grid",
                               gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr) auto",
@@ -1277,22 +1916,22 @@ export const PositionsPanel = ({
                   style={{
                     ...tableCellStyle,
                     textAlign: "right",
-                    color: toneForValue(query.data?.totals?.unrealizedPnl),
+                    color: toneForValue(displayTotals.unrealizedPnl),
                     fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
-                  {formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, false, maskValues)}
+                  {formatAccountMoney(displayTotals.unrealizedPnl, currency, false, maskValues)}
                 </td>
                 <td />
                 <td style={{ ...tableCellStyle, textAlign: "right", color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues)}
+                  {formatAccountMoney(displayTotals.netExposure, currency, true, maskValues)}
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues)}
+                  {formatAccountPercent(displayTotals.weightPercent, 2, maskValues)}
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                  Long {formatAccountMoney(query.data?.totals?.grossLong, currency, true, maskValues)} · Short{" "}
-                  {formatAccountMoney(query.data?.totals?.grossShort, currency, true, maskValues)}
+                  Long {formatAccountMoney(displayTotals.grossLong, currency, true, maskValues)} · Short{" "}
+                  {formatAccountMoney(displayTotals.grossShort, currency, true, maskValues)}
                 </td>
               </tr>
             </tfoot>

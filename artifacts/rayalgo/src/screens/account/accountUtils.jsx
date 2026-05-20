@@ -146,7 +146,7 @@ export const sectionEyebrowStyle = {
 
 export const mutedLabelStyle = {
   get fontSize() {
-    return textSize("body");
+    return textSize("caption");
   },
   get color() {
     return T.textMuted;
@@ -405,8 +405,8 @@ export const tableHeaderStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.medium,
-  letterSpacing: "0.02em",
-  textTransform: "none",
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
   get borderBottom() {
     return `1px solid ${T.border}`;
   },
@@ -414,7 +414,7 @@ export const tableHeaderStyle = {
 
 export const tableCellStyle = {
   get padding() {
-    return sp("6px 8px");
+    return sp("3px 8px");
   },
   get borderBottom() {
     return `1px solid ${T.borderLight}`;
@@ -462,8 +462,8 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         display: "inline-flex",
         alignItems: "center",
         gap: sp(4),
-        minHeight: dim(16),
-        padding: sp("1px 6px"),
+        minHeight: dim(14),
+        padding: sp("0 5px"),
         borderRadius: dim(RADII.pill),
         border: "none",
         background: palette.bg,

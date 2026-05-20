@@ -32,7 +32,15 @@ import {
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
-import type { BrokerBarSnapshot, PlaceOrderInput } from "../providers/ibkr/client";
+import type {
+  BrokerBarSnapshot,
+  PlaceOrderInput,
+  QuoteSnapshot,
+} from "../providers/ibkr/client";
+import {
+  PolygonMarketDataClient,
+  type OptionChainContract,
+} from "../providers/polygon/market-data";
 import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
 import { notifyShadowAccountChanged } from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
@@ -66,6 +74,7 @@ const WATCHLIST_BACKTEST_SOURCE = "watchlist_backtest";
 const WATCHLIST_BACKTEST_MARK_SOURCE = "watchlist_backtest_mark";
 export const SIGNAL_OPTIONS_REPLAY_SOURCE = "signal_options_replay";
 export const SIGNAL_OPTIONS_REPLAY_MARK_SOURCE = "signal_options_replay_mark";
+const SHADOW_EQUITY_FORWARD_POSITION_PREFIX = "shadow_equity_forward:";
 const WATCHLIST_BACKTEST_TIMEFRAME_MS: Record<ShadowWatchlistBacktestTimeframe, number> = {
   "1m": 60_000,
   "5m": 5 * 60_000,
@@ -100,6 +109,7 @@ const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
 const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
 const SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS = 1_000;
+const SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 
@@ -154,6 +164,12 @@ type ShadowPortfolioAnalysisSnapshotRow =
 type ShadowPositionDayChange = {
   dayChange: number | null;
   dayChangePercent: number | null;
+};
+
+type ShadowQuoteDayChangeInput = {
+  quantity: number;
+  multiplier: number;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
 };
 
 type ShadowTotals = {
@@ -432,12 +448,6 @@ function kickShadowPositionMarkRefresh() {
   }
 
   shadowPositionMarkRefreshInFlight = refreshShadowPositionMarks()
-    .then((result) => {
-      if (result.updatedCount > 0) {
-        invalidateShadowReadCachesAfterBackgroundMarkRefresh();
-      }
-      return result;
-    })
     .catch((error) => {
       logger.debug?.({ err: error }, "Shadow mark refresh failed");
       return { updatedCount: 0 };
@@ -621,16 +631,48 @@ function isSignalOptionsReplayPositionKey(value: unknown): boolean {
   return typeof value === "string" && value.startsWith(`${SIGNAL_OPTIONS_REPLAY_SOURCE}:`);
 }
 
+function isShadowEquityForwardPositionKey(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.startsWith(SHADOW_EQUITY_FORWARD_POSITION_PREFIX)
+  );
+}
+
+function isForwardTestShadowOrder(
+  order?: Pick<ShadowOrderRow, "payload" | "clientOrderId"> | null,
+): boolean {
+  const payload = readRecord(order?.payload) ?? {};
+  const forwardTest = payload.forwardTest;
+  return (
+    forwardTest === true ||
+    readString(forwardTest)?.toLowerCase() === "true" ||
+    Boolean(order?.clientOrderId?.startsWith("shadow-equity-forward-"))
+  );
+}
+
 function isSimulationShadowOrderSource(source: string | null | undefined): boolean {
-  return source === WATCHLIST_BACKTEST_SOURCE;
+  return source === WATCHLIST_BACKTEST_SOURCE || source === SIGNAL_OPTIONS_REPLAY_SOURCE;
 }
 
 function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
-  return !isSimulationShadowOrderSource(order?.source);
+  return !isSimulationShadowOrderSource(order?.source) && !isForwardTestShadowOrder(order);
+}
+
+function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: string) {
+  if (!order || order.source !== source) {
+    return false;
+  }
+  if (source === "automation") {
+    return !isForwardTestShadowOrder(order);
+  }
+  return true;
 }
 
 function isLiveShadowPosition(position: Pick<ShadowPositionRow, "positionKey">): boolean {
-  return !isWatchlistBacktestPositionKey(position.positionKey);
+  return (
+    !isWatchlistBacktestPositionKey(position.positionKey) &&
+    !isShadowEquityForwardPositionKey(position.positionKey)
+  );
 }
 
 function positionMatchesShadowSource(
@@ -643,9 +685,16 @@ function positionMatchesShadowSource(
   if (source === SIGNAL_OPTIONS_REPLAY_SOURCE) {
     return isSignalOptionsReplayPositionKey(position.positionKey);
   }
+  if (source === "automation") {
+    return (
+      !isWatchlistBacktestPositionKey(position.positionKey) &&
+      !isShadowEquityForwardPositionKey(position.positionKey)
+    );
+  }
   return (
     !isWatchlistBacktestPositionKey(position.positionKey) &&
-    !isSignalOptionsReplayPositionKey(position.positionKey)
+    !isSignalOptionsReplayPositionKey(position.positionKey) &&
+    !isShadowEquityForwardPositionKey(position.positionKey)
   );
 }
 
@@ -656,7 +705,7 @@ function shadowMarkSnapshotSourceForPosition(
     return WATCHLIST_BACKTEST_MARK_SOURCE;
   }
   if (isSignalOptionsReplayPositionKey(position.positionKey)) {
-    return SIGNAL_OPTIONS_REPLAY_MARK_SOURCE;
+    return "automation_mark";
   }
   return "mark";
 }
@@ -1047,7 +1096,16 @@ async function readOpenShadowPositions(): Promise<ShadowPositionRow[]> {
 }
 
 async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
-  return (await readOpenShadowPositions()).filter(isLiveShadowPosition);
+  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const livePositionKeys = shadowPositionKeysForOrders(
+    fills
+      .filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)))
+      .map((fill) => ordersById.get(fill.orderId)),
+  );
+  return (await readOpenShadowPositions()).filter(
+    (position) =>
+      isLiveShadowPosition(position) && livePositionKeys.has(position.positionKey),
+  );
 }
 
 async function readShadowOrdersByFillOrderId(
@@ -1139,15 +1197,14 @@ async function computeShadowTotalsForSource(
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const { fills, ordersById } = await readShadowFillsWithOrders();
   const selectedFills = source
-    ? fills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
-  const selectedPositionKeys = source
-    ? shadowPositionKeysForOrders(
-        selectedFills.map((fill) => ordersById.get(fill.orderId)),
-      )
-    : null;
+  const selectedPositionKeys = shadowPositionKeysForOrders(
+    selectedFills.map((fill) => ordersById.get(fill.orderId)),
+  );
   const positions = (await readOpenShadowPositions()).filter((position) =>
-    source ? selectedPositionKeys!.has(position.positionKey) : isLiveShadowPosition(position),
+    selectedPositionKeys.has(position.positionKey) &&
+      (source ? positionMatchesShadowSource(position, source) : isLiveShadowPosition(position)),
   );
   const totals = buildShadowTotalsFromLedger({
     account,
@@ -1170,11 +1227,15 @@ async function computeShadowTotals(): Promise<ShadowTotals> {
 async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktestStartingBook> {
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  const positions = (await readOpenShadowPositions()).filter(
-    isLiveShadowPosition,
-  );
   const { fills, ordersById } = await readShadowFillsWithOrders();
   const baselineFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
+  const baselinePositionKeys = shadowPositionKeysForOrders(
+    baselineFills.map((fill) => ordersById.get(fill.orderId)),
+  );
+  const positions = (await readOpenShadowPositions()).filter(
+    (position) =>
+      isLiveShadowPosition(position) && baselinePositionKeys.has(position.positionKey),
+  );
   const cash = baselineFills.reduce(
     (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
     startingBalance,
@@ -1219,15 +1280,7 @@ async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktest
 
 async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) {
   invalidateShadowFreshStateCache();
-  const totals = await computeShadowTotalsForSource(
-    source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
-      ? SIGNAL_OPTIONS_REPLAY_SOURCE
-      : source === WATCHLIST_BACKTEST_MARK_SOURCE ||
-          source.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`) ||
-          source.startsWith("watchlist_bt:")
-        ? WATCHLIST_BACKTEST_SOURCE
-        : null,
-  );
+  const totals = await computeShadowTotalsForSource(shadowTotalsSourceForSnapshotSource(source));
   const [snapshot] = await db
     .insert(shadowBalanceSnapshotsTable)
     .values({
@@ -1475,9 +1528,7 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
     .limit(1);
 
   if (input.side === "buy") {
-    const totals = await computeShadowTotalsForSource(
-      input.source === SIGNAL_OPTIONS_REPLAY_SOURCE ? SIGNAL_OPTIONS_REPLAY_SOURCE : null,
-    );
+    const totals = await computeShadowTotalsForSource(null);
     const cash = totals.cash;
     const cashNeeded = grossAmount + fees;
     if (cashNeeded > cash) {
@@ -1675,11 +1726,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   });
 
   await writeShadowBalanceSnapshot(
-    normalized.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-      ? SIGNAL_OPTIONS_REPLAY_SOURCE
-      : normalized.source === "automation"
-        ? "automation"
-        : "ledger",
+    normalized.source === "automation" ? "automation" : "ledger",
     now,
   );
 
@@ -1696,11 +1743,9 @@ function isSignalOptionsShadowSource(source: string | null | undefined) {
 }
 
 function shadowMaintenanceOrderSource(
-  order: ShadowOrderRow | null,
+  _order: ShadowOrderRow | null,
 ): ShadowOrderSource {
-  return order?.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-    ? SIGNAL_OPTIONS_REPLAY_SOURCE
-    : "automation";
+  return "automation";
 }
 
 function sourceDeploymentIdFromShadowOrder(order: ShadowOrderRow | null) {
@@ -2020,7 +2065,10 @@ function normalizeShadowOrderInput(input: ShadowOrderInput): ShadowOrderInput & 
     side: input.side,
     type: input.type ?? "market",
     timeInForce: input.timeInForce ?? "day",
-    source: input.source ?? "manual",
+    source:
+      input.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? "automation"
+        : input.source ?? "manual",
   };
 }
 
@@ -2114,6 +2162,7 @@ export async function refreshShadowPositionMarks() {
   }
 
   if (updatedCount) {
+    invalidateShadowReadCachesAfterBackgroundMarkRefresh();
     for (const [source, latestMarkAt] of latestMarkAtBySnapshotSource) {
       await writeShadowBalanceSnapshot(source, latestMarkAt);
     }
@@ -2174,6 +2223,248 @@ function buildShadowPositionDayChange(input: {
   };
 }
 
+function shadowDayChangeDayStart(marketDate: string): Date {
+  return zonedDateTimeToUtc({
+    marketDate: previousWeekdayOrSame(marketDate),
+    hour: 0,
+    minute: 0,
+  });
+}
+
+function shadowPositionDayChangeDayStart(
+  _position: Pick<ShadowPositionRow, "positionKey" | "asOf" | "updatedAt">,
+  now = new Date(),
+): Date {
+  return shadowDayChangeDayStart(marketDateKey(now));
+}
+
+function shadowQuoteMarkPrice(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+): number | null {
+  const bid = toNumber((quote as Record<string, unknown> | undefined)?.bid);
+  const ask = toNumber((quote as Record<string, unknown> | undefined)?.ask);
+  if (bid != null && ask != null && bid > 0 && ask > 0) {
+    return (bid + ask) / 2;
+  }
+  return (
+    toNumber((quote as Record<string, unknown> | undefined)?.mark) ??
+    toNumber((quote as Record<string, unknown> | undefined)?.price) ??
+    toNumber((quote as Record<string, unknown> | undefined)?.last)
+  );
+}
+
+function shadowQuotePreviousMark(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+  mark: number | null,
+): number | null {
+  const record = quote as Record<string, unknown> | undefined;
+  const prevClose = toNumber(record?.prevClose);
+  if (prevClose != null && prevClose > 0) {
+    return prevClose;
+  }
+  const change = toNumber(record?.change);
+  if (mark != null && change != null) {
+    const previous = mark - change;
+    return previous > 0 ? previous : null;
+  }
+  return null;
+}
+
+function buildShadowPositionDayChangeFromQuote(
+  input: ShadowQuoteDayChangeInput,
+): ShadowPositionDayChange {
+  const mark = shadowQuoteMarkPrice(input.quote);
+  const previousMark = shadowQuotePreviousMark(input.quote, mark);
+  const perContractChange =
+    mark != null && previousMark != null
+      ? mark - previousMark
+      : toNumber((input.quote as Record<string, unknown> | undefined)?.change);
+  if (
+    perContractChange == null ||
+    input.quantity === 0 ||
+    !Number.isFinite(input.multiplier) ||
+    input.multiplier <= 0
+  ) {
+    return { dayChange: null, dayChangePercent: null };
+  }
+  const quotePercent = toNumber(
+    (input.quote as Record<string, unknown> | undefined)?.changePercent,
+  );
+  return {
+    dayChange: perContractChange * input.quantity * input.multiplier,
+    dayChangePercent:
+      previousMark != null && previousMark > 0
+        ? (perContractChange / Math.abs(previousMark)) * 100
+        : quotePercent,
+  };
+}
+
+function isPolygonOptionProviderContractId(providerContractId: string): boolean {
+  return providerContractId.startsWith("O:");
+}
+
+function polygonOptionContractDayChangeQuote(
+  contract: OptionChainContract,
+): Record<string, unknown> {
+  return {
+    providerContractId: contract.contract.ticker,
+    bid: contract.bid,
+    ask: contract.ask,
+    mark: contract.mark,
+    price: contract.mark,
+    last: contract.last,
+    prevClose: contract.prevClose,
+    change: contract.change,
+    changePercent: contract.changePercent,
+    updatedAt: contract.updatedAt,
+  };
+}
+
+async function fetchShadowPolygonOptionDayChangeQuotes(
+  positions: ShadowPositionRow[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const config = getPolygonRuntimeConfig();
+  const quoteByProviderContractId = new Map<string, Record<string, unknown>>();
+  if (!config) {
+    return quoteByProviderContractId;
+  }
+
+  const requestsByGroup = new Map<
+    string,
+    {
+      underlying: string;
+      expirationDate: Date;
+      right: ShadowOptionContract["right"];
+      providerContractIds: Set<string>;
+    }
+  >();
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const providerContractId = contract?.providerContractId?.trim();
+    const underlying = normalizeSymbol(contract?.underlying || position.symbol).toUpperCase();
+    if (
+      !contract ||
+      !providerContractId ||
+      !underlying ||
+      !isPolygonOptionProviderContractId(providerContractId)
+    ) {
+      return;
+    }
+    const groupKey = [
+      underlying,
+      optionDateKey(contract.expirationDate),
+      contract.right,
+    ].join("|");
+    const current =
+      requestsByGroup.get(groupKey) ??
+      {
+        underlying,
+        expirationDate: contract.expirationDate,
+        right: contract.right,
+        providerContractIds: new Set<string>(),
+      };
+    current.providerContractIds.add(providerContractId);
+    requestsByGroup.set(groupKey, current);
+  });
+
+  const client = new PolygonMarketDataClient(config);
+  await Promise.all(
+    Array.from(requestsByGroup.values(), async (request) => {
+      const contracts = await client
+        .getOptionChain({
+          underlying: request.underlying,
+          expirationDate: request.expirationDate,
+          contractType: request.right,
+          maxPages: 10,
+        })
+        .catch((): OptionChainContract[] => []);
+      contracts.forEach((contract) => {
+        const providerContractId = contract.contract.ticker.trim();
+        if (request.providerContractIds.has(providerContractId)) {
+          quoteByProviderContractId.set(
+            providerContractId,
+            polygonOptionContractDayChangeQuote(contract),
+          );
+        }
+      });
+    }),
+  );
+  return quoteByProviderContractId;
+}
+
+async function fetchShadowOptionDayChangeQuotes(
+  positions: ShadowPositionRow[],
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  const idsByUnderlying = new Map<string, Set<string>>();
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const providerContractId = contract?.providerContractId?.trim();
+    const underlying = normalizeSymbol(contract?.underlying || position.symbol).toUpperCase();
+    if (
+      !providerContractId ||
+      !underlying ||
+      isPolygonOptionProviderContractId(providerContractId)
+    ) {
+      return;
+    }
+    if (!idsByUnderlying.has(underlying)) {
+      idsByUnderlying.set(underlying, new Set());
+    }
+    idsByUnderlying.get(underlying)!.add(providerContractId);
+  });
+
+  const quoteByProviderContractId = new Map<
+    string,
+    Partial<QuoteSnapshot> | Record<string, unknown>
+  >();
+  const [polygonQuotes] = await Promise.all([
+    fetchShadowPolygonOptionDayChangeQuotes(positions),
+    ...Array.from(idsByUnderlying, async ([underlying, ids]) => {
+      const payload = await fetchOptionQuoteSnapshotPayload({
+        underlying,
+        providerContractIds: Array.from(ids),
+        owner: `shadow-position-day-change:${underlying}`,
+        intent: "account-monitor-live",
+        requiresGreeks: false,
+      }).catch(() => null);
+      (payload?.quotes || []).forEach((quote) => {
+        const providerContractId = String(quote.providerContractId || "").trim();
+        if (providerContractId) {
+          quoteByProviderContractId.set(providerContractId, quote);
+        }
+      });
+    }),
+  ]);
+  polygonQuotes.forEach((quote, providerContractId) => {
+    quoteByProviderContractId.set(providerContractId, quote);
+  });
+  return quoteByProviderContractId;
+}
+
+async function waitForShadowOptionDayChangeQuotes(
+  request: Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>>,
+) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      request,
+      new Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>>(
+        (resolve) => {
+          timeout = setTimeout(
+            () => resolve(new Map()),
+            SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS,
+          );
+          timeout.unref?.();
+        },
+      ),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function selectLatestShadowPositionMarksByPositionId<
   T extends Pick<ShadowPositionMarkRow, "positionId" | "asOf">,
 >(marks: T[]): Map<string, T> {
@@ -2187,30 +2478,70 @@ function selectLatestShadowPositionMarksByPositionId<
   return byPositionId;
 }
 
+function groupShadowPositionMarksByPositionId<
+  T extends Pick<ShadowPositionMarkRow, "positionId" | "asOf">,
+>(marks: T[]): Map<string, T[]> {
+  const byPositionId = new Map<string, T[]>();
+  marks.forEach((mark) => {
+    byPositionId.set(mark.positionId, [
+      ...(byPositionId.get(mark.positionId) ?? []),
+      mark,
+    ]);
+  });
+  byPositionId.forEach((positionMarks) => {
+    positionMarks.sort((left, right) => right.asOf.getTime() - left.asOf.getTime());
+  });
+  return byPositionId;
+}
+
 async function readShadowPositionDayChanges(
   positions: ShadowPositionRow[],
   now = new Date(),
 ): Promise<Map<string, ShadowPositionDayChange>> {
   const changes = new Map<string, ShadowPositionDayChange>();
-  const marketDate = previousWeekdayOrSame(marketDateKey(now));
-  const dayStart = zonedDateTimeToUtc({ marketDate, hour: 0, minute: 0 });
+  const dayStartByPositionId = new Map(
+    positions.map((position) => [
+      position.id,
+      shadowPositionDayChangeDayStart(position, now),
+    ]),
+  );
+  const maxDayStart = Array.from(dayStartByPositionId.values()).reduce<Date | null>(
+    (latest, dayStart) =>
+      latest === null || dayStart.getTime() > latest.getTime() ? dayStart : latest,
+    null,
+  );
   const positionIds = positions.map((position) => position.id);
-  const baselineMarks = positionIds.length
+  const baselineMarks = positionIds.length && maxDayStart
     ? await db
         .select()
         .from(shadowPositionMarksTable)
         .where(
           and(
             inArray(shadowPositionMarksTable.positionId, positionIds),
-            lte(shadowPositionMarksTable.asOf, dayStart),
+            lte(shadowPositionMarksTable.asOf, maxDayStart),
           ),
         )
+        .orderBy(desc(shadowPositionMarksTable.asOf))
     : [];
   const baselineMarksByPositionId =
-    selectLatestShadowPositionMarksByPositionId(baselineMarks);
+    groupShadowPositionMarksByPositionId(baselineMarks);
+  let optionQuoteByProviderContractId:
+    | Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>
+    | null = null;
+  const getOptionQuoteByProviderContractId = async () => {
+    if (!optionQuoteByProviderContractId) {
+      optionQuoteByProviderContractId = await waitForShadowOptionDayChangeQuotes(
+        fetchShadowOptionDayChangeQuotes(positions).catch(() => new Map()),
+      );
+    }
+    return optionQuoteByProviderContractId;
+  };
 
   for (const position of positions) {
     const currentAsOf = position.asOf ?? position.updatedAt ?? now;
+    const dayStart =
+      dayStartByPositionId.get(position.id) ??
+      shadowPositionDayChangeDayStart(position, now);
     const quantity = toNumber(position.quantity) ?? 0;
     const averageCost = toNumber(position.averageCost) ?? 0;
     const currentMarketValue = toNumber(position.marketValue);
@@ -2220,26 +2551,51 @@ async function readShadowPositionDayChanges(
       optionContract: contract,
     });
 
-    if (currentAsOf.getTime() < dayStart.getTime() || quantity <= 0) {
+    if (quantity === 0) {
       changes.set(position.id, { dayChange: null, dayChangePercent: null });
       continue;
     }
 
-    const baselineMark = baselineMarksByPositionId.get(position.id);
+    const baselineMark = (baselineMarksByPositionId.get(position.id) ?? []).find(
+      (mark) => mark.asOf.getTime() <= dayStart.getTime(),
+    );
     const openedAt = position.openedAt ?? currentAsOf;
     const baselineMarketValue =
       toNumber(baselineMark?.marketValue) ??
       (openedAt.getTime() >= dayStart.getTime()
         ? averageCost * quantity * multiplier
         : null);
+    const baselineDayChange = buildShadowPositionDayChange({
+      currentMarketValue,
+      baselineMarketValue,
+    });
+    const providerContractId = contract?.providerContractId?.trim();
+    const currentMarkStale = currentAsOf.getTime() < dayStart.getTime();
+    if (
+      (baselineDayChange.dayChange == null || currentMarkStale) &&
+      providerContractId
+    ) {
+      const quotes = await getOptionQuoteByProviderContractId();
+      const quote = quotes.get(providerContractId);
+      if (quote) {
+        changes.set(
+          position.id,
+          buildShadowPositionDayChangeFromQuote({
+            quantity,
+            multiplier,
+            quote,
+          }),
+        );
+        continue;
+      }
+    }
 
-    changes.set(
-      position.id,
-      buildShadowPositionDayChange({
-        currentMarketValue,
-        baselineMarketValue,
-      }),
-    );
+    if (currentMarkStale) {
+      changes.set(position.id, { dayChange: null, dayChangePercent: null });
+      continue;
+    }
+
+    changes.set(position.id, baselineDayChange);
   }
 
   return changes;
@@ -2391,6 +2747,22 @@ function isSignalOptionsReplaySnapshotSource(source: string | null | undefined) 
     source === SIGNAL_OPTIONS_REPLAY_SOURCE ||
     source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
   );
+}
+
+function shadowTotalsSourceForSnapshotSource(
+  source: string | null | undefined,
+): ShadowSourceScope | null {
+  if (source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
+  }
+  if (
+    source === WATCHLIST_BACKTEST_MARK_SOURCE ||
+    source?.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`) ||
+    source?.startsWith("watchlist_bt:")
+  ) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+  return null;
 }
 
 function shadowBenchmarkBarsCacheKey(input: {
@@ -2593,7 +2965,8 @@ function selectShadowEquityHistoryRows<
     includeLiveTerminal: true,
     rows: rows.filter(
       (row) =>
-        !isWatchlistBacktestSnapshotSource(row.source),
+        !isWatchlistBacktestSnapshotSource(row.source) &&
+        !isSignalOptionsReplaySnapshotSource(row.source),
     ),
   };
 }
@@ -2646,6 +3019,29 @@ function filterShadowEquityHistoryRowsToLiveLedger<
       nearlyEqualMoney(toNumber(row.fees) ?? 0, expected.fees)
     );
   });
+}
+
+type ShadowEquityHistoryLedgerRow = Pick<
+  ShadowBalanceSnapshotRow,
+  "asOf" | "source" | "cash" | "realizedPnl" | "fees" | "netLiquidation" | "createdAt"
+>;
+
+function buildDefaultShadowEquityHistoryRows<T extends ShadowEquityHistoryLedgerRow>(
+  rows: T[],
+  input: {
+    account: Pick<ShadowAccountRow, "startingBalance">;
+    fills: ShadowFillRow[];
+    terminalTotals: Pick<ShadowTotals, "netLiquidation"> | null;
+  },
+) {
+  void input.terminalTotals;
+  return filterShadowEquityHistoryRowsToLiveLedger(
+    rows.filter((row) => !isSignalOptionsReplaySnapshotSource(row.source)),
+    {
+      account: input.account,
+      fills: input.fills,
+    },
+  );
 }
 
 async function computeShadowEquityHistoryTerminalTotals(
@@ -2827,15 +3223,23 @@ export async function getShadowAccountEquityHistory(input: {
     ? await computeShadowEquityHistoryTerminalTotals(source)
     : null;
   const { fills, ordersById } = await readShadowFillsWithOrders();
-  const liveFills = fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
+  const ledgerFills = source
+    ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
+    : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const sourceUsesSimulationSnapshots =
     source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === WATCHLIST_BACKTEST_SOURCE;
   const liveLedgerRows = sourceUsesSimulationSnapshots
     ? selection.rows
-    : filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
-        account,
-        fills: liveFills,
-      });
+    : source
+      ? filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
+          account,
+          fills: ledgerFills,
+        })
+      : buildDefaultShadowEquityHistoryRows(selection.rows, {
+          account,
+          fills: ledgerFills,
+          terminalTotals: totals,
+        });
   const historyRows = selection.includeInitialPoint
     ? liveLedgerRows.filter((row) => row.source !== "initial")
     : liveLedgerRows;
@@ -3108,11 +3512,14 @@ export async function getShadowAccountPositions(input: {
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(1000);
   const sourcePositionKeys = source
-    ? shadowPositionKeysForOrders(orders.filter((order) => order.source === source))
+    ? shadowPositionKeysForOrders(
+        orders.filter((order) => shadowOrderMatchesSource(order, source)),
+      )
     : null;
   const positions = source
     ? (await readOpenShadowPositions()).filter((position) =>
-        sourcePositionKeys!.has(position.positionKey),
+        sourcePositionKeys!.has(position.positionKey) &&
+        positionMatchesShadowSource(position, source),
       )
     : await readOpenLiveShadowPositions();
   const filtered =
@@ -3221,7 +3628,7 @@ export async function getShadowAccountPositionsAtDate(input: {
     .orderBy(shadowFillsTable.occurredAt);
   const ordersById = await readShadowOrdersByFillOrderId(rawFills);
   const fills = source
-    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const books = new Map<
     string,
@@ -3465,7 +3872,7 @@ export async function getShadowAccountClosedTrades(input: {
     .orderBy(shadowFillsTable.occurredAt);
   const ordersById = await readShadowOrdersByFillOrderId(rawFills);
   const fills = source
-    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const { roundTrips } = buildShadowAnalysisRoundTrips(
     fills.map((fill) => shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId))),
@@ -4371,7 +4778,10 @@ async function getShadowTradeEquityEvents(input: {
   const selectedFills = input.sources?.length
     ? fills.filter((fill) => {
         const order = ordersById.get(fill.orderId);
-        return Boolean(order && input.sources?.includes(order.source));
+        return Boolean(
+          order &&
+            input.sources?.some((source) => shadowOrderMatchesSource(order, source)),
+        );
       })
     : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   return buildShadowEquityAnnotations(
@@ -4411,7 +4821,7 @@ export async function getShadowAccountOrders(input: {
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(SHADOW_ORDER_HISTORY_LIMIT);
   const sourceOrders = source
-    ? orders.filter((order) => order.source === source)
+    ? orders.filter((order) => shadowOrderMatchesSource(order, source))
     : orders.filter(isLiveShadowOrder);
   const filtered = sourceOrders.filter((order) =>
     tab === "working"
@@ -4644,7 +5054,7 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
     .limit(200);
   const ordersById = await readShadowOrdersByFillOrderId(rawFills);
   const fills = source
-    ? rawFills.filter((fill) => ordersById.get(fill.orderId)?.source === source)
+    ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     : rawFills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
   const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
   const totals = source ? await computeShadowTotalsForSource(source) : await computeShadowTotals();
@@ -7273,11 +7683,15 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   computeWatchlistBacktestStartingBook,
   selectShadowEquityHistoryRows,
   filterShadowEquityHistoryRowsToLiveLedger,
+  buildDefaultShadowEquityHistoryRows,
   compactShadowEquityHistoryRows,
   shadowEquityHistoryBucketSizeMs,
   bucketShadowEquityHistoryRows,
   selectLatestShadowPositionMarksByPositionId,
   buildShadowPositionDayChange,
+  shadowPositionDayChangeDayStart,
+  buildShadowPositionDayChangeFromQuote,
+  polygonOptionContractDayChangeQuote,
   buildShadowTradingPatternsFromRows,
   summarizeWatchlistBacktestClosedTrades,
   summarizeWatchlistBacktestBuyHoldBenchmark,
@@ -8339,12 +8753,9 @@ async function recordShadowAutomationEntry(
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: options.source ?? "automation",
+    source: "automation",
     sourceEventId: event.id,
-    clientOrderId:
-      options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? `shadow-options-replay-entry-${event.id}`
-        : `shadow-auto-entry-${event.id}`,
+    clientOrderId: `shadow-auto-entry-${event.id}`,
     positionKey: shadowAutomationPayloadPositionKey(payload),
     requestedFillPrice: price,
     payload,
@@ -8377,12 +8788,9 @@ async function recordShadowAutomationExit(
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: options.source ?? "automation",
+    source: "automation",
     sourceEventId: event.id,
-    clientOrderId:
-      options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? `shadow-options-replay-exit-${event.id}`
-        : `shadow-auto-exit-${event.id}`,
+    clientOrderId: `shadow-auto-exit-${event.id}`,
     positionKey: shadowAutomationPayloadPositionKey(payload),
     requestedFillPrice: price,
     payload,
@@ -8454,14 +8862,13 @@ async function recordShadowAutomationMark(
     mark: money(markPrice),
     marketValue: money(marketValue),
     unrealizedPnl: money(unrealizedPnl),
-    source: options.source ?? "automation",
+    source: "automation",
     asOf: event.occurredAt,
   });
   await writeShadowBalanceSnapshot(
-    options.markSource ??
-      (options.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
-        : "automation_mark"),
+    options.markSource === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
+      ? "automation_mark"
+      : options.markSource ?? "automation_mark",
     event.occurredAt,
   );
   return row.id;

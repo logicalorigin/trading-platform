@@ -23,14 +23,11 @@ export const AccountHeroBlock = ({
   maskValues = false,
   shadowMode: _shadowMode = false,
   isPhone = false,
-  sectionControl = null,
 }) => {
   const metrics = summary?.metrics || {};
   const netLiquidation = metrics.netLiquidation?.value;
   const dayPnl = metrics.dayPnl?.value;
   const dayPnlPercent = metrics.dayPnlPercent?.value;
-  const totalPnl = metrics.totalPnl?.value;
-  const totalPnlPercent = metrics.totalPnlPercent?.value;
 
   // Animate the hero net liquidation value when it changes (rAF-driven,
   // respects prefers-reduced-motion). Disabled when masked since the
@@ -46,13 +43,8 @@ export const AccountHeroBlock = ({
   const displayNet = animatedNet ?? netLiquidation;
   const displayDayPnl = animatedDayPnl ?? dayPnl;
   const dayPositive = Number.isFinite(Number(dayPnl)) ? Number(dayPnl) >= 0 : null;
-  const totalPositive = Number.isFinite(Number(totalPnl))
-    ? Number(totalPnl) >= 0
-    : null;
   const dayTone =
     dayPositive === null ? T.textDim : dayPositive ? T.green : T.red;
-  const totalTone =
-    totalPositive === null ? T.textDim : totalPositive ? T.green : T.red;
   const DayIcon = dayPositive === false ? TrendingDown : TrendingUp;
   return (
     <section
@@ -60,29 +52,29 @@ export const AccountHeroBlock = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: sp(isPhone ? 3 : 3),
-        padding: sp(isPhone ? "6px 4px 4px" : "6px 4px 4px"),
+        padding: sp("2px 4px 2px"),
         minWidth: 0,
       }}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "baseline",
+          alignItems: "center",
           flexWrap: "wrap",
-          gap: sp(isPhone ? 8 : 10),
+          gap: sp(isPhone ? 6 : 8),
+          minWidth: 0,
         }}
       >
         <div
           style={{
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(isPhone ? 22 : 38),
+            fontSize: fs(isPhone ? 18 : 24),
             fontVariantNumeric: "tabular-nums",
-            letterSpacing: "-0.025em",
             lineHeight: 1,
             fontWeight: FONT_WEIGHTS.label,
             whiteSpace: "nowrap",
+            flexShrink: 1,
             minWidth: 0,
             maxWidth: "100%",
             overflow: "hidden",
@@ -91,63 +83,35 @@ export const AccountHeroBlock = ({
         >
           {formatMoney(displayNet, currency, maskValues)}
         </div>
-        {sectionControl ? (
-          <div style={{ flexShrink: 0, maxWidth: "100%" }}>{sectionControl}</div>
+        {dayPositive !== null ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(4),
+              padding: sp("2px 6px"),
+              border: `1px solid ${dayTone}40`,
+              borderRadius: 999,
+              background: `${dayTone}12`,
+              color: dayTone,
+              flexShrink: 0,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <DayIcon size={11} />
+            <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
+            {formatPercent(dayPnlPercent, maskValues) ? (
+              <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
+                {formatPercent(dayPnlPercent, maskValues)}
+              </span>
+            ) : null}
+            <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
+          </span>
         ) : null}
       </div>
-      {dayPositive !== null || (totalPositive !== null && !isPhone) ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: sp(isPhone ? 6 : 10),
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {dayPositive !== null ? (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: sp(3),
-                color: dayTone,
-              }}
-            >
-              <DayIcon size={11} />
-              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
-              {formatPercent(dayPnlPercent, maskValues) ? (
-                <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
-                  {formatPercent(dayPnlPercent, maskValues)}
-                </span>
-              ) : null}
-              <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
-            </span>
-          ) : null}
-          {totalPositive !== null && !isPhone ? (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: sp(3),
-                color: T.textSec,
-              }}
-            >
-              <span style={{ color: T.textMuted }}>All-time</span>
-              <span style={{ color: totalTone }}>
-                {formatMoney(totalPnl, currency, maskValues)}
-              </span>
-              {formatPercent(totalPnlPercent, maskValues) ? (
-                <span style={{ color: totalTone, opacity: 0.75 }}>
-                  {formatPercent(totalPnlPercent, maskValues)}
-                </span>
-              ) : null}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
     </section>
   );
 };
