@@ -32,8 +32,9 @@ test("strip resolves status to red when the bridge is not authenticated", () => 
   assert.match(source, /brokerAuthenticated === false[\s\S]+?tone:\s*T\.red/);
 });
 
-test("strip carries five metrics — Net, Cash, BP, Margin, Cushion", () => {
-  assert.match(source, /label:\s*"Net"/);
+test("strip keeps secondary account metrics while hero owns Net", () => {
+  assert.doesNotMatch(source, /label:\s*"Net"/);
+  assert.doesNotMatch(source, /metrics\.netLiquidation/);
   assert.match(source, /label:\s*"Cash"/);
   assert.match(source, /label:\s*"BP"/);
   assert.match(source, /label:\s*"Margin"/);

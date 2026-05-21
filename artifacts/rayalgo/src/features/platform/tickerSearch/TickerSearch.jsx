@@ -27,12 +27,12 @@ import { AppTooltip } from "@/components/ui/tooltip";
 const FONT_CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{width:100%;height:100%;overflow:hidden}
-body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+body,button,input,select,textarea{font-family:var(--ra-font-sans)}
 ::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-thumb{background:#2F2E35;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#3A3940}
+::-webkit-scrollbar-thumb{background:var(--ra-border-default);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--ra-surface-4)}
 ::-webkit-scrollbar-track{background:transparent}
-input[type=range]{accent-color:#E08F76}
+input[type=range]{accent-color:var(--ra-color-accent)}
 `;
 
 const TICKER_SEARCH_MARKET_FILTERS = [

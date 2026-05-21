@@ -12,6 +12,32 @@ import {
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
+import { __resetMarketDataAdmissionForTests } from "./market-data-admission";
+
+const ENV_KEYS = [
+  "IBKR_MARKET_DATA_APP_MAX_LINES",
+  "IBKR_MARKET_DATA_RESERVE_LINES",
+  "IBKR_MARKET_DATA_EXECUTION_LINES",
+  "IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES",
+  "IBKR_MARKET_DATA_VISIBLE_LINES",
+  "IBKR_MARKET_DATA_AUTOMATION_LINES",
+  "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
+  "IBKR_MARKET_DATA_CONVENIENCE_LINES",
+] as const;
+
+const originalEnv = Object.fromEntries(
+  ENV_KEYS.map((key) => [key, process.env[key]]),
+);
+
+function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>): void {
+  ENV_KEYS.forEach((key) => {
+    if (values[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = values[key];
+    }
+  });
+}
 
 function quote(symbol: string, price: number, updatedAt: string): QuoteSnapshot {
   return {
@@ -44,6 +70,8 @@ function quote(symbol: string, price: number, updatedAt: string): QuoteSnapshot 
 test.afterEach(() => {
   __resetBridgeQuoteStreamForTests();
   __setBridgeQuoteClientForTests(null);
+  __resetMarketDataAdmissionForTests();
+  setEnv(originalEnv);
 });
 
 test("bridge quote cache rejects older quote events for the same symbol", () => {
@@ -83,6 +111,45 @@ test("fetchBridgeQuoteSnapshots hydrates missing symbols through the shared brid
   assert.deepEqual(
     getCurrentBridgeQuoteSnapshots(["SPY", "QQQ"]).map((item) => item.symbol),
     ["QQQ", "SPY"],
+  );
+});
+
+test("fetchBridgeQuoteSnapshots keeps cached rejected symbols in the payload", async () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "1",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "1",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  __setBridgeQuoteStreamNowForTests(now);
+  assert.ok(__cacheBridgeQuoteForTests(quote("SPY", 502, now.toISOString())));
+  const snapshotRequests: string[][] = [];
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots(symbols) {
+      snapshotRequests.push(symbols);
+      return symbols.map((symbol, index) =>
+        quote(symbol, 100 + index, now.toISOString()),
+      );
+    },
+    streamQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeQuoteSnapshots(["SPY", "QQQ"]);
+
+  assert.deepEqual(snapshotRequests, [["QQQ"]]);
+  assert.deepEqual(
+    payload.quotes.map((item) => [item.symbol, item.price]),
+    [
+      ["QQQ", 100],
+      ["SPY", 502],
+    ],
   );
 });
 
@@ -280,6 +347,55 @@ test("bridge quote stream updates mutable bridge stream symbols without reconnec
   assert.equal(diagnostics.mutableStreamActive, true);
   assert.equal(diagnostics.mutableUpdateCount, 1);
   assert.equal(diagnostics.reconnectScheduled, false);
+});
+
+test("bridge quote stream keeps cached rejected symbols subscribed", async () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "1",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "1",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  __setBridgeQuoteStreamNowForTests(now);
+  assert.ok(__cacheBridgeQuoteForTests(quote("SPY", 502, now.toISOString())));
+  const streamRequests: string[][] = [];
+  let emitQuotes: ((quotes: QuoteSnapshot[]) => void) | null = null;
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      return [];
+    },
+    streamQuoteSnapshots(symbols, onQuotes) {
+      streamRequests.push(symbols);
+      emitQuotes = onQuotes;
+      return () => {};
+    },
+  });
+
+  const payloads: string[][] = [];
+  const unsubscribe = subscribeBridgeQuoteSnapshots(["SPY", "QQQ"], (payload) => {
+    payloads.push(payload.quotes.map((item) => item.symbol));
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const diagnostics = getBridgeQuoteStreamDiagnostics();
+  const emit = emitQuotes as ((quotes: QuoteSnapshot[]) => void) | null;
+  if (!emit) {
+    throw new Error("Quote stream was not opened.");
+  }
+  emit([quote("QQQ", 100, now.toISOString())]);
+  unsubscribe();
+
+  assert.deepEqual(streamRequests, [["QQQ"]]);
+  assert.deepEqual(payloads[0], ["SPY"]);
+  assert.deepEqual(payloads.at(-1), ["QQQ"]);
+  assert.equal(diagnostics.unionSymbolCount, 1);
+  assert.equal(diagnostics.requestedSymbolCount, 2);
+  assert.equal(diagnostics.nonLiveSymbolCount, 1);
 });
 
 test("bridge quote stream reports capacity pressure without reconnecting", async () => {

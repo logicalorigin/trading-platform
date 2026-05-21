@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
@@ -27,12 +27,13 @@ export const extractSparklineValues = (data = []) =>
     .filter((value) => Number.isFinite(value));
 
 /**
- * MicroSparkline — green/red line + soft area fill + glowing tail dot.
- * Used in PlatformWatchlist rows, HeaderKpiStrip, and (via RowSparkValue)
- * any row primitive that wants an inline trend indicator.
+ * MicroSparkline — green/red line + soft area fill + compact detail cues.
+ * Used in PlatformWatchlist rows and (via RowSparkValue) any row primitive
+ * that wants an inline trend indicator.
  *
  *   data       — array of points (any of the shapes extractSparklineValues handles)
  *   positive   — boolean override; null/undefined infers from first-vs-last value
+ *   color      — optional stroke/fill tone override for non-P/L sparklines
  *   width/height — SVG viewBox size in dim() units before scaling
  *   style      — optional SVG style overrides for responsive sizing
  *
@@ -42,9 +43,13 @@ export const extractSparklineValues = (data = []) =>
 export const MicroSparkline = ({
   data = [],
   positive = null,
+  color = null,
   width = 64,
   height = 24,
   style = null,
+  className,
+  ariaLabel = null,
+  ariaHidden,
 }) => {
   const values = useMemo(() => extractSparklineValues(data), [data]);
   const uid = useId().replace(/:/g, "");
@@ -55,22 +60,72 @@ export const MicroSparkline = ({
 
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const range = max - min || 1;
-  const step = width / Math.max(values.length - 1, 1);
+  const range = max - min;
+  const yPad = Math.min(Math.max(height * 0.12, 1.5), 3);
+  const xPad = Math.min(Math.max(width * 0.025, 0.75), 2);
+  const drawHeight = Math.max(height - yPad * 2, 1);
+  const drawWidth = Math.max(width - xPad * 2, 1);
+  const step = drawWidth / Math.max(values.length - 1, 1);
   const inferredPositive = values[values.length - 1] >= values[0];
   const resolvedPositive =
     typeof positive === "boolean" ? positive : inferredPositive;
-  const lineColor = resolvedPositive ? T.green : T.red;
+  const lineColor = color || (resolvedPositive ? T.green : T.red);
+  const toY = (value) => {
+    if (range === 0) {
+      return height / 2;
+    }
+    const normalized = (value - min) / range;
+    return height - yPad - normalized * drawHeight;
+  };
   const plottedPoints = values.map((value, index) => {
-    const x = index * step;
-    const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
-    return [x.toFixed(2), y.toFixed(2)];
+    const x = xPad + index * step;
+    const y = toY(value);
+    return {
+      index,
+      value,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+    };
   });
-  const points = plottedPoints.map(([x, y]) => `${x},${y}`).join(" ");
+  const points = plottedPoints.map(({ x, y }) => `${x},${y}`).join(" ");
   const areaPath = `M ${plottedPoints
-    .map(([x, y], index) => `${index === 0 ? "" : "L "}${x},${y}`)
+    .map(({ x, y }, index) => `${index === 0 ? "" : "L "}${x},${y}`)
     .join(" ")} L ${width},${height} L 0,${height} Z`;
-  const [tailX, tailY] = plottedPoints[plottedPoints.length - 1];
+  const tailPoint = plottedPoints[plottedPoints.length - 1];
+  const highIndex = values.indexOf(max);
+  const lowIndex = values.indexOf(min);
+  const isTurningPoint = (index) => {
+    if (index <= 0 || index >= values.length - 1) {
+      return false;
+    }
+    const previousDelta = values[index] - values[index - 1];
+    const nextDelta = values[index + 1] - values[index];
+    return (
+      previousDelta !== 0 &&
+      nextDelta !== 0 &&
+      Math.sign(previousDelta) !== Math.sign(nextDelta)
+    );
+  };
+  const detailPoints =
+    range === 0
+      ? []
+      : plottedPoints
+          .slice(1, -1)
+          .filter(
+            (point) =>
+              values.length <= 14 ||
+              point.index === lowIndex ||
+              point.index === highIndex ||
+              isTurningPoint(point.index),
+          );
+  const baselineValue = min < 0 && max > 0 ? 0 : values[0];
+  const baselineY = Number(toY(baselineValue).toFixed(2));
+  const detailDotRadius = Number(
+    Math.min(Math.max(height * 0.055, 0.85), 1.25).toFixed(2),
+  );
+  const extremeDotRadius = Number(
+    Math.min(Math.max(height * 0.07, 1.15), 1.55).toFixed(2),
+  );
   const gradientId = `raSparkGrad-${uid}`;
   const glowId = `raSparkGlow-${uid}`;
 
@@ -80,11 +135,15 @@ export const MicroSparkline = ({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
+      className={className}
+      aria-hidden={ariaHidden}
+      aria-label={ariaLabel || undefined}
+      role={ariaLabel ? "img" : undefined}
       style={{ display: "block", ...style }}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.32" />
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.22" />
           <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
         </linearGradient>
         <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
@@ -95,21 +154,61 @@ export const MicroSparkline = ({
           </feMerge>
         </filter>
       </defs>
-      <path d={areaPath} fill={`url(#${gradientId})`} />
+      <path
+        className="ra-sparkline-area"
+        d={areaPath}
+        fill={`url(#${gradientId})`}
+      />
+      <line
+        className="ra-sparkline-baseline"
+        x1={xPad}
+        y1={baselineY}
+        x2={width - xPad}
+        y2={baselineY}
+        stroke={T.textMuted}
+        strokeWidth="0.75"
+        strokeOpacity="0.28"
+        vectorEffect="non-scaling-stroke"
+        shapeRendering="crispEdges"
+      />
       <polyline
+        className="ra-sparkline-line"
         points={points}
         fill="none"
         stroke={lineColor}
-        strokeWidth="1.55"
-        strokeLinejoin="round"
-        strokeLinecap="round"
+        strokeWidth="1.35"
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+        vectorEffect="non-scaling-stroke"
       />
+      {detailPoints.map((point) => {
+        const isExtreme = point.index === lowIndex || point.index === highIndex;
+        return (
+          <circle
+            key={`${point.index}-${point.x}-${point.y}`}
+            className={
+              isExtreme ? "ra-sparkline-extreme" : "ra-sparkline-point"
+            }
+            cx={point.x}
+            cy={point.y}
+            r={isExtreme ? extremeDotRadius : detailDotRadius}
+            fill={lineColor}
+            fillOpacity={isExtreme ? "0.96" : "0.72"}
+            stroke={T.bg1}
+            strokeWidth="0.55"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
       <circle
         className="ra-sparkline-tail"
-        cx={tailX}
-        cy={tailY}
-        r="1.6"
+        cx={tailPoint.x}
+        cy={tailPoint.y}
+        r="1.45"
         fill={lineColor}
+        stroke={T.bg1}
+        strokeWidth="0.75"
+        vectorEffect="non-scaling-stroke"
         filter={`url(#${glowId})`}
       />
     </svg>
@@ -299,7 +398,7 @@ export const StatusPill = ({
       fontSize: textSize("body"),
       fontWeight: FONT_WEIGHTS.medium,
       fontFamily: T.sans,
-      letterSpacing: "-0.005em",
+      letterSpacing: 0,
       whiteSpace: "nowrap",
       ...resolveBadgeVariantSurface({ variant, color, solidAlpha: "12" }),
     }}
@@ -514,7 +613,7 @@ export const DataUnavailableState = ({
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
             color: titleColor,
-            letterSpacing: "-0.005em",
+            letterSpacing: 0,
           }}
         >
           {title}
@@ -1432,7 +1531,7 @@ export const CardTitle = ({ children, right }) => (
         fontWeight: FONT_WEIGHTS.medium,
         fontFamily: T.sans,
         color: T.text,
-        letterSpacing: "-0.01em",
+        letterSpacing: 0,
       }}
     >
       {children}
@@ -1470,7 +1569,7 @@ export const RichTooltipContent = ({
           fontSize: textSize("bodyStrong"),
           color: "var(--ra-tooltip-text)",
           fontWeight: FONT_WEIGHTS.medium,
-          letterSpacing: "-0.005em",
+          letterSpacing: 0,
         }}
       >
         {title}

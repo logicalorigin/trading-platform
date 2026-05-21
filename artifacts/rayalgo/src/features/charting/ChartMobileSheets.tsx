@@ -135,7 +135,7 @@ export const IndicatorPickerSheet = ({
                   fontFamily: T.sans,
                   fontSize: fs(12),
                   fontWeight: isOn ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-                  letterSpacing: "-0.005em",
+                  letterSpacing: 0,
                   cursor: "pointer",
                   textAlign: "left",
                 }}

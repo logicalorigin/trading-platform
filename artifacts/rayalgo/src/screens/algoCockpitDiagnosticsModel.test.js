@@ -33,7 +33,7 @@ test("buildAttentionStream surfaces cockpit attention items first", () => {
 test("buildAttentionStream maps rule failures and warnings, skips passing rules", () => {
   const stream = buildAttentionStream({
     ruleAdherence: [
-      { id: "r1", status: "fail", label: "Daily cap", detail: "over budget" },
+      { id: "r1", status: "fail", label: "Daily limit", detail: "over budget" },
       { id: "r2", status: "warning", label: "Win rate", detail: "below target" },
       { id: "r3", status: "pass", label: "Trail" },
     ],

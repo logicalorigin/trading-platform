@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./TodaySnapshotPanel.jsx", import.meta.url), "utf8");
+const positionsSource = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 
 test("today snapshot panel exposes heatmap + intraday tabs", () => {
   assert.match(source, /value:\s*"heatmap"/);
@@ -17,6 +18,9 @@ test("today snapshot panel composes the two content components, not the legacy p
 });
 
 test("today snapshot heatmap uses the same live option rows as positions", () => {
+  assert.match(source, /getOpenPositionRows/);
+  assert.match(positionsSource, /getOpenPositionRows/);
+  assert.doesNotMatch(positionsSource, /filter\(isOpenPositionRow\)/);
   assert.match(source, /useLiveOptionPositionRows/);
   assert.match(source, /PositionOptionQuoteStreams/);
   assert.match(source, /positions=\{livePositionRows\}/);

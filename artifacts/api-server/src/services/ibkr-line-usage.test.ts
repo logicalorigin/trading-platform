@@ -41,20 +41,54 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.ok(Date.now() - startedAt < 1_000);
   assert.equal(snapshot.admission.activeLineCount, 1);
   assert.equal(snapshot.admission.accountMonitorLineCount, 0);
-  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 10);
+  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 0);
   assert.equal(snapshot.policy.maxLines, 200);
   assert.equal(snapshot.policy.reserveLines, 0);
   assert.equal(snapshot.policy.targetFillLines, 200);
+  assert.equal(snapshot.policy.accountMonitorDynamic, true);
   assert.equal(snapshot.allocation.activeLineCount, 1);
   assert.equal(snapshot.allocation.remainingToTargetLineCount, 199);
+  assert.equal(snapshot.allocation.elasticLineCount, 0);
+  assert.equal(snapshot.allocation.reclaimableElasticLineCount, 0);
   assert.equal(snapshot.allocation.fillerLineCount, 0);
-  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 10);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 0);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"].dynamic, true);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
   assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");
+  assert.equal(snapshot.signalOptions.activeLineCount, 0);
   assert.equal(snapshot.bridge.diagnostics, null);
   assert.equal(snapshot.bridge.activeLineCount, null);
   assert.match(snapshot.bridge.error ?? "", /timed out after 10ms/i);
   assert.equal(snapshot.drift.reconciliation.status, "unknown");
+});
+
+test("getIbkrLineUsageSnapshot exposes signal option owner-class usage", async () => {
+  process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"] = "10";
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: () => new Promise(() => {}),
+  }));
+  admitMarketDataLeases({
+    owner: "signal-options-position-mark:deploy-1:position-1",
+    intent: "flow-scanner-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "NVDA",
+        providerContractId: "SIGOPT1",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.signalOptions.activeLineCount, 1);
+  assert.equal(snapshot.signalOptions.ownerCount, 1);
+  assert.equal(snapshot.signalOptions.recentCacheFallbackCount, 1);
+  assert.equal(
+    snapshot.ownerClasses.summaries["signal-options"].activeLineCount,
+    1,
+  );
 });
 
 test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () => {
@@ -104,10 +138,42 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
   assert.deepEqual(snapshot.drift.reconciliation.apiOnlyLineSample, [
     "option:twsopt:test-api-only",
   ]);
+  assert.deepEqual(snapshot.drift.reconciliation.apiOnlyGroups, [
+    {
+      owner: "line-usage-option",
+      intent: "visible-live",
+      pool: "visible",
+      assetClass: null,
+      lineCount: 1,
+      leaseCount: 1,
+      lineSample: ["option:twsopt:test-api-only"],
+    },
+  ]);
   assert.deepEqual(snapshot.drift.reconciliation.bridgeOnlyLineSample, [
     "equity:MSFT",
     "option:twsopt:test-bridge-only",
   ]);
+  assert.deepEqual(snapshot.drift.reconciliation.bridgeOnlyGroups, [
+    {
+      owner: null,
+      intent: null,
+      pool: null,
+      assetClass: "equity",
+      lineCount: 1,
+      leaseCount: 0,
+      lineSample: ["equity:MSFT"],
+    },
+    {
+      owner: null,
+      intent: null,
+      pool: null,
+      assetClass: "option",
+      lineCount: 1,
+      leaseCount: 0,
+      lineSample: ["option:twsopt:test-bridge-only"],
+    },
+  ]);
+  assert.equal(snapshot.drift.reconciliation.persistentBridgeOnlyLineCount, 0);
 });
 
 test("getIbkrLineUsageSnapshot reports account and visible bridge warm-up coverage", async () => {
@@ -152,4 +218,7 @@ test("getIbkrLineUsageSnapshot reports account and visible bridge warm-up covera
   assert.equal(snapshot.warmup.visiblePendingLineCount, 1);
   assert.deepEqual(snapshot.warmup.accountPendingLineSample, ["equity:MSFT"]);
   assert.deepEqual(snapshot.warmup.visiblePendingLineSample, ["equity:NVDA"]);
+  assert.equal(snapshot.accountMonitor.activeLineCount, 2);
+  assert.equal(snapshot.accountMonitor.pendingLineCount, 1);
+  assert.deepEqual(snapshot.accountMonitor.pendingLineSample, ["equity:MSFT"]);
 });

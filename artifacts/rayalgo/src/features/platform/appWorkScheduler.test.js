@@ -52,25 +52,32 @@ test("keeps account realtime during backoff for active trading state", () => {
   assert.equal(schedule.classes.foregroundIbkr, false);
 });
 
-test("defers broad flow runtime on account until background resume", () => {
+test("keeps broad flow runtime active on account after first-screen warmup", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "account",
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, true);
 });
 
-test("starts broad flow runtime after background resume is allowed", () => {
-  const schedule = buildPlatformWorkSchedule({
+test("keeps broad flow runtime independent from background resume gates", () => {
+  const beforeResume = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "account",
+    screenWarmupPhase: "ready",
+    backgroundResumeReady: false,
+  });
+  const afterResume = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "account",
     screenWarmupPhase: "ready",
     backgroundResumeReady: true,
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(beforeResume.streams.broadFlowRuntime, true);
+  assert.equal(afterResume.streams.broadFlowRuntime, true);
 });
 
 test("keeps broad flow runtime owned without broker readiness", () => {
@@ -88,7 +95,7 @@ test("keeps broad flow runtime owned without broker readiness", () => {
   assert.equal(schedule.streams.marketStockAggregates, false);
 });
 
-test("keeps non-Flow broad aggregate reader when background IBKR work is blocked", () => {
+test("keeps broad flow runtime active off Flow while limiting low-priority history under pressure", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
@@ -176,7 +183,6 @@ test("memory watch pressure blocks low-priority background hydration first", () 
     ...baseInput,
     activeScreen: "market",
     screenWarmupPhase: "ready",
-    backgroundResumeReady: true,
     memoryPressure: {
       level: "watch",
       observedAt: "2026-05-06T00:00:00.000Z",
@@ -260,10 +266,10 @@ test("waits for a first memory sample before starting background work", () => {
   assert.equal(schedule.memoryPressure.observed, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
-  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, true);
 });
 
-test("keeps broad flow runtime deferred on non-market work screens until resume", () => {
+test("keeps broad flow runtime active on non-market work screens after first-screen warmup", () => {
   const tradeSchedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "trade",
@@ -275,6 +281,6 @@ test("keeps broad flow runtime deferred on non-market work screens until resume"
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(tradeSchedule.streams.broadFlowRuntime, false);
-  assert.equal(algoSchedule.streams.broadFlowRuntime, false);
+  assert.equal(tradeSchedule.streams.broadFlowRuntime, true);
+  assert.equal(algoSchedule.streams.broadFlowRuntime, true);
 });

@@ -10,12 +10,15 @@ import {
 import {
   Activity,
   ChartCandlestick,
+  CheckCircle2,
+  CircleAlert,
   Ellipsis,
   LineChart,
   List,
   PanelLeftClose,
   Tv,
   WalletCards,
+  XCircle,
 } from "lucide-react";
 import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
@@ -27,7 +30,7 @@ import {
   SCREEN_RENDER_POLICIES,
   ScreenLoadingFallback,
 } from "./screenRegistry.jsx";
-import { useViewport } from "../../lib/responsive";
+import { useElementSize, useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry } from "../../lib/dynamicImport";
@@ -225,11 +228,12 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
     className="ra-header-chip"
     style={{
       minWidth: 0,
-      flexShrink: 0,
+      flex: "0 1 auto",
       display: "inline-flex",
       alignItems: "baseline",
       gap: sp(3),
-      paddingRight: sp(8),
+      maxWidth: dim(96),
+      paddingRight: sp(7),
       marginRight: sp(1),
       borderRight: `1px solid ${T.borderLight}`,
       color: tone,
@@ -292,6 +296,26 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
     </button>
   </AppTooltip>
 );
+
+const HEADER_SCREEN_LABELS = {
+  account: "Acct",
+  backtest: "BT",
+  diagnostics: "Diag",
+  settings: "Set",
+};
+
+const NARROW_HEADER_SCREEN_LABELS = {
+  market: "Mkt",
+  flow: "Fl",
+  gex: "GX",
+  trade: "Tr",
+  account: "Acct",
+  research: "Rs",
+  algo: "Alg",
+  backtest: "BT",
+  diagnostics: "Dg",
+  settings: "Set",
+};
 
 const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }) => (
   <nav
@@ -434,7 +458,7 @@ const FooterField = ({ label, value, valueColor }) => (
         fontSize: textSize("body"),
         fontWeight: FONT_WEIGHTS.medium,
         fontVariantNumeric: "tabular-nums",
-        letterSpacing: "-0.005em",
+        letterSpacing: 0,
       }}
     >
       {value}
@@ -469,7 +493,7 @@ const FooterStatusField = ({ label, value, ok }) => (
         color: T.text,
         fontSize: textSize("body"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "-0.005em",
+        letterSpacing: 0,
       }}
     >
       {value}
@@ -552,6 +576,30 @@ export const PlatformShell = ({
 }) => {
   const viewport = useViewport();
   const { isPhone, isNarrow } = viewport.flags;
+  const headerWidth = viewport.width || 0;
+  const [headerRef, headerSize] = useElementSize();
+  const headerEffectiveWidth = headerSize.width || headerWidth;
+  const headerTight =
+    !isPhone &&
+    (isNarrow || (headerEffectiveWidth > 0 && headerEffectiveWidth <= 1440));
+  const headerUltraTight =
+    !isPhone && headerEffectiveWidth > 0 && headerEffectiveWidth < 1120;
+  const headerShowKpis = !isPhone;
+  const headerKpiMaxItems =
+    !headerEffectiveWidth || headerEffectiveWidth >= 1500
+      ? null
+      : headerEffectiveWidth >= 1320
+        ? 5
+        : headerEffectiveWidth >= 1120
+          ? 4
+          : 2;
+  const headerAccountMinimal =
+    !isPhone && headerEffectiveWidth > 0 && headerEffectiveWidth < 1180;
+  const headerCompactStatus =
+    headerUltraTight ||
+    (headerShowKpis && headerEffectiveWidth > 0 && headerEffectiveWidth < 1760);
+  const headerStatusMinimal =
+    !isPhone && headerEffectiveWidth > 0 && headerEffectiveWidth < 980;
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [mobileActivityOpen, setMobileActivityOpen] = useState(false);
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
@@ -654,9 +702,7 @@ export const PlatformShell = ({
       : resolvedWatchlistSidebarWidth;
   const headerGridTemplate = isPhone
     ? "minmax(0, 1fr)"
-    : isNarrow
-      ? "minmax(0, 1fr) auto"
-      : "minmax(380px, 0.8fr) minmax(380px, 1fr) auto";
+    : "minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content)";
   const compactAccountId = primaryAccountId || accounts?.[0]?.id || MISSING_VALUE;
   const compactNetLiq = fmtCompactCurrency(
     primaryAccount?.netLiquidation,
@@ -695,18 +741,21 @@ export const PlatformShell = ({
     ) : null}
 
     <div
+      ref={headerRef}
       data-testid="platform-compact-header"
       style={{
         display: "grid",
         gridTemplateColumns: headerGridTemplate,
         alignItems: "center",
-        gap: sp(isPhone ? 2 : 3),
-        padding: sp(isPhone ? "3px 6px" : "3px 8px"),
+        justifyContent: "stretch",
+        gap: sp(isPhone ? 2 : 2),
+        padding: sp(isPhone ? "3px 0px" : headerTight ? "2px 4px" : "2px 6px"),
         minWidth: 0,
         background: T.bg1,
         borderBottom: "none",
         boxShadow: `0 1px 0 ${T.border}`,
         flexShrink: 0,
+        overflow: "hidden",
       }}
     >
       {isPhone ? (
@@ -730,7 +779,8 @@ export const PlatformShell = ({
                 gap: sp(4),
                 minWidth: 0,
                 maxWidth: "100%",
-                overflowX: "auto",
+                flexWrap: "wrap",
+                overflow: "hidden",
               }}
             >
               <MobileHeaderChip label="ACCT" value={compactAccountId} />
@@ -801,10 +851,14 @@ export const PlatformShell = ({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: sp(2),
+              gap: sp(1),
+              width: "auto",
+              maxWidth: "100%",
               minWidth: 0,
+              flex: "0 1 auto",
               flexWrap: "nowrap",
-              overflowX: "auto",
+              overflow: "hidden",
+              justifySelf: "start",
             }}
           >
             {SCREENS.map((screen) => {
@@ -819,6 +873,9 @@ export const PlatformShell = ({
                   ? "pulseAlertLoss 1.8s ease-in-out infinite"
                   : "pulseAlert 1.8s ease-in-out infinite"
                 : "none";
+              const visibleLabel = headerTight
+                ? NARROW_HEADER_SCREEN_LABELS[screen.id] || screen.label
+                : HEADER_SCREEN_LABELS[screen.id] || screen.label;
               return (
                 <AppTooltip key={screen.id} content={
                     hasAlerts
@@ -835,18 +892,22 @@ export const PlatformShell = ({
                     ...motionVars({
                       accent: hasAlerts ? alertColor : T.accent,
                     }),
-                    padding: sp("5px 12px"),
-                    minHeight: dim(30),
-                    fontSize: textSize("paragraphMuted"),
+                    padding: sp("2px 5px"),
+                    minHeight: dim(22),
+                    fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
                     background:
-                      activeScreen === screen.id ? `${T.accent}14` : "transparent",
+                      activeScreen === screen.id ? T.accentHoverBg : "transparent",
                     border: "none",
-                    borderRadius: dim(RADII.pill),
+                    borderRadius: dim(RADII.xs),
                     cursor: "pointer",
                     color: activeScreen === screen.id ? T.accent : T.textSec,
-                    transition: "background 0.18s ease, color 0.18s ease",
+                    boxShadow:
+                      activeScreen === screen.id
+                        ? `inset 0 -1px 0 ${T.accent}`
+                        : "none",
+                    transition: "background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease",
                     animation: pulseAnim,
                     position: "relative",
                     whiteSpace: "nowrap",
@@ -862,7 +923,7 @@ export const PlatformShell = ({
                     event.currentTarget.style.background = "transparent";
                   }}
                 >
-                  {screen.label}
+                  {visibleLabel}
                   {hasAlerts ? (
                     <span
                       style={{
@@ -886,17 +947,29 @@ export const PlatformShell = ({
             })}
           </div>
 
-          <div
-            className="ra-hide-scrollbar"
-            style={{
-              minWidth: 0,
-              display: "flex",
-              alignItems: "center",
-              overflowX: "auto",
-            }}
-          >
-            <HeaderKpiStripComponent onSelect={onSelectSymbol} dense />
-          </div>
+          {headerShowKpis ? (
+            <div
+              className="ra-hide-scrollbar"
+              style={{
+                width: "auto",
+                maxWidth: "100%",
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                justifySelf: "center",
+                overflow: "hidden",
+              }}
+            >
+              <HeaderKpiStripComponent
+                onSelect={onSelectSymbol}
+                compact={headerTight}
+                dense
+                maxItems={headerKpiMaxItems}
+              />
+            </div>
+          ) : null}
+
+          <div aria-hidden="true" style={{ minWidth: 0 }} />
 
           <div
             data-testid="platform-header-controls"
@@ -905,10 +978,14 @@ export const PlatformShell = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "flex-end",
-              gap: sp(3),
+              gap: sp(1),
+              width: "auto",
+              maxWidth: "100%",
               minWidth: 0,
+              flex: "0 1 auto",
               flexWrap: "nowrap",
-              overflowX: "auto",
+              overflow: "hidden",
+              justifySelf: "end",
             }}
           >
             <HeaderAccountStripComponent
@@ -917,6 +994,8 @@ export const PlatformShell = ({
               primaryAccount={primaryAccount}
               onSelectAccount={onSelectAccount}
               maskValues={maskAccountValues}
+              compact={headerTight}
+              minimal={headerAccountMinimal}
               dense
             />
             <HeaderStatusClusterComponent
@@ -925,6 +1004,8 @@ export const PlatformShell = ({
               bridgeTone={bridgeTone}
               theme={theme}
               onToggleTheme={onToggleTheme}
+              compact={headerCompactStatus}
+              minimal={headerStatusMinimal}
               dense
             />
           </div>
@@ -1214,39 +1295,41 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
               : toast.kind === "warn"
                 ? T.amber
                 : T.accent;
-        const icon =
+        const ToastIcon =
           toast.kind === "success"
-            ? "✓"
+            ? CheckCircle2
             : toast.kind === "error"
-              ? "✕"
+              ? XCircle
               : toast.kind === "warn"
-                ? "⚠"
-                : "ⓘ";
+                ? CircleAlert
+                : Activity;
       return (
         <AppTooltip key={toast.id} content="Click to dismiss"><div
           key={toast.id}
           onClick={() => onDismiss?.(toast.id)}
           style={{
             background: T.bg1,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(RADII.md),
-            padding: sp("12px 16px"),
-            minWidth: dim(280),
-            maxWidth: dim(360),
-            boxShadow: ELEVATION.lg,
+            border: `1px solid ${color}33`,
+            borderRadius: dim(RADII.xs),
+            padding: sp("8px 10px"),
+            minWidth: dim(244),
+            maxWidth: dim(330),
+            boxShadow: ELEVATION.sm,
             animation: toast.leaving
               ? "toastSlideOut 0.2s ease-in forwards"
               : "toastSlideIn 0.22s ease-out",
             pointerEvents: "auto",
             cursor: "pointer",
-            transition: "transform 0.12s ease, border-color 0.12s ease",
+            transition: "background 0.12s ease, transform 0.12s ease, border-color 0.12s ease",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.borderColor = T.accent;
+            event.currentTarget.style.background = `${color}0f`;
+            event.currentTarget.style.borderColor = `${color}55`;
             event.currentTarget.style.transform = "translateX(-2px)";
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.borderColor = T.border;
+            event.currentTarget.style.background = T.bg1;
+            event.currentTarget.style.borderColor = `${color}33`;
             event.currentTarget.style.transform = "translateX(0)";
           }}
         >
@@ -1262,27 +1345,25 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: dim(24),
-                height: dim(24),
-                borderRadius: dim(RADII.pill),
-                background: `${color}14`,
+                width: dim(20),
+                height: dim(20),
+                borderRadius: dim(RADII.xs),
+                background: `${color}12`,
                 color,
-                fontSize: fs(13),
-                fontWeight: FONT_WEIGHTS.label,
                 lineHeight: 1,
                 flexShrink: 0,
               }}
             >
-              {icon}
+              <ToastIcon size={dim(13)} strokeWidth={2.3} />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
                   fontSize: textSize("paragraphMuted"),
                   fontWeight: FONT_WEIGHTS.medium,
-                  letterSpacing: "-0.005em",
+                  letterSpacing: 0,
                   color: T.text,
-                  marginBottom: toast.body ? sp(3) : 0,
+                  marginBottom: toast.body ? sp(2) : 0,
                 }}
               >
                 {toast.title}
@@ -1293,7 +1374,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                     fontSize: textSize("body"),
                     color: T.textSec,
                     fontFamily: T.sans,
-                    lineHeight: 1.4,
+                    lineHeight: 1.35,
                   }}
                 >
                   {toast.body}
@@ -1304,7 +1385,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
               style={{
                 fontSize: textSize("caption"),
                 color: T.textMuted,
-                fontWeight: FONT_WEIGHTS.regular,
+                fontWeight: FONT_WEIGHTS.medium,
                 opacity: 0.6,
                 marginLeft: sp(4),
                 marginTop: sp(2),

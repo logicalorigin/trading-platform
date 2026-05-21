@@ -17,6 +17,7 @@ import { getSignalMonitorProfile } from "./signal-monitor";
 type Unsubscribe = () => void;
 
 export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
+export const ALGO_COCKPIT_STREAM_COALESCE_MS = 1_000;
 
 export type AlgoCockpitStreamInput = {
   deploymentId?: string | null;
@@ -159,53 +160,90 @@ export function subscribeAlgoCockpitSnapshots(
       payload: AlgoCockpitStreamPayload;
       changed: boolean;
     }) => void | Promise<void>;
+    fetchPayload?: typeof fetchAlgoCockpitStreamPayload;
+    subscribeChanges?: typeof subscribeAlgoCockpitChanges;
+    setInterval?: typeof setInterval;
+    clearInterval?: typeof clearInterval;
+    setTimeout?: typeof setTimeout;
+    clearTimeout?: typeof clearTimeout;
+    coalescedPollDelayMs?: number;
   } = {},
 ): Unsubscribe {
   let active = true;
   let inFlight = false;
   let queued = false;
+  let queuedTimer: ReturnType<typeof setTimeout> | null = null;
+  const fetchPayload = options.fetchPayload ?? fetchAlgoCockpitStreamPayload;
+  const subscribeChanges =
+    options.subscribeChanges ?? subscribeAlgoCockpitChanges;
+  const setPollInterval = options.setInterval ?? setInterval;
+  const clearPollInterval = options.clearInterval ?? clearInterval;
+  const setPollTimeout = options.setTimeout ?? setTimeout;
+  const clearPollTimeout = options.clearTimeout ?? clearTimeout;
+  const coalescedPollDelayMs = Math.max(
+    0,
+    Math.floor(options.coalescedPollDelayMs ?? ALGO_COCKPIT_STREAM_COALESCE_MS),
+  );
   let lastSignature = options.initialPayload
     ? stableStringify({ ...options.initialPayload, updatedAt: null })
     : "";
 
-  const tick = async () => {
-    if (!active || inFlight) {
-      if (inFlight) {
-        queued = true;
+  const scheduleQueuedPoll = () => {
+    if (!active || queuedTimer) {
+      return;
+    }
+    queuedTimer = setPollTimeout(() => {
+      queuedTimer = null;
+      if (!active) {
+        return;
       }
+      queued = false;
+      void tick();
+    }, coalescedPollDelayMs);
+    queuedTimer.unref?.();
+  };
+
+  const tick = async () => {
+    if (!active) {
+      return;
+    }
+    if (inFlight || queuedTimer) {
+      queued = true;
       return;
     }
     inFlight = true;
     try {
-      do {
-        queued = false;
-        const payload = await fetchAlgoCockpitStreamPayload(
-          input,
-          "algo-cockpit-live",
-        );
-        if (!active) {
-          return;
-        }
-        const signature = stableStringify({ ...payload, updatedAt: null });
-        const changed = signature !== lastSignature;
-        if (changed) {
-          lastSignature = signature;
-          onSnapshot(payload);
-        }
-        await options.onPollSuccess?.({ payload, changed });
-      } while (active && queued);
+      queued = false;
+      const payload = await fetchPayload(
+        input,
+        "algo-cockpit-live",
+      );
+      if (!active) {
+        return;
+      }
+      const signature = stableStringify({ ...payload, updatedAt: null });
+      const changed = signature !== lastSignature;
+      if (changed) {
+        lastSignature = signature;
+        onSnapshot(payload);
+      }
+      await options.onPollSuccess?.({ payload, changed });
     } catch (error) {
       logger.warn({ err: error }, "Algo cockpit stream polling failed");
     } finally {
       inFlight = false;
+      if (active && queued) {
+        queued = false;
+        scheduleQueuedPoll();
+      }
     }
   };
 
-  const timer = setInterval(() => {
+  const timer = setPollInterval(() => {
     void tick();
   }, ALGO_COCKPIT_STREAM_INTERVAL_MS);
   timer.unref?.();
-  const unsubscribeChanges = subscribeAlgoCockpitChanges((change) => {
+  const unsubscribeChanges = subscribeChanges((change) => {
     if (
       input.deploymentId &&
       change.deploymentId &&
@@ -223,7 +261,11 @@ export function subscribeAlgoCockpitSnapshots(
 
   return () => {
     active = false;
-    clearInterval(timer);
+    clearPollInterval(timer);
+    if (queuedTimer) {
+      clearPollTimeout(queuedTimer);
+      queuedTimer = null;
+    }
     unsubscribeChanges();
   };
 }

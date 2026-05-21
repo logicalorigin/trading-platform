@@ -25,6 +25,9 @@ import {
 import {
   buildAlgoAccountPositionRows,
   buildAlgoAccountPositionsResponse,
+  collectAlgoRuntimeProviderContractIds,
+  filterAccountPositionRowsForDeployment,
+  filterAccountPositionRowsForRuntimePositions,
 } from "./algoAccountPositions";
 
 test("algo profile defaults match the tuned h8 signal-options profile", () => {
@@ -375,6 +378,66 @@ test("algo positions adapt to the account positions row contract with live optio
   assert.equal(response.totals.weightPercent, 100);
 });
 
+test("algo account ledger rows can be scoped to the focused deployment without runtime churn", () => {
+  const runtimePositions = [
+    {
+      symbol: "TSLA",
+      selectedContract: { providerContractId: "tsla-contract" },
+    },
+    {
+      symbol: "TLT",
+      selectedContract: { providerContractId: "tlt-contract" },
+    },
+  ];
+  const accountRows = [
+    {
+      symbol: "TSLA",
+      optionContract: { providerContractId: "tsla-contract" },
+      sourceAttribution: [{ deploymentId: "focused-deployment" }],
+    },
+    {
+      symbol: "TLT",
+      optionContract: { providerContractId: "tlt-contract" },
+      sourceAttribution: [{ deploymentId: "focused-deployment" }],
+    },
+    {
+      symbol: "AAPL",
+      optionContract: { providerContractId: "aapl-contract" },
+      sourceAttribution: [{ deploymentId: "other-deployment" }],
+    },
+    {
+      symbol: "NVDA",
+      optionContract: { providerContractId: "replay-contract" },
+      sourceAttribution: [
+        {
+          sourceType: "signal_options_replay",
+          deploymentId: "focused-deployment",
+        },
+      ],
+    },
+  ];
+
+  assert.deepEqual(
+    collectAlgoRuntimeProviderContractIds(runtimePositions),
+    ["tsla-contract", "tlt-contract"],
+  );
+  assert.deepEqual(
+    filterAccountPositionRowsForRuntimePositions({
+      rows: accountRows,
+      positions: runtimePositions,
+      deploymentId: "focused-deployment",
+    }).map((row) => row.symbol),
+    ["TSLA", "TLT"],
+  );
+  assert.deepEqual(
+    filterAccountPositionRowsForDeployment({
+      rows: accountRows,
+      deploymentId: "focused-deployment",
+    }).map((row) => row.symbol),
+    ["TSLA", "TLT", "NVDA"],
+  );
+});
+
 test("algo profile UI exposes and saves expanded strategy and exit fields", () => {
   const profileTabSource = readFileSync(
     new URL("./AlgoProfileTab.jsx", import.meta.url),
@@ -436,7 +499,12 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(positionsSource, /PositionsPanel/);
   assert.match(positionsSource, /buildAlgoAccountPositionRows/);
   assert.match(positionsSource, /accountPositionsQuery/);
-  assert.match(positionsSource, /Shadow account ledger \+ live option quotes/);
+  assert.match(positionsSource, /Focused shadow ledger/);
+  assert.match(positionsSource, /filterAccountPositionRowsForDeployment/);
+  assert.match(positionsSource, /liveOptionQuotesEnabled=\{!hasAccountPositionsQuery\}/);
+  assert.match(positionsSource, /streamLiveOptionQuotes=\{!hasAccountPositionsQuery\}/);
+  assert.match(positionsSource, /hasAccountPositionsQuery/);
+  assert.doesNotMatch(positionsSource, /scopedAccountRows\.length\s*>\s*0/);
   assert.match(positionsSource, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(positionsSource, /showFilters=\{false\}/);
   assert.match(accountPositionsSource, /PositionOptionDetails/);

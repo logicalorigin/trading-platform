@@ -172,7 +172,7 @@ const buildCompactLineUsage = (lineUsage) => {
     percent,
     summary:
       Number.isFinite(used) && Number.isFinite(cap)
-        ? `${formatHeaderCount(used)} / ${formatHeaderCount(cap)}`
+        ? `${formatHeaderCount(used)} of ${formatHeaderCount(cap)}`
         : lineUsage.summary,
     tone: source?.tone || streamStateTokenVar(state),
   };

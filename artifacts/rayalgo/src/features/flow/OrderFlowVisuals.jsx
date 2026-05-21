@@ -1,19 +1,31 @@
 import { FONT_WEIGHTS, MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const rgba = (hex, alpha) => {
+  const normalized = String(hex).replace("#", "");
+  const value = Number.parseInt(normalized.length === 3
+    ? normalized.split("").map((char) => `${char}${char}`).join("")
+    : normalized, 16);
+  if (!Number.isFinite(value)) return hex;
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
 export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const totalBuy = flow.buyXL + flow.buyL + flow.buyM + flow.buyS;
   const totalSell = flow.sellXL + flow.sellL + flow.sellM + flow.sellS;
   const total = totalBuy + totalSell || 1;
   const net = totalBuy - totalSell;
   const segs = [
-    { value: flow.buyXL, color: "#1F3A2C" },
-    { value: flow.buyL, color: "#4FB286" },
-    { value: flow.buyM, color: "#6BC498" },
-    { value: flow.buyS, color: "#9FD8B5" },
-    { value: flow.sellS, color: "#EDB7B5" },
-    { value: flow.sellM, color: "#E29592" },
-    { value: flow.sellL, color: "#D77470" },
-    { value: flow.sellXL, color: "#9C4945" },
+    { value: flow.buyXL, color: rgba(T.green, 0.42) },
+    { value: flow.buyL, color: rgba(T.green, 0.95) },
+    { value: flow.buyM, color: rgba(T.green, 0.72) },
+    { value: flow.buyS, color: rgba(T.green, 0.46) },
+    { value: flow.sellS, color: rgba(T.red, 0.38) },
+    { value: flow.sellM, color: rgba(T.red, 0.58) },
+    { value: flow.sellL, color: rgba(T.red, 0.78) },
+    { value: flow.sellXL, color: rgba(T.red, 0.94) },
   ];
 
   const cx = size / 2;

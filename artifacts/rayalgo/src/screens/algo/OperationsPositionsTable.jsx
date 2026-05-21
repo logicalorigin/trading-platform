@@ -6,98 +6,69 @@ import {
   useStoredOptionQuoteSnapshotVersion,
 } from "../../features/platform/live-streams";
 import {
-  asRecord,
-  mergeOptionQuoteSnapshot,
-  optionProviderContractId,
-} from "./algoHelpers";
-import {
   buildAlgoAccountPositionRows,
   buildAlgoAccountPositionsResponse,
+  collectAlgoRuntimeProviderContractIds,
+  filterAccountPositionRowsForDeployment,
 } from "./algoAccountPositions";
-
-const collectRuntimeProviderContractIds = (positions, symbolIndex) =>
-  Array.from(
-    new Set(
-      (positions || [])
-        .map((position) => {
-          const symbol = String(position?.symbol || "").toUpperCase();
-          const candidate = asRecord(symbolIndex[symbol]?.candidate);
-          const positionContract = asRecord(position?.selectedContract);
-          const selectedContract = Object.keys(positionContract).length
-            ? positionContract
-            : asRecord(candidate.selectedContract);
-          return optionProviderContractId(selectedContract);
-        })
-        .filter(Boolean),
-    ),
-  );
-
-const collectAccountProviderContractIds = (positions) =>
-  (positions || [])
-    .map((position) => optionProviderContractId(position?.optionContract))
-    .filter(Boolean);
-
-const withLiveOptionQuotes = (rows, liveQuoteByContractId) =>
-  (rows || []).map((row) => {
-    const providerContractId = optionProviderContractId(row?.optionContract);
-    const liveQuote = providerContractId
-      ? liveQuoteByContractId[providerContractId]
-      : null;
-    if (!liveQuote) return row;
-    return {
-      ...row,
-      optionQuote: mergeOptionQuoteSnapshot(row.optionQuote, liveQuote),
-    };
-  });
 
 export const OperationsPositionsTable = ({
   positions = [],
   accountPositionsQuery = null,
   symbolIndex = {},
+  deploymentId = null,
   algoIsPhone,
 }) => {
   const accountRows = accountPositionsQuery?.data?.positions || [];
-  const hasAccountPositionsResponse = Boolean(accountPositionsQuery?.data);
-  const providerContractIds = useMemo(
+  const hasAccountPositionsQuery = Boolean(accountPositionsQuery);
+  const scopedAccountRows = useMemo(
     () =>
-      Array.from(
-        new Set([
-          ...collectRuntimeProviderContractIds(positions, symbolIndex),
-          ...collectAccountProviderContractIds(accountRows),
-        ]),
-      ),
-    [accountRows, positions, symbolIndex],
+      filterAccountPositionRowsForDeployment({
+        rows: accountRows,
+        deploymentId,
+      }),
+    [accountRows, deploymentId],
+  );
+  const providerContractIds = useMemo(
+    () => {
+      const contractIds = hasAccountPositionsQuery
+        ? []
+        : collectAlgoRuntimeProviderContractIds(positions, symbolIndex);
+      return Array.from(new Set(contractIds));
+    },
+    [hasAccountPositionsQuery, positions, symbolIndex],
   );
   const quoteVersion = useStoredOptionQuoteSnapshotVersion(providerContractIds);
   const rows = useMemo(() => {
+    if (hasAccountPositionsQuery) {
+      return scopedAccountRows;
+    }
     const liveQuoteByContractId = Object.fromEntries(
       providerContractIds.map((providerContractId) => [
         providerContractId,
         getStoredOptionQuoteSnapshot(providerContractId),
       ]),
     );
-    if (hasAccountPositionsResponse) {
-      return withLiveOptionQuotes(accountRows, liveQuoteByContractId);
-    }
     return buildAlgoAccountPositionRows({
       positions,
       symbolIndex,
       liveQuoteByContractId,
     });
   }, [
-    accountRows,
-    hasAccountPositionsResponse,
+    hasAccountPositionsQuery,
     positions,
     providerContractIds,
     quoteVersion,
+    scopedAccountRows,
     symbolIndex,
   ]);
   const query = useMemo(
     () =>
-      hasAccountPositionsResponse
+      hasAccountPositionsQuery
         ? {
             data: {
-              ...accountPositionsQuery.data,
+              ...(accountPositionsQuery.data ||
+                buildAlgoAccountPositionsResponse([])),
               positions: rows,
             },
             isLoading: accountPositionsQuery.isLoading,
@@ -112,7 +83,7 @@ export const OperationsPositionsTable = ({
           },
     [
       accountPositionsQuery,
-      hasAccountPositionsResponse,
+      hasAccountPositionsQuery,
       rows,
     ],
   );
@@ -128,13 +99,15 @@ export const OperationsPositionsTable = ({
         onJumpToChart={(symbol) => setAlgoFocus(symbol, "position")}
         onPositionSelect={(row) => setAlgoFocus(row?.symbol, "position")}
         rightRail={
-          hasAccountPositionsResponse
-            ? "Shadow account ledger + live option quotes"
+          hasAccountPositionsQuery
+            ? "Focused shadow ledger"
             : "Runtime positions + live option quotes"
         }
         emptyBody="Open shadow option positions will appear here once an entry signal fills."
         showFilters={false}
         isPhone={algoIsPhone}
+        liveOptionQuotesEnabled={!hasAccountPositionsQuery}
+        streamLiveOptionQuotes={!hasAccountPositionsQuery}
       />
     </div>
   );

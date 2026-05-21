@@ -3,10 +3,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MicroSparkline } from "./primitives.jsx";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const readPrimitivesSource = () =>
   readFileSync(join(here, "primitives.jsx"), "utf8");
+const readSrcSource = (...segments) =>
+  readFileSync(join(here, "..", "..", ...segments), "utf8");
 
 test("SegmentedControl uses a sliding indicator driven by measured offsets", () => {
   // Root-cause guard: the indicator's translateX position must come from
@@ -165,6 +170,76 @@ test("MicroSparkline + RowSparkValue are exported and composable", () => {
   );
   assert.ok(rowSlice, "RowSparkValue declaration not found");
   assert.match(rowSlice[0], /\{sparklineData \? \(/);
+});
+
+test("MicroSparkline renders sharper detail cues from raw points", () => {
+  const source = readPrimitivesSource();
+  const html = renderToStaticMarkup(
+    createElement(MicroSparkline, {
+      data: [10, 10.3, 9.8, 10.6, 10.1],
+      color: "#123456",
+      className: "ra-sparkline",
+      ariaLabel: "sample sparkline",
+      width: 64,
+      height: 24,
+    }),
+  );
+
+  assert.match(html, /class="ra-sparkline"/);
+  assert.match(html, /aria-label="sample sparkline"/);
+  assert.match(html, /role="img"/);
+  assert.match(html, /stroke="#123456"/);
+  assert.match(html, /class="ra-sparkline-baseline"/);
+  assert.match(html, /class="ra-sparkline-line"/);
+  assert.equal(
+    (html.match(/class="ra-sparkline-extreme"/g) || []).length,
+    2,
+  );
+  assert.equal(
+    (html.match(/class="ra-sparkline-point"/g) || []).length,
+    1,
+  );
+  assert.match(html, /class="ra-sparkline-tail"/);
+  assert.match(source, /strokeLinejoin="miter"/);
+  assert.match(source, /strokeLinecap="butt"/);
+  assert.match(source, /isTurningPoint/);
+  assert.match(source, /vectorEffect="non-scaling-stroke"/);
+});
+
+test("MicroSparkline centers flat series without invalid coordinates", () => {
+  const html = renderToStaticMarkup(
+    createElement(MicroSparkline, {
+      data: [7, 7, 7],
+      width: 60,
+      height: 20,
+    }),
+  );
+
+  assert.doesNotMatch(html, /NaN|Infinity/);
+  assert.match(html, /y1="10"/);
+  assert.match(html, /cy="10"/);
+  assert.equal(
+    (html.match(/class="ra-sparkline-extreme"/g) || []).length,
+    0,
+  );
+});
+
+test("named app sparkline surfaces compose the shared MicroSparkline", () => {
+  const surfaces = [
+    ["features/flow/FlowScannerStatusPanel.jsx", 1],
+    ["features/market/MiniChartPremiumFlowIndicator.jsx", 1],
+    ["features/research/PhotonicsObservatory.jsx", 3],
+    ["screens/DiagnosticsScreen.jsx", 1],
+  ];
+
+  surfaces.forEach(([path, expectedCount]) => {
+    const source = readSrcSource(...path.split("/"));
+    assert.equal(
+      (source.match(/<MicroSparkline\b/g) || []).length,
+      expectedCount,
+      `${path} should render its named sparklines through MicroSparkline`,
+    );
+  });
 });
 
 test("DataUnavailableState supports semantic variants + icon + action slots", () => {

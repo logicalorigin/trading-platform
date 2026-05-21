@@ -519,7 +519,9 @@ const HeaderIbkrTriggerSummary = ({
   latencyStats,
   compact,
   dense = false,
+  minimal = false,
 }) => {
+  const compressed = compact || dense || minimal;
   const health = model?.health || resolveIbkrGatewayHealth({ connection });
   const issueActive = Boolean(
     model?.issue?.severity && model.issue.severity !== "healthy",
@@ -537,19 +539,29 @@ const HeaderIbkrTriggerSummary = ({
     ? Math.max(0, lineUsage.pendingLineCount)
     : 0;
   const lineValue = compactLineUsage?.summary || lineUsage?.summary || MISSING_VALUE;
+  const shortLineValue = lineValue.replace(/\s*\/\s*/g, "/");
+  const inlineLineValue =
+    lineUsage?.available && pendingLineCount > 0
+      ? `${shortLineValue}+${Math.round(pendingLineCount).toLocaleString()}`
+      : shortLineValue;
   const lineDisplayValue =
     pendingLineCount > 0
       ? `${lineValue} · ${Math.round(pendingLineCount).toLocaleString()} pending`
       : lineValue;
+  const showInlineLineUsage = compressed;
   const statusLabel = issueActive
     ? model.issue.severity === "warning"
       ? "Attention"
       : "Action needed"
     : health.label || tone.label;
+  const shortStatusLabel = statusLabel
+    .replace(/^Market\s+/i, "")
+    .replace(/^Action needed$/i, "Action")
+    .replace(/^Attention$/i, "Issue");
   const metrics = [
-    compact || dense ? null : dataTile,
-    dense ? null : streamTile,
-    dense
+    compressed ? null : dataTile,
+    compressed ? null : streamTile,
+    compressed
       ? null
       : lineUsage?.available
       ? {
@@ -566,21 +578,21 @@ const HeaderIbkrTriggerSummary = ({
       data-ibkr-state-pulse={tone.pulse ? "true" : undefined}
       style={{
         display: "grid",
-        gap: sp(dense ? 0 : 5),
-        minWidth: 0,
-        width: compact ? dim(156) : dense ? dim(198) : dim(286),
+        gap: sp(compressed ? 0 : 5),
+        width: "max-content",
+        minWidth: "max-content",
         animation: tone.pulse ? "ibkrStatusPulse 1.8s ease-in-out infinite" : "none",
       }}
     >
       <span
         style={{
           display: "grid",
-          gridTemplateColumns: dense
-            ? "auto auto minmax(0, 1fr) auto"
+          gridTemplateColumns: compressed
+            ? "auto auto auto auto auto"
             : "auto auto minmax(0, 1fr) auto auto",
           alignItems: "center",
-          gap: sp(dense ? 4 : 6),
-          minWidth: 0,
+          gap: sp(compressed ? 4 : 6),
+          minWidth: "max-content",
         }}
       >
         <span
@@ -588,32 +600,32 @@ const HeaderIbkrTriggerSummary = ({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            width: dim(dense ? 18 : 20),
-            height: dim(dense ? 18 : 20),
-            borderRadius: dim(RADII.sm),
-            background: `${statusTone}14`,
+            width: dim(compressed ? 13 : 18),
+            height: dim(compressed ? 13 : 18),
+            borderRadius: 0,
+            background: "transparent",
             flexShrink: 0,
           }}
         >
-          <StatusIcon size={dim(12)} strokeWidth={2.3} color={statusTone} />
+          <StatusIcon size={dim(compressed ? 11 : 12)} strokeWidth={2.3} color={statusTone} />
         </span>
         <span
           style={{
             color: T.textMuted,
-            fontSize: textSize(dense ? "micro" : "caption"),
+            fontSize: textSize(compressed ? "micro" : "caption"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
-            letterSpacing: dense ? 0 : "0.04em",
+            letterSpacing: compressed ? 0 : "0.04em",
             textTransform: "uppercase",
             whiteSpace: "nowrap",
           }}
         >
           IBKR
         </span>
-        <span
+        {compressed ? null : <span
           style={{
             color: statusTone,
-            fontSize: textSize(dense ? "body" : "paragraphMuted"),
+            fontSize: textSize(compressed ? "body" : "paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
             minWidth: 0,
@@ -622,11 +634,39 @@ const HeaderIbkrTriggerSummary = ({
             whiteSpace: "nowrap",
           }}
         >
-          {statusLabel}
-        </span>
-        {dense ? null : (
-          <IbkrPingWavelength connection={connection} tone={{ ...tone, color: statusTone }} />
-        )}
+          {compressed ? shortStatusLabel : statusLabel}
+        </span>}
+        <IbkrPingWavelength connection={connection} tone={{ ...tone, color: statusTone }} />
+        {showInlineLineUsage ? (
+          <AppTooltip content={`Market data lines ${lineDisplayValue}`}><span
+            data-testid="header-ibkr-line-usage"
+            style={{
+              display: "inline-flex",
+              alignItems: "baseline",
+              gap: sp(3),
+              minWidth: "max-content",
+              color: compactLineUsage?.tone || T.textSec,
+              fontFamily: T.sans,
+              fontSize: textSize(compressed ? "body" : "caption"),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span
+              style={{
+                color: T.textMuted,
+                fontSize: textSize("micro"),
+                fontWeight: FONT_WEIGHTS.medium,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+              }}
+            >
+              {compact || minimal ? "L" : "Lines"}
+            </span>
+            <span>{inlineLineValue}</span>
+          </span></AppTooltip>
+        ) : null}
         <span
           style={{
             color: T.textSec,
@@ -634,7 +674,7 @@ const HeaderIbkrTriggerSummary = ({
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
             fontVariantNumeric: "tabular-nums",
-            minWidth: dim(34),
+            minWidth: "max-content",
             textAlign: "right",
             whiteSpace: "nowrap",
           }}
@@ -722,7 +762,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
   const tone = compact?.tone || lineUsage.bridge?.tone || T.textSec;
   const summaryText =
     Number.isFinite(used) && Number.isFinite(cap)
-      ? `${Math.round(used)} / ${Math.round(cap)} · ${
+      ? `${Math.round(used)} of ${Math.round(cap)} · ${
           Number.isFinite(free) ? `${Math.round(free)} free` : lineUsage.summary
         }`
       : lineUsage.summary;
@@ -887,9 +927,9 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
               borderBottom: `1px solid ${T.borderLight}`,
             }}
           >
-            <span>Pool</span>
-            <span style={{ textAlign: "right" }}>Used</span>
-            <span style={{ textAlign: "right" }}>Cap</span>
+            <span>Lane</span>
+            <span style={{ textAlign: "right" }}>Active</span>
+            <span style={{ textAlign: "right" }}>Available</span>
             <span style={{ textAlign: "right" }}>Free</span>
           </div>
           {lineUsage.rows.map((row, index) => (
@@ -944,17 +984,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
-              </span>
-              <span
-                style={{
-                  textAlign: "right",
-                  color: T.textSec,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {Number.isFinite(row.effectiveCap ?? row.cap)
-                  ? Math.round(row.effectiveCap ?? row.cap)
+                {Number.isFinite(row.covered ?? row.used)
+                  ? Math.round(row.covered ?? row.used)
                   : MISSING_VALUE}
               </span>
               <span
@@ -964,7 +995,30 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {Number.isFinite(row.free) ? Math.round(row.free) : MISSING_VALUE}
+                {Number.isFinite(
+                  row.id === "account-monitor"
+                    ? row.needed
+                    : row.effectiveCap ?? row.cap,
+                )
+                  ? Math.round(
+                      row.id === "account-monitor"
+                        ? row.needed
+                        : row.effectiveCap ?? row.cap,
+                    )
+                  : MISSING_VALUE}
+              </span>
+              <span
+                style={{
+                  textAlign: "right",
+                  color: T.textSec,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {Number.isFinite(
+                  row.id === "account-monitor" ? row.deferred : row.free,
+                )
+                  ? Math.round(row.id === "account-monitor" ? row.deferred : row.free)
+                  : MISSING_VALUE}
               </span>
             </div>
           ))}
@@ -1189,8 +1243,10 @@ export const HeaderStatusCluster = ({
   onToggleTheme,
   compact = false,
   dense = false,
+  minimal = false,
 }) => {
   const isDense = dense && !compact;
+  const compressed = compact || isDense || minimal;
   const queryClient = useQueryClient();
   const { preferences } = useUserPreferences();
   const bridgeTriggerRef = useRef(null);
@@ -1352,20 +1408,25 @@ export const HeaderStatusCluster = ({
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
-    gap: sp(compact ? 4 : isDense ? 4 : 6),
-    minHeight: dim(compact ? 28 : isDense ? 30 : 38),
-    padding: sp(compact ? "3px 8px" : isDense ? "3px 10px" : "6px 12px"),
-    background: T.bg1,
-    border: `1px solid ${T.border}`,
-    borderRadius: dim(RADII.sm),
-    transition: "background 0.12s ease, border-color 0.12s ease",
+    gap: sp(compressed ? 3 : 6),
+    width: "max-content",
+    minWidth: "max-content",
+    minHeight: dim(compressed ? 22 : 34),
+    padding: sp(compressed ? "0px 4px" : "3px 8px"),
+    boxSizing: "border-box",
+    background: "transparent",
+    border: "none",
+    borderRadius: 0,
+    overflow: "visible",
+    flex: "0 0 max-content",
+    transition: "background 0.12s ease, color 0.12s ease",
   };
   const microLabelStyle = {
-    fontSize: textSize(compact ? "micro" : "caption"),
+    fontSize: textSize(compressed ? "micro" : "caption"),
     fontWeight: FONT_WEIGHTS.medium,
     fontFamily: T.sans,
     color: T.textMuted,
-    letterSpacing: "0.04em",
+    letterSpacing: compressed ? 0 : "0.04em",
     textTransform: "uppercase",
     whiteSpace: "nowrap",
   };
@@ -1868,12 +1929,15 @@ export const HeaderStatusCluster = ({
         display: "flex",
         alignItems: "stretch",
         justifyContent: "flex-end",
-        gap: sp(compact ? 2 : isDense ? 3 : 4),
+        gap: sp(compressed ? 2 : 4),
         flexWrap: "nowrap",
-        minWidth: 0,
+        alignContent: "center",
+        width: "max-content",
+        minWidth: "max-content",
+        flex: "0 0 max-content",
       }}
     >
-      <div style={{ position: "relative", display: "flex" }}>
+      <div style={{ position: "relative", display: "flex", flex: "0 0 max-content" }}>
         <button
           ref={bridgeTriggerRef}
           type="button"
@@ -1885,9 +1949,10 @@ export const HeaderStatusCluster = ({
             display: "grid",
             alignItems: "center",
             justifyContent: "stretch",
-            minWidth: compact ? dim(174) : isDense ? dim(222) : dim(312),
-            maxWidth: compact ? dim(196) : isDense ? dim(240) : dim(348),
-            padding: sp(compact ? "5px 18px 5px 7px" : isDense ? "4px 14px 4px 7px" : "7px 20px 7px 9px"),
+            width: "max-content",
+            minWidth: "max-content",
+            maxWidth: "none",
+            padding: sp(compact ? "2px 14px 2px 3px" : compressed ? "2px 15px 2px 4px" : "6px 20px 6px 8px"),
             position: "relative",
             color: T.text,
             appearance: "none",
@@ -1895,10 +1960,10 @@ export const HeaderStatusCluster = ({
             cursor: "pointer",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.borderColor = T.accent;
+            event.currentTarget.style.background = T.accentHoverBg;
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.borderColor = T.border;
+            event.currentTarget.style.background = "transparent";
           }}
         >
           <HeaderIbkrTriggerSummary
@@ -1908,6 +1973,7 @@ export const HeaderStatusCluster = ({
             latencyStats={gatewayLatencyStats}
             compact={compact}
             dense={isDense}
+            minimal={minimal}
           />
           <ChevronDown
             size={dim(12)}
@@ -1916,7 +1982,7 @@ export const HeaderStatusCluster = ({
             style={{
               position: "absolute",
               right: dim(5),
-              top: dim(5),
+              top: dim(compressed ? 3 : 5),
               pointerEvents: "none",
             }}
           />
@@ -2056,7 +2122,7 @@ export const HeaderStatusCluster = ({
                     fontSize: textSize("paragraphMuted"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
-                    letterSpacing: "-0.005em",
+                    letterSpacing: 0,
                   }}
                 >
                   <X size={dim(12)} strokeWidth={2.2} />
@@ -2236,47 +2302,27 @@ export const HeaderStatusCluster = ({
       </div>
 
       {compact ? null : (
-      <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.label}`}><div
+      <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.timeLabel} · ${marketClock.label}`}><div
         style={{
           ...surfaceStyle,
-          flexDirection: isDense ? "row" : "column",
-          alignItems: isDense ? "center" : "flex-start",
+          flexDirection: "row",
+          alignItems: "center",
           justifyContent: "center",
-          minWidth: dim(isDense ? 112 : 92),
-          maxWidth: isDense ? dim(124) : undefined,
-          gap: sp(isDense ? 4 : 0),
-          overflow: "hidden",
+          width: "max-content",
+          minWidth: "max-content",
+          maxWidth: "none",
+          gap: sp(compressed ? 3 : 0),
+          overflow: "visible",
+          paddingLeft: sp(compressed ? 5 : 8),
+          borderLeft: `1px solid ${T.borderLight}`,
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.borderColor = T.accent;
+          event.currentTarget.style.background = T.accentHoverBg;
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.borderColor = T.border;
+          event.currentTarget.style.background = "transparent";
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: sp(4),
-            minWidth: 0,
-          }}
-        >
-          <span style={microLabelStyle}>Market</span>
-          <span
-            style={{
-              fontSize: textSize("paragraphMuted"),
-              fontWeight: FONT_WEIGHTS.medium,
-              fontFamily: T.sans,
-              fontVariantNumeric: "tabular-nums",
-              color: T.text,
-              lineHeight: 1.2,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {marketClock.timeLabel}
-          </span>
-        </div>
         <div
           style={{
             fontSize: textSize("body"),
@@ -2285,43 +2331,44 @@ export const HeaderStatusCluster = ({
             fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             whiteSpace: "nowrap",
-            overflow: isDense ? "hidden" : undefined,
-            textOverflow: isDense ? "ellipsis" : undefined,
+            overflow: "visible",
           }}
         >
-          {isDense
-            ? `${marketClock.label.replace(/^Market /, "")} ${marketClock.timerLabel}`
+          {compressed
+            ? `${marketClock.label.replace(/^Market /, "").replace("After hours", "AH")} ${marketClock.timerLabel}`
             : `${marketClock.label} ${marketClock.timerLabel}`}
         </div>
       </div></AppTooltip>
       )}
 
-      {compact ? null : (
+      {compact || minimal ? null : (
       <AppTooltip content={
           theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
         }><button
         type="button"
         onClick={onToggleTheme}
         style={{
-          width: dim(isDense ? 30 : 38),
-          minHeight: dim(isDense ? 30 : 38),
+          width: dim(compressed ? 22 : 34),
+          minHeight: dim(compressed ? 22 : 34),
           padding: 0,
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(RADII.sm),
+          background: "transparent",
+          border: "none",
+          borderRadius: 0,
           color: T.textSec,
           cursor: "pointer",
-          fontSize: fs(13),
+          fontSize: fs(compressed ? 11 : 13),
           lineHeight: 1,
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
-          transition: "background 0.12s ease, border-color 0.12s ease",
+          transition: "background 0.12s ease, color 0.12s ease",
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.borderColor = T.accent;
+          event.currentTarget.style.background = T.accentHoverBg;
+          event.currentTarget.style.color = T.accent;
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.borderColor = T.border;
+          event.currentTarget.style.background = "transparent";
+          event.currentTarget.style.color = T.textSec;
         }}
       >
         {theme === "dark" ? "☼" : "☾"}

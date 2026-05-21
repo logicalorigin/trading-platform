@@ -66,6 +66,26 @@ const collectSourceFiles = (dir) =>
     return SOURCE_EXTENSIONS.has(extname(entry.name)) ? [fullPath] : [];
   });
 
+const LEGACY_STYLE_GUARD_FILES = [
+  "screens/FlowScreen.jsx",
+  "screens/GexScreen.jsx",
+  "features/flow/OrderFlowVisuals.jsx",
+  "screens/account/AccountHeroBlock.jsx",
+  "screens/account/AccountHeaderStrip.jsx",
+  "screens/account/PositionTreemapPanel.jsx",
+  "screens/algo/AlgoStatusBar.jsx",
+  "features/trade/BrokerActionConfirmDialog.jsx",
+  "components/platform/Drawer.jsx",
+  "components/platform/BottomSheet.jsx",
+  "features/market/MarketActivityPanel.jsx",
+  "features/platform/PlatformApp.jsx",
+  "features/platform/tickerSearch/TickerSearch.jsx",
+  "features/platform/BloombergLiveDock.jsx",
+  "features/platform/marketIdentity.jsx",
+  "features/research/PhotonicsObservatory.jsx",
+  "features/research/components/ResearchCalendarView.jsx",
+];
+
 test("THEMES.dark and THEMES.light expose the full warm palette", () => {
   for (const mode of ["dark", "light"]) {
     const palette = THEMES[mode];
@@ -76,6 +96,38 @@ test("THEMES.dark and THEMES.light expose the full warm palette", () => {
         "string",
         `THEMES.${mode}.${key} should be a string`,
       );
+    }
+  }
+});
+
+test("page-level styling avoids legacy hardcoded palettes and negative tracking", () => {
+  const forbiddenPatterns = [
+    /letterSpacing:\s*(?:"-|-\d)/,
+    /#031216/i,
+    /#CDA24E/i,
+    /#D77470/i,
+    /#4fb58d/i,
+    /#7dba63/i,
+    /#58bd75/i,
+    /#d64f61/i,
+    /#f5ba42/i,
+    /#fb8b55/i,
+    /rgba\(0,0,0/i,
+    /rgba\(255,255,255/i,
+    /rgba\(79,178,134/i,
+    /rgba\(215,116,112/i,
+    /rgba\(25,\s*23,\s*26/i,
+    /rgba\(8,\s*11,\s*18/i,
+    /rgba\(16,\s*20,\s*30/i,
+    /rgba\(18,\s*24,\s*36/i,
+    /rgba\(148,\s*163,\s*184/i,
+    /boxShadow:\s*"0\s/,
+  ];
+
+  for (const relativePath of LEGACY_STYLE_GUARD_FILES) {
+    const source = readFileSync(join(SRC_DIR, relativePath), "utf8");
+    for (const pattern of forbiddenPatterns) {
+      assert.doesNotMatch(source, pattern, `${relativePath} contains ${pattern}`);
     }
   }
 });

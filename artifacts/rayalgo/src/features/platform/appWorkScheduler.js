@@ -47,7 +47,6 @@ export const buildPlatformWorkSchedule = ({
   brokerAuthenticated = false,
   automationEnabled = false,
   tradingEnabled = false,
-  backgroundResumeReady = false,
 } = {}) => {
   const screen = normalizeScreen(activeScreen);
   const visible = Boolean(pageVisible);
@@ -83,14 +82,7 @@ export const buildPlatformWorkSchedule = ({
   const trade = screen === "trade";
   const account = screen === "account";
   const historyScreen = market || flow || trade || account;
-  const broadFlowAggregateReaderAllowed = Boolean(
-    backgroundResumeReady && memoryAllowsForeground,
-  );
-  const broadFlowAllowed = Boolean(
-    sessionReady &&
-      visible &&
-      (flow || broadFlowAggregateReaderAllowed),
-  );
+  const broadFlowAllowed = Boolean(sessionReady && visible && firstScreenReady);
   const backgroundHistoryReady = screenWarmupPhase === "ready";
   const accountRealtimeCritical = Boolean(
     criticalIbkr &&

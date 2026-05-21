@@ -256,8 +256,8 @@ const optionQuoteStoreListenersByProviderContractId = new Map<
 const optionQuoteStoreVersions = new Map<string, number>();
 const pendingOptionQuoteNotifications = new Set<string>();
 let optionQuoteNotifyScheduled = false;
-// Hard cap on the in-memory option-quote snapshot cache. An option chain for a
-// single underlying can have ~100 contracts; a cap of 1024 fits ~10 underlyings'
+// Hard limit on the in-memory option-quote snapshot cache. An option chain for a
+// single underlying can have ~100 contracts; a limit of 1024 fits ~10 underlyings'
 // worth of chains while protecting against unbounded growth as users browse.
 const MAX_OPTION_QUOTE_SNAPSHOTS = 1_024;
 const OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE = 100;
@@ -539,6 +539,28 @@ const parseJsonPayload = <T,>(value: string): T | null => {
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
+const isPositiveFiniteNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value > 0;
+
+const positiveOptionQuotePrice = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (isPositiveFiniteNumber(value)) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const optionQuoteMidpoint = (
+  bid: unknown,
+  ask: unknown,
+): number | null => {
+  if (!isPositiveFiniteNumber(bid) || !isPositiveFiniteNumber(ask)) {
+    return null;
+  }
+  return (bid + ask) / 2;
+};
+
 const getUpdatedAtTime = (value: string | null | undefined): number | null => {
   if (!value) {
     return null;
@@ -673,11 +695,11 @@ const cacheOptionQuoteSnapshot = (
     return currentQuote;
   }
 
-  const cachedQuote = {
-    ...currentQuote,
-    ...quote,
-    providerContractId: normalizedProviderContractId,
-  };
+  const cachedQuote = mergeOptionQuoteSnapshotForCache(
+    currentQuote,
+    quote,
+    normalizedProviderContractId,
+  );
 
   if (
     currentQuote &&
@@ -717,6 +739,36 @@ const cacheOptionQuoteSnapshot = (
   scheduleOptionQuoteNotification(normalizedProviderContractId);
 
   return cachedQuote;
+};
+
+export const mergeOptionQuoteSnapshotForCache = (
+  currentQuote: LiveOptionQuoteSnapshot | null | undefined,
+  quote: LiveOptionQuoteSnapshot,
+  providerContractId: string,
+): LiveOptionQuoteSnapshot => {
+  const currentBid = positiveOptionQuotePrice(currentQuote?.bid);
+  const currentAsk = positiveOptionQuotePrice(currentQuote?.ask);
+  const incomingBid = positiveOptionQuotePrice(quote.bid);
+  const incomingAsk = positiveOptionQuotePrice(quote.ask);
+  const incomingHasUsablePrice =
+    positiveOptionQuotePrice(quote.price, quote.bid, quote.ask) != null;
+  return {
+    ...currentQuote,
+    ...quote,
+    providerContractId,
+    bid: incomingBid ?? currentBid ?? quote.bid,
+    ask: incomingAsk ?? currentAsk ?? quote.ask,
+    price:
+      positiveOptionQuotePrice(quote.price) ??
+      optionQuoteMidpoint(incomingBid, incomingAsk) ??
+      positiveOptionQuotePrice(currentQuote?.price) ??
+      optionQuoteMidpoint(currentBid, currentAsk) ??
+      quote.price,
+    change: incomingHasUsablePrice ? quote.change : currentQuote?.change ?? quote.change,
+    changePercent: incomingHasUsablePrice
+      ? quote.changePercent
+      : currentQuote?.changePercent ?? quote.changePercent,
+  };
 };
 
 const seedOptionQuoteSnapshotsFromContracts = (
@@ -1533,6 +1585,11 @@ type BrokerFreshnessForSnapshot = {
   lastEventAt: number | null;
   fresh: boolean;
 };
+
+const INTERNAL_SHADOW_ACCOUNT_ID = "shadow";
+
+const isInternalShadowAccountId = (accountId?: string | null): boolean =>
+  String(accountId ?? "").trim().toLowerCase() === INTERNAL_SHADOW_ACCOUNT_ID;
 
 const accountLiveSlices = new Map<string, AccountLiveSlice>();
 const accountLiveSliceListeners = new Set<() => void>();
@@ -2983,6 +3040,9 @@ export const applyIbkrAccountPayloadToCache = (
       if (!matchesMode(params, input.mode)) {
         return;
       }
+      if (isInternalShadowAccountId(params?.accountId as string | null | undefined)) {
+        return;
+      }
 
       queryClient.setQueryData(query.queryKey, {
         positions: filterPositionsForQuery(payload.positions, query.queryKey),
@@ -3006,6 +3066,9 @@ export const applyIbkrAccountPayloadToCache = (
       const path = queryKeyPath(query.queryKey);
       const summaryAccountId = accountIdFromScopedPath(path, "summary");
       if (summaryAccountId) {
+        if (isInternalShadowAccountId(summaryAccountId)) {
+          return;
+        }
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
@@ -3016,6 +3079,9 @@ export const applyIbkrAccountPayloadToCache = (
 
       const positionsAccountId = accountIdFromScopedPath(path, "positions");
       if (positionsAccountId) {
+        if (isInternalShadowAccountId(positionsAccountId)) {
+          return;
+        }
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
@@ -3031,6 +3097,9 @@ export const applyIbkrAccountPayloadToCache = (
 
       const equityAccountId = accountIdFromScopedPath(path, "equity-history");
       if (!equityAccountId) {
+        return;
+      }
+      if (isInternalShadowAccountId(equityAccountId)) {
         return;
       }
 
@@ -3234,14 +3303,17 @@ export const patchOptionQuotesIntoContracts = (
       return contract;
     }
 
-    const bid = isFiniteNumber(quote.bid) ? quote.bid : contract.bid;
-    const ask = isFiniteNumber(quote.ask) ? quote.ask : contract.ask;
-    const last = isFiniteNumber(quote.price) ? quote.price : contract.last;
+    const incomingBid = isPositiveFiniteNumber(quote.bid) ? quote.bid : null;
+    const incomingAsk = isPositiveFiniteNumber(quote.ask) ? quote.ask : null;
+    const incomingPrice = isPositiveFiniteNumber(quote.price) ? quote.price : null;
+    const bid = incomingBid ?? contract.bid;
+    const ask = incomingAsk ?? contract.ask;
+    const last = incomingPrice ?? contract.last;
     const mark =
-      bid != null && ask != null && bid > 0 && ask > 0
-        ? (bid + ask) / 2
-        : isFiniteNumber(last)
-        ? last
+      incomingBid != null && incomingAsk != null
+        ? (incomingBid + incomingAsk) / 2
+        : incomingPrice != null
+        ? incomingPrice
         : contract.mark;
     const updatedAt = quote.updatedAt ?? contract.updatedAt;
     const quoteHasUsableData = hasUsableOptionQuoteData(quote);

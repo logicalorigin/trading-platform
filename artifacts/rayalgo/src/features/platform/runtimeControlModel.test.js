@@ -1,11 +1,63 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildRuntimeControlSnapshot,
   isOptionsFlowScannerRuntimeActive,
   normalizeAdmissionDiagnostics,
   selectRuntimeAdmissionDiagnostics,
 } from "./runtimeControlModel.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const readPlatformSource = (relativePath) =>
+  readFileSync(resolve(__dirname, relativePath), "utf8");
+
+test("line allocation UI copy keeps allocator jargon internal", () => {
+  const source = [
+    "./runtimeControlModel.js",
+    "./HeaderStatusCluster.jsx",
+    "./IbkrConnectionStatus.jsx",
+    "./streamSemantics.ts",
+    "./live-streams.ts",
+    "../trade/TradeOrderTicket.jsx",
+    "../../screens/SettingsScreen.jsx",
+    "../../screens/AlgoScreen.jsx",
+    "../../screens/FlowScreen.jsx",
+    "../../screens/algo/AlgoProfileTab.jsx",
+    "../../screens/settings/IbkrLaneArchitecturePanel.jsx",
+    "../../screens/settings/ibkrLaneUiModel.js",
+  ]
+    .map(readPlatformSource)
+    .join("\n");
+  const forbiddenVisiblePhrases = [
+    "Bridge live cap",
+    "Scanner effective cap",
+    "hard cap",
+    "Max Symbols",
+    "EXPANDED CAPACITY",
+    "Risk caps",
+    "\"Capacity\"",
+    "capacity limited",
+    "Capacity Limited",
+    "\"CAPACITY\"",
+    "line capacity",
+    "quotes next",
+    "quote leases",
+    "capped at",
+    "Lower caps",
+    "higher caps",
+    "cap increases",
+    "balanced cap",
+    " at capacity.",
+  ];
+
+  for (const phrase of forbiddenVisiblePhrases) {
+    assert.equal(source.includes(phrase), false, `${phrase} leaked into UI copy`);
+  }
+});
 
 test("normalizes complete market data admission pools", () => {
   const normalized = normalizeAdmissionDiagnostics({
@@ -44,7 +96,7 @@ test("normalizes complete market data admission pools", () => {
     },
   });
 
-  assert.equal(normalized.summary, "100 / 200");
+  assert.equal(normalized.summary, "100 of 200");
   assert.equal(normalized.accountMonitor.used, 12);
   assert.equal(normalized.accountMonitor.cap, 20);
   assert.equal(normalized.flowScanner.used, 34);
@@ -111,11 +163,11 @@ test("shows active flow scanner work ahead of a stale skip reason", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "2 option chains scanning; quotes next",
+    "2 option-chain scans active; 0 quote lines",
   );
 });
 
-test("explains queued flow scanner work without active quote leases", () => {
+test("explains queued flow scanner work without active quote lines", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 80,
     flowScannerLineCount: 0,
@@ -136,8 +188,32 @@ test("explains queued flow scanner work without active quote leases", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "3 option chains scanning; quotes next",
+    "3 option-chain scans active; 0 quote lines",
   );
+});
+
+test("scanner line exhaustion renders as a line budget state", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "line-cap-exhausted",
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "paused: no scanner lines available");
 });
 
 test("reports queued flow scanner work ahead of background pauses", () => {
@@ -248,6 +324,91 @@ test("normalizes line pressure and scanner effective cap", () => {
   assert.equal(normalized.flowScanner.free, 15);
 });
 
+test("normalizes signal option quote usage separately from flow scanner demand", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 7,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    signalOptions: {
+      activeLineCount: 3,
+      leaseCount: 2,
+      ownerCount: 2,
+      recentRequestedLineCount: 5,
+      recentRejectedCount: 1,
+      recentCacheFallbackCount: 2,
+    },
+    poolUsage: {
+      "flow-scanner": {
+        id: "flow-scanner",
+        activeLineCount: 7,
+        maxLines: 40,
+        effectiveMaxLines: 35,
+        remainingLineCount: 28,
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.used, 7);
+  assert.equal(normalized.signalOptions.used, 3);
+  assert.equal(normalized.signalOptions.effectiveCap, 35);
+  assert.equal(normalized.signalOptions.requestedLineCount, 5);
+  assert.equal(normalized.signalOptions.rejectedCount, 1);
+  assert.equal(normalized.signalOptions.cacheFallbackCount, 2);
+  assert.equal(normalized.signalOptions.streamState, "capacity-limited");
+});
+
+test("normalizes cap-zero convenience usage as elastic slack", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 84,
+    budget: {
+      maxLines: 190,
+      targetFillLines: 190,
+    },
+    lineAllocation: {
+      protectedLineCount: 100,
+      elasticLineCount: 84,
+      reclaimableElasticLineCount: 80,
+      sharedElasticLineCount: 4,
+      elasticTargetLineCapacity: 90,
+      elasticRemainingLineCount: 10,
+      fillerLineCount: 54,
+      reclaimableFillerLineCount: 52,
+    },
+    convenienceLineCount: 84,
+    fillerLineCount: 54,
+    poolUsage: {
+      convenience: {
+        id: "convenience",
+        label: "Convenience",
+        activeLineCount: 84,
+        maxLines: 0,
+        effectiveMaxLines: 90,
+        remainingLineCount: 10,
+        elastic: true,
+        reclaimableLineCount: 80,
+        sharedLineCount: 4,
+      },
+    },
+  });
+
+  assert.equal(normalized.allocation.elasticLineCount, 84);
+  assert.equal(normalized.allocation.reclaimableElasticLineCount, 80);
+  assert.equal(normalized.pools.convenience.used, 80);
+  assert.equal(normalized.pools.convenience.activeLineCount, 84);
+  assert.equal(normalized.pools.convenience.cap, 90);
+  assert.equal(normalized.pools.convenience.effectiveCap, 90);
+  assert.equal(normalized.pools.convenience.free, 10);
+  assert.equal(normalized.pools.convenience.elastic, true);
+  assert.equal(normalized.pools.convenience.streamState, "capacity-limited");
+  assert.equal(
+    normalized.pools.convenience.detail,
+    "84 active of 80 reclaimable",
+  );
+});
+
 test("uses API-active lines as canonical while retaining bridge reconciliation", () => {
   const normalized = normalizeAdmissionDiagnostics(
     {
@@ -300,13 +461,13 @@ test("uses API-active lines as canonical while retaining bridge reconciliation",
     },
   );
 
-  assert.equal(normalized.summary, "143 / 190");
+  assert.equal(normalized.summary, "143 of 190");
   assert.equal(normalized.activeLineCount, 143);
   assert.equal(normalized.requestedLineCount, 143);
   assert.equal(normalized.pendingLineCount, 128);
-  assert.equal(normalized.requestedSummary, "143 / 190");
-  assert.equal(normalized.demandSummary, "143 / 190");
-  assert.equal(normalized.bridge.summary, "15 / 190");
+  assert.equal(normalized.requestedSummary, "143 of 190");
+  assert.equal(normalized.demandSummary, "143 of 190");
+  assert.equal(normalized.bridge.summary, "15 of 190");
   assert.equal(normalized.bridge.activeOptions, 1);
   assert.equal(normalized.bridge.prewarm, 12);
   assert.equal(normalized.drift.status, "api_active_bridge_missing");

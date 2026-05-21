@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
   DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS,
@@ -13,6 +13,7 @@ import {
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   algoDeploymentsTable,
+  backtestRunPointsTable,
   db,
   executionEventsTable,
   shadowAccountsTable,
@@ -110,6 +111,10 @@ const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
 const SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS = 1_000;
 const SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS = 1_250;
+const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
+  250,
+  SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS - 100,
+);
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 
@@ -591,6 +596,35 @@ function positionKey(input: {
   return `equity:${normalizeSymbol(input.symbol).toUpperCase()}`;
 }
 
+function normalizeShadowMarketDataSymbol(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text || /^twsopt:/i.test(text)) {
+    return "";
+  }
+  return normalizeSymbol(text).toUpperCase();
+}
+
+function shadowPositionKeyMarketDataSymbol(positionKey?: string | null): string {
+  const [kind, symbol] = String(positionKey ?? "").split(":");
+  if ((kind === "option" || kind === "equity") && symbol) {
+    return normalizeShadowMarketDataSymbol(symbol);
+  }
+  return "";
+}
+
+function shadowPositionMarketDataSymbol(input: {
+  symbol?: unknown;
+  optionContract?: unknown;
+  positionKey?: string | null;
+}): string {
+  const contract = asOptionContract(input.optionContract);
+  return (
+    normalizeShadowMarketDataSymbol(contract?.underlying) ||
+    shadowPositionKeyMarketDataSymbol(input.positionKey) ||
+    normalizeShadowMarketDataSymbol(input.symbol)
+  );
+}
+
 function positionDescription(position: ShadowPositionRow): string {
   const contract = asOptionContract(position.optionContract);
   if (!contract) {
@@ -711,9 +745,32 @@ function shadowOrderEffectiveSource(
   return "manual";
 }
 
+function shadowBalanceSnapshotSourceForOrder(input: {
+  source?: ShadowOrderSource | null;
+  payload?: unknown;
+  positionKey?: string | null;
+}) {
+  const effectiveSource =
+    input.source === SIGNAL_OPTIONS_REPLAY_SOURCE
+      ? SIGNAL_OPTIONS_REPLAY_SOURCE
+      : input.source === WATCHLIST_BACKTEST_SOURCE
+        ? WATCHLIST_BACKTEST_SOURCE
+        : shadowPayloadEffectiveSource(input.payload) ??
+          shadowPositionKeySource(input.positionKey);
+
+  if (effectiveSource === SIGNAL_OPTIONS_REPLAY_SOURCE) {
+    return SIGNAL_OPTIONS_REPLAY_SOURCE;
+  }
+  if (effectiveSource === WATCHLIST_BACKTEST_SOURCE) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+  return input.source === "automation" ? "automation" : "ledger";
+}
+
 function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
+  const effectiveSource = shadowOrderEffectiveSource(order);
   return (
-    !isSimulationShadowOrderSource(shadowOrderEffectiveSource(order)) &&
+    effectiveSource !== WATCHLIST_BACKTEST_SOURCE &&
     !isForwardTestShadowOrder(order)
   );
 }
@@ -732,7 +789,6 @@ function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: str
 function isLiveShadowPosition(position: Pick<ShadowPositionRow, "positionKey">): boolean {
   return (
     !isWatchlistBacktestPositionKey(position.positionKey) &&
-    !isSignalOptionsReplayPositionKey(position.positionKey) &&
     !isShadowEquityForwardPositionKey(position.positionKey)
   );
 }
@@ -768,7 +824,7 @@ function shadowMarkSnapshotSourceForPosition(
     return WATCHLIST_BACKTEST_MARK_SOURCE;
   }
   if (isSignalOptionsReplayPositionKey(position.positionKey)) {
-    return "automation_mark";
+    return SIGNAL_OPTIONS_REPLAY_MARK_SOURCE;
   }
   return "mark";
 }
@@ -1739,6 +1795,11 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
   }
 
   const plan = await buildShadowFillPlan(normalized);
+  const snapshotSource = shadowBalanceSnapshotSourceForOrder({
+    source: input.source ?? normalized.source,
+    payload: normalized.payload,
+    positionKey: plan.positionKey,
+  });
   const now = normalized.placedAt ?? new Date();
   const orderId = randomUUID();
   const fillId = randomUUID();
@@ -1808,10 +1869,7 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
     await recomputeShadowAccountFromLedger(tx, now);
   });
 
-  await writeShadowBalanceSnapshot(
-    normalized.source === "automation" ? "automation" : "ledger",
-    now,
-  );
+  await writeShadowBalanceSnapshot(snapshotSource, now);
 
   const [order] = await db
     .select()
@@ -2148,10 +2206,7 @@ function normalizeShadowOrderInput(input: ShadowOrderInput): ShadowOrderInput & 
     side: input.side,
     type: input.type ?? "market",
     timeInForce: input.timeInForce ?? "day",
-    source:
-      input.source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? "automation"
-        : input.source ?? "manual",
+    source: input.source ?? "manual",
   };
 }
 
@@ -2500,9 +2555,14 @@ async function fetchShadowOptionDayChangeQuotes(
     string,
     Partial<QuoteSnapshot> | Record<string, unknown>
   >();
-  const [polygonQuotes] = await Promise.all([
-    fetchShadowPolygonOptionDayChangeQuotes(positions),
-    ...Array.from(idsByUnderlying, async ([underlying, ids]) => {
+  const quoteTasks = [
+    async () => {
+      const polygonQuotes = await fetchShadowPolygonOptionDayChangeQuotes(positions);
+      polygonQuotes.forEach((quote, providerContractId) => {
+        quoteByProviderContractId.set(providerContractId, quote);
+      });
+    },
+    ...Array.from(idsByUnderlying, ([underlying, ids]) => async () => {
       const payload = await fetchOptionQuoteSnapshotPayload({
         underlying,
         providerContractIds: Array.from(ids),
@@ -2517,10 +2577,21 @@ async function fetchShadowOptionDayChangeQuotes(
         }
       });
     }),
-  ]);
-  polygonQuotes.forEach((quote, providerContractId) => {
-    quoteByProviderContractId.set(providerContractId, quote);
-  });
+  ];
+  await Promise.allSettled(
+    quoteTasks.map((task) => {
+      const request = task().catch((error) => {
+        logger.debug?.(
+          { err: error },
+          "Shadow position day-change quote task failed",
+        );
+      });
+      return Promise.race([
+        request,
+        sleep(SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS).then(() => undefined),
+      ]);
+    }),
+  );
   return quoteByProviderContractId;
 }
 
@@ -2577,6 +2648,51 @@ function groupShadowPositionMarksByPositionId<
   return byPositionId;
 }
 
+function shadowPositionNeedsDayChangeQuote(input: {
+  position: ShadowPositionRow;
+  baselineMarksByPositionId: Map<string, ShadowPositionMarkRow[]>;
+  dayStartByPositionId: Map<string, Date>;
+  now: Date;
+}) {
+  const { position, baselineMarksByPositionId, dayStartByPositionId, now } = input;
+  const providerContractId =
+    asOptionContract(position.optionContract)?.providerContractId?.trim();
+  if (!providerContractId) {
+    return false;
+  }
+  const currentAsOf = position.asOf ?? position.updatedAt ?? now;
+  const dayStart =
+    dayStartByPositionId.get(position.id) ??
+    shadowPositionDayChangeDayStart(position, now);
+  const quantity = toNumber(position.quantity) ?? 0;
+  if (quantity === 0) {
+    return false;
+  }
+
+  const averageCost = toNumber(position.averageCost) ?? 0;
+  const currentMarketValue = toNumber(position.marketValue);
+  const contract = asOptionContract(position.optionContract);
+  const multiplier = marketMultiplier({
+    assetClass: position.assetClass as ShadowAssetClass,
+    optionContract: contract,
+  });
+  const baselineMark = (baselineMarksByPositionId.get(position.id) ?? []).find(
+    (mark) => mark.asOf.getTime() <= dayStart.getTime(),
+  );
+  const openedAt = position.openedAt ?? currentAsOf;
+  const baselineMarketValue =
+    toNumber(baselineMark?.marketValue) ??
+    (openedAt.getTime() >= dayStart.getTime()
+      ? averageCost * quantity * multiplier
+      : null);
+  const baselineDayChange = buildShadowPositionDayChange({
+    currentMarketValue,
+    baselineMarketValue,
+  });
+  const currentMarkStale = currentAsOf.getTime() < dayStart.getTime();
+  return baselineDayChange.dayChange == null || currentMarkStale;
+}
+
 async function readShadowPositionDayChanges(
   positions: ShadowPositionRow[],
   now = new Date(),
@@ -2611,10 +2727,21 @@ async function readShadowPositionDayChanges(
   let optionQuoteByProviderContractId:
     | Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>
     | null = null;
+  let quoteCandidatePositions: ShadowPositionRow[] | null = null;
   const getOptionQuoteByProviderContractId = async () => {
     if (!optionQuoteByProviderContractId) {
+      quoteCandidatePositions ??= positions.filter((position) =>
+        shadowPositionNeedsDayChangeQuote({
+          position,
+          baselineMarksByPositionId,
+          dayStartByPositionId,
+          now,
+        }),
+      );
       optionQuoteByProviderContractId = await waitForShadowOptionDayChangeQuotes(
-        fetchShadowOptionDayChangeQuotes(positions).catch(() => new Map()),
+        fetchShadowOptionDayChangeQuotes(quoteCandidatePositions).catch(
+          () => new Map(),
+        ),
       );
     }
     return optionQuoteByProviderContractId;
@@ -3042,11 +3169,7 @@ function selectShadowEquityHistoryRows<
     selectedSource: null,
     includeInitialPoint: true,
     includeLiveTerminal: true,
-    rows: rows.filter(
-      (row) =>
-        !isWatchlistBacktestSnapshotSource(row.source) &&
-        !isSignalOptionsReplaySnapshotSource(row.source),
-    ),
+    rows: rows.filter((row) => !isWatchlistBacktestSnapshotSource(row.source)),
   };
 }
 
@@ -3114,12 +3237,25 @@ function buildDefaultShadowEquityHistoryRows<T extends ShadowEquityHistoryLedger
   },
 ) {
   void input.terminalTotals;
-  return filterShadowEquityHistoryRowsToLiveLedger(
-    rows.filter((row) => !isSignalOptionsReplaySnapshotSource(row.source)),
+  const replayRows = rows.filter((row) => row.source === SIGNAL_OPTIONS_REPLAY_SOURCE);
+  const latestReplayAt = replayRows.reduce<Date | null>(
+    (latest, row) =>
+      !latest || row.asOf.getTime() > latest.getTime() ? row.asOf : latest,
+    null,
+  );
+  const ledgerRows = filterShadowEquityHistoryRowsToLiveLedger(
+    rows.filter(
+      (row) =>
+        row.source !== SIGNAL_OPTIONS_REPLAY_SOURCE &&
+        (!latestReplayAt || row.asOf.getTime() > latestReplayAt.getTime()),
+    ),
     {
       account: input.account,
       fills: input.fills,
     },
+  );
+  return [...replayRows, ...ledgerRows].sort(
+    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
   );
 }
 
@@ -3208,16 +3344,82 @@ function shadowEquityHistoryBucketSizeMs<
   }
 
   const spanMs = last.getTime() - first.getTime();
-  const shortHistoryMs = 45 * 24 * 60 * 60_000;
+  const detailedHistoryMs = 370 * 24 * 60 * 60_000;
   if (
     spanMs > 0 &&
-    spanMs <= shortHistoryMs &&
+    spanMs <= detailedHistoryMs &&
     ["3M", "6M", "YTD", "1Y", "ALL"].includes(range)
   ) {
     return 5 * 60_000;
   }
 
   return defaultBucketSizeMs;
+}
+
+export async function backfillSignalOptionsReplayEquitySnapshotsFromRun(input: {
+  runId: string;
+  replace?: boolean;
+}) {
+  const points = await db
+    .select()
+    .from(backtestRunPointsTable)
+    .where(eq(backtestRunPointsTable.runId, input.runId))
+    .orderBy(asc(backtestRunPointsTable.occurredAt));
+  if (!points.length) {
+    return {
+      inserted: 0,
+      deleted: 0,
+      firstAsOf: null,
+      lastAsOf: null,
+    };
+  }
+
+  const firstAsOf = points[0]!.occurredAt;
+  const lastAsOf = points[points.length - 1]!.occurredAt;
+  let deleted = 0;
+  await db.transaction(async (tx) => {
+    if (input.replace !== false) {
+      const removed = await tx
+        .delete(shadowBalanceSnapshotsTable)
+        .where(
+          and(
+            eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowBalanceSnapshotsTable.source, SIGNAL_OPTIONS_REPLAY_SOURCE),
+            gte(shadowBalanceSnapshotsTable.asOf, firstAsOf),
+            lte(shadowBalanceSnapshotsTable.asOf, lastAsOf),
+          ),
+        )
+        .returning({ id: shadowBalanceSnapshotsTable.id });
+      deleted = removed.length;
+    }
+
+    await tx.insert(shadowBalanceSnapshotsTable).values(
+      points.map((point) => {
+        const equity = toNumber(point.equity) ?? 0;
+        const cash = toNumber(point.cash) ?? 0;
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          currency: SHADOW_CURRENCY,
+          cash: money(cash),
+          buyingPower: money(cash),
+          netLiquidation: money(equity),
+          realizedPnl: money(0),
+          unrealizedPnl: money(equity - cash),
+          fees: money(0),
+          source: SIGNAL_OPTIONS_REPLAY_SOURCE,
+          asOf: point.occurredAt,
+        };
+      }),
+    );
+  });
+  invalidateShadowFreshStateCache();
+  notifyShadowAccountChanged();
+  return {
+    inserted: points.length,
+    deleted,
+    firstAsOf,
+    lastAsOf,
+  };
 }
 
 function buildFallbackShadowAccountEquityHistory(input: {
@@ -3611,6 +3813,7 @@ export async function getShadowAccountPositions(input: {
       accountId: SHADOW_ACCOUNT_ID,
       accounts: [SHADOW_ACCOUNT_ID],
       symbol: position.symbol,
+      marketDataSymbol: shadowPositionMarketDataSymbol(position),
       description: positionDescription(position),
       assetClass: assetClassLabel(position),
       optionContract: optionPayload(asOptionContract(position.optionContract)),
@@ -3789,6 +3992,11 @@ export async function getShadowAccountPositionsAtDate(input: {
       accountId: SHADOW_ACCOUNT_ID,
       accounts: [SHADOW_ACCOUNT_ID],
       symbol: book.symbol,
+      marketDataSymbol: shadowPositionMarketDataSymbol({
+        symbol: book.symbol,
+        optionContract: book.optionContract,
+        positionKey: key,
+      }),
       description: book.optionContract
         ? `${book.optionContract.underlying} ${optionDateKey(book.optionContract.expirationDate)} ${book.optionContract.strike} ${String(book.optionContract.right).toUpperCase()}`
         : book.symbol,
@@ -7734,6 +7942,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   signalOptionsReplayOrderSourceMatchesRange,
   isSimulationShadowOrderSource,
   shadowOrderEffectiveSource,
+  shadowBalanceSnapshotSourceForOrder,
+  shadowPositionMarketDataSymbol,
   isLiveShadowOrder,
   isLiveShadowPosition,
   readOpenShadowPositionsForSource,
@@ -8820,7 +9030,7 @@ async function recordShadowAutomationEntry(
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: "automation",
+    source: options.source ?? "automation",
     sourceEventId: event.id,
     clientOrderId: `shadow-auto-entry-${event.id}`,
     positionKey: shadowAutomationPayloadPositionKey(payload),
@@ -8855,7 +9065,7 @@ async function recordShadowAutomationExit(
     stopPrice: null,
     timeInForce: "day",
     optionContract: contract,
-    source: "automation",
+    source: options.source ?? "automation",
     sourceEventId: event.id,
     clientOrderId: `shadow-auto-exit-${event.id}`,
     positionKey: shadowAutomationPayloadPositionKey(payload),
@@ -8933,9 +9143,7 @@ async function recordShadowAutomationMark(
     asOf: event.occurredAt,
   });
   await writeShadowBalanceSnapshot(
-    options.markSource === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
-      ? "automation_mark"
-      : options.markSource ?? "automation_mark",
+    options.markSource ?? "automation_mark",
     event.occurredAt,
   );
   return row.id;

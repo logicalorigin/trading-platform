@@ -22,6 +22,20 @@ export type MarketDataPoolId =
   | "flow-scanner"
   | "convenience";
 
+export type MarketDataOwnerClass =
+  | "execution"
+  | "account-monitor"
+  | "visible"
+  | "automation"
+  | "signal-options"
+  | "flow-scanner"
+  | "flow-scanner-benchmark"
+  | "watchlist-prewarm"
+  | "watchlist-filler"
+  | "historical"
+  | "retired-shadow-equity-forward"
+  | "unknown";
+
 export type MarketDataLineRequest = {
   symbol?: string | null;
   providerContractId?: string | null;
@@ -33,6 +47,7 @@ export type MarketDataLineRequest = {
 export type MarketDataLease = {
   id: string;
   owner: string;
+  ownerClass: MarketDataOwnerClass;
   intent: MarketDataIntent;
   pool: MarketDataPoolId;
   priority: number;
@@ -51,6 +66,7 @@ type AdmissionEvent = {
   at: string;
   action: "admitted" | "rejected" | "demoted" | "released" | "expired" | "fallback";
   owner: string;
+  ownerClass: MarketDataOwnerClass;
   intent: MarketDataIntent;
   pool?: MarketDataPoolId | null;
   instrumentKey?: string | null;
@@ -145,8 +161,6 @@ const POOL_INTENTS: Record<MarketDataPoolId, MarketDataIntent[]> = {
 
 const STRICT_POOL_IDS = new Set<MarketDataPoolId>([
   "execution",
-  "account-monitor",
-  "automation",
   "flow-scanner",
 ]);
 
@@ -155,15 +169,14 @@ const DEFAULT_MAX_LINES = 200;
 const DEFAULT_RESERVE_LINES = 0;
 const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
 const DEFAULT_EXECUTION_LINES = 12;
-const DEFAULT_ACCOUNT_MONITOR_LINES = 10;
-const DEFAULT_AUTOMATION_LINES = 5;
 const DEFAULT_FLOW_SCANNER_LINES = 10;
-const DEFAULT_FLOW_SCANNER_CONCURRENCY = 10;
-const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = 100;
+const DEFAULT_FLOW_SCANNER_CONCURRENCY = 20;
+const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = DEFAULT_MAX_LINES;
 const BRIDGE_LINE_BUDGET_TTL_MS = 30_000;
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV = "OPTIONS_FLOW_SCANNER_LINE_BUDGET";
 const OPTIONS_FLOW_SCANNER_CONCURRENCY_ENV = "OPTIONS_FLOW_SCANNER_CONCURRENCY";
 const TARGET_FILL_LINES_ENV = "IBKR_MARKET_DATA_TARGET_FILL_LINES";
+const MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT = 20;
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   execution: "IBKR_MARKET_DATA_EXECUTION_LINES",
@@ -173,6 +186,25 @@ const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   "flow-scanner": "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
   convenience: "IBKR_MARKET_DATA_CONVENIENCE_LINES",
 };
+
+const OWNER_CLASS_LABELS: Record<MarketDataOwnerClass, string> = {
+  execution: "Execution",
+  "account-monitor": "Account monitor",
+  visible: "Visible",
+  automation: "Automation",
+  "signal-options": "Signal automation",
+  "flow-scanner": "Flow scanner",
+  "flow-scanner-benchmark": "Flow scanner benchmark",
+  "watchlist-prewarm": "Watchlist prewarm",
+  "watchlist-filler": "Watchlist filler",
+  historical: "Historical",
+  "retired-shadow-equity-forward": "Retired shadow equity forward",
+  unknown: "Unknown",
+};
+
+const RETIRED_OWNER_CLASSES = new Set<MarketDataOwnerClass>([
+  "retired-shadow-equity-forward",
+]);
 
 const leases = new Map<string, MarketDataLease>();
 const countersByIntent = new Map<MarketDataIntent, AdmissionCounters>();
@@ -189,6 +221,80 @@ let runtimeBridgeLineBudget:
       observedAt: number;
     }
   | null = null;
+
+function classifyMarketDataOwner(input: {
+  owner: string;
+  intent: MarketDataIntent;
+  pool: MarketDataPoolId;
+}): MarketDataOwnerClass {
+  const owner = input.owner.trim().toLowerCase();
+  if (owner.startsWith("shadow-equity-forward")) {
+    return "retired-shadow-equity-forward";
+  }
+  if (owner.startsWith("flow-scanner-benchmark")) {
+    return "flow-scanner-benchmark";
+  }
+  if (
+    input.intent !== "account-monitor-live" &&
+    (owner.startsWith("signal-options-") ||
+      owner.startsWith("signal-options:"))
+  ) {
+    return "signal-options";
+  }
+  if (owner.startsWith("flow-scanner")) {
+    return "flow-scanner";
+  }
+  if (owner.startsWith("watchlist-prewarm-filler")) {
+    return "watchlist-filler";
+  }
+  if (owner.startsWith("watchlist-prewarm")) {
+    return "watchlist-prewarm";
+  }
+  if (input.intent === "execution-live") {
+    return "execution";
+  }
+  if (input.intent === "account-monitor-live") {
+    return "account-monitor";
+  }
+  if (input.intent === "visible-live") {
+    return "visible";
+  }
+  if (input.intent === "automation-live") {
+    return "automation";
+  }
+  if (input.intent === "flow-scanner-live") {
+    return "flow-scanner";
+  }
+  if (input.intent === "historical") {
+    return "historical";
+  }
+  if (input.pool === "convenience") {
+    return owner.includes("history") ? "historical" : "watchlist-prewarm";
+  }
+  return "unknown";
+}
+
+function marketDataOwnerPriorityAdjustment(
+  ownerClass: MarketDataOwnerClass,
+): number {
+  if (ownerClass === "signal-options") {
+    return 3;
+  }
+  if (ownerClass === "flow-scanner-benchmark") {
+    return -5;
+  }
+  return 0;
+}
+
+function resolveMarketDataLeasePriority(input: {
+  intent: MarketDataIntent;
+  ownerClass: MarketDataOwnerClass;
+}): number {
+  return (
+    INTENT_PRIORITY[input.intent] +
+    marketDataOwnerPriorityAdjustment(input.ownerClass)
+  );
+}
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -231,18 +337,12 @@ function resolveDefaultFlowScannerLineCap(): number {
 function buildDefaultPoolLineCaps(
   usableLines: number,
 ): Record<MarketDataPoolId, number> {
-  const flowScannerLines = resolveDefaultFlowScannerLineCap();
-  const fixedLines =
-    DEFAULT_EXECUTION_LINES +
-    DEFAULT_ACCOUNT_MONITOR_LINES +
-    DEFAULT_AUTOMATION_LINES +
-    flowScannerLines;
   return {
     execution: DEFAULT_EXECUTION_LINES,
-    "account-monitor": DEFAULT_ACCOUNT_MONITOR_LINES,
-    visible: Math.max(0, usableLines - fixedLines),
-    automation: DEFAULT_AUTOMATION_LINES,
-    "flow-scanner": flowScannerLines,
+    "account-monitor": 0,
+    visible: 0,
+    automation: 0,
+    "flow-scanner": Math.min(usableLines, resolveDefaultFlowScannerLineCap()),
     convenience: 0,
   };
 }
@@ -251,46 +351,18 @@ function normalizePoolLineCaps(
   usableLines: number,
 ): Record<MarketDataPoolId, number> {
   const caps = buildDefaultPoolLineCaps(usableLines);
-  const envOverrides = new Set<MarketDataPoolId>();
   (Object.keys(caps) as MarketDataPoolId[]).forEach((pool) => {
+    if (pool === "account-monitor") {
+      return;
+    }
     const value = readOptionalNonNegativeIntegerEnv(POOL_ENV_KEYS[pool]);
     if (value !== null) {
       caps[pool] = value;
-      envOverrides.add(pool);
     }
   });
 
-  const total = () => Object.values(caps).reduce((sum, value) => sum + value, 0);
-  if (total() < usableLines) {
-    const leftover = usableLines - total();
-    if (!envOverrides.has("visible")) {
-      caps.visible += leftover;
-    } else if (!envOverrides.has("convenience")) {
-      caps.convenience += leftover;
-    }
-  }
-
-  const totalLines = total();
-  if (totalLines <= usableLines) {
-    return caps;
-  }
-
-  let overflow = totalLines - usableLines;
-  const reductionOrder: MarketDataPoolId[] = [
-    "convenience",
-    "automation",
-    "visible",
-    "flow-scanner",
-    "account-monitor",
-    "execution",
-  ];
-  reductionOrder.forEach((pool) => {
-    if (overflow <= 0) {
-      return;
-    }
-    const reduction = Math.min(caps[pool], overflow);
-    caps[pool] -= reduction;
-    overflow -= reduction;
+  (Object.keys(caps) as MarketDataPoolId[]).forEach((pool) => {
+    caps[pool] = Math.min(caps[pool], usableLines);
   });
   return caps;
 }
@@ -418,10 +490,22 @@ function getCounters(intent: MarketDataIntent): AdmissionCounters {
   return created;
 }
 
-function recordEvent(event: Omit<AdmissionEvent, "at">): AdmissionEvent {
+function recordEvent(
+  event: Omit<AdmissionEvent, "at" | "ownerClass"> & {
+    ownerClass?: MarketDataOwnerClass;
+  },
+): AdmissionEvent {
+  const ownerClass =
+    event.ownerClass ??
+    classifyMarketDataOwner({
+      owner: event.owner,
+      intent: event.intent,
+      pool: event.pool ?? INTENT_POOL[event.intent],
+    });
   const recorded = {
     at: new Date().toISOString(),
     ...event,
+    ownerClass,
   };
   recentEvents.push(recorded);
   if (recentEvents.length > MAX_RECENT_EVENTS) {
@@ -548,11 +632,317 @@ function activeLineIdsForOwnerPrefix(ownerPrefix: string): Set<string> {
   return result;
 }
 
+function sampleDiagnosticLineIds(values: Set<string>): string[] {
+  return Array.from(values).sort().slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT);
+}
+
+function lineLabel(lineId: string): string {
+  if (lineId.startsWith("equity:")) {
+    return lineId.slice("equity:".length);
+  }
+  if (lineId.startsWith("option:")) {
+    return lineId.slice("option:".length);
+  }
+  return lineId;
+}
+
+function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget()) {
+  const protectedLineIds = new Set<string>();
+  const dynamicLineIds = new Set<string>();
+  const accountLineIds = new Set<string>();
+  const scannerLineIds = new Set<string>();
+  const elasticLineIds = new Set<string>();
+  const fillerLineIds = new Set<string>();
+
+  leases.forEach((lease) => {
+    const isElastic = lease.pool === "convenience";
+    lease.lineIds.forEach((id) => {
+      if (isElastic) {
+        elasticLineIds.add(id);
+        if (lease.owner.startsWith("watchlist-prewarm-filler")) {
+          fillerLineIds.add(id);
+        }
+      } else if (lease.pool === "execution") {
+        protectedLineIds.add(id);
+      } else {
+        dynamicLineIds.add(id);
+        if (lease.pool === "account-monitor") {
+          accountLineIds.add(id);
+        } else if (lease.pool === "flow-scanner") {
+          scannerLineIds.add(id);
+        }
+      }
+    });
+  });
+
+  const activeLineIds = new Set([
+    ...protectedLineIds,
+    ...dynamicLineIds,
+    ...elasticLineIds,
+  ]);
+  const sharedElasticLineIds = new Set(
+    Array.from(elasticLineIds).filter(
+      (id) => protectedLineIds.has(id) || dynamicLineIds.has(id),
+    ),
+  );
+  const reclaimableElasticLineIds = new Set(
+    Array.from(elasticLineIds).filter(
+      (id) => !protectedLineIds.has(id) && !dynamicLineIds.has(id),
+    ),
+  );
+  const reclaimableFillerLineIds = new Set(
+    Array.from(fillerLineIds).filter(
+      (id) => !protectedLineIds.has(id) && !dynamicLineIds.has(id),
+    ),
+  );
+  const elasticTargetLineCapacity = Math.max(
+    0,
+    budget.targetFillLines - protectedLineIds.size - dynamicLineIds.size,
+  );
+
+  return {
+    policy: "dynamic-account-scanner",
+    targetFillLines: budget.targetFillLines,
+    protectedLineCount: protectedLineIds.size,
+    dynamicLineCount: dynamicLineIds.size,
+    accountLineCount: accountLineIds.size,
+    scannerLineCount: scannerLineIds.size,
+    elasticLineCount: elasticLineIds.size,
+    reclaimableElasticLineCount: reclaimableElasticLineIds.size,
+    sharedElasticLineCount: sharedElasticLineIds.size,
+    fillerLineCount: fillerLineIds.size,
+    reclaimableFillerLineCount: reclaimableFillerLineIds.size,
+    activeLineCount: activeLineIds.size,
+    remainingToTargetLineCount: Math.max(
+      0,
+      budget.targetFillLines - activeLineIds.size,
+    ),
+    elasticTargetLineCapacity,
+    elasticRemainingLineCount: Math.max(
+      0,
+      elasticTargetLineCapacity - reclaimableElasticLineIds.size,
+    ),
+    elasticLineSample: sampleDiagnosticLineIds(elasticLineIds),
+    dynamicLineSample: sampleDiagnosticLineIds(dynamicLineIds),
+    accountLineSample: sampleDiagnosticLineIds(accountLineIds),
+    scannerLineSample: sampleDiagnosticLineIds(scannerLineIds),
+    reclaimableElasticLineSample: sampleDiagnosticLineIds(
+      reclaimableElasticLineIds,
+    ),
+    fillerLineSample: sampleDiagnosticLineIds(fillerLineIds),
+  };
+}
+
+function buildAccountMonitorDiagnostics(budget = getMarketDataAdmissionBudget()) {
+  const accountLeases = Array.from(leases.values()).filter(
+    (lease) => lease.intent === "account-monitor-live",
+  );
+  const accountLineIds = new Set<string>();
+  const activeSymbols = new Set<string>();
+  accountLeases.forEach((lease) => {
+    lease.lineIds.forEach((id) => {
+      accountLineIds.add(id);
+      activeSymbols.add(lineLabel(id));
+    });
+  });
+  const recentRejectedLineIds = new Set(
+    recentEvents
+      .filter(
+        (event) =>
+          event.intent === "account-monitor-live" &&
+          event.action === "rejected" &&
+          event.instrumentKey,
+      )
+      .map((event) => String(event.instrumentKey)),
+  );
+  const recentDemotedLineIds = new Set(
+    recentEvents
+      .filter(
+        (event) =>
+          event.intent === "account-monitor-live" &&
+          event.action === "demoted" &&
+          event.instrumentKey,
+      )
+      .map((event) => String(event.instrumentKey)),
+  );
+  const neededLineCount = accountLineIds.size + recentRejectedLineIds.size;
+  const deferredLineCount = recentRejectedLineIds.size;
+  const availableExpansionLineCount = Math.max(
+    0,
+    budget.usableLines - activeLineIds().size,
+  );
+
+  return {
+    dynamic: true,
+    lineCap: budget.accountMonitorLineCap,
+    neededLineCount,
+    coveredLineCount: accountLineIds.size,
+    deferredLineCount,
+    activeLineCount: accountLineIds.size,
+    remainingLineCount: availableExpansionLineCount,
+    availableExpansionLineCount,
+    leaseCount: accountLeases.length,
+    ownerCount: new Set(accountLeases.map((lease) => lease.owner)).size,
+    activeLineSample: sampleDiagnosticLineIds(accountLineIds),
+    activeSymbolSample: Array.from(activeSymbols)
+      .sort()
+      .slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT),
+    recentRejectedCount: recentRejectedLineIds.size,
+    recentRejectedLineSample: sampleDiagnosticLineIds(recentRejectedLineIds),
+    recentDemotedLineCount: recentDemotedLineIds.size,
+    recentDemotedLineSample: sampleDiagnosticLineIds(recentDemotedLineIds),
+  };
+}
+
+function emptyOwnerClassSummary(ownerClass: MarketDataOwnerClass) {
+  return {
+    id: ownerClass,
+    label: OWNER_CLASS_LABELS[ownerClass],
+    activeLineCount: 0,
+    leaseCount: 0,
+    ownerCount: 0,
+    activeOwnerSample: [] as string[],
+    activeLineSample: [] as string[],
+    recentRequestedLineCount: 0,
+    recentAdmittedCount: 0,
+    recentRejectedCount: 0,
+    recentDemotedCount: 0,
+    recentReleasedCount: 0,
+    recentExpiredCount: 0,
+    recentFallbackCount: 0,
+    recentCacheFallbackCount: 0,
+    recentRejectedLineSample: [] as string[],
+  };
+}
+
+function buildOwnerClassDiagnostics() {
+  const groups = new Map<
+    MarketDataOwnerClass,
+    ReturnType<typeof emptyOwnerClassSummary> & {
+      lineIds: Set<string>;
+      owners: Set<string>;
+      rejectedLineIds: Set<string>;
+    }
+  >();
+
+  const ensureGroup = (ownerClass: MarketDataOwnerClass) => {
+    const existing = groups.get(ownerClass);
+    if (existing) {
+      return existing;
+    }
+    const created = {
+      ...emptyOwnerClassSummary(ownerClass),
+      lineIds: new Set<string>(),
+      owners: new Set<string>(),
+      rejectedLineIds: new Set<string>(),
+    };
+    groups.set(ownerClass, created);
+    return created;
+  };
+
+  leases.forEach((lease) => {
+    const group = ensureGroup(lease.ownerClass);
+    group.leaseCount += 1;
+    group.owners.add(lease.owner);
+    lease.lineIds.forEach((lineId) => group.lineIds.add(lineId));
+  });
+
+  recentEvents.forEach((event) => {
+    const group = ensureGroup(event.ownerClass);
+    if (event.action === "admitted" || event.action === "rejected") {
+      group.recentRequestedLineCount += Math.max(0, event.lineCost ?? 0);
+    }
+    if (event.action === "admitted") {
+      group.recentAdmittedCount += 1;
+    } else if (event.action === "rejected") {
+      group.recentRejectedCount += 1;
+      if (event.instrumentKey) {
+        group.rejectedLineIds.add(event.instrumentKey);
+      }
+    } else if (event.action === "demoted") {
+      group.recentDemotedCount += 1;
+    } else if (event.action === "released") {
+      group.recentReleasedCount += 1;
+    } else if (event.action === "expired") {
+      group.recentExpiredCount += 1;
+    } else if (event.action === "fallback") {
+      group.recentFallbackCount += 1;
+    }
+    if (
+      event.fallbackProvider === "cache" &&
+      (event.action === "admitted" ||
+        event.action === "rejected" ||
+        event.action === "fallback")
+    ) {
+      group.recentCacheFallbackCount += 1;
+    }
+  });
+
+  const summaries = Object.fromEntries(
+    Array.from(groups.entries()).map(([ownerClass, group]) => {
+      const { lineIds, owners, rejectedLineIds, ...counts } = group;
+      return [
+        ownerClass,
+        {
+          ...emptyOwnerClassSummary(ownerClass),
+          ...counts,
+          activeLineCount: lineIds.size,
+          ownerCount: owners.size,
+          activeOwnerSample: Array.from(owners).sort().slice(0, 20),
+          activeLineSample: sampleDiagnosticLineIds(lineIds),
+          recentRejectedLineSample: sampleDiagnosticLineIds(rejectedLineIds),
+        },
+      ];
+    }),
+  ) as Record<MarketDataOwnerClass, ReturnType<typeof emptyOwnerClassSummary>>;
+
+  const unknownOwners = summaries.unknown?.activeOwnerSample ?? [];
+  const retiredOwners = Array.from(RETIRED_OWNER_CLASSES).flatMap(
+    (ownerClass) => summaries[ownerClass]?.activeOwnerSample ?? [],
+  );
+  const warnings = [
+    ...(unknownOwners.length
+      ? [
+          {
+            code: "unknown-owner-class",
+            severity: "warning" as const,
+            ownerClass: "unknown" as const,
+            message:
+              "Active market data leases have an unknown owner class.",
+            ownerSample: unknownOwners,
+          },
+        ]
+      : []),
+    ...(retiredOwners.length
+      ? [
+          {
+            code: "retired-owner-active",
+            severity: "warning" as const,
+            ownerClass: "retired-shadow-equity-forward" as const,
+            message:
+              "Retired shadow equity forward owners are still holding market data leases.",
+            ownerSample: retiredOwners,
+          },
+        ]
+      : []),
+  ];
+
+  return {
+    summaries,
+    signalOptions:
+      summaries["signal-options"] ?? emptyOwnerClassSummary("signal-options"),
+    unknownOwnerCount: unknownOwners.length,
+    retiredOwnerCount: retiredOwners.length,
+    warnings,
+  };
+}
+
 function releaseLease(lease: MarketDataLease, action: AdmissionEvent["action"], reason: string): void {
   leases.delete(lease.id);
   const event = recordEvent({
     action,
     owner: lease.owner,
+    ownerClass: lease.ownerClass,
     intent: lease.intent,
     pool: lease.pool,
     instrumentKey: lease.instrumentKey,
@@ -622,11 +1012,63 @@ function demoteLowerPriorityLeases(input: {
   return demoted;
 }
 
+function demoteFlowScannerLeasesAboveEffectiveCap(reasonIntent: MarketDataIntent): MarketDataLease[] {
+  const demoted: MarketDataLease[] = [];
+  let scannerLineIds = activeLineIds({ pool: "flow-scanner" });
+  let scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
+  if (scannerLineIds.size <= scannerLineCap) {
+    return demoted;
+  }
+
+  const candidates = Array.from(leases.values())
+    .filter((lease) => lease.pool === "flow-scanner")
+    .sort(
+      (left, right) =>
+        left.priority - right.priority ||
+        Date.parse(left.acquiredAt) - Date.parse(right.acquiredAt),
+    );
+
+  for (const candidate of candidates) {
+    if (scannerLineIds.size <= scannerLineCap) {
+      break;
+    }
+    releaseLease(
+      candidate,
+      "demoted",
+      `scanner_rebalanced_for_${reasonIntent}`,
+    );
+    demoted.push(candidate);
+    scannerLineIds = activeLineIds({ pool: "flow-scanner" });
+    scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
+  }
+
+  return demoted;
+}
+
 export function getMarketDataPoolEffectiveLineCap(
   pool: MarketDataPoolId,
   budget = getMarketDataAdmissionBudget(),
 ): number {
   const staticCap = budget.poolLineCaps[pool];
+  if (pool === "account-monitor") {
+    const executionLineCount = activeLineIds({ pool: "execution" }).size;
+    return Math.max(0, budget.usableLines - executionLineCount);
+  }
+  if (pool === "visible") {
+    const higherPriorityLineCount = new Set([
+      ...activeLineIds({ pool: "execution" }),
+      ...activeLineIds({ pool: "account-monitor" }),
+    ]).size;
+    return Math.max(0, budget.usableLines - higherPriorityLineCount);
+  }
+  if (pool === "automation") {
+    const higherPriorityLineCount = new Set([
+      ...activeLineIds({ pool: "execution" }),
+      ...activeLineIds({ pool: "account-monitor" }),
+      ...activeLineIds({ pool: "visible" }),
+    ]).size;
+    return Math.max(0, budget.usableLines - higherPriorityLineCount);
+  }
   if (pool !== "flow-scanner") {
     return staticCap;
   }
@@ -663,7 +1105,7 @@ export function getMarketDataLinePressureSnapshot() {
 
   return {
     state,
-    policy: "active-ui-first",
+    policy: "dynamic-priority",
     budgetSource: budget.budgetSource,
     configuredMaxLines: budget.configuredMaxLines,
     bridgeLineBudget: budget.bridgeLineBudget,
@@ -672,8 +1114,10 @@ export function getMarketDataLinePressureSnapshot() {
     usableRemainingLineCount,
     utilization,
     visibleLineCount: visibleLines.size,
-    protectedLineCount:
-      executionLines.size + accountMonitorLines.size + automationLines.size,
+    protectedLineCount: executionLines.size,
+    accountMonitorLineCount: accountMonitorLines.size,
+    accountMonitorDynamic: true,
+    automationLineCount: automationLines.size,
     scannerStaticLineCap,
     scannerEffectiveLineCap,
     scannerActiveLineCount: flowScannerLines.size,
@@ -708,8 +1152,16 @@ export function admitMarketDataLeases(input: {
   expireMarketDataLeases();
   const fallbackProvider = input.fallbackProvider ?? "polygon";
   const budget = getMarketDataAdmissionBudget();
-  const priority = INTENT_PRIORITY[input.intent];
   const pool = input.pool ?? INTENT_POOL[input.intent];
+  const ownerClass = classifyMarketDataOwner({
+    owner: input.owner,
+    intent: input.intent,
+    pool,
+  });
+  const priority = resolveMarketDataLeasePriority({
+    intent: input.intent,
+    ownerClass,
+  });
   const admitted: MarketDataLease[] = [];
   const rejected: MarketDataAdmissionResult["rejected"] = [];
   const demoted: MarketDataLease[] = [];
@@ -736,17 +1188,27 @@ export function admitMarketDataLeases(input: {
         lease.fallbackProvider === fallbackProvider,
     );
     if (sameInstrumentSet(existingOwnerLeases, normalizedRequests)) {
-      const refreshedLeases = existingOwnerLeases.map((lease) => ({
-        ...lease,
-        expiresAt,
-      }));
-      refreshedLeases.forEach((lease) => leases.set(lease.id, lease));
-      return {
-        admitted: refreshedLeases,
-        rejected,
-        demoted,
-        budget,
-      };
+      const currentLineCount = activeLineIds().size;
+      const currentPoolLineCount = activeLineIds({ pool }).size;
+      const poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
+      const refreshWouldPreserveOverCap =
+        currentLineCount > budget.usableLines ||
+        (STRICT_POOL_IDS.has(pool) && currentPoolLineCount > poolCap);
+      if (!refreshWouldPreserveOverCap) {
+        const refreshedLeases = existingOwnerLeases.map((lease) => ({
+          ...lease,
+          ownerClass,
+          priority,
+          expiresAt,
+        }));
+        refreshedLeases.forEach((lease) => leases.set(lease.id, lease));
+        return {
+          admitted: refreshedLeases,
+          rejected,
+          demoted,
+          budget,
+        };
+      }
     }
 
     releaseMarketDataLeases(input.owner, "owner_replaced");
@@ -840,6 +1302,7 @@ export function admitMarketDataLeases(input: {
     const lease: MarketDataLease = {
       id: String(nextLeaseId++),
       owner: input.owner,
+      ownerClass,
       intent: input.intent,
       pool,
       priority,
@@ -868,6 +1331,12 @@ export function admitMarketDataLeases(input: {
       ...event,
       lease: cloneLease(lease),
     });
+    if (
+      pool !== "flow-scanner" &&
+      priority > INTENT_PRIORITY["flow-scanner-live"]
+    ) {
+      demoted.push(...demoteFlowScannerLeasesAboveEffectiveCap(input.intent));
+    }
   });
 
   return {
@@ -931,6 +1400,9 @@ export function getMarketDataAdmissionDiagnostics() {
   expireMarketDataLeases();
   const budget = getMarketDataAdmissionBudget();
   const pressure = getMarketDataLinePressureSnapshot();
+  const lineAllocation = buildLineAllocationDiagnostics(budget);
+  const accountMonitor = buildAccountMonitorDiagnostics(budget);
+  const ownerClasses = buildOwnerClassDiagnostics();
   const uniqueLines = activeLineIds();
   const equityLines = Array.from(uniqueLines).filter((id) =>
     id.startsWith("equity:"),
@@ -959,20 +1431,40 @@ export function getMarketDataAdmissionDiagnostics() {
     (Object.keys(budget.poolLineCaps) as MarketDataPoolId[]).map((pool) => {
       const lines = activeLineIds({ pool });
       const maxLines = budget.poolLineCaps[pool];
-      const effectiveMaxLines = getMarketDataPoolEffectiveLineCap(pool, budget);
-      return [
-        pool,
-        {
-          id: pool,
-          label: POOL_LABELS[pool],
-          activeLineCount: lines.size,
-          maxLines,
-          effectiveMaxLines,
-          remainingLineCount: Math.max(0, effectiveMaxLines - lines.size),
-          strict: STRICT_POOL_IDS.has(pool),
-          intents: POOL_INTENTS[pool],
-        },
-      ];
+      const elastic = pool === "convenience";
+      const dynamic =
+        pool === "account-monitor" || pool === "visible" || pool === "automation";
+      const effectiveMaxLines = elastic
+        ? lineAllocation.elasticTargetLineCapacity
+        : getMarketDataPoolEffectiveLineCap(pool, budget);
+      const effectiveActiveLineCount = elastic
+        ? lineAllocation.reclaimableElasticLineCount
+        : lines.size;
+      const usage = {
+        id: pool,
+        label: POOL_LABELS[pool],
+        activeLineCount: lines.size,
+        maxLines,
+        effectiveMaxLines,
+        remainingLineCount: Math.max(
+          0,
+          effectiveMaxLines - effectiveActiveLineCount,
+        ),
+        strict: STRICT_POOL_IDS.has(pool),
+        dynamic,
+        intents: POOL_INTENTS[pool],
+        elastic,
+        reclaimableLineCount: elastic
+          ? lineAllocation.reclaimableElasticLineCount
+          : undefined,
+        sharedLineCount: elastic
+          ? lineAllocation.sharedElasticLineCount
+          : undefined,
+        chargedLineCount: elastic
+          ? lineAllocation.reclaimableElasticLineCount
+          : lines.size,
+      };
+      return [pool, usage];
     }),
   ) as Record<
     MarketDataPoolId,
@@ -984,7 +1476,12 @@ export function getMarketDataAdmissionDiagnostics() {
       effectiveMaxLines: number;
       remainingLineCount: number;
       strict: boolean;
+      dynamic: boolean;
       intents: MarketDataIntent[];
+      elastic: boolean;
+      reclaimableLineCount?: number;
+      sharedLineCount?: number;
+      chargedLineCount: number;
     }
   >;
 
@@ -993,6 +1490,7 @@ export function getMarketDataAdmissionDiagnostics() {
     generatedAt: new Date().toISOString(),
     budget,
     pressure,
+    lineAllocation,
     activeLineCount: uniqueLines.size,
     reserveLineCount: Math.max(0, budget.maxLines - uniqueLines.size),
     usableRemainingLineCount: Math.max(0, budget.usableLines - uniqueLines.size),
@@ -1001,13 +1499,14 @@ export function getMarketDataAdmissionDiagnostics() {
     automationLineCount: automationLines.size,
     automationRemainingLineCount: Math.max(
       0,
-      budget.automationLineCap - automationLines.size,
+      getMarketDataPoolEffectiveLineCap("automation", budget) -
+        automationLines.size,
     ),
     accountMonitorLineCount: accountMonitorLines.size,
-    accountMonitorRemainingLineCount: Math.max(
-      0,
-      budget.accountMonitorLineCap - accountMonitorLines.size,
-    ),
+    accountMonitorRemainingLineCount: accountMonitor.remainingLineCount,
+    accountMonitor,
+    ownerClasses,
+    signalOptions: ownerClasses.signalOptions,
     flowScannerLineCount: flowScannerLines.size,
     flowScannerRemainingLineCount: Math.max(
       0,
@@ -1015,6 +1514,9 @@ export function getMarketDataAdmissionDiagnostics() {
     ),
     convenienceLineCount: convenienceLines.size,
     fillerLineCount: fillerLines.size,
+    elasticLineCount: lineAllocation.elasticLineCount,
+    reclaimableElasticLineCount: lineAllocation.reclaimableElasticLineCount,
+    reclaimableFillerLineCount: lineAllocation.reclaimableFillerLineCount,
     poolUsage,
     leaseCount: leases.size,
     intentUsage,

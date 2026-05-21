@@ -46,7 +46,8 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   if (Number.isFinite(used) && used === 0) {
     const activeCount = Number(scanner.deepScanner?.activeCount);
     if (Number.isFinite(activeCount) && activeCount > 0) {
-      return `${Math.round(activeCount)} option chain${Math.round(activeCount) === 1 ? "" : "s"} scanning; quotes next`;
+      const rounded = Math.round(activeCount);
+      return `${rounded} option-chain scan${rounded === 1 ? "" : "s"} active; 0 quote lines`;
     }
     const queuedCount = Number(scanner.deepScanner?.queuedCount);
     if (Number.isFinite(queuedCount) && queuedCount > 0) {
@@ -59,7 +60,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     const skipReason = scanner.lastSkippedReason;
     if (skipReason) {
       if (skipReason === "line-cap-exhausted") {
-        return "paused: no scanner line capacity";
+        return "paused: no scanner lines available";
       }
       return `skipped: ${skipReason}`;
     }
@@ -75,15 +76,15 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return "paused: options lane queued";
     }
     if (blockedReason === "line-cap-exhausted") {
-      return "paused: no scanner line capacity";
+      return "paused: no scanner lines available";
     }
     if (scanner.deepScanner?.draining) {
       return "deep scan starting";
     }
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
-      return "last scan complete; no active quote leases";
+      return "last scan complete; no active quote lines";
     }
-    return "no active quote leases";
+    return "no active quote lines";
   }
   return null;
 };
@@ -125,7 +126,7 @@ const normalizeBridgeLineUsage = (lineUsageSnapshot, admission) => {
     cap,
     free: Number.isFinite(free) ? Math.max(0, free) : null,
     pressure,
-    summary: available ? `${formatRuntimeCount(used)} / ${formatRuntimeCount(cap)}` : MISSING_VALUE,
+    summary: available ? `${formatRuntimeCount(used)} of ${formatRuntimeCount(cap)}` : MISSING_VALUE,
     activeEquity: firstFiniteNumber(subscriptions.activeEquitySubscriptions),
     activeOptions: firstFiniteNumber(subscriptions.activeOptionSubscriptions),
     prewarm: firstFiniteNumber(subscriptions.prewarmSymbolCount),
@@ -261,6 +262,10 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
     lineUsageSnapshot?.allocation && typeof lineUsageSnapshot.allocation === "object"
       ? lineUsageSnapshot.allocation
       : {};
+  const lineAllocation =
+    admission?.lineAllocation && typeof admission.lineAllocation === "object"
+      ? admission.lineAllocation
+      : {};
   const policy =
     lineUsageSnapshot?.policy && typeof lineUsageSnapshot.policy === "object"
       ? lineUsageSnapshot.policy
@@ -295,7 +300,40 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
         : null,
     protectedLineCount: firstFiniteNumber(
       allocation.protectedLineCount,
+      lineAllocation.protectedLineCount,
       pressure.protectedLineCount,
+    ),
+    elasticLineCount: firstFiniteNumber(
+      allocation.elasticLineCount,
+      lineAllocation.elasticLineCount,
+      admission?.elasticLineCount,
+      admission?.convenienceLineCount,
+      0,
+    ),
+    reclaimableElasticLineCount: firstFiniteNumber(
+      allocation.reclaimableElasticLineCount,
+      lineAllocation.reclaimableElasticLineCount,
+      admission?.reclaimableElasticLineCount,
+      0,
+    ),
+    sharedElasticLineCount: firstFiniteNumber(
+      allocation.sharedElasticLineCount,
+      lineAllocation.sharedElasticLineCount,
+      0,
+    ),
+    reclaimableFillerLineCount: firstFiniteNumber(
+      allocation.reclaimableFillerLineCount,
+      lineAllocation.reclaimableFillerLineCount,
+      admission?.reclaimableFillerLineCount,
+      0,
+    ),
+    elasticTargetLineCapacity: firstFiniteNumber(
+      allocation.elasticTargetLineCapacity,
+      lineAllocation.elasticTargetLineCapacity,
+    ),
+    elasticRemainingLineCount: firstFiniteNumber(
+      allocation.elasticRemainingLineCount,
+      lineAllocation.elasticRemainingLineCount,
     ),
     visibleLineCount: firstFiniteNumber(
       allocation.visibleLineCount,
@@ -336,6 +374,74 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
   };
 };
 
+const normalizeSignalOptionsLineUsage = (admission, lineUsageSnapshot = null) => {
+  const signalOptions =
+    (lineUsageSnapshot?.signalOptions &&
+    typeof lineUsageSnapshot.signalOptions === "object"
+      ? lineUsageSnapshot.signalOptions
+      : null) ||
+    (admission?.signalOptions && typeof admission.signalOptions === "object"
+      ? admission.signalOptions
+      : null) ||
+    (admission?.ownerClasses?.signalOptions &&
+    typeof admission.ownerClasses.signalOptions === "object"
+      ? admission.ownerClasses.signalOptions
+      : null) ||
+    (admission?.ownerClasses?.summaries?.["signal-options"] &&
+    typeof admission.ownerClasses.summaries["signal-options"] === "object"
+      ? admission.ownerClasses.summaries["signal-options"]
+      : {});
+  const flowScannerPool =
+    admission?.poolUsage?.["flow-scanner"] &&
+    typeof admission.poolUsage["flow-scanner"] === "object"
+      ? admission.poolUsage["flow-scanner"]
+      : {};
+  const used = firstFiniteNumber(signalOptions.activeLineCount, 0);
+  const cap = firstFiniteNumber(
+    signalOptions.effectiveMaxLines,
+    signalOptions.maxLines,
+    flowScannerPool.effectiveMaxLines,
+    flowScannerPool.maxLines,
+    admission?.budget?.flowScannerLineCap,
+  );
+  const free =
+    Number.isFinite(used) && Number.isFinite(cap)
+      ? Math.max(0, cap - used)
+      : null;
+  const rejectedCount = firstFiniteNumber(signalOptions.recentRejectedCount, 0);
+  const cacheFallbackCount = firstFiniteNumber(
+    signalOptions.recentCacheFallbackCount,
+    0,
+  );
+  const detail =
+    rejectedCount > 0
+      ? `${formatRuntimeCount(rejectedCount)} recent rejected`
+      : cacheFallbackCount > 0
+        ? `${formatRuntimeCount(cacheFallbackCount)} cache fallback`
+        : "scanner pool";
+  const streamState = lineUsageState(used, cap, rejectedCount > 0);
+
+  return {
+    ...signalOptions,
+    used,
+    activeLineCount: used,
+    cap,
+    effectiveCap: cap,
+    free,
+    leaseCount: firstFiniteNumber(signalOptions.leaseCount, 0),
+    ownerCount: firstFiniteNumber(signalOptions.ownerCount, 0),
+    requestedLineCount: firstFiniteNumber(
+      signalOptions.recentRequestedLineCount,
+      used,
+    ),
+    rejectedCount,
+    cacheFallbackCount,
+    detail,
+    streamState,
+    tone: streamStateTokenVar(streamState),
+  };
+};
+
 export const isOptionsFlowScannerRuntimeActive = (admission) => {
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
@@ -362,9 +468,10 @@ export const formatRuntimeCount = (value) =>
 
 export const lineUsageState = (used, cap, degraded = false) => {
   if (degraded) return "capacity-limited";
-  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
+  if (!Number.isFinite(used) || !Number.isFinite(cap)) {
     return "no-subscribers";
   }
+  if (cap <= 0) return used > 0 ? "capacity-limited" : "no-subscribers";
   const ratio = used / cap;
   if (ratio >= 0.75) return "capacity-limited";
   return "healthy";
@@ -402,6 +509,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     const drift = normalizeLineDrift(lineUsageSnapshot);
     const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
     const allocation = normalizeLineAllocation(null, lineUsageSnapshot);
+    const signalOptions = normalizeSignalOptionsLineUsage(null, lineUsageSnapshot);
     return {
       schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
       available: false,
@@ -411,8 +519,17 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       warnings: 0,
       rows: [],
       pools: {},
-      accountMonitor: { used: 0, cap: DEFAULT_ACCOUNT_MONITOR_LINE_CAP, free: DEFAULT_ACCOUNT_MONITOR_LINE_CAP },
+      accountMonitor: {
+        used: 0,
+        cap: null,
+        free: null,
+        dynamic: true,
+        needed: 0,
+        covered: 0,
+        deferred: 0,
+      },
       flowScanner: { used: null, cap: null, free: null },
+      signalOptions,
       total: { used: null, cap: null, free: null },
       bridge,
       drift,
@@ -432,9 +549,16 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const drift = normalizeLineDrift(lineUsageSnapshot);
   const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
+  const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
+    const accountDetails =
+      admission.accountMonitor && typeof admission.accountMonitor === "object"
+        ? admission.accountMonitor
+        : {};
+    const elasticPool = Boolean(pool.elastic || id === "convenience");
+    const dynamicPool = Boolean(pool.dynamic || id === "account-monitor");
     const rawUsed =
       id === "account-monitor"
         ? firstFiniteNumber(pool.activeLineCount, admission.accountMonitorLineCount, 0)
@@ -442,19 +566,33 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           ? firstFiniteNumber(pool.activeLineCount, admission.flowScannerLineCount)
           : id === "automation"
             ? firstFiniteNumber(pool.activeLineCount, admission.automationLineCount)
-          : firstFiniteNumber(pool.activeLineCount);
+            : id === "convenience"
+              ? firstFiniteNumber(
+                  pool.reclaimableLineCount,
+                  pool.chargedLineCount,
+                  allocation.reclaimableElasticLineCount,
+                  pool.activeLineCount,
+                )
+              : firstFiniteNumber(pool.activeLineCount);
+    const activeLineCount = firstFiniteNumber(pool.activeLineCount, rawUsed);
     const rawCap =
       id === "account-monitor"
         ? firstFiniteNumber(
-            pool.maxLines,
-            budget.accountMonitorLineCap,
+            pool.effectiveMaxLines,
+            budget.usableLines,
             DEFAULT_ACCOUNT_MONITOR_LINE_CAP,
           )
         : id === "flow-scanner"
           ? firstFiniteNumber(pool.maxLines, budget.flowScannerLineCap)
           : id === "automation"
             ? firstFiniteNumber(pool.maxLines, budget.automationLineCap)
-            : firstFiniteNumber(pool.maxLines);
+            : id === "convenience"
+              ? firstFiniteNumber(
+                  pool.effectiveMaxLines,
+                  allocation.elasticTargetLineCapacity,
+                  pool.maxLines,
+                )
+              : firstFiniteNumber(pool.maxLines);
     const legacyVisibleAdjusted =
       id === "visible" &&
       legacyAdmission &&
@@ -466,6 +604,12 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     const effectiveCap =
       id === "flow-scanner"
         ? firstFiniteNumber(pool.effectiveMaxLines, pressure.scannerEffectiveLineCap)
+        : id === "convenience"
+          ? firstFiniteNumber(
+              pool.effectiveMaxLines,
+              allocation.elasticTargetLineCapacity,
+              cap,
+            )
         : firstFiniteNumber(pool.effectiveMaxLines, cap);
     const free =
       legacyVisibleAdjusted || !Number.isFinite(Number(pool.remainingLineCount))
@@ -482,14 +626,45 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       id,
       label: pool.label || fallbackLabel,
       used: rawUsed,
+      needed:
+        id === "account-monitor"
+          ? firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0)
+          : rawUsed,
+      covered:
+        id === "account-monitor"
+          ? firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0)
+          : rawUsed,
+      deferred:
+        id === "account-monitor"
+          ? firstFiniteNumber(
+              accountDetails.deferredLineCount,
+              accountDetails.recentRejectedCount,
+              0,
+            )
+          : 0,
       cap,
       effectiveCap,
       free,
+      activeLineCount,
+      elastic: elasticPool,
+      reclaimableLineCount: firstFiniteNumber(
+        pool.reclaimableLineCount,
+        allocation.reclaimableElasticLineCount,
+      ),
+      sharedLineCount: firstFiniteNumber(
+        pool.sharedLineCount,
+        allocation.sharedElasticLineCount,
+      ),
       detail:
-        id === "flow-scanner"
+        id === "account-monitor"
+          ? `${formatRuntimeCount(firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0))} covered of ${formatRuntimeCount(firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0))} needed`
+          : id === "flow-scanner"
           ? formatFlowScannerRuntimeDetail(admission, rawUsed)
+          : id === "convenience"
+            ? `${formatRuntimeCount(activeLineCount)} active of ${formatRuntimeCount(rawUsed)} reclaimable`
           : null,
-      strict: id === "account-monitor" ? true : Boolean(pool.strict),
+      dynamic: dynamicPool,
+      strict: Boolean(pool.strict),
       source: pool.id ? "diagnostics" : id === "account-monitor" && legacyAdmission ? "legacy-default" : "missing",
       legacyNormalized: legacyVisibleAdjusted || (id === "account-monitor" && legacyAdmission),
       streamState,
@@ -516,7 +691,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     tone: lineUsageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
   };
   rows.push(total);
-  const demandSummary = `${formatRuntimeCount(total.used)} / ${formatRuntimeCount(total.cap)}`;
+  const demandSummary = `${formatRuntimeCount(total.used)} of ${formatRuntimeCount(total.cap)}`;
   const requestedLineCount = total.used;
   const activeLineCount = total.used;
   const pendingLineCount =
@@ -541,6 +716,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     pools,
     accountMonitor: pools["account-monitor"],
     flowScanner: pools["flow-scanner"],
+    signalOptions,
     total,
     bridge,
     drift,

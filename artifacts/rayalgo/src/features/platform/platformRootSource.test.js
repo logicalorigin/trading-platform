@@ -48,6 +48,16 @@ test("platform root no longer depends on the retired RayAlgoPlatform module", ()
   assert.deepEqual(sourceHits, []);
 });
 
+test("api boot does not start the retired shadow equity forward worker", () => {
+  const apiIndexSource = readFileSync(
+    join(repoRoot.pathname, "artifacts/api-server/src/index.ts"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(apiIndexSource, /shadow-equity-forward-worker/);
+  assert.doesNotMatch(apiIndexSource, /startShadowEquityForwardWorker/);
+});
+
 test("vite keeps React and Query provider dependencies single-instanced", () => {
   const source = readFileSync(
     new URL("../../../vite.config.ts", import.meta.url),
@@ -217,6 +227,26 @@ test("floating platform controls use pointer outside-click listeners", () => {
   });
 });
 
+test("market activity signal lane chips use the flow lane chip width", () => {
+  const marketActivitySource = readFileSync(
+    new URL("../market/MarketActivityPanel.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    marketActivitySource,
+    /const ACTIVITY_LANE_CHIP_MIN_WIDTH = 34;/,
+  );
+  assert.match(
+    marketActivitySource,
+    /MarketSignalRow[\s\S]*?activityChipStyle\(tone\.color, ACTIVITY_LANE_CHIP_MIN_WIDTH\)/,
+  );
+  assert.match(
+    marketActivitySource,
+    /MarketUnusualRow[\s\S]*?activityChipStyle\(tone\.color, ACTIVITY_LANE_CHIP_MIN_WIDTH\)/,
+  );
+});
+
 test("header broadcast lane settings use the shared Radix Popover primitive", () => {
   const headerSource = readFileSync(
     new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
@@ -233,6 +263,98 @@ test("header broadcast lane settings use the shared Radix Popover primitive", ()
     headerSource,
     /addEventListener\("pointerdown", handlePointerDown\)/,
   );
+});
+
+test("compact platform header stays flat, ticker-first, and exposes line usage", () => {
+  const shellSource = readFileSync(
+    new URL("./PlatformShell.jsx", import.meta.url),
+    "utf8",
+  );
+  const accountSource = readFileSync(
+    new URL("./HeaderAccountStrip.jsx", import.meta.url),
+    "utf8",
+  );
+  const kpiSource = readFileSync(
+    new URL("./HeaderKpiStrip.jsx", import.meta.url),
+    "utf8",
+  );
+  const statusSource = readFileSync(
+    new URL("./HeaderStatusCluster.jsx", import.meta.url),
+    "utf8",
+  );
+  const broadcastSource = readFileSync(
+    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
+    "utf8",
+  );
+
+  const navBlock = shellSource.match(
+    /data-testid="platform-screen-nav"[\s\S]*?<HeaderKpiStripComponent/,
+  )?.[0] ?? "";
+  const controlsBlock = shellSource.match(
+    /data-testid="platform-header-controls"[\s\S]*?<HeaderAccountStripComponent/,
+  )?.[0] ?? "";
+  const kpiSurfaceBlock = kpiSource.match(
+    /data-testid="platform-header-kpis"[\s\S]*?items\.map/,
+  )?.[0] ?? "";
+
+  assert.match(shellSource, /useElementSize/);
+  assert.match(shellSource, /const \[headerRef, headerSize\] = useElementSize\(\)/);
+  assert.match(shellSource, /const headerEffectiveWidth = headerSize\.width \|\| headerWidth/);
+  assert.match(shellSource, /"minmax\(0, max-content\) minmax\(0, max-content\) minmax\(0, 1fr\) minmax\(0, max-content\)"/);
+  assert.doesNotMatch(shellSource, /headerShowKpis \? "minmax/);
+  assert.match(shellSource, /justifyContent:\s*"stretch"/);
+  assert.match(shellSource, /headerUltraTight/);
+  assert.match(shellSource, /const headerCompactStatus =/);
+  assert.match(shellSource, /const headerShowKpis = !isPhone/);
+  assert.match(shellSource, /const headerKpiMaxItems =/);
+  assert.match(shellSource, /headerEffectiveWidth >= 1500/);
+  assert.match(shellSource, /headerEffectiveWidth >= 1320[\s\S]*\? 5/);
+  assert.match(shellSource, /headerEffectiveWidth >= 1120[\s\S]*\? 4/);
+  assert.match(shellSource, /const headerAccountMinimal =/);
+  assert.match(shellSource, /minimal=\{headerAccountMinimal\}/);
+  assert.match(shellSource, /headerShowKpis \? \(/);
+  assert.match(shellSource, /maxItems=\{headerKpiMaxItems\}/);
+  assert.doesNotMatch(shellSource, /headerEffectiveWidth >= 1620/);
+  assert.doesNotMatch(shellSource, /headerUltraTight \? null : \(\s*<HeaderAccountStripComponent/);
+  assert.match(navBlock, /flexWrap:\s*"nowrap"/);
+  assert.match(navBlock, /maxWidth:\s*"100%"/);
+  assert.match(navBlock, /minWidth:\s*0/);
+  assert.match(navBlock, /overflow:\s*"hidden"/);
+  assert.doesNotMatch(navBlock, /overflowX:\s*"auto"/);
+  assert.match(controlsBlock, /flexWrap:\s*"nowrap"/);
+  assert.match(controlsBlock, /maxWidth:\s*"100%"/);
+  assert.match(controlsBlock, /minWidth:\s*0/);
+  assert.match(controlsBlock, /overflow:\s*"hidden"/);
+  assert.doesNotMatch(controlsBlock, /overflowX:\s*"auto"/);
+
+  assert.match(accountSource, /background:\s*"transparent"/);
+  assert.match(accountSource, /border:\s*"none"/);
+  assert.match(accountSource, /width:\s*minimal \? "auto" : "max-content"/);
+  assert.match(accountSource, /minimal = false/);
+  assert.match(accountSource, /!minimal && !\(compact && metric\.shortLabel === "Cash"\)/);
+  assert.doesNotMatch(accountSource, /width:\s*dense \? dim\(250\)/);
+  assert.match(kpiSurfaceBlock, /background:\s*"transparent"/);
+  assert.match(kpiSurfaceBlock, /border:\s*"none"/);
+  assert.match(kpiSurfaceBlock, /justifyContent:\s*"flex-start"/);
+  assert.match(kpiSurfaceBlock, /width:\s*"max-content"/);
+  assert.match(kpiSource, /maxItems = null/);
+  assert.match(kpiSource, /HEADER_KPI_CONFIG\.slice\(0, Math\.max\(1, maxItems\)\)/);
+  assert.match(kpiSource, /\{ symbol: "SPY", label: "S&P 500" \}/);
+  assert.match(kpiSource, /\{ symbol: "QQQ", label: "Nasdaq 100" \}/);
+  assert.match(kpiSource, /\{displayPriceLabel\}/);
+  assert.match(kpiSource, /flex:\s*"0 0 max-content"/);
+  assert.doesNotMatch(kpiSource, /flex:\s*"1 1 0"/);
+  assert.match(kpiSource, /\{symbol\}\s*<\/span>/);
+  assert.doesNotMatch(kpiSource, /\{label\}\s*<\/span>/);
+  assert.doesNotMatch(kpiSource, /MicroSparkline/);
+
+  assert.match(statusSource, /data-testid="header-ibkr-line-usage"/);
+  assert.match(statusSource, /Market data lines/);
+  assert.match(statusSource, /<IbkrPingWavelength connection=\{connection\}/);
+  assert.doesNotMatch(statusSource, /compressed \? null : \(\s*<IbkrPingWavelength/);
+  assert.doesNotMatch(statusSource, />\s*\{marketClock\.timeLabel\}\s*<\/span>/);
+  assert.doesNotMatch(statusSource, />Market<\/span>/);
+  assert.match(broadcastSource, /overflowX:\s*"hidden"/);
 });
 
 test("Market phone layout uses the app-frame activity sheet instead of the old panel", () => {
@@ -409,6 +531,65 @@ test("Flow page premium distribution widgets use Polygon summary endpoint", () =
   assert.doesNotMatch(source, /useGetFlowPremiumDistribution[\s\S]*listFlowEventsRequest/);
 });
 
+test("Flow phone tape cards stay compact and omit redundant row text", () => {
+  const source = readFileSync(
+    new URL("../../screens/FlowScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const mobileCardSource = source.match(
+    /const renderFlowMobileCard = \(event, index = 0\) => \{[\s\S]*?\n\s*\};\s*\n\s*const flowScannerStatusProps/,
+  )?.[0];
+
+  assert.ok(mobileCardSource, "mobile Flow card renderer must be present");
+  assert.match(mobileCardSource, /data-mobile-density="compact"/);
+  assert.match(mobileCardSource, /data-testid="flow-mobile-card-primary"/);
+  assert.match(mobileCardSource, /data-testid="flow-mobile-card-compact-meta"/);
+  assert.match(mobileCardSource, /renderTapeCell\("actions", event\)/);
+  assert.match(mobileCardSource, /overflowX:\s*"auto"/);
+  assert.match(
+    mobileCardSource,
+    /event\.side === "BUY" \? "B" : event\.side === "SELL" \? "S" : "M"/,
+  );
+  assert.match(
+    mobileCardSource,
+    /event\.type === "SWEEP" \? "SWP" : event\.type === "BLOCK" \? "BLK" : event\.type/,
+  );
+  assert.doesNotMatch(mobileCardSource, /event\.sourceLabel/);
+  assert.doesNotMatch(mobileCardSource, /formatFlowAppTime/);
+  assert.doesNotMatch(mobileCardSource, /appTimeZoneLabel/);
+  assert.doesNotMatch(mobileCardSource, /<Badge/);
+  assert.doesNotMatch(mobileCardSource, /data-testid="flow-mobile-fill-spread"/);
+  assert.doesNotMatch(mobileCardSource, /Bid\/Ask|Sprd|VOL\/OI|Pinned|\bBULL\b|\bBEAR\b|\bNEUTRAL\b/);
+  assert.doesNotMatch(mobileCardSource, />\s*Size\s*\{/);
+  assert.doesNotMatch(mobileCardSource, />\s*OI\s*\{/);
+  assert.doesNotMatch(mobileCardSource, />\s*Score\s*\{/);
+});
+
+test("Flow phone toolbar and tape header use icon-first compact controls", () => {
+  const source = readFileSync(
+    new URL("../../screens/FlowScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /SlidersHorizontal/);
+  assert.match(source, /Calendar/);
+  assert.match(source, /Clock/);
+  assert.match(source, /DollarSign/);
+  assert.match(source, /Hash/);
+  assert.match(source, /Tag/);
+  assert.match(source, /\{!isMobileFlowLayout \? "Filters" : null\}/);
+  assert.match(source, /\{!isMobileFlowLayout \? "Columns" : null\}/);
+  assert.match(source, /livePaused \? <Play size=\{14\} \/> : <Pause size=\{14\} \/>/);
+  assert.match(source, /\{!isMobileFlowLayout \? \(livePaused \? "Resume" : "Pause"\) : null\}/);
+  assert.match(source, /data-testid="flow-mobile-tape-summary"/);
+  assert.match(source, /\["premium", "Premium", DollarSign\]/);
+  assert.doesNotMatch(source, /\["premium", "Prem"\]/);
+  assert.match(source, /aria-label=\{`Sort Flow tape by \$\{label\}`\}/);
+  assert.match(source, /<Icon size=\{13\} \/>/);
+  assert.match(source, /\{isMobileFlowLayout \? "×" : "Clear"\}/);
+  assert.match(source, /\{isMobileFlowLayout \? flowFilterSymbol : `Symbol: \$\{flowFilterSymbol\}`\}/);
+});
+
 test("client flow scanner keeps rotating after failed symbol batches", () => {
   const source = readFileSync(
     new URL("./useLiveMarketFlow.js", import.meta.url),
@@ -458,7 +639,7 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
   assert.doesNotMatch(platformAppSource, /broadFlowActiveSymbols/);
 });
 
-test("Broad scanner owns Flow and resumes the header flow lane after startup", () => {
+test("Broad scanner owns Flow across the visible app after startup", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const schedulerSource = readFileSync(
     new URL("./appWorkScheduler.js", import.meta.url),
@@ -487,13 +668,15 @@ test("Broad scanner owns Flow and resumes the header flow lane after startup", (
   assert.ok(flowRuntimeProp, "PlatformApp must pass flowRuntimeEnabled");
   assert.match(flowRuntimeProp, /workSchedule\.streams\.sharedFlowRuntime/);
   assert.match(schedulerSource, /const firstScreenReady = screenWarmupPhase !== "initial"/);
-  assert.match(schedulerSource, /backgroundResumeReady = false/);
-  assert.match(schedulerSource, /const broadFlowAggregateReaderAllowed = Boolean/);
-  assert.match(schedulerSource, /backgroundResumeReady && memoryAllowsForeground/);
-  assert.match(schedulerSource, /flow \|\| broadFlowAggregateReaderAllowed/);
+  assert.doesNotMatch(schedulerSource, /broadFlowAggregateReaderAllowed/);
+  assert.doesNotMatch(schedulerSource, /backgroundResumeReady && memoryAllowsForeground/);
+  assert.match(
+    schedulerSource,
+    /const broadFlowAllowed = Boolean\(sessionReady && visible && firstScreenReady\)/,
+  );
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);
-  assert.match(source, /backgroundResumeReady\.broadFlow/);
+  assert.doesNotMatch(source, /backgroundResumeReady\.broadFlow/);
   assert.match(apiIndexSource, /startOptionsFlowScanner\(\)/);
   assert.match(apiPlatformSource, /const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv\([\s\S]*"OPTIONS_FLOW_SCANNER_ALWAYS_ON"[\s\S]*true/);
   assert.doesNotMatch(source, /flowScanRuntimeEnabled/);
@@ -585,6 +768,48 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
     sparklineSymbolsBlock ?? "",
     /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? INDICES\.map/,
   );
+});
+
+test("visible watchlist and open position symbols join bounded priority sparkline hydration", () => {
+  const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const providerSource = readFileSync(
+    new URL("./MarketDataSubscriptionProvider.jsx", import.meta.url),
+    "utf8",
+  );
+  const runtimeLayerSource = readFileSync(
+    new URL("./PlatformRuntimeLayer.jsx", import.meta.url),
+    "utf8",
+  );
+  const runtimeSymbolBlock = source.match(
+    /const runtimeQuoteSymbols = useMemo\([\s\S]*?const runtimeStreamedAggregateSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
+  const requestedSparklineBlock = providerSource.match(
+    /const requestedSparklineSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
+  const prioritySparklineBlock = source.match(
+    /const prioritySparklineSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
+
+  assert.match(source, /const OPEN_POSITION_MARKET_DATA_LIMIT = 16;/);
+  assert.match(source, /const resolveOpenPositionMarketDataSymbol/);
+  assert.match(source, /position\?\.marketDataSymbol/);
+  assert.match(source, /position\?\.optionContract\?\.underlying/);
+  assert.match(source, /openPositionMarketDataWeight\(right\)/);
+  assert.match(source, /symbols\.length >= OPEN_POSITION_MARKET_DATA_LIMIT/);
+  assert.match(runtimeSymbolBlock ?? "", /quoteSymbols, \.\.\.openPositionMarketDataSymbols/);
+  assert.match(runtimeSymbolBlock ?? "", /sparklineSymbols, \.\.\.openPositionMarketDataSymbols/);
+  assert.match(runtimeSymbolBlock ?? "", /streamedQuoteSymbols, \.\.\.openPositionMarketDataSymbols/);
+  assert.doesNotMatch(
+    runtimeSymbolBlock ?? "",
+    /streamedAggregateSymbols, \.\.\.openPositionMarketDataSymbols/,
+  );
+  assert.match(prioritySparklineBlock ?? "", /visibleWatchlistMarketDataSymbols/);
+  assert.match(prioritySparklineBlock ?? "", /openPositionMarketDataSymbols/);
+  assert.match(source, /prioritySparklineSymbols=\{prioritySparklineSymbols\}/);
+  assert.match(runtimeLayerSource, /prioritySparklineSymbols = \[\]/);
+  assert.match(providerSource, /prioritySparklineSymbols = \[\]/);
+  assert.match(requestedSparklineBlock ?? "", /lowPriorityHistoryEnabled \? sparklineSymbols : \[\]/);
+  assert.match(requestedSparklineBlock ?? "", /\.\.\.prioritySparklineSymbols/);
 });
 
 test("signal monitor display refreshes separately from evaluator cadence", () => {
@@ -811,6 +1036,53 @@ test("market data subscription provider does not fetch quote snapshots while hid
   assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(pageVisible && quoteSymbols\.length > 0\)/);
 });
 
+test("market sparklines render the reduced high-detail point budget", () => {
+  const source = readFileSync(
+    new URL("./MarketDataSubscriptionProvider.jsx", import.meta.url),
+    "utf8",
+  );
+  const configSource = readFileSync(
+    new URL("./sparklineConfig.js", import.meta.url),
+    "utf8",
+  );
+  const watchlistSource = readFileSync(
+    new URL("./PlatformWatchlist.jsx", import.meta.url),
+    "utf8",
+  );
+  const sparklineQuery = source.match(
+    /const sparklineQuery = useQuery\(\{[\s\S]*?\n  \}\);/,
+  )?.[0];
+
+  assert.match(source, /const SPARKLINE_HISTORY_TIMEFRAME = "1m";/);
+  assert.match(source, /const SPARKLINE_HISTORY_LIMIT = 720;/);
+  assert.match(configSource, /export const SPARKLINE_RENDER_POINT_LIMIT = 40;/);
+  assert.match(configSource, /export const TABLE_SPARKLINE_WIDTH = 58;/);
+  assert.match(configSource, /export const TABLE_SPARKLINE_HEIGHT = 16;/);
+  assert.match(configSource, /export const TABLE_SPARKLINE_COMPACT_WIDTH = 44;/);
+  assert.match(configSource, /export const TABLE_SPARKLINE_COMPACT_HEIGHT = 12;/);
+  assert.match(configSource, /export const buildDetailedFallbackSparklineData = /);
+  assert.match(source, /SPARKLINE_RENDER_POINT_LIMIT/);
+  assert.match(watchlistSource, /buildDetailedFallbackSparklineData/);
+  assert.match(watchlistSource, /width=\{TABLE_SPARKLINE_WIDTH\}/);
+  assert.match(watchlistSource, /height=\{TABLE_SPARKLINE_HEIGHT\}/);
+  assert.match(watchlistSource, /width=\{TABLE_SPARKLINE_COMPACT_WIDTH\}/);
+  assert.match(watchlistSource, /height=\{TABLE_SPARKLINE_COMPACT_HEIGHT\}/);
+  assert.doesNotMatch(watchlistSource, /width=\{92\}/);
+  assert.doesNotMatch(watchlistSource, /height=\{22\}/);
+  assert.doesNotMatch(watchlistSource, /Math\.sin|Math\.cos/);
+  assert.match(source, /const thinBarsForSparkline = /);
+  assert.match(sparklineQuery ?? "", /SPARKLINE_HISTORY_TIMEFRAME/);
+  assert.match(sparklineQuery ?? "", /SPARKLINE_HISTORY_LIMIT/);
+  assert.match(sparklineQuery ?? "", /SPARKLINE_RENDER_POINT_LIMIT/);
+  assert.match(
+    sparklineQuery ?? "",
+    /thinBarsForSparkline\(result\.value\.bars \|\| \[\]\)/,
+  );
+  assert.doesNotMatch(sparklineQuery ?? "", /timeframe:\s*"15m"/);
+  assert.doesNotMatch(sparklineQuery ?? "", /limit:\s*48/);
+  assert.doesNotMatch(watchlistSource, /const pointCount = 32/);
+});
+
 test("operational pages defer noncritical presentation work after first paint", () => {
   const marketSource = readFileSync(
     new URL("../../screens/MarketScreen.jsx", import.meta.url),
@@ -861,9 +1133,9 @@ test("operational pages defer noncritical presentation work after first paint", 
   assert.match(marketSource, /secondaryPanelsReady \? \(\s*<MarketActivityPanelContainer/);
   assert.match(marketSource, /const LazyMarketActivityPanel = lazyWithRetry/);
   assert.match(marketSource, /<CardTitle>Market Activity<\/CardTitle>/);
-  assert.match(platformAppSource, /const BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS = 1_500/);
-  assert.match(platformAppSource, /backgroundResumeReady\.broadFlow/);
-  assert.match(platformAppSource, /broadFlowStartupDelayMs=\{0\}/);
+  assert.doesNotMatch(platformAppSource, /BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS/);
+  assert.doesNotMatch(platformAppSource, /backgroundResumeReady\.broadFlow/);
+  assert.doesNotMatch(platformAppSource, /broadFlowStartupDelayMs=\{0\}/);
 });
 
 test("Trade first render chunk lazy-loads noncritical panels", () => {

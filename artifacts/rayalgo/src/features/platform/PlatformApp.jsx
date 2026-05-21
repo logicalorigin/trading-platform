@@ -149,21 +149,21 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 const FONT_CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{width:100%;height:100%;overflow:hidden}
-body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+body,button,input,select,textarea{font-family:var(--ra-font-sans)}
 ::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-thumb{background:#2F2E35;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#3A3940}
+::-webkit-scrollbar-thumb{background:var(--ra-border-default);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--ra-surface-4)}
 .ra-scrollbar-hidden{scrollbar-width:none;-ms-overflow-style:none}
 .ra-scrollbar-hidden::-webkit-scrollbar{display:none}
 ::-webkit-scrollbar-track{background:transparent}
-input[type=range]{accent-color:#E08F76}
+input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes toastSlideIn{from{opacity:0;transform:translateX(20px) scale(0.96)}to{opacity:1;transform:translateX(0) scale(1)}}
 @keyframes toastSlideOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(20px)}}
-@keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 rgba(217,168,100,0.6)}50%{box-shadow:0 0 0 4px rgba(217,168,100,0)}}
-@keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(215,116,112,0.6)}50%{box-shadow:0 0 0 4px rgba(215,116,112,0)}}
+@keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-status-warn) 60%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--ra-color-status-warn) 0%,transparent)}}
+@keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-pnl-negative) 60%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--ra-color-pnl-negative) 0%,transparent)}}
 @keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
 @keyframes premiumFlowPulse{0%,100%{opacity:0.38;transform:scale(0.82)}50%{opacity:1;transform:scale(1)}}
-@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 rgba(217,168,100,0.28)}50%{box-shadow:0 0 0 3px rgba(217,168,100,0)}}
+@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-status-warn) 28%,transparent)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--ra-color-status-warn) 0%,transparent)}}
 @keyframes headerBroadcastScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-ibkr-wave] *{animation:none!important}}
@@ -181,10 +181,10 @@ const OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS = 120;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
-const BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS = 1_500;
 const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 3_000;
 const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
+const OPEN_POSITION_MARKET_DATA_LIMIT = 16;
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -221,9 +221,34 @@ const EMPTY_SCREEN_READINESS = {
 
 const EMPTY_BACKGROUND_RESUME_READY = {
   screen: null,
-  broadFlow: false,
   signalDisplay: false,
   signalMatrix: false,
+};
+
+const resolveOpenPositionMarketDataSymbol = (position) => {
+  const normalized = normalizeTickerSymbol(
+    position?.marketDataSymbol ||
+      position?.optionContract?.underlying ||
+      position?.underlyingMarket?.symbol ||
+      position?.symbol,
+  );
+  return normalized && !normalized.startsWith("TWSOPT:") ? normalized : "";
+};
+
+const openPositionMarketDataWeight = (position) => {
+  const marketValue = Math.abs(Number(position?.marketValue));
+  if (Number.isFinite(marketValue)) return marketValue;
+
+  const pnl = Math.abs(Number(position?.unrealizedPnl));
+  if (Number.isFinite(pnl)) return pnl;
+
+  const quantity = Math.abs(Number(position?.quantity));
+  return Number.isFinite(quantity) ? quantity : 0;
+};
+
+const isOpenMarketDataPosition = (position) => {
+  const quantity = Number(position?.quantity);
+  return !Number.isFinite(quantity) || Math.abs(quantity) > 1e-9;
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -551,24 +576,6 @@ export default function PlatformApp() {
   const activeScreenBackgroundAllowed = Boolean(
     activeScreenReadiness.backgroundAllowed,
   );
-  useEffect(() => {
-    if (!pageVisible || !activeScreenCriticalReady) {
-      updateBackgroundResumeReady("broadFlow", false);
-      return undefined;
-    }
-
-    const timer = window.setTimeout(
-      () => updateBackgroundResumeReady("broadFlow", true),
-      flowScreenActive ? 0 : BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [
-    activeScreenCriticalReady,
-    flowScreenActive,
-    pageVisible,
-    screen,
-    updateBackgroundResumeReady,
-  ]);
   useEffect(() => {
     if (!pageVisible || !activeScreenCriticalReady) {
       updateBackgroundResumeReady("signalDisplay", false);
@@ -1435,6 +1442,34 @@ export default function PlatformApp() {
       },
     },
   );
+  const openPositionMarketDataSymbols = useMemo(() => {
+    if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
+      return [];
+    }
+
+    const symbols = [];
+    const seen = new Set();
+    [...(positionAlertsQuery.data?.positions || [])]
+      .filter(isOpenMarketDataPosition)
+      .sort(
+        (left, right) =>
+          openPositionMarketDataWeight(right) -
+          openPositionMarketDataWeight(left),
+      )
+      .forEach((position) => {
+        if (symbols.length >= OPEN_POSITION_MARKET_DATA_LIMIT) return;
+        const symbol = resolveOpenPositionMarketDataSymbol(position);
+        if (!symbol || seen.has(symbol)) return;
+        seen.add(symbol);
+        symbols.push(symbol);
+      });
+    return symbols;
+  }, [
+    brokerAuthenticated,
+    brokerConfigured,
+    positionAlertsQuery.data,
+    primaryAccountId,
+  ]);
   const alertingPositions = useMemo(() => {
     if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
       return [];
@@ -1571,13 +1606,8 @@ export default function PlatformApp() {
           signalMonitorProfile?.enabled && !signalMonitorProfileDegraded,
         ),
         tradingEnabled: Boolean(gatewayTradingReady),
-        backgroundResumeReady:
-          backgroundResumeReady.screen === screen &&
-          backgroundResumeReady.broadFlow,
       }),
     [
-      backgroundResumeReady.broadFlow,
-      backgroundResumeReady.screen,
       brokerConfigured,
       gatewayTradingReady,
       ibkrWorkPressure,
@@ -1877,16 +1907,25 @@ export default function PlatformApp() {
     [allWatchlistSymbolList],
   );
   const runtimeQuoteSymbols = useMemo(
-    () => [...new Set(quoteSymbols)],
-    [quoteSymbols],
+    () => [...new Set([...quoteSymbols, ...openPositionMarketDataSymbols])],
+    [openPositionMarketDataSymbols, quoteSymbols],
   );
   const runtimeSparklineSymbols = useMemo(
-    () => [...new Set(sparklineSymbols)],
-    [sparklineSymbols],
+    () => [...new Set([...sparklineSymbols, ...openPositionMarketDataSymbols])],
+    [openPositionMarketDataSymbols, sparklineSymbols],
+  );
+  const prioritySparklineSymbols = useMemo(
+    () => [
+      ...new Set([
+        ...visibleWatchlistMarketDataSymbols,
+        ...openPositionMarketDataSymbols,
+      ]),
+    ],
+    [openPositionMarketDataSymbols, visibleWatchlistMarketDataSymbols],
   );
   const runtimeStreamedQuoteSymbols = useMemo(
-    () => [...new Set(streamedQuoteSymbols)],
-    [streamedQuoteSymbols],
+    () => [...new Set([...streamedQuoteSymbols, ...openPositionMarketDataSymbols])],
+    [openPositionMarketDataSymbols, streamedQuoteSymbols],
   );
   const runtimeStreamedAggregateSymbols = useMemo(
     () => [...new Set(streamedAggregateSymbols)],
@@ -2397,6 +2436,7 @@ export default function PlatformApp() {
         activeWatchlistItems={activeWatchlist?.items}
         quoteSymbols={runtimeQuoteSymbols}
         sparklineSymbols={runtimeSparklineSymbols}
+        prioritySparklineSymbols={prioritySparklineSymbols}
         streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
         quoteStreamRuntimeEnabled={workSchedule.streams.watchlistQuoteStream}
@@ -2410,7 +2450,6 @@ export default function PlatformApp() {
           marketScreenActive || flowScreenActive ? 10_000 : 30_000
         }
         broadFlowRuntimeEnabled={workSchedule.streams.broadFlowRuntime}
-        broadFlowStartupDelayMs={0}
       >
         <PlatformShell
             activeScreen={screen}

@@ -136,3 +136,36 @@ test("warnings flag guarded changes without blocking them", () => {
     ["cap-increase", "scanner-expanded", "source-flow-universe", "capacity-drops"],
   );
 });
+
+test("lane preset and warning display copy uses limits language", () => {
+  for (const preset of LANE_PRESETS) {
+    assert.equal(/\bcap(s|acity)?\b/i.test(preset.description), false);
+  }
+
+  const warnings = buildLaneWarnings({
+    lane: {
+      laneId: "flow-scanner",
+      label: "Flow Scanner",
+      droppedSymbols: [{ symbol: "MSFT", reason: "capacity" }],
+    },
+    basePolicy: {
+      enabled: true,
+      sources: { "flow-universe": false },
+      manualSymbols: [],
+      maxSymbols: 500,
+    },
+    mergedPolicy: {
+      enabled: true,
+      sources: { "flow-universe": true },
+      manualSymbols: [],
+      maxSymbols: 1000,
+    },
+    defaultPolicy: {
+      maxSymbols: 500,
+    },
+  });
+
+  for (const warning of warnings) {
+    assert.equal(/\bcap(s|acity)?\b/i.test(warning.message), false);
+  }
+});

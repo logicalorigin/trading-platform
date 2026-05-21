@@ -277,13 +277,15 @@ function smallButton({ active = false, danger = false } = {}) {
 
 function inputStyle() {
   return {
-    border: `1px solid ${T.border}`,
+    minHeight: dim(30),
+    border: `1px solid ${T.borderLight}`,
     background: T.bg1,
     color: T.text,
-    borderRadius: dim(RADII.sm),
-    padding: sp("8px 10px"),
+    borderRadius: dim(RADII.xs),
+    padding: sp("5px 7px"),
     fontFamily: T.sans,
-    fontSize: fs(11),
+    fontSize: textSize("body"),
+    fontWeight: FONT_WEIGHTS.medium,
     minWidth: 0,
     width: "100%",
     outline: "none",
@@ -298,7 +300,7 @@ function labelStyle() {
     color: T.textDim,
     fontFamily: T.sans,
     fontSize: textSize("caption"),
-    fontWeight: FONT_WEIGHTS.regular,
+    fontWeight: FONT_WEIGHTS.medium,
     minWidth: 0,
   };
 }
@@ -397,7 +399,7 @@ function Panel({ title, action, children }) {
           marginBottom: sp(10),
         }}
       >
-        <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.label, letterSpacing: "-0.01em" }}>{title}</div>
+        <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.label, letterSpacing: 0 }}>{title}</div>
         {action}
       </div>
       {children}
@@ -484,11 +486,25 @@ function TextField({ label, value, onChange, placeholder = "" }) {
 
 function CheckboxField({ label, checked, onChange }) {
   return (
-    <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center", gap: sp(7) }}>
+    <label
+      style={{
+        ...labelStyle(),
+        minHeight: dim(30),
+        flexDirection: "row",
+        alignItems: "center",
+        gap: sp(7),
+        padding: sp("5px 7px"),
+        border: `1px solid ${T.borderLight}`,
+        borderRadius: dim(RADII.xs),
+        background: T.bg1,
+        color: T.textSec,
+      }}
+    >
       <input
         type="checkbox"
         checked={Boolean(checked)}
         onChange={(event) => onChange(event.target.checked)}
+        style={{ accentColor: T.accent }}
       />
       {label}
     </label>
@@ -1229,7 +1245,9 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const optionQuoteStreams = safeRecord(streams.optionQuoteStreams);
   const lineUsage = runtimeControl.lineUsage;
   const accountMonitor = lineUsage.accountMonitor || {};
+  const accountMonitorDetails = safeRecord(snapshot?.accountMonitor);
   const flowScanner = lineUsage.flowScanner || {};
+  const signalOptions = lineUsage.signalOptions || {};
   const automation = lineUsage.pools.automation || {};
   const pressure = lineUsage.pressure || {};
   const warmup = lineUsage.warmup || {};
@@ -1277,9 +1295,9 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             }
           />
           <StateRow label="Budget source" value={String(pressure.budgetSource || MISSING_VALUE)} />
-          <StateRow label="Line reserve" value={formatCount(budget.reserveLines)} />
+          <StateRow label="Execution buffer" value={formatCount(budget.reserveLines)} />
           <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? T.amber : T.green} />
-          <StateRow label="Bridge live cap" value={formatCount(bridge.lineBudget)} />
+          <StateRow label="Bridge line budget" value={formatCount(bridge.lineBudget)} />
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
           <StateRow
             label="Bridge pressure"
@@ -1295,15 +1313,32 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           />
         </div>
         <div>
-          <StateRow label="Flow scanner demand" value={`${formatCount(flowScanner.used)} / ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)}`} />
+          <StateRow
+            label="Flow scanner lines"
+            value={`${formatCount(flowScanner.used)} active · ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)} available`}
+          />
           {flowScanner.detail ? (
             <StateRow label="Flow scanner status" value={flowScanner.detail} />
           ) : null}
-          <StateRow label="Scanner effective cap" value={formatCount(flowScanner.effectiveCap)} />
-          <StateRow label="Account monitor" value={`${formatCount(accountMonitor.used)} / ${formatCount(accountMonitor.cap)}`} />
-          <StateRow label="Automation" value={`${formatCount(automation.used)} / ${formatCount(automation.cap)}`} />
-          <StateRow label="Convenience total" value={formatCount(allocation.convenienceLineCount ?? admission.convenienceLineCount)} />
-          <StateRow label="Convenience filler" value={formatCount(allocation.fillerLineCount ?? admission.fillerLineCount)} />
+          <StateRow
+            label="Signal quote health"
+            value={signalOptions.detail || MISSING_VALUE}
+            tone={Number(signalOptions.rejectedCount) > 0 ? T.amber : T.green}
+          />
+          <StateRow label="Scanner available lines" value={formatCount(flowScanner.effectiveCap)} />
+          <StateRow
+            label="Account covered"
+            value={`${formatCount(accountMonitor.covered ?? accountMonitor.used)} of ${formatCount(accountMonitor.needed ?? accountMonitor.used)}`}
+          />
+          <StateRow
+            label="Account deferred"
+            value={formatCount(accountMonitor.deferred ?? accountMonitorDetails.deferredLineCount ?? accountMonitorDetails.recentRejectedCount)}
+            tone={Number(accountMonitor.deferred ?? accountMonitorDetails.recentRejectedCount) > 0 ? T.amber : T.green}
+          />
+          <StateRow label="Automation lines" value={formatCount(automation.used)} />
+          <StateRow label="Elastic active" value={formatCount(allocation.elasticLineCount ?? allocation.convenienceLineCount ?? admission.convenienceLineCount)} />
+          <StateRow label="Elastic reclaimable" value={formatCount(allocation.reclaimableElasticLineCount ?? admission.reclaimableElasticLineCount)} />
+          <StateRow label="Elastic filler" value={formatCount(allocation.fillerLineCount ?? admission.fillerLineCount)} />
           <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />
@@ -1371,10 +1406,10 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             >
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{pool.label}</div>
               <div style={{ color: Number(pool.used) > Number(pool.effectiveCap ?? pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
-                {formatCount(pool.used)} / {formatCount(pool.effectiveCap ?? pool.cap)}
+                {formatCount(pool.used)} of {formatCount(pool.effectiveCap ?? pool.cap)}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
-                {pool.strict ? "hard cap" : "borrowable"}
+                {pool.elastic ? "elastic slack" : pool.strict ? "execution protected" : pool.dynamic ? "dynamic expansion" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
             </div>
@@ -2377,7 +2412,7 @@ function FlowScannerSettingsPanel() {
           onChange={(value) => updateConfig({ scope: value })}
           options={Object.values(FLOW_SCANNER_SCOPE)}
         />
-        <NumberField label="Max Symbols" value={config.maxSymbols} onChange={(value) => updateConfig({ maxSymbols: value })} {...FLOW_SCANNER_CONFIG_LIMITS.maxSymbols} />
+        <NumberField label="Symbol Limit" value={config.maxSymbols} onChange={(value) => updateConfig({ maxSymbols: value })} {...FLOW_SCANNER_CONFIG_LIMITS.maxSymbols} />
         <NumberField label="Batch Size" value={config.batchSize} onChange={(value) => updateConfig({ batchSize: value })} {...FLOW_SCANNER_CONFIG_LIMITS.batchSize} />
         <NumberField label="Concurrency" value={config.concurrency} onChange={(value) => updateConfig({ concurrency: value })} {...FLOW_SCANNER_CONFIG_LIMITS.concurrency} />
         <NumberField label="Interval Ms" value={config.intervalMs} onChange={(value) => updateConfig({ intervalMs: value })} {...FLOW_SCANNER_CONFIG_LIMITS.intervalMs} />
@@ -2455,7 +2490,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
             <SelectField label="Timeframe" value={draft.timeframe} onChange={(value) => monitor.patchDraft({ timeframe: value })} options={SIGNAL_TIMEFRAMES} />
             <SelectField label="Watchlist" value={draft.watchlistId || ""} onChange={(value) => monitor.patchDraft({ watchlistId: value || null })} options={watchlistOptions} />
             <NumberField label="Poll Seconds" value={draft.pollIntervalSeconds} {...SIGNAL_MONITOR_LIMITS.pollIntervalSeconds} onChange={(value) => monitor.patchDraft({ pollIntervalSeconds: value })} />
-            <NumberField label="Max Symbols" value={draft.maxSymbols} {...SIGNAL_MONITOR_LIMITS.maxSymbols} onChange={(value) => monitor.patchDraft({ maxSymbols: value })} />
+            <NumberField label="Symbol Limit" value={draft.maxSymbols} {...SIGNAL_MONITOR_LIMITS.maxSymbols} onChange={(value) => monitor.patchDraft({ maxSymbols: value })} />
             <NumberField label="Concurrency" value={draft.evaluationConcurrency} {...SIGNAL_MONITOR_LIMITS.evaluationConcurrency} onChange={(value) => monitor.patchDraft({ evaluationConcurrency: value })} />
             <NumberField label="Fresh Bars" value={draft.freshWindowBars} {...SIGNAL_MONITOR_LIMITS.freshWindowBars} onChange={(value) => monitor.patchDraft({ freshWindowBars: value })} />
           </div>
@@ -2463,7 +2498,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
       </Panel>
       <Panel title="Signal Monitor Status">
         <StateRow label="Environment" value={liveProfile?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
-        <StateRow label="Configured max" value={statusSnapshot.configuredMaxSymbols ?? MISSING_VALUE} />
+        <StateRow label="Configured symbols" value={statusSnapshot.configuredMaxSymbols ?? MISSING_VALUE} />
         <StateRow label="Resolved symbols" value={statusSnapshot.resolvedSymbols ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? T.amber : T.textSec} />
         <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.total} />
         <StateRow label="Pinned symbols" value={statusSnapshot.pinnedSymbols ?? MISSING_VALUE} />

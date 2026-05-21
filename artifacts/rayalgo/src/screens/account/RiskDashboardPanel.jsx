@@ -67,7 +67,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.medium,
           fontVariantNumeric: "tabular-nums",
-          letterSpacing: "-0.015em",
+          letterSpacing: 0,
           lineHeight: 1.1,
         }}
       >

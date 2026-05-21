@@ -20,7 +20,7 @@ test("canonicalizeStreamState accepts legacy stream vocabulary", () => {
 
 test("stream state helpers route every canonical state through semantic tokens", () => {
   assert.equal(STREAM_STATE_TOKEN.healthy, "--ra-stream-healthy");
-  assert.equal(STREAM_STATE_LABEL["capacity-limited"], "CAPACITY");
+  assert.equal(STREAM_STATE_LABEL["capacity-limited"], "LIMITED");
   assert.equal(streamStateTokenVar("reconnect_needed"), "var(--ra-stream-reconnecting)");
   assert.equal(
     streamStateBackgroundVar("stale_stream"),

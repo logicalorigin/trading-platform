@@ -48,6 +48,8 @@ export type OptionQuoteSnapshotPayload = {
 export type BridgeOptionQuoteStreamDiagnostics = {
   activeConsumerCount: number;
   unionProviderContractIdCount: number;
+  requestedProviderContractIdCount: number;
+  nonLiveProviderContractIdCount: number;
   cachedQuoteCount: number;
   eventCount: number;
   reconnectCount: number;
@@ -255,6 +257,14 @@ function getDesiredProviderContractIds(): string[] {
   );
 }
 
+function getRequestedProviderContractIds(): string[] {
+  return normalizeProviderContractIds(
+    Array.from(subscribers.values()).flatMap((subscriber) =>
+      Array.from(subscriber.providerContractIds),
+    ),
+  );
+}
+
 function addApiLatency(
   quote: QuoteSnapshot,
   timestampKey: "apiServerReceivedAt" | "apiServerEmittedAt",
@@ -330,6 +340,52 @@ function shouldPromoteQuote(
   );
 }
 
+function positiveNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
+}
+
+function midpoint(bid: unknown, ask: unknown): number | null {
+  const numericBid = positiveNumber(bid);
+  const numericAsk = positiveNumber(ask);
+  return numericBid !== null && numericAsk !== null
+    ? (numericBid + numericAsk) / 2
+    : null;
+}
+
+function mergeQuoteForCache(
+  quote: QuoteSnapshot,
+  current: QuoteSnapshot | undefined,
+  providerContractId: string,
+): QuoteSnapshot {
+  const incomingBid = positiveNumber(quote.bid);
+  const incomingAsk = positiveNumber(quote.ask);
+  const currentBid = positiveNumber(current?.bid);
+  const currentAsk = positiveNumber(current?.ask);
+  const incomingHasUsablePrice =
+    positiveNumber(quote.price) !== null ||
+    incomingBid !== null ||
+    incomingAsk !== null;
+  return {
+    ...current,
+    ...quote,
+    providerContractId,
+    bid: incomingBid ?? currentBid ?? quote.bid,
+    ask: incomingAsk ?? currentAsk ?? quote.ask,
+    price:
+      positiveNumber(quote.price) ??
+      midpoint(incomingBid, incomingAsk) ??
+      positiveNumber(current?.price) ??
+      midpoint(currentBid, currentAsk) ??
+      quote.price,
+    change: incomingHasUsablePrice ? quote.change : current?.change ?? quote.change,
+    changePercent: incomingHasUsablePrice
+      ? quote.changePercent
+      : current?.changePercent ?? quote.changePercent,
+  };
+}
+
 function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
   const providerContractId = quote.providerContractId?.trim?.() || "";
   if (!providerContractId) {
@@ -343,10 +399,7 @@ function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
   }
 
   const cached = addApiLatency(
-    {
-      ...quote,
-      providerContractId,
-    },
+    mergeQuoteForCache(quote, current, providerContractId),
     "apiServerReceivedAt",
     receivedAt,
   );
@@ -617,9 +670,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const owner =
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
+  const isLiveQuoteSnapshotIntent =
+    intent === "flow-scanner-live" || intent === "account-monitor-live";
   const bridgeWorkCategory: BridgeWorkCategory =
-    intent === "flow-scanner-live" ? "quotes" : "options";
-  const bypassBridgeBackoff = intent === "flow-scanner-live";
+    isLiveQuoteSnapshotIntent ? "quotes" : "options";
+  const bypassBridgeBackoff = isLiveQuoteSnapshotIntent;
   const bridgeWorkOptions = bypassBridgeBackoff
     ? { bypassBackoff: true, recordFailure: false }
     : undefined;
@@ -677,9 +732,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   );
   const providerDebug = await getOptionQuoteProviderDebug();
   const cachedQuotes = getPayloadForProviderContractIds(
-    admittedProviderContractIds.length
-      ? admittedProviderContractIds
-      : normalizedProviderContractIds,
+    normalizedProviderContractIds,
     underlying,
   );
   const cachedQuotesByProviderContractId = new Map(
@@ -774,9 +827,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   }
 
   const payload = getPayloadForProviderContractIds(
-    admittedProviderContractIds.length
-      ? admittedProviderContractIds
-      : normalizedProviderContractIds,
+    normalizedProviderContractIds,
     underlying,
   );
   const returnedProviderContractIds = new Set(
@@ -849,22 +900,16 @@ export function subscribeBridgeOptionQuoteSnapshots(
     .filter((providerContractId): providerContractId is string =>
       Boolean(providerContractId),
     );
-  if (!admittedProviderContractIds.length) {
-    return () => {
-      releaseMarketDataLeases(owner, "unsubscribe");
-    };
-  }
-
   subscribers.set(subscriberId, {
     id: subscriberId,
     owner,
     underlying,
-    providerContractIds: new Set(admittedProviderContractIds),
+    providerContractIds: new Set(normalizedProviderContractIds),
     onSnapshot,
   });
 
   const cachedPayload = getPayloadForProviderContractIds(
-    admittedProviderContractIds,
+    normalizedProviderContractIds,
     underlying,
   );
   if (cachedPayload.quotes.length > 0) {
@@ -882,6 +927,7 @@ export function subscribeBridgeOptionQuoteSnapshots(
 
 export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStreamDiagnostics {
   const desiredProviderContractIds = getDesiredProviderContractIds();
+  const requestedProviderContractIds = getRequestedProviderContractIds();
   const now = nowProvider().getTime();
   const lastEventMs = lastEventAt?.getTime() ?? null;
   const lastSignalMs = lastSignalAt?.getTime() ?? null;
@@ -892,6 +938,11 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
   return {
     activeConsumerCount: subscribers.size,
     unionProviderContractIdCount: desiredProviderContractIds.length,
+    requestedProviderContractIdCount: requestedProviderContractIds.length,
+    nonLiveProviderContractIdCount: Math.max(
+      0,
+      requestedProviderContractIds.length - desiredProviderContractIds.length,
+    ),
     cachedQuoteCount: quoteCacheByProviderContractId.size,
     eventCount,
     reconnectCount,

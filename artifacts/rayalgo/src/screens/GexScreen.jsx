@@ -43,7 +43,7 @@ import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 
 const fetchGexData = async ({ ticker, signal }) => {
@@ -75,6 +75,18 @@ const fmtPercent = (value, digits = 1) =>
 
 const pct = (numerator, denominator) =>
   denominator > 0 ? numerator / denominator : 0;
+
+const rgba = (hex, alpha) => {
+  const normalized = String(hex).replace("#", "");
+  const value = Number.parseInt(normalized.length === 3
+    ? normalized.split("").map((char) => `${char}${char}`).join("")
+    : normalized, 16);
+  if (!Number.isFinite(value)) return hex;
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 
 const fieldStyle = {
   background: T.bg0,
@@ -144,7 +156,7 @@ const SectionTitle = ({ children, right }) => (
           fontFamily: T.sans,
           fontSize: textSize("displaySmall"),
           fontWeight: FONT_WEIGHTS.label,
-          letterSpacing: "-0.01em",
+          letterSpacing: 0,
         }}
       >
         {children}
@@ -305,7 +317,7 @@ const GexTooltip = ({ active, payload, spot }) => {
         color: T.text,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
-        boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
+        boxShadow: ELEVATION.md,
       }}
     >
       <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
@@ -451,7 +463,7 @@ const tooltipBoxStyle = {
   color: T.text,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
-  boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
+  boxShadow: ELEVATION.md,
 };
 
 const GammaPriceChart = ({ rows, spot }) => {
@@ -644,8 +656,8 @@ const HeatmapCard = ({ rows, spot }) => {
     if (!value || !model.maxAbs) return T.bg0;
     const alpha = Math.min(0.85, Math.max(0.08, Math.abs(value) / model.maxAbs));
     return value > 0
-      ? `rgba(79,178,134,${alpha})`
-      : `rgba(215,116,112,${alpha})`;
+      ? rgba(T.green, alpha)
+      : rgba(T.red, alpha);
   };
 
   return (

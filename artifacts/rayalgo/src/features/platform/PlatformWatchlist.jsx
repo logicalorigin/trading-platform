@@ -22,6 +22,14 @@ import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
 import { useSignalMonitorStateForSymbol } from "./signalMonitorStore";
+import {
+  SPARKLINE_RENDER_POINT_LIMIT,
+  TABLE_SPARKLINE_COMPACT_HEIGHT,
+  TABLE_SPARKLINE_COMPACT_WIDTH,
+  TABLE_SPARKLINE_HEIGHT,
+  TABLE_SPARKLINE_WIDTH,
+  buildDetailedFallbackSparklineData,
+} from "./sparklineConfig";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 import {
   WATCHLIST_SORT_MODE,
@@ -36,29 +44,6 @@ import { AppTooltip } from "@/components/ui/tooltip";
 
 // MicroSparkline + extractSparklineValues are exported from
 // components/platform/primitives.jsx — imported above.
-
-const buildFallbackSparklineData = (symbol, priceValue, previousPrice) => {
-  const pointCount = 32;
-  const start = isFiniteNumber(previousPrice) ? previousPrice : priceValue * 0.997;
-  const end = priceValue;
-  const span = Math.max(Math.abs(end - start), Math.abs(end) * 0.0015, 0.01);
-  const seed = String(symbol || "")
-    .split("")
-    .reduce((sum, char, index) => sum + char.charCodeAt(0) * (index + 1), 0);
-
-  return Array.from({ length: pointCount }, (_, index) => {
-    const t = index / (pointCount - 1);
-    const trend = start + (end - start) * t;
-    const wave =
-      Math.sin(t * Math.PI * 3 + seed * 0.17) * span * 0.18 +
-      Math.cos(t * Math.PI * 5 + seed * 0.11) * span * 0.08;
-
-    return {
-      i: index,
-      v: index === 0 ? start : index === pointCount - 1 ? end : trend + wave,
-    };
-  });
-};
 
 const resolveSparklineData = (symbol, snapshot, fallback, priceValue) => {
   if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
@@ -94,7 +79,12 @@ const resolveSparklineData = (symbol, snapshot, fallback, priceValue) => {
       ? priceValue / (1 + percent / 100)
       : priceValue * 0.997;
 
-  return buildFallbackSparklineData(symbol, priceValue, previousPrice);
+  return buildDetailedFallbackSparklineData({
+    symbol,
+    current: priceValue,
+    previous: previousPrice,
+    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
+  });
 };
 const WATCHLIST_SORT_OPTIONS = [
   { id: WATCHLIST_SORT_MODE.MANUAL, label: "Manual" },
@@ -292,7 +282,7 @@ const WatchlistRow = memo(
               fontFamily: T.sans,
               fontSize: fs(7),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "-0.005em",
+              letterSpacing: 0,
               lineHeight: 1,
               padding: sp("2px 5px"),
               borderRadius: dim(RADII.pill),
@@ -411,9 +401,9 @@ const WatchlistRow = memo(
             <span
               data-testid="watchlist-mobile-sparkline"
               style={{
-                width: dim(40),
-                height: dim(14),
-                minWidth: dim(40),
+                width: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
+                height: dim(TABLE_SPARKLINE_COMPACT_HEIGHT),
+                minWidth: dim(TABLE_SPARKLINE_COMPACT_WIDTH),
                 marginLeft: "auto",
                 overflow: "hidden",
                 flexShrink: 0,
@@ -422,8 +412,8 @@ const WatchlistRow = memo(
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
-                width={40}
-                height={14}
+                width={TABLE_SPARKLINE_COMPACT_WIDTH}
+                height={TABLE_SPARKLINE_COMPACT_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
               />
             </span>
@@ -547,7 +537,7 @@ const WatchlistRow = memo(
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
                   color: T.text,
-                  letterSpacing: "-0.005em",
+                  letterSpacing: 0,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -564,7 +554,7 @@ const WatchlistRow = memo(
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(44px,92px) auto",
+              gridTemplateColumns: "max-content auto",
               alignItems: "center",
               justifyContent: "end",
               gap: sp(4),
@@ -575,18 +565,17 @@ const WatchlistRow = memo(
             <span
               data-testid="watchlist-row-sparkline"
               style={{
-                width: "100%",
-                minWidth: dim(44),
-                maxWidth: dim(92),
-                height: dim(22),
+                width: dim(TABLE_SPARKLINE_WIDTH),
+                minWidth: dim(TABLE_SPARKLINE_WIDTH),
+                height: dim(TABLE_SPARKLINE_HEIGHT),
                 overflow: "hidden",
               }}
             >
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
-                width={92}
-                height={22}
+                width={TABLE_SPARKLINE_WIDTH}
+                height={TABLE_SPARKLINE_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
               />
             </span>
@@ -1003,7 +992,7 @@ export const Watchlist = ({
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "-0.005em",
+              letterSpacing: 0,
             }}
             className="ra-interactive"
           >
@@ -1067,7 +1056,7 @@ export const Watchlist = ({
                         fontWeight: FONT_WEIGHTS.medium,
                         fontFamily: T.sans,
                         color: T.text,
-                        letterSpacing: "-0.005em",
+                        letterSpacing: 0,
                       }}
                     >
                       {watchlist.name}
@@ -1422,7 +1411,7 @@ export const Watchlist = ({
                   fontSize: textSize("paragraphMuted"),
                   fontFamily: T.sans,
                   color: T.text,
-                  letterSpacing: "-0.005em",
+                  letterSpacing: 0,
                 }}
               />
               <AppTooltip content="Close add symbol"><button
@@ -1476,7 +1465,7 @@ export const Watchlist = ({
                           fontWeight: FONT_WEIGHTS.medium,
                           fontFamily: T.sans,
                           color: T.text,
-                          letterSpacing: "-0.005em",
+                          letterSpacing: 0,
                         }}
                       >
                         {result.ticker}
@@ -1778,7 +1767,7 @@ export const Watchlist = ({
                   color: T.text,
                   fontFamily: T.sans,
                   fontSize: textSize("paragraphMuted"),
-                  letterSpacing: "-0.005em",
+                  letterSpacing: 0,
                 }}
               />
             </div>
@@ -1813,7 +1802,7 @@ export const Watchlist = ({
                           fontFamily: T.sans,
                           fontSize: textSize("paragraphMuted"),
                           fontWeight: FONT_WEIGHTS.medium,
-                          letterSpacing: "-0.005em",
+                          letterSpacing: 0,
                         }}
                       >
                         {result.ticker}

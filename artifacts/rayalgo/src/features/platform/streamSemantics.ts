@@ -30,7 +30,7 @@ export const STREAM_STATE_LABEL: Record<StreamState, string> = {
   quiet: "QUIET",
   stale: "STALE",
   delayed: "DELAYED",
-  "capacity-limited": "CAPACITY",
+  "capacity-limited": "LIMITED",
   reconnecting: "RECONNECTING",
   checking: "CHECKING",
   "login-required": "LOGIN REQUIRED",

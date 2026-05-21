@@ -46,7 +46,13 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { DataUnavailableState, MicroSparkline } from "../../components/platform/primitives.jsx";
+import { useRuntimeTickerSnapshots } from "../platform/runtimeTickerStore";
+import {
+  SPARKLINE_RENDER_POINT_LIMIT,
+  buildDetailedFallbackSparklineData,
+} from "../platform/sparklineConfig";
+import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const compactOrderKeyPart = (value) => {
@@ -71,6 +77,84 @@ export const getTradeLiveOrderRowId = (order) => {
   ]
     .map(compactOrderKeyPart)
     .join("|");
+};
+
+const firstPositiveNumber = (...values) => {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return null;
+};
+
+const firstNumber = (...values) => {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+};
+
+const buildTradePositionFallbackSparklineData = (position, snapshot, symbol) => {
+  const current = firstPositiveNumber(snapshot?.price, position?.mark, position?.entry);
+  if (current == null) return [];
+
+  const percent = firstNumber(position?.pct, snapshot?.pct, snapshot?.changePercent);
+  const start =
+    percent != null && percent > -99
+      ? current / (1 + percent / 100)
+      : firstPositiveNumber(position?.entry) ?? current * 0.9975;
+
+  return buildDetailedFallbackSparklineData({
+    symbol,
+    current,
+    previous: start,
+    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
+  });
+};
+
+const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
+  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
+    return snapshot.sparkBars;
+  }
+  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
+    return snapshot.spark;
+  }
+  return buildTradePositionFallbackSparklineData(position, snapshot, symbol);
+};
+
+const OPEN_POSITION_GRID_TEMPLATE =
+  "72px 30px 72px 22px 44px 44px 40px 38px 18px";
+
+const TradePositionSparkline = ({ position, snapshotsBySymbol }) => {
+  const symbol = normalizeTickerSymbol(position?.ticker);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const data = resolveTradePositionSparklineData(snapshot, position, symbol);
+  if (data.length < 2) return null;
+
+  return (
+    <span
+      data-testid="trade-position-sparkline"
+      title={`${symbol} intraday trend`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        width: dim(34),
+        height: dim(11),
+        flexShrink: 0,
+        overflow: "hidden",
+      }}
+    >
+      <MicroSparkline
+        data={data}
+        positive={isFiniteNumber(position?.pct) ? position.pct >= 0 : null}
+        width={34}
+        height={11}
+        style={{ width: "100%", height: "100%" }}
+        ariaHidden
+      />
+    </span>
+  );
 };
 
 export const TradePositionsPanel = ({
@@ -242,6 +326,12 @@ export const TradePositionsPanel = ({
 
       return (positionsQuery.data?.positions || []).filter(isOpenPositionRow).map((position) => {
         const isOption = Boolean(position.optionContract);
+        const marketDataTicker =
+          normalizeTickerSymbol(
+            position.marketDataSymbol ||
+              position.optionContract?.underlying ||
+              position.symbol,
+          ) || position.symbol;
         const contract = isOption
           ? formatOptionContractLabel(position.optionContract, {
               includeSymbol: false,
@@ -253,7 +343,7 @@ export const TradePositionsPanel = ({
           _isLive: true,
           _id: position.id,
           _brokerPosition: position,
-          ticker: position.symbol,
+          ticker: marketDataTicker,
           side: position.quantity >= 0 ? "LONG" : "SHORT",
           contract,
           optionLoadContract: isOption
@@ -327,6 +417,18 @@ export const TradePositionsPanel = ({
     pos.positions,
     positionsQuery.data,
   ]);
+  const openPositionSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          openPositions
+            .map((position) => normalizeTickerSymbol(position.ticker))
+            .filter(Boolean),
+        ),
+      ),
+    [openPositions],
+  );
+  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(openPositionSymbols);
   const liveOrders = useMemo(
     () =>
       [...(ordersQuery.data?.orders || [])].sort((left, right) => {
@@ -994,10 +1096,9 @@ export const TradePositionsPanel = ({
             <>
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "34px 32px 78px 22px 48px 48px 44px 42px 18px",
-                  gap: sp(3),
+	                  display: "grid",
+	                  gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
+	                  gap: sp(3),
                   fontSize: textSize("caption"),
                   color: T.textMuted,
                   letterSpacing: "0.04em",
@@ -1032,11 +1133,10 @@ export const TradePositionsPanel = ({
                         });
                       }
                     }}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "34px 32px 78px 22px 48px 48px 44px 42px 18px",
-                      gap: sp(3),
+	                    style={{
+	                      display: "grid",
+	                      gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
+	                      gap: sp(3),
                       padding: sp("3px 4px"),
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
@@ -1055,9 +1155,31 @@ export const TradePositionsPanel = ({
                         : "transparent")
                     }
                   >
-                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
-                      {p.ticker}
-                    </span>
+	                    <span
+	                      style={{
+	                        minWidth: 0,
+	                        display: "inline-flex",
+	                        alignItems: "center",
+	                        gap: sp(4),
+	                        color: T.text,
+	                        fontWeight: FONT_WEIGHTS.regular,
+	                      }}
+	                    >
+	                      <TradePositionSparkline
+	                        position={p}
+	                        snapshotsBySymbol={tickerSnapshotsBySymbol}
+	                      />
+	                      <span
+	                        style={{
+	                          minWidth: 0,
+	                          overflow: "hidden",
+	                          textOverflow: "ellipsis",
+	                          whiteSpace: "nowrap",
+	                        }}
+	                      >
+	                        {p.ticker}
+	                      </span>
+	                    </span>
                     <span
                       style={{
                         color: p.side === "LONG" ? T.green : T.red,

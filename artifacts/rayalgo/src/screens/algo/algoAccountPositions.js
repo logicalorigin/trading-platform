@@ -169,6 +169,108 @@ const buildPositionId = (position, optionContract) =>
     .filter(Boolean)
     .join(":");
 
+const normalizeIdentity = (value) => String(value ?? "").trim();
+const normalizeSymbol = (value) => normalizeIdentity(value).toUpperCase();
+
+export const collectAlgoRuntimeProviderContractIds = (
+  positions = [],
+  symbolIndex = {},
+) =>
+  Array.from(
+    new Set(
+      (positions || [])
+        .map((position) => {
+          const symbol = normalizeSymbol(position?.symbol);
+          const indexed = asRecord(symbolIndex[symbol]);
+          const selectedContract = resolvePositionContract(
+            position,
+            indexed.candidate,
+          );
+          return optionProviderContractId(selectedContract);
+        })
+        .filter(Boolean),
+    ),
+  );
+
+const collectRuntimeSymbols = (positions = [], symbolIndex = {}) =>
+  Array.from(
+    new Set(
+      (positions || [])
+        .map((position) => {
+          const symbol = normalizeSymbol(position?.symbol);
+          const indexed = asRecord(symbolIndex[symbol]);
+          const selectedContract = resolvePositionContract(
+            position,
+            indexed.candidate,
+          );
+          return normalizeSymbol(
+            selectedContract.underlying ||
+              position?.symbol ||
+              indexed.candidate?.symbol,
+          );
+        })
+        .filter(Boolean),
+    ),
+  );
+
+const rowDeploymentIds = (row) => {
+  const attribution = Array.isArray(row?.sourceAttribution)
+    ? row.sourceAttribution
+    : [];
+  return Array.from(
+    new Set(
+      [
+        row?.deploymentId,
+        row?.sourceDeploymentId,
+        ...attribution.map((item) => asRecord(item).deploymentId),
+      ]
+        .map(normalizeIdentity)
+        .filter(Boolean),
+    ),
+  );
+};
+
+export const filterAccountPositionRowsForRuntimePositions = ({
+  rows = [],
+  positions = [],
+  symbolIndex = {},
+  deploymentId = null,
+} = {}) => {
+  const deploymentRows = filterAccountPositionRowsForDeployment({
+    rows,
+    deploymentId,
+  });
+  const runtimeProviderContractIds = new Set(
+    collectAlgoRuntimeProviderContractIds(positions, symbolIndex),
+  );
+  if (runtimeProviderContractIds.size) {
+    return deploymentRows.filter((row) =>
+      runtimeProviderContractIds.has(optionProviderContractId(row?.optionContract)),
+    );
+  }
+
+  const runtimeSymbols = new Set(collectRuntimeSymbols(positions, symbolIndex));
+  if (runtimeSymbols.size) {
+    return deploymentRows.filter((row) =>
+      runtimeSymbols.has(normalizeSymbol(row?.symbol)),
+    );
+  }
+
+  return deploymentRows;
+};
+
+export const filterAccountPositionRowsForDeployment = ({
+  rows = [],
+  deploymentId = null,
+} = {}) => {
+  const normalizedDeploymentId = normalizeIdentity(deploymentId);
+  return normalizedDeploymentId
+    ? (rows || []).filter((row) =>
+        rowDeploymentIds(row).includes(normalizedDeploymentId),
+      )
+    : rows || [];
+};
+
 export const buildAlgoAccountPositionRows = ({
   positions = [],
   symbolIndex = {},

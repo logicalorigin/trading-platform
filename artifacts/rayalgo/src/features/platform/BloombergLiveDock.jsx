@@ -279,25 +279,19 @@ const RoundIconButton = ({
         alignItems: "center",
         justifyContent: "center",
         background: active
-          ? "rgba(255,255,255,0.22)"
+          ? "color-mix(in srgb, var(--ra-text-primary) 22%, transparent)"
           : hovered
             ? prominent
-              ? "rgba(18, 24, 36, 0.92)"
-              : "rgba(16, 20, 30, 0.78)"
+              ? "color-mix(in srgb, var(--ra-surface-2) 92%, transparent)"
+              : "color-mix(in srgb, var(--ra-surface-1) 78%, transparent)"
             : prominent
-              ? "rgba(8, 11, 18, 0.82)"
-              : "rgba(8, 11, 18, 0.62)",
+              ? "color-mix(in srgb, var(--ra-surface-0) 82%, transparent)"
+              : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
         color: T.onAccent,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.45 : 1,
         backdropFilter: "blur(18px)",
-        boxShadow: hovered
-          ? prominent
-            ? "0 20px 34px rgba(0, 0, 0, 0.34)"
-            : "0 14px 28px rgba(0, 0, 0, 0.28)"
-          : prominent
-            ? "0 14px 30px rgba(0, 0, 0, 0.26)"
-            : "0 10px 24px rgba(0, 0, 0, 0.18)",
+        boxShadow: hovered ? ELEVATION.lg : ELEVATION.md,
         padding: 0,
         transform: pressed
           ? "translateY(1px) scale(0.96)"
@@ -394,15 +388,13 @@ const AudioControlButton = ({
           alignItems: "center",
           justifyContent: "center",
           background: hovered
-            ? "rgba(16, 20, 30, 0.78)"
-            : "rgba(8, 11, 18, 0.62)",
+            ? "color-mix(in srgb, var(--ra-surface-1) 78%, transparent)"
+            : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
           color: T.onAccent,
           cursor: "pointer",
           opacity: 1,
           backdropFilter: "blur(18px)",
-          boxShadow: hovered
-            ? "0 14px 28px rgba(0, 0, 0, 0.28)"
-            : "0 10px 24px rgba(0, 0, 0, 0.18)",
+          boxShadow: hovered ? ELEVATION.md : ELEVATION.sm,
           padding: 0,
           transform: pressed
             ? "translateY(1px) scale(0.96)"
@@ -446,9 +438,9 @@ const AudioControlButton = ({
           minHeight: dim(150),
           padding: sp("10px 8px"),
           borderRadius: dim(RADII.xl),
-          background: "rgba(8, 11, 18, 0.86)",
+          background: "color-mix(in srgb, var(--ra-surface-0) 86%, transparent)",
           backdropFilter: "blur(18px)",
-          boxShadow: "0 16px 36px rgba(0, 0, 0, 0.32)",
+          boxShadow: ELEVATION.lg,
           opacity: sliderVisible ? 1 : 0,
           transform: sliderVisible
             ? "translateY(0) scale(1)"
@@ -512,11 +504,10 @@ const MenuPanel = ({
       maxHeight: dim(176),
       padding: sp(8),
       borderRadius: dim(RADII.lg),
-      border: "1px solid rgba(148, 163, 184, 0.16)",
+      border: "1px solid color-mix(in srgb, var(--ra-text-secondary) 16%, transparent)",
       background:
-        "linear-gradient(180deg, rgba(8, 11, 18, 0.98), rgba(8, 11, 18, 0.94))",
-      boxShadow:
-        "0 24px 50px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.03)",
+        "linear-gradient(180deg, color-mix(in srgb, var(--ra-surface-0) 98%, transparent), color-mix(in srgb, var(--ra-surface-0) 94%, transparent))",
+      boxShadow: ELEVATION.lg,
       backdropFilter: "blur(18px)",
       display: "flex",
       flexDirection: "column",
@@ -549,7 +540,7 @@ const MenuDivider = () => (
   <div
     style={{
       height: 1,
-      background: "rgba(148, 163, 184, 0.14)",
+      background: "color-mix(in srgb, var(--ra-text-secondary) 14%, transparent)",
       margin: `${sp(4)} ${sp(2)}`,
     }}
   />
@@ -602,16 +593,14 @@ const MenuActionButton = ({
         background: active
           ? accent
             ? `${T.accent}1c`
-            : "rgba(255, 255, 255, 0.12)"
+            : "color-mix(in srgb, var(--ra-text-primary) 12%, transparent)"
           : hovered
-            ? "rgba(255, 255, 255, 0.08)"
-            : "rgba(255, 255, 255, 0.03)",
+            ? "color-mix(in srgb, var(--ra-text-primary) 8%, transparent)"
+            : "color-mix(in srgb, var(--ra-text-primary) 3%, transparent)",
         color: foregroundColor,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.55 : 1,
-        boxShadow: hovered || active
-          ? "0 14px 28px rgba(0, 0, 0, 0.24)"
-          : "0 8px 18px rgba(0, 0, 0, 0.14)",
+        boxShadow: hovered || active ? ELEVATION.md : ELEVATION.sm,
         transform: disabled
           ? "translateY(0)"
           : pressed
@@ -642,14 +631,14 @@ const MenuActionButton = ({
               background: active
                 ? accent
                   ? `${T.accent}24`
-                  : "rgba(255, 255, 255, 0.16)"
+                  : "color-mix(in srgb, var(--ra-text-primary) 16%, transparent)"
                 : hovered
-                  ? "rgba(255, 255, 255, 0.12)"
-                  : "rgba(255, 255, 255, 0.07)",
+                  ? "color-mix(in srgb, var(--ra-text-primary) 12%, transparent)"
+                  : "color-mix(in srgb, var(--ra-text-primary) 7%, transparent)",
               color: foregroundColor,
               flex: "0 0 auto",
               boxShadow: active || hovered
-                ? "0 10px 24px rgba(0, 0, 0, 0.24)"
+                ? "0 10px 24px color-mix(in srgb, var(--ra-surface-0) 24%, transparent)"
                 : "none",
             }}
           >
@@ -699,8 +688,8 @@ const MenuSpeedButton = ({
         background: active
           ? `${T.green}22`
           : hovered
-            ? "rgba(255, 255, 255, 0.05)"
-            : "rgba(255, 255, 255, 0.03)",
+            ? "color-mix(in srgb, var(--ra-text-primary) 5%, transparent)"
+            : "color-mix(in srgb, var(--ra-text-primary) 3%, transparent)",
         color: disabled ? T.textMuted : active ? T.green : T.textSec,
         fontSize: fs(8),
         fontFamily: T.sans,
@@ -2498,7 +2487,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
         display: "flex",
         flexDirection: "column",
         background: "transparent",
-        boxShadow: collapsed ? "none" : "0 28px 64px rgba(0, 0, 0, 0.48)",
+        boxShadow: collapsed ? "none" : ELEVATION.lg,
         overflow: "visible",
       }}
     >
@@ -2528,7 +2517,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 }
               : {
                   position: "relative",
-                  background: "#000",
+                  background: T.bg0,
                   aspectRatio: "16 / 9",
                   minHeight: dim(190),
                   borderRadius: dim(RADII.xl),
@@ -2547,13 +2536,13 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     width: 1,
                     height: 1,
                     display: "block",
-                    background: "#000",
+                    background: T.bg0,
                   }
                 : {
                     width: "100%",
                     height: "100%",
                     display: "block",
-                    background: "#000",
+                    background: T.bg0,
                   }
             }
           />
@@ -2571,7 +2560,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   gap: sp(8),
                   padding: sp("8px"),
                   background:
-                    "linear-gradient(180deg, rgba(8,11,18,0.88), rgba(8,11,18,0))",
+                    "linear-gradient(180deg, color-mix(in srgb, var(--ra-surface-0) 88%, transparent), color-mix(in srgb, var(--ra-surface-0) 0%, transparent))",
                   opacity: expandedChromeVisible ? 1 : 0,
                   transform: expandedChromeVisible
                     ? "translateY(0)"
@@ -2596,8 +2585,8 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       alignItems: "center",
                       gap: sp(6),
                       padding: sp("4px 7px"),
-                      border: `1px solid rgba(148, 163, 184, 0.22)`,
-                      background: "rgba(8, 11, 18, 0.68)",
+                      border: `1px solid color-mix(in srgb, var(--ra-text-secondary) 22%, transparent)`,
+                      background: "color-mix(in srgb, var(--ra-surface-0) 68%, transparent)",
                       backdropFilter: "blur(10px)",
                     }}
                   >
@@ -2631,8 +2620,8 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     <span
                       style={{
                         padding: sp("3px 6px"),
-                        border: `1px solid rgba(16,185,129,0.3)`,
-                        background: "rgba(8, 11, 18, 0.62)",
+                        border: `1px solid color-mix(in srgb, var(--ra-color-pnl-positive) 30%, transparent)`,
+                        background: "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
                         color: T.green,
                         fontSize: fs(7),
                         fontFamily: T.sans,
@@ -2745,7 +2734,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         style={{
                           padding: sp("4px 9px"),
                           borderRadius: dim(RADII.pill),
-                          background: "rgba(8, 11, 18, 0.72)",
+                          background: "color-mix(in srgb, var(--ra-surface-0) 72%, transparent)",
                           color: audioBlocked ? T.amber : T.red,
                           fontSize: fs(8),
                           fontFamily: T.sans,
@@ -2782,7 +2771,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   gap: sp(10),
                   padding: sp("34px 10px 10px"),
                   background:
-                    "linear-gradient(180deg, rgba(8,11,18,0), rgba(8,11,18,0.5) 34%, rgba(8,11,18,0.9))",
+                    "linear-gradient(180deg, color-mix(in srgb, var(--ra-surface-0) 0%, transparent), color-mix(in srgb, var(--ra-surface-0) 50%, transparent) 34%, color-mix(in srgb, var(--ra-surface-0) 90%, transparent))",
                   opacity: expandedChromeVisible ? 1 : 0,
                   transform: expandedChromeVisible
                     ? "translateY(0)"
@@ -2862,8 +2851,8 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         borderRadius: dim(RADII.pill),
                         border: "none",
                         background: atLiveEdge
-                          ? "rgba(16, 185, 129, 0.22)"
-                          : "rgba(8, 11, 18, 0.62)",
+                          ? "color-mix(in srgb, var(--ra-color-pnl-positive) 22%, transparent)"
+                          : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
                         color: atLiveEdge ? T.green : T.onAccent,
                         fontSize: fs(7),
                         fontFamily: T.sans,
@@ -2872,7 +2861,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         cursor: hasBufferedWindow ? "pointer" : "default",
                         opacity: hasBufferedWindow ? 1 : 0.45,
                         backdropFilter: "blur(18px)",
-                        boxShadow: "0 10px 24px rgba(0, 0, 0, 0.18)",
+                        boxShadow: ELEVATION.md,
                       }}
                     >
                       {atLiveEdge
@@ -3062,8 +3051,8 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 pointerEvents: "none",
                 background:
                   playerStatus === "error"
-                    ? "linear-gradient(180deg, rgba(127,29,29,0.25), rgba(8,11,18,0.55))"
-                    : "linear-gradient(180deg, rgba(8,11,18,0.16), rgba(8,11,18,0.36))",
+                    ? "linear-gradient(180deg, color-mix(in srgb, var(--ra-color-pnl-negative) 25%, transparent), color-mix(in srgb, var(--ra-surface-0) 55%, transparent))"
+                    : "linear-gradient(180deg, color-mix(in srgb, var(--ra-surface-0) 16%, transparent), color-mix(in srgb, var(--ra-surface-0) 36%, transparent))",
               }}
             >
               <div

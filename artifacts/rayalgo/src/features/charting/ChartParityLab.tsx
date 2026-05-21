@@ -48,7 +48,7 @@ const THEME = {
   accent: "#E08F76",
   accentDim: "#3F2A22",
   green: "#4FB286",
-  red: "#D77470",
+  red: "#EA5E5B",
   amber: "#D9A864",
   purple: "#A189CF",
   mono: FONT_CSS_VAR.data,

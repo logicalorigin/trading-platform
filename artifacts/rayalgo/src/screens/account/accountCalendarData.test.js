@@ -88,6 +88,26 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /onReadinessChange\?\.\(\{/);
 });
 
+test("account screen always renders equity-date positions below the equity curve", () => {
+  const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
+  const equityPanelIndex = source.indexOf("<EquityCurvePanel");
+  const inspectorIndex = source.indexOf("<PositionsAtDateInspector");
+  const positionsPanelIndex = source.indexOf("<PositionsPanel");
+  const positionsPanelBlock = source.match(
+    /testId="account-deferred-positions"[\s\S]*?<PositionsPanel[\s\S]*?\/>/,
+  )?.[0] ?? "";
+
+  assert.match(source, /className="ra-account-overview-cell ra-account-overview-equity"/);
+  assert.doesNotMatch(source, /activeEquityInspectionDate \? \(\s*<PositionsAtDateInspector/);
+  assert.ok(equityPanelIndex >= 0, "EquityCurvePanel must render on AccountScreen");
+  assert.ok(inspectorIndex > equityPanelIndex, "PositionsAtDateInspector must render after the equity curve");
+  assert.ok(positionsPanelIndex > inspectorIndex, "Current Positions must render after the equity-date inspector");
+  assert.doesNotMatch(positionsPanelBlock, /positionsAtDateQuery/);
+  assert.doesNotMatch(positionsPanelBlock, /activeEquityDate/);
+  assert.doesNotMatch(positionsPanelBlock, /pinnedEquityDate/);
+  assert.doesNotMatch(positionsPanelBlock, /onClearEquityPin/);
+});
+
 test("shadow account treemap empty state does not mention bridge streaming", () => {
   const accountSource = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
   const treemapSource = readFileSync(

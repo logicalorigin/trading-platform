@@ -2816,6 +2816,48 @@ async function upsertTickerReferenceCache(
   });
 }
 
+function rawString(source: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!source) {
+    return null;
+  }
+  for (const key of keys) {
+    const direct = source[key];
+    if (typeof direct === "string" && direct.trim()) {
+      return direct.trim();
+    }
+
+    const entry = Object.entries(source).find(
+      ([candidate]) => candidate.toLowerCase() === key.toLowerCase(),
+    );
+    if (typeof entry?.[1] === "string" && entry[1].trim()) {
+      return entry[1].trim();
+    }
+  }
+  return null;
+}
+
+function normalizeMarketDataSymbol(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text || /^twsopt:/i.test(text)) {
+    return "";
+  }
+  return normalizeSymbol(text).toUpperCase();
+}
+
+function accountPositionMarketDataSymbol(input: {
+  symbol?: unknown;
+  optionContract?: { underlying?: unknown } | null;
+  raw?: Record<string, unknown> | null;
+}): string {
+  return (
+    normalizeMarketDataSymbol(input.optionContract?.underlying) ||
+    normalizeMarketDataSymbol(
+      rawString(input.raw, ["underlyingSymbol", "underlying", "underlyingTicker"]),
+    ) ||
+    normalizeMarketDataSymbol(input.symbol)
+  );
+}
+
 export async function getAccountPositions(input: {
   accountId: string;
   assetClass?: string | null;
@@ -2883,6 +2925,7 @@ export async function getAccountPositions(input: {
     description: string;
     assetClass: string;
     optionContract: BrokerPositionSnapshot["optionContract"] | null;
+    marketDataSymbol: string;
     sector: string;
     quantity: number;
     averageCostAccumulator: number;
@@ -2914,6 +2957,7 @@ export async function getAccountPositions(input: {
               : position.symbol,
             assetClass: normalizeAssetClassLabel(position),
             optionContract: position.optionContract ?? null,
+            marketDataSymbol: accountPositionMarketDataSymbol(position),
             sector: sectorForSymbol(positionReferenceSymbol(position)),
             quantity: 0,
             averageCostAccumulator: 0,
@@ -2988,6 +3032,7 @@ export async function getAccountPositions(input: {
         description: row.description,
         assetClass: row.assetClass,
         optionContract: row.optionContract,
+        marketDataSymbol: row.marketDataSymbol,
         sector: row.sector,
         quantity: row.quantity,
         averageCost:
@@ -3054,6 +3099,7 @@ export async function getAccountPositions(input: {
             : position.symbol,
           assetClass: normalizeAssetClassLabel(position),
           optionContract: position.optionContract ?? null,
+          marketDataSymbol: accountPositionMarketDataSymbol(position),
           sector: sectorForSymbol(referenceSymbol),
           quantity: position.quantity,
           averageCost: position.averagePrice,
@@ -3277,6 +3323,7 @@ export async function getAccountPositionsAtDate(input: {
         symbol: row.symbol,
       }),
       optionContract: null,
+      marketDataSymbol: accountPositionMarketDataSymbol(row),
       sector: sectorForSymbol(row.symbol),
       quantity,
       averageCost,
@@ -4474,9 +4521,11 @@ export const __accountEquityHistoryInternalsForTests = {
 
 export const __accountPositionInternalsForTests = {
   aggregateBalanceRows,
+  accountPositionMarketDataSymbol,
   buildPositionMarketHydration,
   filterOpenBrokerPositions,
   isOpenBrokerPosition,
+  normalizeMarketDataSymbol,
   selectBalanceBoundaryRows,
   withAccountPositionLotsReadFallback,
 };

@@ -69,7 +69,7 @@ export const resolveFlowScannerProgress = ({
 
   const cycleLabel = `${scannedCount}/${totalCount}`;
   const queueLabel = queuedCount > 0 ? `${queuedCount} queued` : "queue clear";
-  const capLabel = `cap ${maxSymbols}`;
+  const limitLabel = `limit ${maxSymbols}`;
   const batchLabel = `${batchSize} batch / ${concurrency} conc`;
   const selectedDetail =
     intendedCount > selectedCount
@@ -83,10 +83,11 @@ export const resolveFlowScannerProgress = ({
     scopeLabel,
     cycleLabel,
     queueLabel,
-    capLabel,
+    limitLabel,
+    capLabel: limitLabel,
     batchLabel,
     cycleEstimateLabel,
     selectedDetail,
-    progressText: `${sourceModeLabel} · ${scopeLabel} · ${cycleLabel} scanned · ${queueLabel} · ${capLabel}`,
+    progressText: `${sourceModeLabel} · ${scopeLabel} · ${cycleLabel} scanned · ${queueLabel} · ${limitLabel}`,
   };
 };

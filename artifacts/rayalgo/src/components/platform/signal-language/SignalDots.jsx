@@ -72,7 +72,7 @@ export const SignalDots = ({
         fontSize: fs(7),
         fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1,
-        letterSpacing: "-0.01em",
+        letterSpacing: 0,
         opacity: hasDirection ? (fresh ? 1 : 0.76) : 0.88,
         boxShadow:
           hasDirection && fresh && !showLabels

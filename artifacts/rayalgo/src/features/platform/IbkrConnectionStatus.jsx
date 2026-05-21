@@ -375,9 +375,9 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
       };
     case "capacity-limited":
       return {
-        label: "capacity limited",
+        label: "line limited",
         status: state,
-        healthLabel: "Capacity Limited",
+        healthLabel: "Line Limited",
         detail:
           "Gateway is connected; live market data requests are waiting for available IBKR lines",
         color: tokenColor,

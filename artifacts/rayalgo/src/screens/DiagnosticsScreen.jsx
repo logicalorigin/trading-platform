@@ -47,6 +47,7 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
+import { MicroSparkline, SeverityRail } from "../components/platform/primitives.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import {
   joinMotionClasses,
@@ -175,6 +176,24 @@ const severityTone = (severity) => {
 
 const severityBorder = (severity) =>
   `color-mix(in srgb, ${severityTone(severity)} 40%, transparent)`;
+
+const alertToneBackground = (severity) => `${severityTone(severity)}0d`;
+const alertToneHoverBackground = (severity) => `${severityTone(severity)}12`;
+
+const alertChipStyle = (severity, minWidth = 58) => ({
+  minWidth: dim(minWidth),
+  color: severityTone(severity),
+  border: `1px solid ${severityBorder(severity)}`,
+  background: `${severityTone(severity)}0f`,
+  borderRadius: dim(RADII.xs),
+  fontFamily: T.sans,
+  fontSize: textSize("caption"),
+  fontWeight: FONT_WEIGHTS.medium,
+  lineHeight: 1,
+  padding: sp("3px 4px"),
+  textAlign: "center",
+  whiteSpace: "nowrap",
+});
 
 const statusLabel = (value) =>
   value === "down"
@@ -347,37 +366,30 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
     );
   }
   const values = data.map((point) => point.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
   const width = 320;
   const height = 78;
-  const path = data
-    .map((point, index) => {
-      const x = data.length === 1 ? width : (index / (data.length - 1)) * width;
-      const y = height - ((point.value - min) / span) * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  if (values.length < 2) {
+    return (
+      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
+        Waiting for more samples.
+      </div>
+    );
+  }
   const tone = data.some((point) => point.severity === "critical")
     ? T.red
     : data.some((point) => point.severity === "warning")
       ? T.amber
       : T.green;
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
+    <MicroSparkline
+      data={values}
+      color={tone}
+      width={width}
+      height={height}
       className="ra-sparkline"
+      ariaLabel={`${subsystem} ${metricKey} trend`}
       style={{ width: "100%", height, "--ra-spark-length": "360" }}
-    >
-      <polyline
-        points={path}
-        fill="none"
-        stroke={tone}
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    />
   );
 };
 
@@ -393,30 +405,40 @@ const EventList = ({ events, onSelect }) => (
           style={{
             ...motionRowStyle(index, 16, 160),
             ...motionVars({ accent: severityTone(event.severity) }),
-            border: `1px solid ${severityBorder(event.severity)}`,
-            background: T.bg1,
-            borderRadius: dim(RADII.sm),
-            padding: sp(9),
+            border: `1px solid ${T.borderLight}`,
+            background: alertToneBackground(event.severity),
+            borderRadius: dim(RADII.xs),
+            padding: sp("5px 6px"),
             display: "grid",
-            gridTemplateColumns: `${dim(96)}px minmax(0, 1fr) ${dim(72)}px`,
-            gap: sp(8),
-            alignItems: "start",
+            gridTemplateColumns: `auto ${dim(74)}px minmax(0, 1fr) ${dim(60)}px`,
+            gap: sp(6),
+            alignItems: "center",
             textAlign: "left",
             cursor: "pointer",
+            transition: "background 0.12s ease, border-color 0.12s ease",
+          }}
+          onMouseEnter={(pointerEvent) => {
+            pointerEvent.currentTarget.style.background = alertToneHoverBackground(event.severity);
+            pointerEvent.currentTarget.style.borderColor = severityBorder(event.severity);
+          }}
+          onMouseLeave={(pointerEvent) => {
+            pointerEvent.currentTarget.style.background = alertToneBackground(event.severity);
+            pointerEvent.currentTarget.style.borderColor = T.borderLight;
           }}
         >
-          <span style={{ color: severityTone(event.severity), fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
+          <SeverityRail tone={severityTone(event.severity)} />
+          <span style={alertChipStyle(event.severity, 74)}>
             {event.severity.toUpperCase()}
           </span>
           <span style={{ minWidth: 0 }}>
-            <div style={{ color: T.text, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+            <div style={{ color: T.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
               {event.message}
             </div>
             <div style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
               {event.subsystem} / {event.category} / {event.code || "no-code"}
             </div>
           </span>
-          <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), textAlign: "right" }}>
+          <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
             x{event.eventCount}
           </span>
         </button>
@@ -435,15 +457,16 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
     style={{
       ...motionVars({ accent: severityTone(alert.severity) }),
       display: "grid",
-      gridTemplateColumns: "minmax(0, 1fr) auto",
-      gap: sp(8),
-      alignItems: "stretch",
-      border: `1px solid ${severityBorder(alert.severity)}`,
-      background: T.bg1,
-      borderRadius: dim(RADII.sm),
-      padding: sp(8),
+      gridTemplateColumns: "auto minmax(0, 1fr) auto",
+      gap: sp(6),
+      alignItems: "center",
+      border: `1px solid ${T.borderLight}`,
+      background: alertToneBackground(alert.severity),
+      borderRadius: dim(RADII.xs),
+      padding: sp("5px 6px"),
     }}
   >
+    <SeverityRail tone={severityTone(alert.severity)} />
     <button
       type="button"
       onClick={() => onSelect(alert)}
@@ -452,32 +475,32 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         background: "transparent",
         color: T.text,
         display: "grid",
-        gridTemplateColumns: `${dim(88)}px minmax(0, 1fr) ${dim(64)}px`,
-        gap: sp(8),
-        alignItems: "start",
+        gridTemplateColumns: `${dim(74)}px minmax(0, 1fr) ${dim(48)}px`,
+        gap: sp(6),
+        alignItems: "center",
         minWidth: 0,
         padding: 0,
         textAlign: "left",
         cursor: "pointer",
       }}
     >
-      <span style={{ color: severityTone(alert.severity), fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
+      <span style={alertChipStyle(alert.severity, 74)}>
         {alert.severity.toUpperCase()}
       </span>
       <span style={{ minWidth: 0 }}>
-        <div style={{ color: T.text, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+        <div style={{ color: T.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
           {alert.message}
         </div>
         <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {alert.subsystem || "diagnostics"} / {alert.category || alert.kind} / {alert.code || alert.incidentKey}
         </div>
       </span>
-      <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), textAlign: "right" }}>
+      <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
         x{alert.repeatCount}
       </span>
     </button>
-    <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
-      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), whiteSpace: "nowrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "nowrap" }}>
         {formatAgo(alert.lastSeenAt)}
       </span>
       <button type="button" onClick={() => onDismiss(alert)} style={smallButton()}>
@@ -881,7 +904,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
     enabled: isVisible,
     runtimeDiagnostics: runtimeIbkr ? { ibkr: runtimeIbkr } : null,
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: false,
+    lineUsageEnabled: true,
     workloadStats,
     hydrationStats: hydrationCoordinatorStats,
     memoryPressure: memoryPressureState,
@@ -1298,7 +1321,15 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                 <StateRow
                   key={row.id}
                   label={row.label}
-                  value={`${formatCount(row.used)} / ${formatCount(row.cap)}`}
+                  value={
+                    row.id === "account-monitor"
+                      ? `${formatCount(row.covered ?? row.used)} of ${formatCount(row.needed ?? row.used)} covered`
+                      : row.id === "flow-scanner"
+                        ? `${formatCount(row.used)} active · ${formatCount(row.effectiveCap ?? row.cap)} available`
+                        : row.id === "total"
+                          ? `${formatCount(row.used)} of ${formatCount(row.cap)} active`
+                          : formatCount(row.used)
+                  }
                   tone={row.tone}
                 />
               ))
@@ -1553,14 +1584,14 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
 function smallButton() {
   return {
-    border: "none",
-    background: T.bg1,
+    border: `1px solid ${T.borderLight}`,
+    background: "transparent",
     color: T.textSec,
     borderRadius: dim(RADII.xs),
-    padding: sp("5px 8px"),
+    padding: sp("4px 7px"),
     fontFamily: T.sans,
     fontSize: textSize("caption"),
-    fontWeight: FONT_WEIGHTS.regular,
+    fontWeight: FONT_WEIGHTS.medium,
     cursor: "pointer",
   };
 }

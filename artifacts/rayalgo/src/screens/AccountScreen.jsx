@@ -1201,7 +1201,7 @@ const AccountScreenInner = ({
     [openAccountPositions],
   );
   const accountLiveOptionQuotesEnabled = Boolean(
-    accountQueriesEnabled && accountCriticalReady,
+    !shadowMode && accountQueriesEnabled && accountCriticalReady,
   );
   const accountTradingAnalysis = useMemo(
     () =>
@@ -1453,6 +1453,8 @@ const AccountScreenInner = ({
 
         <AccountHeroBlock
           summary={displaySummaryData}
+          returnsModel={returnsModel}
+          range={range}
           currency={currency}
           maskValues={maskAccountValues}
           shadowMode={shadowMode}
@@ -1489,13 +1491,10 @@ const AccountScreenInner = ({
         >
           <div className="ra-account-overview-cell ra-account-overview-returns">
             <AccountReturnsPanel
-              model={returnsModel}
               currency={currency}
-              range={range}
               maskValues={maskAccountValues}
               tradesData={returnsCalendarTradesData}
               equityPoints={returnsCalendarEquityPoints}
-              compact
               isPhone={accountIsPhone}
             />
           </div>
@@ -1514,7 +1513,10 @@ const AccountScreenInner = ({
               maskValues={maskAccountValues}
             />
           </div>
-          <div className="ra-account-overview-cell ra-account-overview-equity">
+          <div
+            className="ra-account-overview-cell ra-account-overview-equity"
+            style={{ display: "grid", gap: sp(5) }}
+          >
             <EquityCurvePanel
               query={equityQuery}
               benchmarkQueries={{
@@ -1540,6 +1542,16 @@ const AccountScreenInner = ({
               onPinInspectionDate={setPinnedEquityDate}
               dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountSection}`}
               compact
+            />
+            <PositionsAtDateInspector
+              query={positionsAtDateQuery}
+              activeDate={activeEquityInspectionDate}
+              pinnedDate={pinnedEquityDate}
+              currentPositionsCount={openAccountPositions.length}
+              currency={currency}
+              maskValues={maskAccountValues}
+              onClearPin={() => setPinnedEquityDate(null)}
+              onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
             />
           </div>
         </div>
@@ -1581,11 +1593,6 @@ const AccountScreenInner = ({
                 : undefined
             }
             maskValues={maskAccountValues}
-            positionsAtDateQuery={positionsAtDateQuery}
-            activeEquityDate={activeEquityInspectionDate}
-            pinnedEquityDate={pinnedEquityDate}
-            currentPositionsCount={openAccountPositions.length}
-            onClearEquityPin={() => setPinnedEquityDate(null)}
             isPhone={accountIsPhone}
             liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
             streamLiveOptionQuotes={false}

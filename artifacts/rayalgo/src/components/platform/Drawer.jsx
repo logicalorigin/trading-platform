@@ -61,7 +61,7 @@ export const Drawer = ({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: "rgba(25, 23, 26, 0.42)",
+          background: `color-mix(in srgb, ${T.bg0} 72%, transparent)`,
           cursor: "pointer",
         }}
       />
@@ -112,7 +112,7 @@ export const Drawer = ({
               fontFamily: T.sans,
               fontSize: fs(15),
               fontWeight: FONT_WEIGHTS.label,
-              letterSpacing: "-0.01em",
+              letterSpacing: 0,
             }}
           >
             {title}

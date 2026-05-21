@@ -62,7 +62,7 @@ function Panel({ title, action, children }) {
             fontSize: fs(14),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.label,
-            letterSpacing: "-0.01em",
+            letterSpacing: 0,
             color: T.text,
           }}
         >
@@ -473,7 +473,7 @@ function LaneMembershipCard({
       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), alignItems: "start" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: sp(6), flexWrap: "wrap" }}>
-            <span style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: "-0.005em" }}>{lane.label}</span>
+            <span style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: 0 }}>{lane.label}</span>
             {changed && <span style={laneChip(T.green)}>staged</span>}
             {isSystemLane(lane.laneId) && <span style={laneChip(T.textDim)}>protected</span>}
           </div>
@@ -511,7 +511,7 @@ function LaneMembershipCard({
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: sp(7) }}>
         <LaneMiniMetric label="ACTIVE" value={formatCount(active)} tone={active >= cap ? T.amber : T.textSec} />
-        <LaneMiniMetric label="CAP" value={formatCount(cap)} />
+        <LaneMiniMetric label="LIMIT" value={formatCount(cap)} />
         <LaneMiniMetric label="DROPPED" value={formatCount(preview.droppedSymbols.length)} tone={preview.droppedSymbols.length ? T.amber : T.green} />
         <LaneMiniMetric label="QUEUED" value={formatCount(queued)} tone={queued ? T.amber : T.textSec} />
       </div>
@@ -519,7 +519,7 @@ function LaneMembershipCard({
       {editable ? (
         <>
           <div style={{ display: "grid", gridTemplateColumns: `${dim(84)}px minmax(0, 1fr)`, gap: sp(8), alignItems: "center" }}>
-            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>Max Symbols</span>
+            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>Symbol Limit</span>
             <input
               type="number"
               min={1}
@@ -722,7 +722,7 @@ function LaneGroupSection({ group, laneStateById, onPolicyChange, onResetPolicy 
 
   return (
     <section style={{ display: "grid", gap: sp(8) }}>
-      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: "-0.005em" }}>{group.label}</div>
+      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: 0 }}>{group.label}</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(360)}px, 1fr))`, gap: sp(12) }}>
         {states.map((laneState) => (
           <LaneMembershipCard
@@ -740,7 +740,7 @@ function LaneGroupSection({ group, laneStateById, onPolicyChange, onResetPolicy 
 function LaneArchitectureSection({ snapshot }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
-      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: "-0.005em" }}>How Data Moves</div>
+      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: 0 }}>How Data Moves</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(10) }}>
         {(snapshot.layers || []).map((layer) => (
           <div key={layer.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), padding: sp(12), background: T.bg1 }}>
@@ -799,7 +799,7 @@ function LaneArchitectureSection({ snapshot }) {
 function AdvancedLaneControls({ controlGroups, drafts, onChange, onReset }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
-      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: "-0.005em" }}>Advanced Controls</div>
+      <div style={{ color: T.text, fontSize: textSize("paragraphMuted"), fontWeight: FONT_WEIGHTS.medium, letterSpacing: 0 }}>Advanced Controls</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(320)}px, 1fr))`, gap: sp(14) }}>
         {Array.from(controlGroups.entries()).map(([group, groupControls]) => (
           <div key={group} style={{ minWidth: 0 }}>

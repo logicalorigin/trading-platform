@@ -859,7 +859,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "-0.005em",
+            letterSpacing: 0,
           }}
         >
           Preview Locked
@@ -876,7 +876,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.sans,
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "-0.005em",
+            letterSpacing: 0,
           }}
         >
           Quote Required
@@ -1815,7 +1815,7 @@ export const TradeOrderTicket = ({
           `${Math.floor(sellCallIntent.coverage.reservedShares)} sh`,
         ],
         [
-          "CAPACITY",
+          "COVERAGE",
           `${sellCallIntent.coverage.coveredCallCapacity.toFixed(2)} ct`,
         ],
       ]

@@ -37,6 +37,7 @@ import {
   numberFrom,
   optionProviderContractId,
 } from "./algoHelpers";
+import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 
@@ -350,16 +351,28 @@ export const AlgoLivePage = ({
   auditPanel,
   rightRail,
 }) => {
+  const focusedDeploymentId = focusedDeployment?.id || null;
+  const focusedLedgerPositions = useMemo(
+    () =>
+      filterAccountPositionRowsForDeployment({
+        rows: signalOptionsLedgerPositionsQuery?.data?.positions || [],
+        deploymentId: focusedDeploymentId,
+      }),
+    [
+      focusedDeploymentId,
+      signalOptionsLedgerPositionsQuery?.data?.positions,
+    ],
+  );
   const optionQuoteGroups = useMemo(
     () =>
       buildAlgoOptionQuoteGroups({
         candidates: signalOptionsCandidates,
         positions: signalOptionsPositions,
-        ledgerPositions: signalOptionsLedgerPositionsQuery?.data?.positions,
+        ledgerPositions: focusedLedgerPositions,
       }),
     [
+      focusedLedgerPositions,
       signalOptionsCandidates,
-      signalOptionsLedgerPositionsQuery?.data?.positions,
       signalOptionsPositions,
     ],
   );
@@ -1002,6 +1015,7 @@ export const AlgoLivePage = ({
             positions={signalOptionsPositions}
             accountPositionsQuery={signalOptionsLedgerPositionsQuery}
             symbolIndex={symbolIndex}
+            deploymentId={focusedDeploymentId}
             signalOptionsProfile={signalOptionsProfile}
             algoIsPhone={algoIsPhone}
           />

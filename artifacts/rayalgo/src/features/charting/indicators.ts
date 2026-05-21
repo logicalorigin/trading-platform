@@ -394,7 +394,7 @@ const createRsiPlugin = (
           priceLineVisible: false,
           lastValueVisible: false,
         }, paneKey),
-        buildGuideStudy(`${id}-guide-70`, chartBars, 70, paneKey, "#D7747088"),
+        buildGuideStudy(`${id}-guide-70`, chartBars, 70, paneKey, "#EA5E5B88"),
         buildGuideStudy(`${id}-guide-50`, chartBars, 50, paneKey, "#86837D88"),
         buildGuideStudy(`${id}-guide-30`, chartBars, 30, paneKey, "#4FB28688"),
       ],
@@ -499,7 +499,7 @@ export const defaultIndicatorRegistry: IndicatorRegistry = {
     macd: "#7CA7D9",
     signal: "#D9A864",
     positive: "#4FB28699",
-    negative: "#D7747099",
+    negative: "#EA5E5B99",
   }),
 };
 

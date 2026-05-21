@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatQuotePrice,
   formatSignedPercent,
@@ -8,11 +8,12 @@ import {
 import { useNumberTick } from "../../lib/numberTick.js";
 import { useRuntimeTickerSnapshot } from "./runtimeTickerStore";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
-import { MicroSparkline } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
 const HEADER_KPI_CONFIG = [
+  { symbol: "SPY", label: "S&P 500" },
+  { symbol: "QQQ", label: "Nasdaq 100" },
   { symbol: "VIXY", label: "Volatility" },
   { symbol: "IEF", label: "Treasuries" },
   { symbol: "UUP", label: "Dollar" },
@@ -21,10 +22,6 @@ const HEADER_KPI_CONFIG = [
 ];
 
 export const HEADER_KPI_SYMBOLS = HEADER_KPI_CONFIG.map((item) => item.symbol);
-
-// MicroSparkline is imported from components/platform/primitives.jsx
-// (single source of truth — was previously duplicated here and in
-// PlatformWatchlist.jsx).
 
 const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = false, dense = false, isFirst = false }) => {
   const isDense = dense && !compact;
@@ -39,29 +36,40 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
   // straight to the target value (the hook handles that).
   const animatedPrice = useNumberTick(snapshot?.price, 420);
   const animatedPct = useNumberTick(snapshot?.pct, 420);
+  const priceLabel = formatQuotePrice(animatedPrice ?? snapshot?.price);
+  const percentLabel = formatSignedPercent(animatedPct ?? snapshot?.pct);
+  const compactPercentLabel = percentLabel.replace(/(\.\d)\d(?=%)/, "$1");
+  const displayPercentLabel = compact ? compactPercentLabel : percentLabel;
+  const displayPriceLabel = compact
+    ? priceLabel.replace(/(\.\d)\d$/, "$1")
+    : priceLabel;
 
   return (
-    <AppTooltip content={`${label} proxy · ${symbol}`}><button
+    <AppTooltip content={`${label} proxy · ${symbol} · ${priceLabel} · ${percentLabel}`}><button
       type="button"
       onClick={() => onSelect?.(symbol)}
       className="ra-header-kpi"
       style={{
-        flex: isDense ? "0 0 auto" : compact ? "0 0 auto" : `1 1 ${dim(110)}px`,
-        minWidth: dim(isDense ? 132 : compact ? 90 : 108),
-        minHeight: dim(isDense ? 30 : compact ? 28 : 38),
-        padding: sp(isDense ? "3px 10px 3px 8px" : compact ? "2px 10px 2px 8px" : "4px 14px 4px 10px"),
-        display: "flex",
+        flex: "0 0 max-content",
+        width: "max-content",
+        minWidth: "max-content",
+        minHeight: dim(isDense || compact ? 20 : 24),
+        padding: sp(isDense ? "0px 3px" : compact ? "0px 2px" : "1px 4px"),
+        boxSizing: "border-box",
+        display: "inline-grid",
+        gridTemplateColumns: "max-content max-content max-content",
         alignItems: "center",
-        gap: sp(isDense ? 6 : 8),
+        gap: sp(compact ? 2 : 4),
         background: "transparent",
         border: "none",
         borderLeft: isFirst ? "none" : `1px solid ${T.borderLight}`,
         color: T.text,
         cursor: "pointer",
-        transition: "background 0.18s ease, color 0.18s ease",
+        overflow: "visible",
+        transition: "background 0.12s ease, color 0.12s ease",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = T.bg2;
+        event.currentTarget.style.background = T.accentHoverBg;
         event.currentTarget.style.color = T.accent;
       }}
       onMouseLeave={(event) => {
@@ -69,234 +77,93 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
         event.currentTarget.style.color = T.text;
       }}
     >
-      {isDense ? (
-        <>
-          <span
-            style={{
-              minWidth: 0,
-              flex: "1 1 auto",
-              textAlign: "left",
-              display: "inline-flex",
-              alignItems: "baseline",
-              gap: sp(5),
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-            }}
-          >
-            <span
-              style={{
-                display: "block",
-                maxWidth: dim(58),
-                fontSize: textSize("caption"),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: 0,
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                flexShrink: 1,
-              }}
-            >
-              {label}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.medium,
-                color: T.textSec,
-                fontFamily: T.sans,
-                lineHeight: 1.1,
-                letterSpacing: 0,
-                flexShrink: 0,
-              }}
-            >
-              {symbol}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("paragraph"),
-                fontWeight: FONT_WEIGHTS.label,
-                fontFamily: T.sans,
-                color: T.text,
-                lineHeight: 1.15,
-                whiteSpace: "nowrap",
-                fontVariantNumeric: "tabular-nums",
-                letterSpacing: 0,
-                flexShrink: 0,
-              }}
-            >
-              {formatQuotePrice(animatedPrice ?? snapshot?.price)}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.medium,
-                fontFamily: T.sans,
-                color:
-                  positive == null ? T.textDim : positive ? T.green : T.red,
-                lineHeight: 1.15,
-                whiteSpace: "nowrap",
-                fontVariantNumeric: "tabular-nums",
-                flexShrink: 0,
-              }}
-            >
-              {formatSignedPercent(animatedPct ?? snapshot?.pct)}
-            </span>
-          </span>
-          <span style={{ display: "block", flexShrink: 0 }}>
-            <MicroSparkline
-              data={
-                snapshot?.sparkBars?.length
-                  ? snapshot.sparkBars
-                  : snapshot?.spark || fallback.spark
-              }
-              positive={positive}
-              width={36}
-              height={14}
-            />
-          </span>
-        </>
-      ) : (
-        <span
-          style={{
-            minWidth: 0,
-            flex: 1,
-            textAlign: "left",
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(1),
-          }}
-        >
-          <span
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: sp(6),
-              minWidth: 0,
-            }}
-          >
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize(compact ? "micro" : "caption"),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.medium,
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {label}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.medium,
-                color: T.textSec,
-                fontFamily: T.sans,
-                lineHeight: 1.1,
-                letterSpacing: "0.04em",
-                flexShrink: 0,
-              }}
-            >
-              {symbol}
-            </span>
-          </span>
-          <span
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              gap: sp(6),
-              minWidth: 0,
-            }}
-          >
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("paragraph"),
-                fontWeight: FONT_WEIGHTS.label,
-                fontFamily: T.sans,
-                color: T.text,
-                lineHeight: 1.15,
-                whiteSpace: "nowrap",
-                fontVariantNumeric: "tabular-nums",
-                letterSpacing: 0,
-              }}
-            >
-              {formatQuotePrice(animatedPrice ?? snapshot?.price)}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: textSize("body"),
-                fontWeight: FONT_WEIGHTS.medium,
-                fontFamily: T.sans,
-                color:
-                  positive == null ? T.textDim : positive ? T.green : T.red,
-                lineHeight: 1.15,
-                whiteSpace: "nowrap",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {formatSignedPercent(animatedPct ?? snapshot?.pct)}
-            </span>
-          </span>
-        </span>
-      )}
-      {isDense ? null : (
-        <span style={{ display: "block", flexShrink: 0 }}>
-          <MicroSparkline
-            data={
-              snapshot?.sparkBars?.length
-                ? snapshot.sparkBars
-                : snapshot?.spark || fallback.spark
-            }
-            positive={positive}
-            width={44}
-            height={18}
-          />
-        </span>
-      )}
+      <span
+        style={{
+          minWidth: "max-content",
+          flex: "0 0 auto",
+          textAlign: "left",
+          display: "block",
+          whiteSpace: "nowrap",
+          overflow: "visible",
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
+          color: T.textSec,
+          fontFamily: T.sans,
+          lineHeight: 1.1,
+          letterSpacing: 0,
+        }}
+      >
+        {symbol}
+      </span>
+      <span
+        style={{
+          minWidth: "max-content",
+          display: "block",
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontFamily: T.sans,
+          color: T.text,
+          lineHeight: 1.15,
+          whiteSpace: "nowrap",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {displayPriceLabel}
+      </span>
+      <span
+        style={{
+          minWidth: "max-content",
+          display: "block",
+          fontSize: textSize("body"),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontFamily: T.sans,
+          color:
+            positive == null ? T.textDim : positive ? T.green : T.red,
+          lineHeight: 1.15,
+          whiteSpace: "nowrap",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {displayPercentLabel}
+      </span>
     </button></AppTooltip>
   );
 });
 
-export const HeaderKpiStrip = memo(({ onSelect, compact = false, dense = false }) => (
-  <div
-    data-testid="platform-header-kpis"
-    style={{
-      display: "flex",
-      alignItems: "stretch",
-      gap: 0,
-      minWidth: 0,
-      width: "100%",
-      background: T.bg1,
-      border: `1px solid ${T.border}`,
-      borderRadius: dim(RADII.sm),
-      overflow: "hidden",
-    }}
-  >
-    {HEADER_KPI_CONFIG.map(({ symbol, label }, index) => (
-      <HeaderKpiStripItem
-        key={symbol}
-        symbol={symbol}
-        label={label}
-        index={index}
-        onSelect={onSelect}
-        compact={compact}
-        dense={dense}
-        isFirst={index === 0}
-      />
-    ))}
-  </div>
-));
+export const HeaderKpiStrip = memo(({ onSelect, compact = false, dense = false, maxItems = null }) => {
+  const items = Number.isFinite(maxItems)
+    ? HEADER_KPI_CONFIG.slice(0, Math.max(1, maxItems))
+    : HEADER_KPI_CONFIG;
+
+  return (
+    <div
+      data-testid="platform-header-kpis"
+      style={{
+        display: "inline-flex",
+        alignItems: "stretch",
+        justifyContent: "flex-start",
+        gap: 0,
+        flex: "0 0 max-content",
+        width: "max-content",
+        minWidth: "max-content",
+        background: "transparent",
+        border: "none",
+        borderRadius: 0,
+        overflow: "visible",
+      }}
+    >
+      {items.map(({ symbol, label }, index) => (
+        <HeaderKpiStripItem
+          key={symbol}
+          symbol={symbol}
+          label={label}
+          index={index}
+          onSelect={onSelect}
+          compact={compact}
+          dense={dense}
+          isFirst={index === 0}
+        />
+      ))}
+    </div>
+  );
+});

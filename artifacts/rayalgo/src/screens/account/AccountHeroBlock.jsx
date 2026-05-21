@@ -1,7 +1,14 @@
 import { TrendingDown, TrendingUp } from "lucide-react";
-import { FONT_WEIGHTS, T, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
-import { formatAccountMoney, formatAccountPercent } from "./accountUtils";
+import {
+  formatAccountMoney,
+  formatAccountPercent,
+  formatAccountSignedMoney,
+  formatNumber,
+  toneForValue,
+} from "./accountUtils";
+import { AppTooltip } from "@/components/ui/tooltip";
 
 const MASKED = "•••••";
 
@@ -17,17 +24,269 @@ const formatPercent = (value, masked) => {
   return formatAccountPercent(Number(value), 2, false);
 };
 
+const formatSignedPercent = (value, digits = 2, masked = false) => {
+  if (masked) return MASKED;
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  const numeric = Number(value);
+  return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(digits)}%`;
+};
+
+const formatRatio = (value, digits = 2, masked = false) => {
+  if (masked) return MASKED;
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(digits)}x`;
+};
+
+const metricTone = (value, fallback = T.textDim) =>
+  value == null || Number.isNaN(Number(value)) ? fallback : toneForValue(value);
+
+const labelCapsStyle = {
+  color: T.textMuted,
+  fontSize: textSize("caption"),
+  fontFamily: T.sans,
+  fontWeight: FONT_WEIGHTS.regular,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  lineHeight: 1.15,
+};
+
+const HeroSummaryStat = ({ label, value, tone = T.text, title }) => (
+  <AppTooltip content={title}>
+    <div
+      style={{
+        display: "grid",
+        gap: sp(1),
+        minWidth: dim(86),
+        padding: sp("3px 7px"),
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(RADII.sm),
+        background: T.bg1,
+      }}
+    >
+      <span style={labelCapsStyle}>{label}</span>
+      <span
+        style={{
+          color: tone,
+          fontSize: textSize("body"),
+          fontFamily: T.sans,
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.1,
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  </AppTooltip>
+);
+
+const HeroMetricCell = ({ label, value, tone = T.text, title }) => (
+  <AppTooltip content={title}>
+    <div
+      style={{
+        minWidth: 0,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr)",
+        gap: sp(1),
+        padding: sp("4px 0 3px"),
+        borderTop: `1px solid ${T.border}`,
+        overflow: "hidden",
+      }}
+    >
+      <span
+        style={{
+          ...labelCapsStyle,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          minWidth: 0,
+          color: tone,
+          fontSize: textSize("body"),
+          fontFamily: T.sans,
+          fontWeight: FONT_WEIGHTS.regular,
+          lineHeight: 1.2,
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  </AppTooltip>
+);
+
 export const AccountHeroBlock = ({
   summary,
+  returnsModel,
+  range,
   currency = "USD",
   maskValues = false,
   shadowMode: _shadowMode = false,
   isPhone = false,
 }) => {
-  const metrics = summary?.metrics || {};
-  const netLiquidation = metrics.netLiquidation?.value;
-  const dayPnl = metrics.dayPnl?.value;
-  const dayPnlPercent = metrics.dayPnlPercent?.value;
+  const summaryMetrics = summary?.metrics || {};
+  const equity = returnsModel?.equity || {};
+  const trades = returnsModel?.trades || {};
+  const positions = returnsModel?.positions || {};
+  const cash = returnsModel?.cash || {};
+  const risk = returnsModel?.risk || {};
+  const hasRiskStats = returnsModel?.available?.hasRiskAdjustedStats;
+  const netLiquidation = summaryMetrics.netLiquidation?.value;
+  const dayPnl = summaryMetrics.dayPnl?.value;
+  const dayPnlPercent = summaryMetrics.dayPnlPercent?.value;
+  const transferAdjustedPnl = equity.transferAdjustedPnl ?? null;
+  const rangeLabel = range || returnsModel?.range || "Range";
+  const returnTooltip = equity.returnPercentDiscrepancy
+    ? `Transfer-adjusted return over the selected range. API value ${formatSignedPercent(
+        equity.providerReturnPercent,
+        2,
+        maskValues,
+      )} differed from recomputed value, so the recomputed value is shown.`
+    : "Transfer-adjusted return over the selected equity range. External deposits and withdrawals are excluded.";
+  const performanceSummary = [
+    {
+      label: "Adj return",
+      value: formatSignedPercent(equity.returnPercent, 2, maskValues),
+      tone: metricTone(equity.returnPercent),
+      title: `${returnTooltip}\nRange: ${rangeLabel}`,
+    },
+    {
+      label: "P&L Δ",
+      value: formatAccountSignedMoney(transferAdjustedPnl, currency, true, maskValues),
+      tone: metricTone(transferAdjustedPnl),
+      title:
+        "Transfer-adjusted P&L over the selected equity range. External deposits and withdrawals are excluded.",
+    },
+  ];
+  const performanceMetrics = [
+    {
+      label: "Trades",
+      value: formatNumber(trades.count, 0),
+      tone: T.text,
+      title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
+        trades.losers,
+        0,
+      )} losers`,
+    },
+    {
+      label: "Real",
+      value: formatAccountSignedMoney(trades.realizedPnl, currency, true, maskValues),
+      tone: metricTone(trades.realizedPnl),
+      title: "Realized P&L over the selected closed-trade range.",
+    },
+    {
+      label: "Open",
+      value: formatAccountSignedMoney(positions.unrealizedPnl, currency, true, maskValues),
+      tone: metricTone(positions.unrealizedPnl),
+      title: `${formatNumber(positions.count, 0)} current positions`,
+    },
+    {
+      label: "Win",
+      value: formatAccountPercent(trades.winRate, 0, maskValues),
+      tone:
+        trades.winRate == null || Number.isNaN(Number(trades.winRate))
+          ? T.textDim
+          : trades.winRate >= 50
+            ? T.green
+            : T.amber,
+      title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
+        trades.losers,
+        0,
+      )} losers`,
+    },
+    {
+      label: "PF",
+      value: formatRatio(trades.profitFactor, 2, maskValues),
+      tone:
+        trades.profitFactor == null || Number.isNaN(Number(trades.profitFactor))
+          ? T.textDim
+          : trades.profitFactor >= 1
+            ? T.green
+            : T.red,
+      title: "Gross profit divided by gross loss.",
+    },
+    {
+      label: "Exp",
+      value: formatAccountSignedMoney(trades.expectancy, currency, true, maskValues),
+      tone: metricTone(trades.expectancy),
+      title: "Average realized P&L per closed trade.",
+    },
+    {
+      label: "MaxDD",
+      value: formatSignedPercent(equity.maxDrawdownPercent, 1, maskValues),
+      tone: metricTone(equity.maxDrawdownPercent),
+      title: formatAccountSignedMoney(
+        equity.maxDrawdownAmount,
+        currency,
+        true,
+        maskValues,
+      ),
+    },
+    {
+      label: "CurDD",
+      value: formatSignedPercent(equity.currentDrawdownPercent, 1, maskValues),
+      tone: metricTone(equity.currentDrawdownPercent),
+      title: formatAccountSignedMoney(
+        equity.currentDrawdownAmount,
+        currency,
+        true,
+        maskValues,
+      ),
+    },
+    ...(hasRiskStats
+      ? [
+          {
+            label: "Vol",
+            value: formatAccountPercent(risk.volatilityPercent, 1, maskValues),
+            tone: T.text,
+            title:
+              "Sample standard deviation of point-to-point account equity returns over the selected range, not annualized.",
+          },
+          {
+            label: "Sharpe",
+            value: formatRatio(risk.sharpeLike, 2, maskValues),
+            tone: metricTone(risk.sharpeLike),
+            title:
+              "Informational ratio using range point returns and zero risk-free rate. It is not a formal TWR/MWR performance report.",
+          },
+          {
+            label: "Sort",
+            value: formatRatio(risk.sortinoLike, 2, maskValues),
+            tone: metricTone(risk.sortinoLike),
+            title: "Informational downside-risk ratio using range point returns.",
+          },
+        ]
+      : []),
+    {
+      label: "Fees",
+      value: formatAccountMoney(cash.feesYtd, currency, true, maskValues),
+      tone: T.amber,
+      title: "Year-to-date fees and commissions from account cash activity.",
+    },
+    {
+      label: "Div",
+      value: formatAccountMoney(cash.dividendsYtd, currency, true, maskValues),
+      tone: T.green,
+      title: "Year-to-date dividends.",
+    },
+    {
+      label: "Int",
+      value: formatAccountMoney(cash.interestYtd, currency, true, maskValues),
+      tone: T.green,
+      title: "Year-to-date interest paid or earned.",
+    },
+  ];
 
   // Animate the hero net liquidation value when it changes (rAF-driven,
   // respects prefers-reduced-motion). Disabled when masked since the
@@ -50,18 +309,19 @@ export const AccountHeroBlock = ({
     <section
       data-testid="account-hero-block"
       style={{
-        display: "flex",
-        flexDirection: "column",
+        display: "grid",
+        gap: sp(isPhone ? 6 : 8),
         padding: sp("2px 4px 2px"),
         minWidth: 0,
       }}
     >
       <div
+        data-testid="account-hero-primary-row"
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: isPhone ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
           alignItems: "center",
-          flexWrap: "wrap",
-          gap: sp(isPhone ? 6 : 8),
+          gap: sp(isPhone ? 5 : 10),
           minWidth: 0,
         }}
       >
@@ -83,34 +343,65 @@ export const AccountHeroBlock = ({
         >
           {formatMoney(displayNet, currency, maskValues)}
         </div>
-        {dayPositive !== null ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(4),
-              padding: sp("2px 6px"),
-              border: `1px solid ${dayTone}40`,
-              borderRadius: 999,
-              background: `${dayTone}12`,
-              color: dayTone,
-              flexShrink: 0,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <DayIcon size={11} />
-            <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
-            {formatPercent(dayPnlPercent, maskValues) ? (
-              <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
-                {formatPercent(dayPnlPercent, maskValues)}
-              </span>
-            ) : null}
-            <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
-          </span>
-        ) : null}
+        <div
+          data-testid="account-hero-performance-summary"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: isPhone ? "flex-start" : "flex-end",
+            flexWrap: "wrap",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {dayPositive !== null ? (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(4),
+                padding: sp("3px 7px"),
+                border: `1px solid ${dayTone}40`,
+                borderRadius: dim(RADII.pill),
+                background: `${dayTone}12`,
+                color: dayTone,
+                flexShrink: 0,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <DayIcon size={11} />
+              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
+              {formatPercent(dayPnlPercent, maskValues) ? (
+                <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
+                  {formatPercent(dayPnlPercent, maskValues)}
+                </span>
+              ) : null}
+              <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
+            </span>
+          ) : null}
+          {performanceSummary.map((metric) => (
+            <HeroSummaryStat key={metric.label} {...metric} />
+          ))}
+        </div>
+      </div>
+      <div
+        data-testid="account-hero-performance-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: isPhone
+            ? "repeat(2, minmax(0, 1fr))"
+            : `repeat(auto-fit, minmax(${dim(86)}, 1fr))`,
+          columnGap: sp(isPhone ? 6 : 8),
+          rowGap: sp(2),
+          minWidth: 0,
+        }}
+      >
+        {performanceMetrics.map((metric) => (
+          <HeroMetricCell key={metric.label} {...metric} />
+        ))}
       </div>
     </section>
   );

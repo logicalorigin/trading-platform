@@ -7,6 +7,7 @@ export const PlatformRuntimeLayer = ({
   activeWatchlistItems,
   quoteSymbols,
   sparklineSymbols,
+  prioritySparklineSymbols = [],
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled,
@@ -24,6 +25,7 @@ export const PlatformRuntimeLayer = ({
     activeWatchlistItems={activeWatchlistItems}
     quoteSymbols={quoteSymbols}
     sparklineSymbols={sparklineSymbols}
+    prioritySparklineSymbols={prioritySparklineSymbols}
     streamedQuoteSymbols={streamedQuoteSymbols}
     streamedAggregateSymbols={streamedAggregateSymbols}
     quoteStreamRuntimeEnabled={quoteStreamRuntimeEnabled}

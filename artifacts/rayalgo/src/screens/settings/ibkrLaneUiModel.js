@@ -51,7 +51,7 @@ export const LANE_PRESETS = [
   {
     id: "conservative",
     label: "Conservative",
-    description: "Lower caps with narrow scanner and metadata demand.",
+    description: "Lower symbol limits with narrow scanner and metadata demand.",
   },
   {
     id: "balanced",
@@ -61,7 +61,7 @@ export const LANE_PRESETS = [
   {
     id: "expanded",
     label: "Expanded",
-    description: "Broader flow/scanner coverage with higher caps.",
+    description: "Broader flow/scanner coverage with higher symbol limits.",
   },
   {
     id: "line-booster",
@@ -329,7 +329,7 @@ export function buildLaneWarnings({ lane, basePolicy = {}, mergedPolicy = {}, de
       laneId: lane.laneId,
       code: "cap-increase",
       severity: "warning",
-      message: `${lane.label} cap increases from ${baseMax} to ${mergedMax}.`,
+      message: `${lane.label} symbol limit increases from ${baseMax} to ${mergedMax}.`,
     });
   }
   if (lane.laneId === "flow-scanner" && mergedMax > Math.max(defaultMax, 500)) {
@@ -337,7 +337,7 @@ export function buildLaneWarnings({ lane, basePolicy = {}, mergedPolicy = {}, de
       laneId: lane.laneId,
       code: "scanner-expanded",
       severity: "warning",
-      message: "Flow Scanner is above the balanced cap and may increase option-chain pressure.",
+      message: "Flow Scanner is above the balanced symbol limit and may increase option-chain pressure.",
     });
   }
   ["flow-universe", "watchlists", "built-in"].forEach((sourceId) => {
@@ -363,7 +363,7 @@ export function buildLaneWarnings({ lane, basePolicy = {}, mergedPolicy = {}, de
       laneId: lane.laneId,
       code: "capacity-drops",
       severity: "info",
-      message: `${lane.label} is dropping ${capacityDrops} symbol${capacityDrops === 1 ? "" : "s"} at capacity.`,
+      message: `${lane.label} is dropping ${capacityDrops} symbol${capacityDrops === 1 ? "" : "s"} at the symbol limit.`,
     });
   }
 

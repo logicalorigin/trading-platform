@@ -78,6 +78,10 @@ import {
   type OptionsFlowScannerRequest,
 } from "./options-flow-scanner";
 import {
+  createOptionsFlowRadarScanner,
+  type OptionsFlowRadarCoverage,
+} from "./options-flow-radar-scanner";
+import {
   deferredFlowEventsResult as buildDeferredFlowEventsResult,
   filterFlowEventsForRequest,
   flowEventMatchesFilters,
@@ -116,6 +120,7 @@ import {
 } from "./bridge-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import {
+  getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
@@ -651,6 +656,8 @@ const IBKR_WATCHLIST_PREWARM_FILLER_TTL_MS = Math.max(
   Number.parseInt(process.env["IBKR_MARKET_DATA_FILLER_TTL_MS"] ?? "30000", 10) ||
     30_000,
 );
+const IBKR_WATCHLIST_PREWARM_FILLER_ENABLED_ENV =
+  "IBKR_MARKET_DATA_ENABLE_FILLER_PREWARM";
 const IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS = readPositiveIntegerEnv(
   "IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS",
   15_000,
@@ -679,6 +686,10 @@ export function resolveIbkrWatchlistPrewarmSymbolLimit(
     : Math.min(normalizedCandidateSymbolCount, configuredLimit);
 }
 
+function isIbkrWatchlistFillerPrewarmEnabled(): boolean {
+  return readBooleanEnv(IBKR_WATCHLIST_PREWARM_FILLER_ENABLED_ENV, true);
+}
+
 export function resolveIbkrWatchlistFillerSymbolLimit(input: {
   candidateSymbolCount: number;
   targetFillLines: number;
@@ -686,6 +697,10 @@ export function resolveIbkrWatchlistFillerSymbolLimit(input: {
   bridgeEquityLineBudget: number | null;
   nonFillerEquityLineCount: number;
 }): number {
+  if (!isIbkrWatchlistFillerPrewarmEnabled()) {
+    return 0;
+  }
+
   const candidateSymbolCount = Math.max(
     0,
     Math.floor(
@@ -8468,13 +8483,33 @@ const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_ALWAYS_ON",
   true,
 );
+const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
+  "OPTIONS_FLOW_RADAR_ENABLED",
+  true,
+);
+const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_BATCH_SIZE",
+  50,
+);
+const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
+  20,
+);
+const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
+  "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
+  20,
+);
+const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
+  10,
+);
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
   25,
 );
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_CONCURRENCY",
-  10,
+  20,
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -8504,6 +8539,11 @@ export type OptionsFlowRuntimeConfig = {
   universeMinPrice: number;
   universeMinDollarVolume: number;
   scannerAlwaysOn: boolean;
+  radarEnabled: boolean;
+  radarBatchSize: number;
+  radarDeepCandidateCount: number;
+  radarFallbackDeepCandidateCount: number;
+  radarDeepLineBudget: number;
   scannerBatchSize: number;
   scannerConcurrency: number;
   scannerLimit: number;
@@ -8530,6 +8570,11 @@ const OPTIONS_FLOW_DEFAULT_CONFIG: OptionsFlowRuntimeConfig = {
   universeMinPrice: OPTIONS_FLOW_UNIVERSE_MIN_PRICE,
   universeMinDollarVolume: OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME,
   scannerAlwaysOn: OPTIONS_FLOW_SCANNER_ALWAYS_ON,
+  radarEnabled: OPTIONS_FLOW_RADAR_ENABLED,
+  radarBatchSize: OPTIONS_FLOW_RADAR_BATCH_SIZE,
+  radarDeepCandidateCount: OPTIONS_FLOW_RADAR_DEEP_CANDIDATES,
+  radarFallbackDeepCandidateCount: OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES,
+  radarDeepLineBudget: OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET,
   scannerBatchSize: OPTIONS_FLOW_SCANNER_BATCH_SIZE,
   scannerConcurrency: OPTIONS_FLOW_SCANNER_CONCURRENCY,
   scannerLimit: OPTIONS_FLOW_SCANNER_LIMIT,
@@ -8792,6 +8837,97 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   },
 });
 
+const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
+  normalizeSymbol,
+  shouldSkip: () =>
+    getOptionsFlowScannerBackgroundBlockReason({ ignoreOptionsBackoff: true }),
+  fetchBatch: async (symbols) => {
+    const quotes = await fetchOptionsFlowRadarQuotes(symbols);
+    return {
+      quotes,
+      source: {
+        provider: quotes.length ? "ibkr" : "fallback-rank",
+        status: quotes.length ? "live" : "degraded",
+        errorMessage: quotes.length ? null : "option_activity_unavailable",
+      },
+    };
+  },
+  onBatch: (symbols) => {
+    flowUniverseManager.noteBatch(symbols);
+  },
+  onPromotions: async (symbols) => {
+    const config = getOptionsFlowRuntimeConfig();
+    const deepLineBudget = Math.max(
+      1,
+      Math.min(config.radarDeepLineBudget, config.scannerLineBudget),
+    );
+    syncOptionsFlowScannerEffectiveConcurrency(config);
+    await optionsFlowScanner.requestScan(symbols, {
+      limit: Math.min(config.scannerLimit, deepLineBudget),
+      lineBudget: deepLineBudget,
+    });
+  },
+  onError: (error, context) => {
+    logger.warn({ err: error, ...context }, "Options flow radar scanner error");
+  },
+});
+
+async function fetchOptionsFlowRadarQuotes(
+  symbols: readonly string[],
+): Promise<QuoteSnapshot[]> {
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  if (!normalizedSymbols.length) {
+    return [];
+  }
+
+  try {
+    return await runBridgeWork(
+      "quotes",
+      () => getIbkrClient().getOptionActivitySnapshots([...normalizedSymbols]),
+      { bypassBackoff: true, recordFailure: false },
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error, symbolCount: normalizedSymbols.length },
+      "Options flow radar batch quote hydration failed; retrying per symbol",
+    );
+  }
+
+  const quoteConcurrency = Math.max(
+    1,
+    getBridgeGovernorConfigSnapshot().quotes.concurrency,
+  );
+  const results = await mapWithConcurrency(
+    normalizedSymbols,
+    quoteConcurrency,
+    async (symbol) => {
+      try {
+        return await runBridgeWork(
+          "quotes",
+          () => getIbkrClient().getOptionActivitySnapshots([symbol]),
+          { bypassBackoff: true, recordFailure: false },
+        );
+      } catch (error) {
+        logger.debug(
+          { err: error, symbol },
+          "Options flow radar symbol quote hydration failed",
+        );
+        return [];
+      }
+    },
+  );
+
+  return results.flat();
+}
+
+export async function __fetchOptionsFlowRadarQuotesForTests(
+  symbols: readonly string[],
+): Promise<QuoteSnapshot[]> {
+  return fetchOptionsFlowRadarQuotes(symbols);
+}
+
 let optionsFlowScannerStarted = false;
 
 function getFlowScannerPinnedSymbols(): string[] {
@@ -8859,6 +8995,12 @@ export function getOptionsFlowDeepScannerIntervalMs(
   });
 }
 
+export function getOptionsFlowRadarIntervalMs(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  return Math.max(1_000, config.scannerIntervalMs);
+}
+
 function estimateOptionsFlowScannerCycleMs(input: {
   activeTargetSize: number;
   batchSize: number;
@@ -8892,29 +9034,79 @@ export function startOptionsFlowScanner(): void {
 
   const effectiveScannerConcurrency =
     syncOptionsFlowScannerEffectiveConcurrency(config);
+  const resolveRadarIntervalMs = () => getOptionsFlowRadarIntervalMs();
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
-  optionsFlowScanner.startRotation({
-    symbols: () =>
-      getOptionsFlowScannerBackgroundBlockReason({ ignoreOptionsBackoff: true })
-        ? []
-        : resolveScannerSymbols(),
-    request: {
-      limit: Math.min(config.scannerLimit, config.scannerLineBudget),
-      lineBudget: config.scannerLineBudget,
-    },
-    intervalMs: resolveDeepIntervalMs,
-    batchSize: () => {
-      syncOptionsFlowScannerEffectiveConcurrency();
-      return Math.max(
-        1,
-        Math.floor(getOptionsFlowRuntimeConfig().scannerBatchSize || 1),
-      );
-    },
-  });
+  const resolveRadarPromotionCapacity = () => {
+    const runtimeConfig = getOptionsFlowRuntimeConfig();
+    const lineBudget = Math.max(
+      1,
+      Math.min(
+        runtimeConfig.radarDeepLineBudget || 1,
+        runtimeConfig.scannerLineBudget || 1,
+      ),
+    );
+    const schedulableLines = getOptionsFlowScannerSchedulableLineCap();
+    return schedulableLines <= 0
+      ? 0
+      : Math.max(1, Math.floor(schedulableLines / lineBudget));
+  };
+  if (config.radarEnabled) {
+    optionsFlowRadarScanner.startRotation({
+      symbols: resolveScannerSymbols,
+      intervalMs: resolveRadarIntervalMs,
+      batchSize: () =>
+        Math.max(
+          1,
+          Math.floor(getOptionsFlowRuntimeConfig().radarBatchSize || 1),
+        ),
+      promoteCount: () => {
+        const runtimeConfig = getOptionsFlowRuntimeConfig();
+        return Math.max(
+          0,
+          Math.min(
+            runtimeConfig.radarDeepCandidateCount,
+            resolveRadarPromotionCapacity(),
+          ),
+        );
+      },
+      fallbackPromoteCount: () =>
+        Math.max(
+          0,
+          Math.min(
+            getOptionsFlowRuntimeConfig().radarFallbackDeepCandidateCount,
+            resolveRadarPromotionCapacity(),
+          ),
+        ),
+    });
+  } else {
+    optionsFlowScanner.startRotation({
+      symbols: () =>
+        getOptionsFlowScannerBackgroundBlockReason({ ignoreOptionsBackoff: true })
+          ? []
+          : resolveScannerSymbols(),
+      request: {
+        limit: Math.min(config.scannerLimit, config.scannerLineBudget),
+        lineBudget: config.scannerLineBudget,
+      },
+      intervalMs: resolveDeepIntervalMs,
+      batchSize: () => {
+        syncOptionsFlowScannerEffectiveConcurrency();
+        return Math.max(
+          1,
+          Math.floor(getOptionsFlowRuntimeConfig().scannerBatchSize || 1),
+        );
+      },
+    });
+  }
   optionsFlowScannerStarted = true;
   logger.info(
     {
       symbols: initialSymbols.length,
+      radarEnabled: config.radarEnabled,
+      radarBatchSize: config.radarBatchSize,
+      radarDeepCandidateCount: config.radarDeepCandidateCount,
+      radarFallbackDeepCandidateCount: config.radarFallbackDeepCandidateCount,
+      radarDeepLineBudget: config.radarDeepLineBudget,
       batchSize: config.scannerBatchSize,
       concurrency: config.scannerConcurrency,
       effectiveConcurrency: effectiveScannerConcurrency,
@@ -8930,6 +9122,7 @@ export function startOptionsFlowScanner(): void {
 }
 
 export function stopOptionsFlowScanner(): void {
+  optionsFlowRadarScanner.stop();
   optionsFlowScanner.stop();
   optionsFlowScannerStarted = false;
 }
@@ -8948,13 +9141,52 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     scanWindowMs:
       estimatedCycleMs === null ? undefined : estimatedCycleMs + intervalMs,
   });
-  return {
+  const baseCoverage = {
     ...coverage,
     batchSize,
     intervalMs,
     lineBudget: config.scannerLineBudget,
     concurrency: resolveOptionsFlowScannerEffectiveConcurrency(config),
     estimatedCycleMs,
+  };
+  const radarCoverage: OptionsFlowRadarCoverage =
+    optionsFlowRadarScanner.getCoverage();
+  if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
+    return baseCoverage;
+  }
+  const activeTargetSize = Math.max(
+    baseCoverage.activeTargetSize,
+    baseCoverage.selectedSymbols,
+    radarCoverage.selectedSymbols,
+  );
+  const selectedShortfall = Math.max(0, baseCoverage.targetSize - activeTargetSize);
+  const cycleScannedSymbols = Math.max(
+    baseCoverage.cycleScannedSymbols,
+    baseCoverage.scannedSymbols,
+    radarCoverage.scannedSymbols,
+  );
+  return {
+    ...baseCoverage,
+    activeTargetSize,
+    selectedSymbols: activeTargetSize,
+    selectedShortfall,
+    scannedSymbols: cycleScannedSymbols,
+    cycleScannedSymbols,
+    currentBatch: radarCoverage.currentBatch.length
+      ? radarCoverage.currentBatch
+      : baseCoverage.currentBatch,
+    lastScanAt: radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
+    degradedReason:
+      radarCoverage.degradedReason ??
+      baseCoverage.degradedReason ??
+      (selectedShortfall > 0
+        ? `Universe fill short: ${activeTargetSize}/${baseCoverage.targetSize}`
+        : null),
+    radarSelectedSymbols: radarCoverage.selectedSymbols,
+    radarEstimatedCycleMs: radarCoverage.estimatedCycleMs,
+    radarBatchSize: radarCoverage.batchSize,
+    radarIntervalMs: radarCoverage.intervalMs,
+    promotedSymbols: radarCoverage.promotedSymbols,
   };
 }
 
@@ -9694,6 +9926,7 @@ export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
   const effectiveConcurrency = syncOptionsFlowScannerEffectiveConcurrency(config);
   const deepScanner = optionsFlowScanner.getDiagnostics();
+  const radar = optionsFlowRadarScanner.getCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
   const effectiveFlowScannerLineCap = getMarketDataPoolEffectiveLineCap(
     "flow-scanner",
@@ -9707,6 +9940,7 @@ export function getOptionsFlowScannerDiagnostics() {
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
+    radarEnabled: config.radarEnabled,
     scannerAlwaysOn: config.scannerAlwaysOn,
     backgroundBlockedReason,
     backgroundHoldRemainingMs: getLiveWarmupBackgroundHoldRemainingMs(),
@@ -9718,6 +9952,11 @@ export function getOptionsFlowScannerDiagnostics() {
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
       scannerLineBudget: config.scannerLineBudget,
+      radarDeepLineBudget: config.radarDeepLineBudget,
+      effectiveDeepLineBudget: Math.min(
+        config.radarDeepLineBudget,
+        config.scannerLineBudget,
+      ),
       maxDeepScanLines: Math.min(
         effectiveFlowScannerLineCap,
         effectiveConcurrency * config.scannerLineBudget,
@@ -9729,8 +9968,13 @@ export function getOptionsFlowScannerDiagnostics() {
       ),
     },
     deepScanner,
+    radar,
     lastSkippedReason: deepScanner.lastSkippedReason || null,
-    lastBatch: deepScanner.lastBatch,
+    radarDegradedReason: radar.degradedReason || null,
+    lastBatch: deepScanner.lastBatch.length
+      ? deepScanner.lastBatch
+      : radar.currentBatch,
+    promotedSymbols: radar.promotedSymbols,
   };
 }
 
@@ -9811,6 +10055,7 @@ export function __resetOptionChainCachesForTests(input?: {
   liveWarmupBackgroundHoldUntil = 0;
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
+    optionsFlowRadarScanner.reset();
     optionsFlowScanner.reset();
     optionsFlowScannerStarted = false;
     flowUniverseManager.reset();

@@ -418,7 +418,7 @@ export function MarketIdentityMark({
         background: logoReady ? T.bg0 : identity.fallbackColor,
         color: T.onAccent,
         border: "none",
-        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12)",
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${T.text} 12%, transparent)`,
         fontFamily: T.sans,
         fontSize: fs(size <= 14 ? 6 : size <= 20 ? 8 : 9),
         fontWeight: FONT_WEIGHTS.regular,
@@ -440,7 +440,7 @@ export function MarketIdentityMark({
               ? 0
               : dim(Math.max(1, Math.round(size * 0.1))),
             background: "transparent",
-            filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))",
+            filter: `drop-shadow(0 1px 1px color-mix(in srgb, ${T.bg0} 35%, transparent))`,
           }}
         />
       ) : showMarketIcon && size >= 22 ? (

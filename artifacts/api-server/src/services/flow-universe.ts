@@ -32,6 +32,11 @@ export type FlowUniverseCoverage = {
   currentBatch: string[];
   lastScanAt: Date | null;
   degradedReason: string | null;
+  radarSelectedSymbols?: number;
+  radarEstimatedCycleMs?: number | null;
+  radarBatchSize?: number;
+  radarIntervalMs?: number;
+  promotedSymbols?: string[];
 };
 
 export type FlowUniverseObservation = {

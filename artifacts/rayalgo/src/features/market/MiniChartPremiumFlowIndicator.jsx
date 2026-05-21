@@ -3,6 +3,7 @@ import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { MicroSparkline } from "../../components/platform/primitives.jsx";
 
 
 const PremiumFlowSparkline = ({ timeline = [], color, dense = false }) => {
@@ -26,36 +27,19 @@ const PremiumFlowSparkline = ({ timeline = [], color, dense = false }) => {
     );
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const step = width / Math.max(values.length - 1, 1);
-  const points = values
-    .map((value, index) => {
-      const x = index * step;
-      const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-
   return (
-    <svg
-      aria-hidden="true"
-      width={dense ? dim(56) : dim(76)}
+    <MicroSparkline
+      data={values}
+      color={color}
+      width={width}
       height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ display: "block", flexShrink: 0 }}
-    >
-      <polyline
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
+      ariaHidden
+      style={{
+        width: dense ? dim(56) : dim(76),
+        height,
+        flexShrink: 0,
+      }}
+    />
   );
 };
 

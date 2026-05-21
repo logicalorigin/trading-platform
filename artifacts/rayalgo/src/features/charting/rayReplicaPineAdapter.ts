@@ -233,7 +233,7 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   orderBlockBearColor: "#D9849B33",
   supportZoneColor: "#6FB5C240",
   resistanceZoneColor: "#D9849B40",
-  keyLevelHighColor: "#D77470",
+  keyLevelHighColor: "#EA5E5B",
   keyLevelLowColor: "#4FB286",
   keyLevelCloseColor: "#86837D",
   keyLevelOpenColor: "#EBCB9C",
@@ -248,7 +248,7 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   plotOverrides: {},
 };
 const REACTION_COLOR = "#EBCB9C";
-const STOP_LOSS_COLOR = "#D77470";
+const STOP_LOSS_COLOR = "#EA5E5B";
 const TAKE_PROFIT_COLOR = "#4FB286";
 const TREND_REVERSAL_LINE_STYLE = "dashed";
 const TP_SL_LINE_STYLE = "dashed";
@@ -2903,7 +2903,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 bottom: Number((pivotResistance - thickness / 2).toFixed(6)),
                 fillColor: resistanceZoneColor,
                 borderColor: withHexAlpha(
-                  resolveSolidHexColor(resistanceZoneColor, "#D77470"),
+                  resolveSolidHexColor(resistanceZoneColor, "#EA5E5B"),
                   "70",
                 ),
               });

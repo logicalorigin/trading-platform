@@ -948,6 +948,122 @@ test("live signal-options state excludes replay events and orphan mark skips", (
   );
 });
 
+test("live signal-options state recovers active positions from mark payloads", () => {
+  const occurredAt = new Date("2026-05-20T17:50:24.255Z");
+  const markedPosition = {
+    id: "deployment-1:AAPL",
+    candidateId: "candidate-aapl",
+    symbol: "AAPL",
+    direction: "buy",
+    optionRight: "call",
+    timeframe: "5m",
+    signalAt: "2026-05-20T13:30:00.000Z",
+    openedAt: "2026-05-20T13:58:05.907Z",
+    entryPrice: 6.44,
+    quantity: 2,
+    peakPrice: 7.25,
+    stopPrice: 4.51,
+    premiumAtRisk: 1288,
+    selectedContract: {
+      underlying: "AAPL",
+      expirationDate: "2026-05-22",
+      strike: 295,
+      right: "call",
+      multiplier: 100,
+    },
+    lastMarkPrice: 6.97,
+    lastMarkedAt: occurredAt.toISOString(),
+  };
+  const markEvent = {
+    id: "mark-aapl",
+    eventType: SIGNAL_OPTIONS_MARK_EVENT,
+    symbol: "AAPL",
+    deploymentId: "deployment-1",
+    occurredAt,
+    payload: {
+      position: markedPosition,
+      selectedContract: markedPosition.selectedContract,
+    },
+  };
+  const recovered =
+    __signalOptionsAutomationInternalsForTests.stateSignalOptionsEvents([
+      markEvent,
+    ] as never);
+
+  assert.deepEqual(
+    recovered.activePositions.map((position) => [
+      position.symbol,
+      position.candidateId,
+      position.entryPrice,
+      position.quantity,
+      position.lastMarkPrice,
+    ]),
+    [["AAPL", "candidate-aapl", 6.44, 2, 6.97]],
+  );
+  assert.deepEqual(
+    recovered.signalEvents.map((event) => event.id),
+    ["mark-aapl"],
+  );
+
+  const staleAfterExit =
+    __signalOptionsAutomationInternalsForTests.stateSignalOptionsEvents([
+      {
+        id: "exit-aapl",
+        eventType: SIGNAL_OPTIONS_EXIT_EVENT,
+        symbol: "AAPL",
+        deploymentId: "deployment-1",
+        occurredAt: new Date("2026-05-20T17:49:00.000Z"),
+        payload: {
+          position: markedPosition,
+          selectedContract: markedPosition.selectedContract,
+        },
+      },
+      markEvent,
+    ] as never);
+
+  assert.deepEqual(staleAfterExit.activePositions, []);
+});
+
+test("live signal-options state does not recover positions from mark-skip payloads", () => {
+  const markSkipEvent = {
+    id: "mark-skip-aapl",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    symbol: "AAPL",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-05-20T17:50:24.255Z"),
+    payload: {
+      reason: "position_mark_unavailable",
+      position: {
+        id: "deployment-1:AAPL",
+        candidateId: "candidate-aapl",
+        symbol: "AAPL",
+        direction: "buy",
+        optionRight: "call",
+        timeframe: "5m",
+        signalAt: "2026-05-20T13:30:00.000Z",
+        openedAt: "2026-05-20T13:58:05.907Z",
+        entryPrice: 6.44,
+        quantity: 2,
+        selectedContract: {
+          underlying: "AAPL",
+          expirationDate: "2026-05-22",
+          strike: 295,
+          right: "call",
+          multiplier: 100,
+        },
+      },
+    },
+  };
+
+  const stateEvents =
+    __signalOptionsAutomationInternalsForTests.stateSignalOptionsEvents([
+      markSkipEvent,
+    ] as never);
+
+  assert.deepEqual(stateEvents.activePositions, []);
+  assert.deepEqual(stateEvents.signalEvents, []);
+});
+
 test("historical backfill uses signal monitor watchlist symbols before deployment symbols", () => {
   const universe =
     __signalOptionsAutomationInternalsForTests.buildSignalOptionsBackfillUniverse({

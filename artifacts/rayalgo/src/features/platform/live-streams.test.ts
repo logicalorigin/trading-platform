@@ -16,6 +16,7 @@ import {
   groupOptionChainContractsByExpiration,
   invalidateVisibleAccountDerivedQueries,
   isQuoteSnapshotAtLeastAsFresh,
+  mergeOptionQuoteSnapshotForCache,
   mergeOptionChainContracts,
   mergeQuotesIntoCache,
   patchOptionQuotesIntoContracts,
@@ -132,6 +133,7 @@ test("account page owns one visible option quote stream for positions surfaces",
 
   assert.match(accountScreenSource, /buildPositionOptionQuoteGroups/);
   assert.match(accountScreenSource, /buildPositionOptionQuoteGroups\(openAccountPositions\)/);
+  assert.match(accountScreenSource, /!shadowMode && accountQueriesEnabled && accountCriticalReady/);
   assert.match(accountScreenSource, /currentPositionsCount=\{openAccountPositions\.length\}/);
   assert.match(accountScreenSource, /<PositionOptionQuoteStreams/);
   assert.match(accountScreenSource, /groups=\{accountOptionQuoteGroups\}/);
@@ -353,6 +355,119 @@ test("patchOptionQuotesIntoContracts marks metadata contracts as hydrated when l
   assert.equal(patched[0]?.quoteUpdatedAt, "2026-04-28T14:30:00.000Z");
   assert.equal(patched[0]?.dataUpdatedAt, "2026-04-28T14:30:00.000Z");
   assert.equal(patched[0]?.ageMs, 12);
+});
+
+test("patchOptionQuotesIntoContracts does not zero prices from partial quote snapshots", () => {
+  const currentContract = optionQuote(
+    "SPY-20260427-C700",
+    "2026-04-27T00:00:00.000Z",
+    700,
+  );
+  const patched = patchOptionQuotesIntoContracts([currentContract], [
+    {
+      symbol: "SPY",
+      price: 0,
+      bid: 0,
+      ask: 0,
+      bidSize: 0,
+      askSize: 0,
+      change: 0,
+      changePercent: 0,
+      open: null,
+      high: null,
+      low: null,
+      prevClose: null,
+      volume: 80,
+      openInterest: 250,
+      impliedVolatility: 0.24,
+      delta: 0.52,
+      gamma: 0.02,
+      theta: -0.04,
+      vega: 0.09,
+      providerContractId: "SPY-20260427-C700",
+      source: "ibkr",
+      transport: "tws",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: "2026-04-28T14:30:00.000Z",
+      ageMs: 12,
+      cacheAgeMs: 12,
+      latency: null,
+      updatedAt: "2026-04-28T14:30:00.000Z",
+    },
+  ]);
+
+  assert.equal(patched[0]?.bid, currentContract.bid);
+  assert.equal(patched[0]?.ask, currentContract.ask);
+  assert.equal(patched[0]?.last, currentContract.last);
+  assert.equal(patched[0]?.mark, currentContract.mark);
+  assert.equal(patched[0]?.openInterest, 250);
+  assert.equal(patched[0]?.delta, 0.52);
+});
+
+test("option quote cache merge preserves usable prices from partial zero snapshots", () => {
+  const currentQuote = {
+    symbol: "SPY",
+    price: 1.05,
+    bid: 1,
+    ask: 1.1,
+    bidSize: 10,
+    askSize: 10,
+    change: 0,
+    changePercent: 1.25,
+    open: null,
+    high: null,
+    low: null,
+    prevClose: null,
+    volume: 25,
+    openInterest: 100,
+    impliedVolatility: 0.2,
+    delta: 0.5,
+    gamma: 0.01,
+    theta: -0.03,
+    vega: 0.08,
+    providerContractId: "SPY-20260427-C700",
+    source: "ibkr",
+    transport: "tws",
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: "2026-04-28T14:29:00.000Z",
+    ageMs: 20,
+    cacheAgeMs: 20,
+    latency: null,
+    updatedAt: "2026-04-28T14:29:00.000Z",
+  };
+  const merged = mergeOptionQuoteSnapshotForCache(
+    currentQuote,
+    {
+      ...currentQuote,
+      price: 0,
+      bid: 0,
+      ask: 0,
+      change: -1.05,
+      changePercent: -100,
+      volume: 80,
+      openInterest: 250,
+      delta: 0.52,
+      dataUpdatedAt: "2026-04-28T14:30:00.000Z",
+      ageMs: 12,
+      cacheAgeMs: 12,
+      updatedAt: "2026-04-28T14:30:00.000Z",
+    },
+    "SPY-20260427-C700",
+  );
+
+  assert.equal(merged.price, 1.05);
+  assert.equal(merged.bid, 1);
+  assert.equal(merged.ask, 1.1);
+  assert.equal(merged.change, 0);
+  assert.equal(merged.changePercent, 1.25);
+  assert.equal(merged.volume, 80);
+  assert.equal(merged.openInterest, 250);
+  assert.equal(merged.delta, 0.52);
+  assert.equal(merged.updatedAt, "2026-04-28T14:30:00.000Z");
 });
 
 const stockQuote = (symbol: string, price: number, updatedAt: string) => ({
@@ -1091,6 +1206,75 @@ test("applyIbkrAccountPayloadToCache patches scoped account positions from strea
   assert.equal(patched.positions[0].marketValue, 600);
   assert.equal(patched.positions[0].weightPercent, 0.6);
   assert.equal(invalidated.length, 0);
+});
+
+test("applyIbkrAccountPayloadToCache does not overwrite Shadow account positions", () => {
+  const shadowPositionsKey = [
+    "/api/accounts/shadow/positions",
+    { mode: "paper" },
+  ];
+  const shadowPositions = {
+    accountId: "shadow",
+    currency: "USD",
+    totals: {},
+    updatedAt: "2026-05-20T17:50:00.000Z",
+    positions: [
+      {
+        id: "shadow-aaoi",
+        accountId: "shadow",
+        accounts: ["shadow"],
+        symbol: "AAOI",
+        description: "AAOI",
+        assetClass: "Options",
+        quantity: 1,
+        averageCost: 12.37,
+        mark: 11.2,
+        dayChange: -117,
+        dayChangePercent: -9.46,
+        unrealizedPnl: -117,
+        marketValue: 1120,
+        optionQuote: { dayChange: -1.17, dayChangePercent: -9.46 },
+        source: "SHADOW_LEDGER",
+        sourceType: "automation",
+        strategyLabel: "Signal Options",
+      },
+    ],
+  };
+  const initialData = new Map<string, unknown>([
+    [JSON.stringify(shadowPositionsKey), shadowPositions],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [shadowPositionsKey],
+    initialData,
+  );
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [],
+      positions: [
+        {
+          id: "broker-aaoi",
+          accountId: "shadow",
+          symbol: "AAOI",
+          assetClass: "option",
+          quantity: 1,
+          averagePrice: 12.37,
+          marketPrice: 0,
+          marketValue: 0,
+          unrealizedPnl: -1237,
+          unrealizedPnlPercent: -100,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: null, mode: "paper" },
+  );
+
+  assert.strictEqual(
+    writes.get(JSON.stringify(shadowPositionsKey)),
+    shadowPositions,
+  );
 });
 
 test("invalidateVisibleAccountDerivedQueries targets scoped real account views", () => {

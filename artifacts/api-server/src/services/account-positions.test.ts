@@ -81,6 +81,36 @@ test("account position hydration derives mark, day P&L, and unrealized P&L from 
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
 
+test("account position rows expose a canonical market-data symbol", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+
+  assert.equal(
+    __accountPositionInternalsForTests.accountPositionMarketDataSymbol({
+      symbol: "twsopt:123456",
+      optionContract: { underlying: "aapl" },
+    }),
+    "AAPL",
+  );
+  assert.equal(
+    __accountPositionInternalsForTests.accountPositionMarketDataSymbol({
+      symbol: "ibm  260116C00180000",
+      raw: { underlyingSymbol: "IBM" },
+    }),
+    "IBM",
+  );
+  assert.equal(
+    __accountPositionInternalsForTests.accountPositionMarketDataSymbol({
+      symbol: "SPY",
+      optionContract: null,
+    }),
+    "SPY",
+  );
+  assert.equal(
+    __accountPositionInternalsForTests.normalizeMarketDataSymbol("twsopt:123456"),
+    "",
+  );
+});
+
 test("account margin usage is sourced from IBKR initial margin", async () => {
   const { __accountMarginInternalsForTests } = await import("./account");
   const margin =

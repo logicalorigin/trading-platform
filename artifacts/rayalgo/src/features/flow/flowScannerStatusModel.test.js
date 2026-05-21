@@ -25,7 +25,7 @@ test("resolveFlowScannerSourceLabel handles current and planned source modes", (
   );
 });
 
-test("resolveFlowScannerProgress exposes scanned, queued, source, scope, and cap", () => {
+test("resolveFlowScannerProgress exposes scanned, queued, source, scope, and limit", () => {
   const progress = resolveFlowScannerProgress({
     coverage: {
       mode: "market",
@@ -45,12 +45,13 @@ test("resolveFlowScannerProgress exposes scanned, queued, source, scope, and cap
   assert.equal(progress.scopeLabel, "Unusual flow");
   assert.equal(progress.cycleLabel, "4/10");
   assert.equal(progress.queueLabel, "6 queued");
-  assert.equal(progress.capLabel, "cap 500");
+  assert.equal(progress.limitLabel, "limit 500");
+  assert.equal(progress.capLabel, "limit 500");
   assert.equal(progress.batchLabel, "25 batch / 10 conc");
   assert.equal(progress.cycleEstimateLabel, "~5m cycle");
   assert.equal(
     progress.progressText,
-    "Market-wide · Unusual flow · 4/10 scanned · 6 queued · cap 500",
+    "Market-wide · Unusual flow · 4/10 scanned · 6 queued · limit 500",
   );
 });
 
@@ -71,7 +72,7 @@ test("resolveFlowScannerProgress reports selected shortfall and clear queue", ()
 
   assert.equal(progress.selectedDetail, "selected 2/8");
   assert.equal(progress.queueLabel, "queue clear");
-  assert.equal(progress.progressText, "Watchlist · All flow · 2/2 scanned · queue clear · cap 12");
+  assert.equal(progress.progressText, "Watchlist · All flow · 2/2 scanned · queue clear · limit 12");
 });
 
 test("buildRecentScannerSymbols excludes active batch and sorts newest first", () => {

@@ -23,6 +23,8 @@ type QuoteSnapshotPayload = {
 export type BridgeQuoteStreamDiagnostics = {
   activeConsumerCount: number;
   unionSymbolCount: number;
+  requestedSymbolCount: number;
+  nonLiveSymbolCount: number;
   cachedQuoteCount: number;
   eventCount: number;
   reconnectCount: number;
@@ -171,6 +173,14 @@ function getDesiredSymbols(): string[] {
           symbol,
         }),
       ),
+    ),
+  );
+}
+
+function getRequestedSymbols(): string[] {
+  return normalizeSymbols(
+    Array.from(subscribers.values()).flatMap((subscriber) =>
+      Array.from(subscriber.symbols),
     ),
   );
 }
@@ -815,7 +825,7 @@ export async function fetchBridgeQuoteSnapshots(
     };
   }
 
-  const cachedQuotes = getCurrentBridgeQuoteSnapshots(admittedSymbols);
+  const cachedQuotes = getCurrentBridgeQuoteSnapshots(normalizedSymbols);
   const cachedQuotesBySymbol = new Map(
     cachedQuotes.map((quote) => [normalizeSymbol(quote.symbol), quote]),
   );
@@ -854,7 +864,7 @@ export async function fetchBridgeQuoteSnapshots(
   }
 
   return {
-    quotes: getCurrentBridgeQuoteSnapshots(admittedSymbols),
+    quotes: getCurrentBridgeQuoteSnapshots(normalizedSymbols),
   };
 }
 
@@ -882,19 +892,14 @@ export function subscribeBridgeQuoteSnapshots(
   const admittedSymbols = admission.admitted
     .map((lease) => lease.symbol)
     .filter((symbol): symbol is string => Boolean(symbol));
-  if (!admittedSymbols.length) {
-    return () => {
-      releaseMarketDataLeases(owner, "unsubscribe");
-    };
-  }
   subscribers.set(subscriberId, {
     id: subscriberId,
     owner,
-    symbols: new Set(admittedSymbols),
+    symbols: new Set(normalizedSymbols),
     onSnapshot,
   });
 
-  const cachedQuotes = getCurrentBridgeQuoteSnapshots(admittedSymbols);
+  const cachedQuotes = getCurrentBridgeQuoteSnapshots(normalizedSymbols);
   if (cachedQuotes.length > 0) {
     onSnapshot({ quotes: cachedQuotes });
   }
@@ -910,6 +915,7 @@ export function subscribeBridgeQuoteSnapshots(
 
 export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics {
   const desiredSymbols = getDesiredSymbols();
+  const requestedSymbols = getRequestedSymbols();
   const hasQuoteDemand = desiredSymbols.length > 0;
   const now = nowProvider().getTime();
   pruneRecentGapEvents(now);
@@ -944,6 +950,8 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
   return {
     activeConsumerCount: subscribers.size,
     unionSymbolCount: desiredSymbols.length,
+    requestedSymbolCount: requestedSymbols.length,
+    nonLiveSymbolCount: Math.max(0, requestedSymbols.length - desiredSymbols.length),
     cachedQuoteCount: quoteCacheBySymbol.size,
     eventCount,
     reconnectCount,

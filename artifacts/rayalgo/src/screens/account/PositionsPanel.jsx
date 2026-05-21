@@ -25,8 +25,18 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
-import { Button } from "../../components/platform/primitives.jsx";
-import { isOpenPositionRow } from "../../features/account/accountPositionRows.js";
+import { Button, MicroSparkline } from "../../components/platform/primitives.jsx";
+import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
+import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
+import {
+  SPARKLINE_RENDER_POINT_LIMIT,
+  TABLE_SPARKLINE_COMPACT_HEIGHT,
+  TABLE_SPARKLINE_COMPACT_WIDTH,
+  TABLE_SPARKLINE_HEIGHT,
+  TABLE_SPARKLINE_WIDTH,
+  buildDetailedFallbackSparklineData,
+} from "../../features/platform/sparklineConfig";
+import { normalizeTickerSymbol } from "../../features/platform/tickerIdentity";
 import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -131,6 +141,14 @@ const firstFiniteNumber = (...values) => {
   return null;
 };
 
+const firstPositiveFiniteNumber = (...values) => {
+  for (const value of values) {
+    const numeric = finiteNumber(value);
+    if (numeric != null && numeric > 0) return numeric;
+  }
+  return null;
+};
+
 const firstText = (...values) => {
   for (const value of values) {
     const text = String(value ?? "").trim();
@@ -221,28 +239,83 @@ const quoteMid = (quote) => {
     : null;
 };
 
+const liveQuoteChangeFieldsAreUsable = (liveQuote) => {
+  const price = firstPositiveFiniteNumber(
+    liveQuote?.mark,
+    liveQuote?.mid,
+    liveQuote?.last,
+    liveQuote?.price,
+    quoteMid(liveQuote),
+  );
+  if (price == null) return false;
+
+  const change = firstFiniteNumber(
+    liveQuote?.dayChange,
+    liveQuote?.change,
+    liveQuote?.netChange,
+  );
+  const changePercent = firstFiniteNumber(
+    liveQuote?.dayChangePercent,
+    liveQuote?.changePercent,
+    liveQuote?.percentChange,
+  );
+  if (change == null || changePercent == null) return true;
+
+  const previous = price - change;
+  if (!Number.isFinite(previous) || previous <= 0) return false;
+  const impliedPercent = (change / previous) * 100;
+  const tolerance = Math.max(2, Math.abs(changePercent) * 0.05);
+  return Math.abs(impliedPercent - changePercent) <= tolerance;
+};
+
 const mergeLiveOptionQuote = (quote, liveQuote) => {
   if (!liveQuote) return quote || null;
   const current = quote || {};
-  const bid = firstFiniteNumber(liveQuote.bid, current.bid);
-  const ask = firstFiniteNumber(liveQuote.ask, current.ask);
-  const last = firstFiniteNumber(liveQuote.last, liveQuote.price, current.last, current.price);
-  const mid = firstFiniteNumber(liveQuote.mid, current.mid, quoteMid({ bid, ask }));
+  const liveHasUsableChange = liveQuoteChangeFieldsAreUsable(liveQuote);
+  const bid = firstPositiveFiniteNumber(liveQuote.bid, current.bid);
+  const ask = firstPositiveFiniteNumber(liveQuote.ask, current.ask);
+  const last = firstPositiveFiniteNumber(
+    liveQuote.last,
+    liveQuote.price,
+    current.last,
+    current.price,
+  );
+  const mid = firstPositiveFiniteNumber(liveQuote.mid, current.mid, quoteMid({ bid, ask }));
   return {
     ...current,
     bid,
     ask,
     mid,
     last,
-    price: firstFiniteNumber(liveQuote.price, liveQuote.last, current.price, current.last),
-    mark: firstFiniteNumber(liveQuote.mark, mid, liveQuote.price, liveQuote.last, current.mark),
-    dayChange: firstFiniteNumber(liveQuote.dayChange, liveQuote.change, liveQuote.netChange, current.dayChange),
-    dayChangePercent: firstFiniteNumber(
-      liveQuote.dayChangePercent,
-      liveQuote.changePercent,
-      liveQuote.percentChange,
-      current.dayChangePercent,
+    price: firstPositiveFiniteNumber(
+      liveQuote.price,
+      liveQuote.last,
+      current.price,
+      current.last,
     ),
+    mark: firstPositiveFiniteNumber(
+      liveQuote.mark,
+      mid,
+      liveQuote.price,
+      liveQuote.last,
+      current.mark,
+    ),
+    dayChange: liveHasUsableChange
+      ? firstFiniteNumber(
+          liveQuote.dayChange,
+          liveQuote.change,
+          liveQuote.netChange,
+          current.dayChange,
+        )
+      : current.dayChange,
+    dayChangePercent: liveHasUsableChange
+      ? firstFiniteNumber(
+          liveQuote.dayChangePercent,
+          liveQuote.changePercent,
+          liveQuote.percentChange,
+          current.dayChangePercent,
+        )
+      : current.dayChangePercent,
     impliedVolatility: firstFiniteNumber(liveQuote.impliedVolatility, current.impliedVolatility),
     delta: firstFiniteNumber(liveQuote.delta, current.delta),
     gamma: firstFiniteNumber(liveQuote.gamma, current.gamma),
@@ -705,11 +778,86 @@ export const useLiveOptionPositionRows = ({
   };
 };
 
+export const __positionsPanelInternalsForTests = {
+  applyLiveOptionQuoteToRow,
+};
+
 const marketForAssetClass = (assetClass) => {
   const normalized = String(assetClass || "").toLowerCase();
   if (normalized === "etf") return "etf";
   if (normalized === "options") return "options";
   return "stocks";
+};
+
+const resolvePositionSparklineSymbol = (row) => {
+  const symbol = firstDisplayText(
+    row?.marketDataSymbol,
+    row?.optionContract?.underlying,
+    row?.underlyingMarket?.symbol,
+    row?.symbol,
+  );
+  const normalized = normalizeTickerSymbol(symbol);
+  return normalized && !isInternalOptionIdentifier(normalized) ? normalized : "";
+};
+
+const buildPositionFallbackSparklineData = (row, snapshot, symbol) => {
+  const current = firstPositiveFiniteNumber(
+    snapshot?.price,
+    snapshot?.mark,
+    row?.underlyingMarket?.price,
+    row?.underlyingMarket?.mark,
+    row?.mark,
+    row?.marketPrice,
+    row?.averageCost,
+  );
+  if (current == null) return [];
+
+  const percent = firstFiniteNumber(
+    row?.dayChangePercent,
+    snapshot?.pct,
+    snapshot?.changePercent,
+    row?.unrealizedPnlPercent,
+  );
+  const previous = firstPositiveFiniteNumber(
+    row?.underlyingMarket?.previousClose,
+    row?.previousClose,
+    row?.averageCost,
+  );
+  const start =
+    percent != null && percent > -99
+      ? current / (1 + percent / 100)
+      : previous ?? current * 0.9975;
+
+  return buildDetailedFallbackSparklineData({
+    symbol,
+    current,
+    previous: start,
+    pointCount: SPARKLINE_RENDER_POINT_LIMIT,
+  });
+};
+
+const resolvePositionSparklineData = (snapshot, row, symbol) => {
+  if (Array.isArray(snapshot?.sparkBars) && snapshot.sparkBars.length >= 2) {
+    return snapshot.sparkBars;
+  }
+  if (Array.isArray(snapshot?.spark) && snapshot.spark.length >= 2) {
+    return snapshot.spark;
+  }
+  return buildPositionFallbackSparklineData(row, snapshot, symbol);
+};
+
+const resolvePositionSparklinePositive = (row, snapshot) => {
+  const percent = firstFiniteNumber(
+    row?.dayChangePercent,
+    snapshot?.pct,
+    snapshot?.changePercent,
+  );
+  if (percent != null) return percent >= 0;
+
+  const change = firstFiniteNumber(row?.dayChange, snapshot?.chg, snapshot?.change);
+  if (change != null) return change >= 0;
+
+  return null;
 };
 
 const mobileFilterRailStyle = {
@@ -838,6 +986,46 @@ const MobileIconButton = ({ label, onClick, children, expanded = null, ...button
   </AppTooltip>
 );
 
+const positionSparklineShellStyle = (compact = false, inline = false) => ({
+  display: inline ? "inline-flex" : "block",
+  alignItems: inline ? "center" : undefined,
+  width: dim(compact ? TABLE_SPARKLINE_COMPACT_WIDTH : TABLE_SPARKLINE_WIDTH),
+  height: dim(compact ? TABLE_SPARKLINE_COMPACT_HEIGHT : TABLE_SPARKLINE_HEIGHT),
+  marginTop: inline ? 0 : sp(compact ? 2 : 3),
+  flexShrink: inline ? 0 : undefined,
+  overflow: "hidden",
+  opacity: 0.95,
+});
+
+const PositionTrendSparkline = ({
+  row,
+  snapshotsBySymbol,
+  compact = false,
+  inline = false,
+}) => {
+  const symbol = resolvePositionSparklineSymbol(row);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const data = resolvePositionSparklineData(snapshot, row, symbol);
+  if (data.length < 2) return null;
+
+  return (
+    <span
+      data-testid="account-position-sparkline"
+      title={`${symbol} intraday trend`}
+      style={positionSparklineShellStyle(compact, inline)}
+    >
+      <MicroSparkline
+        data={data}
+        positive={resolvePositionSparklinePositive(row, snapshot)}
+        width={compact ? TABLE_SPARKLINE_COMPACT_WIDTH : TABLE_SPARKLINE_WIDTH}
+        height={compact ? TABLE_SPARKLINE_COMPACT_HEIGHT : TABLE_SPARKLINE_HEIGHT}
+        style={{ width: "100%", height: "100%" }}
+        ariaHidden
+      />
+    </span>
+  );
+};
+
 const MobileMetric = ({ label, value, tone = T.text }) => (
   <div style={{ minWidth: 0 }}>
     <div style={mutedLabelStyle}>{label}</div>
@@ -893,6 +1081,7 @@ const MobilePositionRow = memo(({
   expanded,
   currency,
   maskValues,
+  snapshotsBySymbol,
   onRowAction,
   onRowKeyDown,
 }) => (
@@ -907,11 +1096,26 @@ const MobilePositionRow = memo(({
       onKeyDown={onRowKeyDown}
       style={mobileScanRowStyle}
     >
-      <div style={mobileMinWidthStyle}>
-        <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
-        <div style={cellSubTextStyle(T.textDim)}>
-          {optionInlineDetail(row, maskValues) ||
-            `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`}
+      <div
+        style={{
+          ...mobileMinWidthStyle,
+          display: "flex",
+          alignItems: "flex-start",
+          gap: sp(5),
+        }}
+      >
+        <PositionTrendSparkline
+          row={row}
+          snapshotsBySymbol={snapshotsBySymbol}
+          compact
+          inline
+        />
+        <div style={mobileMinWidthStyle}>
+          <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
+          <div style={cellSubTextStyle(T.textDim)}>
+            {optionInlineDetail(row, maskValues) ||
+              `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`}
+          </div>
         </div>
       </div>
       <div
@@ -1110,8 +1314,8 @@ export const PositionsAtDateInspector = ({
           : `${formatNumber(currentPositionsCount, 0)} current positions`
       }
       loading={Boolean(inspecting && query.isLoading)}
-      error={query.error}
-      onRetry={query.refetch}
+      error={inspecting ? query.error : null}
+      onRetry={inspecting ? query.refetch : undefined}
       minHeight={136}
       action={
         pinnedDate ? (
@@ -1335,11 +1539,6 @@ export const PositionsPanel = ({
   rightRail = "IBKR positions + lots",
   emptyBody = "Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
   maskValues = false,
-  positionsAtDateQuery,
-  activeEquityDate,
-  pinnedEquityDate,
-  currentPositionsCount,
-  onClearEquityPin,
   isPhone = false,
   showFilters = true,
   onPositionSelect,
@@ -1350,11 +1549,9 @@ export const PositionsPanel = ({
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const sourceFilteredRows = useMemo(
     () =>
-      (query.data?.positions || [])
-        .filter(isOpenPositionRow)
-        .filter((row) =>
-          sourceFilter === "all" ? true : row.sourceType === sourceFilter,
-        ),
+      getOpenPositionRows(query.data?.positions || []).filter((row) =>
+        sourceFilter === "all" ? true : row.sourceType === sourceFilter,
+      ),
     [query.data?.positions, sourceFilter],
   );
   const { rows, displayTotals, optionQuoteGroups } = useLiveOptionPositionRows({
@@ -1377,6 +1574,14 @@ export const PositionsPanel = ({
     });
     return copy;
   }, [rows, sort]);
+  const positionSparklineSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(sortedRows.map(resolvePositionSparklineSymbol).filter(Boolean)),
+      ),
+    [sortedRows],
+  );
+  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(positionSparklineSymbols);
   const totalDayChange = useMemo(
     () =>
       rows.reduce(
@@ -1447,9 +1652,6 @@ export const PositionsPanel = ({
     [handleMobileRowAction],
   );
 
-  const inspectingDate = Boolean(activeEquityDate || pinnedEquityDate);
-  const showInspector = inspectingDate && positionsAtDateQuery;
-
   const positionsTablePanel = (
     <Panel
       title={`Current Positions · ${rows.length}`}
@@ -1505,6 +1707,7 @@ export const PositionsPanel = ({
               expanded={expandedRows.has(row.id)}
               currency={currency}
               maskValues={maskValues}
+              snapshotsBySymbol={tickerSnapshotsBySymbol}
               onRowAction={handleMobileRowAction}
               onRowKeyDown={handleMobileRowKeyDown}
             />
@@ -1612,48 +1815,62 @@ export const PositionsPanel = ({
                         >
                           {expandedRows.has(row.id) ? "−" : "+"}
                         </button>
-                        <div style={{ minWidth: 0 }}>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onPositionSelect?.(row);
-                              onJumpToChart?.(row.symbol);
-                            }}
-                            style={{
-                              border: "none",
-                              padding: 0,
-                              background: "transparent",
-                              color: T.text,
-                              fontSize: textSize("body"),
-                              fontWeight: FONT_WEIGHTS.regular,
-                              cursor: "pointer",
-                              textAlign: "left",
-                            }}
-                          >
-                            <MarketIdentityInline
-                              item={{
-                                ticker: row.symbol,
-                                name: row.description || row.symbol,
-                                market: marketForAssetClass(row.assetClass),
-                                sector: row.sector || null,
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: sp(6),
+                            minWidth: 0,
+                          }}
+                        >
+                          <PositionTrendSparkline
+                            row={row}
+                            snapshotsBySymbol={tickerSnapshotsBySymbol}
+                            inline
+                          />
+                          <div style={{ minWidth: 0 }}>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onPositionSelect?.(row);
+                                onJumpToChart?.(row.symbol);
                               }}
-                              size={14}
-                              showMark={false}
-                              showChips
-                              style={{ maxWidth: dim(148) }}
-                            />
-                          </button>
-                          <div
-                            style={{
-                              marginTop: sp(1),
-                              color: T.textDim,
-                              fontSize: textSize("body"),
-                              whiteSpace: "normal",
-                              lineHeight: 1.25,
-                            }}
-                          >
-                            {optionInlineDetail(row, maskValues)}
+                              style={{
+                                border: "none",
+                                padding: 0,
+                                background: "transparent",
+                                color: T.text,
+                                fontSize: textSize("body"),
+                                fontWeight: FONT_WEIGHTS.regular,
+                                cursor: "pointer",
+                                textAlign: "left",
+                              }}
+                            >
+                              <MarketIdentityInline
+                                item={{
+                                  ticker: row.symbol,
+                                  name: row.description || row.symbol,
+                                  market: marketForAssetClass(row.assetClass),
+                                  sector: row.sector || null,
+                                }}
+                                size={14}
+                                showMark={false}
+                                showChips
+                                style={{ maxWidth: dim(148) }}
+                              />
+                            </button>
+                            <div
+                              style={{
+                                marginTop: sp(1),
+                                color: T.textDim,
+                                fontSize: textSize("body"),
+                                whiteSpace: "normal",
+                                lineHeight: 1.25,
+                              }}
+                            >
+                              {optionInlineDetail(row, maskValues)}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1941,25 +2158,7 @@ export const PositionsPanel = ({
     </Panel>
   );
 
-  if (!showInspector) {
-    return positionsTablePanel;
-  }
-
-  return (
-    <div style={{ display: "grid", gap: sp(6) }}>
-      <PositionsAtDateInspector
-        query={positionsAtDateQuery}
-        activeDate={activeEquityDate}
-        pinnedDate={pinnedEquityDate}
-        currentPositionsCount={currentPositionsCount}
-        currency={currency}
-        maskValues={maskValues}
-        onClearPin={onClearEquityPin}
-        onJumpToChart={onJumpToChart}
-      />
-      {positionsTablePanel}
-    </div>
-  );
+  return positionsTablePanel;
 };
 
 export default PositionsPanel;

@@ -3,14 +3,9 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ThemeContext } from "../../features/platform/platformContexts";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
+  Panel,
   ToggleGroup,
-  formatAccountMoney,
-  formatAccountPercent,
   formatAccountSignedMoney,
-  formatNumber,
-  mutedLabelStyle,
-  panelStyle,
-  toneForValue,
 } from "./accountUtils";
 import {
   PNL_CALENDAR_WEEKDAYS,
@@ -22,74 +17,6 @@ import {
 } from "./accountPnlCalendarModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-
-const formatSignedPercent = (value, digits = 2, maskValues = false) => {
-  if (maskValues) return "****";
-  if (value == null || Number.isNaN(Number(value))) return "—";
-  const numeric = Number(value);
-  return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(digits)}%`;
-};
-
-const formatRatio = (value, digits = 2, maskValues = false) => {
-  if (maskValues) return "****";
-  if (value == null || Number.isNaN(Number(value))) return "—";
-  return `${Number(value).toFixed(digits)}x`;
-};
-
-const metricTone = (value, fallback = T.textDim) =>
-  value == null || Number.isNaN(Number(value)) ? fallback : toneForValue(value);
-
-const labelCapsStyle = {
-  color: T.textMuted,
-  fontSize: textSize("caption"),
-  fontFamily: T.sans,
-  fontWeight: FONT_WEIGHTS.regular,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-  lineHeight: 1.25,
-};
-
-const MetricCell = ({ label, value, tone = T.text, title }) => (
-  <AppTooltip content={title}><div
-    style={{
-      minWidth: 0,
-      display: "grid",
-      gridTemplateColumns: `minmax(${dim(42)}px, auto) minmax(0, 1fr)`,
-      alignItems: "baseline",
-      columnGap: sp(6),
-      minHeight: dim(18),
-      padding: sp("2px 0"),
-      borderTop: `1px solid ${T.border}`,
-      overflow: "hidden",
-    }}
-  >
-    <span
-      style={{
-        ...labelCapsStyle,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-    <span
-      style={{
-        minWidth: 0,
-        color: tone,
-        fontSize: textSize("body"),
-        fontFamily: T.sans,
-        fontWeight: FONT_WEIGHTS.regular,
-        lineHeight: 1.25,
-        textAlign: "right",
-        fontVariantNumeric: "tabular-nums",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-      }}
-    >
-      {value}
-    </span>
-  </div></AppTooltip>
-);
 
 const CALENDAR_VIEW_OPTIONS = [
   { value: "month", label: "Month" },
@@ -604,325 +531,107 @@ const DailyPnlCalendar = ({
     setVisibleYear(date.getFullYear());
     setView("month");
   };
+  const periodLabel = (
+    <span
+      data-testid="account-pnl-calendar-period"
+      style={{
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {activeLabel}
+    </span>
+  );
 
   return (
-    <div data-testid="account-pnl-calendar" style={{ display: "grid", gap: sp(2), minWidth: 0 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: isPhone ? "stretch" : "center",
-          gap: sp(4),
-          flexWrap: "wrap",
-          minWidth: 0,
-        }}
-      >
-        <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
-          <span style={mutedLabelStyle}>P&L Calendar</span>
-          <span
+    <div
+      className="ra-account-pnl-calendar-panel"
+      data-testid="account-pnl-calendar"
+      style={{ minWidth: 0 }}
+    >
+      <Panel
+        title="P&L Calendar"
+        rightRail={periodLabel}
+        action={
+          <div
             style={{
-              color: T.text,
-              fontSize: fs(10),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              lineHeight: 1,
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(3),
+              flexWrap: "wrap",
+              justifyContent: isPhone ? "space-between" : "flex-end",
+              minWidth: 0,
             }}
           >
-            {activeLabel}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(3),
-            flexWrap: "wrap",
-            justifyContent: isPhone ? "space-between" : "flex-end",
-            flex: isPhone ? "1 1 100%" : undefined,
-          }}
-        >
-          <ToggleGroup options={CALENDAR_VIEW_OPTIONS} value={view} onChange={handleViewChange} />
-          <span style={{ display: "inline-flex", gap: sp(1) }}>
-            <CalendarNavButton
-              label="Previous period"
-              onClick={() => shiftCalendar(-1)}
+            <ToggleGroup options={CALENDAR_VIEW_OPTIONS} value={view} onChange={handleViewChange} />
+            <span style={{ display: "inline-flex", gap: sp(1) }}>
+              <CalendarNavButton
+                label="Previous period"
+                onClick={() => shiftCalendar(-1)}
+                calendarStyle={calendarStyle}
+                isPhone={isPhone}
+              >
+                <ChevronLeft size={dim(14)} strokeWidth={2.3} />
+              </CalendarNavButton>
+              <CalendarNavButton
+                label="Next period"
+                onClick={() => shiftCalendar(1)}
+                calendarStyle={calendarStyle}
+                isPhone={isPhone}
+              >
+                <ChevronRight size={dim(14)} strokeWidth={2.3} />
+              </CalendarNavButton>
+            </span>
+          </div>
+        }
+      >
+        <div style={{ display: "grid", gap: sp(2), minWidth: 0 }}>
+          {view === "month" ? (
+            <MonthCalendarGrid
+              model={monthModel}
+              currency={currency}
+              maskValues={maskValues}
               calendarStyle={calendarStyle}
               isPhone={isPhone}
-            >
-              <ChevronLeft size={dim(14)} strokeWidth={2.3} />
-            </CalendarNavButton>
-            <CalendarNavButton
-              label="Next period"
-              onClick={() => shiftCalendar(1)}
+            />
+          ) : (
+            <YearCalendarGrid
+              model={yearModel}
+              currency={currency}
+              maskValues={maskValues}
+              onSelectMonth={selectYearMonth}
               calendarStyle={calendarStyle}
               isPhone={isPhone}
-            >
-              <ChevronRight size={dim(14)} strokeWidth={2.3} />
-            </CalendarNavButton>
-          </span>
+            />
+          )}
+          <CalendarSummary
+            summary={activeSummary}
+            currency={currency}
+            maskValues={maskValues}
+            calendarStyle={calendarStyle}
+          />
         </div>
-      </div>
-      {view === "month" ? (
-        <MonthCalendarGrid
-          model={monthModel}
-          currency={currency}
-          maskValues={maskValues}
-          calendarStyle={calendarStyle}
-          isPhone={isPhone}
-        />
-      ) : (
-        <YearCalendarGrid
-          model={yearModel}
-          currency={currency}
-          maskValues={maskValues}
-          onSelectMonth={selectYearMonth}
-          calendarStyle={calendarStyle}
-          isPhone={isPhone}
-        />
-      )}
-      <CalendarSummary
-        summary={activeSummary}
-        currency={currency}
-        maskValues={maskValues}
-        calendarStyle={calendarStyle}
-      />
+      </Panel>
     </div>
   );
 };
 
 export const AccountReturnsPanel = ({
-  model,
   currency,
-  range,
   maskValues = false,
-  compact = false,
   isPhone = false,
   tradesData = null,
   equityPoints = null,
-}) => {
-  const equity = model?.equity || {};
-  const trades = model?.trades || {};
-  const positions = model?.positions || {};
-  const cash = model?.cash || {};
-  const risk = model?.risk || {};
-  const hasRiskStats = model?.available?.hasRiskAdjustedStats;
-  const transferAdjustedPnl = equity.transferAdjustedPnl ?? null;
-  const returnTooltip = equity.returnPercentDiscrepancy
-    ? `Transfer-adjusted return over the selected range. API value ${formatSignedPercent(
-        equity.providerReturnPercent,
-        2,
-        maskValues,
-      )} differed from recomputed value, so the recomputed value is shown.`
-    : "Transfer-adjusted return over the selected equity range. External deposits and withdrawals are excluded.";
-
-  const metrics = [
-    {
-      label: "Trades",
-      value: formatNumber(trades.count, 0),
-      tone: T.text,
-      title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
-        trades.losers,
-        0,
-      )} losers`,
-    },
-    {
-      label: "Real",
-      value: formatAccountSignedMoney(trades.realizedPnl, currency, true, maskValues),
-      tone: metricTone(trades.realizedPnl),
-      title: "Realized P&L over the selected closed-trade range.",
-    },
-    {
-      label: "Open",
-      value: formatAccountSignedMoney(positions.unrealizedPnl, currency, true, maskValues),
-      tone: metricTone(positions.unrealizedPnl),
-      title: `${formatNumber(positions.count, 0)} current positions`,
-    },
-    {
-      label: "Win",
-      value: formatAccountPercent(trades.winRate, 0, maskValues),
-      tone:
-        trades.winRate == null || Number.isNaN(Number(trades.winRate))
-          ? T.textDim
-          : trades.winRate >= 50
-            ? T.green
-            : T.amber,
-      title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
-        trades.losers,
-        0,
-      )} losers`,
-    },
-    {
-      label: "PF",
-      value: formatRatio(trades.profitFactor, 2, maskValues),
-      tone:
-        trades.profitFactor == null || Number.isNaN(Number(trades.profitFactor))
-          ? T.textDim
-          : trades.profitFactor >= 1
-            ? T.green
-            : T.red,
-      title: "Gross profit divided by gross loss.",
-    },
-    {
-      label: "Exp",
-      value: formatAccountSignedMoney(trades.expectancy, currency, true, maskValues),
-      tone: metricTone(trades.expectancy),
-      title: "Average realized P&L per closed trade.",
-    },
-    {
-      label: "MaxDD",
-      value: formatSignedPercent(equity.maxDrawdownPercent, 1, maskValues),
-      tone: metricTone(equity.maxDrawdownPercent),
-      title: formatAccountSignedMoney(
-        equity.maxDrawdownAmount,
-        currency,
-        true,
-        maskValues,
-      ),
-    },
-    {
-      label: "CurDD",
-      value: formatSignedPercent(equity.currentDrawdownPercent, 1, maskValues),
-      tone: metricTone(equity.currentDrawdownPercent),
-      title: formatAccountSignedMoney(
-        equity.currentDrawdownAmount,
-        currency,
-        true,
-        maskValues,
-      ),
-    },
-    ...(hasRiskStats
-      ? [
-          {
-            label: "Vol",
-            value: formatAccountPercent(risk.volatilityPercent, 1, maskValues),
-            tone: T.text,
-            title:
-              "Sample standard deviation of point-to-point account equity returns over the selected range, not annualized.",
-          },
-          {
-            label: "Sharpe",
-            value: formatRatio(risk.sharpeLike, 2, maskValues),
-            tone: metricTone(risk.sharpeLike),
-            title:
-              "Informational ratio using range point returns and zero risk-free rate. It is not a formal TWR/MWR performance report.",
-          },
-          {
-            label: "Sort",
-            value: formatRatio(risk.sortinoLike, 2, maskValues),
-            tone: metricTone(risk.sortinoLike),
-            title: "Informational downside-risk ratio using range point returns.",
-          },
-        ]
-      : []),
-    {
-      label: "Fees",
-      value: formatAccountMoney(cash.feesYtd, currency, true, maskValues),
-      tone: T.amber,
-      title: "Year-to-date fees and commissions from account cash activity.",
-    },
-    {
-      label: "Div",
-      value: formatAccountMoney(cash.dividendsYtd, currency, true, maskValues),
-      tone: T.green,
-      title: "Year-to-date dividends.",
-    },
-    {
-      label: "Int",
-      value: formatAccountMoney(cash.interestYtd, currency, true, maskValues),
-      tone: T.green,
-      title: "Year-to-date interest paid or earned.",
-    },
-  ];
-  return (
-    <section
-      tabIndex={0}
-      className="ra-panel-enter"
-      style={{
-        ...panelStyle,
-        minHeight: dim(54),
-        display: "grid",
-        gap: sp(compact ? 2 : 3),
-        padding: compact ? sp("4px 7px") : sp("5px 9px"),
-        overflow: "hidden",
-        outline: "none",
-      }}
-    >
-      <header
-        style={{
-          minWidth: 0,
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          alignItems: "start",
-          gap: sp(8),
-        }}
-      >
-        <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
-          <AppTooltip content={returnTooltip}><div style={labelCapsStyle}>
-            Adj return · {range || model?.range || "Range"}
-          </div></AppTooltip>
-          <AppTooltip content={returnTooltip}><div
-            style={{
-              color: metricTone(equity.returnPercent),
-              fontSize: fs(compact ? 15 : 17),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              lineHeight: 1,
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {formatSignedPercent(equity.returnPercent, 2, maskValues)}
-          </div></AppTooltip>
-        </div>
-        <div style={{ minWidth: 0, display: "grid", gap: sp(2), textAlign: "right" }}>
-          <div style={labelCapsStyle}>
-            P&L Δ
-          </div>
-          <AppTooltip content="Transfer-adjusted P&L over the selected equity range. External deposits and withdrawals are excluded."><div
-            style={{
-              color: metricTone(transferAdjustedPnl),
-              fontSize: fs(compact ? 10 : 11),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              lineHeight: 1.2,
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {formatAccountSignedMoney(transferAdjustedPnl, currency, true, maskValues)}
-          </div></AppTooltip>
-        </div>
-      </header>
-
-      <DailyPnlCalendar
-        trades={tradesData?.trades || []}
-        equityPoints={equityPoints || []}
-        currency={currency}
-        maskValues={maskValues}
-        isPhone={isPhone}
-      />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          columnGap: sp(8),
-          rowGap: sp(3),
-          minWidth: 0,
-        }}
-      >
-        {metrics.map((metric) => (
-          <MetricCell key={metric.label} {...metric} />
-        ))}
-      </div>
-    </section>
-  );
-};
+}) => (
+  <DailyPnlCalendar
+    trades={tradesData?.trades || []}
+    equityPoints={equityPoints || []}
+    currency={currency}
+    maskValues={maskValues}
+    isPhone={isPhone}
+  />
+);
 
 export default AccountReturnsPanel;

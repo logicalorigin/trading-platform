@@ -183,13 +183,19 @@ export const AlgoStatusBar = ({
                 disabled:
                   !focusedDeployment || scanPending || gatewayBridgeLaunching,
               }),
-              border: "none",
+              border: !focusedDeployment
+                ? "none"
+                : `1px solid ${gatewayReady ? T.cyan : T.amber}`,
               background: !focusedDeployment
                 ? T.textMuted
                 : gatewayReady
+                  ? T.cyanBg
+                  : T.amberBg,
+              color: !focusedDeployment
+                ? T.bg0
+                : gatewayReady
                   ? T.cyan
                   : T.amber,
-              color: "#031216",
             }}
           >
             {scanPending

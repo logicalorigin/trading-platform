@@ -1233,6 +1233,7 @@ export const GetAccountPositionsResponse = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]).optional(),
+  "marketDataSymbol": zod.string().nullish().describe('Canonical ticker used for quote and sparkline hydration.'),
   "sector": zod.string(),
   "quantity": zod.number(),
   "averageCost": zod.number(),
@@ -1331,6 +1332,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]).optional(),
+  "marketDataSymbol": zod.string().nullish().describe('Canonical ticker used for quote and sparkline hydration.'),
   "sector": zod.string(),
   "quantity": zod.number(),
   "averageCost": zod.number(),

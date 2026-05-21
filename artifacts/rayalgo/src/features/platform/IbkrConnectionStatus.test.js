@@ -182,7 +182,7 @@ test("getIbkrConnectionTone maps configured connection states", () => {
       accountsLoaded: true,
       strictReady: false,
     }).label,
-    "capacity limited",
+    "line limited",
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -417,7 +417,7 @@ test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
       "quiet stream",
       "online",
       "stale",
-      "capacity limited",
+      "line limited",
       "reconnecting",
     ],
   );
@@ -428,7 +428,19 @@ test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
       getIbkrStreamStateMeta("quiet", null).badge,
       getIbkrStreamStateMeta("capacity_limited", "backpressure").badge,
     ],
-    ["STANDBY", "CLOSED", "QUIET", "CAPACITY"],
+    ["STANDBY", "CLOSED", "QUIET", "LIMITED"],
+  );
+});
+
+test("IBKR limited-line state does not leak capacity wording into display copy", () => {
+  const meta = getIbkrStreamStateMeta("capacity_limited", "backpressure");
+
+  assert.equal(meta.label, "line limited");
+  assert.equal(meta.healthLabel, "Line Limited");
+  assert.equal(meta.badge, "LIMITED");
+  assert.equal(
+    /\bcap(s|acity)?\b/i.test(`${meta.label} ${meta.healthLabel} ${meta.badge}`),
+    false,
   );
 });
 
@@ -1450,7 +1462,7 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
       ["Polygon", "OK"],
     ],
   );
-  assert.equal(model.lineUsage.summary, "77 / 200");
+  assert.equal(model.lineUsage.summary, "77 of 200");
   assert.equal(model.compactLineUsage.used, 77);
   assert.equal(model.compactLineUsage.cap, 200);
   assert.equal(model.compactLineUsage.free, 123);
@@ -1516,7 +1528,7 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
   });
 
   assert.equal(model.lineUsage.available, true);
-  assert.equal(model.lineUsage.summary, "77 / 200");
+  assert.equal(model.lineUsage.summary, "77 of 200");
   assert.deepEqual(
     model.lineUsage.rows
       .filter((row) =>
@@ -1605,17 +1617,17 @@ test("buildHeaderIbkrPopoverModel uses one active line meter with pending reconc
     },
   });
 
-  assert.equal(model.lineUsage.summary, "143 / 190");
+  assert.equal(model.lineUsage.summary, "143 of 190");
   assert.equal(model.lineUsage.activeLineCount, 143);
   assert.equal(model.lineUsage.requestedLineCount, 143);
   assert.equal(model.lineUsage.pendingLineCount, 128);
-  assert.equal(model.lineUsage.requestedSummary, "143 / 190");
-  assert.equal(model.lineUsage.demandSummary, "143 / 190");
-  assert.equal(model.lineUsage.bridge.summary, "15 / 190");
+  assert.equal(model.lineUsage.requestedSummary, "143 of 190");
+  assert.equal(model.lineUsage.demandSummary, "143 of 190");
+  assert.equal(model.lineUsage.bridge.summary, "15 of 190");
   assert.equal(model.compactLineUsage.used, 143);
   assert.equal(model.compactLineUsage.cap, 190);
   assert.equal(model.compactLineUsage.free, 47);
-  assert.equal(model.compactLineUsage.summary, "143 / 190");
+  assert.equal(model.compactLineUsage.summary, "143 of 190");
   assert.equal(model.lineUsage.drift.label, "pending bridge");
   assert.equal(model.lineUsage.warmup.pendingLineCount, 27);
   assert.equal(model.lineUsage.warmup.accountPendingLineCount, 1);

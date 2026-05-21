@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 export const formatLiveBrokerActionError = (error) => {
   const message =
@@ -35,7 +35,7 @@ export const BrokerActionConfirmDialog = ({
         alignItems: "center",
         justifyContent: "center",
         padding: sp(16),
-        background: "rgba(25, 23, 26, 0.55)",
+        background: `color-mix(in srgb, ${T.bg0} 72%, transparent)`,
         backdropFilter: "blur(8px)",
       }}
     >
@@ -46,7 +46,7 @@ export const BrokerActionConfirmDialog = ({
           background: T.bg1,
           border: `1px solid ${confirmTone}55`,
           borderRadius: dim(RADII.md),
-          boxShadow: "0 24px 72px rgba(0,0,0,0.45)",
+          boxShadow: ELEVATION.lg,
           padding: sp("20px 22px"),
           display: "flex",
           flexDirection: "column",
@@ -72,7 +72,7 @@ export const BrokerActionConfirmDialog = ({
               fontWeight: FONT_WEIGHTS.label,
               color: T.text,
               fontFamily: T.sans,
-              letterSpacing: "-0.015em",
+              letterSpacing: 0,
               lineHeight: 1.2,
             }}
           >
@@ -172,7 +172,7 @@ export const BrokerActionConfirmDialog = ({
               fontSize: fs(13),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "-0.005em",
+              letterSpacing: 0,
               cursor: pending ? "not-allowed" : "pointer",
               opacity: pending ? 0.65 : 1,
             }}
@@ -191,7 +191,7 @@ export const BrokerActionConfirmDialog = ({
               fontSize: fs(13),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.label,
-              letterSpacing: "-0.005em",
+              letterSpacing: 0,
               cursor: pending ? "wait" : "pointer",
               opacity: pending ? 0.75 : 1,
             }}

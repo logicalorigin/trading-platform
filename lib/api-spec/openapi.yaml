@@ -7772,6 +7772,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        marketDataSymbol:
+          type: string
+          nullable: true
+          description: Canonical ticker used for quote and sparkline hydration.
         sector:
           type: string
         quantity:

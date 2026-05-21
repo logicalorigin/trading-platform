@@ -1,4 +1,4 @@
-import { FONT_WEIGHTS, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import {
   formatAccountMoney,
   formatAccountPercent,
@@ -12,7 +12,7 @@ const metricValue = (metric, currency, kind = "money", maskValues = false) => {
   return formatAccountMoney(metric.value, metric.currency || currency, true, maskValues);
 };
 
-const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) => (
+const HeaderMetric = ({ label, value, tone = T.text, title }) => (
   <AppTooltip content={title}>
     <div
       style={{
@@ -43,9 +43,9 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
       <span
         style={{
           color: tone,
-          fontSize: fs(strong ? 11 : 9),
+          fontSize: fs(9),
           fontFamily: T.sans,
-          fontWeight: strong ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+          fontWeight: FONT_WEIGHTS.regular,
           fontVariantNumeric: "tabular-nums",
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -73,7 +73,7 @@ const StatusDot = ({ tone, title }) => (
         style={{
           width: 6,
           height: 6,
-          borderRadius: 999,
+          borderRadius: dim(RADII.pill),
           background: tone,
         }}
       />
@@ -186,12 +186,6 @@ export const AccountHeaderStrip = ({
         }}
       >
         {[
-          {
-            label: "Net",
-            value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
-            title: metricTitle(metrics.netLiquidation),
-            strong: true,
-          },
           {
             label: "Cash",
             value: metricValue(metrics.totalCash, currency, "money", maskValues),

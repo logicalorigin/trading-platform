@@ -21,6 +21,33 @@ import {
 } from "./bridge-governor";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 
+const ENV_KEYS = [
+  "IBKR_MARKET_DATA_APP_MAX_LINES",
+  "IBKR_MARKET_DATA_RESERVE_LINES",
+  "IBKR_MARKET_DATA_EXECUTION_LINES",
+  "IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES",
+  "IBKR_MARKET_DATA_VISIBLE_LINES",
+  "IBKR_MARKET_DATA_AUTOMATION_LINES",
+  "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
+  "IBKR_MARKET_DATA_CONVENIENCE_LINES",
+  "IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS",
+  "IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD",
+] as const;
+
+const originalEnv = Object.fromEntries(
+  ENV_KEYS.map((key) => [key, process.env[key]]),
+);
+
+function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>): void {
+  ENV_KEYS.forEach((key) => {
+    if (values[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = values[key];
+    }
+  });
+}
+
 function optionQuote(
   providerContractId: string,
   price: number,
@@ -75,8 +102,7 @@ test.afterEach(() => {
   __setBridgeOptionQuoteStreamNowForTests(null);
   __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
-  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"];
-  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"];
+  setEnv(originalEnv);
 });
 
 test("option quote stream shares one bridge stream for duplicate contract demand", async () => {
@@ -202,6 +228,39 @@ test("option quote snapshots reuse fresh shared cache before bridge reads", asyn
   assert.equal(payload.debug?.returnedCount, 1);
 });
 
+test("option quote shared cache preserves prices when a partial zero quote is newer", () => {
+  assert.ok(
+    __cacheBridgeOptionQuoteForTests(
+      optionQuote("1001", 1.23, "2026-04-28T14:30:00.000Z"),
+    ),
+  );
+
+  const partialZeroQuote = {
+    ...optionQuote("1001", 0, "2026-04-28T14:31:00.000Z"),
+    bid: 0,
+    ask: 0,
+    change: -1.23,
+    changePercent: -100,
+    volume: 250,
+    openInterest: 2_000,
+    delta: 0.42,
+  };
+  const cached = __cacheBridgeOptionQuoteForTests(partialZeroQuote);
+
+  assert.equal(cached?.price, 1.23);
+  assert.equal(cached?.bid, 1.22);
+  assert.equal(cached?.ask, 1.24);
+  assert.equal(cached?.change, 0);
+  assert.equal(cached?.changePercent, 0);
+  assert.equal(cached?.volume, 250);
+  assert.equal(cached?.openInterest, 2_000);
+  assert.equal(cached?.delta, 0.42);
+  assert.equal(
+    cached?.updatedAt.toISOString(),
+    "2026-04-28T14:31:00.000Z",
+  );
+});
+
 test("option quote snapshots expose custom admission results for background callers", async () => {
   const bridgeRequests: string[][] = [];
   __setBridgeOptionQuoteClientForTests({
@@ -244,6 +303,61 @@ test("option quote snapshots expose custom admission results for background call
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 0);
   assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("option quote snapshots keep cached rejected contracts in the payload", async () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "1",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  __setBridgeOptionQuoteStreamNowForTests(now);
+  assert.ok(__cacheBridgeOptionQuoteForTests(optionQuote("2002", 2.2)));
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2002", "2001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.deepEqual(bridgeRequests, [["2001"]]);
+  assert.deepEqual(
+    payload.quotes.map((quote) => quote.providerContractId),
+    ["2001", "2002"],
+  );
+  assert.equal(payload.debug?.acceptedCount, 1);
+  assert.equal(payload.debug?.rejectedCount, 1);
+  assert.equal(payload.debug?.returnedCount, 2);
+  assert.deepEqual(payload.debug?.missingProviderContractIds, []);
 });
 
 test("option quote snapshots ignore Polygon option tickers before bridge hydration", async () => {
@@ -331,6 +445,72 @@ test("option quote stream subscriptions do not admit Polygon option tickers", as
   assert.deepEqual(bridgeRequests, [["1001"]]);
   assert.equal(diagnostics.activeOptionLineCount, 1);
   assert.equal(diagnostics.activeLineCount, 2);
+});
+
+test("option quote stream keeps cached rejected contracts subscribed", async () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "1",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  __setBridgeOptionQuoteStreamNowForTests(now);
+  assert.ok(__cacheBridgeOptionQuoteForTests(optionQuote("1002", 2.2)));
+  const bridgeRequests: string[][] = [];
+  let emitQuotes: ((quotes: QuoteSnapshot[]) => void) | null = null;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [];
+    },
+    streamOptionQuoteSnapshots(input, onQuotes) {
+      bridgeRequests.push(input.providerContractIds);
+      emitQuotes = onQuotes;
+      return () => {};
+    },
+  });
+
+  const payloads: string[][] = [];
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    {
+      underlying: "SPY",
+      providerContractIds: ["1002", "1001"],
+      owner: "flow-scanner:SPY",
+      intent: "flow-scanner-live",
+      fallbackProvider: "none",
+      requiresGreeks: false,
+    },
+    (payload) => {
+      payloads.push(payload.quotes.map((quote) => quote.providerContractId ?? ""));
+    },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const diagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const emit = emitQuotes as ((quotes: QuoteSnapshot[]) => void) | null;
+  if (!emit) {
+    throw new Error("Option quote stream was not opened.");
+  }
+  emit([optionQuote("1001", 1.1)]);
+  unsubscribe();
+
+  assert.deepEqual(bridgeRequests, [["1001"]]);
+  assert.deepEqual(payloads[0], ["1002"]);
+  assert.deepEqual(payloads.at(-1), ["1001"]);
+  assert.equal(diagnostics.unionProviderContractIdCount, 1);
+  assert.equal(diagnostics.requestedProviderContractIdCount, 2);
+  assert.equal(diagnostics.nonLiveProviderContractIdCount, 1);
 });
 
 test("flow scanner option quote snapshots are not blocked by option-chain governor backoff", async () => {

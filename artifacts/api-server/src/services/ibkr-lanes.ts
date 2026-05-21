@@ -207,6 +207,10 @@ const optionsFlowBounds: Partial<
   universeRefreshMs: { min: 60_000, max: 3_600_000, unit: "ms" },
   universeMinPrice: { min: 0.01, max: 1_000 },
   universeMinDollarVolume: { min: 0, max: 1_000_000_000 },
+  radarBatchSize: { min: 1, max: 250 },
+  radarDeepCandidateCount: { min: 0, max: 24 },
+  radarFallbackDeepCandidateCount: { min: 0, max: 24 },
+  radarDeepLineBudget: { min: 1, max: 150 },
   scannerBatchSize: { min: 1, max: 100 },
   scannerConcurrency: { min: 1, max: 24 },
   scannerLimit: { min: 1, max: 500 },
@@ -678,7 +682,7 @@ async function buildLaneMemberships(
       queuedCount: readNumber(bridgeSchedulerLane(bridge, "account").queued),
       notes: [
         "Account lane is system controlled and should stay narrow.",
-        `Account monitor live-line pool: ${admissionDiagnostics.accountMonitorLineCount}/${admissionDiagnostics.budget.accountMonitorLineCap}.`,
+        `Account monitor live lines are dynamic: ${admissionDiagnostics.accountMonitor.coveredLineCount} of ${admissionDiagnostics.accountMonitor.neededLineCount} covered.`,
       ],
     },
     {
@@ -798,7 +802,8 @@ function normalizeFlowOverride(
 ): OptionsFlowRuntimeConfig[keyof OptionsFlowRuntimeConfig] {
   if (
     key === "scannerEnabled" ||
-    key === "scannerAlwaysOn"
+    key === "scannerAlwaysOn" ||
+    key === "radarEnabled"
   ) {
     return readBoolean(value);
   }

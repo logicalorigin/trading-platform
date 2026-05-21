@@ -19,6 +19,7 @@ import {
   buildBarsRequestOptions,
 } from "./queryDefaults";
 import { syncRuntimeMarketData } from "./runtimeMarketDataModel";
+import { SPARKLINE_RENDER_POINT_LIMIT } from "./sparklineConfig";
 
 const settleWithConcurrency = async (items, concurrency, mapper) => {
   const results = new Array(items.length);
@@ -48,11 +49,31 @@ const settleWithConcurrency = async (items, concurrency, mapper) => {
   return results;
 };
 
+const SPARKLINE_HISTORY_TIMEFRAME = "1m";
+const SPARKLINE_HISTORY_LIMIT = 720;
+
+const thinBarsForSparkline = (bars, limit = SPARKLINE_RENDER_POINT_LIMIT) => {
+  if (!Array.isArray(bars) || bars.length <= limit) {
+    return Array.isArray(bars) ? bars : [];
+  }
+
+  if (limit <= 1) {
+    return bars.slice(-1);
+  }
+
+  const lastIndex = bars.length - 1;
+  return Array.from({ length: limit }, (_, index) => {
+    const sourceIndex = Math.round((index * lastIndex) / (limit - 1));
+    return bars[sourceIndex];
+  });
+};
+
 export const MarketDataSubscriptionProvider = ({
   watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
   sparklineSymbols,
+  prioritySparklineSymbols = [],
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled = false,
@@ -87,8 +108,17 @@ export const MarketDataSubscriptionProvider = ({
         .join("|"),
     [activeWatchlistItems],
   );
+  const requestedSparklineSymbols = useMemo(
+    () => [
+      ...new Set([
+        ...(lowPriorityHistoryEnabled ? sparklineSymbols : []),
+        ...prioritySparklineSymbols,
+      ]),
+    ],
+    [lowPriorityHistoryEnabled, prioritySparklineSymbols, sparklineSymbols],
+  );
   const sparklineHistoryEnabled = Boolean(
-    lowPriorityHistoryEnabled && sparklineSymbols.length > 0,
+    requestedSparklineSymbols.length > 0,
   );
   const quoteStreamRuntimeActive = Boolean(
     pageVisible && quoteStreamRuntimeEnabled && streamedQuoteSymbols.length > 0,
@@ -115,7 +145,7 @@ export const MarketDataSubscriptionProvider = ({
   useRuntimeWorkloadFlag("market:sparklines", sparklineHistoryEnabled, {
     kind: "poll",
     label: "Market sparklines",
-    detail: `${sparklineSymbols.length}s`,
+    detail: `${requestedSparklineSymbols.length}s`,
     priority: 6,
   });
   useRuntimeWorkloadFlag(
@@ -144,18 +174,24 @@ export const MarketDataSubscriptionProvider = ({
     },
   );
   const sparklineQuery = useQuery({
-    queryKey: ["market-sparklines", sparklineSymbols],
+    queryKey: [
+      "market-sparklines",
+      SPARKLINE_HISTORY_TIMEFRAME,
+      SPARKLINE_HISTORY_LIMIT,
+      SPARKLINE_RENDER_POINT_LIMIT,
+      requestedSparklineSymbols,
+    ],
     enabled: sparklineHistoryEnabled,
     queryFn: async () => {
       const results = await settleWithConcurrency(
-        sparklineSymbols,
+        requestedSparklineSymbols,
         4,
         (symbol) =>
           getBarsRequest(
             {
               symbol,
-              timeframe: "15m",
-              limit: 48,
+              timeframe: SPARKLINE_HISTORY_TIMEFRAME,
+              limit: SPARKLINE_HISTORY_LIMIT,
               outsideRth: true,
               source: "trades",
             },
@@ -165,8 +201,10 @@ export const MarketDataSubscriptionProvider = ({
 
       return Object.fromEntries(
         results.map((result, index) => [
-          sparklineSymbols[index],
-          result.status === "fulfilled" ? result.value.bars || [] : [],
+          requestedSparklineSymbols[index],
+          result.status === "fulfilled"
+            ? thinBarsForSparkline(result.value.bars || [])
+            : [],
         ]),
       );
     },

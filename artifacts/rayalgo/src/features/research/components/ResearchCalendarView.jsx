@@ -86,7 +86,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
   const timeBadge = t => {
     if (t === "bmo") return { label: "BMO", bg: T.greenBg, fg: T.green, title: "Before market open" };
-    if (t === "amc") return { label: "AMC", bg: "rgba(142,68,173,.15)", fg: T.purple, title: "After market close" };
+    if (t === "amc") return { label: "AMC", bg: `${T.purple}26`, fg: T.purple, title: "After market close" };
     if (t === "dmh") return { label: "DMH", bg: T.amberBg, fg: T.amber, title: "During market hours" };
     return { label: "—", bg: T.bg2, fg: T.textDim, title: "Time not specified" };
   };
@@ -109,7 +109,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
           <div style={{ fontSize: fs(11), color: accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
             Earnings & Catalysts
           </div>
-          <h2 style={{ fontFamily: T.display, fontSize: fs(30), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: -0.8, lineHeight: 1.05, marginTop: sp(3) }}>
+          <h2 style={{ fontFamily: T.display, fontSize: fs(30), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(3) }}>
             Catalyst Calendar
           </h2>
         </div>
@@ -206,7 +206,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             <div style={{
               position: "sticky", top: 0, zIndex: 2,
               display: "flex", alignItems: "baseline", gap: sp(8),
-              padding: sp("5px 8px"), background: `linear-gradient(to bottom, ${T.bg1} 75%, rgba(255,255,255,.85))`,
+              padding: sp("5px 8px"), background: `linear-gradient(to bottom, ${T.bg1} 75%, color-mix(in srgb, ${T.bg1} 85%, transparent))`,
               borderBottom: `1px solid ${T.border}`,
             }}>
               <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{dh.primary}</span>

@@ -125,7 +125,7 @@ export const sectionTitleStyle = {
     return T.sans;
   },
   fontWeight: FONT_WEIGHTS.label,
-  letterSpacing: "-0.015em",
+  letterSpacing: 0,
   lineHeight: 1.2,
 };
 
@@ -569,7 +569,7 @@ export const EmptyState = ({ title, body, action }) => (
         color: T.text,
         fontSize: textSize("paragraphMuted"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "-0.005em",
+        letterSpacing: 0,
       }}
     >
       {title}

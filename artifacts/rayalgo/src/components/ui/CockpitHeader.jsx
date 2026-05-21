@@ -89,7 +89,7 @@ export const CockpitHeader = ({
                 fontFamily: T.sans,
                 fontSize: textSize(narrow ? "displayMedium" : "displayLarge"),
                 fontWeight: FONT_WEIGHTS.label,
-                letterSpacing: "-0.02em",
+                letterSpacing: 0,
                 lineHeight: 1.1,
                 overflow: "hidden",
                 textOverflow: "ellipsis",

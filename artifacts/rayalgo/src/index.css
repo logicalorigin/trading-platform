@@ -11,7 +11,7 @@
   --ra-blue-500: #7CA7D9;
   --ra-green-400: #6BC498;
   --ra-green-500: #4FB286;
-  --ra-red-500: #D77470;
+  --ra-red-500: #EA5E5B;
   --ra-amber-300: #EBCB9C;
   --ra-amber-400: #E2B97E;
   --ra-amber-500: #D9A864;
@@ -114,7 +114,7 @@
   --ra-motion-exit: cubic-bezier(0.4, 0, 1, 1);
   --ra-motion-accent: #E08F76;
   --ra-motion-up: #4FB286;
-  --ra-motion-down: #D77470;
+  --ra-motion-down: #EA5E5B;
   --ra-motion-warn: #D9A864;
   --ra-tooltip-bg: #1E1D22;
   --ra-tooltip-border: #3A3940;
@@ -739,6 +739,14 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
 }
 
 .ra-account-overview-cell > section {
+  height: auto;
+}
+
+.ra-account-pnl-calendar-panel {
+  min-width: 0;
+}
+
+.ra-account-pnl-calendar-panel > section {
   height: auto;
 }
 

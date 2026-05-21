@@ -2556,6 +2556,8 @@ export interface AccountPositionRow {
   description: string;
   assetClass: string;
   optionContract?: OptionContract | null;
+  /** Canonical ticker used for quote and sparkline hydration. */
+  marketDataSymbol?: string | null;
   sector: string;
   quantity: number;
   averageCost: number;

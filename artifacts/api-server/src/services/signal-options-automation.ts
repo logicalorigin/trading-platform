@@ -96,6 +96,7 @@ const activeSignalOptionsRunMetadata = new Map<
 
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
+const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
 const SIGNAL_OPTIONS_OPTION_BACKOFF_DEBUG_REASON = "options_backoff";
 const SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON = "algo_gateway_not_ready";
 
@@ -702,7 +703,7 @@ async function listDeploymentEvents(deploymentId: string, limit = 500) {
     .from(executionEventsTable)
     .where(eq(executionEventsTable.deploymentId, deploymentId))
     .orderBy(desc(executionEventsTable.occurredAt))
-    .limit(Math.min(Math.max(limit, 1), 1_000));
+    .limit(Math.min(Math.max(limit, 1), 10_000));
 }
 
 async function listDeploymentBackfillEvents(deploymentId: string) {
@@ -787,17 +788,9 @@ async function insertSignalOptionsEvent(input: {
     event.eventType === SIGNAL_OPTIONS_EXIT_EVENT ||
     event.eventType === SIGNAL_OPTIONS_MARK_EVENT
   ) {
-    const ledgerSource =
-      input.ledgerSource === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? "automation"
-        : input.ledgerSource;
-    const ledgerMarkSource =
-      input.ledgerMarkSource === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
-        ? "automation_mark"
-        : input.ledgerMarkSource;
     await recordShadowAutomationEvent(event, {
-      source: ledgerSource,
-      markSource: ledgerMarkSource,
+      source: input.ledgerSource,
+      markSource: input.ledgerMarkSource,
     }).catch((error) => {
       logger.warn?.(
         { err: error, eventId: event.id, eventType: event.eventType },
@@ -2132,11 +2125,14 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
   const payload = asRecord(event.payload);
   const position = asRecord(payload.position);
   const candidate = asRecord(payload.candidate);
-  const selectedContract = asRecord(payload.selectedContract);
+  const selectedContract = Object.keys(asRecord(payload.selectedContract)).length
+    ? asRecord(payload.selectedContract)
+    : asRecord(position.selectedContract);
   const entryPrice = finiteNumber(position.entryPrice ?? payload.simulatedFillPrice);
   const quantity = finiteNumber(position.quantity ?? payload.quantity);
   const candidateId = String(candidate.id || position.candidateId || event.id);
-  const direction = candidate.direction === "sell" ? "sell" : "buy";
+  const direction =
+    candidate.direction === "sell" || position.direction === "sell" ? "sell" : "buy";
   const signalAt =
     toIsoString(candidate.signalAt) ??
     toIsoString(position.signalAt) ??
@@ -2150,10 +2146,15 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
     candidateId,
     symbol: event.symbol,
     direction,
-    optionRight: candidate.optionRight === "put" ? "put" : "call",
-    timeframe: String(candidate.timeframe || "15m") as SignalMonitorTimeframe,
+    optionRight:
+      candidate.optionRight === "put" ||
+      position.optionRight === "put" ||
+      selectedContract.right === "put"
+        ? "put"
+        : "call",
+    timeframe: String(candidate.timeframe || position.timeframe || "15m") as SignalMonitorTimeframe,
     signalAt,
-    openedAt: toIsoString(event.occurredAt) ?? signalAt,
+    openedAt: toIsoString(position.openedAt) ?? toIsoString(event.occurredAt) ?? signalAt,
     entryPrice,
     quantity,
     peakPrice: finiteNumber(position.peakPrice) ?? entryPrice,
@@ -2169,6 +2170,8 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
 
 function deriveActivePositions(events: ExecutionEvent[]) {
   const positions = new Map<string, SignalOptionsPosition>();
+  const closedCandidateIds = new Set<string>();
+  const closedPositionIds = new Set<string>();
   [...events]
     .sort(
       (left, right) =>
@@ -2182,15 +2185,33 @@ function deriveActivePositions(events: ExecutionEvent[]) {
       if (event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT) {
         const position = positionFromEntryPayload(event);
         if (position) {
+          closedCandidateIds.delete(position.candidateId);
+          closedPositionIds.delete(position.id);
           positions.set(symbol, position);
         }
         return;
       }
       if (event.eventType === SIGNAL_OPTIONS_EXIT_EVENT) {
+        const payload = asRecord(event.payload);
+        const position = asRecord(payload.position);
+        const candidateId = positionCandidateIdFromPayload(payload);
+        if (candidateId) {
+          closedCandidateIds.add(candidateId);
+        }
+        const positionId = compactString(position.id);
+        if (positionId) {
+          closedPositionIds.add(positionId);
+        }
         positions.delete(symbol);
         return;
       }
-      if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT) {
+      const isPositionMarkSkip =
+        event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
+        ["position_mark_unavailable", "position_mark_failed"].includes(
+          compactString(asRecord(event.payload).reason ?? asRecord(event.payload).skipReason) ??
+            "",
+        );
+      if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT || isPositionMarkSkip) {
         const payload = asRecord(event.payload);
         const position = asRecord(payload.position);
         const current = positions.get(symbol);
@@ -2203,6 +2224,20 @@ function deriveActivePositions(events: ExecutionEvent[]) {
             toIsoString(position.lastMarkedAt) ??
             toIsoString(event.occurredAt) ??
             current.lastMarkedAt;
+          return;
+        }
+
+        if (isPositionMarkSkip) {
+          return;
+        }
+
+        const recovered = positionFromEntryPayload(event);
+        if (
+          recovered &&
+          !closedCandidateIds.has(recovered.candidateId) &&
+          !closedPositionIds.has(recovered.id)
+        ) {
+          positions.set(symbol, recovered);
         }
       }
     });
@@ -4241,7 +4276,7 @@ export async function getSignalOptionsPerformance(input: {
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const profile = resolveDeploymentProfile(deployment);
-  const events = await listDeploymentEvents(deployment.id, 1_000);
+  const events = await listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT);
   const state = await buildStatePayload({ deployment, profile, events });
   const shadowPatterns = await computeShadowTradingPatterns({ range: "1M" });
 
@@ -4425,7 +4460,7 @@ export async function listSignalOptionsAutomationState(input: {
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const profile = resolveDeploymentProfile(deployment);
-  const events = await listDeploymentEvents(deployment.id, 500);
+  const events = await listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT);
 
   return buildStatePayload({ deployment, profile, events });
 }
@@ -4436,7 +4471,7 @@ export async function getAlgoDeploymentCockpit(input: {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const [profile, events, readiness, fleetRows] = await Promise.all([
     Promise.resolve(resolveDeploymentProfile(deployment)),
-    listDeploymentEvents(deployment.id, 750),
+    listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT),
     getAlgoGatewayReadiness(),
     db
       .select()
@@ -4605,7 +4640,7 @@ async function refreshActivePosition(input: {
       underlying: input.position.symbol,
       providerContractIds: [providerContractId],
       owner: `signal-options-position-mark:${input.deployment.id}:${input.position.id}`,
-      intent: "flow-scanner-live",
+      intent: "account-monitor-live",
       ttlMs: 5_000,
       fallbackProvider: "cache",
       requiresGreeks: false,
@@ -5776,7 +5811,10 @@ async function insertSignalOptionsBackfillEvent(input: {
     ) {
       input.summaryCounters.mirrorRepairsAttempted += 1;
       await recordShadowAutomationEvent(existing, {
-        source: "automation",
+        source:
+          source === SIGNAL_OPTIONS_REPLAY_SOURCE
+            ? SIGNAL_OPTIONS_REPLAY_SOURCE
+            : "automation",
       }).catch((error) => {
         logger.warn?.(
           { err: error, eventId: existing.id, backfillEventKey: input.backfillEventKey },
@@ -5799,7 +5837,11 @@ async function insertSignalOptionsBackfillEvent(input: {
     occurredAt: input.occurredAt,
     ledgerSource:
       input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? "automation"
+        ? SIGNAL_OPTIONS_REPLAY_SOURCE
+        : undefined,
+    ledgerMarkSource:
+      input.replay || source === SIGNAL_OPTIONS_REPLAY_SOURCE
+        ? SIGNAL_OPTIONS_REPLAY_MARK_SOURCE
         : undefined,
     payload: historicalEventPayload({
       source,
@@ -7471,7 +7513,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   }
 
   const profile = resolveDeploymentProfile(deployment);
-  const initialEvents = await listDeploymentEvents(deployment.id, 500);
+  const initialEvents = await listDeploymentEvents(
+    deployment.id,
+    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+  );
   const initialSignalEvents = runtimeSignalOptionsEvents(initialEvents);
   const initialPositions = deriveActivePositions(initialSignalEvents);
 
@@ -7512,7 +7557,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     );
   }
 
-  const eventsAfterMarks = await listDeploymentEvents(deployment.id, 750);
+  const eventsAfterMarks = await listDeploymentEvents(
+    deployment.id,
+    SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+  );
   const eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
   const activePositionsAfterMarks = deriveActivePositions(eventsAfterMarksRuntime);
   const profileUpdatedAt = latestSignalOptionsProfileUpdatedAt(

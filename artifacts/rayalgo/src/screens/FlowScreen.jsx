@@ -16,15 +16,20 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Calendar,
+  Clock,
   Columns3,
   Copy,
+  DollarSign,
   ExternalLink,
+  Hash,
   PanelLeftClose,
   PanelLeftOpen,
+  Pause,
   Pin,
   PinOff,
   Play,
-  SlidersHorizontal,
+  Tag,
 } from "lucide-react";
 import {
   useGetFlowPremiumDistribution,
@@ -599,42 +604,42 @@ const FLOW_PREMIUM_SEGMENT_CONFIG = [
     flow: "inflow",
     bucket: "large",
     label: "Inflow Large",
-    color: "#4fb58d",
+    color: T.green,
   },
   {
     key: "inflow.small",
     flow: "inflow",
     bucket: "small",
     label: "Inflow Small",
-    color: "#7dba63",
+    color: T.cyan,
   },
   {
     key: "inflow.medium",
     flow: "inflow",
     bucket: "medium",
     label: "Inflow Medium",
-    color: "#58bd75",
+    color: T.blue,
   },
   {
     key: "outflow.large",
     flow: "outflow",
     bucket: "large",
     label: "Outflow Large",
-    color: "#d64f61",
+    color: T.red,
   },
   {
     key: "outflow.small",
     flow: "outflow",
     bucket: "small",
     label: "Outflow Small",
-    color: "#f5ba42",
+    color: T.amber,
   },
   {
     key: "outflow.medium",
     flow: "outflow",
     bucket: "medium",
     label: "Outflow Medium",
-    color: "#fb8b55",
+    color: T.pink,
   },
 ];
 
@@ -3610,6 +3615,7 @@ const FlowOverviewPanel = ({
     const selected = selectedEvt?.id === event.id;
     const pinned = pinnedEventId === event.id;
     const executionMeta = getFlowExecutionMeta(event);
+    const cluster = clusterFor(event);
     const premiumLabel =
       event.premium >= 1e6
         ? `$${(event.premium / 1e6).toFixed(2)}M`
@@ -3617,13 +3623,57 @@ const FlowOverviewPanel = ({
     const fillSpreadMeta = resolveFlowFillSpreadMeta(event);
     const sentiment = classifyFlowSentiment(event);
     const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
-    const occurredAt = event.occurredAt ? formatFlowAppTime(event.occurredAt) : event.time;
     const sentimentColor =
       sentiment === "bull" ? T.green : sentiment === "bear" ? T.red : T.textDim;
+    const sideColor =
+      event.side === "BUY" ? T.green : event.side === "SELL" ? T.red : T.textDim;
+    const typeColor =
+      event.type === "SWEEP"
+        ? T.amber
+        : event.type === "BLOCK"
+          ? T.accent
+          : T.purple;
+    const cpColor = event.cp === "C" ? T.green : T.red;
+    const volToOi =
+      isFiniteNumber(event.vol) && isFiniteNumber(event.oi) && event.oi > 0
+        ? event.vol / event.oi
+        : null;
+    const spreadLabel = fillSpreadMeta.crossed
+      ? "X"
+      : isFiniteNumber(fillSpreadMeta.spreadPct)
+        ? `${fillSpreadMeta.spreadPct.toFixed(
+            fillSpreadMeta.spreadPct < 10 ? 1 : 0,
+          )}%`
+        : MISSING_VALUE;
+    const fillLabel = isFiniteNumber(fillSpreadMeta.fill)
+      ? `${formatOptionPrice(fillSpreadMeta.fill)} ${fillSpreadMeta.shortLabel}`
+      : MISSING_VALUE;
+    const mobileChipStyle = (
+      color = T.textDim,
+      { fill = false, strong = false, compact = false } = {},
+    ) => ({
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: sp(2),
+      minHeight: dim(18),
+      padding: compact ? sp("0 3px") : sp("1px 5px"),
+      borderRadius: dim(RADII.pill),
+      border: "none",
+      background: fill ? `${color}18` : "transparent",
+      color,
+      fontFamily: T.sans,
+      fontSize: fs(9),
+      fontWeight: strong ? FONT_WEIGHTS.label : FONT_WEIGHTS.regular,
+      lineHeight: 1,
+      whiteSpace: "nowrap",
+    });
+
     return (
       <div
         key={event.id}
         data-testid="flow-row-card"
+        data-mobile-density="compact"
         role="button"
         tabIndex={0}
         onClick={() =>
@@ -3653,7 +3703,7 @@ const FlowOverviewPanel = ({
                 ? T.amber
                 : executionMeta.color,
           }),
-          padding: sp("10px 12px"),
+          padding: sp("7px 9px"),
           borderBottom: `1px solid ${T.borderLight}`,
           background: selected
             ? `${T.accent}12`
@@ -3664,109 +3714,176 @@ const FlowOverviewPanel = ({
                 : "transparent",
           display: "flex",
           flexDirection: "column",
-          gap: sp(6),
+          gap: sp(5),
           cursor: "pointer",
         }}
       >
         <div
+          data-testid="flow-mobile-card-primary"
           style={{
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: sp(8),
+            alignItems: "center",
+            gap: sp(6),
           }}
         >
-          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div
+            style={{
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: sp(5),
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                fontSize: fs(13),
+                fontWeight: FONT_WEIGHTS.label,
+                color: T.text,
+                fontFamily: T.sans,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {event.ticker}
+            </span>
+            <span
+              style={{
+                ...mobileChipStyle(cpColor, { fill: true, strong: true }),
+                borderRadius: dim(3),
+                maxWidth: "46vw",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {event.cp}
+              {event.strike}
+            </span>
+            <span
+              style={{
+                fontSize: fs(9),
+                color: T.textMuted,
+                fontFamily: T.sans,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {formatExpirationLabel(event.expirationDate)}
+            </span>
+            {event.golden ? (
+              <AppTooltip content="Golden setup">
+                <span aria-label="Golden setup" style={{ color: T.amber, lineHeight: 1 }}>
+                  ★
+                </span>
+              </AppTooltip>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(5),
+              flexShrink: 0,
+            }}
+          >
             <span
               style={{
                 fontSize: fs(12),
-                fontWeight: FONT_WEIGHTS.regular,
-                color: T.text,
+                color: event.premium >= 250000 ? T.amber : T.text,
                 fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.label,
+                whiteSpace: "nowrap",
               }}
             >
-              {event.ticker}{" "}
-              <span style={{ color: event.cp === "C" ? T.green : T.red }}>
-                {event.cp}
-                {event.strike}
-              </span>
+              {premiumLabel}
             </span>
-            <span
-              style={{
-                fontSize: textSize("caption"),
-                color: T.textDim,
-                fontFamily: T.sans,
-              }}
-            >
-              {formatExpirationLabel(event.expirationDate)} · {ageLabel} · {occurredAt} {appTimeZoneLabel}
-            </span>
+            {renderTapeCell("actions", event)}
           </div>
+        </div>
+        <div
+          data-testid="flow-mobile-card-compact-meta"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(4),
+            minWidth: 0,
+            overflowX: "auto",
+            paddingBottom: sp(1),
+            scrollbarWidth: "none",
+          }}
+        >
+          <AppTooltip content="Trade age">
+            <span style={mobileChipStyle(T.textSec, { strong: true })}>{ageLabel}</span>
+          </AppTooltip>
+          <AppTooltip content={sentiment === "bull" ? "Bullish" : sentiment === "bear" ? "Bearish" : "Neutral"}>
+            <span
+              aria-label={`Flow sentiment ${sentiment}`}
+              style={{
+                width: dim(7),
+                height: dim(7),
+                borderRadius: dim(RADII.pill),
+                background: sentimentColor,
+                flex: "0 0 auto",
+              }}
+            />
+          </AppTooltip>
+          <span style={mobileChipStyle(sideColor, { fill: true, strong: true })}>
+            {event.side === "BUY" ? "B" : event.side === "SELL" ? "S" : "M"}
+          </span>
+          <span style={mobileChipStyle(executionMeta.color, { fill: true })}>
+            {executionMeta.label}
+          </span>
           <span
-            style={{
-              fontSize: fs(12),
-              color: event.premium >= 250000 ? T.amber : T.text,
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              whiteSpace: "nowrap",
-            }}
+            style={mobileChipStyle(typeColor, {
+              fill: event.type === "SWEEP" || event.type === "BLOCK",
+            })}
           >
-            {premiumLabel}
+            {event.type === "SWEEP" ? "SWP" : event.type === "BLOCK" ? "BLK" : event.type}
+          </span>
+          {event.isUnusual ? (
+            <AppTooltip content="Volume exceeds open interest">
+              <span style={mobileChipStyle(T.cyan, { fill: true, strong: true })}>V/OI</span>
+            </AppTooltip>
+          ) : null}
+          {cluster ? (
+            <AppTooltip content={`${cluster.count} prints · ${fmtM(cluster.totalPrem)} total premium`}>
+              <span style={mobileChipStyle(T.cyan, { fill: true })}>R{cluster.count}</span>
+            </AppTooltip>
+          ) : null}
+          <span style={mobileChipStyle(T.textDim)}>
+            {fmtCompactNumber(event.vol)}/{fmtCompactNumber(event.oi)}
+          </span>
+          <span style={mobileChipStyle(T.textDim)}>
+            {Number.isFinite(event.dte) ? `${event.dte}d` : MISSING_VALUE}
+          </span>
+          {isFiniteNumber(volToOi) ? (
+            <span style={mobileChipStyle(volToOi > 1 ? T.amber : T.textDim)}>
+              {volToOi.toFixed(volToOi >= 10 ? 0 : 1)}x
+            </span>
+          ) : null}
+          <AppTooltip
+            content={
+              isFiniteNumber(fillSpreadMeta.bid) && isFiniteNumber(fillSpreadMeta.ask)
+                ? `${formatOptionPrice(fillSpreadMeta.bid)} bid · ${fillLabel} · ${formatOptionPrice(fillSpreadMeta.ask)} ask`
+                : fillSpreadMeta.label
+            }
+          >
+            <span style={mobileChipStyle(fillSpreadMeta.color, { fill: true })}>
+              {fillLabel}
+            </span>
+          </AppTooltip>
+          <span
+            style={mobileChipStyle(
+              fillSpreadMeta.crossed ||
+                (isFiniteNumber(fillSpreadMeta.spreadPct) && fillSpreadMeta.spreadPct > 10)
+                ? T.amber
+                : T.textDim,
+            )}
+          >
+            {spreadLabel}
           </span>
         </div>
-        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-          <Badge color={executionMeta.color}>{executionMeta.label}</Badge>
-          <Badge color={event.type === "SWEEP" ? T.amber : T.accent}>
-            {event.type}
-          </Badge>
-          <Badge color={flowProviderColor(event.provider)}>
-            {event.sourceLabel}
-          </Badge>
-          <Badge color={sentimentColor}>
-            {sentiment === "bull"
-              ? "BULL"
-              : sentiment === "bear"
-                ? "BEAR"
-                : "NEUTRAL"}
-          </Badge>
-          {event.isUnusual ? <Badge color={T.cyan}>VOL/OI</Badge> : null}
-          {pinned ? <Badge color={T.amber}>Pinned</Badge> : null}
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-            gap: sp(5),
-            fontSize: textSize("body"),
-            color: T.textDim,
-            fontFamily: T.sans,
-          }}
-        >
-          <span>Size {fmtCompactNumber(event.vol)}</span>
-          <span>OI {fmtCompactNumber(event.oi)}</span>
-          <span>DTE {Number.isFinite(event.dte) ? `${event.dte}d` : MISSING_VALUE}</span>
-          <span>Score {event.score}</span>
-        </div>
-        <div
-          data-testid="flow-mobile-fill-spread"
-          style={{
-            fontSize: textSize("body"),
-            color: T.textDim,
-            fontFamily: T.sans,
-          }}
-        >
-          Fill{" "}
-          <span style={{ color: fillSpreadMeta.color, fontWeight: FONT_WEIGHTS.regular }}>
-            {formatOptionPrice(fillSpreadMeta.fill)} {fillSpreadMeta.shortLabel}
-          </span>{" "}
-          · Bid/Ask {formatOptionPrice(fillSpreadMeta.bid)}/
-          {formatOptionPrice(fillSpreadMeta.ask)} · Sprd{" "}
-          {fillSpreadMeta.crossed
-            ? "CROSSED"
-            : isFiniteNumber(fillSpreadMeta.spreadPct)
-              ? `${fillSpreadMeta.spreadPct.toFixed(1)}%`
-              : MISSING_VALUE}
-        </div>
-        {renderTapeCell("actions", event)}
       </div>
     );
   };
@@ -3791,27 +3908,31 @@ const FlowOverviewPanel = ({
     formatAppTime: formatFlowAppTime,
   };
 
-  const flowPresetBar = (
-    <div
-      data-testid="flow-preset-bar"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: sp(5),
-        flexWrap: "wrap",
-        padding: sp("0 2px"),
-      }}
-    >
-      <span
-        style={{
-          fontSize: textSize("body"),
-          color: T.textDim,
-          fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.regular,
-        }}
-      >
-        PRESET SCANS
-      </span>
+	  const flowPresetBar = (
+	    <div
+	      data-testid="flow-preset-bar"
+	      style={{
+	        display: "flex",
+	        alignItems: "center",
+	        gap: sp(isMobileFlowLayout ? 4 : 5),
+	        flexWrap: isMobileFlowLayout ? "nowrap" : "wrap",
+	        padding: sp("0 2px"),
+	        overflowX: isMobileFlowLayout ? "auto" : undefined,
+	        scrollbarWidth: isMobileFlowLayout ? "none" : undefined,
+	      }}
+	    >
+	      {!isMobileFlowLayout ? (
+	        <span
+	          style={{
+	            fontSize: textSize("body"),
+	            color: T.textDim,
+	            fontFamily: T.sans,
+	            fontWeight: FONT_WEIGHTS.regular,
+	          }}
+	        >
+	          PRESET SCANS
+	        </span>
+	      ) : null}
       {FLOW_BUILT_IN_PRESETS.map((preset) => {
         const active = activeFlowPresetId === preset.id;
         const presetColor = FLOW_PRESET_COLORS[preset.id] || T.accent;
@@ -3821,12 +3942,12 @@ const FlowOverviewPanel = ({
             type="button"
             data-testid={`flow-built-in-preset-${preset.id}`}
             onClick={() => applyBuiltInPreset(preset)}
-            style={{
-              padding: sp("4px 10px"),
-              border: "none",
-              borderRadius: dim(RADII.pill),
-              background: active ? `${presetColor}18` : T.bg2,
-              color: active ? presetColor : T.textSec,
+	            style={{
+	              padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
+	              border: "none",
+	              borderRadius: dim(RADII.pill),
+	              background: active ? `${presetColor}18` : T.bg2,
+	              color: active ? presetColor : T.textSec,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: active ? 600 : 500,
@@ -3841,12 +3962,13 @@ const FlowOverviewPanel = ({
       {activeFlowPresetId ? (
         <button
           type="button"
-          onClick={() => updateFlowTapeFilters({ activeFlowPresetId: null }, { clearPreset: false })}
-          style={{
-            padding: sp("4px 10px"),
-            border: "none",
-            borderRadius: dim(RADII.pill),
-            background: T.bg1,
+	          onClick={() => updateFlowTapeFilters({ activeFlowPresetId: null }, { clearPreset: false })}
+	          aria-label="Clear active Flow preset"
+	          style={{
+	            padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
+	            border: "none",
+	            borderRadius: dim(RADII.pill),
+	            background: T.bg1,
             color: T.textSec,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
@@ -3854,10 +3976,10 @@ const FlowOverviewPanel = ({
             letterSpacing: "0.02em",
             cursor: "pointer",
           }}
-        >
-          Clear
-        </button>
-      ) : null}
+	        >
+	          {isMobileFlowLayout ? "×" : "Clear"}
+	        </button>
+	      ) : null}
       {flowFilterSymbol ? (
         <button
           type="button"
@@ -3868,7 +3990,7 @@ const FlowOverviewPanel = ({
             display: "inline-flex",
             alignItems: "center",
             gap: sp(4),
-            padding: sp("4px 10px"),
+	            padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
             border: "none",
             borderRadius: dim(RADII.pill),
             background: `${T.accent}18`,
@@ -3879,10 +4001,10 @@ const FlowOverviewPanel = ({
             letterSpacing: "0.02em",
             cursor: "pointer",
           }}
-        >
-          <span>Symbol: {flowFilterSymbol}</span>
-          <span aria-hidden="true">×</span>
-        </button>
+	        >
+	          <span>{isMobileFlowLayout ? flowFilterSymbol : `Symbol: ${flowFilterSymbol}`}</span>
+	          <span aria-hidden="true">×</span>
+	        </button>
       ) : null}
     </div>
   );
@@ -3918,21 +4040,21 @@ const FlowOverviewPanel = ({
     >
       <div
         ref={flowContentRef}
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: sp(isMobileFlowLayout ? "10px 10px" : "16px 20px"),
-          display: "grid",
-          gridAutoRows: "max-content",
-          alignContent: "start",
-          gap: sp(isMobileFlowLayout ? 6 : 10),
-          minWidth: 0,
-        }}
+	        style={{
+	          flex: 1,
+	          overflowY: "auto",
+	          padding: sp(isMobileFlowLayout ? "7px 8px" : "16px 20px"),
+	          display: "grid",
+	          gridAutoRows: "max-content",
+	          alignContent: "start",
+	          gap: sp(isMobileFlowLayout ? 5 : 10),
+	          minWidth: 0,
+	        }}
       >
         <Card
-          data-testid="flow-top-toolbar"
-          style={{
-            padding: sp("8px 10px"),
+	          data-testid="flow-top-toolbar"
+	          style={{
+	            padding: sp(isMobileFlowLayout ? "6px 8px" : "8px 10px"),
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -3945,12 +4067,12 @@ const FlowOverviewPanel = ({
         >
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: sp(10),
-              minWidth: 0,
-              flex: "1 1 360px",
-            }}
+	              display: "flex",
+	              alignItems: "center",
+	              gap: sp(isMobileFlowLayout ? 7 : 10),
+	              minWidth: 0,
+	              flex: isMobileFlowLayout ? "1 1 180px" : "1 1 360px",
+	            }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
               <span
@@ -3970,10 +4092,11 @@ const FlowOverviewPanel = ({
                   fontFamily: T.sans,
                 }}
               >
-                {filtered.length} / {flowEvents.length} shown ·{" "}
-                {visibleColumns.length} columns · {density}
-                {activeBuiltInPreset ? ` · ${activeBuiltInPreset.label}` : ""}
-              </span>
+	                {isMobileFlowLayout
+	                  ? `${filtered.length}/${flowEvents.length} shown`
+	                  : `${filtered.length} / ${flowEvents.length} shown · ${visibleColumns.length} columns · ${density}`}
+	                {activeBuiltInPreset ? ` · ${activeBuiltInPreset.label}` : ""}
+	              </span>
             </div>
             <span
               style={{
@@ -4044,9 +4167,9 @@ const FlowOverviewPanel = ({
               style={toolButtonStyle(filtersOpen)}
               aria-label={filtersOpen ? "Hide Flow filters" : "Show Flow filters"}
             >
-              {filtersOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
-              Filters
-            </button></AppTooltip>
+	              {filtersOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+	              {!isMobileFlowLayout ? "Filters" : null}
+	            </button></AppTooltip>
             <AppTooltip content="Configure columns"><button
               type="button"
               data-testid="flow-column-toggle"
@@ -4054,17 +4177,17 @@ const FlowOverviewPanel = ({
               style={toolButtonStyle(columnsOpen)}
               aria-label="Configure Flow columns"
             >
-              <Columns3 size={14} />
-              Columns
-            </button></AppTooltip>
+	              <Columns3 size={14} />
+	              {!isMobileFlowLayout ? "Columns" : null}
+	            </button></AppTooltip>
             <button
               type="button"
               onClick={handleToggleLivePaused}
               style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
             >
-              {livePaused ? <Play size={14} /> : <SlidersHorizontal size={14} />}
-              {livePaused ? "Resume" : "Pause"}
-            </button>
+	              {livePaused ? <Play size={14} /> : <Pause size={14} />}
+	              {!isMobileFlowLayout ? (livePaused ? "Resume" : "Pause") : null}
+	            </button>
           </div>
         </Card>
 
@@ -4162,12 +4285,12 @@ const FlowOverviewPanel = ({
             >
               <div
                 style={{
-                  padding: sp("8px 10px 6px"),
+                  padding: sp(isMobileFlowLayout ? "6px 8px 5px" : "8px 10px 6px"),
                   borderBottom: `1px solid ${T.border}`,
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "flex-start",
-                  gap: sp(10),
+                  gap: sp(isMobileFlowLayout ? 6 : 10),
                   flexWrap: "wrap",
                 }}
               >
@@ -4177,11 +4300,11 @@ const FlowOverviewPanel = ({
                       fontSize: fs(14),
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
-                      letterSpacing: "-0.01em",
+                      letterSpacing: 0,
                       color: T.text,
                     }}
                   >
-                    Live Flow Tape
+                    {isMobileFlowLayout ? "Flow Tape" : "Live Flow Tape"}
                   </span>
                   <span
                     style={{
@@ -4192,48 +4315,104 @@ const FlowOverviewPanel = ({
                   >
                     {isFlowLoadingShell
                       ? "warming flow feed"
-                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} prints${filtered.length > rowsPerPage ? ` · capped at ${rowsPerPage}` : ""}`}
+                      : isMobileFlowLayout
+                        ? `${activeTicker || "All"} · ${visibleFlowRows.length}`
+                        : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} prints${filtered.length > rowsPerPage ? ` · showing ${rowsPerPage}` : ""}`}
                   </span>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: sp(8),
-                    flexWrap: "wrap",
-                    fontSize: textSize("body"),
-                    fontFamily: T.sans,
-                    color: T.textDim,
-                  }}
-                >
-                  <span>
-                    Bull{" "}
-                    <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
-                      {fmtM(flowSentimentSummary.bullPremium)}
+                {isMobileFlowLayout ? (
+                  <div
+                    data-testid="flow-mobile-tape-summary"
+                    style={{
+                      display: "flex",
+                      gap: sp(5),
+                      flexWrap: "nowrap",
+                      alignItems: "center",
+                      overflowX: "auto",
+                      scrollbarWidth: "none",
+                      fontSize: textSize("caption"),
+                      fontFamily: T.sans,
+                      color: T.textDim,
+                    }}
+                  >
+                    {[
+                      ["Bull", flowSentimentSummary.bullPremium, T.green],
+                      ["Bear", flowSentimentSummary.bearPremium, T.red],
+                      [
+                        "Net",
+                        flowSentimentSummary.netPremium,
+                        flowSentimentSummary.netPremium > 0
+                          ? T.green
+                          : flowSentimentSummary.netPremium < 0
+                            ? T.red
+                            : T.textDim,
+                      ],
+                    ].map(([label, value, color]) => (
+                      <AppTooltip key={label} content={`${label} ${fmtM(value)}`}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: sp(3),
+                            color,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: dim(6),
+                              height: dim(6),
+                              borderRadius: dim(RADII.pill),
+                              background: color,
+                            }}
+                          />
+                          {fmtM(value)}
+                        </span>
+                      </AppTooltip>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: sp(8),
+                      flexWrap: "wrap",
+                      fontSize: textSize("body"),
+                      fontFamily: T.sans,
+                      color: T.textDim,
+                    }}
+                  >
+                    <span>
+                      Bull{" "}
+                      <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                        {fmtM(flowSentimentSummary.bullPremium)}
+                      </span>
                     </span>
-                  </span>
-                  <span>
-                    Bear{" "}
-                    <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
-                      {fmtM(flowSentimentSummary.bearPremium)}
+                    <span>
+                      Bear{" "}
+                      <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                        {fmtM(flowSentimentSummary.bearPremium)}
+                      </span>
                     </span>
-                  </span>
-                  <span>
-                    Net{" "}
-                    <span
-                      style={{
-                        color:
-                          flowSentimentSummary.netPremium > 0
-                            ? T.green
-                            : flowSentimentSummary.netPremium < 0
-                              ? T.red
-                              : T.textDim,
-                        fontWeight: FONT_WEIGHTS.regular,
-                      }}
-                    >
-                      {fmtM(flowSentimentSummary.netPremium)}
+                    <span>
+                      Net{" "}
+                      <span
+                        style={{
+                          color:
+                            flowSentimentSummary.netPremium > 0
+                              ? T.green
+                              : flowSentimentSummary.netPremium < 0
+                                ? T.red
+                                : T.textDim,
+                          fontWeight: FONT_WEIGHTS.regular,
+                        }}
+                      >
+                        {fmtM(flowSentimentSummary.netPremium)}
+                      </span>
                     </span>
-                  </span>
-                </div>
+                  </div>
+                )}
                 <div
                   data-testid="flow-sentiment-bar"
                   style={{
@@ -4292,20 +4471,30 @@ const FlowOverviewPanel = ({
                       }}
                     >
                       {[
-                        ["time", "Age"],
-                        ["premium", "Prem"],
-                        ["ticker", "Tick"],
-                        ["expiration", "Exp"],
-                        ["strike", "Strike"],
-                      ].map(([key, label]) => (
+                        ["time", "Age", Clock],
+                        ["premium", "Premium", DollarSign],
+                        ["ticker", "Ticker", Tag],
+                        ["expiration", "Expiration", Calendar],
+                        ["strike", "Strike", Hash],
+                      ].map(([key, label, Icon]) => (
                         <button
                           key={key}
                           type="button"
+                          aria-label={`Sort Flow tape by ${label}`}
                           onClick={() => applyFlowSort(key)}
-                          style={toolbarChipStyle(sortBy === key)}
+                          style={{
+                            ...toolbarChipStyle(sortBy === key),
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: dim(28),
+                            minWidth: dim(28),
+                            height: dim(26),
+                            padding: 0,
+                          }}
                         >
-                          {label}
-                          {sortBy === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                          <Icon size={13} />
+                          {sortBy === key ? (sortDir === "asc" ? "▲" : "▼") : null}
                         </button>
                       ))}
                     </div>
@@ -5179,7 +5368,7 @@ const FlowOverviewPanel = ({
                       fontSize: fs(13),
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
-                      letterSpacing: "-0.01em",
+                      letterSpacing: 0,
                       color: T.text,
                     }}
                   >
@@ -5259,7 +5448,7 @@ const FlowOverviewPanel = ({
                       fontSize: fs(13),
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
-                      letterSpacing: "-0.01em",
+                      letterSpacing: 0,
                       color: T.text,
                     }}
                   >
@@ -5429,7 +5618,7 @@ const FlowOverviewPanel = ({
                   fontSize: fs(13),
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
-                  letterSpacing: "-0.01em",
+                  letterSpacing: 0,
                   color: T.text,
                 }}
               >
@@ -5551,7 +5740,7 @@ const FlowOverviewPanel = ({
                   fontSize: fs(13),
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
-                  letterSpacing: "-0.01em",
+                  letterSpacing: 0,
                   color: T.text,
                 }}
               >
@@ -5728,7 +5917,7 @@ const FlowOverviewPanel = ({
                   fontSize: fs(13),
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
-                  letterSpacing: "-0.01em",
+                  letterSpacing: 0,
                   color: T.text,
                 }}
               >

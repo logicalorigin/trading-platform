@@ -23,11 +23,11 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import {
+  ELEVATION,
   FONT_WEIGHTS,
   RADII,
   T,
   dim,
-  fs,
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
@@ -64,6 +64,56 @@ const SIGNAL_TIMEFRAME_LABELS = {
   "1d": "1D",
 };
 
+const activityToneBackground = (tone) => `${tone}0d`;
+const activityToneHoverBackground = (tone) => `${tone}12`;
+const ACTIVITY_LANE_CHIP_MIN_WIDTH = 34;
+
+const activityChipStyle = (tone, minWidth = 32) => ({
+  minWidth: dim(minWidth),
+  color: tone,
+  border: `1px solid ${tone}40`,
+  background: `${tone}0f`,
+  borderRadius: dim(RADII.xs),
+  fontFamily: T.sans,
+  fontSize: textSize("caption"),
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: 0,
+  lineHeight: 1,
+  padding: sp("3px 4px"),
+  textAlign: "center",
+  whiteSpace: "nowrap",
+});
+
+const activityRowStyle = (tone, index, maxItems, delay = 100) => ({
+  ...motionRowStyle(index, maxItems, delay),
+  ...motionVars({ accent: tone }),
+  width: "100%",
+  display: "grid",
+  gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: sp(6),
+  minWidth: 0,
+  padding: sp("5px 6px"),
+  border: `1px solid ${T.borderLight}`,
+  borderRadius: dim(RADII.xs),
+  background: T.bg1,
+  textAlign: "left",
+});
+
+const compactControlStyle = (width = null) => ({
+  minHeight: dim(26),
+  width: width ? dim(width) : "100%",
+  background: T.bg1,
+  border: `1px solid ${T.borderLight}`,
+  borderRadius: dim(RADII.xs),
+  color: T.textSec,
+  fontFamily: T.sans,
+  fontSize: textSize("caption"),
+  fontWeight: FONT_WEIGHTS.medium,
+  padding: sp("4px 5px"),
+  outline: "none",
+});
+
 const MarketActivityLaneSection = ({
   title,
   meta,
@@ -81,8 +131,8 @@ const MarketActivityLaneSection = ({
       minHeight: 0,
       display: "flex",
       flexDirection: "column",
-      borderTop: `1px solid ${T.border}`,
-      paddingTop: sp(7),
+      borderTop: `1px solid ${T.borderLight}`,
+      paddingTop: sp(6),
     }}
   >
     <div
@@ -90,8 +140,8 @@ const MarketActivityLaneSection = ({
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "space-between",
-        gap: sp(8),
-        marginBottom: sp(6),
+        gap: sp(6),
+        marginBottom: sp(5),
         minWidth: 0,
         flexWrap: "wrap",
       }}
@@ -101,8 +151,8 @@ const MarketActivityLaneSection = ({
           style={{
             color: T.text,
             fontFamily: T.sans,
-            fontSize: fs(compact ? 10 : 11),
-            fontWeight: FONT_WEIGHTS.regular,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.15,
           }}
         >
@@ -115,8 +165,8 @@ const MarketActivityLaneSection = ({
               color: T.textDim,
               fontFamily: T.sans,
               fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.04em",
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: 0,
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -133,7 +183,7 @@ const MarketActivityLaneSection = ({
             display: "flex",
             justifyContent: "flex-end",
             alignItems: "center",
-            gap: sp(4),
+            gap: sp(3),
             flexWrap: "wrap",
             minWidth: 0,
           }}
@@ -258,13 +308,13 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
         style={{
           width: "100%",
           background: T.bg1,
-          border: "none",
+          border: `1px solid ${T.borderLight}`,
           color: T.textSec,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
-          padding: sp("6px 20px 6px 10px"),
-          borderRadius: dim(RADII.sm),
+          padding: sp("4px 18px 4px 7px"),
+          borderRadius: dim(RADII.xs),
           outline: "none",
           textTransform: "uppercase",
         }}
@@ -293,9 +343,9 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
             right: 0,
             top: "calc(100% + 4px)",
             background: T.bg1,
-            border: "none",
-            borderRadius: dim(RADII.sm),
-            boxShadow: "0 6px 20px rgba(25, 23, 26, 0.12), 0 2px 4px rgba(25, 23, 26, 0.06)",
+            border: `1px solid ${T.borderLight}`,
+            borderRadius: dim(RADII.xs),
+            boxShadow: ELEVATION.md,
             maxHeight: dim(200),
             overflowY: "auto",
             padding: sp(4),
@@ -320,15 +370,15 @@ const SignalTimeframeTypeahead = ({ value, onChange }) => {
                   border: "none",
                   borderBottom: `1px solid ${T.border}55`,
                   background: active
-                    ? T.bg3
+                    ? T.accentHoverBg
                     : selectedOption
-                      ? T.accentDim
-                      : T.bg2,
+                      ? `${T.accent}12`
+                      : "transparent",
                   color: selectedOption ? T.accent : T.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
-                  fontWeight: FONT_WEIGHTS.regular,
+                  fontWeight: FONT_WEIGHTS.medium,
                   padding: sp("5px 6px"),
                   textAlign: "left",
                 }}
@@ -348,9 +398,9 @@ const MarketLaneToolbar = ({ children }) => (
     style={{
       display: "flex",
       alignItems: "center",
-      gap: sp(4),
+      gap: sp(3),
       minWidth: 0,
-      marginBottom: sp(6),
+      marginBottom: sp(5),
       whiteSpace: "nowrap",
     }}
   >
@@ -379,13 +429,23 @@ const MarketIconToolButton = ({
       alignItems: "center",
       justifyContent: "center",
       flex: "0 0 auto",
-      border: `1px solid ${active ? tone : T.border}`,
-      background: active ? `${tone}16` : T.bg2,
+      border: "none",
+      background: active ? `${tone}12` : "transparent",
       color: active ? tone : T.textDim,
       cursor: disabled ? "wait" : "pointer",
       opacity: disabled ? 0.78 : 1,
       borderRadius: dim(RADII.xs),
       padding: 0,
+      transition: "background 0.12s ease, color 0.12s ease",
+    }}
+    onMouseEnter={(event) => {
+      if (disabled) return;
+      event.currentTarget.style.background = active ? `${tone}18` : T.accentHoverBg;
+      event.currentTarget.style.color = active ? tone : T.text;
+    }}
+    onMouseLeave={(event) => {
+      event.currentTarget.style.background = active ? `${tone}12` : "transparent";
+      event.currentTarget.style.color = active ? tone : T.textDim;
     }}
   >
     <Icon size={dim(13)} strokeWidth={2.4} />
@@ -401,8 +461,9 @@ const MarketToolbarLabel = ({ Icon, label, tone = T.textDim }) => (
       width: dim(28),
       height: dim(28),
       flex: "0 0 auto",
-      border: `1px solid ${tone}36`,
-      background: `${tone}10`,
+      border: "none",
+      borderRadius: dim(RADII.xs),
+      background: `${tone}0f`,
       color: tone,
     }}
   >
@@ -413,19 +474,19 @@ const MarketToolbarLabel = ({ Icon, label, tone = T.textDim }) => (
 const getNotificationLaneTone = (item) => {
   if (item.kind === "alert") {
     return item.tone === "profit"
-      ? { label: "ALERT", color: T.green, background: `${T.green}12` }
-      : { label: "RISK", color: T.red, background: `${T.red}12` };
+      ? { label: "ALERT", color: T.green, background: activityToneBackground(T.green) }
+      : { label: "RISK", color: T.red, background: activityToneBackground(T.red) };
   }
   if (item.kind === "calendar") {
-    return { label: "CAL", color: T.amber, background: `${T.amber}12` };
+    return { label: "CAL", color: T.amber, background: activityToneBackground(T.amber) };
   }
-  return { label: "NEWS", color: T.accent, background: `${T.accent}12` };
+  return { label: "NEWS", color: T.accent, background: activityToneBackground(T.accent) };
 };
 
 const getSignalLaneTone = (item) =>
   item.direction === "sell"
-    ? { label: "SELL", color: T.red, background: `${T.red}12` }
-    : { label: "BUY", color: T.green, background: `${T.green}12` };
+    ? { label: "SELL", color: T.red, background: activityToneBackground(T.red) }
+    : { label: "BUY", color: T.green, background: activityToneBackground(T.green) };
 
 const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
   const tone = getSignalLaneTone(item);
@@ -436,42 +497,23 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
       style={{
-        ...motionRowStyle(index, maxItems, 100),
-        ...motionVars({ accent: tone.color }),
-        width: "100%",
-        display: "grid",
-        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: sp(6),
-        minWidth: 0,
-        padding: sp("7px 8px"),
-        border: `1px solid ${tone.color}33`,
-        borderRadius: dim(RADII.xs),
-        background: tone.background,
-        textAlign: "left",
+        ...activityRowStyle(tone.color, index, maxItems, 100),
         cursor: "pointer",
+        background: tone.background,
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = `${tone.color}1f`;
+        event.currentTarget.style.background = activityToneHoverBackground(tone.color);
+        event.currentTarget.style.borderColor = `${tone.color}40`;
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
+        event.currentTarget.style.borderColor = T.borderLight;
       }}
     >
       <SeverityRail tone={tone.color} />
       <span
         style={{
-          color: tone.color,
-          border: `1px solid ${tone.color}55`,
-          background: `${tone.color}14`,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
-          letterSpacing: "0.04em",
-          lineHeight: 1,
-          padding: sp("3px 4px"),
-          minWidth: dim(30),
-          textAlign: "center",
+          ...activityChipStyle(tone.color, ACTIVITY_LANE_CHIP_MIN_WIDTH),
         }}
       >
         {tone.label}
@@ -483,7 +525,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
             color: T.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
+            fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -513,7 +555,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
           color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
+          fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
         }}
       >
@@ -554,7 +596,7 @@ const getUnusualLaneTone = (item) => {
   return {
     label: isPut ? "PUT" : isCall ? "CALL" : "FLOW",
     color,
-    background: `${color}12`,
+    background: activityToneBackground(color),
   };
 };
 
@@ -567,42 +609,23 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
       style={{
-        ...motionRowStyle(index, maxItems, 100),
-        ...motionVars({ accent: tone.color }),
-        width: "100%",
-        display: "grid",
-        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: sp(6),
-        minWidth: 0,
-        padding: sp("7px 8px"),
-        border: `1px solid ${tone.color}33`,
-        borderRadius: dim(RADII.xs),
-        background: tone.background,
-        textAlign: "left",
+        ...activityRowStyle(tone.color, index, maxItems, 100),
         cursor: "pointer",
+        background: tone.background,
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = `${tone.color}1f`;
+        event.currentTarget.style.background = activityToneHoverBackground(tone.color);
+        event.currentTarget.style.borderColor = `${tone.color}40`;
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
+        event.currentTarget.style.borderColor = T.borderLight;
       }}
     >
       <SeverityRail tone={tone.color} />
       <span
         style={{
-          color: tone.color,
-          border: `1px solid ${tone.color}55`,
-          background: `${tone.color}14`,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
-          letterSpacing: "0.04em",
-          lineHeight: 1,
-          padding: sp("3px 4px"),
-          minWidth: dim(34),
-          textAlign: "center",
+          ...activityChipStyle(tone.color, ACTIVITY_LANE_CHIP_MIN_WIDTH),
         }}
       >
         {tone.label}
@@ -614,7 +637,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
             color: T.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
+            fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -644,7 +667,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
           color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
+          fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
         }}
       >
@@ -669,42 +692,23 @@ const MarketNotificationRow = ({
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
       style={{
-        ...motionRowStyle(index, maxItems, 90),
-        ...motionVars({ accent: tone.color }),
-        width: "100%",
-        display: "grid",
-        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: sp(6),
-        minWidth: 0,
-        padding: sp("5px 6px"),
-        border: `1px solid ${tone.color}33`,
+        ...activityRowStyle(tone.color, index, maxItems, 90),
         background: tone.background,
-        borderRadius: dim(RADII.xs),
-        textAlign: "left",
         cursor,
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = `${tone.color}1c`;
+        event.currentTarget.style.background = activityToneHoverBackground(tone.color);
+        event.currentTarget.style.borderColor = `${tone.color}40`;
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
+        event.currentTarget.style.borderColor = T.borderLight;
       }}
     >
       <SeverityRail tone={tone.color} />
       <span
         style={{
-          color: tone.color,
-          border: `1px solid ${tone.color}55`,
-          background: `${tone.color}12`,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
-          letterSpacing: "0.04em",
-          lineHeight: 1,
-          padding: sp("3px 4px"),
-          minWidth: dim(32),
-          textAlign: "center",
+          ...activityChipStyle(tone.color, 32),
         }}
       >
         {tone.label}
@@ -716,7 +720,7 @@ const MarketNotificationRow = ({
             color: T.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
-            fontWeight: FONT_WEIGHTS.regular,
+            fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -746,7 +750,7 @@ const MarketNotificationRow = ({
           color: T.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.regular,
+          fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
         }}
       >
@@ -910,7 +914,7 @@ export const MarketActivityPanel = ({
     <Card
       data-testid="market-activity-panel-card"
       style={{
-        padding: "7px 9px",
+        padding: "6px 7px",
         height: "auto",
         maxHeight: "inherit",
         display: "flex",
@@ -926,8 +930,8 @@ export const MarketActivityPanel = ({
               fontSize: textSize("body"),
               color: signalMonitorPending ? T.amber : T.textDim,
               fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              letterSpacing: "0.04em",
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: 0,
             }}
           >
             {monitorMeta}
@@ -941,7 +945,7 @@ export const MarketActivityPanel = ({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: sp(6),
+          gap: sp(5),
           minHeight: 0,
           flex: "0 1 auto",
         }}
@@ -950,7 +954,7 @@ export const MarketActivityPanel = ({
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-            gap: sp(8),
+            gap: sp(6),
             minHeight: 0,
             flex: "0 1 auto",
             alignItems: "start",
@@ -1005,16 +1009,7 @@ export const MarketActivityPanel = ({
                 style={{
                   minWidth: 0,
                   flex: "1 1 auto",
-                  width: "100%",
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
-                  color: T.textSec,
-                  fontFamily: T.sans,
-                  fontSize: textSize("body"),
-                  fontWeight: FONT_WEIGHTS.regular,
-                  padding: sp("6px 5px"),
-                  borderRadius: dim(RADII.xs),
-                  outline: "none",
+                  ...compactControlStyle(),
                 }}
               >
                 <option value="">DEFAULT</option>
@@ -1084,17 +1079,8 @@ export const MarketActivityPanel = ({
                 }
                 aria-label="Flow threshold"
                 style={{
-                  width: dim(76),
                   flex: "0 0 auto",
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
-                  color: T.textSec,
-                  fontFamily: T.sans,
-                  fontSize: textSize("body"),
-                  fontWeight: FONT_WEIGHTS.regular,
-                  padding: sp("6px 5px"),
-                  borderRadius: dim(RADII.xs),
-                  outline: "none",
+                  ...compactControlStyle(76),
                 }}
               >
                 {UNUSUAL_THRESHOLD_OPTIONS.map((option) => (
@@ -1119,10 +1105,10 @@ export const MarketActivityPanel = ({
                     color: thresholdMatches ? T.textDim : T.amber,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
-                    fontWeight: FONT_WEIGHTS.regular,
-                    border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}40`,
-                    background: `${thresholdMatches ? T.textDim : T.amber}12`,
-                    padding: sp("6px 5px"),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}33`,
+                    background: `${thresholdMatches ? T.textDim : T.amber}0f`,
+                    padding: sp("4px 5px"),
                     borderRadius: dim(RADII.xs),
                     whiteSpace: "nowrap",
                     textAlign: "center",
@@ -1178,11 +1164,12 @@ export const MarketActivityPanel = ({
                   key={label}
                   style={{
                     color,
-                    border: `1px solid ${color}44`,
-                    background: `${color}12`,
+                    border: `1px solid ${color}33`,
+                    background: `${color}0f`,
+                    borderRadius: dim(RADII.xs),
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
-                    fontWeight: FONT_WEIGHTS.regular,
+                    fontWeight: FONT_WEIGHTS.medium,
                     lineHeight: 1,
                     padding: sp("3px 4px"),
                     whiteSpace: "nowrap",

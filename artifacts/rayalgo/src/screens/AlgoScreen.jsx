@@ -1347,7 +1347,7 @@ export const AlgoScreen = ({
       T.amber,
     ],
     [
-      "Capacity",
+      "Symbol slots",
       `${signalOptionsOpenExposure.openSymbols ?? cockpitKpis.openSymbols ?? 0}/${signalOptionsOpenExposure.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
       signalOptionsOpenExposure.atOpenSymbolCapacity ? T.amber : T.cyan,
     ],

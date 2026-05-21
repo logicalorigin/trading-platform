@@ -1,6 +1,5 @@
-import { useContext, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-import { ThemeContext } from "../../features/platform/platformContexts";
 import {
   EmptyState,
   ToggleGroup,
@@ -64,6 +63,9 @@ const treemapLayout = (items, x, y, w, h) => {
 const TREEMAP_W = 1200;
 const TREEMAP_H = 280;
 const PCT_CLIP = 5;
+const TREEMAP_LAYOUT_TRANSITION_MS = 900;
+const TREEMAP_METRIC_TRANSITION_MS = 420;
+const TREEMAP_TARGET_SETTLE_MS = 120;
 
 const TREEMAP_MODES = [
   { value: "DAY", label: "Day %" },
@@ -84,6 +86,281 @@ const firstFiniteNumber = (...values) => {
     if (numeric != null) return numeric;
   }
   return null;
+};
+
+const clamp01 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
+const lerp = (from, to, amount) => from + (to - from) * amount;
+
+export const easeTreemapTransition = (progress) => {
+  const t = clamp01(progress);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
+
+const interpolateMaybeNumber = (fromValue, toValue, amount) => {
+  const from = finiteNumber(fromValue);
+  const to = finiteNumber(toValue);
+  if (from != null && to != null) return lerp(from, to, amount);
+  return amount >= 1 ? to : from ?? to;
+};
+
+const collapsedTreemapRect = (rect) => ({
+  ...rect,
+  x: rect.x + rect.w / 2,
+  y: rect.y + rect.h / 2,
+  w: 0,
+  h: 0,
+  opacity: 0,
+});
+
+export const interpolateTreemapRect = (fromRect, toRect, progress) => {
+  const amount = clamp01(progress);
+  return {
+    ...toRect,
+    id: toRect.id ?? fromRect.id,
+    symbol: toRect.symbol ?? fromRect.symbol,
+    assetClass: toRect.assetClass ?? fromRect.assetClass,
+    x: lerp(finiteNumber(fromRect.x) ?? 0, finiteNumber(toRect.x) ?? 0, amount),
+    y: lerp(finiteNumber(fromRect.y) ?? 0, finiteNumber(toRect.y) ?? 0, amount),
+    w: Math.max(
+      0,
+      lerp(finiteNumber(fromRect.w) ?? 0, finiteNumber(toRect.w) ?? 0, amount),
+    ),
+    h: Math.max(
+      0,
+      lerp(finiteNumber(fromRect.h) ?? 0, finiteNumber(toRect.h) ?? 0, amount),
+    ),
+    value: interpolateMaybeNumber(fromRect.value, toRect.value, amount),
+    marketValue: interpolateMaybeNumber(
+      fromRect.marketValue,
+      toRect.marketValue,
+      amount,
+    ),
+    dayChangePercent: interpolateMaybeNumber(
+      fromRect.dayChangePercent,
+      toRect.dayChangePercent,
+      amount,
+    ),
+    unrealizedPnlPercent: interpolateMaybeNumber(
+      fromRect.unrealizedPnlPercent,
+      toRect.unrealizedPnlPercent,
+      amount,
+    ),
+    opacity: lerp(
+      finiteNumber(fromRect.opacity) ?? 1,
+      finiteNumber(toRect.opacity) ?? 1,
+      amount,
+    ),
+  };
+};
+
+const treemapRectMap = (rects) =>
+  new Map((rects || []).map((rect) => [String(rect.id), rect]));
+
+const renderableTreemapRect = (rect) => ({
+  ...rect,
+  opacity: finiteNumber(rect.opacity) ?? 1,
+  isLeaving: false,
+});
+
+export const buildTreemapTransitionFrame = ({
+  fromRects = [],
+  toRects = [],
+  progress = 1,
+  reducedMotion = false,
+} = {}) => {
+  if (reducedMotion) {
+    return (toRects || []).map(renderableTreemapRect);
+  }
+
+  const eased = easeTreemapTransition(progress);
+  const fromById = treemapRectMap(fromRects);
+  const toById = treemapRectMap(toRects);
+  const orderedIds = [
+    ...(toRects || []).map((rect) => String(rect.id)),
+    ...(fromRects || [])
+      .map((rect) => String(rect.id))
+      .filter((id) => !toById.has(id)),
+  ];
+
+  return orderedIds
+    .map((id) => {
+      const from = fromById.get(id);
+      const to = toById.get(id);
+      if (from && to) {
+        return {
+          ...interpolateTreemapRect(from, renderableTreemapRect(to), eased),
+          isLeaving: false,
+        };
+      }
+      if (to) {
+        return {
+          ...interpolateTreemapRect(
+            collapsedTreemapRect(to),
+            renderableTreemapRect(to),
+            eased,
+          ),
+          isLeaving: false,
+        };
+      }
+      if (from) {
+        const leaving = interpolateTreemapRect(
+          renderableTreemapRect(from),
+          collapsedTreemapRect(from),
+          eased,
+        );
+        return {
+          ...leaving,
+          isLeaving: true,
+        };
+      }
+      return null;
+    })
+    .filter((rect) => rect && rect.opacity > 0.001);
+};
+
+const signatureNumber = (value) => {
+  const numeric = finiteNumber(value);
+  return numeric == null ? "" : Math.round(numeric * 100) / 100;
+};
+
+const treemapLayoutSignature = (rects) =>
+  (rects || [])
+    .map((rect) =>
+      [rect.id, rect.x, rect.y, rect.w, rect.h]
+        .map((value, index) => (index === 0 ? value : signatureNumber(value)))
+        .join(":"),
+    )
+    .join("|");
+
+const treemapRectSignature = (rects) =>
+  (rects || [])
+    .map((rect) =>
+      [
+        rect.id,
+        signatureNumber(rect.x),
+        signatureNumber(rect.y),
+        signatureNumber(rect.w),
+        signatureNumber(rect.h),
+        signatureNumber(rect.marketValue),
+        signatureNumber(rect.dayChangePercent),
+        signatureNumber(rect.unrealizedPnlPercent),
+      ].join(":"),
+    )
+    .join("|");
+
+const prefersReducedTreemapMotion = () => {
+  if (typeof window === "undefined") return false;
+  return Boolean(
+    window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ||
+      (typeof document !== "undefined" &&
+        document.documentElement?.getAttribute("data-rayalgo-reduced-motion") ===
+          "on"),
+  );
+};
+
+const scheduleAnimationFrame = (callback) => {
+  if (typeof requestAnimationFrame === "function") {
+    return requestAnimationFrame(callback);
+  }
+  return setTimeout(() => callback(Date.now()), 16);
+};
+
+const cancelScheduledFrame = (frameId) => {
+  if (!frameId) return;
+  if (typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(frameId);
+    return;
+  }
+  clearTimeout(frameId);
+};
+
+const useAnimatedTreemapRects = (
+  targetRects,
+  durationMs = TREEMAP_LAYOUT_TRANSITION_MS,
+) => {
+  const [displayRects, setDisplayRects] = useState(() =>
+    buildTreemapTransitionFrame({ toRects: targetRects, reducedMotion: true }),
+  );
+  const displayRectsRef = useRef(displayRects);
+  const displaySignatureRef = useRef(treemapRectSignature(displayRects));
+  const displayLayoutSignatureRef = useRef(treemapLayoutSignature(displayRects));
+  const targetRectsRef = useRef(targetRects);
+  const targetSignature = useMemo(
+    () => treemapRectSignature(targetRects),
+    [targetRects],
+  );
+  const targetLayoutSignature = useMemo(
+    () => treemapLayoutSignature(targetRects),
+    [targetRects],
+  );
+
+  targetRectsRef.current = targetRects;
+
+  useEffect(() => {
+    const nextRects = targetRectsRef.current;
+    if (displaySignatureRef.current === targetSignature) {
+      return undefined;
+    }
+
+    const setFrame = (frame, signature = treemapRectSignature(frame)) => {
+      displayRectsRef.current = frame;
+      displaySignatureRef.current = signature;
+      displayLayoutSignatureRef.current = treemapLayoutSignature(frame);
+      setDisplayRects(frame);
+    };
+
+    if (durationMs <= 0 || prefersReducedTreemapMotion()) {
+      const immediate = buildTreemapTransitionFrame({
+        toRects: nextRects,
+        reducedMotion: true,
+      });
+      setFrame(immediate, targetSignature);
+      return undefined;
+    }
+
+    const transitionMs =
+      displayLayoutSignatureRef.current === targetLayoutSignature
+        ? TREEMAP_METRIC_TRANSITION_MS
+        : durationMs;
+    let frameId = 0;
+    let settleId = 0;
+
+    const startAnimation = () => {
+      const startRects = displayRectsRef.current;
+      const startTime =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+
+      const tick = (now) => {
+        const elapsed = (now ?? Date.now()) - startTime;
+        const progress = clamp01(elapsed / transitionMs);
+        const complete = progress >= 1;
+        const frame = complete
+          ? buildTreemapTransitionFrame({
+              toRects: nextRects,
+              reducedMotion: true,
+            })
+          : buildTreemapTransitionFrame({
+              fromRects: startRects,
+              toRects: nextRects,
+              progress,
+            });
+        setFrame(frame, complete ? targetSignature : undefined);
+        if (progress < 1) {
+          frameId = scheduleAnimationFrame(tick);
+        }
+      };
+
+      frameId = scheduleAnimationFrame(tick);
+    };
+
+    settleId = setTimeout(startAnimation, TREEMAP_TARGET_SETTLE_MS);
+    return () => {
+      clearTimeout(settleId);
+      cancelScheduledFrame(frameId);
+    };
+  }, [durationMs, targetLayoutSignature, targetSignature]);
+
+  return displayRects;
 };
 
 const rowMultiplier = (row) =>
@@ -154,6 +431,45 @@ export const buildTreemapItems = (positions) =>
     .filter(Boolean)
     .sort((a, b) => b.value - a.value);
 
+export const stabilizeTreemapItemOrder = (items = [], previousItems = []) => {
+  const currentById = new Map(
+    (items || []).map((item) => [String(item.id), item]),
+  );
+  const used = new Set();
+  const ordered = [];
+
+  (previousItems || []).forEach((previous) => {
+    const id = typeof previous === "string" ? previous : previous?.id;
+    const current = currentById.get(String(id));
+    if (!current || used.has(String(current.id))) return;
+    ordered.push(current);
+    used.add(String(current.id));
+  });
+
+  const added = (items || [])
+    .filter((item) => !used.has(String(item.id)))
+    .sort((a, b) => b.value - a.value);
+
+  return [...ordered, ...added];
+};
+
+const smoothStepRange = (value, start, end) => {
+  if (end <= start) return value >= end ? 1 : 0;
+  const t = clamp01((value - start) / (end - start));
+  return t * t * (3 - 2 * t);
+};
+
+const treemapTextOpacity = (rect, startArea, endArea) => {
+  if (rect?.isLeaving) return 0;
+  const w = finiteNumber(rect?.w) ?? 0;
+  const h = finiteNumber(rect?.h) ?? 0;
+  const area = Math.max(0, w * h);
+  return (
+    clamp01(finiteNumber(rect?.opacity) ?? 1) *
+    smoothStepRange(area, startArea, endArea)
+  );
+};
+
 export const PositionTreemapContent = ({
   positions,
   currency = "USD",
@@ -161,11 +477,20 @@ export const PositionTreemapContent = ({
   emptyBody = "Treemap renders once open positions are streamed from the bridge.",
 }) => {
   const [mode, setMode] = useState("DAY");
-  const items = useMemo(() => buildTreemapItems(positions), [positions]);
+  const rawItems = useMemo(() => buildTreemapItems(positions), [positions]);
+  const previousItemsRef = useRef([]);
+  const items = useMemo(
+    () => stabilizeTreemapItemOrder(rawItems, previousItemsRef.current),
+    [rawItems],
+  );
+  useEffect(() => {
+    previousItemsRef.current = items;
+  }, [items]);
   const rects = useMemo(
     () => treemapLayout(items, 0, 0, TREEMAP_W, TREEMAP_H),
     [items],
   );
+  const animatedRects = useAnimatedTreemapRects(rects);
 
   const pctFor = (rect) =>
     mode === "DAY" ? rect.dayChangePercent : rect.unrealizedPnlPercent;
@@ -179,12 +504,10 @@ export const PositionTreemapContent = ({
     return rgba(clipped >= 0 ? T.green : T.red, alpha);
   };
 
-  const { theme } = useContext(ThemeContext);
-  const isDarkTheme = theme !== "light";
   const labelFill = T.text;
-  const subLabelFill = isDarkTheme ? "rgba(242,239,233,0.85)" : "rgba(25,23,26,0.85)";
+  const subLabelFill = rgba(T.text, 0.85);
 
-  if (!items.length) {
+  if (!items.length && !animatedRects.length) {
     return <EmptyState title="No positions" body={emptyBody} />;
   }
 
@@ -209,14 +532,17 @@ export const PositionTreemapContent = ({
         preserveAspectRatio="none"
         style={{ display: "block" }}
       >
-        {rects.map((rect) => {
+        {animatedRects.map((rect) => {
           const pct = pctFor(rect);
           const area = rect.w * rect.h;
-          const showLabel = area > 4000;
-          const showPct = area > 18000;
+          const opacity = finiteNumber(rect.opacity) ?? 1;
+          const labelOpacity = treemapTextOpacity(rect, 3200, 7600);
+          const pctOpacity = treemapTextOpacity(rect, 14000, 24000);
+          const showLabel = labelOpacity > 0.03;
+          const showPct = pctOpacity > 0.03;
           const labelSize = Math.min(22, Math.sqrt(area) * 0.18);
           return (
-            <g key={rect.id}>
+            <g key={rect.id} opacity={opacity}>
               <rect
                 x={rect.x + 0.5}
                 y={rect.y + 0.5}
@@ -242,6 +568,7 @@ export const PositionTreemapContent = ({
                   fontFamily={T.sans}
                   fontWeight={400}
                   fill={labelFill}
+                  opacity={labelOpacity}
                   style={{ pointerEvents: "none" }}
                 >
                   {rect.symbol.length > 16
@@ -258,6 +585,7 @@ export const PositionTreemapContent = ({
                   fontFamily={T.mono}
                   fontWeight={400}
                   fill={subLabelFill}
+                  opacity={pctOpacity}
                   style={{ pointerEvents: "none" }}
                 >
                   {formatAccountPercent(pct, 2, maskValues)}

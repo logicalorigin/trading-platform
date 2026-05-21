@@ -50,7 +50,7 @@ export const TabBar = ({
               fontSize: textSize("paragraphMuted"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "-0.005em",
+              letterSpacing: 0,
               border: "none",
               borderRadius: dim(RADII.pill),
               background: active ? `${accent}14` : "transparent",

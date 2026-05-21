@@ -1,12 +1,24 @@
 import { useMemo, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import {
+  DataUnavailableState,
+  SeverityRail,
+} from "../../components/platform/primitives.jsx";
+import {
   fmtCompactNumber,
   formatOptionContractLabel,
   formatQuotePrice,
   formatRelativeTimeShort,
 } from "../../lib/formatters";
-import { MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  FONT_WEIGHTS,
+  RADII,
+  MISSING_VALUE,
+  T,
+  dim,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
@@ -33,21 +45,58 @@ const SegmentButton = ({ active, children, onClick, testId }) => (
     aria-pressed={active}
     onClick={onClick}
     style={{
-      minHeight: dim(34),
-      border: `1px solid ${active ? T.accent : T.border}`,
-      background: active ? `${T.accent}18` : T.bg1,
-      color: active ? T.text : T.textDim,
+      minHeight: dim(28),
+      border: "none",
+      borderRadius: dim(RADII.xs),
+      background: active ? T.accentHoverBg : "transparent",
+      color: active ? T.accent : T.textSec,
       cursor: "pointer",
       fontFamily: T.sans,
       fontSize: textSize("caption"),
+      fontWeight: FONT_WEIGHTS.medium,
+      boxShadow: active ? `inset 0 -1px 0 ${T.accent}` : "none",
+      transition: "background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease",
+    }}
+    onMouseEnter={(event) => {
+      if (active) return;
+      event.currentTarget.style.background = T.accentHoverBg;
+      event.currentTarget.style.color = T.text;
+    }}
+    onMouseLeave={(event) => {
+      if (active) return;
+      event.currentTarget.style.background = "transparent";
+      event.currentTarget.style.color = T.textSec;
     }}
   >
     {children}
   </button>
 );
 
+const ToneChip = ({ label, tone }) => (
+  <span
+    style={{
+      minWidth: dim(34),
+      display: "inline-flex",
+      justifyContent: "center",
+      color: tone,
+      border: `1px solid ${tone}40`,
+      background: `${tone}0f`,
+      borderRadius: dim(RADII.xs),
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      fontWeight: FONT_WEIGHTS.medium,
+      lineHeight: 1,
+      padding: sp("3px 4px"),
+      whiteSpace: "nowrap",
+    }}
+  >
+    {label}
+  </span>
+);
+
 const ActivityRow = ({
   tone = T.textSec,
+  toneLabel,
   title,
   detail,
   meta,
@@ -60,21 +109,33 @@ const ActivityRow = ({
     onClick={onClick}
     disabled={!onClick}
     style={{
-      minHeight: dim(44),
+      minHeight: dim(38),
       display: "grid",
-      gridTemplateColumns: "minmax(0, 1fr) auto",
+      gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
       alignItems: "center",
-      gap: sp(8),
-      padding: sp("8px 12px"),
-      border: "none",
-      borderBottom: `1px solid ${T.borderLight}`,
-      background: "transparent",
+      gap: sp(6),
+      padding: sp("6px 7px"),
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
       color: T.text,
       textAlign: "left",
       cursor: onClick ? "pointer" : "default",
       fontFamily: T.sans,
+      transition: "background 0.12s ease, border-color 0.12s ease",
+    }}
+    onMouseEnter={(event) => {
+      if (!onClick) return;
+      event.currentTarget.style.background = `${tone}10`;
+      event.currentTarget.style.borderColor = `${tone}40`;
+    }}
+    onMouseLeave={(event) => {
+      event.currentTarget.style.background = T.bg1;
+      event.currentTarget.style.borderColor = T.borderLight;
     }}
   >
+    <SeverityRail tone={tone} />
+    <ToneChip label={toneLabel} tone={tone} />
     <span style={{ minWidth: 0 }}>
       <span
         style={{
@@ -83,8 +144,9 @@ const ActivityRow = ({
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           fontFamily: T.sans,
-          fontSize: fs(11),
-          lineHeight: 1.1,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.15,
         }}
       >
         {title}
@@ -98,7 +160,7 @@ const ActivityRow = ({
           whiteSpace: "nowrap",
           color: T.textDim,
           fontSize: textSize("caption"),
-          lineHeight: 1.1,
+          lineHeight: 1.15,
         }}
       >
         {detail || MISSING_VALUE}
@@ -108,7 +170,8 @@ const ActivityRow = ({
       style={{
         color: T.textMuted,
         fontFamily: T.sans,
-        fontSize: fs(8),
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
         whiteSpace: "nowrap",
       }}
     >
@@ -117,23 +180,8 @@ const ActivityRow = ({
   </button>
 );
 
-const EmptyState = ({ children }) => (
-  <div
-    style={{
-      minHeight: dim(128),
-      display: "grid",
-      placeItems: "center",
-      padding: sp(16),
-      color: T.textDim,
-      fontFamily: T.sans,
-      fontSize: fs(10),
-      textAlign: "center",
-      border: `1px solid ${T.border}`,
-      background: T.bg1,
-    }}
-  >
-    {children}
-  </div>
+const EmptyState = ({ title, detail }) => (
+  <DataUnavailableState title={title} detail={detail} minHeight={96} />
 );
 
 export const MobileActivitySheet = ({
@@ -176,8 +224,8 @@ export const MobileActivitySheet = ({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: sp(8),
-          padding: sp("10px 10px max(14px, env(safe-area-inset-bottom))"),
+          gap: sp(7),
+          padding: sp("8px 8px max(12px, env(safe-area-inset-bottom))"),
           background: T.bg0,
         }}
       >
@@ -185,7 +233,9 @@ export const MobileActivitySheet = ({
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: sp(4),
+            gap: sp(3),
+            padding: sp(2),
+            borderBottom: `1px solid ${T.borderLight}`,
           }}
         >
           <SegmentButton
@@ -211,7 +261,7 @@ export const MobileActivitySheet = ({
           </SegmentButton>
         </div>
 
-        <div style={{ display: "grid", gap: sp(3) }}>
+        <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
           {tab === "signals" ? (
             signalItems.length ? (
               signalItems.map((item) => {
@@ -221,6 +271,7 @@ export const MobileActivitySheet = ({
                     key={item.id}
                     testId="mobile-activity-signal-row"
                     tone={tone}
+                    toneLabel={item.direction === "sell" ? "SELL" : "BUY"}
                     title={`${item.directionLabel} ${item.symbol}`}
                     detail={`${item.timeframe || MISSING_VALUE} · ${formatQuotePrice(item.price)}`}
                     meta={formatRelativeTimeShort(item.time)}
@@ -229,7 +280,10 @@ export const MobileActivitySheet = ({
                 );
               })
             ) : (
-              <EmptyState>No signal events are available yet.</EmptyState>
+              <EmptyState
+                title="No signal events"
+                detail="Monitor results will appear here after the next scan."
+              />
             )
           ) : null}
 
@@ -239,7 +293,10 @@ export const MobileActivitySheet = ({
                 const isPut =
                   item.right === "P" ||
                   String(item.sentiment || "").toLowerCase() === "bearish";
-                const tone = isPut ? T.red : T.green;
+                const isCall =
+                  item.right === "C" ||
+                  String(item.sentiment || "").toLowerCase() === "bullish";
+                const tone = isPut ? T.red : isCall ? T.green : T.amber;
                 const contractLabel =
                   formatOptionContractLabel(item, {
                     includeSymbol: false,
@@ -257,6 +314,7 @@ export const MobileActivitySheet = ({
                     key={item.id}
                     testId="mobile-activity-flow-row"
                     tone={tone}
+                    toneLabel={isPut ? "PUT" : isCall ? "CALL" : "FLOW"}
                     title={`${item.symbol} ${contractLabel || "FLOW"}`}
                     detail={`${fmtCompactCurrency(item.premium)} · ${scoreLabel} · ${fmtCompactNumber(item.size)}`}
                     meta={formatRelativeTimeShort(item.time)}
@@ -265,7 +323,10 @@ export const MobileActivitySheet = ({
                 );
               })
             ) : (
-              <EmptyState>No unusual flow is available yet.</EmptyState>
+              <EmptyState
+                title="No unusual flow"
+                detail="Options prints meeting the selected threshold will appear here."
+              />
             )
           ) : null}
 
@@ -278,6 +339,7 @@ export const MobileActivitySheet = ({
                     key={item.id || `${item.symbol}-${item.label}`}
                     testId="mobile-activity-notification-row"
                     tone={tone}
+                    toneLabel={item.tone === "profit" ? "WIN" : "RISK"}
                     title={item.label || "Portfolio alert"}
                     detail={item.detail || item.symbol || MISSING_VALUE}
                     meta={item.tone === "profit" ? "WIN" : "RISK"}
@@ -288,7 +350,10 @@ export const MobileActivitySheet = ({
                 );
               })
             ) : (
-              <EmptyState>No notifications are available yet.</EmptyState>
+              <EmptyState
+                title="No notifications"
+                detail="Portfolio alerts, headlines, and calendar items will appear here."
+              />
             )
           ) : null}
         </div>

@@ -226,16 +226,16 @@ test("options flow runtime defaults cover the broad scanner cycle", () => {
 
   assert.equal(config.scannerBatchSize, 25);
   assert.equal(config.scannerLineBudget, 10);
-  assert.equal(config.scannerConcurrency, 10);
+  assert.equal(config.scannerConcurrency, 20);
   assert.equal(config.scannerStrikeCoverage, "standard");
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 10);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 20);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
       ...config,
       scannerConcurrency: 8,
       scannerLineBudget: 40,
     }),
-    2,
+    5,
   );
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -243,7 +243,7 @@ test("options flow runtime defaults cover the broad scanner cycle", () => {
       scannerConcurrency: 8,
       scannerLineBudget: 20,
     }),
-    5,
+    8,
   );
 });
 

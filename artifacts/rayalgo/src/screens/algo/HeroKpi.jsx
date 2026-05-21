@@ -255,7 +255,7 @@ export const HeroKpi = ({
             fontFamily: T.sans,
             fontSize: fs(narrow ? 28 : 36),
             fontVariantNumeric: "tabular-nums",
-            letterSpacing: "-0.02em",
+            letterSpacing: 0,
             lineHeight: 1,
           }}
         >

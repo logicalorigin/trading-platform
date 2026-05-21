@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
-import { Badge, Card, Pill } from "../../components/platform/primitives.jsx";
+import { Badge, Card, MicroSparkline, Pill } from "../../components/platform/primitives.jsx";
 import {
   lineUsageTone,
 } from "../platform/runtimeControlModel.js";
@@ -38,41 +38,16 @@ const formatCycleEstimate = (value) => {
   return `~${Math.round(ms / 1_000)}s`;
 };
 
-const Sparkline = ({ values, color, width = 56, height = 14 }) => {
-  if (!Array.isArray(values) || values.length < 2) return null;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const step = width / Math.max(values.length - 1, 1);
-  const plotted = values.map((value, index) => {
-    const x = index * step;
-    const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
-    return [x.toFixed(2), y.toFixed(2)];
-  });
-  const points = plotted.map(([x, y]) => `${x},${y}`).join(" ");
-  const areaPath = `M ${plotted
-    .map(([x, y], index) => `${index === 0 ? "" : "L "}${x},${y}`)
-    .join(" ")} L ${width},${height} L 0,${height} Z`;
-  return (
-    <svg
+const Sparkline = ({ values, color, width = 56, height = 14 }) =>
+  Array.isArray(values) && values.length >= 2 ? (
+    <MicroSparkline
+      data={values}
+      color={color}
       width={width}
       height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ display: "block" }}
-    >
-      <path d={areaPath} fill={`${color}1f`} />
-      <polyline
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-};
+      ariaHidden
+    />
+  ) : null;
 
 const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
   const clamped = Math.max(0, Math.min(1, ratio || 0));
@@ -135,7 +110,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
         fontFamily: T.sans,
         fontSize: fs(13),
         fontWeight: FONT_WEIGHTS.label,
-        letterSpacing: "-0.01em",
+        letterSpacing: 0,
         lineHeight: 1.1,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -250,10 +225,10 @@ export const FlowScannerStatusPanel = ({
   });
   const lineUsage = runtimeControl.lineUsage;
   const scannerUsed = lineUsage.flowScanner?.used;
-  const scannerCap = lineUsage.flowScanner?.cap;
+  const scannerCap = lineUsage.flowScanner?.effectiveCap ?? lineUsage.flowScanner?.cap;
   const scannerRuntimeDetail = lineUsage.flowScanner?.detail;
   const accountMonitorUsed = lineUsage.accountMonitor?.used;
-  const accountMonitorCap = lineUsage.accountMonitor?.cap;
+  const accountMonitorNeeded = lineUsage.accountMonitor?.needed;
   const totalUsed = lineUsage.total?.used;
   const totalCap = lineUsage.total?.cap;
   const currentBatch = Array.isArray(coverage.currentBatch)
@@ -441,15 +416,15 @@ export const FlowScannerStatusPanel = ({
         <ScannerMetric
           label="Lines"
           value={
-            Number.isFinite(scannerUsed) || Number.isFinite(scannerCap)
-              ? `${formatCount(scannerUsed)}/${formatCount(scannerCap)}`
+            Number.isFinite(scannerUsed)
+              ? `${formatCount(scannerUsed)} active`
               : MISSING_VALUE
           }
           chart={<Sparkline values={linesHistory} color={linesTone} />}
           detail={
             scannerRuntimeDetail ||
             (Number.isFinite(totalUsed) || Number.isFinite(totalCap)
-              ? `acct ${formatCount(accountMonitorUsed)}/${formatCount(accountMonitorCap)} · app ${formatCount(totalUsed)}/${formatCount(totalCap)}`
+              ? `acct ${formatCount(accountMonitorUsed)} of ${formatCount(accountMonitorNeeded ?? accountMonitorUsed)} · app ${formatCount(totalUsed)} of ${formatCount(totalCap)}`
               : "runtime diagnostics")
           }
           tone={linesTone}

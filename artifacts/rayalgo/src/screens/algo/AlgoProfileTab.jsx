@@ -171,7 +171,7 @@ export const AlgoProfileTab = ({
               letterSpacing: "0.04em",
             }}
           >
-            EXPANDED CAPACITY
+            EXPANDED LIMITS
           </div>
           <div
             style={{
@@ -369,7 +369,7 @@ export const AlgoProfileTab = ({
 
       <ProfileSection
         id="risk"
-        title="Risk caps"
+        title="Risk limits"
         summary={riskSummary}
         expanded={profileSectionOpen === "risk"}
         onToggle={() => toggleSection("risk")}

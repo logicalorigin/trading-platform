@@ -11,7 +11,7 @@ import {
   Tv,
 } from "lucide-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
@@ -39,18 +39,28 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
     data-testid={testId}
     onClick={onClick}
     style={{
-      minHeight: dim(48),
+      minHeight: dim(42),
       display: "grid",
-      gridTemplateColumns: `${dim(24)}px minmax(0, 1fr)`,
+      gridTemplateColumns: `${dim(22)}px minmax(0, 1fr)`,
       alignItems: "center",
-      gap: sp(8),
-      padding: sp("7px 9px"),
-      border: "none",
+      gap: sp(7),
+      padding: sp("6px 7px"),
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.xs),
       background: T.bg1,
       color: T.text,
       textAlign: "left",
       cursor: "pointer",
       fontFamily: T.sans,
+      transition: "background 0.12s ease, border-color 0.12s ease",
+    }}
+    onMouseEnter={(event) => {
+      event.currentTarget.style.background = T.accentHoverBg;
+      event.currentTarget.style.borderColor = `${T.accent}33`;
+    }}
+    onMouseLeave={(event) => {
+      event.currentTarget.style.background = T.bg1;
+      event.currentTarget.style.borderColor = T.borderLight;
     }}
   >
     <Icon size={16} strokeWidth={2.1} style={{ color: T.accent }} />
@@ -61,7 +71,8 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          fontSize: fs(11),
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
           lineHeight: 1.1,
         }}
       >
@@ -77,7 +88,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
             whiteSpace: "nowrap",
             color: T.textDim,
             fontFamily: T.sans,
-            fontSize: fs(8),
+            fontSize: textSize("caption"),
             lineHeight: 1.1,
           }}
         >
@@ -93,7 +104,8 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
     style={{
       minWidth: 0,
       padding: sp("5px 7px"),
-      border: "none",
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.xs),
       background: T.bg1,
       fontFamily: T.sans,
     }}
@@ -101,9 +113,10 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
     <div
       style={{
         color: T.textMuted,
-        fontSize: fs(7),
+        fontSize: textSize("caption"),
         lineHeight: 1.05,
-        letterSpacing: "0.04em",
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: 0,
       }}
     >
       {label}
@@ -113,6 +126,7 @@ const StatusChip = ({ label, value, tone = T.textSec }) => (
         marginTop: sp(2),
         color: tone,
         fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1.1,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -189,17 +203,19 @@ export const MobileMoreSheet = ({
                 aria-current={active ? "page" : undefined}
                 onClick={() => handleScreenSelect(screen.id)}
                 style={{
-                  minHeight: dim(46),
+                  minHeight: dim(42),
                   display: "flex",
                   alignItems: "center",
-                  gap: sp(8),
-                  padding: sp("0 9px"),
-                  border: `1px solid ${active ? T.accent : T.border}`,
-                  background: active ? `${T.accent}18` : T.bg1,
-                  color: active ? T.text : T.textSec,
+                  gap: sp(7),
+                  padding: sp("0 7px"),
+                  border: `1px solid ${active ? `${T.accent}40` : T.borderLight}`,
+                  borderRadius: dim(RADII.xs),
+                  background: active ? T.accentHoverBg : T.bg1,
+                  color: active ? T.accent : T.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
-                  fontSize: fs(11),
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.medium,
                   textAlign: "left",
                 }}
               >
