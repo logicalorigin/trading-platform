@@ -65,3 +65,18 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Recurring Bugs Need Source Removal
+
+**If the same bug returns, stop treating the visible failure as the cause.**
+
+For repeat defects:
+- Identify the persisted state that makes the bug visible.
+- Identify the creator path that can recreate that state.
+- Identify the reader path that surfaces it.
+- Remove or hard-disable the creator path when the feature is retired.
+- Add a guard at the reader/writer boundary so stale state cannot re-enter the active surface.
+- Clean existing persisted rows only after the code path is blocked.
+- Explain the cause briefly and concretely: "X keeps happening because Y still creates Z."
+
+Do not call a fix permanent if it only filters UI output, deletes one database row, or changes a display component while the stale creator path still exists.

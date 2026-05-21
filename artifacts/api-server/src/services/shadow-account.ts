@@ -62,7 +62,7 @@ import {
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
-export const SHADOW_STARTING_BALANCE = 30_000;
+export const SHADOW_STARTING_BALANCE = 40_000;
 export const SHADOW_EQUITY_COLOR = "#ec4899";
 
 const SHADOW_CURRENCY = "USD";
@@ -505,6 +505,24 @@ function assetClassLabel(position: { assetClass: string; symbol: string }): stri
   return "Stocks";
 }
 
+function normalizePositionAssetClass(value: unknown): "options" | "stocks" | "all" | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "all") return "all";
+  if (normalized === "option" || normalized === "options" || normalized === "opt") {
+    return "options";
+  }
+  if (
+    normalized === "stock" ||
+    normalized === "stocks" ||
+    normalized === "equity" ||
+    normalized === "equities"
+  ) {
+    return "stocks";
+  }
+  return null;
+}
+
 function marketMultiplier(input: {
   assetClass: ShadowAssetClass;
   optionContract?: ShadowOptionContract | null;
@@ -770,7 +788,7 @@ function shadowBalanceSnapshotSourceForOrder(input: {
 function isLiveShadowOrder(order?: ShadowOrderRow | null): boolean {
   const effectiveSource = shadowOrderEffectiveSource(order);
   return (
-    effectiveSource !== WATCHLIST_BACKTEST_SOURCE &&
+    !isSimulationShadowOrderSource(effectiveSource) &&
     !isForwardTestShadowOrder(order)
   );
 }
@@ -789,6 +807,7 @@ function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: str
 function isLiveShadowPosition(position: Pick<ShadowPositionRow, "positionKey">): boolean {
   return (
     !isWatchlistBacktestPositionKey(position.positionKey) &&
+    !isSignalOptionsReplayPositionKey(position.positionKey) &&
     !isShadowEquityForwardPositionKey(position.positionKey)
   );
 }
@@ -1041,14 +1060,14 @@ function buildPositionSourceAttribution(
       quantity: Number(bucket.quantity.toFixed(6)),
     }));
   const sourceTypes = new Set(attribution.map((bucket) => bucket.sourceType));
-  const hasMultipleAutomationCandidates =
+  const hasMultipleAutomationDeployments =
     new Set(
       attribution
         .filter((bucket) => bucket.sourceType === "automation")
-        .map((bucket) => bucket.candidateId ?? "unknown"),
+        .map((bucket) => bucket.deploymentId ?? bucket.deploymentName ?? "automation"),
     ).size > 1;
   const sourceType =
-    sourceTypes.size > 1 || hasMultipleAutomationCandidates
+    sourceTypes.size > 1 || hasMultipleAutomationDeployments
       ? "mixed"
       : attribution[0]?.sourceType ?? "manual";
 
@@ -1178,16 +1197,6 @@ async function ensureShadowAccount(): Promise<ShadowAccountRow> {
       code: "shadow_account_init_failed",
       expose: true,
     });
-  }
-
-  const [existingSnapshot] = await db
-    .select({ id: shadowBalanceSnapshotsTable.id })
-    .from(shadowBalanceSnapshotsTable)
-    .where(eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID))
-    .limit(1);
-
-  if (!existingSnapshot) {
-    await writeShadowBalanceSnapshot("initial");
   }
 
   return account;
@@ -1337,7 +1346,7 @@ async function computeShadowTotalsForSource(
   const { fills, ordersById } = await readShadowFillsWithOrders();
   const selectedFills = source
     ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-    : fills.filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)));
+    : fills;
   const selectedPositionKeys = shadowPositionKeysForOrders(
     selectedFills.map((fill) => ordersById.get(fill.orderId)),
   );
@@ -1417,26 +1426,10 @@ async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktest
   };
 }
 
-async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) {
+async function writeShadowBalanceSnapshot(_source = "ledger", _asOf = new Date()) {
   invalidateShadowFreshStateCache();
-  const totals = await computeShadowTotalsForSource(shadowTotalsSourceForSnapshotSource(source));
-  const [snapshot] = await db
-    .insert(shadowBalanceSnapshotsTable)
-    .values({
-      accountId: SHADOW_ACCOUNT_ID,
-      currency: SHADOW_CURRENCY,
-      cash: money(totals.cash),
-      buyingPower: money(totals.cash),
-      netLiquidation: money(totals.netLiquidation),
-      realizedPnl: money(totals.realizedPnl),
-      unrealizedPnl: money(totals.unrealizedPnl),
-      fees: money(totals.fees),
-      source,
-      asOf,
-    })
-    .returning();
   notifyShadowAccountChanged();
-  return snapshot;
+  return null;
 }
 
 async function resolveEquityMark(symbol: string): Promise<{
@@ -2955,22 +2948,6 @@ function isSignalOptionsReplaySnapshotSource(source: string | null | undefined) 
   );
 }
 
-function shadowTotalsSourceForSnapshotSource(
-  source: string | null | undefined,
-): ShadowSourceScope | null {
-  if (source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === SIGNAL_OPTIONS_REPLAY_MARK_SOURCE) {
-    return SIGNAL_OPTIONS_REPLAY_SOURCE;
-  }
-  if (
-    source === WATCHLIST_BACKTEST_MARK_SOURCE ||
-    source?.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`) ||
-    source?.startsWith("watchlist_bt:")
-  ) {
-    return WATCHLIST_BACKTEST_SOURCE;
-  }
-  return null;
-}
-
 function shadowBenchmarkBarsCacheKey(input: {
   symbol: string;
   timeframe: ReturnType<typeof accountBenchmarkTimeframeForRange>;
@@ -3392,30 +3369,11 @@ export async function backfillSignalOptionsReplayEquitySnapshotsFromRun(input: {
         .returning({ id: shadowBalanceSnapshotsTable.id });
       deleted = removed.length;
     }
-
-    await tx.insert(shadowBalanceSnapshotsTable).values(
-      points.map((point) => {
-        const equity = toNumber(point.equity) ?? 0;
-        const cash = toNumber(point.cash) ?? 0;
-        return {
-          accountId: SHADOW_ACCOUNT_ID,
-          currency: SHADOW_CURRENCY,
-          cash: money(cash),
-          buyingPower: money(cash),
-          netLiquidation: money(equity),
-          realizedPnl: money(0),
-          unrealizedPnl: money(equity - cash),
-          fees: money(0),
-          source: SIGNAL_OPTIONS_REPLAY_SOURCE,
-          asOf: point.occurredAt,
-        };
-      }),
-    );
   });
   invalidateShadowFreshStateCache();
   notifyShadowAccountChanged();
   return {
-    inserted: points.length,
+    inserted: 0,
     deleted,
     firstAsOf,
     lastAsOf,
@@ -3774,8 +3732,9 @@ export async function getShadowAccountPositions(input: {
   source?: string | null;
 }) {
   const source = normalizeShadowSourceScope(input.source);
+  const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   return withShadowReadCache(
-    `positions:${input.assetClass || "all"}:${shadowSourceCacheKey(source)}`,
+    `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}`,
     async () => {
   try {
   const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
@@ -3790,10 +3749,10 @@ export async function getShadowAccountPositions(input: {
     .limit(1000);
   const positions = await readOpenShadowPositionsForSource(source);
   const filtered =
-    input.assetClass && input.assetClass !== "all"
+    assetClassFilter && assetClassFilter !== "all"
       ? positions.filter(
           (position) =>
-            assetClassLabel(position).toLowerCase() === input.assetClass?.toLowerCase(),
+            normalizePositionAssetClass(assetClassLabel(position)) === assetClassFilter,
         )
       : positions;
   const dayChanges = await readShadowPositionDayChanges(filtered);
@@ -7821,7 +7780,6 @@ async function insertWatchlistBacktestFills(input: {
   fills: WatchlistBacktestFill[];
   snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
 }) {
-  const snapshotSource = watchlistBacktestSnapshotSource(input.rangeKey);
   await db.transaction(async (tx) => {
     await deleteWatchlistBacktestRowsForRange(tx, input);
 
@@ -7906,24 +7864,6 @@ async function insertWatchlistBacktestFills(input: {
         occurredAt: fill.placedAt,
       });
     }
-
-    if (input.snapshots.length) {
-      await tx.insert(shadowBalanceSnapshotsTable).values(
-        input.snapshots.map((snapshot) => ({
-          accountId: SHADOW_ACCOUNT_ID,
-          currency: SHADOW_CURRENCY,
-          cash: money(snapshot.cash),
-          buyingPower: money(snapshot.cash),
-          netLiquidation: money(snapshot.netLiquidation),
-          realizedPnl: money(snapshot.realizedPnl),
-          unrealizedPnl: money(snapshot.unrealizedPnl),
-          fees: money(snapshot.fees),
-          source: snapshotSource,
-          asOf: snapshot.asOf,
-        })),
-      );
-    }
-
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
 }

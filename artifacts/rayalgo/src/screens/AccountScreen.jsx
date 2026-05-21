@@ -1769,7 +1769,7 @@ const AccountScreenInner = ({
                     lineHeight: 1.35,
                   }}
                 >
-                  Starting balance is tracked at $30,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
+                  Starting balance is tracked at $40,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
                 </div>
                 <div
                   className="ra-hide-scrollbar"

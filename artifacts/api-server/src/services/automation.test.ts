@@ -25,6 +25,15 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /subscribeAlgoCockpitSnapshots/);
   assert.match(serviceSource, /updateAlgoDeploymentStrategySettings/);
   assert.match(serviceSource, /notifyAlgoCockpitChanged/);
+  assert.match(
+    serviceSource,
+    /RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE\s*=\s*"signal_equity_shadow"/,
+  );
+  assert.match(serviceSource, /isRetiredShadowEquityForwardDeployment/);
+  assert.match(
+    serviceSource,
+    /\.filter\(\(deployment\) => !isRetiredShadowEquityForwardDeployment\(deployment\)\)/,
+  );
   assert.match(signalOptionsServiceSource, /notifyAlgoCockpitChanged/);
   assert.match(
     serviceSource,

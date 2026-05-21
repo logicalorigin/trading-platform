@@ -2865,23 +2865,10 @@ export async function getAccountPositions(input: {
   source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    const positionsResponse = input.source
-      ? await getShadowAccountPositions({
-          assetClass: input.assetClass,
-          source: input.source,
-        })
-      : (await fetchShadowAccountSnapshotBase()).positions;
-    if (!input.assetClass || input.assetClass === "all") {
-      return positionsResponse;
-    }
-    return {
-      ...positionsResponse,
-      positions: positionsResponse.positions.filter(
-        (position) =>
-          String(position.assetClass || "").toLowerCase() ===
-          input.assetClass?.toLowerCase(),
-      ),
-    };
+    return getShadowAccountPositions({
+      assetClass: input.assetClass,
+      source: input.source,
+    });
   }
 
   const mode = input.mode ?? getRuntimeMode();

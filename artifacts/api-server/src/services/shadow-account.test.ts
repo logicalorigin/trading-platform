@@ -1887,7 +1887,7 @@ test("shadow equity history can select signal-options replay snapshots", () => {
   );
 });
 
-test("shadow live source filters keep replay orders and reject forward-test rows", () => {
+test("shadow live source filters reject simulation and forward-test rows", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
 
   assert.equal(internals.isSimulationShadowOrderSource("watchlist_backtest"), true);
@@ -1896,7 +1896,7 @@ test("shadow live source filters keep replay orders and reject forward-test rows
   assert.equal(internals.isLiveShadowOrder({ source: "automation" } as any), true);
   assert.equal(internals.isLiveShadowOrder({ source: "manual" } as any), true);
   assert.equal(internals.isLiveShadowOrder({ source: "watchlist_backtest" } as any), false);
-  assert.equal(internals.isLiveShadowOrder({ source: "signal_options_replay" } as any), true);
+  assert.equal(internals.isLiveShadowOrder({ source: "signal_options_replay" } as any), false);
   assert.equal(
     internals.isLiveShadowOrder({
       source: "automation",
@@ -1907,7 +1907,7 @@ test("shadow live source filters keep replay orders and reject forward-test rows
         },
       },
     } as any),
-    true,
+    false,
   );
   assert.equal(
     internals.shadowOrderEffectiveSource({
@@ -1946,7 +1946,7 @@ test("shadow live source filters keep replay orders and reject forward-test rows
     internals.isLiveShadowPosition({
       positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
     } as any),
-    true,
+    false,
   );
   assert.equal(
     internals.isLiveShadowPosition({

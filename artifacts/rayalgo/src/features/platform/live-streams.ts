@@ -1031,6 +1031,24 @@ const queryKeyPath = (queryKey: unknown): string | null =>
 const accountScopedPrefix = (accountId: string): string =>
   `/api/accounts/${accountId}`;
 
+const normalizeAccountAssetClass = (value: unknown): string | null => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "all") return "all";
+  if (normalized === "option" || normalized === "options" || normalized === "opt") {
+    return "options";
+  }
+  if (
+    normalized === "stock" ||
+    normalized === "stocks" ||
+    normalized === "equity" ||
+    normalized === "equities"
+  ) {
+    return "stocks";
+  }
+  return normalized;
+};
+
 const invalidateAccountScopedQueries = (
   queryClient: ReturnType<typeof useQueryClient>,
   accountIds: string[],
@@ -2288,8 +2306,7 @@ const shadowPositionsForQuery = (
   queryKey: unknown,
 ): AccountPositionsResponse => {
   const params = readQueryParams(queryKey);
-  const requestedAssetClass =
-    typeof params?.assetClass === "string" ? params.assetClass : null;
+  const requestedAssetClass = normalizeAccountAssetClass(params?.assetClass);
   const openPositions = positionsResponse.positions.filter((position) => {
     const quantity = Number(position.quantity);
     return !Number.isFinite(quantity) || Math.abs(quantity) > 1e-9;
@@ -2305,8 +2322,7 @@ const shadowPositionsForQuery = (
     ...positionsResponse,
     positions: openPositions.filter(
       (position) =>
-        String(position.assetClass || "").toLowerCase() ===
-        requestedAssetClass.toLowerCase(),
+        normalizeAccountAssetClass(position.assetClass) === requestedAssetClass,
     ),
   };
 };
@@ -2372,12 +2388,10 @@ const assetClassParamMatches = (
   params: Record<string, unknown> | null,
   expected: string | null | undefined,
 ): boolean => {
-  const current =
-    typeof params?.assetClass === "string" && params.assetClass
-      ? params.assetClass
-      : null;
-  return expected && expected !== "all"
-    ? current === expected
+  const current = normalizeAccountAssetClass(params?.assetClass);
+  const normalizedExpected = normalizeAccountAssetClass(expected);
+  return normalizedExpected && normalizedExpected !== "all"
+    ? current === normalizedExpected
     : current == null || current === "all";
 };
 

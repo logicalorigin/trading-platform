@@ -34,6 +34,7 @@ type ListExecutionEventsInput = {
 
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
 const RAY_REPLICA_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
+const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -67,6 +68,13 @@ async function getDeploymentOrThrow(deploymentId: string) {
   if (!deployment) {
     throw new HttpError(404, "Algorithm deployment not found.", {
       code: "algo_deployment_not_found",
+    });
+  }
+
+  if (isRetiredShadowEquityForwardDeployment(deployment)) {
+    throw new HttpError(410, "Retired shadow equity forward deployments are disabled.", {
+      code: "retired_algo_deployment_disabled",
+      expose: true,
     });
   }
 
@@ -158,6 +166,18 @@ function deploymentToResponse(
   };
 }
 
+function isRetiredShadowEquityForwardDeployment(
+  deployment: typeof algoDeploymentsTable.$inferSelect,
+) {
+  return isRetiredShadowEquityForwardConfig(deployment.config);
+}
+
+function isRetiredShadowEquityForwardConfig(configValue: unknown) {
+  const config = asRecord(configValue);
+  const parameters = asRecord(config.parameters);
+  return parameters.executionMode === RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE;
+}
+
 function executionEventToResponse(
   event: typeof executionEventsTable.$inferSelect,
 ) {
@@ -188,7 +208,9 @@ export async function listAlgoDeployments(input: ListAlgoDeploymentsInput) {
     .orderBy(desc(algoDeploymentsTable.updatedAt));
 
   return {
-    deployments: rows.map(deploymentToResponse),
+    deployments: rows
+      .filter((deployment) => !isRetiredShadowEquityForwardDeployment(deployment))
+      .map(deploymentToResponse),
   };
 }
 
@@ -198,6 +220,12 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     ...(strategy.config as Record<string, unknown>),
     ...(input.config ?? {}),
   };
+  if (isRetiredShadowEquityForwardConfig(config)) {
+    throw new HttpError(410, "Retired shadow equity forward deployments cannot be created.", {
+      code: "retired_algo_deployment_disabled",
+      expose: true,
+    });
+  }
   const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
     providerAccountId: input.providerAccountId,
     config,
