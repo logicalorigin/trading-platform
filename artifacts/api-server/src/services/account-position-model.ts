@@ -1,5 +1,7 @@
 import type {
   BrokerPositionSnapshot,
+  PositionQuoteSnapshot,
+  PositionQuoteSource,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
 
@@ -126,4 +128,96 @@ export function buildPositionMarketHydration(
         : null,
     source: hasQuotePrice ? "QUOTE_SNAPSHOT" : "IBKR_POSITIONS",
   };
+}
+
+function positiveNumberOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function quoteTimestamp(quote: QuoteSnapshot | null | undefined): Date | null {
+  const timestamp = quote?.dataUpdatedAt ?? quote?.updatedAt ?? null;
+  return timestamp instanceof Date && !Number.isNaN(timestamp.getTime())
+    ? timestamp
+    : null;
+}
+
+export function buildPositionQuoteFromSnapshot(
+  quote: QuoteSnapshot | null | undefined,
+  fallbackMark: number | null | undefined,
+  source: PositionQuoteSource = "bridge_quote",
+): PositionQuoteSnapshot | null {
+  if (!quote) {
+    const mark = positiveNumberOrNull(fallbackMark);
+    return mark === null
+      ? null
+      : {
+          bid: null,
+          ask: null,
+          mid: null,
+          last: null,
+          mark,
+          spread: null,
+          spreadPercent: null,
+          bidSize: null,
+          askSize: null,
+          updatedAt: null,
+          freshness: null,
+          marketDataMode: null,
+          source:
+            source === "bridge_quote" || source === "option_quote"
+              ? "position_mark"
+              : source,
+        };
+  }
+
+  const bid = positiveNumberOrNull(quote.bid);
+  const ask = positiveNumberOrNull(quote.ask);
+  const last = positiveNumberOrNull(quote.price);
+  const mark =
+    bid !== null && ask !== null
+      ? (bid + ask) / 2
+      : last ?? positiveNumberOrNull(fallbackMark);
+  const spread = bid !== null && ask !== null ? ask - bid : null;
+
+  return {
+    bid,
+    ask,
+    mid: bid !== null && ask !== null ? (bid + ask) / 2 : null,
+    last,
+    mark,
+    spread,
+    spreadPercent:
+      spread !== null && mark !== null && mark > 0 ? (spread / mark) * 100 : null,
+    bidSize: finiteNumberOrNull(quote.bidSize),
+    askSize: finiteNumberOrNull(quote.askSize),
+    updatedAt: quoteTimestamp(quote),
+    freshness: quote.freshness ?? null,
+    marketDataMode: quote.marketDataMode ?? null,
+    source,
+  };
+}
+
+export function positionQuoteHasBidAsk(
+  quote: PositionQuoteSnapshot | null | undefined,
+): boolean {
+  return quote?.bid != null && quote.ask != null;
+}
+
+export function choosePositionQuote(
+  primary: PositionQuoteSnapshot | null | undefined,
+  fallback: PositionQuoteSnapshot | null | undefined,
+): PositionQuoteSnapshot | null {
+  if (positionQuoteHasBidAsk(primary)) {
+    return primary ?? null;
+  }
+  if (positionQuoteHasBidAsk(fallback)) {
+    return fallback ?? null;
+  }
+  return primary ?? fallback ?? null;
 }

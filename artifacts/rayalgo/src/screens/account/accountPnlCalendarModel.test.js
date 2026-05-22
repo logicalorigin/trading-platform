@@ -6,7 +6,9 @@ import {
   buildMonthPnlCalendarModel,
   buildYearPnlCalendarModel,
   findLatestCalendarActivityDate,
+  findLatestVisiblePnlCalendarDay,
   formatCalendarPnlValue,
+  resolveActivePnlCalendarDay,
 } from "./accountPnlCalendarModel.js";
 
 const trade = (closeDate, realizedPnl, extra = {}) => ({
@@ -414,19 +416,79 @@ test("buildYearPnlCalendarModel summarizes monthly display P&L and win/loss days
   assert.equal(model.summary.realized, 65);
 });
 
-test("findLatestCalendarActivityDate uses the latest valid trade or equity point", () => {
+test("findLatestVisiblePnlCalendarDay picks the latest active in-month day", () => {
+  const model = buildMonthPnlCalendarModel({
+    monthDate: new Date(2026, 4, 15),
+    today: new Date(2026, 4, 31, 12),
+    trades: [
+      trade("2026-04-30T15:00:00.000Z", 100),
+      trade("2026-05-05T15:00:00.000Z", 25),
+      trade("2026-05-19T15:00:00.000Z", -10),
+    ],
+  });
+
+  assert.equal(findLatestVisiblePnlCalendarDay(model.days).iso, "2026-05-19");
+});
+
+test("resolveActivePnlCalendarDay prefers hover, then pin, then latest activity", () => {
+  const model = buildMonthPnlCalendarModel({
+    monthDate: new Date(2026, 4, 15),
+    today: new Date(2026, 4, 31, 12),
+    trades: [
+      trade("2026-05-05T15:00:00.000Z", 25),
+      trade("2026-05-19T15:00:00.000Z", -10),
+    ],
+  });
+
+  assert.equal(
+    resolveActivePnlCalendarDay({
+      days: model.days,
+      hoveredDayIso: "2026-05-05",
+      pinnedDayIso: "2026-05-19",
+    }).iso,
+    "2026-05-05",
+  );
+  assert.equal(
+    resolveActivePnlCalendarDay({
+      days: model.days,
+      pinnedDayIso: "2026-05-05",
+    }).iso,
+    "2026-05-05",
+  );
+  assert.equal(
+    resolveActivePnlCalendarDay({
+      days: model.days,
+      hoveredDayIso: "2026-04-30",
+      pinnedDayIso: "2026-04-30",
+    }).iso,
+    "2026-05-19",
+  );
+  assert.equal(resolveActivePnlCalendarDay({ days: model.days }).iso, "2026-05-19");
+});
+
+test("findLatestCalendarActivityDate uses the latest computed calendar activity", () => {
   const latest = findLatestCalendarActivityDate({
     trades: [
       trade("2026-01-02T16:00:00.000Z", 12),
       trade("2026-03-05T16:00:00.000Z", "not-a-number"),
     ],
     equityPoints: [
-      equityPoint("2026-02-04T21:00:00.000Z", 1010),
+      equityPoint("2026-02-03T21:00:00.000Z", 1010),
+      equityPoint("2026-02-04T21:00:00.000Z", 1025),
       equityPoint("2026-04-01T21:00:00.000Z", "not-a-number"),
     ],
   });
 
   assert.equal(latest.toISOString(), new Date(2026, 1, 4).toISOString());
+});
+
+test("findLatestCalendarActivityDate ignores sparse terminal NAV without a P&L baseline", () => {
+  const latest = findLatestCalendarActivityDate({
+    trades: [trade("2026-04-22T16:00:00.000Z", 12)],
+    equityPoints: [equityPoint("2026-05-22T01:24:31.250Z", 90190.06)],
+  });
+
+  assert.equal(latest.toISOString(), new Date(2026, 3, 22).toISOString());
 });
 
 test("formatCalendarPnlValue masks values and keeps day cells compact", () => {

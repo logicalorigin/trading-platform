@@ -1,11 +1,17 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Card, DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { useViewportBelow } from "../../lib/responsive";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { FlowScannerStatusPanel } from "./FlowScannerStatusPanel.jsx";
 
 const RAIL_BREAKPOINT_PX = 1100;
-const RAIL_WIDTH_PX = 220;
+const RAIL_WIDTH_PX = 160;
+const DEFAULT_VISIBLE_BUCKETS = ["small", "medium", "large"];
+const BUCKET_TOGGLE_OPTIONS = [
+  ["small", "S"],
+  ["medium", "M"],
+  ["large", "L"],
+];
 
 const COVERAGE_MODE_OPTIONS = [
   ["ranked", "Ranked"],
@@ -41,6 +47,49 @@ const SegmentedToggle = ({
           aria-pressed={active}
           onClick={() => onChange?.(optionValue)}
           style={{
+            border: "none",
+            borderRadius: dim(RADII.sm),
+            background: active ? `${T.accent}14` : "transparent",
+            color: active ? T.accent : T.textMuted,
+            cursor: "pointer",
+            fontFamily: T.sans,
+            fontSize: fs(8),
+            fontWeight: FONT_WEIGHTS.regular,
+            padding: "3px 7px",
+          }}
+        >
+          {label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
+  <div
+    data-testid="flow-premium-bucket-visibility"
+    aria-label="Premium bucket visibility"
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(2),
+      padding: sp(2),
+      border: `1px solid ${T.border}`,
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
+    }}
+  >
+    {BUCKET_TOGGLE_OPTIONS.map(([bucket, label]) => {
+      const active = visibleBuckets.has(bucket);
+      return (
+        <button
+          key={bucket}
+          type="button"
+          data-testid={`flow-premium-bucket-toggle-${bucket}`}
+          aria-pressed={active}
+          onClick={() => onToggleBucket?.(bucket)}
+          style={{
+            minWidth: dim(24),
             border: "none",
             borderRadius: dim(RADII.sm),
             background: active ? `${T.accent}14` : "transparent",
@@ -122,6 +171,9 @@ export const FlowDistributionScannerPanel = ({
   scannerStatus,
   testId = "flow-distribution-scanner-panel",
 }) => {
+  const [visibleBuckets, setVisibleBuckets] = useState(
+    () => new Set(DEFAULT_VISIBLE_BUCKETS),
+  );
   const widgets = query?.data?.widgets || [];
   const loading = Boolean(query?.isLoading || query?.isPending);
   const empty =
@@ -144,6 +196,36 @@ export const FlowDistributionScannerPanel = ({
     () => Array.from({ length: totalWidgetSlots }),
     [totalWidgetSlots],
   );
+  const maxAbsNetKilo = useMemo(
+    () =>
+      widgets.reduce((maxValue, widget) => {
+        const netKilo = Math.abs(Number(widget?.netPremium) || 0) / 1_000;
+        return Math.max(maxValue, netKilo);
+      }, 0),
+    [widgets],
+  );
+  const classificationSummary = useMemo(() => {
+    if (!widgets.length) return null;
+    const averageCoverage =
+      widgets.reduce((sum, widget) => {
+        const coverage = Number(widget?.classificationCoverage);
+        return sum + (Number.isFinite(coverage) ? coverage : 0);
+      }, 0) / widgets.length;
+    return `${widgets.length} syms · ${Math.round(
+      Math.max(0, Math.min(1, averageCoverage)) * 100,
+    )}% classified avg`;
+  }, [widgets]);
+  const handleToggleBucket = useCallback((bucket) => {
+    setVisibleBuckets((current) => {
+      const next = new Set(current);
+      if (next.has(bucket)) {
+        next.delete(bucket);
+      } else {
+        next.add(bucket);
+      }
+      return next.size ? next : new Set(DEFAULT_VISIBLE_BUCKETS);
+    });
+  }, []);
 
   const widgetGrid = empty ? (
     <Card
@@ -163,8 +245,8 @@ export const FlowDistributionScannerPanel = ({
       style={{
         display: "grid",
         gridTemplateColumns:
-          "repeat(auto-fit, minmax(min(100%, 116px), 1fr))",
-        gap: sp(5),
+          "repeat(auto-fill, minmax(min(100%, 280px), 1fr))",
+        gap: sp(3),
         minWidth: 0,
       }}
     >
@@ -177,6 +259,8 @@ export const FlowDistributionScannerPanel = ({
             widget,
             loading: loading && !widget,
             selected,
+            visibleBuckets,
+            maxAbsNetKilo,
             onSelect: () =>
               symbol ? onWidgetSelect?.(symbol) : undefined,
           }) || null;
@@ -220,6 +304,10 @@ export const FlowDistributionScannerPanel = ({
           testId="flow-premium-distribution-coverage-mode"
         />
       ) : null}
+      <BucketVisibilityToggle
+        visibleBuckets={visibleBuckets}
+        onToggleBucket={handleToggleBucket}
+      />
     </div>
   );
 
@@ -240,6 +328,20 @@ export const FlowDistributionScannerPanel = ({
         sourceWarning={sourceWarning}
         warningTone={warningTone}
       />
+      {classificationSummary ? (
+        <span
+          style={{
+            flex: "0 0 auto",
+            color: T.textMuted,
+            fontFamily: T.sans,
+            fontSize: fs(7),
+            fontWeight: FONT_WEIGHTS.regular,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {classificationSummary}
+        </span>
+      ) : null}
       {distributionControls}
     </div>
   );

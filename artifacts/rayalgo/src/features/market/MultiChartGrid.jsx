@@ -24,6 +24,7 @@ import {
   BARS_REQUEST_PRIORITY,
   buildBarsRequestOptions,
 } from "../platform/queryDefaults";
+import { useHydrationGate } from "../platform/hydrationCoordinator";
 import { isTransientEmptyFlowSource } from "../platform/flowSourceState";
 import { publishTradeFlowSnapshotsByTicker } from "../platform/tradeFlowStore";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
@@ -51,10 +52,23 @@ import {
   normalizePersistedTickerSearchRows,
   normalizeTickerSearchResultForStorage,
 } from "../platform/tickerSearch/model";
-import { MiniChartCell } from "./MiniChartCell.jsx";
+import {
+  MarketChartCell,
+  preloadMarketChartRuntime as preloadMarketChartCellRuntime,
+} from "./MarketChartCell.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { _initialState, persistState } from "../../lib/workspaceState";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  FONT_WEIGHTS,
+  LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { Card } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -80,7 +94,7 @@ const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
   "3x3": 340,
 };
 
-const MINI_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
+const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
 const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
@@ -94,8 +108,9 @@ const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;
 const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REFRESH_MS = 30_000;
 const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
-const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 2;
-const MARKET_CHART_HYDRATION_STAGGER_MS = 450;
+const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 4;
+const MARKET_CHART_HYDRATION_STAGGER_MS = 1_200;
+const MARKET_CHART_BACKOFF_HYDRATION_STAGGER_MS = 2_500;
 const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS = new Set([
   "options_flow_historical_provider_timeout",
   "options_flow_historical_refreshing",
@@ -106,6 +121,10 @@ const MARKET_CHART_FLOW_PENDING_SOURCE = {
   status: "empty",
   ibkrStatus: "empty",
   ibkrReason: "options_flow_historical_refreshing",
+};
+
+export const preloadMarketChartRuntime = () => {
+  preloadMarketChartCellRuntime();
 };
 
 const isHistoricalChartFlowTransientSource = (source) => {
@@ -147,7 +166,7 @@ const buildMarketChartViewportLayoutKey = ({
     `rev-${revision}`,
   ].join(":");
 
-const buildDefaultMiniChartSymbols = (
+const buildDefaultMarketChartSymbols = (
   activeSym,
   count = MAX_MULTI_CHART_SLOTS,
 ) => {
@@ -166,13 +185,13 @@ const buildDefaultMiniChartSymbols = (
   );
 };
 
-const hydrateMiniChartSlot = (slot, fallbackTicker) => ({
+const hydrateMarketChartSlot = (slot, fallbackTicker) => ({
   ticker:
     normalizeTickerSymbol(slot?.ticker) ||
     fallbackTicker ||
     WATCHLIST[0]?.sym ||
     "SPY",
-  tf: MINI_CHART_TIMEFRAMES.includes(normalizeChartTimeframe(slot?.tf))
+  tf: MARKET_CHART_TIMEFRAMES.includes(normalizeChartTimeframe(slot?.tf))
     ? normalizeChartTimeframe(slot?.tf)
     : "15m",
   market: slot?.market || "stocks",
@@ -190,16 +209,16 @@ const hydrateMiniChartSlot = (slot, fallbackTicker) => ({
   searchResult: normalizeTickerSearchResultForStorage(slot?.searchResult) || null,
 });
 
-const buildInitialMiniChartSlots = (activeSym) => {
+const buildInitialMarketChartSlots = (activeSym) => {
   const persisted = Array.isArray(_initialState.marketGridSlots)
     ? _initialState.marketGridSlots
     : [];
-  const defaults = buildDefaultMiniChartSymbols(
+  const defaults = buildDefaultMarketChartSymbols(
     activeSym,
     MAX_MULTI_CHART_SLOTS,
   );
   return defaults.map((fallbackTicker, index) =>
-    hydrateMiniChartSlot(persisted[index], fallbackTicker),
+    hydrateMarketChartSlot(persisted[index], fallbackTicker),
   );
 };
 
@@ -249,7 +268,7 @@ export const MultiChartGrid = ({
 }) => {
   const gridBodyRef = useRef(null);
   const defaultSymbolsRef = useRef(
-    buildDefaultMiniChartSymbols(activeSym, MAX_MULTI_CHART_SLOTS),
+    buildDefaultMarketChartSymbols(activeSym, MAX_MULTI_CHART_SLOTS),
   );
   const [layout, setLayout] = useState(_initialState.marketGridLayout || "2x3");
   const [soloSlotIndex, setSoloSlotIndex] = useState(
@@ -264,7 +283,7 @@ export const MultiChartGrid = ({
     Boolean(_initialState.marketGridSyncCrosshair),
   );
   const [slots, setSlots] = useState(() =>
-    buildInitialMiniChartSlots(activeSym),
+    buildInitialMarketChartSlots(activeSym),
   );
   const [recentTickers, setRecentTickers] = useState(() =>
     Array.isArray(_initialState.marketGridRecentTickers)
@@ -290,10 +309,28 @@ export const MultiChartGrid = ({
   const [hydrationSlotLimit, setHydrationSlotLimit] = useState(
     MARKET_CHART_INITIAL_HYDRATION_SLOTS,
   );
+  const chartHydrationGate = useHydrationGate({
+    enabled: isVisible,
+    priority: BARS_REQUEST_PRIORITY.visible,
+    family: "chart-bars",
+  });
+  const chartFlowHydrationGate = useHydrationGate({
+    enabled: isVisible,
+    priority: BARS_REQUEST_PRIORITY.favoritePrewarm,
+    family: "chart-flow",
+  });
+  const allowProgressiveChartHydration = Boolean(chartHydrationGate.enabled);
+  const [firstChartReady, setFirstChartReady] = useState(false);
   const readySignaledRef = useRef(false);
+  const effectiveHydrationStaggerMs =
+    chartHydrationGate.pressure === "backoff" ||
+    chartHydrationGate.pressure === "stalled"
+      ? MARKET_CHART_BACKOFF_HYDRATION_STAGGER_MS
+      : MARKET_CHART_HYDRATION_STAGGER_MS;
   useEffect(() => {
     if (!isVisible) {
       readySignaledRef.current = false;
+      setFirstChartReady(false);
     }
   }, [isVisible]);
   const handleFirstVisibleChartReady = useCallback(() => {
@@ -301,6 +338,7 @@ export const MultiChartGrid = ({
       return;
     }
     readySignaledRef.current = true;
+    setFirstChartReady(true);
     onReady?.();
   }, [isVisible, onReady]);
   useEffect(() => {
@@ -310,11 +348,19 @@ export const MultiChartGrid = ({
         setLayout((current) => (current === nextLayout ? current : nextLayout));
       }
     };
-    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
+    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, handleWorkspaceSettings);
+    window.addEventListener(
+      LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+      handleWorkspaceSettings,
+    );
     window.addEventListener(USER_PREFERENCES_UPDATED_EVENT, handleWorkspaceSettings);
     return () => {
       window.removeEventListener(
-        "rayalgo:workspace-settings-updated",
+        PYRUS_WORKSPACE_SETTINGS_EVENT,
+        handleWorkspaceSettings,
+      );
+      window.removeEventListener(
+        LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
         handleWorkspaceSettings,
       );
       window.removeEventListener(USER_PREFERENCES_UPDATED_EVENT, handleWorkspaceSettings);
@@ -397,19 +443,29 @@ export const MultiChartGrid = ({
     [visibleSlotEntries],
   );
   const streamedSymbolsKey = streamedSymbols.join(",");
-  const initialHydrationSlotLimit = Math.min(
-    visibleSlotEntries.length,
-    layout === "1x1" ? 1 : MARKET_CHART_INITIAL_HYDRATION_SLOTS,
-  );
-  const effectiveHydrationSlotLimit = Math.min(
-    visibleSlotEntries.length,
-    Math.max(initialHydrationSlotLimit, hydrationSlotLimit),
-  );
+  const initialHydrationSlotLimit = chartHydrationGate.enabled
+    ? Math.min(
+        visibleSlotEntries.length,
+        layout === "1x1" ? 1 : MARKET_CHART_INITIAL_HYDRATION_SLOTS,
+      )
+    : 0;
+  const effectiveHydrationSlotLimit = chartHydrationGate.enabled
+    ? Math.min(
+        visibleSlotEntries.length,
+        Math.max(initialHydrationSlotLimit, hydrationSlotLimit),
+      )
+    : 0;
   useEffect(() => {
     setHydrationSlotLimit(initialHydrationSlotLimit);
+    readySignaledRef.current = false;
+    setFirstChartReady(false);
   }, [initialHydrationSlotLimit, streamedSymbolsKey]);
   useEffect(() => {
-    if (!isVisible || visibleSlotEntries.length <= initialHydrationSlotLimit) {
+    if (
+      !isVisible ||
+      !allowProgressiveChartHydration ||
+      visibleSlotEntries.length <= initialHydrationSlotLimit
+    ) {
       return undefined;
     }
 
@@ -429,7 +485,7 @@ export const MultiChartGrid = ({
           setHydrationSlotLimit((current) =>
             Math.max(current, nextSlotLimit),
           );
-        }, MARKET_CHART_HYDRATION_STAGGER_MS * step),
+        }, effectiveHydrationStaggerMs * step),
       );
     }
 
@@ -439,13 +495,14 @@ export const MultiChartGrid = ({
     };
   }, [
     initialHydrationSlotLimit,
+    allowProgressiveChartHydration,
+    effectiveHydrationStaggerMs,
     isVisible,
     streamedSymbolsKey,
     visibleSlotEntries.length,
   ]);
   const chartFlowHydrationReady =
-    visibleSlotEntries.length > 0 &&
-    effectiveHydrationSlotLimit >= visibleSlotEntries.length;
+    firstChartReady && chartFlowHydrationGate.enabled;
   const chartFlowEnabled = Boolean(
     isVisible && streamedSymbols.length && chartFlowHydrationReady,
   );
@@ -460,7 +517,7 @@ export const MultiChartGrid = ({
       const symbol = normalizeTickerSymbol(entry.slot?.ticker);
       if (!symbol) return;
       const hydratedTimeframe = normalizeChartTimeframe(entry.slot?.tf);
-      const timeframe = MINI_CHART_TIMEFRAMES.includes(hydratedTimeframe)
+      const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
         ? hydratedTimeframe
         : "15m";
       const window = getChartEventLookbackWindow(timeframe);
@@ -507,7 +564,10 @@ export const MultiChartGrid = ({
             historicalBucketSeconds: request.historicalBucketSeconds,
             blocking: false,
           },
-          buildBarsRequestOptions(MARKET_CHART_FLOW_REQUEST_PRIORITY),
+          buildBarsRequestOptions(
+            MARKET_CHART_FLOW_REQUEST_PRIORITY,
+            "chart-flow",
+          ),
         ),
       enabled: Boolean(chartFlowEnabled && request.symbol),
       staleTime: MARKET_CHART_FLOW_HISTORY_REFRESH_MS,
@@ -599,6 +659,7 @@ export const MultiChartGrid = ({
     blocking: false,
     unusualThreshold,
     workloadLabel: "Chart flow",
+    includeAnalytics: false,
   });
   const {
     flowStatus: chartFlowStatus,
@@ -732,7 +793,7 @@ export const MultiChartGrid = ({
     visibleSlotEntries.forEach(({ slot, index }) => {
       const symbol = normalizeTickerSymbol(slot?.ticker);
       const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
-      const timeframe = MINI_CHART_TIMEFRAMES.includes(hydratedTimeframe)
+      const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
         ? hydratedTimeframe
         : "15m";
       bySlot[index] = symbol
@@ -782,7 +843,7 @@ export const MultiChartGrid = ({
     setSlots((current) => {
       let changed = current.length !== MAX_MULTI_CHART_SLOTS;
       const next = Array.from({ length: MAX_MULTI_CHART_SLOTS }, (_, index) => {
-        const hydrated = hydrateMiniChartSlot(current[index], defaults[index]);
+        const hydrated = hydrateMarketChartSlot(current[index], defaults[index]);
         const previous = current[index];
         if (
           !previous ||
@@ -850,13 +911,16 @@ export const MultiChartGrid = ({
   );
   const baseCellHeight = dim(
     phoneGrid
-      ? 430
+      ? 360
       : MULTI_CHART_LAYOUT_CARD_HEIGHT[layout] ||
         MULTI_CHART_LAYOUT_CARD_HEIGHT["2x3"],
   );
+  const renderedSlotEntries = phoneGrid
+    ? visibleSlotEntries.slice(0, 1)
+    : visibleSlotEntries;
   const renderedCols = phoneGrid ? 1 : layout === "1x1" ? 1 : cfg.cols;
   const renderedRows = phoneGrid
-    ? visibleSlotEntries.length
+    ? renderedSlotEntries.length
     : layout === "1x1"
       ? 1
       : cfg.rows;
@@ -952,7 +1016,7 @@ export const MultiChartGrid = ({
       const ticker = normalizeTickerSymbol(slot?.ticker) || "SPY";
       const timeframe = normalizeChartTimeframe(slot?.tf) || "5m";
       clearStoredChartViewportSnapshot(
-        buildChartBarScopeKey("trade-equity-chart", "mini", ticker, timeframe),
+        buildChartBarScopeKey("trade-equity-chart", "primary", ticker, timeframe),
       );
     });
     setChartViewportResetRevision((revision) => revision + 1);
@@ -1086,7 +1150,7 @@ export const MultiChartGrid = ({
     setSlots((current) =>
       current.map((slot, index) =>
         index === slotIndex
-          ? hydrateMiniChartSlot({ ...slot, ...patch }, defaults[index])
+          ? hydrateMarketChartSlot({ ...slot, ...patch }, defaults[index])
           : slot,
       ),
     );
@@ -1095,7 +1159,7 @@ export const MultiChartGrid = ({
     setSlots((current) =>
       current.map((slot, index) =>
         syncTimeframes || index === slotIndex
-          ? hydrateMiniChartSlot({ ...slot, tf }, defaults[index])
+          ? hydrateMarketChartSlot({ ...slot, tf }, defaults[index])
           : slot,
       ),
     );
@@ -1141,7 +1205,7 @@ export const MultiChartGrid = ({
       const targetSlot = current[targetIndex] || null;
       return current.map((slot, index) => {
         if (index === targetIndex) {
-          return hydrateMiniChartSlot(
+          return hydrateMarketChartSlot(
             {
               ...(sourceSlot || slot),
               ticker: normalizedActiveSym,
@@ -1165,7 +1229,7 @@ export const MultiChartGrid = ({
           sourceIndex !== targetIndex &&
           index === sourceIndex
         ) {
-          return hydrateMiniChartSlot(targetSlot, defaults[index]);
+          return hydrateMarketChartSlot(targetSlot, defaults[index]);
         }
         return slot;
       });
@@ -1181,7 +1245,9 @@ export const MultiChartGrid = ({
     visibleSlotEntries,
   ]);
   const focusedLabel =
-    layout === "1x1"
+    phoneGrid
+      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused`
+    : layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
       : `${cfg.count} visible`;
 
@@ -1189,6 +1255,9 @@ export const MultiChartGrid = ({
     <Card
       noPad
       data-testid="market-chart-grid"
+      data-chart-hydration-pressure={chartHydrationGate.pressure}
+      data-chart-hydration-slot-limit={effectiveHydrationSlotLimit}
+      data-chart-visible-slot-count={renderedSlotEntries.length}
       style={{ flexShrink: 0, overflow: "visible" }}
     >
       <div
@@ -1247,26 +1316,28 @@ export const MultiChartGrid = ({
             justifyContent: "flex-end",
           }}
         >
-          <button
-            type="button"
-            onClick={resetGridCardScale}
-            disabled={gridScaleResetDisabled}
-            style={{
-              padding: sp("3px 8px"),
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
-              color: gridScaleResetDisabled ? T.textMuted : T.text,
-              border: "none",
-              borderRadius: dim(RADII.xs),
-              cursor: gridScaleResetDisabled ? "default" : "pointer",
-              letterSpacing: "0.04em",
-              opacity: gridScaleResetDisabled ? 0.55 : 1,
-            }}
-          >
-            RESET SIZE
-          </button>
+          {!phoneGrid ? (
+            <button
+              type="button"
+              onClick={resetGridCardScale}
+              disabled={gridScaleResetDisabled}
+              style={{
+                padding: sp("3px 8px"),
+                fontSize: textSize("caption"),
+                fontFamily: T.sans,
+                fontWeight: FONT_WEIGHTS.regular,
+                background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
+                color: gridScaleResetDisabled ? T.textMuted : T.text,
+                border: "none",
+                borderRadius: dim(RADII.xs),
+                cursor: gridScaleResetDisabled ? "default" : "pointer",
+                letterSpacing: "0.04em",
+                opacity: gridScaleResetDisabled ? 0.55 : 1,
+              }}
+            >
+              RESET SIZE
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={resetGridChartViews}
@@ -1286,62 +1357,66 @@ export const MultiChartGrid = ({
           >
             RESET VIEWS
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSyncTimeframes((current) => {
-                const next = !current;
-                if (next) {
-                  const anchorTf = visibleSlotEntries[0]?.slot?.tf || "15m";
-                  setSlots((slotList) =>
-                    slotList.map((slot, index) =>
-                      hydrateMiniChartSlot(
-                        {
-                          ...slot,
-                          tf: anchorTf,
-                        },
-                        defaults[index],
-                      ),
-                    ),
-                  );
-                }
-                return next;
-              });
-            }}
-            style={{
-              padding: sp("3px 8px"),
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              background: syncTimeframes ? T.accent : T.bg3,
-              color: syncTimeframes ? T.onAccent : T.textDim,
-              border: "none",
-              borderRadius: dim(RADII.xs),
-              cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >
-            SYNC TF
-          </button>
-          <button
-            type="button"
-            onClick={() => setSyncCrosshair((current) => !current)}
-            data-testid="market-chart-sync-crosshair"
-            style={{
-              padding: sp("3px 8px"),
-              fontSize: textSize("caption"),
-              fontFamily: T.sans,
-              fontWeight: FONT_WEIGHTS.regular,
-              background: syncCrosshair ? T.accent : T.bg3,
-              color: syncCrosshair ? T.onAccent : T.textDim,
-              border: "none",
-              borderRadius: dim(RADII.xs),
-              cursor: "pointer",
-              letterSpacing: "0.04em",
-            }}
-          >
-            SYNC X
-          </button>
+          {!phoneGrid ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setSyncTimeframes((current) => {
+                    const next = !current;
+                    if (next) {
+                      const anchorTf = visibleSlotEntries[0]?.slot?.tf || "15m";
+                      setSlots((slotList) =>
+                        slotList.map((slot, index) =>
+                          hydrateMarketChartSlot(
+                            {
+                              ...slot,
+                              tf: anchorTf,
+                            },
+                            defaults[index],
+                          ),
+                        ),
+                      );
+                    }
+                    return next;
+                  });
+                }}
+                style={{
+                  padding: sp("3px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  background: syncTimeframes ? T.accent : T.bg3,
+                  color: syncTimeframes ? T.onAccent : T.textDim,
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  cursor: "pointer",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                SYNC TF
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncCrosshair((current) => !current)}
+                data-testid="market-chart-sync-crosshair"
+                style={{
+                  padding: sp("3px 8px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  background: syncCrosshair ? T.accent : T.bg3,
+                  color: syncCrosshair ? T.onAccent : T.textDim,
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  cursor: "pointer",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                SYNC X
+              </button>
+            </>
+          ) : null}
           <div
             style={{
               display: "flex",
@@ -1397,7 +1472,7 @@ export const MultiChartGrid = ({
             height: `${gridRenderedHeight}px`,
           }}
         >
-          {visibleSlotEntries.map(({ slot, index }, visibleIndex) => {
+          {renderedSlotEntries.map(({ slot, index }, visibleIndex) => {
             const chartHydrationEnabled =
               visibleIndex < effectiveHydrationSlotLimit;
             const chartViewportLayoutKey = buildMarketChartViewportLayoutKey({
@@ -1408,9 +1483,9 @@ export const MultiChartGrid = ({
               revision: chartViewportLayoutRevision,
             });
             return (
-              <MiniChartCell
+              <MarketChartCell
                 key={`market-chart-slot-${index}-${layout}-${chartViewportLayoutRevision}-${chartViewportResetRevision}`}
-                dataTestId={`market-mini-chart-${index}`}
+                dataTestId={`market-chart-${index}`}
                 slotId={`slot-${index}`}
                 slot={slot}
                 chartViewportLayoutKey={chartViewportLayoutKey}
@@ -1423,6 +1498,7 @@ export const MultiChartGrid = ({
                 isActive={slot.ticker === activeSym}
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
+                fullFrame={layout === "1x1"}
                 historicalDataEnabled={chartHydrationEnabled}
                 stockAggregateStreamingEnabled={
                   stockAggregateStreamingEnabled && chartHydrationEnabled

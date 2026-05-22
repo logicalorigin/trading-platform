@@ -57,7 +57,11 @@ type SweepConfig = {
   variantTimeoutMs: number;
   timeHorizon: number;
   symbols: string[];
+  replayWinner: boolean;
+  replayVariant: string | null;
 };
+
+type VariantBackfillInput = Parameters<typeof runSignalOptionsShadowBackfill>[0];
 
 const MIN_CLOSED_TRADES = 20;
 const ACCOUNT_SIZE = 30_000;
@@ -69,6 +73,19 @@ const RISK_CAP_PATCH = {
     maxPremiumPerEntry: ACCOUNT_SIZE * 0.05,
   },
 };
+const WINNING_COMBO_EXIT_POLICY = {
+  hardStopPct: -30,
+  trailActivationPct: 35,
+  minLockedGainPct: 15,
+  trailGivebackPct: 20,
+  tightenAtFiveXGivebackPct: 30,
+  tightenAtTenXGivebackPct: 15,
+  overnightExitEnabled: true,
+  overnightMinGainPct: 10,
+  overnightRunnerGivebackPct: 15,
+} as const;
+const EARLY_INVALIDATION_BAR_GRID = [2, 3, 4, 5, 6, 8, 10, 12] as const;
+const EARLY_INVALIDATION_LOSS_GRID = [12.5, 15, 17.5, 20, 22.5, 25, 30] as const;
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -88,6 +105,14 @@ function finiteNumber(value: unknown): number | null {
 function readIntegerEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return fallback;
 }
 
 function readBoundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {
@@ -133,6 +158,9 @@ function readSweepConfig(): SweepConfig {
         ?.split(",")
         .map((symbol) => symbol.trim().toUpperCase())
         .filter(Boolean) ?? [],
+    replayWinner: readBooleanEnv("SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER", false),
+    replayVariant:
+      process.env["SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_VARIANT"]?.trim() || null,
   };
 }
 
@@ -141,6 +169,17 @@ function withProfilePatch(exitPolicy: JsonRecord = {}): JsonRecord {
     ...RISK_CAP_PATCH,
     ...(Object.keys(exitPolicy).length ? { exitPolicy } : {}),
   };
+}
+
+function variantNumber(value: number) {
+  return String(value).replace(".", "p");
+}
+
+function withWinningComboPatch(exitPolicy: JsonRecord = {}) {
+  return withProfilePatch({
+    ...WINNING_COMBO_EXIT_POLICY,
+    ...exitPolicy,
+  });
 }
 
 export function buildVariants(): ExitPolicyVariant[] {
@@ -263,15 +302,8 @@ export function buildVariants(): ExitPolicyVariant[] {
     {
       id: "combo-hard30-trail35-overnight10-early6",
       description:
-        "Hard stop -30%, trail 35/15/20, overnight +10%, early loss after 6 bars.",
-      profilePatch: withProfilePatch({
-        hardStopPct: -30,
-        trailActivationPct: 35,
-        minLockedGainPct: 15,
-        trailGivebackPct: 20,
-        overnightExitEnabled: true,
-        overnightMinGainPct: 10,
-        overnightRunnerGivebackPct: 15,
+        "Hard stop -30%, trail 35/15/20 with 5x/10x tightening, overnight +10%, early loss after 6 bars.",
+      profilePatch: withWinningComboPatch({
         earlyExitBars: 6,
         earlyExitLossPct: 20,
       }),
@@ -280,14 +312,7 @@ export function buildVariants(): ExitPolicyVariant[] {
       id: "creative-quality-conditional-v1",
       description:
         "Best h8 policy plus conditional exits: cut low-quality earlier, let high-quality runners breathe.",
-      profilePatch: withProfilePatch({
-        hardStopPct: -30,
-        trailActivationPct: 35,
-        minLockedGainPct: 15,
-        trailGivebackPct: 20,
-        overnightExitEnabled: true,
-        overnightMinGainPct: 10,
-        overnightRunnerGivebackPct: 15,
+      profilePatch: withWinningComboPatch({
         earlyExitBars: 6,
         earlyExitLossPct: 20,
         conditionalQualityExitsEnabled: true,
@@ -303,6 +328,140 @@ export function buildVariants(): ExitPolicyVariant[] {
   ];
 }
 
+export function buildEarlyInvalidationGridVariants(): ExitPolicyVariant[] {
+  const variants: ExitPolicyVariant[] = [
+    {
+      id: "early-grid-disabled",
+      description: "Winning combo with early invalidation disabled.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 0,
+        earlyExitLossPct: 0,
+      }),
+    },
+  ];
+
+  for (const bars of EARLY_INVALIDATION_BAR_GRID) {
+    for (const lossPct of EARLY_INVALIDATION_LOSS_GRID) {
+      variants.push({
+        id: `early-grid-b${bars}-loss${variantNumber(lossPct)}`,
+        description: `Winning combo, early invalidation after ${bars} bars at -${lossPct}%.`,
+        profilePatch: withWinningComboPatch({
+          earlyExitBars: bars,
+          earlyExitLossPct: lossPct,
+        }),
+      });
+    }
+  }
+
+  return variants;
+}
+
+export function buildProgressiveTrailVariants(): ExitPolicyVariant[] {
+  return [
+    {
+      id: "trail-ladder-soft",
+      description:
+        "Winning combo with progressive trail: flat at +25%, then slower profit locks.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 25, minLockedGainPct: 0, givebackPct: 40 },
+          { activationPct: 35, minLockedGainPct: 10, givebackPct: 30 },
+          { activationPct: 50, minLockedGainPct: 20, givebackPct: 30 },
+          { activationPct: 75, minLockedGainPct: 30, givebackPct: 25 },
+          { activationPct: 100, minLockedGainPct: 45, givebackPct: 25 },
+        ],
+      }),
+    },
+    {
+      id: "trail-ladder-balanced",
+      description:
+        "Winning combo with progressive trail: lower activation and steadily rising locks.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 25, minLockedGainPct: 0, givebackPct: 35 },
+          { activationPct: 35, minLockedGainPct: 15, givebackPct: 25 },
+          { activationPct: 50, minLockedGainPct: 25, givebackPct: 25 },
+          { activationPct: 75, minLockedGainPct: 35, givebackPct: 20 },
+          { activationPct: 100, minLockedGainPct: 50, givebackPct: 20 },
+        ],
+      }),
+    },
+    {
+      id: "trail-ladder-balanced-early8-loss25",
+      description:
+        "Balanced progressive trail with looser early invalidation after 8 bars at -25%.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 25, minLockedGainPct: 0, givebackPct: 35 },
+          { activationPct: 35, minLockedGainPct: 15, givebackPct: 25 },
+          { activationPct: 50, minLockedGainPct: 25, givebackPct: 25 },
+          { activationPct: 75, minLockedGainPct: 35, givebackPct: 20 },
+          { activationPct: 100, minLockedGainPct: 50, givebackPct: 20 },
+        ],
+      }),
+    },
+    {
+      id: "trail-ladder-aggressive",
+      description:
+        "Winning combo with progressive trail: early activation and faster profit locks.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+          { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },
+          { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
+          { activationPct: 65, minLockedGainPct: 40, givebackPct: 20 },
+          { activationPct: 100, minLockedGainPct: 60, givebackPct: 15 },
+        ],
+      }),
+    },
+    {
+      id: "trail-ladder-aggressive-early8-loss25",
+      description:
+        "Aggressive progressive trail with looser early invalidation after 8 bars at -25%.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+          { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },
+          { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
+          { activationPct: 65, minLockedGainPct: 40, givebackPct: 20 },
+          { activationPct: 100, minLockedGainPct: 60, givebackPct: 15 },
+        ],
+      }),
+    },
+    {
+      id: "trail-ladder-runner-friendly",
+      description:
+        "Winning combo with progressive trail: earlier flat protection while leaving sub-5x runners wider.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: [
+          { activationPct: 25, minLockedGainPct: 0, givebackPct: 45 },
+          { activationPct: 40, minLockedGainPct: 10, givebackPct: 35 },
+          { activationPct: 75, minLockedGainPct: 25, givebackPct: 30 },
+          { activationPct: 150, minLockedGainPct: 60, givebackPct: 25 },
+        ],
+      }),
+    },
+  ];
+}
+
 export function buildRayReplicaSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
   return {
     ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
@@ -310,23 +469,51 @@ export function buildRayReplicaSettingsPatch(config: Pick<SweepConfig, "timeHori
   };
 }
 
+function buildVariantUniverse() {
+  return [
+    ...buildVariants(),
+    ...buildEarlyInvalidationGridVariants(),
+    ...buildProgressiveTrailVariants(),
+  ];
+}
+
 function selectVariants(variants: ExitPolicyVariant[]): ExitPolicyVariant[] {
   const requested = process.env["SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS"]
     ?.split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (!requested?.length) {
+  if (requested?.length) {
+    const requestedIds = new Set(requested);
+    const selected = variants.filter((variant) => requestedIds.has(variant.id));
+    const missing = requested.filter(
+      (variantId) => !variants.some((variant) => variant.id === variantId),
+    );
+    if (missing.length) {
+      throw new Error(`Unknown exit-policy variants: ${missing.join(", ")}`);
+    }
+    return selected;
+  }
+
+  const families = (
+    process.env["SIGNAL_OPTIONS_EXIT_SWEEP_FAMILIES"] ?? "core"
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (families.includes("all")) {
     return variants;
   }
-  const requestedIds = new Set(requested);
-  const selected = variants.filter((variant) => requestedIds.has(variant.id));
-  const missing = requested.filter(
-    (variantId) => !variants.some((variant) => variant.id === variantId),
-  );
-  if (missing.length) {
-    throw new Error(`Unknown exit-policy variants: ${missing.join(", ")}`);
-  }
-  return selected;
+
+  const selectedFamilies = new Set(families);
+  return variants.filter((variant) => {
+    if (variant.id.startsWith("early-grid-")) {
+      return selectedFamilies.has("early-grid");
+    }
+    if (variant.id.startsWith("trail-ladder-")) {
+      return selectedFamilies.has("trail-grid");
+    }
+    return selectedFamilies.has("core");
+  });
 }
 
 function computeMaxRealizedDrawdown(closedTrades: readonly unknown[]): number {
@@ -544,31 +731,16 @@ async function runVariant(input: {
   deployment: DeploymentRow;
   variant: ExitPolicyVariant;
   config: SweepConfig;
+  commit?: boolean;
+  replay?: boolean;
 }): Promise<SweepResult> {
   const started = new Date();
   try {
-    const rayReplicaSettingsPatch = buildRayReplicaSettingsPatch(input.config);
+    const backfillInput = buildVariantBackfillInput(input);
     const result = await withVariantHeartbeat({
       variantId: input.variant.id,
       config: input.config,
-      run: () =>
-        runSignalOptionsShadowBackfill({
-          deploymentId: input.deployment.id,
-          start: input.config.start,
-          end: input.config.end,
-          session: input.config.session,
-          commit: false,
-          replay: false,
-          replaceReplayRows: false,
-          forceDeploymentUniverse: true,
-          symbolUniverseOverride: input.deployment.symbolUniverse.map((symbol) =>
-            String(symbol).toUpperCase(),
-          ),
-          signalTimeframe: input.config.signalTimeframe,
-          rayReplicaSettingsPatch,
-          profilePatch: input.variant.profilePatch,
-          progress: true,
-        }),
+      run: () => runSignalOptionsShadowBackfill(backfillInput),
     });
     const finished = new Date();
     const metrics = computeMetrics(result);
@@ -606,6 +778,42 @@ async function runVariant(input: {
   }
 }
 
+export function buildVariantBackfillInput(input: {
+  deployment: Pick<DeploymentRow, "id" | "name" | "symbolUniverse">;
+  variant: ExitPolicyVariant;
+  config: Pick<SweepConfig, "start" | "end" | "session" | "signalTimeframe" | "timeHorizon">;
+  commit?: boolean;
+  replay?: boolean;
+  replayRunSlug?: string;
+}): VariantBackfillInput {
+  const replay = input.replay
+    ? {
+        runId: `signal-options-exit-sweep-${input.replayRunSlug ?? slug()}-${input.variant.id}`,
+        marketDate: input.config.start,
+        deploymentId: input.deployment.id,
+        deploymentName: input.deployment.name,
+      }
+    : null;
+
+  return {
+    deploymentId: input.deployment.id,
+    start: input.config.start,
+    end: input.config.end,
+    session: input.config.session,
+    commit: input.commit === true,
+    replay,
+    replaceReplayRows: Boolean(replay),
+    forceDeploymentUniverse: true,
+    symbolUniverseOverride: input.deployment.symbolUniverse.map((symbol) =>
+      String(symbol).toUpperCase(),
+    ),
+    signalTimeframe: input.config.signalTimeframe,
+    rayReplicaSettingsPatch: buildRayReplicaSettingsPatch(input.config),
+    profilePatch: input.variant.profilePatch,
+    progress: true,
+  };
+}
+
 function csvValue(value: unknown): string {
   const text =
     typeof value === "number" && !Number.isFinite(value)
@@ -614,30 +822,72 @@ function csvValue(value: unknown): string {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function earlyInvalidationOutcomeStats(summary: JsonRecord | null) {
+  const earlyTrades = asArray(asRecord(summary)["closedTrades"]).filter(
+    (trade) => asRecord(trade)["reason"] === "early_invalidation",
+  );
+  let recoveredEntry = 0;
+  let reachedTwentyFivePctGain = 0;
+  let reachedFiftyPctGain = 0;
+  let finalAboveExit = 0;
+  let finalAboveEntry = 0;
+  let sparseOutcomeBars = 0;
+
+  for (const trade of earlyTrades) {
+    const outcome = asRecord(asRecord(trade)["postExitOutcome"]);
+    if (outcome["recoveredEntry"] === true) recoveredEntry += 1;
+    if (outcome["reachedTwentyFivePctGain"] === true) reachedTwentyFivePctGain += 1;
+    if (outcome["reachedFiftyPctGain"] === true) reachedFiftyPctGain += 1;
+    if (outcome["finalAboveExit"] === true) finalAboveExit += 1;
+    if (outcome["finalAboveEntry"] === true) finalAboveEntry += 1;
+    if ((finiteNumber(outcome["bars"]) ?? 0) < 5) sparseOutcomeBars += 1;
+  }
+
+  return {
+    earlyInvalidations: earlyTrades.length,
+    earlyRecoveredEntry: recoveredEntry,
+    earlyReached25Gain: reachedTwentyFivePctGain,
+    earlyReached50Gain: reachedFiftyPctGain,
+    earlyFinalAboveExit: finalAboveExit,
+    earlyFinalAboveEntry: finalAboveEntry,
+    earlySparseOutcomeBars: sparseOutcomeBars,
+  };
+}
+
 function reportRows(results: readonly SweepResult[]) {
-  return results.map((result) => ({
-    variantId: result.variant.id,
-    status: result.status,
-    eligible: result.eligible,
-    ineligibleReason: result.ineligibleReason ?? "",
-    description: result.variant.description,
-    profilePatch: JSON.stringify(result.variant.profilePatch),
-    realizedPnl: result.metrics.realizedPnl,
-    winRate: result.metrics.winRate,
-    profitFactor: result.metrics.profitFactor,
-    closedTrades: result.metrics.closedTrades,
-    maxDrawdownAbs: result.metrics.maxDrawdownAbs,
-    openPositions: result.metrics.openPositions,
-    riskAdjustedScore: result.metrics.riskAdjustedScore,
-    symbolsEvaluated: finiteNumber(result.summary?.["symbolsEvaluated"]) ?? "",
-    signalsEvaluated: finiteNumber(result.summary?.["signalsEvaluated"]) ?? "",
-    entriesOpened: finiteNumber(result.summary?.["entriesOpened"]) ?? "",
-    exitsClosed: finiteNumber(result.summary?.["exitsClosed"]) ?? "",
-    exitReasons: JSON.stringify(result.summary?.["exitReasons"] ?? {}),
-    skippedReasons: JSON.stringify(result.summary?.["skippedReasons"] ?? {}),
-    durationMs: result.durationMs,
-    error: result.error ?? "",
-  }));
+  return results.map((result) => {
+    const earlyStats = earlyInvalidationOutcomeStats(result.summary);
+    return {
+      variantId: result.variant.id,
+      status: result.status,
+      eligible: result.eligible,
+      ineligibleReason: result.ineligibleReason ?? "",
+      description: result.variant.description,
+      profilePatch: JSON.stringify(result.variant.profilePatch),
+      realizedPnl: result.metrics.realizedPnl,
+      winRate: result.metrics.winRate,
+      profitFactor: result.metrics.profitFactor,
+      closedTrades: result.metrics.closedTrades,
+      maxDrawdownAbs: result.metrics.maxDrawdownAbs,
+      openPositions: result.metrics.openPositions,
+      riskAdjustedScore: result.metrics.riskAdjustedScore,
+      earlyInvalidations: earlyStats.earlyInvalidations,
+      earlyRecoveredEntry: earlyStats.earlyRecoveredEntry,
+      earlyReached25Gain: earlyStats.earlyReached25Gain,
+      earlyReached50Gain: earlyStats.earlyReached50Gain,
+      earlyFinalAboveExit: earlyStats.earlyFinalAboveExit,
+      earlyFinalAboveEntry: earlyStats.earlyFinalAboveEntry,
+      earlySparseOutcomeBars: earlyStats.earlySparseOutcomeBars,
+      symbolsEvaluated: finiteNumber(result.summary?.["symbolsEvaluated"]) ?? "",
+      signalsEvaluated: finiteNumber(result.summary?.["signalsEvaluated"]) ?? "",
+      entriesOpened: finiteNumber(result.summary?.["entriesOpened"]) ?? "",
+      exitsClosed: finiteNumber(result.summary?.["exitsClosed"]) ?? "",
+      exitReasons: JSON.stringify(result.summary?.["exitReasons"] ?? {}),
+      skippedReasons: JSON.stringify(result.summary?.["skippedReasons"] ?? {}),
+      durationMs: result.durationMs,
+      error: result.error ?? "",
+    };
+  });
 }
 
 async function writeReports(input: {
@@ -646,6 +896,8 @@ async function writeReports(input: {
   config: SweepConfig;
   results: SweepResult[];
   ranked: SweepResult[];
+  replayResult?: SweepResult | null;
+  verification?: JsonRecord | null;
 }) {
   await mkdir(input.reportDir, { recursive: true });
   const rows = reportRows(input.results);
@@ -669,11 +921,15 @@ async function writeReports(input: {
     `- Premium-bucket variants: excluded`,
     `- Dry variants: ${input.results.length}`,
     `- Eligible variants: ${input.ranked.length}`,
+    input.replayResult
+      ? `- Replay committed: ${input.replayResult.variant.id}`
+      : "- Replay committed: no",
     "",
-    "| Rank | Variant | PnL | Score | Trades | Win % | PF | Max DD | Open | Exit Reasons |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
-    ...input.ranked.map((result, index) =>
-      [
+    "| Rank | Variant | PnL | Score | Trades | Win % | PF | Max DD | Open | Early | Early Recovered Entry | Early Final > Exit | Exit Reasons |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ...input.ranked.map((result, index) => {
+      const earlyStats = earlyInvalidationOutcomeStats(result.summary);
+      return [
         index + 1,
         result.variant.id,
         result.metrics.realizedPnl.toFixed(2),
@@ -685,14 +941,80 @@ async function writeReports(input: {
           : "Infinity",
         result.metrics.maxDrawdownAbs.toFixed(2),
         result.metrics.openPositions,
+        earlyStats.earlyInvalidations,
+        earlyStats.earlyRecoveredEntry,
+        earlyStats.earlyFinalAboveExit,
         `\`${JSON.stringify(result.summary?.["exitReasons"] ?? {})}\``,
-      ].join(" | "),
-    ),
+      ].join(" | ");
+    }),
+    input.verification
+      ? `\n\`\`\`json\n${JSON.stringify(input.verification, null, 2)}\n\`\`\``
+      : "",
   ].join("\n");
 
   await writeFile(path.join(input.reportDir, "results.json"), `${JSON.stringify(input, null, 2)}\n`);
   await writeFile(path.join(input.reportDir, "results.csv"), `${csv}\n`);
   await writeFile(path.join(input.reportDir, "report.md"), `${markdown}\n`);
+}
+
+export function selectReplayVariant(
+  ranked: readonly SweepResult[],
+  requestedVariantId: string | null,
+): SweepResult | null {
+  if (!requestedVariantId) {
+    return ranked[0] ?? null;
+  }
+  const selected = ranked.find((result) => result.variant.id === requestedVariantId);
+  if (!selected) {
+    throw new Error(
+      `Replay variant ${requestedVariantId} is not an eligible ranked result.`,
+    );
+  }
+  return selected;
+}
+
+async function verifyReplayLedger(input: {
+  deploymentId: string;
+  window: JsonRecord | null;
+}) {
+  const from = String(input.window?.["from"] ?? "");
+  const to = String(input.window?.["to"] ?? "");
+  if (!from || !to) return { skipped: true, reason: "missing replay window" };
+
+  const result = await pool.query<JsonRecord>(
+    `
+      with replay_orders as (
+        select o.*
+        from shadow_orders o
+        where o.source = 'signal_options_replay'
+          and o.placed_at >= $2::timestamptz
+          and o.placed_at <= $3::timestamptz
+          and (
+            o.payload->'replay'->>'deploymentId' = $1
+            or o.payload->'metadata'->>'deploymentId' = $1
+            or o.payload->>'sourceDeploymentId' = $1
+            or o.payload->'metadata'->>'positionKey' like ('signal_options_replay:%:' || $1 || ':%')
+          )
+      )
+      select
+        count(*)::int as "orderCount",
+        count(*) filter (where source_event_id is null)::int as "ordersWithNullSourceEventId",
+        count(*) filter (
+          where payload->'metadata'->>'sourceType' is null
+             or payload->'metadata'->>'positionKey' is null
+        )::int as "ordersWithNullSourceMetadata",
+        count(*) filter (
+          where not exists (
+            select 1 from shadow_fills f where f.order_id = replay_orders.id
+          )
+        )::int as "ordersWithoutFills",
+        count(distinct payload->'metadata'->>'runId')::int as "runIdCount",
+        array_remove(array_agg(distinct payload->'metadata'->>'runId'), null) as "runIds"
+      from replay_orders
+    `,
+    [input.deploymentId, from, to],
+  );
+  return result.rows[0] ?? {};
 }
 
 async function main() {
@@ -715,7 +1037,7 @@ async function main() {
         );
       }
     }
-    const variants = selectVariants(buildVariants());
+    const variants = selectVariants(buildVariantUniverse());
     const results: SweepResult[] = [];
     console.log(
       JSON.stringify({
@@ -747,12 +1069,35 @@ async function main() {
     }
 
     const ranked = rankResults(results);
+    let replayResult: SweepResult | null = null;
+    let verification: JsonRecord | null = null;
+    if (config.replayWinner) {
+      const selectedReplay = selectReplayVariant(ranked, config.replayVariant);
+      if (!selectedReplay) {
+        throw new Error("No eligible replay variant found.");
+      }
+      console.log(`replay ${selectedReplay.variant.id}`);
+      replayResult = await runVariant({
+        deployment,
+        variant: selectedReplay.variant,
+        config,
+        commit: true,
+        replay: true,
+      });
+      verification = await verifyReplayLedger({
+        deploymentId: deployment.id,
+        window: replayResult.window,
+      });
+    }
+
     await writeReports({
       reportDir: config.reportDir,
       deployment,
       config,
       results,
       ranked,
+      replayResult,
+      verification,
     });
 
     console.log(
@@ -763,6 +1108,9 @@ async function main() {
           eligibleVariants: ranked.length,
           winner: ranked[0]?.variant.id ?? null,
           winnerMetrics: ranked[0]?.metrics ?? null,
+          replayCommitted: replayResult?.status === "succeeded",
+          replayVariant: replayResult?.variant.id ?? null,
+          verification,
         },
         null,
         2,

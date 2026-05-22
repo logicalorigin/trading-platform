@@ -295,7 +295,7 @@ async function loadBundledPineSeeds(): Promise<BundledPineSeed[]> {
     return [
       {
         scriptKey: RAY_REPLICA_PINE_SCRIPT_KEY,
-        name: "RayAlgo Replica (SMC Pro v3)",
+        name: "PYRUS Replica (SMC Pro v3)",
         description:
           "Shared price-pane Pine script seed for the RayReplica-style market-structure overlay.",
         sourceCode: rayReplicaSource,

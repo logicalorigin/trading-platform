@@ -658,6 +658,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   ttlMs?: number;
   fallbackProvider?: MarketDataFallbackProvider;
   requiresGreeks?: boolean;
+  releaseLeasesOnComplete?: boolean;
 }): Promise<OptionQuoteSnapshotPayload> {
   const requestedAt = Date.now();
   const underlying = normalizeUnderlying(input.underlying);
@@ -670,8 +671,16 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const owner =
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
+  const normalizedOwner = owner.toLowerCase();
+  const isSignalOptionsLiveQuoteIntent =
+    intent === "automation-live" &&
+    (normalizedOwner.startsWith("signal-options-") ||
+      normalizedOwner.startsWith("signal-options:"));
   const isLiveQuoteSnapshotIntent =
-    intent === "flow-scanner-live" || intent === "account-monitor-live";
+    intent === "flow-scanner-live" ||
+    intent === "account-monitor-live" ||
+    intent === "watchlist-live" ||
+    isSignalOptionsLiveQuoteIntent;
   const bridgeWorkCategory: BridgeWorkCategory =
     isLiveQuoteSnapshotIntent ? "quotes" : "options";
   const bypassBridgeBackoff = isLiveQuoteSnapshotIntent;
@@ -681,6 +690,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "polygon";
   const requiresGreeks = input.requiresGreeks ?? true;
+  const releaseLeasesOnComplete = input.releaseLeasesOnComplete ?? true;
   if (!normalizedProviderContractIds.length) {
     return {
       underlying,
@@ -823,7 +833,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastError = upstreamErrorMessage;
     lastErrorAt = nowProvider();
   } finally {
-    releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
+    if (releaseLeasesOnComplete || upstreamErrorMessage) {
+      releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
+    }
   }
 
   const payload = getPayloadForProviderContractIds(

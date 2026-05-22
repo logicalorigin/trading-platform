@@ -5,6 +5,7 @@ import test from "node:test";
 const accountUtilsSource = readFileSync(new URL("./accountUtils.jsx", import.meta.url), "utf8");
 const positionsSource = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 const tradesOrdersSource = readFileSync(new URL("./TradesOrdersPanel.jsx", import.meta.url), "utf8");
+const tradingAnalysisSource = readFileSync(new URL("./TradingAnalysisWorkbench.jsx", import.meta.url), "utf8");
 const cashFundingSource = readFileSync(new URL("./CashFundingPanel.jsx", import.meta.url), "utf8");
 
 test("account table tokens use the balanced density contract", () => {
@@ -22,9 +23,11 @@ test("account desktop tables keep horizontal access without vertical caps", () =
   assert.doesNotMatch(positionsSource, /maxHeight:\s*"34vh"/);
 
   assert.match(tradesOrdersSource, /data-testid="account-orders-table-scroll"/);
-  assert.match(tradesOrdersSource, /data-testid="account-closed-trades-table-scroll"/);
+  assert.match(tradingAnalysisSource, /data-testid="account-analysis-trades-view"/);
   assert.doesNotMatch(tradesOrdersSource, /maxHeight:\s*248/);
   assert.doesNotMatch(tradesOrdersSource, /maxHeight:\s*278/);
+  assert.doesNotMatch(tradingAnalysisSource, /maxHeight:\s*248/);
+  assert.doesNotMatch(tradingAnalysisSource, /maxHeight:\s*278/);
 
   assert.match(cashFundingSource, /data-testid="account-cash-activity-table-scroll"/);
   assert.doesNotMatch(cashFundingSource, /maxHeight:\s*170/);
@@ -39,4 +42,24 @@ test("account mobile scan rows use the denser row target", () => {
   assert.match(positionsSource, /minHeight:\s*dim\(40\)/);
   assert.match(tradesOrdersSource, /gap:\s*sp\(1\)/);
   assert.match(tradesOrdersSource, /minHeight:\s*dim\(40\)/);
+  assert.match(tradingAnalysisSource, /dataTestId="account-analysis-trade-row"/);
+  assert.match(tradingAnalysisSource, /rowHeight=\{isPhone \? 54 : 38\}/);
+});
+
+test("account report tables use shared client-side pagination", () => {
+  assert.match(positionsSource, /POSITIONS_PAGE_SIZE = 50/);
+  assert.match(positionsSource, /dataTestId="account-positions-pagination"/);
+  assert.match(positionsSource, /pageRows\.map/);
+
+  assert.match(tradesOrdersSource, /ORDERS_PAGE_SIZE = 25/);
+  assert.match(tradesOrdersSource, /dataTestId="account-orders-pagination"/);
+  assert.match(tradesOrdersSource, /pageOrders\.map/);
+
+  assert.match(cashFundingSource, /CASH_ACTIVITY_PAGE_SIZE = 25/);
+  assert.match(cashFundingSource, /dataTestId="account-cash-activity-pagination"/);
+  assert.match(cashFundingSource, /paginatedActivities\.pageRows\.map/);
+
+  assert.match(tradingAnalysisSource, /SYMBOL_PAGE_SIZE = 8/);
+  assert.match(tradingAnalysisSource, /dataTestId="account-analysis-symbol-pagination"/);
+  assert.doesNotMatch(tradingAnalysisSource, /Show all/);
 });

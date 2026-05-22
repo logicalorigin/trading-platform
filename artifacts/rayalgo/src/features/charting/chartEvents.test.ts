@@ -4,6 +4,7 @@ import {
   clusterChartEvents,
   earningsCalendarToChartEvents,
   filterFlowEventsForChartLookbackWindow,
+  filterFlowEventsForLoadedChartWindow,
   filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
   flowEventsToChartEventConversion,
@@ -11,6 +12,7 @@ import {
   getChartEventLookbackWindow,
   getStableFlowEventKey,
   mergeFlowEventFeeds,
+  resolveFlowEventChartLoadedWindow,
   resolveFlowEventSourceBasis,
   resolveFlowEventChartTimeResolution,
 } from "./chartEvents";
@@ -458,6 +460,29 @@ test("flowEventsToChartEvents allows snapshot flow to use observation update tim
   assert.equal(events[0].metadata.timeBasis, "snapshot_observed");
 });
 
+test("flowEventsToChartEvents places snapshot flow on event time before update time", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "snapshot-event-time",
+        ticker: "SPY",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        cp: "C",
+        contract: "SPY 500C",
+        premium: 420_000,
+        occurredAt: "2026-05-01T14:52:00.000Z",
+        updatedAt: "2026-05-01T19:59:00.000Z",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
+  assert.equal(events[0].metadata.chartTimeSourceField, "occurredAt");
+});
+
 test("flow event helpers merge feeds and match selected option contracts", () => {
   const broad = [
     {
@@ -821,6 +846,43 @@ test("filterFlowEventsForChartLookbackWindow keeps window events and newest over
   });
 
   assert.deepEqual(filtered.map((event) => event.id), ["window", "newest"]);
+});
+
+test("filterFlowEventsForLoadedChartWindow follows the hydrated chart window", () => {
+  const loadedWindow = resolveFlowEventChartLoadedWindow(
+    [
+      { time: Date.parse("2026-05-01T14:30:00.000Z") / 1000 },
+      { time: Date.parse("2026-05-01T14:35:00.000Z") / 1000 },
+    ],
+    "5m",
+  );
+  const pinned = {
+    id: "pinned",
+    ticker: "AAPL",
+    occurredAt: "2026-05-21T14:30:00.000Z",
+  };
+  const filtered = filterFlowEventsForLoadedChartWindow(
+    [
+      {
+        id: "inside-loaded-window",
+        ticker: "AAPL",
+        occurredAt: "2026-05-01T14:32:00.000Z",
+      },
+      {
+        id: "outside-loaded-window",
+        ticker: "AAPL",
+        occurredAt: "2026-05-21T14:30:00.000Z",
+      },
+      pinned,
+    ],
+    loadedWindow,
+    { pinnedEvents: [pinned] },
+  );
+
+  assert.deepEqual(
+    filtered.map((event) => event.id),
+    ["inside-loaded-window", "pinned"],
+  );
 });
 
 test("clusterChartEvents labels clustered flow by count and net bias", () => {

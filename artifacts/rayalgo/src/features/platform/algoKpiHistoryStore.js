@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-const ALGO_KPI_HISTORY_STORE_KEY = Symbol.for("rayalgo.algoKpiHistoryStore");
+const ALGO_KPI_HISTORY_STORE_KEY = Symbol.for("pyrus.algoKpiHistoryStore");
 
 const DEFAULT_CAPACITY = 60;
 

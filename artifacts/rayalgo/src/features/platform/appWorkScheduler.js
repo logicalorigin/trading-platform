@@ -22,6 +22,83 @@ const normalizeMemoryPressureLevel = (value) => {
   return "normal";
 };
 
+const PRESSURE_CAPS = {
+  normal: {
+    broadMarketSymbolLimit: null,
+    broadFlowSymbolLimit: null,
+    broadFlowRuntimeEnabled: true,
+    broadFlowScannerConfig: {},
+    signalMatrixWideSymbolLimit: 250,
+    signalMatrixNarrowSymbolLimit: 48,
+    signalDisplayPollMinMs: 0,
+    signalMatrixPollMinMs: 0,
+    sparklineEnabled: true,
+    sparklineConcurrency: 4,
+    prioritySparklineSymbolLimit: null,
+  },
+  watch: {
+    broadMarketSymbolLimit: 48,
+    broadFlowSymbolLimit: 160,
+    broadFlowRuntimeEnabled: true,
+    broadFlowScannerConfig: {
+      maxSymbols: 160,
+      batchSize: 20,
+      intervalMs: 30_000,
+      concurrency: 4,
+      limit: 20,
+    },
+    signalMatrixWideSymbolLimit: 96,
+    signalMatrixNarrowSymbolLimit: 32,
+    signalDisplayPollMinMs: 60_000,
+    signalMatrixPollMinMs: 60_000,
+    sparklineEnabled: true,
+    sparklineConcurrency: 2,
+    prioritySparklineSymbolLimit: null,
+  },
+  high: {
+    broadMarketSymbolLimit: 16,
+    broadFlowSymbolLimit: 48,
+    broadFlowRuntimeEnabled: true,
+    broadFlowScannerConfig: {
+      maxSymbols: 48,
+      batchSize: 8,
+      intervalMs: 60_000,
+      concurrency: 2,
+      limit: 8,
+    },
+    signalMatrixWideSymbolLimit: 32,
+    signalMatrixNarrowSymbolLimit: 16,
+    signalDisplayPollMinMs: 120_000,
+    signalMatrixPollMinMs: 120_000,
+    sparklineEnabled: true,
+    sparklineConcurrency: 1,
+    prioritySparklineSymbolLimit: 8,
+  },
+  critical: {
+    broadMarketSymbolLimit: 0,
+    broadFlowSymbolLimit: 1,
+    broadFlowRuntimeEnabled: true,
+    broadFlowScannerConfig: {
+      maxSymbols: 1,
+      batchSize: 1,
+      intervalMs: 120_000,
+      concurrency: 1,
+      limit: 1,
+    },
+    signalMatrixWideSymbolLimit: 8,
+    signalMatrixNarrowSymbolLimit: 8,
+    signalDisplayPollMinMs: 120_000,
+    signalMatrixPollMinMs: 120_000,
+    sparklineEnabled: false,
+    sparklineConcurrency: 1,
+    prioritySparklineSymbolLimit: 0,
+  },
+};
+
+export const buildPlatformPressureCaps = (level) => ({
+  ...PRESSURE_CAPS[normalizeMemoryPressureLevel(level)],
+});
+
 const memoryHydrationPressureState = (memoryPressureLevel) => {
   if (memoryPressureLevel === "critical") return "stalled";
   if (memoryPressureLevel === "high") return "backoff";
@@ -41,6 +118,7 @@ export const buildPlatformWorkSchedule = ({
   sessionMetadataSettled = false,
   activeScreen = "market",
   screenWarmupPhase = "initial",
+  activeScreenBackgroundAllowed = true,
   ibkrWorkPressure = WORK_PRESSURE_STATE.normal,
   memoryPressure = null,
   brokerConfigured = false,
@@ -82,7 +160,13 @@ export const buildPlatformWorkSchedule = ({
   const trade = screen === "trade";
   const account = screen === "account";
   const historyScreen = market || flow || trade || account;
-  const broadFlowAllowed = Boolean(sessionReady && visible && firstScreenReady);
+  const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
+  const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
+  const broadFlowAllowed = Boolean(
+    sessionReady &&
+      visible &&
+      pressureCaps.broadFlowRuntimeEnabled,
+  );
   const backgroundHistoryReady = screenWarmupPhase === "ready";
   const accountRealtimeCritical = Boolean(
     criticalIbkr &&
@@ -100,6 +184,7 @@ export const buildPlatformWorkSchedule = ({
       level: memoryPressureLevel,
       observed: memoryPressureObserved,
     },
+    pressureCaps,
     hydrationPressure: maxHydrationPressureState(
       toHydrationPressureState(ibkrWorkPressure),
       memoryHydrationPressureState(memoryPressureLevel),
@@ -128,7 +213,11 @@ export const buildPlatformWorkSchedule = ({
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
       lowPriorityHistory: Boolean(
-        sessionReady && backgroundIbkr && backgroundHistoryReady && historyScreen,
+        sessionReady &&
+          backgroundIbkr &&
+          backgroundHistoryReady &&
+          activeBackgroundReady &&
+          historyScreen,
       ),
     },
     resume: {

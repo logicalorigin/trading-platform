@@ -6,7 +6,8 @@ const source = readFileSync(new URL("./accountUtils.jsx", import.meta.url), "utf
 
 test("useCollapsibleSections persists open state to localStorage under a namespaced key", () => {
   assert.match(source, /export const useCollapsibleSections\b/);
-  assert.match(source, /COLLAPSIBLE_STORAGE_PREFIX\s*=\s*"rayalgo:account:"/);
+  assert.match(source, /COLLAPSIBLE_STORAGE_PREFIX\s*=\s*"pyrus:account:"/);
+  assert.match(source, /LEGACY_COLLAPSIBLE_STORAGE_PREFIX\s*=\s*"rayalgo:account:"/);
   assert.match(source, /localStorage\.setItem/);
   assert.match(source, /localStorage\.getItem/);
 });

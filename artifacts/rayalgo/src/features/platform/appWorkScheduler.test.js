@@ -178,6 +178,18 @@ test("holds low-priority history until operational preload finishes", () => {
   assert.equal(schedule.streams.lowPriorityHistory, false);
 });
 
+test("holds low-priority history until active screen allows background work", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.lowPriorityHistory, false);
+});
+
 test("memory watch pressure blocks low-priority background hydration first", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
@@ -192,11 +204,13 @@ test("memory watch pressure blocks low-priority background hydration first", () 
   assert.equal(schedule.hydrationPressure, "degraded");
   assert.equal(schedule.streams.marketStockAggregates, true);
   assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.pressureCaps.broadMarketSymbolLimit, 48);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 96);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
 });
 
-test("critical memory pressure pauses hidden preload without dropping broad flow owner", () => {
+test("critical memory pressure stalls heavy hydration but keeps broad flow reader alive", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -209,9 +223,33 @@ test("critical memory pressure pauses hidden preload without dropping broad flow
 
   assert.equal(schedule.hydrationPressure, "stalled");
   assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.pressureCaps.broadFlowRuntimeEnabled, true);
+  assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, 1);
+  assert.equal(schedule.pressureCaps.broadFlowScannerConfig.batchSize, 1);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 8);
+  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 8);
+  assert.equal(schedule.pressureCaps.sparklineEnabled, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.resume.backgroundRefresh, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
+});
+
+test("high memory pressure keeps broad flow owned with capped breadth", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "flow",
+    screenWarmupPhase: "ready",
+    memoryPressure: {
+      level: "high",
+      observedAt: "2026-05-06T00:00:00.000Z",
+    },
+  });
+
+  assert.equal(schedule.hydrationPressure, "backoff");
+  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, 48);
+  assert.equal(schedule.pressureCaps.broadFlowScannerConfig.batchSize, 8);
+  assert.equal(schedule.pressureCaps.sparklineConcurrency, 1);
 });
 
 test("pauses broad flow runtime while page is hidden", () => {
@@ -239,14 +277,14 @@ test("defers broad flow runtime before session metadata settles", () => {
   assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("defers broad flow runtime before first screen ready while deferring low priority work", () => {
+test("keeps broad flow runtime independent of first-screen warmup", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
     screenWarmupPhase: "initial",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);

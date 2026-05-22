@@ -6,6 +6,7 @@ export const DEFAULT_ACCOUNT_MONITOR_LINE_CAP = 20;
 
 const POOL_ORDER = [
   ["account-monitor", "Account monitor"],
+  ["watchlist", "Watchlist"],
   ["flow-scanner", "Flow scanner"],
   ["visible", "Visible"],
   ["execution", "Execution"],
@@ -183,6 +184,8 @@ const normalizeWarmupCoverage = (lineUsageSnapshot) => {
   const pendingLineCount = firstFiniteNumber(warmup.pendingLineCount, 0);
   const accountTargetLineCount = firstFiniteNumber(warmup.accountTargetLineCount, 0);
   const accountPendingLineCount = firstFiniteNumber(warmup.accountPendingLineCount, 0);
+  const watchlistTargetLineCount = firstFiniteNumber(warmup.watchlistTargetLineCount, 0);
+  const watchlistPendingLineCount = firstFiniteNumber(warmup.watchlistPendingLineCount, 0);
   const visibleTargetLineCount = firstFiniteNumber(warmup.visibleTargetLineCount, 0);
   const visiblePendingLineCount = firstFiniteNumber(warmup.visiblePendingLineCount, 0);
   const available =
@@ -219,6 +222,8 @@ const normalizeWarmupCoverage = (lineUsageSnapshot) => {
     visiblePendingLineCount,
     coverageRatio: firstFiniteNumber(warmup.coverageRatio),
     targetSymbolCount: firstFiniteNumber(warmup.targetSymbolCount, 0),
+    watchlistTargetLineCount,
+    watchlistPendingLineCount,
     summary: available
       ? `${formatRuntimeCount(activeBridgeLineCount)} / ${formatRuntimeCount(targetLineCount)} covered`
       : MISSING_VALUE,
@@ -253,6 +258,18 @@ const normalizeLinePressure = (admission) => {
     usableRemainingLineCount: firstFiniteNumber(
       pressure.usableRemainingLineCount,
       admission?.usableRemainingLineCount,
+    ),
+    watchlistLineCount: firstFiniteNumber(
+      pressure.watchlistLineCount,
+      admission?.watchlistLineCount,
+    ),
+    watchlistStaticLineCap: firstFiniteNumber(
+      pressure.watchlistStaticLineCap,
+      admission?.budget?.watchlistLineCap,
+    ),
+    watchlistRemainingLineCount: firstFiniteNumber(
+      pressure.watchlistRemainingLineCount,
+      admission?.watchlistRemainingLineCount,
     ),
   };
 };
@@ -351,6 +368,25 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
     scannerRemainingLineCount: firstFiniteNumber(
       allocation.scannerRemainingLineCount,
       pressure.scannerRemainingLineCount,
+    ),
+    watchlistLineCount: firstFiniteNumber(
+      allocation.watchlistLineCount,
+      pressure.watchlistLineCount,
+      admission?.watchlistLineCount,
+      admission?.poolUsage?.watchlist?.activeLineCount,
+      0,
+    ),
+    watchlistLineCap: firstFiniteNumber(
+      allocation.watchlistLineCap,
+      pressure.watchlistStaticLineCap,
+      admission?.budget?.watchlistLineCap,
+      admission?.poolUsage?.watchlist?.maxLines,
+    ),
+    watchlistRemainingLineCount: firstFiniteNumber(
+      allocation.watchlistRemainingLineCount,
+      pressure.watchlistRemainingLineCount,
+      admission?.watchlistRemainingLineCount,
+      admission?.poolUsage?.watchlist?.remainingLineCount,
     ),
     convenienceLineCount: firstFiniteNumber(
       allocation.convenienceLineCount,
@@ -528,6 +564,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
         covered: 0,
         deferred: 0,
       },
+      watchlist: { used: null, cap: null, free: null },
       flowScanner: { used: null, cap: null, free: null },
       signalOptions,
       total: { used: null, cap: null, free: null },
@@ -564,6 +601,12 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
         ? firstFiniteNumber(pool.activeLineCount, admission.accountMonitorLineCount, 0)
         : id === "flow-scanner"
           ? firstFiniteNumber(pool.activeLineCount, admission.flowScannerLineCount)
+          : id === "watchlist"
+            ? firstFiniteNumber(
+                pool.activeLineCount,
+                admission.watchlistLineCount,
+                allocation.watchlistLineCount,
+              )
           : id === "automation"
             ? firstFiniteNumber(pool.activeLineCount, admission.automationLineCount)
             : id === "convenience"
@@ -584,6 +627,12 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           )
         : id === "flow-scanner"
           ? firstFiniteNumber(pool.maxLines, budget.flowScannerLineCap)
+          : id === "watchlist"
+            ? firstFiniteNumber(
+                pool.maxLines,
+                budget.watchlistLineCap,
+                allocation.watchlistLineCap,
+              )
           : id === "automation"
             ? firstFiniteNumber(pool.maxLines, budget.automationLineCap)
             : id === "convenience"
@@ -658,6 +707,8 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       detail:
         id === "account-monitor"
           ? `${formatRuntimeCount(firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0))} covered of ${formatRuntimeCount(firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0))} needed`
+          : id === "watchlist"
+          ? `${formatRuntimeCount(activeLineCount)} active of ${formatRuntimeCount(effectiveCap ?? cap)} reserved`
           : id === "flow-scanner"
           ? formatFlowScannerRuntimeDetail(admission, rawUsed)
           : id === "convenience"
@@ -700,6 +751,10 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       : Number.isFinite(warmup.pendingLineCount)
         ? Math.max(0, warmup.pendingLineCount)
         : 0;
+  const foregroundPendingLineCount =
+    warmup.available && Number.isFinite(warmup.pendingLineCount)
+      ? Math.max(0, warmup.pendingLineCount)
+      : pendingLineCount;
 
   return {
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
@@ -708,6 +763,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     activeLineCount,
     requestedLineCount,
     pendingLineCount,
+    foregroundPendingLineCount,
     requestedSummary: demandSummary,
     demandSummary,
     bridgeSummary: bridge.summary,
@@ -715,6 +771,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     rows,
     pools,
     accountMonitor: pools["account-monitor"],
+    watchlist: pools.watchlist,
     flowScanner: pools["flow-scanner"],
     signalOptions,
     total,

@@ -122,17 +122,17 @@ function installBridgeFetchStub(expectedToken?: string): void {
 
 test("IBKR bridge launcher returns only the one-click protocol contract", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com/api/ignored?x=1",
+    apiBaseUrl: "https://pyrus.example.com/api/ignored?x=1",
   });
 
-  assert.equal(launcher.apiBaseUrl, "https://rayalgo.example.com");
+  assert.equal(launcher.apiBaseUrl, "https://pyrus.example.com");
   assert.equal(
     launcher.helperUrl,
-    "https://rayalgo.example.com/api/ibkr/bridge/helper.ps1",
+    "https://pyrus.example.com/api/ibkr/bridge/helper.ps1",
   );
   assert.equal(
     launcher.bundleUrl,
-    "https://rayalgo.example.com/api/ibkr/bridge/bundle.tar.gz",
+    "https://pyrus.example.com/api/ibkr/bridge/bundle.tar.gz",
   );
   assert.equal("command" in launcher, false);
   assert.equal("helperInstallCommand" in launcher, false);
@@ -152,19 +152,19 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
   assert.equal(launcher.credentialHandoff.algorithm, "RSA-OAEP-256-CHUNKED");
   assert.match(launchParams.get("activationId") ?? "", /^[a-f0-9]{32}$/);
   assert.match(launchParams.get("callbackSecret") ?? "", /^[a-f0-9]{64}$/);
-  assert.equal(launchParams.get("apiBaseUrl"), "https://rayalgo.example.com");
+  assert.equal(launchParams.get("apiBaseUrl"), "https://pyrus.example.com");
   assert.equal(launchParams.get("bridgeToken"), launcher.bridgeToken);
   assert.equal(launchParams.get("managementToken"), launcher.managementToken);
   assert.equal(
     launchParams.get("helperUrl"),
-    "https://rayalgo.example.com/api/ibkr/bridge/helper.ps1",
+    "https://pyrus.example.com/api/ibkr/bridge/helper.ps1",
   );
   assert.equal(launchParams.get("helperVersion"), launcher.helperVersion);
   assert.equal(launchParams.get("requiredCapability"), "bridgeBundle");
   assert.equal(launchParams.has("forceFreshTunnel"), false);
   assert.equal(
     launchParams.get("bundleUrl"),
-    "https://rayalgo.example.com/api/ibkr/bridge/bundle.tar.gz",
+    "https://pyrus.example.com/api/ibkr/bridge/bundle.tar.gz",
   );
 
   const autoLoginParams = new URL(launcher.autoLoginLaunchUrl).searchParams;
@@ -182,7 +182,7 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
 
 test("IBKR bridge launcher can omit the bundle URL for repo-build fallback", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
     bundleUrl: null,
   });
 
@@ -194,7 +194,7 @@ test("IBKR bridge launcher can omit the bundle URL for repo-build fallback", () 
 
 test("IBKR remote desktop launch queues the same one-time launch for the paired desktop", () => {
   const pairing = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const pairingParams = new URL(pairing.launchUrl).searchParams;
   const pairingActivationId = pairingParams.get("activationId");
@@ -226,10 +226,10 @@ test("IBKR remote desktop launch queues the same one-time launch for the paired 
   assert.equal(listIbkrRemoteDesktops().onlineCount, 1);
 
   const remoteLaunch = createIbkrRemoteBridgeLaunch({
-    apiBaseUrl: "https://rayalgo.example.com/api/ignored",
+    apiBaseUrl: "https://pyrus.example.com/api/ignored",
     body: { autoLogin: true },
   });
-  assert.equal(remoteLaunch.apiBaseUrl, "https://rayalgo.example.com");
+  assert.equal(remoteLaunch.apiBaseUrl, "https://pyrus.example.com");
   assert.equal(remoteLaunch.remoteLaunch.mode, "desktop-agent");
   assert.equal(remoteLaunch.remoteLaunch.desktop.desktopId, "desktop-win-main");
 
@@ -256,7 +256,7 @@ test("IBKR remote desktop launch queues the same one-time launch for the paired 
 
 test("IBKR remote desktop launch can queue a non-auto-login helper launch", () => {
   const pairing = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const pairingParams = new URL(pairing.launchUrl).searchParams;
   registerIbkrRemoteDesktop({
@@ -275,7 +275,7 @@ test("IBKR remote desktop launch can queue a non-auto-login helper launch", () =
   });
 
   const remoteLaunch = createIbkrRemoteBridgeLaunch({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
     body: { autoLogin: false },
   });
   const claimed = claimIbkrRemoteDesktopLaunchJob({
@@ -293,7 +293,7 @@ test("IBKR remote desktop launch can queue a non-auto-login helper launch", () =
 
 test("IBKR remote desktop shutdown queues a shutdown job for the paired desktop", () => {
   const pairing = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const pairingParams = new URL(pairing.launchUrl).searchParams;
   registerIbkrRemoteDesktop({
@@ -312,7 +312,7 @@ test("IBKR remote desktop shutdown queues a shutdown job for the paired desktop"
   });
 
   const queued = createIbkrRemoteBridgeShutdown({
-    apiBaseUrl: "https://rayalgo.example.com/api/ignored",
+    apiBaseUrl: "https://pyrus.example.com/api/ignored",
     body: { force: true },
   });
   assert.equal(queued.shutdown.action, "shutdown");
@@ -339,10 +339,10 @@ test("IBKR remote desktop shutdown queues a shutdown job for the paired desktop"
   assert.equal(claimed.jobId, queued.shutdown.jobId);
   assert.match(claimed.completionToken ?? "", /^[a-f0-9]{64}$/);
   const launchParams = new URL(claimed.launchUrl).searchParams;
-  assert.equal(launchParams.get("apiBaseUrl"), "https://rayalgo.example.com");
+  assert.equal(launchParams.get("apiBaseUrl"), "https://pyrus.example.com");
   assert.equal(
     launchParams.get("helperUrl"),
-    "https://rayalgo.example.com/api/ibkr/bridge/helper.ps1",
+    "https://pyrus.example.com/api/ibkr/bridge/helper.ps1",
   );
   assert.equal(launchParams.get("helperVersion"), pairing.helperVersion);
   assert.equal(launchParams.get("jobId"), queued.shutdown.jobId);
@@ -382,7 +382,7 @@ test("IBKR remote desktop shutdown queues a shutdown job for the paired desktop"
 
 test("IBKR remote desktop shutdown gives outdated helpers a self-update launch URL", () => {
   const pairing = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const pairingParams = new URL(pairing.launchUrl).searchParams;
   registerIbkrRemoteDesktop({
@@ -401,7 +401,7 @@ test("IBKR remote desktop shutdown gives outdated helpers a self-update launch U
   });
 
   const queued = createIbkrRemoteBridgeShutdown({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
     body: { force: true },
   });
   const claimed = claimIbkrRemoteDesktopLaunchJob({
@@ -425,7 +425,7 @@ test("IBKR remote desktop launch requires a paired online desktop", () => {
   assert.throws(
     () =>
       createIbkrRemoteBridgeLaunch({
-        apiBaseUrl: "https://rayalgo.example.com",
+        apiBaseUrl: "https://pyrus.example.com",
       }),
     /No paired Windows desktop agent is online/,
   );
@@ -443,7 +443,7 @@ test("IBKR remote desktop launch requires a paired online desktop", () => {
 
 test("IBKR remote desktop launch does not queue to a paired desktop without a polling heartbeat", () => {
   const pairing = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const pairingParams = new URL(pairing.launchUrl).searchParams;
   registerIbkrRemoteDesktop({
@@ -459,7 +459,7 @@ test("IBKR remote desktop launch does not queue to a paired desktop without a po
   assert.throws(
     () =>
       createIbkrRemoteBridgeLaunch({
-        apiBaseUrl: "https://rayalgo.example.com",
+        apiBaseUrl: "https://pyrus.example.com",
       }),
     /No paired Windows desktop agent is online/,
   );
@@ -467,7 +467,7 @@ test("IBKR remote desktop launch does not queue to a paired desktop without a po
 
 test("IBKR bridge login handoff stores only encrypted credential chunks", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.autoLoginLaunchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -534,7 +534,7 @@ test("IBKR bridge login handoff stores only encrypted credential chunks", () => 
 
 test("IBKR bridge login handoff requires the browser management token", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.autoLoginLaunchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -574,7 +574,7 @@ test("IBKR bridge login handoff requires the browser management token", () => {
 
 test("IBKR bridge activation cancellation stops helper credential polling", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.autoLoginLaunchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -619,7 +619,7 @@ test("IBKR bridge activation cancellation stops helper credential polling", () =
 
 test("legacy IBKR bridge activation callbacks attach the runtime", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -653,7 +653,7 @@ test("legacy IBKR bridge activation callbacks attach the runtime", async () => {
 
 test("legacy IBKR bridge activation accepts the helper persisted bridge token", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -679,7 +679,7 @@ test("legacy IBKR bridge activation accepts the helper persisted bridge token", 
 
 test("legacy IBKR bridge activation progress is available for diagnostics", () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -726,7 +726,7 @@ test("IBKR bridge attach validates and stores a local bridge runtime", async () 
 
 test("IBKR bridge attach recovers when the launch activation was lost", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -750,7 +750,7 @@ test("IBKR bridge attach recovers when the launch activation was lost", async ()
 
 test("IBKR bridge attach accepts helper persisted token when management token matches activation", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -775,7 +775,7 @@ test("IBKR bridge attach accepts helper persisted token when management token ma
 
 test("legacy IBKR bridge completion recovers when the activation was lost", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -800,7 +800,7 @@ test("legacy IBKR bridge completion recovers when the activation was lost", asyn
 
 test("older legacy bridge activations cannot replace a newer runtime", async () => {
   const launcher = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const launchParams = new URL(launcher.launchUrl).searchParams;
   const activationId = launchParams.get("activationId");
@@ -831,7 +831,7 @@ test("older legacy bridge activations cannot replace a newer runtime", async () 
 
 test("older overlapping one-click activations cannot attach after a newer launch is issued", async () => {
   const older = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const olderParams = new URL(older.launchUrl).searchParams;
   const olderActivationId = olderParams.get("activationId");
@@ -840,7 +840,7 @@ test("older overlapping one-click activations cannot attach after a newer launch
   assert.ok(olderCallbackSecret);
 
   const newer = getIbkrBridgeLauncher({
-    apiBaseUrl: "https://rayalgo.example.com",
+    apiBaseUrl: "https://pyrus.example.com",
   });
   const newerParams = new URL(newer.launchUrl).searchParams;
   const newerActivationId = newerParams.get("activationId");

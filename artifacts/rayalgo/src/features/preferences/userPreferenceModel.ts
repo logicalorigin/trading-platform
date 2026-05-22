@@ -1,8 +1,14 @@
-export const USER_PREFERENCES_UPDATED_EVENT = "rayalgo:user-preferences-updated";
-export const USER_PREFERENCES_STORAGE_KEY = "rayalgo:state:v1";
+export const USER_PREFERENCES_UPDATED_EVENT = "pyrus:user-preferences-updated";
+export const LEGACY_USER_PREFERENCES_UPDATED_EVENT =
+  "rayalgo:user-preferences-updated";
+export const USER_PREFERENCES_STORAGE_KEY = "pyrus:state:v1";
+export const LEGACY_USER_PREFERENCES_STORAGE_KEY = "rayalgo:state:v1";
+export const PYRUS_WORKSPACE_SETTINGS_EVENT = "pyrus:workspace-settings-updated";
+export const LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT =
+  "rayalgo:workspace-settings-updated";
 export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
-export type AccentPreset = "coral" | "amber" | "green" | "aurora";
+export type AccentPreset = "pyrus" | "coral" | "amber" | "green" | "aurora";
 
 export type UserPreferences = {
   appearance: {
@@ -92,7 +98,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     theme: "system",
     density: "compact",
     scale: "m",
-    accentPreset: "coral",
+    accentPreset: "pyrus",
     reducedMotion: "system",
     showTooltips: true,
     maskBalances: false,
@@ -240,7 +246,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       theme: enumValue(appearance.theme, ["system", "dark", "light"], DEFAULT_USER_PREFERENCES.appearance.theme),
       density: enumValue(appearance.density, ["compact", "comfortable"], DEFAULT_USER_PREFERENCES.appearance.density),
       scale: enumValue(appearance.scale, ["xs", "s", "m", "l", "xl"], DEFAULT_USER_PREFERENCES.appearance.scale),
-      accentPreset: enumValue(appearance.accentPreset, ["coral", "amber", "green", "aurora"], DEFAULT_USER_PREFERENCES.appearance.accentPreset),
+      accentPreset: enumValue(appearance.accentPreset, ["pyrus", "coral", "amber", "green", "aurora"], DEFAULT_USER_PREFERENCES.appearance.accentPreset),
       reducedMotion: enumValue(appearance.reducedMotion, ["system", "on", "off"], DEFAULT_USER_PREFERENCES.appearance.reducedMotion),
       showTooltips: booleanValue(appearance.showTooltips, DEFAULT_USER_PREFERENCES.appearance.showTooltips),
       maskBalances: booleanValue(appearance.maskBalances, DEFAULT_USER_PREFERENCES.appearance.maskBalances),
@@ -309,7 +315,9 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
 
 const readWorkspaceState = (): JsonRecord => {
   try {
-    const raw = window.localStorage.getItem(USER_PREFERENCES_STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(USER_PREFERENCES_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_USER_PREFERENCES_STORAGE_KEY);
     return raw ? recordValue(JSON.parse(raw)) : {};
   } catch {
     return {};
@@ -357,16 +365,26 @@ export const writeCachedUserPreferences = (
       scale: preferences.appearance.scale,
     };
     window.localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
-    window.dispatchEvent(
-      new CustomEvent(USER_PREFERENCES_UPDATED_EVENT, {
-        detail: preferences,
-      }),
-    );
-    window.dispatchEvent(
-      new CustomEvent("rayalgo:workspace-settings-updated", {
-        detail: next,
-      }),
-    );
+    for (const eventName of [
+      USER_PREFERENCES_UPDATED_EVENT,
+      LEGACY_USER_PREFERENCES_UPDATED_EVENT,
+    ]) {
+      window.dispatchEvent(
+        new CustomEvent(eventName, {
+          detail: preferences,
+        }),
+      );
+    }
+    for (const eventName of [
+      PYRUS_WORKSPACE_SETTINGS_EVENT,
+      LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+    ]) {
+      window.dispatchEvent(
+        new CustomEvent(eventName, {
+          detail: next,
+        }),
+      );
+    }
   } catch {}
 };
 

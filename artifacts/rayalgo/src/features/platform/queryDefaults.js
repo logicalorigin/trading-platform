@@ -1,5 +1,6 @@
 import {
   HYDRATION_PRIORITY,
+  HYDRATION_FAMILY_HEADER,
   HYDRATION_PRIORITY_HEADER,
   buildHydrationRequestOptions,
 } from "./hydrationCoordinator";
@@ -23,6 +24,7 @@ export const BARS_QUERY_DEFAULTS = {
 };
 
 export const BARS_REQUEST_PRIORITY_HEADER = HYDRATION_PRIORITY_HEADER;
+export const BARS_REQUEST_FAMILY_HEADER = HYDRATION_FAMILY_HEADER;
 export const BARS_REQUEST_PRIORITY = {
   background: HYDRATION_PRIORITY.background,
   favoritePrewarm: HYDRATION_PRIORITY.near,

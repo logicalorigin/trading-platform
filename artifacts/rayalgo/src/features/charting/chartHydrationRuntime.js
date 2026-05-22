@@ -9,6 +9,7 @@ import {
 import {
   clearChartHydrationScope,
   consumeChartLivePatchPending,
+  recordChartHydrationCounter,
   recordChartHydrationMetric,
 } from "./chartHydrationStats";
 import { buildResearchChartModelIncremental } from "./model";
@@ -61,7 +62,6 @@ const resolveFiniteCount = (value, fallback = 0) =>
   Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : fallback;
 
 export const CHART_HYDRATION_ROLES = Object.freeze([
-  "mini",
   "primary",
   "option",
 ]);
@@ -149,6 +149,16 @@ const resolveMinimumPrependPageSize = (timeframe, role) => {
   return getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
 };
 
+const resolvePrependPressureMultiplier = (pressure) => {
+  if (pressure === "backoff" || pressure === "stalled") {
+    return 0.5;
+  }
+  if (pressure === "degraded") {
+    return 0.75;
+  }
+  return 1;
+};
+
 export const resolveVisibleRangeHydrationAction = ({
   enabled = true,
   range,
@@ -163,6 +173,7 @@ export const resolveVisibleRangeHydrationAction = ({
   isPrependingOlder = false,
   isHydratingRequestedWindow = false,
   hasExhaustedOlderHistory = false,
+  pressure = "normal",
 } = {}) => {
   if (!enabled || !range) {
     return { action: CHART_HYDRATION_ACTION.NONE, reason: "disabled" };
@@ -210,28 +221,29 @@ export const resolveVisibleRangeHydrationAction = ({
 
   if (
     resolvedRequestedLimit >= resolvedTargetLimit &&
-    resolvedLoadedBarCount < resolvedMaxLimit &&
     canPrependOlderHistory &&
     !hasExhaustedOlderHistory &&
     Number.isFinite(oldestLoadedAtMs)
   ) {
-    const remainingBars = Math.max(0, resolvedMaxLimit - resolvedLoadedBarCount);
     const minimumPageSize = resolveMinimumPrependPageSize(timeframe, role);
     const prependPageSize = Math.max(
       minimumPageSize,
       Math.ceil(visibleBars * 2),
       role === "option" ? 240 : 360,
     );
+    const pressureAdjustedPageSize = Math.max(
+      minimumPageSize,
+      Math.ceil(prependPageSize * resolvePrependPressureMultiplier(pressure)),
+    );
 
-    if (remainingBars > 0) {
-      return {
-        action: CHART_HYDRATION_ACTION.PREPEND_OLDER,
-        reason: "near-left-edge",
-        visibleBars,
-        leftEdgeBufferBars,
-        pageSize: Math.min(remainingBars, prependPageSize),
-      };
-    }
+    return {
+      action: CHART_HYDRATION_ACTION.PREPEND_OLDER,
+      reason: "near-left-edge",
+      visibleBars,
+      leftEdgeBufferBars,
+      pageSize: pressureAdjustedPageSize,
+      pressure,
+    };
   }
 
   if (resolvedRequestedLimit >= resolvedTargetLimit && hasExhaustedOlderHistory) {
@@ -327,6 +339,7 @@ export const useProgressiveChartBarLimit = ({
   role = "primary",
   enabled = true,
   hydrationPriority = "visible",
+  interactiveHydrationPriority = hydrationPriority,
   warmTargetLimit,
 }) => {
   const policy = useMemo(
@@ -343,6 +356,11 @@ export const useProgressiveChartBarLimit = ({
     priority: hydrationPriority,
     family: "chart-bars",
   });
+  const interactiveHydrationGate = useHydrationGate({
+    enabled,
+    priority: interactiveHydrationPriority,
+    family: "chart-bars",
+  });
   const progressiveKey = `${scopeKey}::${normalizedRole}::${normalizedTimeframe}`;
   const activeScopeKeyRef = useRef(progressiveKey);
   const warmingKeyRef = useRef(null);
@@ -355,15 +373,20 @@ export const useProgressiveChartBarLimit = ({
   }, [initialLimit, progressiveKey]);
 
   const hydrateLimit = useCallback(
-    (nextRequestedLimit) => {
+    (nextRequestedLimit, options = {}) => {
       const normalizedNextLimit = Math.min(
         maxLimit,
         Math.max(initialLimit, Math.ceil(nextRequestedLimit)),
       );
+      const requestGateEnabled =
+        typeof options.gateEnabled === "boolean"
+          ? options.gateEnabled
+          : hydrationGate.enabled;
+      const requestPriority = options.priority ?? hydrationPriority;
 
       if (
         !enabled ||
-        !hydrationGate.enabled ||
+        !requestGateEnabled ||
         normalizedNextLimit <= requestedLimit
       ) {
         return;
@@ -377,7 +400,12 @@ export const useProgressiveChartBarLimit = ({
       warmingKeyRef.current = warmingKey;
 
       Promise.resolve()
-        .then(() => warmTargetLimit(normalizedNextLimit))
+        .then(() =>
+          warmTargetLimit(normalizedNextLimit, {
+            priority: requestPriority,
+            source: options.source || "warmup",
+          }),
+        )
         .then(() => {
           if (activeScopeKeyRef.current !== progressiveKey) {
             return;
@@ -401,6 +429,7 @@ export const useProgressiveChartBarLimit = ({
     [
       enabled,
       hydrationGate.enabled,
+      hydrationPriority,
       initialLimit,
       maxLimit,
       progressiveKey,
@@ -439,24 +468,38 @@ export const useProgressiveChartBarLimit = ({
         isHydratingRequestedWindow: Boolean(options.isHydratingRequestedWindow),
         isPrependingOlder: Boolean(options.isPrependingOlder),
         hasExhaustedOlderHistory: Boolean(options.hasExhaustedOlderHistory),
+        pressure: hydrationGate.pressure,
       });
 
       if (hydrationAction.action === CHART_HYDRATION_ACTION.PREPEND_OLDER) {
+        recordChartHydrationCounter(
+          "visibleRangePrependRequested",
+          scopeKey,
+        );
         options.prependOlderBars?.({ pageSize: hydrationAction.pageSize });
       } else if (
         hydrationAction.action === CHART_HYDRATION_ACTION.EXPAND_LIMIT
       ) {
-        hydrateLimit(hydrationAction.nextRequestedLimit);
+        recordChartHydrationCounter("visibleRangeExpandRequested", scopeKey);
+        hydrateLimit(hydrationAction.nextRequestedLimit, {
+          gateEnabled: interactiveHydrationGate.enabled,
+          priority: interactiveHydrationPriority,
+          source: "visible-range",
+        });
       }
       return hydrationAction;
     },
     [
       enabled,
       hydrateLimit,
+      hydrationGate.pressure,
+      interactiveHydrationGate.enabled,
+      interactiveHydrationPriority,
       maxLimit,
       normalizedRole,
       normalizedTimeframe,
       requestedLimit,
+      scopeKey,
       targetLimit,
     ],
   );

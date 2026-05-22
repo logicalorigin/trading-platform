@@ -13,7 +13,8 @@ const RETRYABLE_DYNAMIC_IMPORT_PATTERNS = [
 
 const DEFAULT_DYNAMIC_IMPORT_RETRIES = 2;
 const DEFAULT_DYNAMIC_IMPORT_RETRY_DELAY_MS = 250;
-const DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "rayalgo:dynamic-import-reload:";
+const DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "pyrus:dynamic-import-reload:";
+const LEGACY_DYNAMIC_IMPORT_RELOAD_KEY_PREFIX = "rayalgo:dynamic-import-reload:";
 
 type DynamicImportOptions = {
   label?: string;
@@ -41,11 +42,14 @@ const wait = (delayMs: number) =>
 
 const getReloadKey = (label: string) =>
   `${DYNAMIC_IMPORT_RELOAD_KEY_PREFIX}${label || "module"}`;
+const getLegacyReloadKey = (label: string) =>
+  `${LEGACY_DYNAMIC_IMPORT_RELOAD_KEY_PREFIX}${label || "module"}`;
 
 const clearReloadGuard = (label: string) => {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.removeItem(getReloadKey(label));
+    window.sessionStorage.removeItem(getLegacyReloadKey(label));
   } catch {
     // Storage can be unavailable in constrained browser contexts.
   }
@@ -57,8 +61,9 @@ const maybeReloadOnceForDynamicImport = (label: string): boolean => {
   }
 
   const key = getReloadKey(label);
+  const legacyKey = getLegacyReloadKey(label);
   try {
-    if (window.sessionStorage.getItem(key)) {
+    if (window.sessionStorage.getItem(key) || window.sessionStorage.getItem(legacyKey)) {
       return false;
     }
     window.sessionStorage.setItem(key, String(Date.now()));

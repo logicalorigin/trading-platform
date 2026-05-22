@@ -1,7 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
-  Check,
   Clock,
   Layers,
   Pause,
@@ -10,6 +9,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Wallet,
+  X,
 } from "lucide-react";
 import {
   RADII,
@@ -30,11 +30,9 @@ import { OperationsStatusOrb } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import { PipelineStrip } from "./PipelineStrip.jsx";
 import {
-  STRATEGY_SIGNAL_TIMEFRAMES,
   asRecord,
   compactButtonStyle,
   formatMoney,
-  numberFrom,
   optionProviderContractId,
 } from "./algoHelpers";
 import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
@@ -208,19 +206,39 @@ const buildAlgoOptionQuoteGroups = ({
     if (!groups.has(underlying)) groups.set(underlying, new Set());
     groups.get(underlying).add(providerContractId);
   };
-  candidates.forEach((candidate) => {
-    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol);
-  });
   positions.forEach((position) => {
     addContract(asRecord(position).selectedContract, asRecord(position).symbol);
   });
   ledgerPositions.forEach((position) => {
     addContract(asRecord(position).optionContract, asRecord(position).symbol);
   });
+  candidates.forEach((candidate) => {
+    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol);
+  });
   return Array.from(groups, ([underlying, ids]) => ({
     underlying,
     providerContractIds: Array.from(ids),
   }));
+};
+
+const ALGO_OPTION_QUOTE_CANDIDATE_LIMIT = 12;
+const ALGO_OPTION_QUOTE_CONTRACT_LIMIT = 16;
+
+const limitAlgoOptionQuoteGroups = (
+  groups,
+  contractLimit = ALGO_OPTION_QUOTE_CONTRACT_LIMIT,
+) => {
+  let remaining = Math.max(0, Math.floor(contractLimit));
+  if (!remaining) return [];
+
+  return groups.flatMap((group) => {
+    if (!remaining) return [];
+    const providerContractIds = group.providerContractIds.slice(0, remaining);
+    remaining -= providerContractIds.length;
+    return providerContractIds.length
+      ? [{ ...group, providerContractIds }]
+      : [];
+  });
 };
 
 const AlgoOptionQuoteStreamGroup = ({ underlying, providerContractIds }) => {
@@ -320,7 +338,9 @@ export const AlgoLivePage = ({
   visibleSignalRows,
   signalOptionsCandidates,
   signalMatrixStates = [],
+  selectedCandidate,
   signalOptionsProfile,
+  onOpenCandidateInTrade,
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
@@ -331,9 +351,6 @@ export const AlgoLivePage = ({
   // Signal monitor (promoted header controls)
   signalMonitorProfile,
   strategySettingsDraft,
-  setStrategySettingsDraft,
-  handleSaveStrategySettings,
-  updateStrategySettingsMutation,
   // Smart summary
   activitySummary,
   // Pause / Scan-now (existing mutations + handlers)
@@ -351,6 +368,8 @@ export const AlgoLivePage = ({
   auditPanel,
   rightRail,
 }) => {
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const settingsDrawerRef = useRef(null);
   const focusedDeploymentId = focusedDeployment?.id || null;
   const focusedLedgerPositions = useMemo(
     () =>
@@ -363,19 +382,68 @@ export const AlgoLivePage = ({
       signalOptionsLedgerPositionsQuery?.data?.positions,
     ],
   );
+  const visibleSignalSymbols = useMemo(
+    () =>
+      new Set(
+        (visibleSignalRows || [])
+          .map((row) => String(asRecord(row).symbol || "").trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    [visibleSignalRows],
+  );
+  const optionQuoteCandidates = useMemo(() => {
+    const seen = new Set();
+    const selectedId = asRecord(selectedCandidate).id;
+    const selectedSymbol = String(
+      asRecord(selectedCandidate).symbol || "",
+    ).trim().toUpperCase();
+    const selectedCandidates = [];
+    const visibleCandidates = [];
+
+    (signalOptionsCandidates || []).forEach((candidate) => {
+      const record = asRecord(candidate);
+      const id = String(record.id || "");
+      const symbol = String(record.symbol || "").trim().toUpperCase();
+      const key = id || symbol;
+      if (!key || seen.has(key)) return;
+      const selected = Boolean(
+        (selectedId && id === selectedId) ||
+          (selectedSymbol && symbol === selectedSymbol),
+      );
+      if (!selected && !visibleSignalSymbols.has(symbol)) return;
+      seen.add(key);
+      if (selected) {
+        selectedCandidates.push(candidate);
+        return;
+      }
+      visibleCandidates.push(candidate);
+    });
+
+    return [...selectedCandidates, ...visibleCandidates].slice(
+      0,
+      ALGO_OPTION_QUOTE_CANDIDATE_LIMIT,
+    );
+  }, [selectedCandidate, signalOptionsCandidates, visibleSignalSymbols]);
   const optionQuoteGroups = useMemo(
     () =>
-      buildAlgoOptionQuoteGroups({
-        candidates: signalOptionsCandidates,
-        positions: signalOptionsPositions,
-        ledgerPositions: focusedLedgerPositions,
-      }),
+      limitAlgoOptionQuoteGroups(
+        buildAlgoOptionQuoteGroups({
+          candidates: optionQuoteCandidates,
+          positions: signalOptionsPositions,
+          ledgerPositions: focusedLedgerPositions,
+        }),
+      ),
     [
       focusedLedgerPositions,
-      signalOptionsCandidates,
+      optionQuoteCandidates,
       signalOptionsPositions,
     ],
   );
+
+  useEffect(() => {
+    if (!settingsDrawerOpen) return;
+    settingsDrawerRef.current?.focus();
+  }, [settingsDrawerOpen]);
 
   if (!deployments.length) {
     return (
@@ -552,7 +620,7 @@ export const AlgoLivePage = ({
             flexWrap: "wrap",
           }}
         >
-          <label
+          <span
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -564,72 +632,10 @@ export const AlgoLivePage = ({
               textTransform: "uppercase",
             }}
           >
-            tf
-            <select
-              value={strategySettingsDraft?.signalTimeframe || "5m"}
-              onChange={(event) =>
-                setStrategySettingsDraft?.((current) => ({
-                  ...current,
-                  signalTimeframe: event.target.value,
-                }))
-              }
-              disabled={updateStrategySettingsMutation?.isPending}
-              style={{
-                background: T.bg1,
-                color: T.text,
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(RADII.xs),
-                padding: sp("1px 4px"),
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-              }}
-            >
-              {STRATEGY_SIGNAL_TIMEFRAMES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(2),
-              color: T.textDim,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-            }}
-          >
-            h=
-            <input
-              type="number"
-              min={2}
-              max={50}
-              step={1}
-              value={strategySettingsDraft?.timeHorizon ?? 8}
-              onChange={(event) =>
-                setStrategySettingsDraft?.((current) => ({
-                  ...current,
-                  timeHorizon: numberFrom(event.target.value, 8),
-                }))
-              }
-              disabled={updateStrategySettingsMutation?.isPending}
-              style={{
-                width: dim(48),
-                background: T.bg1,
-                color: T.text,
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(RADII.xs),
-                padding: sp("1px 4px"),
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                textAlign: "center",
-              }}
-            />
-          </label>
+            tf {strategySettingsDraft?.signalTimeframe || "5m"} · h
+            {strategySettingsDraft?.timeHorizon ?? 8} ·{" "}
+            {strategySettingsDraft?.bosConfirmation || "wicks"}
+          </span>
           {!algoIsPhone && signalMonitorProfile?.watchlistId ? (
             <span
               style={{
@@ -647,37 +653,6 @@ export const AlgoLivePage = ({
               wl {signalMonitorProfile.watchlistId}
             </span>
           ) : null}
-          <button
-            type="button"
-            onClick={handleSaveStrategySettings}
-            disabled={
-              !handleSaveStrategySettings ||
-              updateStrategySettingsMutation?.isPending
-            }
-            aria-label="Apply strategy settings"
-            title="Apply strategy settings"
-            style={{
-              ...compactButtonStyle({
-                disabled:
-                  !handleSaveStrategySettings ||
-                  updateStrategySettingsMutation?.isPending,
-              }),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: sp(3),
-              border: "none",
-              background: T.accent,
-              color: T.onAccent,
-            }}
-          >
-            <Check
-              size={HEADER_ICON_SIZE}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-            {updateStrategySettingsMutation?.isPending ? "SAVING..." : "APPLY"}
-          </button>
           {focusedDeployment ? (
             <span
               aria-hidden="true"
@@ -968,13 +943,31 @@ export const AlgoLivePage = ({
         </div>
       </div>
 
+      {algoIsPhone ? (
+        <button
+          type="button"
+          data-testid="algo-settings-drawer-open"
+          onClick={() => setSettingsDrawerOpen(true)}
+          style={{
+            ...compactButtonStyle({ active: true, fill: true }),
+            border: `1px solid ${T.accent}`,
+            background: T.accent,
+            color: T.onAccent,
+          }}
+        >
+          Settings
+        </button>
+      ) : null}
+
       <div
         data-testid="algo-live-grid"
         style={{
           display: "grid",
           gridTemplateColumns:
-            algoIsPhone || algoIsNarrow
+            algoIsPhone
               ? "minmax(0, 1fr)"
+              : algoIsNarrow
+                ? "minmax(0, 1fr) 320px"
               : "minmax(0, 1fr) 380px",
           gap: sp(8),
           alignItems: "start",
@@ -994,7 +987,11 @@ export const AlgoLivePage = ({
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
             signalMatrixStates={signalMatrixStates}
+            cockpitGeneratedAt={cockpitGeneratedAt}
+            cockpitStageItems={cockpitStageItems}
             algoIsPhone={algoIsPhone}
+            algoIsNarrow={algoIsNarrow}
+            onOpenCandidateInTrade={onOpenCandidateInTrade}
             renderDrill={({ signal, candidate }) => {
               const symbol = String(signal?.symbol || "").toUpperCase();
               const indexed = symbolIndex?.[symbol] || {};
@@ -1023,18 +1020,94 @@ export const AlgoLivePage = ({
           {auditPanel}
         </div>
 
-        <div
-          data-testid="algo-live-right-column"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(algoIsPhone ? 3 : 6),
-            minWidth: 0,
-          }}
-        >
-          {rightRail}
-        </div>
+        {!algoIsPhone ? (
+          <div
+            data-testid="algo-live-right-column"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: sp(6),
+              minWidth: 0,
+              height: "calc(100vh - 120px)",
+              maxHeight: "calc(100vh - 120px)",
+              position: "sticky",
+              top: dim(44),
+            }}
+          >
+            {rightRail}
+          </div>
+        ) : null}
       </div>
+      {algoIsPhone && settingsDrawerOpen ? (
+        <div
+          data-testid="algo-settings-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Algo settings"
+          tabIndex={-1}
+          ref={settingsDrawerRef}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setSettingsDrawerOpen(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            display: "flex",
+            alignItems: "flex-end",
+            background: "rgba(0,0,0,0.48)",
+          }}
+          onClick={() => setSettingsDrawerOpen(false)}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: "90vh",
+              background: T.bg0,
+              borderTop: `1px solid ${T.border}`,
+              boxShadow: "0 -18px 42px rgba(0,0,0,0.45)",
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                alignItems: "center",
+                padding: sp("6px 8px"),
+                borderBottom: `1px solid ${T.border}`,
+                flex: "0 0 auto",
+              }}
+            >
+              <button
+                type="button"
+                data-testid="algo-settings-drawer-close"
+                aria-label="Close algo settings"
+                title="Close settings"
+                onClick={() => setSettingsDrawerOpen(false)}
+                style={{
+                  ...compactButtonStyle(),
+                  width: dim(30),
+                  minWidth: dim(30),
+                  height: dim(30),
+                  padding: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <X size={15} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </div>
+            <div style={{ flex: "1 1 auto", minHeight: 0 }}>
+              {rightRail}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

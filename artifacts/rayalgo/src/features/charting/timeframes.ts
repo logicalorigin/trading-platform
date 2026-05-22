@@ -1,4 +1,4 @@
-export type ChartTimeframeRole = "mini" | "primary" | "option";
+export type ChartTimeframeRole = "primary" | "option";
 
 export type ChartTimeframeDefinition = {
   value: string;
@@ -31,9 +31,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 1_000,
     baseTimeframe: "1s",
     streamable: false,
-    supports: { mini: false, primary: false, option: false },
+    supports: { primary: false, option: false },
     limits: {
-      mini: defineLimits(120, 240, 900),
       primary: defineLimits(180, 900, 7_200),
       option: defineLimits(0, 0, 0),
     },
@@ -44,9 +43,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 5_000,
     baseTimeframe: "5s",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(180, 360, 1_800),
       primary: defineLimits(240, 900, 8_640),
       option: defineLimits(180, 600, 1_800),
     },
@@ -57,9 +55,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 15_000,
     baseTimeframe: "5s",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 600, 600),
       primary: defineLimits(300, 900, 2_880),
       option: defineLimits(180, 600, 600),
     },
@@ -70,9 +67,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 30_000,
     baseTimeframe: "5s",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 300, 300),
       primary: defineLimits(300, 900, 1_440),
       option: defineLimits(180, 300, 300),
     },
@@ -83,9 +79,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: minuteMs,
     baseTimeframe: "1m",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 20_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -96,9 +91,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 2 * minuteMs,
     baseTimeframe: "1m",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 10_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -109,9 +103,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 5 * minuteMs,
     baseTimeframe: "5m",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(360, 1_800, 12_000),
       option: defineLimits(240, 720, 2_400),
     },
@@ -122,9 +115,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 15 * minuteMs,
     baseTimeframe: "15m",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(300, 1_500, 8_000),
       option: defineLimits(240, 720, 1_800),
     },
@@ -135,9 +127,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 30 * minuteMs,
     baseTimeframe: "15m",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 900, 1_800),
       primary: defineLimits(300, 1_500, 6_000),
       option: defineLimits(240, 720, 1_800),
     },
@@ -148,9 +139,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: hourMs,
     baseTimeframe: "1h",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(260, 780, 1_000),
       primary: defineLimits(240, 1_000, 4_000),
       option: defineLimits(240, 720, 1_200),
     },
@@ -161,9 +151,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: 4 * hourMs,
     baseTimeframe: "1h",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(240, 720, 1_000),
       primary: defineLimits(240, 1_000, 2_500),
       option: defineLimits(180, 480, 1_000),
     },
@@ -174,9 +163,8 @@ export const CHART_TIMEFRAME_DEFINITIONS: ChartTimeframeDefinition[] = [
     stepMs: dayMs,
     baseTimeframe: "1d",
     streamable: true,
-    supports: { mini: true, primary: true, option: true },
+    supports: { primary: true, option: true },
     limits: {
-      mini: defineLimits(504, 504, 756),
       primary: defineLimits(252, 756, 2_500),
       option: defineLimits(126, 252, 756),
     },
@@ -217,7 +205,6 @@ export const DEFAULT_CHART_TIMEFRAME_FAVORITES: Record<
   ChartTimeframeRole,
   string[]
 > = {
-  mini: ["5s", "1m", "5m", "15m", "1h", "1d"],
   primary: ["5s", "1m", "5m", "15m", "1h", "1d"],
   option: ["5s", "1m", "5m", "15m", "1h", "1d"],
 };

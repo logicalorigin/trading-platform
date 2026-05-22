@@ -42,12 +42,62 @@ const readResourceSnapshot = (payload) =>
   payload?.snapshots?.find?.((entry) => entry?.subsystem === "resource-pressure") ||
   null;
 
+const normalizeServerPressureLevel = (summary) =>
+  summary?.pressureLevel || summary?.level || null;
+
+export const mergeMemoryPressureServerSummary = ({
+  footerMemoryPressure = null,
+  resourceMetrics = null,
+} = {}) => {
+  if (!footerMemoryPressure && !resourceMetrics) {
+    return null;
+  }
+  if (!footerMemoryPressure) {
+    return {
+      ...resourceMetrics,
+      level: normalizeServerPressureLevel(resourceMetrics) || "normal",
+    };
+  }
+  if (!resourceMetrics) {
+    return footerMemoryPressure;
+  }
+
+  const footerLevel = normalizeServerPressureLevel(footerMemoryPressure) || "normal";
+  const resourceLevel = normalizeServerPressureLevel(resourceMetrics);
+  const level =
+    resourceLevel && isPressureLevelAtLeast(resourceLevel, footerLevel)
+      ? resourceLevel
+      : footerLevel;
+
+  return {
+    ...footerMemoryPressure,
+    ...resourceMetrics,
+    level,
+    apiHeapUsedPercent:
+      footerMemoryPressure.apiHeapUsedPercent ??
+      resourceMetrics.apiHeapUsedPercent ??
+      resourceMetrics.heapUsedPercent ??
+      null,
+    browserMemoryMb:
+      footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
+    sourceQuality:
+      footerMemoryPressure.sourceQuality ?? resourceMetrics.sourceQuality ?? null,
+    dominantDrivers: resourceMetrics.dominantDrivers?.length
+      ? resourceMetrics.dominantDrivers
+      : footerMemoryPressure.dominantDrivers,
+  };
+};
+
 const readLatestDiagnosticsSnapshot = (signal) =>
   getLatestDiagnostics(signal ? { signal } : undefined);
 
 const readQueryDiagnostics = () => {
   try {
-    return window.__RAYALGO_MEMORY_DIAGNOSTICS__?.() || null;
+    return (
+      window.__PYRUS_MEMORY_DIAGNOSTICS__?.() ||
+      window.__RAYALGO_MEMORY_DIAGNOSTICS__?.() ||
+      null
+    );
   } catch {
     return null;
   }
@@ -89,8 +139,10 @@ export const useMemoryPressureMonitor = () => {
           const diagnosticsPayload = await readLatestDiagnosticsSnapshot();
           if (!cancelled) {
             const resourceSnapshot = readResourceSnapshot(diagnosticsPayload);
-            serverSummary =
-              diagnosticsPayload?.footerMemoryPressure || resourceSnapshot?.metrics || null;
+            serverSummary = mergeMemoryPressureServerSummary({
+              footerMemoryPressure: diagnosticsPayload?.footerMemoryPressure || null,
+              resourceMetrics: resourceSnapshot?.metrics || null,
+            });
           }
         } catch {}
       }

@@ -40,12 +40,11 @@ import {
   ResearchChartWidgetSidebar,
 } from "../features/charting/ResearchChartFrame";
 import {
-  filterFlowEventsForChartLookbackWindow,
-  filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
   getChartEventLookbackWindow,
   mergeFlowEventFeeds,
 } from "../features/charting/chartEvents";
+import { useContractFlowChartEvents } from "../features/charting/useContractFlowChartEvents.js";
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
 import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
@@ -70,7 +69,6 @@ import {
 } from "../features/platform/tradeOptionChainStore";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
-  filterFlowEventsForChartDisplay,
   useFlowTapeFilterState,
 } from "../features/platform/flowFilterStore";
 import {
@@ -155,7 +153,6 @@ import {
   writeCachedFlowEvents,
   writeCachedOptionChainSnapshot,
 } from "../features/platform/runtimeCache";
-import { useFlowChartEventConversion } from "../features/workers/analyticsClient";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { MetricChip } from "../components/platform/primitives.jsx";
 import {
@@ -1161,43 +1158,23 @@ const TradeContractDetailPanel = ({
         : tradeFlowSnapshot.events || [],
     [flowEvents, parentFlowEventsProvided, tradeFlowSnapshot.events],
   );
-  const selectedContractFlowEvents = useMemo(
-    () =>
-      filterFlowEventsForOptionContract(
-        filterFlowEventsForChartDisplay(mergedFlowEvents, flowTapeFilters),
-        {
-          symbol: ticker,
-          providerContractId,
-          optionTicker,
-          expirationDate: optionExpirationIso,
-          right: optionRight,
-          strike: contract.strike,
-        },
-      ),
-    [
-      contract.strike,
-      flowTapeFilters,
-      mergedFlowEvents,
-      optionExpirationIso,
-      optionRight,
-      optionTicker,
+  const contractChartFlow = useContractFlowChartEvents({
+    flowEvents: mergedFlowEvents,
+    flowTapeFilters,
+    contract: {
+      symbol: ticker,
       providerContractId,
-      ticker,
-    ],
-  );
-  const selectedContractChartWindowFlowEvents = useMemo(
-    () =>
-      filterFlowEventsForChartLookbackWindow(
-        selectedContractFlowEvents,
-        optionChartTimeframe,
-      ),
-    [optionChartTimeframe, selectedContractFlowEvents],
-  );
-  const chartEventConversion = useFlowChartEventConversion(
-    selectedContractChartWindowFlowEvents,
-    ticker,
-  );
-  const chartEvents = chartEventConversion.events;
+      optionTicker,
+      expirationDate: optionExpirationIso,
+      right: optionRight,
+      strike: contract.strike,
+    },
+    timeframe: optionChartTimeframe,
+    chartBars: displayBars,
+    symbol: ticker,
+  });
+  const chartEventConversion = contractChartFlow.conversion;
+  const chartEvents = contractChartFlow.chartEvents;
   const chartFlowBadge = useMemo(() => {
     if (!chartEvents.length) {
       return null;
@@ -2088,6 +2065,13 @@ const TradeQuoteRuntime = ({
         prevClose: quote.prevClose ?? currentInfo.prevClose ?? null,
         volume: quote.volume ?? currentInfo.volume ?? null,
         updatedAt: quote.updatedAt ?? currentInfo.updatedAt ?? null,
+        dataUpdatedAt: quote.dataUpdatedAt ?? currentInfo.dataUpdatedAt ?? null,
+        freshness: quote.freshness ?? currentInfo.freshness ?? null,
+        marketDataMode: quote.marketDataMode ?? currentInfo.marketDataMode ?? null,
+        delayed: quote.delayed ?? currentInfo.delayed ?? null,
+        source: quote.source ?? currentInfo.source ?? null,
+        transport: quote.transport ?? currentInfo.transport ?? null,
+        latency: quote.latency ?? currentInfo.latency ?? null,
       });
     });
   }, []);
@@ -3956,10 +3940,11 @@ const TradeScreenInner = ({
     display: "grid",
     gap: sp(6),
     minWidth: 0,
+    paddingBottom: sp(10),
   };
   const tradeMobileChartFrameStyle = {
-    height: "clamp(320px, 46vh, 460px)",
-    maxHeight: "clamp(320px, 46vh, 460px)",
+    height: "clamp(260px, 36vh, 360px)",
+    maxHeight: "clamp(260px, 36vh, 360px)",
     minHeight: 0,
     minWidth: 0,
   };
@@ -4195,12 +4180,13 @@ const TradeScreenInner = ({
         className="ra-panel-enter"
         style={{
           flex: 1,
-          padding: sp(tradeIsPhone ? 4 : 6),
+          padding: sp(tradeIsPhone ? "4px 4px 16px" : 6),
           display: "flex",
           flexDirection: "column",
           gap: sp(4),
           overflow: "auto",
           minWidth: 0,
+          WebkitOverflowScrolling: tradeIsPhone ? "touch" : undefined,
         }}
       >
         {/* Compact ticker header */}

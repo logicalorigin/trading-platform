@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 
-const API_TIMING_EVENT = "rayalgo:api-request-timing";
-export const SCREEN_READY_EVENT = "rayalgo:screen-ready";
+const API_TIMING_EVENT = "pyrus:api-request-timing";
+export const SCREEN_READY_EVENT = "pyrus:screen-ready";
 const REPORT_INTERVAL_MS = 30_000;
 const MAX_API_TIMINGS = 160;
 const MAX_SCREEN_TIMINGS = 80;
+const MAX_ROUTE_DATA_TIMINGS = 80;
 const MAX_LONG_TASKS = 80;
 const SLOW_API_TIMING_MS = 1_000;
 const SLOW_SCREEN_READY_MS = 1_500;
@@ -27,6 +28,17 @@ type ScreenTimingSample = {
   startedAtMs: number;
   readyAtMs: number;
   observedAt: string;
+};
+
+type RouteDataTimingSample = {
+  screenId: string;
+  stage: string;
+  source: string;
+  durationMs: number;
+  startedAtMs: number;
+  observedAtMs: number;
+  observedAt: string;
+  detail: Record<string, unknown>;
 };
 
 type LongTaskSample = {
@@ -56,8 +68,10 @@ const metrics = {
   firstScreenId: "",
   lastReportAt: 0,
   pendingScreens: new Map<string, PendingScreenStart>(),
+  latestScreenStarts: new Map<string, PendingScreenStart>(),
   apiTimings: [] as ApiTimingSample[],
   screenTimings: [] as ScreenTimingSample[],
+  routeDataTimings: [] as RouteDataTimingSample[],
   longTasks: [] as LongTaskSample[],
 };
 
@@ -202,7 +216,7 @@ const installLongTaskObserver = () => {
   return () => observer.disconnect();
 };
 
-export const installRayalgoPerformanceMetrics = () => {
+export const installPyrusPerformanceMetrics = () => {
   if (metrics.installed || typeof window === "undefined") {
     return;
   }
@@ -226,7 +240,7 @@ export const markScreenSwitchStart = (
   source = "navigation",
 ) => {
   if (!screenId) return;
-  installRayalgoPerformanceMetrics();
+  installPyrusPerformanceMetrics();
   if (metrics.pendingScreens.has(screenId)) {
     return;
   }
@@ -235,15 +249,14 @@ export const markScreenSwitchStart = (
       metrics.pendingScreens.delete(pendingScreenId);
     }
   });
-  metrics.pendingScreens.set(screenId, {
-    startedAt: nowMs(),
-    source,
-  });
+  const startedAt = nowMs();
+  metrics.pendingScreens.set(screenId, { startedAt, source });
+  metrics.latestScreenStarts.set(screenId, { startedAt, source });
 };
 
 export const markScreenReady = (screenId: string) => {
   if (!screenId) return;
-  installRayalgoPerformanceMetrics();
+  installPyrusPerformanceMetrics();
   const fallbackStart =
     metrics.firstScreenReadyAt === 0
       ? { startedAt: metrics.appStartedAt || nowMs(), source: "initial" }
@@ -269,15 +282,50 @@ export const markScreenReady = (screenId: string) => {
   if (metrics.firstScreenReadyAt === 0) {
     metrics.firstScreenReadyAt = readyAt;
     metrics.firstScreenId = screenId;
+    metrics.latestScreenStarts.set(screenId, {
+      startedAt: pending.startedAt,
+      source: pending.source,
+    });
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(SCREEN_READY_EVENT, { detail: sample }));
     }
   }
 };
 
-export const hasRayalgoFirstScreenReady = () => metrics.firstScreenReadyAt > 0;
+export const markRouteDataTiming = (
+  screenId: string,
+  stage: string,
+  detail: Record<string, unknown> = {},
+) => {
+  if (!screenId || !stage) return;
+  installPyrusPerformanceMetrics();
+  const started =
+    metrics.latestScreenStarts.get(screenId) ??
+    metrics.pendingScreens.get(screenId) ??
+    {
+      startedAt: metrics.appStartedAt || nowMs(),
+      source: "active",
+    };
+  const observedAt = nowMs();
+  pushBounded(
+    metrics.routeDataTimings,
+    {
+      screenId,
+      stage,
+      source: started.source,
+      durationMs: Math.max(0, Math.round(observedAt - started.startedAt)),
+      startedAtMs: Math.round(started.startedAt),
+      observedAtMs: Math.round(observedAt),
+      observedAt: nowIso(),
+      detail: asRecord(detail),
+    },
+    MAX_ROUTE_DATA_TIMINGS,
+  );
+};
 
-export const buildRayalgoPerformanceMetricsPayload = (reason = "interval") => {
+export const hasPyrusFirstScreenReady = () => metrics.firstScreenReadyAt > 0;
+
+export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
   const apiSummary = summarizeTimings(
     metrics.apiTimings.filter(
       (sample) => sample.path !== "/api/diagnostics/client-metrics",
@@ -319,6 +367,7 @@ export const buildRayalgoPerformanceMetricsPayload = (reason = "interval") => {
     },
     raw: {
       pendingScreens: Array.from(metrics.pendingScreens.keys()),
+      routeDataTimings: metrics.routeDataTimings.slice(-30),
     },
   };
 };
@@ -328,6 +377,7 @@ const hasReportableMetrics = () =>
   metrics.apiTimings.some(
     (sample) => sample.path !== "/api/diagnostics/client-metrics",
   ) ||
+  metrics.routeDataTimings.length > 0 ||
   metrics.longTasks.length > 0;
 
 const postPerformanceMetrics = (reason: string) => {
@@ -339,18 +389,18 @@ const postPerformanceMetrics = (reason: string) => {
   fetch("/api/diagnostics/client-metrics", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(buildRayalgoPerformanceMetricsPayload(reason)),
+    body: JSON.stringify(buildPyrusPerformanceMetricsPayload(reason)),
     keepalive: reason === "visibility-hidden",
   }).catch(() => {});
 };
 
-export const useRayalgoPerformanceMetricsReporter = () => {
+export const usePyrusPerformanceMetricsReporter = () => {
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
       return undefined;
     }
 
-    installRayalgoPerformanceMetrics();
+    installPyrusPerformanceMetrics();
 
     const intervalId = window.setInterval(() => {
       postPerformanceMetrics("interval");
@@ -374,3 +424,10 @@ export const useRayalgoPerformanceMetricsReporter = () => {
     };
   }, []);
 };
+
+export const installRayalgoPerformanceMetrics = installPyrusPerformanceMetrics;
+export const hasRayalgoFirstScreenReady = hasPyrusFirstScreenReady;
+export const buildRayalgoPerformanceMetricsPayload =
+  buildPyrusPerformanceMetricsPayload;
+export const useRayalgoPerformanceMetricsReporter =
+  usePyrusPerformanceMetricsReporter;

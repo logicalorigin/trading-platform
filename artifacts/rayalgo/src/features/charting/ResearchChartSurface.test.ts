@@ -314,7 +314,7 @@ test("ResearchChartSurface iconizes the responsive overlay toolbar", () => {
 });
 
 test("Chart wrappers use frame placement instead of chart-specific renderers", () => {
-  const miniChartSource = readSource("../market/MiniChartCell.jsx");
+  const miniChartSource = readSource("../market/MarketChartCell.jsx");
   const tradeSpotSource = readSource("../trade/TradeEquityPanel.jsx");
   const tradeScreenSource = readSource("../../screens/TradeScreen.jsx");
   const flowInlineSource = readSource("../flow/ContractDetailInline.jsx");
@@ -450,7 +450,9 @@ test("ResearchChartSurface axis click-drag scales via custom capture-phase handl
   //     as the wheel handler
   //   • capture the pointer + preventDefault + stopImmediatePropagation
   //   • flip autoScale via applyMainPriceAutoScale on price-axis drags
+  //   • drag the price axis down to expand/zoom out, up to tighten/zoom in
   //   • call setVisibleLogicalRange / setVisibleRange directly
+  //   • publish time-axis user ranges so hydration can prepend older bars
   const source = readResearchChartSurfaceSource();
 
   assert.match(
@@ -467,7 +469,19 @@ test("ResearchChartSurface axis click-drag scales via custom capture-phase handl
   );
   assert.match(
     source,
-    /chart\.timeScale\?\.\(\)\?\.setVisibleLogicalRange\?\.\(\{/,
+    /if \(dragState\.axis === "price"\)[\s\S]*?const scaleFactor = Math\.exp\(deltaY \* 0\.005\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(dragState\.axis === "price"\)[\s\S]*?Math\.exp\(-deltaY \* 0\.005\)/,
+  );
+  assert.match(
+    source,
+    /chart\.timeScale\?\.\(\)\?\.setVisibleLogicalRange\?\.\(nextRange\)/,
+  );
+  assert.match(
+    source,
+    /publishCustomTimeScaleUserRange\(nextRange\)/,
   );
   assert.match(
     source,
@@ -490,6 +504,31 @@ test("ResearchChartSurface axis-wheel Y zoom routes autoScale through React stat
   assert.doesNotMatch(
     source,
     /if \(overPriceAxis\) \{[\s\S]*?priceScale\.setAutoScale\?\.\(false\)/,
+  );
+});
+
+test("ResearchChartSurface custom time-axis zoom publishes user visible ranges for hydration", () => {
+  // The chart body pan/zoom path relies on lightweight-charts' range
+  // subscriber. Our custom time-axis wheel/drag path owns the range change,
+  // so it must notify the hydration callback directly; otherwise zooming
+  // into left whitespace can expose blank history without backfilling.
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(
+    source,
+    /const publishCustomTimeScaleUserRange = useCallback\(/,
+  );
+  assert.match(
+    source,
+    /autoHydrationViewportRef\.current = false;[\s\S]*?lastUserVisibleRangeRef\.current = visibleRange;[\s\S]*?visibleRangeChangeRef\.current\?\.\(visibleRange\)/,
+  );
+  assert.match(
+    source,
+    /timeScale\.setVisibleLogicalRange\?\.\(nextRange\);\s*publishCustomTimeScaleUserRange\(nextRange\)/,
+  );
+  assert.match(
+    source,
+    /chart\.timeScale\?\.\(\)\?\.setVisibleLogicalRange\?\.\(nextRange\);\s*publishCustomTimeScaleUserRange\(nextRange\)/,
   );
 });
 
@@ -745,7 +784,7 @@ test("ResearchChartSurface keeps fuller dashboard labels off the chart area", ()
       {
         kind: "title",
         label: undefined,
-        value: "RayAlgo",
+        value: "PYRUS",
         detail: undefined,
       },
       {

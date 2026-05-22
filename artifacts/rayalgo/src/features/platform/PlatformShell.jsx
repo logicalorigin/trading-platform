@@ -1,4 +1,7 @@
 import {
+  useListExecutionEvents,
+} from "@workspace/api-client-react";
+import {
   memo,
   Suspense,
   useCallback,
@@ -13,9 +16,13 @@ import {
   CheckCircle2,
   CircleAlert,
   Ellipsis,
+  Gauge,
   LineChart,
   List,
   PanelLeftClose,
+  RadioTower,
+  Search,
+  Settings as SettingsIcon,
   Tv,
   WalletCards,
   XCircle,
@@ -25,6 +32,9 @@ import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
 import { MobileMoreSheet } from "./MobileMoreSheet.jsx";
 import { MobileWatchlistDrawer } from "./MobileWatchlistDrawer.jsx";
+import { buildAlgoEventToast } from "./algoEventToasts.js";
+import { useAlgoCockpitStream } from "./live-streams";
+import { useToast } from "./platformContexts.jsx";
 import {
   SCREENS,
   SCREEN_RENDER_POLICIES,
@@ -33,6 +43,7 @@ import {
 import { useElementSize, useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { PyrusBrandLockup, PyrusRadialMark } from "../../components/brand/PyrusLogo";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
   markScreenReady,
@@ -57,7 +68,14 @@ const MOBILE_NAV_ICONS = {
   flow: Activity,
   trade: ChartCandlestick,
   account: WalletCards,
+  gex: Activity,
+  research: Search,
+  algo: RadioTower,
+  backtest: ChartCandlestick,
+  diagnostics: Gauge,
+  settings: SettingsIcon,
 };
+const MOBILE_SYMBOL_CONTEXT_SCREEN_SET = new Set(["market", "flow", "gex", "trade"]);
 const BloombergLiveDock = lazyWithRetry(
   () => import("./BloombergLiveDock"),
   { label: "BloombergLiveDock" },
@@ -155,11 +173,11 @@ const PlatformScreenStack = memo(({
           screenId={id}
           active={active}
         >
+          <ScreenReadyProbe screenId={id} active={active} />
           <Suspense
             fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
           >
             {renderScreenById(id)}
-            <ScreenReadyProbe screenId={id} active={active} />
           </Suspense>
         </ScreenTransitionHost>
       ) : null;
@@ -225,17 +243,19 @@ const fmtCompactCurrency = (value, masked = false) => {
 
 const MobileHeaderChip = ({ label, value, tone = T.text }) => (
   <span
-    className="ra-header-chip"
+    className="ra-header-chip ra-mobile-header-chip"
     style={{
       minWidth: 0,
       flex: "0 1 auto",
       display: "inline-flex",
       alignItems: "baseline",
-      gap: sp(3),
-      maxWidth: dim(96),
-      paddingRight: sp(7),
-      marginRight: sp(1),
-      borderRight: `1px solid ${T.borderLight}`,
+      gap: sp(2),
+      maxWidth: dim(126),
+      minHeight: dim(22),
+      padding: sp("2px 6px"),
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.pill),
+      background: T.bg0,
       color: tone,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
@@ -250,7 +270,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
         color: T.textMuted,
         fontSize: textSize("micro"),
         fontWeight: FONT_WEIGHTS.medium,
-        letterSpacing: "0.04em",
+        letterSpacing: 0,
         textTransform: "uppercase",
       }}
     >
@@ -272,7 +292,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
 const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
   <AppTooltip content={label}>
     <button
-      className="ra-interactive"
+      className="ra-interactive ra-mobile-icon-button"
       data-testid={testId}
       type="button"
       onClick={onClick}
@@ -297,6 +317,72 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
   </AppTooltip>
 );
 
+const MobileHeaderContext = ({ activeScreen, selectedSymbol }) => {
+  const screen = SCREENS.find((item) => item.id === activeScreen);
+  const label = screen?.label || activeScreen;
+  const symbol = MOBILE_SYMBOL_CONTEXT_SCREEN_SET.has(activeScreen)
+    ? String(selectedSymbol || "").trim().toUpperCase()
+    : "";
+  const Icon = MOBILE_NAV_ICONS[activeScreen] || LineChart;
+  const accessibleLabel = symbol ? `${label} ${symbol}` : label;
+
+  return (
+    <div
+      data-testid="mobile-header-context"
+      className="ra-mobile-header-context"
+      aria-label={accessibleLabel}
+      style={{
+        minWidth: 0,
+        maxWidth: "100%",
+        justifySelf: "stretch",
+        height: dim(28),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(5),
+        padding: sp("0 8px"),
+        border: `1px solid ${T.borderLight}`,
+        borderRadius: dim(RADII.pill),
+        background: T.bg0,
+        color: T.text,
+        fontFamily: T.sans,
+        boxSizing: "border-box",
+        overflow: "hidden",
+      }}
+    >
+      <Icon size={dim(13)} strokeWidth={2.2} color={T.accent} style={{ flex: "0 0 auto" }} />
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: T.textSec,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
+        }}
+      >
+        {label}
+      </span>
+      {symbol ? (
+        <span
+          style={{
+            flex: "0 0 auto",
+            color: T.text,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.label,
+            lineHeight: 1,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {symbol}
+        </span>
+      ) : null}
+    </div>
+  );
+};
+
 const HEADER_SCREEN_LABELS = {
   account: "Acct",
   backtest: "BT",
@@ -317,19 +403,28 @@ const NARROW_HEADER_SCREEN_LABELS = {
   settings: "Set",
 };
 
-const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }) => (
+const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }) => {
+  const activeSecondaryScreen = MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
+    ? null
+    : SCREENS.find((item) => item.id === activeScreen);
+  const MoreIcon = activeSecondaryScreen
+    ? MOBILE_NAV_ICONS[activeSecondaryScreen.id] || Ellipsis
+    : Ellipsis;
+  const moreLabel = activeSecondaryScreen?.label || "More";
+
+  return (
   <nav
     data-testid="mobile-bottom-nav"
     aria-label="Primary mobile navigation"
-    className="ra-glass-surface"
+    className="ra-glass-surface ra-mobile-bottom-nav"
     style={{
       flexShrink: 0,
       display: "grid",
       gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-      gap: sp(2),
-      padding: sp("4px 6px max(5px, env(safe-area-inset-bottom))"),
+      gap: sp(3),
+      padding: "6px 8px max(8px, env(safe-area-inset-bottom))",
       borderTop: `1px solid ${T.border}`,
-      minHeight: `calc(${dim(54)}px + env(safe-area-inset-bottom))`,
+      minHeight: `calc(${dim(58)}px + env(safe-area-inset-bottom))`,
     }}
   >
     {MOBILE_PRIMARY_SCREEN_IDS.map((screenId) => {
@@ -349,18 +444,23 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
           data-testid={`mobile-bottom-nav-${screenId}`}
           aria-current={active ? "page" : undefined}
           onClick={() => setScreen(screenId)}
-          className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
+          className={joinMotionClasses(
+            "ra-interactive",
+            "ra-mobile-nav-item",
+            active && "ra-focus-rail",
+          )}
           style={{
             ...motionVars({ accent: hasAlerts ? alertColor : T.accent }),
             minWidth: 0,
-            minHeight: dim(46),
+            minHeight: dim(48),
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
             gap: sp(2),
-            border: `1px solid ${active ? T.accent : "transparent"}`,
-            background: active ? `${T.accent}14` : "transparent",
+            border: "1px solid transparent",
+            borderRadius: dim(RADII.sm),
+            background: active ? `${T.accent}12` : "transparent",
             color: active ? T.accent : T.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
@@ -410,22 +510,22 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
       onClick={onOpenMore}
       className={joinMotionClasses(
         "ra-interactive",
+        "ra-mobile-nav-item",
         !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) && "ra-focus-rail",
       )}
       style={{
         ...motionVars({ accent: T.accent }),
         minWidth: 0,
-        minHeight: dim(46),
+        minHeight: dim(48),
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         gap: sp(2),
-        border: `1px solid ${
-          !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : "transparent"
-        }`,
+        border: "1px solid transparent",
+        borderRadius: dim(RADII.sm),
         background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
-          ? `${T.accent}14`
+          ? `${T.accent}12`
           : "transparent",
         color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : T.textDim,
         cursor: "pointer",
@@ -433,11 +533,21 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
         fontSize: textSize("caption"),
       }}
     >
-      <Ellipsis size={17} strokeWidth={2.1} />
-      <span>More</span>
+      <MoreIcon size={17} strokeWidth={2.1} />
+      <span
+        style={{
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {moreLabel}
+      </span>
     </button>
   </nav>
-);
+  );
+};
 
 const FooterField = ({ label, value, valueColor }) => (
   <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
@@ -608,6 +718,9 @@ export const PlatformShell = ({
   const mobileAutoCollapseRef = useRef(false);
   const previousActiveScreenRef = useRef(activeScreen);
   const resizeCleanupRef = useRef(null);
+  const toastedEventIdsRef = useRef(new Set());
+  const hasReceivedLiveRef = useRef(false);
+  const toast = useToast();
   const handleSetScreen = useCallback(
     (screenId) => {
       if (!screenId || screenId === activeScreen) {
@@ -617,6 +730,64 @@ export const PlatformShell = ({
       setScreen(screenId);
     },
     [activeScreen, setScreen],
+  );
+  const handleAlgoAction = useCallback(() => {
+    handleSetScreen("algo");
+  }, [handleSetScreen]);
+  const handleAlgoLiveEvents = useCallback(
+    (events) => {
+      const liveEvents = Array.isArray(events) ? events : [];
+      if (!hasReceivedLiveRef.current) {
+        hasReceivedLiveRef.current = true;
+        liveEvents.forEach((event) => {
+          if (event?.id) {
+            toastedEventIdsRef.current.add(event.id);
+          }
+        });
+        return;
+      }
+
+      liveEvents.forEach((event) => {
+        if (!event?.id || toastedEventIdsRef.current.has(event.id)) {
+          return;
+        }
+        toastedEventIdsRef.current.add(event.id);
+        const toastSpec = buildAlgoEventToast(event);
+        if (toastSpec) {
+          toast.push(toastSpec);
+        }
+      });
+
+      if (toastedEventIdsRef.current.size > 500) {
+        toastedEventIdsRef.current = new Set(
+          Array.from(toastedEventIdsRef.current).slice(-300),
+        );
+      }
+    },
+    [toast],
+  );
+
+  useEffect(() => {
+    hasReceivedLiveRef.current = false;
+    toastedEventIdsRef.current = new Set();
+  }, [environment]);
+
+  useAlgoCockpitStream({
+    deploymentId: null,
+    mode: environment || "paper",
+    eventLimit: 20,
+    enabled: true,
+    onLiveEvents: handleAlgoLiveEvents,
+  });
+  const algoEventsQuery = useListExecutionEvents(
+    { limit: 20 },
+    {
+      query: {
+        enabled: true,
+        retry: false,
+        refetchOnWindowFocus: false,
+      },
+    },
   );
 
   useLayoutEffect(() => {
@@ -702,15 +873,12 @@ export const PlatformShell = ({
       : resolvedWatchlistSidebarWidth;
   const headerGridTemplate = isPhone
     ? "minmax(0, 1fr)"
-    : "minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content)";
+    : "minmax(0, max-content) minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content)";
   const compactAccountId = primaryAccountId || accounts?.[0]?.id || MISSING_VALUE;
   const compactNetLiq = fmtCompactCurrency(
     primaryAccount?.netLiquidation,
     maskAccountValues,
   );
-  const compactWatchlist = (activeWatchlist?.name || "Core").toUpperCase();
-  const compactIbkrReady = Boolean(session?.configured?.ibkr);
-
   return (
   <div
     className="ra-shell"
@@ -743,13 +911,16 @@ export const PlatformShell = ({
     <div
       ref={headerRef}
       data-testid="platform-compact-header"
+      className={isPhone ? "ra-mobile-app-header" : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: headerGridTemplate,
         alignItems: "center",
         justifyContent: "stretch",
-        gap: sp(isPhone ? 2 : 2),
-        padding: sp(isPhone ? "3px 0px" : headerTight ? "2px 4px" : "2px 6px"),
+        gap: sp(isPhone ? 1 : 2),
+        padding: isPhone
+          ? "max(5px, env(safe-area-inset-top)) 7px 4px"
+          : sp(headerTight ? "2px 4px" : "2px 6px"),
         minWidth: 0,
         background: T.bg1,
         borderBottom: "none",
@@ -762,49 +933,40 @@ export const PlatformShell = ({
         <>
           <div
             data-testid="mobile-top-chrome"
+            className="ra-mobile-top-chrome"
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(0, 1fr)",
               alignItems: "center",
-              gap: sp(2),
+              gap: sp(3),
               minWidth: 0,
             }}
           >
             <div
-              className="ra-hide-scrollbar"
+              data-testid="mobile-kpi-rail"
+              className="ra-hide-scrollbar ra-mobile-kpi-rail"
               style={{
                 order: 2,
                 display: "flex",
                 alignItems: "center",
-                gap: sp(4),
+                gap: sp(5),
                 minWidth: 0,
                 maxWidth: "100%",
-                flexWrap: "wrap",
-                overflow: "hidden",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                overflowY: "hidden",
+                padding: sp("0 1px 1px"),
+                scrollSnapType: "x proximity",
               }}
             >
-              <MobileHeaderChip label="ACCT" value={compactAccountId} />
-              <MobileHeaderChip label="NLV" value={compactNetLiq} tone={T.text} />
-              <MobileHeaderChip
-                label="IBKR"
-                value={compactIbkrReady ? "ON" : "OFF"}
-                tone={compactIbkrReady ? T.green : T.red}
-              />
-              <MobileHeaderChip label="SYM" value={selectedSymbol} tone={T.text} />
-              <MobileHeaderChip label="WL" value={compactWatchlist} />
-            </div>
-            <div
-              style={{
-                order: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(4),
-                minWidth: 0,
-                width: "100%",
-              }}
-            >
-              <div style={{ minWidth: 0, overflow: "hidden" }}>
+              <div
+                style={{
+                  flex: "0 0 auto",
+                  maxWidth: `min(58vw, ${dim(220)}px)`,
+                  minWidth: 0,
+                  overflow: "hidden",
+                }}
+              >
                 <HeaderStatusClusterComponent
                   session={session}
                   environment={environment}
@@ -814,37 +976,78 @@ export const PlatformShell = ({
                   compact
                 />
               </div>
-              <MobileIconButton
-                Icon={Activity}
-                label="Open activity and notifications"
-                testId="mobile-activity-trigger"
-                onClick={() => setMobileActivityOpen(true)}
-                active={mobileActivityOpen}
-              />
-              <MobileIconButton
-                Icon={List}
-                label="Open watchlist"
-                testId="mobile-watchlist-trigger"
-                onClick={() => setMobileWatchlistOpen(true)}
-                active={mobileWatchlistOpen}
-              />
+              <MobileHeaderChip label="ACCT" value={compactAccountId} />
+              <MobileHeaderChip label="NLV" value={compactNetLiq} tone={T.text} />
             </div>
-          </div>
-          <div
-            data-testid="mobile-kpi-rail"
-            className="ra-hide-scrollbar"
-            style={{
-              minWidth: 0,
-              display: "flex",
-              alignItems: "center",
-              overflowX: "auto",
-            }}
-          >
-            <HeaderKpiStripComponent onSelect={onSelectSymbol} compact />
+            <div
+              className="ra-mobile-title-bar"
+              style={{
+                order: 1,
+                display: "grid",
+                gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                alignItems: "center",
+                gap: sp(8),
+                minWidth: 0,
+                width: "100%",
+                padding: sp("0 1px"),
+              }}
+            >
+              <div
+                aria-label="PYRUS"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifySelf: "start",
+                  minWidth: 0,
+                }}
+              >
+                <PyrusRadialMark size={21} title="PYRUS" />
+              </div>
+              <MobileHeaderContext
+                activeScreen={activeScreen}
+                selectedSymbol={selectedSymbol}
+              />
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(6),
+                  justifySelf: "end",
+                }}
+              >
+                <MobileIconButton
+                  Icon={Activity}
+                  label="Open activity and notifications"
+                  testId="mobile-activity-trigger"
+                  onClick={() => setMobileActivityOpen(true)}
+                  active={mobileActivityOpen}
+                />
+                <MobileIconButton
+                  Icon={List}
+                  label="Open watchlist"
+                  testId="mobile-watchlist-trigger"
+                  onClick={() => setMobileWatchlistOpen(true)}
+                  active={mobileWatchlistOpen}
+                />
+              </div>
+            </div>
           </div>
         </>
       ) : (
         <>
+          <div
+            aria-label="PYRUS Trading OS"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifySelf: "start",
+              minWidth: 0,
+              paddingInline: sp(3),
+            }}
+          >
+            <PyrusBrandLockup compact={headerTight} showDescriptor={!headerTight} />
+          </div>
+
           <div
             data-testid="platform-screen-nav"
             className="ra-hide-scrollbar"
@@ -1018,6 +1221,8 @@ export const PlatformShell = ({
       enabled={sessionMetadataSettled}
       onSignalAction={onSignalAction}
       onFlowAction={onFlowAction}
+      onAlgoAction={handleAlgoAction}
+      algoEvents={algoEventsQuery.data?.events || []}
       signalScanEnabled={signalScanEnabled}
       signalScanPending={signalScanPending}
       signalEvaluationPending={signalEvaluationPending}

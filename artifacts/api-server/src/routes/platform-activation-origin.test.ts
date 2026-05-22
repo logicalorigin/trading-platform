@@ -58,7 +58,7 @@ test.after(() => {
 
 test("IBKR bridge launcher origin prefers explicit public API base URL", () => {
   process.env["IBKR_BRIDGE_API_BASE_URL"] =
-    "https://api.rayalgo.example.com/api/ignored?x=1";
+    "https://api.pyrus.example.com/api/ignored?x=1";
 
   const origin = getIbkrBridgeRequestOrigin(
     makeRequest({
@@ -69,7 +69,7 @@ test("IBKR bridge launcher origin prefers explicit public API base URL", () => {
     }),
   );
 
-  assert.equal(origin, "https://api.rayalgo.example.com");
+  assert.equal(origin, "https://api.pyrus.example.com");
 });
 
 test("IBKR bridge launcher origin uses forwarded public host from frontend proxy", () => {
@@ -78,14 +78,14 @@ test("IBKR bridge launcher origin uses forwarded public host from frontend proxy
       protocol: "http",
       headers: {
         host: "127.0.0.1:8080",
-        "x-forwarded-host": "rayalgo-public.example.com",
+        "x-forwarded-host": "pyrus-public.example.com",
         "x-forwarded-proto": "http",
         origin: "http://localhost:5173",
       },
     }),
   );
 
-  assert.equal(origin, "https://rayalgo-public.example.com");
+  assert.equal(origin, "https://pyrus-public.example.com");
 });
 
 test("IBKR bridge launcher origin does not emit loopback browser origins", () => {
@@ -156,12 +156,12 @@ test("IBKR bridge launcher origin can use a non-loopback browser origin", () => 
     makeRequest({
       headers: {
         host: "127.0.0.1:8080",
-        origin: "https://rayalgo-preview.example.com",
+        origin: "https://pyrus-preview.example.com",
       },
     }),
   );
 
-  assert.equal(origin, "https://rayalgo-preview.example.com");
+  assert.equal(origin, "https://pyrus-preview.example.com");
 });
 
 test("IBKR bridge bundle redirect uses configured external artifact URL", () => {

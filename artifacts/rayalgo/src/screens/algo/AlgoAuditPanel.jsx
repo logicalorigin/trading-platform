@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FONT_WEIGHTS,
   RADII,
@@ -9,6 +9,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { InlineFilterBar } from "../../components/platform/primitives.jsx";
+import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import { motionRowStyle } from "../../lib/motion";
@@ -24,6 +25,8 @@ const STAGE_CHIPS = [
   { id: "blocked", label: "Blocked", matches: (type) => /blocked|skipped|gateway/.test(type) },
   { id: "config", label: "Config", matches: (type) => /strategy_settings|enabled|paused|deployment/.test(type) },
 ];
+
+const AUDIT_PAGE_SIZE = 50;
 
 const matchesStage = (eventType, stageIds) => {
   if (!stageIds.length) return true;
@@ -42,6 +45,7 @@ export const AlgoAuditPanel = ({
 }) => {
   const [symbolFilter, setSymbolFilter] = useState("");
   const [stageFilters, setStageFilters] = useState([]);
+  const [page, setPage] = useState(0);
   const focus = useAlgoFocus();
   const filteredEvents = useMemo(() => {
     const symbolQuery = symbolFilter.trim().toUpperCase();
@@ -63,6 +67,16 @@ export const AlgoAuditPanel = ({
     );
     return [...matches, ...rest];
   }, [events, focus.focusedSymbol, stageFilters, symbolFilter]);
+  const paginatedEvents = paginateRows(filteredEvents, page, AUDIT_PAGE_SIZE);
+  const pageEvents = paginatedEvents.pageRows;
+  useEffect(() => {
+    setPage(0);
+  }, [focus.focusedSymbol, stageFilters, symbolFilter]);
+  useEffect(() => {
+    if (paginatedEvents.safePage !== page) {
+      setPage(paginatedEvents.safePage);
+    }
+  }, [page, paginatedEvents.safePage]);
 
   const stageCounts = useMemo(() => {
     const counts = {};
@@ -158,81 +172,93 @@ export const AlgoAuditPanel = ({
             : "No events match the current filter."}
         </div>
       ) : (
-        filteredEvents.map((event, index) => {
+        <>
+          {pageEvents.map((event, index) => {
           const isFocused =
             focus.focusedSymbol &&
             String(event.symbol || "").toUpperCase() ===
               String(focus.focusedSymbol).toUpperCase();
           return (
-          <div
-            key={event.id}
-            className="ra-row-enter"
-            data-focused={isFocused ? "true" : undefined}
-            style={{
-              ...motionRowStyle(index, 10, 140),
-              display: "grid",
-              gridTemplateColumns: `${dim(64)}px ${dim(130)}px 1fr ${dim(88)}px`,
-              gap: sp(6),
-              alignItems: "start",
-              padding: sp("4px 0"),
-              paddingLeft: isFocused ? sp(6) : 0,
-              borderLeft: isFocused
-                ? `3px solid ${T.accent}`
-                : "3px solid transparent",
-              background: isFocused ? `${T.accent}10` : "transparent",
-              borderBottom: `1px solid ${T.border}08`,
-              fontSize: textSize("caption"),
-            }}
-          >
-            <span style={{ color: T.textDim, fontFamily: T.sans }}>
-              {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
-            </span>
-            <span
-              style={{ color: T.accent, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}
-            >
-              {formatEnumLabel(event.eventType)}
-            </span>
-            <span
+            <div
+              key={event.id}
+              className="ra-row-enter"
+              data-focused={isFocused ? "true" : undefined}
               style={{
-                color: T.textSec,
-                fontFamily: T.sans,
-                lineHeight: 1.4,
+                ...motionRowStyle(index, 10, 140),
+                display: "grid",
+                gridTemplateColumns: `${dim(64)}px ${dim(130)}px 1fr ${dim(88)}px`,
+                gap: sp(6),
+                alignItems: "start",
+                padding: sp("4px 0"),
+                paddingLeft: isFocused ? sp(6) : 0,
+                borderLeft: isFocused
+                  ? `3px solid ${T.accent}`
+                  : "3px solid transparent",
+                background: isFocused ? `${T.accent}10` : "transparent",
+                borderBottom: `1px solid ${T.border}08`,
+                fontSize: textSize("caption"),
               }}
             >
-              {event.summary}
-            </span>
-            {event.symbol ? (
-              <button
-                type="button"
-                onClick={() => handleSymbolClick(event.symbol)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: 0,
-                  color: T.text,
-                  fontFamily: T.sans,
-                  textAlign: "right",
-                  textDecoration: "underline dotted",
-                  textDecorationColor: T.textDim,
-                  cursor: "pointer",
-                }}
+              <span style={{ color: T.textDim, fontFamily: T.sans }}>
+                {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
+              </span>
+              <span
+                style={{ color: T.accent, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}
               >
-                {event.symbol}
-              </button>
-            ) : (
+                {formatEnumLabel(event.eventType)}
+              </span>
               <span
                 style={{
-                  color: T.textDim,
+                  color: T.textSec,
                   fontFamily: T.sans,
-                  textAlign: "right",
+                  lineHeight: 1.4,
                 }}
               >
-                {event.providerAccountId || "system"}
+                {event.summary}
               </span>
-            )}
-          </div>
+              {event.symbol ? (
+                <button
+                  type="button"
+                  onClick={() => handleSymbolClick(event.symbol)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    color: T.text,
+                    fontFamily: T.sans,
+                    textAlign: "right",
+                    textDecoration: "underline dotted",
+                    textDecorationColor: T.textDim,
+                    cursor: "pointer",
+                  }}
+                >
+                  {event.symbol}
+                </button>
+              ) : (
+                <span
+                  style={{
+                    color: T.textDim,
+                    fontFamily: T.sans,
+                    textAlign: "right",
+                  }}
+                >
+                  {event.providerAccountId || "system"}
+                </span>
+              )}
+            </div>
           );
-        })
+        })}
+          <PaginationFooter
+            dataTestId="algo-audit-pagination"
+            label="Rows"
+            onPageChange={setPage}
+            page={paginatedEvents.safePage}
+            pageCount={paginatedEvents.pageCount}
+            pageSize={AUDIT_PAGE_SIZE}
+            total={paginatedEvents.total}
+            style={{ paddingTop: sp(2), borderTop: `1px solid ${T.border}` }}
+          />
+        </>
       )}
     </div>
   );

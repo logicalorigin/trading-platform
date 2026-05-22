@@ -75,15 +75,15 @@ export const SharedMarketFlowRuntime = memo(({
 export const BroadFlowScannerRuntime = memo(({
   symbols = [],
   enabled = true,
+  scannerConfig = null,
   startupDelayMs = BROAD_FLOW_STARTUP_DELAY_MS,
 }) => {
   const ownerTokenRef = useRef(Symbol("broad-flow-scanner-runtime"));
   const flowScannerControl = useFlowScannerControlState();
-  const symbolsKey = symbols.join(",");
   const [startupReady, setStartupReady] = useState(false);
   const scannerEnabled = Boolean(flowScannerControl.enabled);
   useEffect(() => {
-    if (!enabled || !symbols.length) {
+    if (!enabled) {
       setStartupReady(false);
       return undefined;
     }
@@ -99,21 +99,28 @@ export const BroadFlowScannerRuntime = memo(({
       setStartupReady(true);
     }, delay);
     return () => clearTimeout(timer);
-  }, [enabled, startupDelayMs, symbols.length, symbolsKey]);
+  }, [enabled, startupDelayMs]);
   const runtimeActive = Boolean(enabled && scannerEnabled && startupReady);
   const broadScannerConfig = useMemo(
     () =>
       normalizeFlowScannerConfig({
         ...flowScannerControl.config,
+        ...(scannerConfig || {}),
         mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
       }),
-    [flowScannerControl.config],
+    [flowScannerControl.config, scannerConfig],
   );
   const snapshot = useLiveMarketFlow(symbols, {
     enabled: runtimeActive,
     scannerConfig: broadScannerConfig,
     blocking: false,
   });
+
+  useEffect(() => {
+    if (!runtimeActive) {
+      clearMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY);
+    }
+  }, [runtimeActive]);
 
   useEffect(() => {
     if (!runtimeActive) {

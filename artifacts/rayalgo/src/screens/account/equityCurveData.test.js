@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAnchoredValueDomain,
+  buildBenchmarkValueDomain,
   buildEquityCurvePointSummary,
   buildPaddedValueDomain,
   buildTransferAdjustedPnlSeries,
@@ -204,5 +205,20 @@ test("buildAnchoredValueDomain expands both sides when needed to preserve alignm
 
   assert.equal(min, -5);
   assert.equal(max, 15);
+  assert.equal(Number(((max - 0) / (max - min)).toFixed(10)), 0.75);
+});
+
+test("buildBenchmarkValueDomain uses a compact padded percent scale without an anchor", () => {
+  const [min, max] = buildBenchmarkValueDomain([-7.1, 19.7]);
+
+  assert.equal(Number(min.toFixed(2)), -10.32);
+  assert.equal(Number(max.toFixed(2)), 22.92);
+});
+
+test("buildBenchmarkValueDomain can still align an anchored zero for P&L charts", () => {
+  const [min, max] = buildBenchmarkValueDomain([-5, 10], {
+    anchorRatio: 0.75,
+  });
+
   assert.equal(Number(((max - 0) / (max - min)).toFixed(10)), 0.75);
 });

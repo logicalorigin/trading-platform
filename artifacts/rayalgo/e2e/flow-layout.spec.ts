@@ -274,7 +274,7 @@ async function mockFlowApi(
       if (options.premiumDistributionFailure) {
         status = 503;
         body = {
-          type: "https://rayalgo.local/problems/premium-distribution",
+          type: "https://pyrus.local/problems/premium-distribution",
           title: "Premium distribution unavailable",
           status,
           detail: "Premium distribution is unavailable.",
@@ -585,7 +585,7 @@ async function openFlow(page: Page) {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "flow",
         sym: "SPY",
@@ -608,7 +608,7 @@ async function openFlowWithState(page: Page, state: Record<string, unknown>) {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "flow",
         sym: "SPY",
@@ -683,7 +683,9 @@ test("Flow premium distribution renders 16 compact tiles in the combined scanner
 
   const panel = page.getByTestId("flow-distribution-scanner-panel");
   await expect(panel).toBeVisible();
-  expect(premiumDistributionLimits).toContain("16");
+  await expect
+    .poll(() => premiumDistributionLimits, { timeout: 10_000 })
+    .toContain("16");
   await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(16);
   await expect(panel.locator('section[aria-label="Inflow order bars"]')).toHaveCount(0);
   await expect(panel.locator('section[aria-label="Outflow order bars"]')).toHaveCount(0);
@@ -691,15 +693,23 @@ test("Flow premium distribution renders 16 compact tiles in the combined scanner
   await expect(panel.getByText(/Quote matched · 96% classified/)).toBeVisible();
   await expect(panel.getByText("Kilo USD", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("img", { name: /Order flow distribution donut chart/ })).toHaveCount(16);
+  await expect(panel.getByTestId("flow-premium-distribution-donut-frame")).toHaveCount(16);
   await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText("SPY");
-  await expect(panel.getByText(/#1/)).toHaveCount(0);
-  await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText(/M/);
-  await expect(panel.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);
+  await expect(panel.getByText("#1", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText(/[MK]/);
+  await expect(panel.getByTestId("flow-premium-net-intensity-meter")).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="small"]')).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="medium"]')).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="large"]')).toHaveCount(16);
   await expect(panel.getByText(/cls · N/)).toHaveCount(0);
   await expect(panel.getByText(/trades · Vol/)).toHaveCount(0);
   await expect(panel.getByText(/L>=/)).toHaveCount(0);
   await expect(panel.getByText("XL")).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Today" })).toBeVisible();
+  await expect(panel.getByText(/16 syms · \d+% classified avg/)).toBeVisible();
+  await expect(panel.getByTestId("flow-premium-bucket-toggle-small")).toBeVisible();
+  await expect(panel.getByTestId("flow-premium-bucket-toggle-medium")).toBeVisible();
+  await expect(panel.getByTestId("flow-premium-bucket-toggle-large")).toBeVisible();
   await expect(page.getByTestId("flow-distribution-status-rail")).toBeVisible();
   const desktopBoxes = await page
     .getByTestId("flow-premium-distribution-widget")
@@ -709,11 +719,21 @@ test("Flow premium distribution renders 16 compact tiles in the combined scanner
         return { width: rect.width, height: rect.height };
       }),
     );
-  expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(155);
+  expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(340);
   expect(Math.max(...desktopBoxes.map((box) => box.height))).toBeLessThanOrEqual(120);
   await panel.screenshot({
     path: testInfo.outputPath("flow-premium-distribution-desktop.png"),
   });
+
+  await panel.getByTestId("flow-premium-bucket-toggle-small").click();
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="small"]')).toHaveCount(0);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="medium"]')).toHaveCount(16);
+  await panel.getByTestId("flow-premium-bucket-toggle-medium").click();
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="medium"]')).toHaveCount(0);
+  await panel.getByTestId("flow-premium-bucket-toggle-large").click();
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="small"]')).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="medium"]')).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"][data-bucket="large"]')).toHaveCount(16);
 
   await panel.getByRole("button", { name: "Week" }).click();
   await expect(panel.getByRole("button", { name: "Week" })).toBeVisible();
@@ -731,7 +751,7 @@ test("Flow premium distribution renders 16 compact tiles in the combined scanner
   await expectNoDocumentOverflow(page);
 });
 
-test("Flow premium distribution falls back to scanner donuts when premium endpoint is unavailable", async ({
+test("Flow premium distribution falls back to scanner dense buckets when premium endpoint is unavailable", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -744,9 +764,10 @@ test("Flow premium distribution falls back to scanner donuts when premium endpoi
   await expect(panel.getByText("Premium distribution unavailable")).toHaveCount(0);
   await expect(page.getByTestId("flow-premium-distribution-empty")).toHaveCount(0);
   await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(16);
-  await expect(
-    panel.getByRole("img", { name: /Order flow distribution donut chart/ }),
-  ).toHaveCount(16);
+  await expect(panel.getByRole("img", { name: /Order flow distribution donut chart/ })).toHaveCount(16);
+  await expect(panel.getByTestId("flow-premium-distribution-donut-frame")).toHaveCount(16);
+  await expect(panel.getByTestId("flow-premium-net-intensity-meter")).toHaveCount(16);
+  await expect(panel.locator('[data-testid="flow-premium-bucket-strip"]')).toHaveCount(48);
   await panel.screenshot({
     path: testInfo.outputPath("flow-scanner-distribution-fallback.png"),
   });
@@ -786,7 +807,8 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
     .toBeGreaterThan(0);
 
   const requestsBeforeLeavingFlow = broadScanRequests.length;
-  await page.getByRole("button", { name: "Account", exact: true }).click();
+  const screenNav = page.getByTestId("platform-screen-nav");
+  await screenNav.getByRole("button", { name: /^(Account|Acct)$/ }).click();
   await expect(page.getByTestId("screen-host-account")).toBeVisible({
     timeout: 30_000,
   });
@@ -794,7 +816,7 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
     .poll(() => broadScanRequests.length, { timeout: 20_000 })
     .toBeGreaterThan(requestsBeforeLeavingFlow);
 
-  await page.getByRole("button", { name: "Flow", exact: true }).click();
+  await screenNav.getByRole("button", { name: /^(Flow|Fl)$/ }).click();
   await expect(page.getByTestId("screen-host-flow")).toBeVisible({
     timeout: 30_000,
   });
@@ -881,8 +903,21 @@ test("Header Flow settings share linked filters with the Flow page", async ({
   await filterPanel.getByTestId("flow-include-input").fill("SPY, QQQ");
   await filterPanel.getByRole("button", { name: "Puts" }).click();
   await filterPanel.getByRole("button", { name: "$100K" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("pyrus:state:v1");
+        return raw ? JSON.parse(raw) : {};
+      }),
+    )
+    .toMatchObject({
+      flowFilter: "puts",
+      flowMinPrem: 100_000,
+      flowIncludeQuery: "SPY, QQQ",
+    });
 
-  await page.getByTestId("header-unusual-tape-settings-trigger").click();
+  const headerFlowSettingsTrigger = page.getByTestId("header-unusual-tape-settings-trigger");
+  await headerFlowSettingsTrigger.click();
   await expect(page.getByTestId("header-flow-filter-include")).toHaveValue(
     "SPY, QQQ",
   );
@@ -900,12 +935,16 @@ test("Header Flow settings share linked filters with the Flow page", async ({
     "SPY, QQQ",
   );
   await expect(filterPanel.getByTestId("flow-exclude-input")).toHaveValue("TSLA");
-  await expect(page.getByTestId("header-flow-filter-type")).toHaveValue("golden");
+  const headerFlowFilterType = page.getByTestId("header-flow-filter-type");
+  if (!(await headerFlowFilterType.isVisible().catch(() => false))) {
+    await headerFlowSettingsTrigger.click();
+  }
+  await expect(headerFlowFilterType).toHaveValue("golden");
   await expect(page.getByTestId("header-flow-filter-preset")).toHaveValue("golden");
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const raw = window.localStorage.getItem("rayalgo:state:v1");
+        const raw = window.localStorage.getItem("pyrus:state:v1");
         return raw ? JSON.parse(raw) : {};
       }),
     )
@@ -969,7 +1008,7 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        const state = JSON.parse(localStorage.getItem("pyrus:state:v1") || "{}");
         return state.flowActivePresetId;
       }),
     )
@@ -981,12 +1020,12 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
 
   const sideCheckbox = drawer.getByTestId("flow-column-row-side").locator("input");
   await expect(sideCheckbox).toBeChecked();
-  await sideCheckbox.click();
+  await sideCheckbox.uncheck({ force: true });
   await expect(sideCheckbox).not.toBeChecked();
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        const state = JSON.parse(localStorage.getItem("pyrus:state:v1") || "{}");
         return Array.isArray(state.flowVisibleColumns)
           ? state.flowVisibleColumns.includes("side")
           : true;
@@ -1036,7 +1075,7 @@ test("Flow tape repairs persisted column state to show the visual bid ask column
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        const state = JSON.parse(localStorage.getItem("pyrus:state:v1") || "{}");
         return Array.isArray(state.flowVisibleColumns)
           ? state.flowVisibleColumns.includes("bidAsk")
           : false;
@@ -1167,8 +1206,9 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   await expect(page.getByTestId("flow-mobile-card-list")).toBeVisible();
   const firstCard = page.getByTestId("flow-row-card").first();
   await expect(firstCard).toBeVisible();
-  await page.getByRole("button", { name: "Pause" }).first().click();
-  await expect(page.getByRole("button", { name: "Resume" }).first()).toBeVisible();
+  const flowToolbar = page.getByTestId("flow-top-toolbar");
+  await flowToolbar.getByRole("button", { name: "Pause" }).click();
+  await expect(flowToolbar.getByRole("button", { name: "Resume" })).toBeVisible();
 
   await page.getByTestId("flow-filter-toggle").click();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();

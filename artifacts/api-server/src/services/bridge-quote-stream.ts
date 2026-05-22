@@ -1,5 +1,6 @@
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
+import { isHttpError } from "../lib/errors";
 import {
   IbkrBridgeClient,
   type MutableQuoteStream,
@@ -11,6 +12,7 @@ import {
   isMarketDataLeaseActive,
   releaseMarketDataLeases,
 } from "./market-data-admission";
+import { runBridgeWork } from "./bridge-governor";
 
 type QuoteWithSource = QuoteSnapshot & {
   source: "ibkr";
@@ -30,6 +32,8 @@ export type BridgeQuoteStreamDiagnostics = {
   reconnectCount: number;
   streamGapCount: number;
   dataGapCount: number;
+  staleQuoteRejectedCount: number;
+  sameTimestampQuoteRejectedCount: number;
   recentGapCount: number;
   recentDataGapCount: number;
   maxGapMs: number | null;
@@ -121,6 +125,10 @@ const SNAPSHOT_BOOTSTRAP_TIMEOUT_MS = Math.max(
   ) || 2_500,
 );
 
+function isBridgeWorkBackoffError(error: unknown): boolean {
+  return isHttpError(error) && error.code === "ibkr_bridge_work_backoff";
+}
+
 let nextSubscriberId = 1;
 let streamSignature = "";
 let streamUnsubscribe: (() => void) | null = null;
@@ -141,6 +149,8 @@ let mutableQuoteStreamSupported = true;
 let mutableUpdateCount = 0;
 let lastMutableUpdateAt: Date | null = null;
 let streamGapCount = 0;
+let staleQuoteRejectedCount = 0;
+let sameTimestampQuoteRejectedCount = 0;
 let maxGapMs = 0;
 let lastGapMs: number | null = null;
 let lastGapAt: Date | null = null;
@@ -378,40 +388,95 @@ function hasUsableQuotePrice(quote: QuoteSnapshot): boolean {
   );
 }
 
+const QUOTE_VALUE_FIELDS: Array<keyof QuoteSnapshot> = [
+  "price",
+  "bid",
+  "ask",
+  "change",
+  "changePercent",
+  "open",
+  "high",
+  "low",
+  "prevClose",
+  "volume",
+  "delayed",
+  "freshness",
+  "marketDataMode",
+  "transport",
+];
+
+function readQuoteDataTimestampMs(quote: QuoteSnapshot): number | null {
+  return readTimestampMs(quote.dataUpdatedAt) ?? readTimestampMs(quote.updatedAt);
+}
+
+function readQuoteWrapperTimestampMs(quote: QuoteSnapshot): number | null {
+  return readTimestampMs(quote.updatedAt);
+}
+
+function hasSameTimestampQuoteConflict(
+  incoming: QuoteSnapshot,
+  current: QuoteSnapshot,
+): boolean {
+  return QUOTE_VALUE_FIELDS.some((field) => {
+    const currentValue = current[field];
+    const incomingValue = incoming[field];
+    return (
+      currentValue !== undefined &&
+      currentValue !== null &&
+      incomingValue !== undefined &&
+      incomingValue !== null &&
+      !Object.is(currentValue, incomingValue)
+    );
+  });
+}
+
 function shouldPromoteQuote(
   incoming: QuoteSnapshot,
   current: QuoteSnapshot | undefined,
   receivedAt: Date,
-): boolean {
+): { promote: boolean; reason: "accepted" | "unusable" | "older" | "same-timestamp-conflict" } {
   if (!hasUsableQuotePrice(incoming) && incoming.freshness !== "pending") {
-    return false;
+    return { promote: false, reason: "unusable" };
   }
   if (!current) {
-    return true;
+    return { promote: true, reason: "accepted" };
   }
 
-  const incomingUpdatedAt = readTimestampMs(incoming.updatedAt);
-  const currentUpdatedAt = readTimestampMs(current.updatedAt);
+  const incomingUpdatedAt = readQuoteDataTimestampMs(incoming);
+  const currentUpdatedAt = readQuoteDataTimestampMs(current);
 
   if (incomingUpdatedAt !== null && currentUpdatedAt !== null) {
     if (incomingUpdatedAt > currentUpdatedAt) {
-      return true;
+      return { promote: true, reason: "accepted" };
     }
     if (incomingUpdatedAt < currentUpdatedAt) {
-      return false;
+      return { promote: false, reason: "older" };
+    }
+    const incomingWrapperUpdatedAt = readQuoteWrapperTimestampMs(incoming);
+    const currentWrapperUpdatedAt = readQuoteWrapperTimestampMs(current);
+    if (incomingWrapperUpdatedAt !== null && currentWrapperUpdatedAt !== null) {
+      if (incomingWrapperUpdatedAt > currentWrapperUpdatedAt) {
+        return { promote: true, reason: "accepted" };
+      }
+      if (incomingWrapperUpdatedAt < currentWrapperUpdatedAt) {
+        return { promote: false, reason: "older" };
+      }
     }
   } else if (incomingUpdatedAt === null && currentUpdatedAt !== null) {
-    return false;
+    return { promote: false, reason: "older" };
   } else if (incomingUpdatedAt !== null && currentUpdatedAt === null) {
-    return true;
+    return { promote: true, reason: "accepted" };
   }
 
   const currentReceivedAt = readTimestampMs(
     current.latency?.apiServerReceivedAt,
   );
-  return (
-    currentReceivedAt === null || receivedAt.getTime() >= currentReceivedAt
-  );
+  if (currentReceivedAt === null || receivedAt.getTime() >= currentReceivedAt) {
+    return { promote: true, reason: "accepted" };
+  }
+  return hasSameTimestampQuoteConflict(incoming, current)
+    ? { promote: false, reason: "same-timestamp-conflict" }
+    : { promote: false, reason: "older" };
 }
 
 function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
@@ -421,7 +486,13 @@ function cacheQuote(quote: QuoteSnapshot): QuoteSnapshot | null {
   }
   const receivedAt = nowProvider();
   const current = quoteCacheBySymbol.get(normalizedSymbol);
-  if (!shouldPromoteQuote(quote, current, receivedAt)) {
+  const decision = shouldPromoteQuote(quote, current, receivedAt);
+  if (!decision.promote) {
+    if (decision.reason === "same-timestamp-conflict") {
+      sameTimestampQuoteRejectedCount += 1;
+    } else if (decision.reason === "older") {
+      staleQuoteRejectedCount += 1;
+    }
     return null;
   }
   recordQuoteEvent(receivedAt);
@@ -835,30 +906,38 @@ export async function fetchBridgeQuoteSnapshots(
 
   try {
     if (hydrateSymbols.length > 0) {
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        SNAPSHOT_BOOTSTRAP_TIMEOUT_MS,
-      );
-      timeout.unref?.();
-      let freshQuotes: QuoteSnapshot[] = [];
-      try {
-        freshQuotes = await bridgeClient.getQuoteSnapshots(hydrateSymbols, {
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      const freshQuotes = await runBridgeWork("quotes", async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          SNAPSHOT_BOOTSTRAP_TIMEOUT_MS,
+        );
+        timeout.unref?.();
+        try {
+          return await bridgeClient.getQuoteSnapshots(hydrateSymbols, {
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+      });
       freshQuotes.forEach(cacheQuote);
     }
   } catch (error) {
     const now = nowProvider();
     lastError = readErrorMessage(error);
     lastErrorAt = now;
-    logger.warn(
-      { err: error, symbols: hydrateSymbols },
-      "IBKR bridge quote snapshot bootstrap skipped",
-    );
+    if (isBridgeWorkBackoffError(error)) {
+      logger.debug(
+        { err: error, symbols: hydrateSymbols },
+        "IBKR bridge quote snapshot bootstrap skipped",
+      );
+    } else {
+      logger.warn(
+        { err: error, symbols: hydrateSymbols },
+        "IBKR bridge quote snapshot bootstrap skipped",
+      );
+    }
   } finally {
     releaseMarketDataLeases(owner, "snapshot_complete");
   }
@@ -957,6 +1036,8 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
     reconnectCount,
     streamGapCount,
     dataGapCount: streamGapCount,
+    staleQuoteRejectedCount,
+    sameTimestampQuoteRejectedCount,
     recentGapCount: streamGapEvents.length,
     recentDataGapCount: streamGapEvents.length,
     maxGapMs: dataMaxGapMs,
@@ -1047,6 +1128,8 @@ export function __resetBridgeQuoteStreamForTests(): void {
   mutableUpdateCount = 0;
   lastMutableUpdateAt = null;
   streamGapCount = 0;
+  staleQuoteRejectedCount = 0;
+  sameTimestampQuoteRejectedCount = 0;
   maxGapMs = 0;
   lastGapMs = null;
   lastGapAt = null;

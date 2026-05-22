@@ -15,7 +15,10 @@ import {
   type MarketDataLease,
 } from "./market-data-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
-import { getOptionsFlowScannerDiagnostics } from "./platform";
+import {
+  getIbkrWatchlistPrewarmDiagnostics,
+  getOptionsFlowScannerDiagnostics,
+} from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
 type CachedBridgeLaneDiagnostics = {
@@ -408,12 +411,17 @@ function buildLineDriftReconciliation(input: {
   };
 }
 
-function liveSurfaceForLease(lease: MarketDataLease): "account" | "visible" | null {
+function liveSurfaceForLease(
+  lease: MarketDataLease,
+): "account" | "visible" | "watchlist" | null {
   if (lease.intent === "account-monitor-live") {
     return "account";
   }
   if (lease.intent === "visible-live") {
     return "visible";
+  }
+  if (lease.intent === "watchlist-live") {
+    return "watchlist";
   }
   return null;
 }
@@ -438,6 +446,7 @@ function buildWarmupCoverage(input: {
     : new Set<string>();
   const targetLineIds = new Set<string>();
   const accountLineIds = new Set<string>();
+  const watchlistLineIds = new Set<string>();
   const visibleLineIds = new Set<string>();
   const targetSymbols = new Set<string>();
 
@@ -450,6 +459,8 @@ function buildWarmupCoverage(input: {
       targetLineIds.add(lineId);
       if (surface === "account") {
         accountLineIds.add(lineId);
+      } else if (surface === "watchlist") {
+        watchlistLineIds.add(lineId);
       } else {
         visibleLineIds.add(lineId);
       }
@@ -469,6 +480,9 @@ function buildWarmupCoverage(input: {
   const visiblePendingLineIds = new Set(
     Array.from(visibleLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
   );
+  const watchlistPendingLineIds = new Set(
+    Array.from(watchlistLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
+  );
   const coverageRatio =
     targetLineIds.size > 0 ? activeLineIds.size / targetLineIds.size : null;
 
@@ -485,12 +499,15 @@ function buildWarmupCoverage(input: {
     pendingLineCount: pendingLineIds.size,
     accountTargetLineCount: accountLineIds.size,
     accountPendingLineCount: accountPendingLineIds.size,
+    watchlistTargetLineCount: watchlistLineIds.size,
+    watchlistPendingLineCount: watchlistPendingLineIds.size,
     visibleTargetLineCount: visibleLineIds.size,
     visiblePendingLineCount: visiblePendingLineIds.size,
     coverageRatio,
     targetSymbolCount: targetSymbols.size,
     pendingLineSample: lineDriftSample(pendingLineIds),
     accountPendingLineSample: lineDriftSample(accountPendingLineIds),
+    watchlistPendingLineSample: lineDriftSample(watchlistPendingLineIds),
     visiblePendingLineSample: lineDriftSample(visiblePendingLineIds),
   };
 }
@@ -514,6 +531,7 @@ function buildLineUsagePolicy(input: {
     accountMonitorLineCap: budget.accountMonitorLineCap,
     accountMonitorDynamic: true,
     automationLineCap: budget.automationLineCap,
+    watchlistLineCap: budget.watchlistLineCap,
     scannerStaticLineCap: budget.flowScannerLineCap,
   };
 }
@@ -568,10 +586,117 @@ function buildLineAllocation(input: {
     scannerConstrainedByActiveDemand: Boolean(
       pressure.scannerConstrainedByActiveDemand,
     ),
+    watchlistLineCount: readNumber(
+      lineAllocation.watchlistLineCount,
+      pressure.watchlistLineCount,
+      admission.watchlistLineCount,
+    ),
+    watchlistLineCap: readNumber(
+      pressure.watchlistStaticLineCap,
+      admission.budget.watchlistLineCap,
+      admission.poolUsage.watchlist?.maxLines,
+    ),
+    watchlistRemainingLineCount: readNumber(
+      pressure.watchlistRemainingLineCount,
+      admission.watchlistRemainingLineCount,
+      admission.poolUsage.watchlist?.remainingLineCount,
+    ),
     convenienceLineCount: readNumber(admission.convenienceLineCount),
     fillerLineCount: readNumber(admission.fillerLineCount),
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
+  };
+}
+
+function buildLineUtilizationAudit(input: {
+  admission: ReturnType<typeof getMarketDataAdmissionDiagnostics> & {
+    optionsFlowScanner: ReturnType<typeof getOptionsFlowScannerDiagnostics>;
+  };
+  allocation: ReturnType<typeof buildLineAllocation>;
+  bridgeActiveLineCount: number | null;
+  bridgeLineBudget: number | null;
+  driftReconciliation: ReturnType<typeof buildLineDriftReconciliation>;
+  watchlistPrewarm: ReturnType<typeof getIbkrWatchlistPrewarmDiagnostics>;
+}) {
+  const admission = input.admission;
+  const scannerUtilization = admission.optionsFlowScanner.lineUtilization;
+  const idleToTargetLineCount = readNumber(
+    input.allocation.remainingToTargetLineCount,
+  );
+  const bridgeRemainingLineCount =
+    input.bridgeLineBudget === null || input.bridgeActiveLineCount === null
+      ? null
+      : Math.max(0, input.bridgeLineBudget - input.bridgeActiveLineCount);
+  const scannerUnusedPoolLineCount = readNumber(
+    scannerUtilization.unusedPoolLines,
+  );
+  const watchlistFillerCap = Math.min(
+    input.watchlistPrewarm.fillerConfiguredMaxSymbolCount,
+    input.watchlistPrewarm.fillerPressureMaxSymbolCount,
+  );
+  const topLimitingReason =
+    idleToTargetLineCount === 0
+      ? "target-filled"
+      : bridgeRemainingLineCount === 0
+        ? "bridge-budget-full"
+        : input.driftReconciliation.status === "unknown"
+          ? "bridge-diagnostics-unavailable"
+          : admission.optionsFlowScanner.backgroundBlockedReason
+            ? `scanner-${admission.optionsFlowScanner.backgroundBlockedReason}`
+            : (scannerUnusedPoolLineCount ?? 0) > 0
+              ? "scanner-concurrency-cap"
+              : input.watchlistPrewarm.fillerCandidateSymbolCount > 0 &&
+                  input.watchlistPrewarm.fillerActiveSymbolCount >=
+                    watchlistFillerCap
+                ? "watchlist-filler-cap"
+                : input.watchlistPrewarm.laneDroppedSymbolCount > 0
+                  ? "watchlist-lane-cap"
+                  : input.driftReconciliation.status !== "matched"
+                    ? "line-drift"
+                    : "candidate-demand";
+
+  return {
+    targetLineCount: admission.budget.targetFillLines,
+    admissionActiveLineCount: admission.activeLineCount,
+    idleToTargetLineCount,
+    bridgeActiveLineCount: input.bridgeActiveLineCount,
+    bridgeLineBudget: input.bridgeLineBudget,
+    bridgeRemainingLineCount,
+    admissionVsBridgeLineDelta:
+      input.bridgeActiveLineCount === null
+        ? null
+        : admission.activeLineCount - input.bridgeActiveLineCount,
+    driftStatus: input.driftReconciliation.status,
+    topLimitingReason,
+    scanner: {
+      activeLineCount: admission.flowScannerLineCount,
+      staticLineCap: admission.budget.flowScannerLineCap,
+      effectiveLineCap: scannerUtilization.effectivePoolCap,
+      configuredConcurrency: scannerUtilization.configuredConcurrency,
+      effectiveConcurrency: scannerUtilization.effectiveConcurrency,
+      scannerLineBudget: scannerUtilization.scannerLineBudget,
+      maxDeepScanLines: scannerUtilization.maxDeepScanLines,
+      unusedPoolLineCount: scannerUnusedPoolLineCount,
+      recentRotatedCount:
+        admission.flowScannerActivity?.recentRotatedCount ?? 0,
+      recentRejectedCount:
+        admission.flowScannerActivity?.recentRejectedCount ?? 0,
+    },
+    watchlist: {
+      primaryActiveSymbolCount:
+        input.watchlistPrewarm.primaryActiveSymbolCount,
+      primarySymbolLimit: input.watchlistPrewarm.primarySymbolLimit,
+      laneDroppedSymbolCount:
+        input.watchlistPrewarm.laneDroppedSymbolCount,
+      droppedAfterPrimarySymbolCount:
+        input.watchlistPrewarm.droppedAfterPrimarySymbolCount,
+      fillerActiveSymbolCount:
+        input.watchlistPrewarm.fillerActiveSymbolCount,
+      fillerCandidateSymbolCount:
+        input.watchlistPrewarm.fillerCandidateSymbolCount,
+      fillerCapSymbolCount: watchlistFillerCap,
+      fillerEnabled: input.watchlistPrewarm.fillerEnabled,
+    },
   };
 }
 
@@ -617,6 +742,7 @@ export async function getIbkrLineUsageSnapshot() {
     ...getMarketDataAdmissionDiagnostics(),
     optionsFlowScanner: getOptionsFlowScannerDiagnostics(),
   };
+  const watchlistPrewarm = getIbkrWatchlistPrewarmDiagnostics();
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
@@ -630,6 +756,19 @@ export async function getIbkrLineUsageSnapshot() {
     subscriptions,
     bridgeDiagnosticsAvailable: Boolean(bridge.value),
   });
+  const allocation = buildLineAllocation({
+    admission,
+    bridgeActiveLineCount: bridgeActiveLines,
+    bridgeLineBudget,
+  });
+  const lineUtilizationAudit = buildLineUtilizationAudit({
+    admission,
+    allocation,
+    bridgeActiveLineCount: bridgeActiveLines,
+    bridgeLineBudget,
+    driftReconciliation,
+    watchlistPrewarm,
+  });
 
   return {
     updatedAt: new Date().toISOString(),
@@ -638,11 +777,8 @@ export async function getIbkrLineUsageSnapshot() {
       admission,
       bridgeLineBudget,
     }),
-    allocation: buildLineAllocation({
-      admission,
-      bridgeActiveLineCount: bridgeActiveLines,
-      bridgeLineBudget,
-    }),
+    allocation,
+    lineUtilizationAudit,
     bridge: {
       diagnostics: bridge.value,
       error: bridge.error,
@@ -661,6 +797,7 @@ export async function getIbkrLineUsageSnapshot() {
       stockAggregates,
     },
     warmup,
+    watchlistPrewarm,
     accountMonitor: buildAccountMonitorLineUsage({ admission, warmup }),
     ownerClasses: admission.ownerClasses,
     signalOptions: admission.signalOptions,

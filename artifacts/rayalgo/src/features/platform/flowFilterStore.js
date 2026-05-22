@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { RAYALGO_STORAGE_KEY } from "../../lib/uiTokens";
+import { PYRUS_STORAGE_KEY } from "../../lib/uiTokens";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 
 export const FLOW_TAPE_FILTER_OPTIONS = Object.freeze([
@@ -52,7 +52,7 @@ const DEFAULT_FLOW_TAPE_FILTER_STATE = Object.freeze({
 const readPersistedState = () => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return {};
-    const raw = window.localStorage.getItem(RAYALGO_STORAGE_KEY);
+    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch (_error) {
     return {};
@@ -64,7 +64,7 @@ const persistFlowTapeFilterState = (state) => {
     if (typeof window === "undefined" || !window.localStorage) return;
     const current = readPersistedState();
     window.localStorage.setItem(
-      RAYALGO_STORAGE_KEY,
+      PYRUS_STORAGE_KEY,
       JSON.stringify({
         ...current,
         flowActivePresetId: state.activeFlowPresetId,

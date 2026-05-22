@@ -122,6 +122,43 @@ test("quote prewarm groups merge instead of replacing each other", async () => {
   assert.equal(trimCalls, 4);
 });
 
+test("option quote snapshots trim temporary subscriptions after request", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<void>;
+    ensureOptionQuoteSubscriptionsForProviderContractIds(
+      providerContractIds: string[],
+    ): Promise<string[]>;
+    resolveOptionContractByProviderContractId(providerContractId: string): Promise<never>;
+    trimUnusedQuoteSubscriptions(): void;
+  };
+  let trimCalls = 0;
+  internals.refreshSession = async () => {};
+  internals.ensureOptionQuoteSubscriptionsForProviderContractIds = async (
+    providerContractIds,
+  ) => providerContractIds;
+  internals.resolveOptionContractByProviderContractId = async () => {
+    throw new Error("contract resolution unavailable");
+  };
+  internals.trimUnusedQuoteSubscriptions = () => {
+    trimCalls += 1;
+  };
+
+  const quotes = await provider.getOptionQuoteSnapshots({
+    providerContractIds: ["twsopt:test-option"],
+  });
+
+  assert.deepEqual(quotes, []);
+  assert.equal(trimCalls, 1);
+});
+
 test("option quote market data type switches live config to frozen outside regular session", () => {
   assert.equal(
     resolveOptionQuoteMarketDataType(
@@ -1355,6 +1392,37 @@ test("toQuoteSnapshot maps IBKR option volume and open-interest ticks", () => {
 
   assert.equal(quote.volume, 812);
   assert.equal(quote.openInterest, 640);
+});
+
+test("toQuoteSnapshot timestamps quote data from the selected price tick", () => {
+  const priceUpdatedAt = Date.parse("2026-05-21T14:30:02.000Z");
+  const laterVolumeUpdatedAt = Date.parse("2026-05-21T14:30:05.000Z");
+  const ticks = new Map<number, { value: number; ingressTm: number }>([
+    [TickType.LAST, { value: 502.25, ingressTm: priceUpdatedAt }],
+    [TickType.VOLUME, { value: 1_200, ingressTm: laterVolumeUpdatedAt }],
+  ]);
+
+  const quote = toQuoteSnapshot("SPY", "756733", ticks as never, MarketDataType.REALTIME);
+
+  assert.equal(quote.price, 502.25);
+  assert.equal(quote.updatedAt.toISOString(), "2026-05-21T14:30:02.000Z");
+  assert.equal(quote.dataUpdatedAt?.toISOString(), "2026-05-21T14:30:02.000Z");
+});
+
+test("toQuoteSnapshot skips zero last prices when bid/ask ticks are usable", () => {
+  const bidUpdatedAt = Date.parse("2026-05-21T14:30:04.000Z");
+  const ticks = new Map<number, { value: number; ingressTm: number }>([
+    [TickType.LAST, { value: 0, ingressTm: Date.parse("2026-05-21T14:30:05.000Z") }],
+    [TickType.BID, { value: 501.9, ingressTm: bidUpdatedAt }],
+    [TickType.ASK, { value: 502.1, ingressTm: bidUpdatedAt }],
+  ]);
+
+  const quote = toQuoteSnapshot("SPY", "756733", ticks as never, MarketDataType.REALTIME);
+
+  assert.equal(quote.price, 501.9);
+  assert.equal(quote.bid, 501.9);
+  assert.equal(quote.ask, 502.1);
+  assert.equal(quote.updatedAt.toISOString(), "2026-05-21T14:30:04.000Z");
 });
 
 test("option activity snapshot timeout scales with batch size", () => {

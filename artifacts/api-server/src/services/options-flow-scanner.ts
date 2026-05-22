@@ -646,7 +646,7 @@ export function createOptionsFlowScanner<TEvent>(
 
   function startRotation(input: {
     symbols: readonly string[] | (() => readonly string[]);
-    request: OptionsFlowScannerRequest;
+    request: OptionsFlowScannerRequest | (() => OptionsFlowScannerRequest);
     intervalMs: number | (() => number);
     batchSize: number | (() => number);
   }): void {
@@ -702,7 +702,9 @@ export function createOptionsFlowScanner<TEvent>(
       if (batch.length) {
         try {
           options.onBatch?.(batch);
-          await requestScan(batch, input.request);
+          const request =
+            typeof input.request === "function" ? input.request() : input.request;
+          await requestScan(batch, request);
         } catch (error) {
           options.onError?.(error, { phase: "rotation" });
         }

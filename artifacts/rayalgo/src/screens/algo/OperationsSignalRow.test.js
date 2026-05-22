@@ -11,15 +11,40 @@ import { resolveSignalVerdict } from "../../components/platform/signal-language/
 const readSource = (relativeUrl) =>
   readFileSync(new URL(relativeUrl, import.meta.url), "utf8");
 
-test("signal row hero merges underlying and signal columns with earned flair", () => {
+test("signal row presents compact signal action decision columns", () => {
   const rowSource = readSource("./OperationsSignalRow.jsx");
 
-  assert.match(rowSource, /\{ key: "signalHero", label: "Signal", width: 250 \}/);
+  assert.match(rowSource, /COMPACT_COLUMNS/);
+  assert.match(rowSource, /\{ key: "signal", label: "Signal", track: "minmax\(0, 1fr\)" \}/);
+  assert.match(rowSource, /\{ key: "since", label: "Since", track: "minmax\(0, 0\.42fr\)" \}/);
+  assert.match(rowSource, /\{ key: "action", label: "Action", track: "minmax\(0, 1fr\)" \}/);
+  assert.match(rowSource, /\{ key: "execution", label: "Execution", track: "minmax\(0, 0\.92fr\)" \}/);
+  assert.match(rowSource, /\{ key: "decision", label: "Decision", track: "minmax\(0, 1\.08fr\)" \}/);
+  assert.match(rowSource, /\{ key: "rowAction", label: "Act", width: 48 \}/);
+  assert.match(rowSource, /COMPACT_COLUMN_TEMPLATE/);
+  assert.match(rowSource, /signalSinceDisplay/);
+  assert.doesNotMatch(rowSource, /\{ key: "contract", label: "Contract", width:/);
+  assert.doesNotMatch(rowSource, /\{ key: "quote", label: "Option quote", width:/);
   assert.doesNotMatch(rowSource, /ScoreBar/);
+  assert.doesNotMatch(rowSource, /ScorePill/);
+  assert.match(rowSource, /resolveSignalScoreBreakdown/);
+  assert.match(rowSource, /actionabilitySignalRecord/);
+  assert.doesNotMatch(rowSource, /Number\(signalRecord\.score\)/);
+  assert.match(rowSource, /resolveCandidateGateDisplay/);
+  assert.match(rowSource, /resolveCandidateSyncDisplay/);
+  assert.match(rowSource, /resolveDecisionDetailMeta/);
+  assert.match(rowSource, /decisionDetailText/);
+  assert.match(rowSource, /DECISION_DETAIL_META/);
+  assert.doesNotMatch(rowSource, /ReasonChip/);
+  assert.doesNotMatch(rowSource, /resolveReasonChipMeta/);
+  assert.doesNotMatch(rowSource, /REASON_ICON_META/);
+  assert.match(rowSource, /compactQuoteText/);
+  assert.match(rowSource, /formatQuoteAge/);
   assert.match(rowSource, /BigDirectionGlyph/);
   assert.match(rowSource, /SignalDots/);
-  assert.match(rowSource, /ConfluenceChip/);
+  assert.doesNotMatch(rowSource, /ConfluenceChip/);
   assert.match(rowSource, /VerdictGlyph/);
+  assert.match(rowSource, /RowActionButton/);
   assert.match(rowSource, /SpreadGauge/);
   assert.match(rowSource, /components\/platform\/signal-language/);
   assert.match(rowSource, /ra-signal-row-glow/);
@@ -29,6 +54,7 @@ test("signal row hero merges underlying and signal columns with earned flair", (
 
 test("algo signal table builds matrix and runtime ticker snapshots once per table", () => {
   const tableSource = readSource("./OperationsSignalTable.jsx");
+  const rowSource = readSource("./OperationsSignalRow.jsx");
   const livePageSource = readSource("./AlgoLivePage.jsx");
   const algoScreenSource = readSource("../AlgoScreen.jsx");
   const routerSource = readFileSync(
@@ -41,11 +67,37 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   );
 
   assert.match(tableSource, /signalMatrixStates = \[\]/);
+  assert.match(tableSource, /useState\("newest"\)/);
+  assert.match(tableSource, /signalTimestampMs\(b\.signal\) - signalTimestampMs\(a\.signal\)/);
+  assert.match(tableSource, /sortKey=\{sortKey\}/);
+  assert.match(tableSource, /onSortChange=\{setSortKey\}/);
+  assert.match(tableSource, /aria-label="Filter signals"/);
+  assert.match(tableSource, /Symbol or strategy/);
+  assert.doesNotMatch(tableSource, /<span>Sort<\/span>/);
+  assert.match(rowSource, /COMPACT_COLUMN_SORTS/);
+  assert.match(rowSource, /signal: \{ sortKey: "symbol"/);
+  assert.match(rowSource, /since: \{ sortKey: "newest"/);
+  assert.match(rowSource, /decision: \{ sortKey: "score"/);
+  assert.match(rowSource, /aria-pressed=\{active\}/);
+  assert.match(rowSource, /onSortChange\?\.\(sort\.sortKey\)/);
+  assert.match(rowSource, /ChevronDown/);
+  assert.match(tableSource, /Scan running/);
   assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
+  assert.match(tableSource, /SIGNALS_PAGE_SIZE = 30/);
+  assert.match(tableSource, /dataTestId="algo-signals-pagination"/);
+  assert.match(tableSource, /pageRows\.map/);
   assert.match(tableSource, /tfMatrix=\{signalMatrixBySymbol/);
+  assert.match(tableSource, /scoreBreakdown: resolveSignalScoreBreakdown\(\{ signal, candidate \}\)/);
+  assert.match(tableSource, /scoreSortValue\(b\.scoreBreakdown\) - scoreSortValue\(a\.scoreBreakdown\)/);
+  assert.match(tableSource, /overflowX: "hidden"/);
+  assert.doesNotMatch(tableSource, /overflowX: "auto"/);
+  assert.doesNotMatch(tableSource, /a\.signal\.score/);
+  assert.doesNotMatch(algoScreenSource, /visibleSignalRows[\s\S]*?\.slice\(0,\s*algoIsPhone \? 8 : 20\)/);
   assert.match(livePageSource, /signalMatrixStates = \[\]/);
   assert.match(livePageSource, /signalMatrixStates=\{signalMatrixStates\}/);
+  assert.match(livePageSource, /cockpitGeneratedAt=\{cockpitGeneratedAt\}/);
+  assert.match(livePageSource, /cockpitStageItems=\{cockpitStageItems\}/);
   assert.match(algoScreenSource, /signalMatrixStates = \[\]/);
   assert.match(algoScreenSource, /signalMatrixStates=\{signalMatrixStates\}/);
   assert.match(routerSource, /signalMatrixStates,/);
@@ -73,6 +125,7 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(signalDotsSource, /showLabels = false/);
   assert.match(signalDotsSource, /testId = "watchlist-signal-dots"/);
   assert.match(signalDotsSource, /data-testid=\{testId\}/);
+  assert.match(signalDotsSource, /fallbackState\.timeframe \|\| "5m"/);
   assert.match(rowSource, /testId="algo-signal-dots"/);
   assert.match(compatibilitySource, /signal-language\/SignalDots/);
   assert.doesNotMatch(watchlistSource, /const WatchlistSignalDots/);
@@ -89,6 +142,10 @@ test("signal row motion classes respect reduced-motion settings", () => {
   assert.match(
     cssSource,
     /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-signal-row-glow[\s\S]*?animation: none/,
+  );
+  assert.match(
+    cssSource,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?animation: none/,
   );
   assert.match(
     cssSource,

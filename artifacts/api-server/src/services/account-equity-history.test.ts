@@ -332,6 +332,190 @@ test("account history filters zero-only account placeholders before compaction",
   );
 });
 
+test("account history de-duplicates repeated persisted snapshot rows", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const dedupe = __accountEquityHistoryInternalsForTests.dedupeEquitySnapshotRows;
+
+  const rows = dedupe([
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-21T04:57:38.372Z"),
+      currency: "USD",
+      netLiquidation: "6016.04",
+      cash: "746.24",
+      buyingPower: "11403.22",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-21T04:57:38.372Z"),
+      currency: "USD",
+      netLiquidation: "6016.04",
+      cash: "746.24",
+      buyingPower: "11403.22",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-21T05:00:38.375Z"),
+      currency: "USD",
+      netLiquidation: "6020.04",
+      cash: "746.24",
+      buyingPower: "11403.22",
+    },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => ({
+      timestamp: row.asOf.toISOString(),
+      netLiquidation: row.netLiquidation,
+    })),
+    [
+      {
+        timestamp: "2026-05-21T04:57:38.372Z",
+        netLiquidation: "6016.04",
+      },
+      {
+        timestamp: "2026-05-21T05:00:38.375Z",
+        netLiquidation: "6020.04",
+      },
+    ],
+  );
+});
+
+test("combined account history aggregates staggered account snapshots before plotting", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const aggregate =
+    __accountEquityHistoryInternalsForTests.aggregateCombinedEquitySnapshotRows;
+
+  const rows = aggregate([
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-21T14:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "1000",
+      cash: "100",
+      buyingPower: "500",
+    },
+    {
+      providerAccountId: "U2",
+      asOf: new Date("2026-05-21T14:00:02.000Z"),
+      currency: "USD",
+      netLiquidation: "2000",
+      cash: "200",
+      buyingPower: "900",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-21T14:03:00.000Z"),
+      currency: "USD",
+      netLiquidation: "1100",
+      cash: "110",
+      buyingPower: "550",
+    },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => ({
+      timestamp: row.asOf.toISOString(),
+      account: row.providerAccountId,
+      netLiquidation: row.netLiquidation,
+      cash: row.cash,
+      buyingPower: row.buyingPower,
+    })),
+    [
+      {
+        timestamp: "2026-05-21T14:00:02.000Z",
+        account: "combined",
+        netLiquidation: "3000",
+        cash: "300",
+        buyingPower: "1400",
+      },
+      {
+        timestamp: "2026-05-21T14:03:00.000Z",
+        account: "combined",
+        netLiquidation: "3100",
+        cash: "310",
+        buyingPower: "1450",
+      },
+    ],
+  );
+});
+
+test("combined account history does not discard older single-account history when another account appears later", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const aggregate =
+    __accountEquityHistoryInternalsForTests.aggregateCombinedEquitySnapshotRows;
+
+  const rows = aggregate([
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-01T14:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "1000",
+      cash: "100",
+      buyingPower: "500",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-01T15:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "1100",
+      cash: "110",
+      buyingPower: "550",
+    },
+    {
+      providerAccountId: "U2",
+      asOf: new Date("2026-05-03T14:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "2000",
+      cash: "200",
+      buyingPower: "900",
+    },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => ({
+      timestamp: row.asOf.toISOString(),
+      netLiquidation: row.netLiquidation,
+    })),
+    [
+      {
+        timestamp: "2026-05-01T14:00:00.000Z",
+        netLiquidation: "1000",
+      },
+      {
+        timestamp: "2026-05-01T15:00:00.000Z",
+        netLiquidation: "1100",
+      },
+      {
+        timestamp: "2026-05-03T14:00:00.000Z",
+        netLiquidation: "3100",
+      },
+    ],
+  );
+});
+
+test("account history keeps ALL range detailed for short source spans", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const bucketSize =
+    __accountEquityHistoryInternalsForTests.equitySnapshotBucketSizeMs;
+  const rows = [
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-03-03T12:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "500",
+    },
+    {
+      providerAccountId: "U1",
+      asOf: new Date("2026-05-22T12:00:00.000Z"),
+      currency: "USD",
+      netLiquidation: "6900",
+    },
+  ];
+
+  assert.equal(bucketSize("ALL", rows), 30 * 60_000);
+});
+
 test("account history compaction preserves first daily snapshot for calendar P&L boundaries", async () => {
   const { __accountEquityHistoryInternalsForTests } = await import("./account");
   const compact = __accountEquityHistoryInternalsForTests.compactEquitySnapshotRows;

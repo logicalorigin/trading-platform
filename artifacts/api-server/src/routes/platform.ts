@@ -140,9 +140,7 @@ import {
 import type { AccountRange } from "../services/account-ranges";
 import type { RuntimeMode } from "../lib/runtime";
 import {
-  getShadowTradingPatterns,
   placeShadowOrder,
-  persistShadowTradingPatternsSnapshot,
   previewShadowOrder,
   runShadowWatchlistBacktest,
   SHADOW_ACCOUNT_ID,
@@ -207,12 +205,22 @@ const isHistoryBarTimeframe = (
   HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
 
 function readFetchPriority(req: Request): number | undefined {
-  const raw = req.get("x-rayalgo-fetch-priority");
+  const raw =
+    req.get("x-pyrus-fetch-priority") ?? req.get("x-rayalgo-fetch-priority");
   if (!raw) {
     return undefined;
   }
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readRequestFamily(req: Request): string | undefined {
+  const raw =
+    req.get("x-pyrus-request-family") ?? req.get("x-rayalgo-request-family");
+  if (!raw?.trim()) {
+    return undefined;
+  }
+  return raw.trim().slice(0, 64);
 }
 
 function normalizeStreamSymbols(rawSymbols: unknown): string[] {
@@ -663,7 +671,7 @@ function validateBarsRequestWindow(
   }
 
   res.status(400).type("application/problem+json").json({
-    type: "https://rayalgo.local/problems/bars-request-too-large",
+    type: "https://pyrus.local/problems/bars-request-too-large",
     title: "Bars request is too large",
     status: 400,
     detail: `${query.timeframe} bars are limited to ${maxDays} calendar days per request.`,
@@ -698,6 +706,10 @@ function setRequestDebugHeaders(
         degraded?: boolean;
         reason?: string | null;
         backoffRemainingMs?: number | null;
+        family?: string | null;
+        priority?: number | null;
+        priorityBucket?: string | null;
+        payloadClass?: string | null;
       }
     | undefined,
 ): void {
@@ -705,32 +717,49 @@ function setRequestDebugHeaders(
     return;
   }
 
-  res.setHeader("X-RayAlgo-Cache-Status", debug.cacheStatus);
-  res.setHeader("X-RayAlgo-Request-Ms", String(debug.totalMs));
+  const setDebugHeader = (suffix: string, value: string) => {
+    res.setHeader(`X-Pyrus-${suffix}`, value);
+    res.setHeader(`X-RayAlgo-${suffix}`, value);
+  };
+
+  setDebugHeader("Cache-Status", debug.cacheStatus);
+  setDebugHeader("Request-Ms", String(debug.totalMs));
 
   if (debug.upstreamMs != null) {
-    res.setHeader("X-RayAlgo-Upstream-Ms", String(debug.upstreamMs));
+    setDebugHeader("Upstream-Ms", String(debug.upstreamMs));
   }
   if (typeof debug.gapFilled === "boolean") {
-    res.setHeader("X-RayAlgo-Gap-Filled", debug.gapFilled ? "1" : "0");
+    setDebugHeader("Gap-Filled", debug.gapFilled ? "1" : "0");
   }
   if (typeof debug.stale === "boolean") {
-    res.setHeader("X-RayAlgo-Cache-Stale", debug.stale ? "1" : "0");
+    setDebugHeader("Cache-Stale", debug.stale ? "1" : "0");
   }
   if (typeof debug.ageMs === "number") {
-    res.setHeader("X-RayAlgo-Cache-Age-Ms", String(debug.ageMs));
+    setDebugHeader("Cache-Age-Ms", String(debug.ageMs));
   }
   if (typeof debug.degraded === "boolean") {
-    res.setHeader("X-RayAlgo-Degraded", debug.degraded ? "1" : "0");
+    setDebugHeader("Degraded", debug.degraded ? "1" : "0");
   }
   if (typeof debug.reason === "string" && debug.reason) {
-    res.setHeader("X-RayAlgo-Degraded-Reason", debug.reason);
+    setDebugHeader("Degraded-Reason", debug.reason);
   }
   if (typeof debug.backoffRemainingMs === "number") {
-    res.setHeader(
-      "X-RayAlgo-Backoff-Remaining-Ms",
+    setDebugHeader(
+      "Backoff-Remaining-Ms",
       String(Math.max(0, Math.round(debug.backoffRemainingMs))),
     );
+  }
+  if (typeof debug.family === "string" && debug.family) {
+    setDebugHeader("Request-Family", debug.family);
+  }
+  if (typeof debug.priority === "number" && Number.isFinite(debug.priority)) {
+    setDebugHeader("Fetch-Priority", String(debug.priority));
+  }
+  if (typeof debug.priorityBucket === "string" && debug.priorityBucket) {
+    setDebugHeader("Priority-Bucket", debug.priorityBucket);
+  }
+  if (typeof debug.payloadClass === "string" && debug.payloadClass) {
+    setDebugHeader("Payload-Class", debug.payloadClass);
   }
 }
 
@@ -1259,46 +1288,6 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
   );
 });
 
-router.get("/accounts/:accountId/trading-patterns", async (req, res) => {
-  if (req.params.accountId !== SHADOW_ACCOUNT_ID) {
-    res.status(400).json({
-      code: "shadow_patterns_only",
-      message: "Trading pattern analysis is currently available for the Shadow account only.",
-    });
-    return;
-  }
-  res.json(
-    await getShadowTradingPatterns({
-      range:
-        typeof req.query.range === "string"
-          ? (req.query.range as AccountRange)
-          : undefined,
-      snapshotId:
-        typeof req.query.snapshotId === "string" ? req.query.snapshotId : "latest",
-    }),
-  );
-});
-
-router.post("/accounts/:accountId/trading-patterns/snapshots", async (req, res) => {
-  if (req.params.accountId !== SHADOW_ACCOUNT_ID) {
-    res.status(400).json({
-      code: "shadow_patterns_only",
-      message: "Trading pattern analysis snapshots are currently available for the Shadow account only.",
-    });
-    return;
-  }
-  res.status(201).json(
-    await persistShadowTradingPatternsSnapshot({
-      range:
-        typeof req.body?.range === "string"
-          ? (req.body.range as AccountRange)
-          : typeof req.query.range === "string"
-            ? (req.query.range as AccountRange)
-            : undefined,
-    }),
-  );
-});
-
 router.get("/accounts/:accountId/allocation", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
@@ -1755,7 +1744,11 @@ router.get("/bars", async (req, res) => {
       Number.isFinite(rawBrokerRecentWindowMinutes)
         ? rawBrokerRecentWindowMinutes
         : null,
-  }, { signal, priority: readFetchPriority(req) });
+  }, {
+    signal,
+    priority: readFetchPriority(req),
+    family: readRequestFamily(req),
+  });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetBarsResponse.parse(raw);
 
@@ -1912,7 +1905,7 @@ router.post("/flow/scanner/benchmark", async (req, res) => {
     typeof body.underlying === "string" ? body.underlying.trim() : "";
   if (!underlying) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing underlying",
       status: 400,
       detail: "underlying is required.",
@@ -1972,7 +1965,7 @@ router.get("/streams/quotes", async (req, res) => {
 
   if (!symbols.length) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing symbols",
       status: 400,
       detail: "Provide one or more comma-separated stock symbols in the symbols query parameter.",
@@ -2008,7 +2001,7 @@ router.get("/streams/options/chains", async (req, res) => {
 
   if (!underlyings.length) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing underlyings",
       status: 400,
       detail: "Provide one or more comma-separated underlying symbols in the underlyings query parameter.",
@@ -2053,7 +2046,7 @@ router.get("/streams/options/quotes", async (req, res) => {
 
   if (!providerContractIds.length) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing contracts",
       status: 400,
       detail: "Provide one or more comma-separated option provider contract ids in the contracts query parameter.",
@@ -2102,7 +2095,7 @@ router.get("/streams/bars", async (req, res) => {
 
   if (!symbol || !isHistoryBarTimeframe(timeframe)) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing bar stream input",
       status: 400,
       detail: "Provide symbol and timeframe query parameters for the historical bar stream.",
@@ -2332,7 +2325,7 @@ router.get("/streams/executions", async (req, res) => {
 router.get("/streams/market-depth", async (req, res) => {
   if (typeof req.query.symbol !== "string" || !req.query.symbol.trim()) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing symbol",
       status: 400,
       detail: "Provide a symbol query parameter.",
@@ -2551,7 +2544,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 
   if (!symbols.length) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing symbols",
       status: 400,
       detail: "Provide one or more comma-separated stock symbols in the symbols query parameter.",
@@ -2561,7 +2554,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
 
   if (!isStockAggregateStreamingAvailable()) {
     res.status(503).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/upstream",
+      type: "https://pyrus.local/problems/upstream",
       title: "Stock aggregate streaming is not configured.",
       status: 503,
       detail: "Set IBKR bridge configuration or Polygon market-data credentials before using stock aggregate streams.",
@@ -2650,7 +2643,7 @@ router.post("/streams/stocks/aggregates/sessions/:sessionId/symbols", async (req
   const session = sessionId ? stockAggregateStreamSessions.get(sessionId) : null;
   if (!session) {
     res.status(404).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/not-found",
+      type: "https://pyrus.local/problems/not-found",
       title: "Stock aggregate stream session not found",
       status: 404,
       detail: "Open a stock aggregate stream before updating its symbols.",
@@ -2664,7 +2657,7 @@ router.post("/streams/stocks/aggregates/sessions/:sessionId/symbols", async (req
   );
   if (!symbols.length) {
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Missing symbols",
       status: 400,
       detail: "Provide one or more stock symbols in the symbols body field.",

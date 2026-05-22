@@ -1,13 +1,20 @@
 import { HttpError } from "../lib/errors";
 import { getPolygonRuntimeConfig, type PolygonRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
+import type {
+  MarketDataFreshness,
+  OptionChainContract as IbkrOptionChainContract,
+  QuoteSnapshot as IbkrQuoteSnapshot,
+} from "../providers/ibkr/client";
 import {
   PolygonMarketDataClient,
-  type FlowEvent,
-  type OptionChainContract,
-  type QuoteSnapshot,
   type UniverseTicker,
 } from "../providers/polygon/market-data";
+import {
+  batchOptionChains as platformBatchOptionChains,
+  getOptionExpirationsWithDebug as platformGetOptionExpirationsWithDebug,
+  getQuoteSnapshots as platformGetQuoteSnapshots,
+} from "./platform";
 
 export type GexOptionRow = {
   strike: number;
@@ -15,12 +22,22 @@ export type GexOptionRow = {
   expireMonth: number;
   expireDay: number;
   cp: "C" | "P";
+  ticker: string | null;
+  underlying: string | null;
+  expirationDate: string;
+  providerContractId: string | null;
   gamma: number;
   delta: number;
   openInterest: number;
   impliedVol: number;
   bid: number;
   ask: number;
+  multiplier: number;
+  sharesPerContract: number;
+  volume: number;
+  updatedAt: string | null;
+  quoteFreshness: MarketDataFreshness | null;
+  marketDataMode: string | null;
 };
 
 export type GexResponse = {
@@ -63,7 +80,7 @@ export type GexResponse = {
   } | null;
   flowContextStatus: "ok" | "unavailable";
   source: {
-    provider: "massive" | "polygon";
+    provider: "ibkr" | "massive" | "polygon";
     status: "ok" | "partial" | "unavailable";
     optionCount: number;
     usableOptionCount: number;
@@ -93,10 +110,7 @@ export type GexResponse = {
 
 type GexMarketDataClient = Pick<
   PolygonMarketDataClient,
-  | "getOptionChain"
-  | "getQuoteSnapshots"
   | "getUniverseTickerByTicker"
-  | "getDerivedFlowEvents"
   | "getBarsPage"
   | "getTickerMarketCap"
 >;
@@ -105,16 +119,33 @@ type GexMarketDataClientFactory = (
   config: PolygonRuntimeConfig,
 ) => GexMarketDataClient;
 
-const GEX_DASHBOARD_CACHE_TTL_MS = 60_000;
-const GEX_FLOW_LOOKBACK_MS = 14 * 60 * 60 * 1000;
-const GEX_FLOW_EVENT_LIMIT = 100;
-const GEX_FLOW_SNAPSHOT_PAGE_LIMIT = 3;
-const GEX_FLOW_TRADE_CONTRACT_LIMIT = 64;
-const GEX_FLOW_TRADE_PAGE_LIMIT = 1;
-const GEX_FLOW_TRADE_LIMIT = 500;
-const GEX_FLOW_TRADE_CONCURRENCY = 6;
+type GexPlatformDataClient = {
+  getQuoteSnapshots: typeof platformGetQuoteSnapshots;
+  getOptionExpirationsWithDebug: typeof platformGetOptionExpirationsWithDebug;
+  batchOptionChains: typeof platformBatchOptionChains;
+};
+
+type GexPlatformDataClientFactory = () => GexPlatformDataClient;
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw?.trim()) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+const GEX_DASHBOARD_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "GEX_DASHBOARD_CACHE_TTL_MS",
+  15_000,
+);
+const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
+  "GEX_DASHBOARD_LOAD_TIMEOUT_MS",
+  10_000,
+);
+const GEX_EXPIRATION_LIMIT = readPositiveIntegerEnv("GEX_EXPIRATION_LIMIT", 10);
 
 let gexMarketDataClientFactory: GexMarketDataClientFactory | null = null;
+let gexPlatformDataClientFactory: GexPlatformDataClientFactory | null = null;
 const gexDashboardCache = new Map<
   string,
   {
@@ -123,12 +154,39 @@ const gexDashboardCache = new Map<
     pending?: Promise<GexResponse>;
   }
 >();
+let gexDashboardLoadTimeoutMsForTests: number | null = null;
 
 export function __setGexMarketDataClientFactoryForTests(
   factory: GexMarketDataClientFactory | null,
 ): void {
   gexMarketDataClientFactory = factory;
   gexDashboardCache.clear();
+}
+
+export function __setGexPlatformDataClientFactoryForTests(
+  factory: GexPlatformDataClientFactory | null,
+): void {
+  gexPlatformDataClientFactory = factory;
+  gexDashboardCache.clear();
+}
+
+export function __setGexDashboardLoadTimeoutMsForTests(
+  value: number | null,
+): void {
+  gexDashboardLoadTimeoutMsForTests =
+    typeof value === "number" && Number.isFinite(value) && value > 0
+      ? Math.floor(value)
+      : null;
+}
+
+export function __expireGexDashboardCacheForTests(underlying: string): void {
+  const ticker = normalizeSymbol(underlying);
+  const cached = ticker ? gexDashboardCache.get(ticker) : null;
+  if (!ticker || !cached) return;
+  gexDashboardCache.set(ticker, {
+    ...cached,
+    expiresAt: 0,
+  });
 }
 
 function firstEnv(names: string[]): string | null {
@@ -156,23 +214,29 @@ function getGexRuntimeConfig(): PolygonRuntimeConfig | null {
   return getPolygonRuntimeConfig();
 }
 
-function getGexMarketDataClient(): {
+function getOptionalGexMarketDataClient(): {
   client: GexMarketDataClient;
   config: PolygonRuntimeConfig;
-} {
+} | null {
   const config = getGexRuntimeConfig();
   if (!config) {
-    throw new HttpError(503, "Massive market data is not configured.", {
-      code: "massive_not_configured",
-      detail:
-        "Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY before requesting GEX.",
-    });
+    return null;
   }
 
   return {
     client: gexMarketDataClientFactory?.(config) ?? new PolygonMarketDataClient(config),
     config,
   };
+}
+
+function getGexPlatformDataClient(): GexPlatformDataClient {
+  return (
+    gexPlatformDataClientFactory?.() ?? {
+      getQuoteSnapshots: platformGetQuoteSnapshots,
+      getOptionExpirationsWithDebug: platformGetOptionExpirationsWithDebug,
+      batchOptionChains: platformBatchOptionChains,
+    }
+  );
 }
 
 const finiteOrNull = (value: unknown): number | null => {
@@ -190,9 +254,14 @@ const finiteOrZero = (value: unknown): number => finiteOrNull(value) ?? 0;
 
 const toIsoDate = (date: Date): string => date.toISOString().slice(0, 10);
 
-function providerFromConfig(config: PolygonRuntimeConfig): "massive" | "polygon" {
-  return config.baseUrl.includes("massive.com") ? "massive" : "polygon";
-}
+const toDateOrNull = (value: unknown): Date | null => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+};
 
 function optionExpirationParts(expirationDate: Date): {
   year: number;
@@ -209,7 +278,30 @@ function optionExpirationParts(expirationDate: Date): {
   };
 }
 
-function mapGexOptions(contracts: OptionChainContract[]): {
+function readOptionUpdatedAt(option: IbkrOptionChainContract): Date | null {
+  return (
+    toDateOrNull(option.dataUpdatedAt) ??
+    toDateOrNull(option.quoteUpdatedAt) ??
+    toDateOrNull(option.updatedAt)
+  );
+}
+
+function deriveSpotFromOptionChain(
+  contracts: IbkrOptionChainContract[],
+): number | null {
+  const prices = contracts
+    .map((contract) => positiveOrNull(contract.underlyingPrice))
+    .filter((price): price is number => price !== null);
+  if (!prices.length) return null;
+  return prices[Math.floor((prices.length - 1) / 2)];
+}
+
+function isIbkrQuoteSnapshot(quote: IbkrQuoteSnapshot): boolean {
+  const source = String((quote as { source?: unknown }).source ?? "ibkr").toLowerCase();
+  return source === "ibkr";
+}
+
+function mapGexOptions(contracts: IbkrOptionChainContract[]): {
   rows: GexOptionRow[];
   optionCount: number;
   usableOptionCount: number;
@@ -230,6 +322,13 @@ function mapGexOptions(contracts: OptionChainContract[]): {
     const gamma = finiteOrNull(quote.gamma);
     const openInterest = finiteOrNull(quote.openInterest);
     const impliedVolatility = finiteOrNull(quote.impliedVolatility);
+    const multiplier =
+      positiveOrNull(quote.contract.multiplier) ??
+      positiveOrNull(quote.contract.sharesPerContract) ??
+      100;
+    const sharesPerContract =
+      positiveOrNull(quote.contract.sharesPerContract) ?? multiplier;
+    const updatedAt = readOptionUpdatedAt(quote);
     const cp =
       quote.contract.right === "call"
         ? "C"
@@ -257,20 +356,31 @@ function mapGexOptions(contracts: OptionChainContract[]): {
       expireMonth: expiration.month,
       expireDay: expiration.day,
       cp,
+      ticker: quote.contract.ticker || null,
+      underlying: quote.contract.underlying || null,
+      expirationDate: `${String(expiration.year).padStart(4, "0")}-${String(
+        expiration.month,
+      ).padStart(2, "0")}-${String(expiration.day).padStart(2, "0")}`,
+      providerContractId: quote.contract.providerContractId ?? null,
       gamma,
       delta: finiteOrZero(quote.delta),
       openInterest: Math.max(0, openInterest),
       impliedVol: impliedVolatility ?? 0,
       bid: finiteOrZero(quote.bid),
       ask: finiteOrZero(quote.ask),
+      multiplier,
+      sharesPerContract,
+      volume: Math.max(0, finiteOrZero(quote.volume)),
+      updatedAt: updatedAt?.toISOString() ?? null,
+      quoteFreshness: quote.quoteFreshness ?? null,
+      marketDataMode: quote.marketDataMode ?? null,
     });
 
     if (
-      quote.updatedAt instanceof Date &&
-      !Number.isNaN(quote.updatedAt.getTime()) &&
-      (!chainUpdatedAt || quote.updatedAt.getTime() > chainUpdatedAt.getTime())
+      updatedAt instanceof Date &&
+      (!chainUpdatedAt || updatedAt.getTime() > chainUpdatedAt.getTime())
     ) {
-      chainUpdatedAt = quote.updatedAt;
+      chainUpdatedAt = updatedAt;
     }
   });
 
@@ -311,7 +421,7 @@ function buildTickerDetails(input: {
 
 function buildProfile(input: {
   spot: number;
-  quote: QuoteSnapshot | null;
+  quote: IbkrQuoteSnapshot | null;
   details: UniverseTicker | null;
   marketCap: number | null;
   yearRange: { low: number | null; high: number | null };
@@ -334,121 +444,15 @@ function buildProfile(input: {
 
 function contractGex(option: GexOptionRow, spot: number): number {
   const sign = option.cp === "P" ? -1 : 1;
-  return sign * option.gamma * option.openInterest * 100 * spot * spot * 0.01;
-}
-
-function buildFlowContext(events: FlowEvent[], todayOptionVolume: number) {
-  const basisCounts = {
-    quoteMatch: 0,
-    tickTest: 0,
-    none: 0,
-  };
-  const confidenceCounts = {
-    high: 0,
-    medium: 0,
-    low: 0,
-    none: 0,
-  };
-
-  if (events.length === 0) {
-    return {
-      status: "unavailable" as const,
-      context: null,
-      eventCount: 0,
-      classifiedEventCount: 0,
-      classificationCoverage: 0,
-      basisCounts,
-      confidenceCounts,
-    };
-  }
-
-  let bullishPremium = 0;
-  let bearishPremium = 0;
-  let totalVolume = 0;
-  let netDelta = 0;
-  let grossDelta = 0;
-  let classifiedEventCount = 0;
-
-  events.forEach((event) => {
-    const premium = Math.max(0, finiteOrZero(event.premium));
-    const size = Math.max(0, finiteOrZero(event.size));
-    const deltaExposure =
-      Math.abs(finiteOrZero(event.delta)) * Math.max(1, size) * 100;
-    const sentiment = String(event.sentiment || "").toLowerCase();
-    const side = String(event.side || "").toLowerCase();
-    const right = String(event.right || "").toLowerCase();
-    const sideBasis = String(event.sideBasis || "none").toLowerCase();
-    const sideConfidence = String(event.sideConfidence || "none").toLowerCase();
-    if (sideBasis === "quote_match") {
-      basisCounts.quoteMatch += 1;
-    } else if (sideBasis === "tick_test") {
-      basisCounts.tickTest += 1;
-    } else {
-      basisCounts.none += 1;
-    }
-    if (sideConfidence === "high") {
-      confidenceCounts.high += 1;
-    } else if (sideConfidence === "medium") {
-      confidenceCounts.medium += 1;
-    } else if (sideConfidence === "low") {
-      confidenceCounts.low += 1;
-    } else {
-      confidenceCounts.none += 1;
-    }
-    const hasClassifiedSide =
-      (sideBasis === "quote_match" || sideBasis === "tick_test") &&
-      (side === "buy" || side === "sell");
-    const bullish =
-      hasClassifiedSide &&
-      (sentiment === "bullish" ||
-        (right === "call" && side === "buy") ||
-        (right === "put" && side === "sell"));
-    const bearish =
-      hasClassifiedSide &&
-      (sentiment === "bearish" ||
-        (right === "put" && side === "buy") ||
-        (right === "call" && side === "sell"));
-
-    if (bullish) bullishPremium += premium;
-    if (bearish) bearishPremium += premium;
-    if (bullish || bearish) {
-      classifiedEventCount += 1;
-      grossDelta += deltaExposure;
-    }
-    totalVolume += size;
-    netDelta += bullish ? deltaExposure : bearish ? -deltaExposure : 0;
-  });
-
-  const directionalPremium = bullishPremium + bearishPremium;
-  if (directionalPremium <= 0 || classifiedEventCount === 0) {
-    return {
-      status: "unavailable" as const,
-      context: null,
-      eventCount: events.length,
-      classifiedEventCount,
-      classificationCoverage: classifiedEventCount / events.length,
-      basisCounts,
-      confidenceCounts,
-    };
-  }
-
-  return {
-    status: "ok" as const,
-    context: {
-      bullishShare: bullishPremium / directionalPremium,
-      todayVol: todayOptionVolume > 0 ? todayOptionVolume : totalVolume,
-      avg30dVol: null,
-      netDelta,
-      refDelta: Math.max(1, grossDelta),
-      eventCount: events.length,
-      volumeBaselineReady: false,
-    },
-    eventCount: events.length,
-    classifiedEventCount,
-    classificationCoverage: classifiedEventCount / events.length,
-    basisCounts,
-    confidenceCounts,
-  };
+  return (
+    sign *
+    option.gamma *
+    option.openInterest *
+    option.multiplier *
+    spot *
+    spot *
+    0.01
+  );
 }
 
 function resolveYearRange(
@@ -471,53 +475,212 @@ function resolveYearRange(
   return { low, high };
 }
 
+function getGexDashboardLoadTimeoutMs(): number {
+  return gexDashboardLoadTimeoutMsForTests ?? GEX_DASHBOARD_LOAD_TIMEOUT_MS;
+}
+
+function withGexDashboardTimeout<T>(
+  promise: Promise<T>,
+  ticker: string,
+): Promise<T> {
+  const timeoutMs = getGexDashboardLoadTimeoutMs();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(
+        new HttpError(504, `GEX dashboard load timed out for ${ticker}.`, {
+          code: "gex_dashboard_timeout",
+          detail:
+            "IBKR quote, expiration, or option-chain hydration did not finish inside the chart marker budget.",
+        }),
+      );
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function appendGexSourceMessage(
+  existing: string | null | undefined,
+  message: string,
+): string {
+  return existing?.trim() ? `${existing} ${message}` : message;
+}
+
+function markGexDashboardStale(data: GexResponse, message: string): GexResponse {
+  return {
+    ...data,
+    isStale: true,
+    source: {
+      ...data.source,
+      status: "partial",
+      message: appendGexSourceMessage(data.source.message, message),
+    },
+  };
+}
+
+function mergeGexDashboardSnapshots(
+  previousData: GexResponse | undefined,
+  nextData: GexResponse,
+): GexResponse {
+  const sessionDate = nextData.timestamp.slice(0, 10);
+  const bySnapshot = new Map<string, { ts: string; netGex: number }>();
+  for (const snapshot of [
+    ...(previousData?.ticker === nextData.ticker ? previousData.snapshots : []),
+    ...nextData.snapshots,
+  ]) {
+    if (
+      !snapshot?.ts ||
+      snapshot.ts.slice(0, 10) !== sessionDate ||
+      !Number.isFinite(snapshot.netGex)
+    ) {
+      continue;
+    }
+    bySnapshot.set(`${snapshot.ts}:${snapshot.netGex}`, snapshot);
+  }
+  const snapshots = Array.from(bySnapshot.values())
+    .sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts))
+    .slice(-240);
+  return {
+    ...nextData,
+    snapshots,
+  };
+}
+
+function startGexDashboardRefresh(
+  ticker: string,
+  previousData?: GexResponse,
+): Promise<GexResponse> {
+  let pending: Promise<GexResponse>;
+  pending = withGexDashboardTimeout(
+    loadGexDashboardData({
+      ticker,
+    }),
+    ticker,
+  )
+    .then((data) => {
+      const mergedData = mergeGexDashboardSnapshots(previousData, data);
+      gexDashboardCache.set(ticker, {
+        expiresAt: Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
+        data: mergedData,
+      });
+      return mergedData;
+    })
+    .catch((error) => {
+      const current = gexDashboardCache.get(ticker);
+      if (current?.pending === pending) {
+        if (previousData) {
+          gexDashboardCache.set(ticker, {
+            expiresAt: 0,
+            data: previousData,
+          });
+        } else {
+          gexDashboardCache.delete(ticker);
+        }
+      }
+      if (previousData) {
+        return markGexDashboardStale(
+          previousData,
+          "Returning the previous zero-gamma dashboard because the refresh did not complete.",
+        );
+      }
+      throw error;
+    });
+
+  gexDashboardCache.set(ticker, {
+    expiresAt: previousData ? 0 : Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
+    data: previousData,
+    pending,
+  });
+  return pending;
+}
+
 async function loadGexDashboardData(input: {
   ticker: string;
   signal?: AbortSignal;
 }): Promise<GexResponse> {
   const ticker = input.ticker;
-  const { client, config } = getGexMarketDataClient();
+  const platformClient = getGexPlatformDataClient();
+  const referenceClient = getOptionalGexMarketDataClient()?.client ?? null;
   const now = new Date();
   const yearRangeFrom = new Date(now.getTime() - 366 * 24 * 60 * 60 * 1000);
-  const flowFrom = new Date(now.getTime() - GEX_FLOW_LOOKBACK_MS);
-  const [quotes, chain, tickerDetails, marketCap, yearBarsPage, flowEvents] =
+  const [quotePayload, expirationsPayload, tickerDetails, marketCap, yearBarsPage] =
     await Promise.all([
-    client.getQuoteSnapshots([ticker]),
-    client.getOptionChain({ underlying: ticker, maxPages: 100, signal: input.signal }),
-    client.getUniverseTickerByTicker(ticker, input.signal).catch(() => null),
-    client.getTickerMarketCap(ticker, input.signal).catch(() => null),
-    client
-      .getBarsPage({
-        symbol: ticker,
-        timeframe: "1d",
-        from: yearRangeFrom,
-        to: now,
-        limit: 260,
-      })
-      .catch(() => ({ bars: [] })),
-    client
-      .getDerivedFlowEvents({
+      platformClient.getQuoteSnapshots({ symbols: ticker }).catch(() => ({
+        quotes: [],
+        transport: null,
+        delayed: false,
+        fallbackUsed: false,
+      })),
+      platformClient.getOptionExpirationsWithDebug({
         underlying: ticker,
-        limit: GEX_FLOW_EVENT_LIMIT,
-        snapshotPageLimit: GEX_FLOW_SNAPSHOT_PAGE_LIMIT,
-        from: flowFrom,
-        to: now,
-        contractLimit: GEX_FLOW_TRADE_CONTRACT_LIMIT,
-        contractPageLimit: 1,
-        tradeLimit: GEX_FLOW_TRADE_LIMIT,
-        tradePageLimit: GEX_FLOW_TRADE_PAGE_LIMIT,
-        tradeConcurrency: GEX_FLOW_TRADE_CONCURRENCY,
-        signal: input.signal,
-      })
-      .catch(() => [] as FlowEvent[]),
-  ]);
+        maxExpirations: GEX_EXPIRATION_LIMIT,
+      }),
+      referenceClient
+        ? referenceClient.getUniverseTickerByTicker(ticker, input.signal).catch(() => null)
+        : Promise.resolve(null),
+      referenceClient
+        ? referenceClient.getTickerMarketCap(ticker, input.signal).catch(() => null)
+        : Promise.resolve(null),
+      referenceClient
+        ? referenceClient
+            .getBarsPage({
+              symbol: ticker,
+              timeframe: "1d",
+              from: yearRangeFrom,
+              to: now,
+              limit: 260,
+            })
+            .catch(() => ({ bars: [] }))
+        : Promise.resolve({ bars: [] }),
+    ]);
 
-  const quote = quotes.find((snapshot) => snapshot.symbol === ticker) ?? null;
-  const spot = finiteOrNull(quote?.price);
+  const expirationDates = expirationsPayload.expirations.map(
+    (expiration) => expiration.expirationDate,
+  );
+  if (expirationDates.length === 0) {
+    throw new HttpError(503, `GEX option expirations unavailable for ${ticker}.`, {
+      code: "gex_chain_unavailable",
+      detail: "IBKR returned no option expirations for this symbol.",
+    });
+  }
+
+  const chainPayload = await platformClient.batchOptionChains({
+    underlying: ticker,
+    expirationDates,
+    strikeCoverage: "full",
+    quoteHydration: "snapshot",
+  });
+  const chain = chainPayload.results.flatMap((result) => result.contracts);
+  const quoteRows = (quotePayload.quotes || []) as IbkrQuoteSnapshot[];
+  const quote =
+    quoteRows.find(
+      (snapshot) => snapshot.symbol === ticker && isIbkrQuoteSnapshot(snapshot),
+    ) ?? null;
+  const spot = positiveOrNull(quote?.price) ?? deriveSpotFromOptionChain(chain);
   if (spot == null || spot <= 0) {
     throw new HttpError(503, `Spot price unavailable for ${ticker}.`, {
       code: "gex_spot_unavailable",
-      detail: "GEX requires a current underlying quote from Massive.",
+      detail:
+        "GEX requires a current IBKR underlying quote or option-chain underlying price.",
     });
   }
 
@@ -525,16 +688,10 @@ async function loadGexDashboardData(input: {
   if (mappedOptions.rows.length === 0) {
     throw new HttpError(503, `GEX option chain unavailable for ${ticker}.`, {
       code: "gex_chain_unavailable",
-      detail:
-        "Massive returned no option contracts with both gamma and open interest.",
+      detail: "IBKR returned no option contracts with both gamma and open interest.",
     });
   }
 
-  const todayOptionVolume = chain.reduce(
-    (sum, row) => sum + Math.max(0, finiteOrZero(row.volume)),
-    0,
-  );
-  const flow = buildFlowContext(flowEvents, todayOptionVolume);
   const tickerDetailsWithMarketCap = tickerDetails
     ? ({ ...tickerDetails, marketCap } as UniverseTicker & {
         marketCap: number | null;
@@ -545,18 +702,30 @@ async function loadGexDashboardData(input: {
     (sum, row) => sum + contractGex(row, spot),
     0,
   );
-  const quoteUpdatedAt =
-    quote?.updatedAt instanceof Date && !Number.isNaN(quote.updatedAt.getTime())
-      ? quote.updatedAt
-      : null;
+  const quoteUpdatedAt = toDateOrNull(quote?.dataUpdatedAt) ?? toDateOrNull(quote?.updatedAt);
   const newestDataAt = [quoteUpdatedAt, mappedOptions.chainUpdatedAt]
     .filter((date): date is Date => date instanceof Date)
     .sort((left, right) => right.getTime() - left.getTime())[0];
   const staleAgeMs = newestDataAt ? now.getTime() - newestDataAt.getTime() : Infinity;
+  const isStale = staleAgeMs > 15 * 60_000;
+  const batchHasFailures = chainPayload.results.some(
+    (result) => result.status !== "loaded" || result.contracts.length === 0,
+  );
   const partialSource =
     mappedOptions.usableOptionCount < mappedOptions.optionCount ||
-    flow.status === "unavailable" ||
-    flow.context?.volumeBaselineReady === false;
+    batchHasFailures ||
+    !quote;
+  const flowBasisCounts = {
+    quoteMatch: 0,
+    tickTest: 0,
+    none: 0,
+  };
+  const flowConfidenceCounts = {
+    high: 0,
+    medium: 0,
+    low: 0,
+    none: 0,
+  };
 
   return {
     ticker,
@@ -574,13 +743,13 @@ async function loadGexDashboardData(input: {
     }),
     spot,
     timestamp: now.toISOString(),
-    isStale: staleAgeMs > 15 * 60_000,
+    isStale,
     options: mappedOptions.rows,
     snapshots: [{ ts: now.toISOString(), netGex }],
-    flowContext: flow.context,
-    flowContextStatus: flow.status,
+    flowContext: null,
+    flowContextStatus: "unavailable",
     source: {
-      provider: providerFromConfig(config),
+      provider: "ibkr",
       status: partialSource ? "partial" : "ok",
       optionCount: mappedOptions.optionCount,
       usableOptionCount: mappedOptions.usableOptionCount,
@@ -589,14 +758,14 @@ async function loadGexDashboardData(input: {
       withImpliedVolatility: mappedOptions.withImpliedVolatility,
       quoteUpdatedAt: quoteUpdatedAt?.toISOString() ?? null,
       chainUpdatedAt: mappedOptions.chainUpdatedAt?.toISOString() ?? null,
-      flowStatus: flow.status,
-      flowEventCount: flow.eventCount,
-      classifiedFlowEventCount: flow.classifiedEventCount,
-      flowClassificationCoverage: flow.classificationCoverage,
-      flowClassificationBasisCounts: flow.basisCounts,
-      flowClassificationConfidenceCounts: flow.confidenceCounts,
+      flowStatus: "unavailable",
+      flowEventCount: 0,
+      classifiedFlowEventCount: 0,
+      flowClassificationCoverage: 0,
+      flowClassificationBasisCounts: flowBasisCounts,
+      flowClassificationConfidenceCounts: flowConfidenceCounts,
       message: partialSource
-        ? "GEX is computed from Massive contracts with usable gamma and open interest. Flow direction uses confirmed option trade prints only when side classifies by quote match or tick test; volume confirmation stays conservative until a real 30-day baseline is available."
+        ? "GEX is computed from IBKR option-chain snapshots. Source is partial when an expiration batch fails, a quote is missing, or contracts lack usable gamma/open interest."
         : null,
     },
   };
@@ -619,30 +788,21 @@ export async function getGexDashboardData(input: {
     return cached.data;
   }
   if (cached?.pending) {
+    if (cached.data) {
+      return markGexDashboardStale(
+        cached.data,
+        "Returning the previous zero-gamma dashboard while the refresh is still loading.",
+      );
+    }
     return cached.pending;
   }
 
-  const pending = loadGexDashboardData({
-    ticker,
-    signal: input.signal,
-  });
-  gexDashboardCache.set(ticker, {
-    expiresAt: now + GEX_DASHBOARD_CACHE_TTL_MS,
-    pending,
-  });
-
-  try {
-    const data = await pending;
-    gexDashboardCache.set(ticker, {
-      expiresAt: Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
-      data,
-    });
-    return data;
-  } catch (error) {
-    const current = gexDashboardCache.get(ticker);
-    if (current?.pending === pending) {
-      gexDashboardCache.delete(ticker);
-    }
-    throw error;
+  const pending = startGexDashboardRefresh(ticker, cached?.data);
+  if (cached?.data) {
+    return markGexDashboardStale(
+      cached.data,
+      "Returning the previous zero-gamma dashboard while the refresh is loading.",
+    );
   }
+  return pending;
 }

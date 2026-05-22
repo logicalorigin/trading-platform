@@ -134,6 +134,32 @@ test("marketFlowStore preserves existing flow events across transient degraded e
   );
 });
 
+test("marketFlowStore preserves flow events across resource-pressure scanner pauses", () => {
+  resetMarketFlowStoreForTests();
+
+  const storeKey = buildMarketFlowStoreKey(["SPY"]);
+  publishMarketFlowSnapshot(storeKey, buildLiveSnapshot("SPY"));
+  publishMarketFlowSnapshot(
+    storeKey,
+    buildEmptySnapshotWithSource("SPY", {
+      provider: "none",
+      status: "empty",
+      ibkrStatus: "empty",
+      ibkrReason: "options_flow_scanner_resource_pressure_critical",
+    }),
+  );
+
+  const snapshot = getMarketFlowSnapshotForStoreKey(storeKey);
+  assert.equal(snapshot.hasLiveFlow, true);
+  assert.equal(snapshot.flowStatus, "live");
+  assert.equal(snapshot.flowEvents.length, 1);
+  assert.equal(snapshot.staleFlowEvents, true);
+  assert.equal(
+    snapshot.providerSummary.sourcesBySymbol.SPY.ibkrReason,
+    "options_flow_scanner_resource_pressure_critical",
+  );
+});
+
 test("marketFlowStore replaces existing flow events on confirmed loaded empty", () => {
   resetMarketFlowStoreForTests();
 

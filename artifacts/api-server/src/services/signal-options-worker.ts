@@ -1,3 +1,4 @@
+import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 import { pool, type AlgoDeployment } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
@@ -13,6 +14,10 @@ import {
   getSignalOptionsWorkerSnapshot,
   registerSignalOptionsWorkerSnapshotGetter,
 } from "./signal-options-worker-state";
+import {
+  getApiResourcePressureSnapshot,
+  type ApiResourcePressureSnapshot,
+} from "./resource-pressure";
 
 const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
@@ -30,6 +35,7 @@ type WorkerDependencies = {
     source: "worker";
   }) => Promise<unknown>;
   runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
+  getResourcePressure: () => ApiResourcePressureSnapshot;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
@@ -203,6 +209,20 @@ function resolvePollIntervalSeconds(deployment: AlgoDeployment): number {
   return positiveInteger(worker.pollIntervalSeconds, 60, 15, 3600);
 }
 
+function shouldSkipDeploymentForResourcePressure(input: {
+  deployment: AlgoDeployment;
+  pressure: ApiResourcePressureSnapshot;
+}) {
+  if (
+    !input.pressure.caps.signalOptions.maintenanceOnly &&
+    !input.pressure.caps.signalOptions.skipDeploymentScans
+  ) {
+    return false;
+  }
+  const profile = resolveSignalOptionsExecutionProfile(input.deployment.config);
+  return profile.infrastructureHaltControls.resourcePressureScanBlockEnabled !== false;
+}
+
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
   let locked = false;
@@ -240,6 +260,8 @@ function defaultDependencies(
       options.listDeployments ?? listEnabledSignalOptionsDeployments,
     scanDeployment: options.scanDeployment ?? runSignalOptionsShadowScan,
     runMaintenance: options.runMaintenance ?? runShadowOptionMaintenance,
+    getResourcePressure:
+      options.getResourcePressure ?? getApiResourcePressureSnapshot,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
@@ -389,7 +411,26 @@ export function createSignalOptionsWorker(
         }
       });
 
+      const pressure = dependencies.getResourcePressure();
+      const pressureBlocksScans =
+        pressure.caps.signalOptions.maintenanceOnly ||
+        pressure.caps.signalOptions.skipDeploymentScans;
+
       for (const deployment of deployments) {
+        if (shouldSkipDeploymentForResourcePressure({ deployment, pressure })) {
+          dependencies.logger.debug?.(
+            { deploymentId: deployment.id, pressureLevel: pressure.level },
+            "Signal-options worker skipped deployment scan under resource pressure",
+          );
+          continue;
+        }
+        if (pressureBlocksScans) {
+          dependencies.logger.debug?.(
+            { deploymentId: deployment.id, pressureLevel: pressure.level },
+            "Signal-options worker resource-pressure scan block overridden",
+          );
+        }
+
         const signature = deploymentSignature(deployment);
         let runtime = deploymentRuntime.get(deployment.id);
         const signatureChanged = runtime?.signature !== signature;

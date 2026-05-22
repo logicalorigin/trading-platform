@@ -26,7 +26,8 @@ test("line allocation UI copy keeps allocator jargon internal", () => {
     "../../screens/SettingsScreen.jsx",
     "../../screens/AlgoScreen.jsx",
     "../../screens/FlowScreen.jsx",
-    "../../screens/algo/AlgoProfileTab.jsx",
+    "../../screens/algo/AlgoSettingsRegion.jsx",
+    "../../screens/algo/algoSettingsFields.js",
     "../../screens/settings/IbkrLaneArchitecturePanel.jsx",
     "../../screens/settings/ibkrLaneUiModel.js",
   ]
@@ -62,9 +63,11 @@ test("line allocation UI copy keeps allocator jargon internal", () => {
 test("normalizes complete market data admission pools", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 100,
+    watchlistLineCount: 20,
     budget: {
       maxLines: 200,
       accountMonitorLineCap: 20,
+      watchlistLineCap: 80,
       flowScannerLineCap: 40,
     },
     accountMonitorLineCount: 12,
@@ -86,6 +89,14 @@ test("normalizes complete market data admission pools", () => {
         remainingLineCount: 6,
         strict: true,
       },
+      watchlist: {
+        id: "watchlist",
+        label: "Watchlist",
+        activeLineCount: 20,
+        maxLines: 80,
+        remainingLineCount: 60,
+        strict: true,
+      },
       visible: {
         id: "visible",
         label: "Visible",
@@ -100,6 +111,9 @@ test("normalizes complete market data admission pools", () => {
   assert.equal(normalized.accountMonitor.used, 12);
   assert.equal(normalized.accountMonitor.cap, 20);
   assert.equal(normalized.flowScanner.used, 34);
+  assert.equal(normalized.watchlist.used, 20);
+  assert.equal(normalized.watchlist.cap, 80);
+  assert.equal(normalized.watchlist.free, 60);
   assert.equal(normalized.pools.visible.cap, 88);
   assert.equal(normalized.total.free, 100);
   assert.equal(normalized.allocation.targetFillLines, 200);
@@ -465,6 +479,7 @@ test("uses API-active lines as canonical while retaining bridge reconciliation",
   assert.equal(normalized.activeLineCount, 143);
   assert.equal(normalized.requestedLineCount, 143);
   assert.equal(normalized.pendingLineCount, 128);
+  assert.equal(normalized.foregroundPendingLineCount, 128);
   assert.equal(normalized.requestedSummary, "143 of 190");
   assert.equal(normalized.demandSummary, "143 of 190");
   assert.equal(normalized.bridge.summary, "15 of 190");
@@ -508,6 +523,7 @@ test("normalizes bridge warm-up coverage from line usage diagnostics", () => {
   assert.equal(normalized.warmup.state, "pending");
   assert.equal(normalized.warmup.label, "pending bridge");
   assert.equal(normalized.warmup.pendingLineCount, 3);
+  assert.equal(normalized.foregroundPendingLineCount, 3);
   assert.equal(normalized.warmup.accountPendingLineCount, 1);
   assert.equal(normalized.warmup.summary, "3 / 6 covered");
   assert.equal(normalized.warmup.pendingSummary, "3 pending");

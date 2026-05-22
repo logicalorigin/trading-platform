@@ -19,6 +19,11 @@ export type OptionsFlowRadarObservation = {
   symbol: string;
   scannedAt: Date;
   score: number;
+  underlyingPrice: number | null;
+  callVolume: number | null;
+  putVolume: number | null;
+  callOpenInterest: number | null;
+  putOpenInterest: number | null;
   optionVolume: number | null;
   optionOpenInterest: number | null;
   volumeOiRatio: number | null;
@@ -193,6 +198,11 @@ export function scoreOptionsFlowRadarQuote(
     symbol: quote.symbol,
     scannedAt,
     score: Number((volumeScore + ratioScore + notionalScore + ivScore).toFixed(4)),
+    underlyingPrice: price,
+    callVolume,
+    putVolume,
+    callOpenInterest,
+    putOpenInterest,
     optionVolume,
     optionOpenInterest,
     volumeOiRatio:

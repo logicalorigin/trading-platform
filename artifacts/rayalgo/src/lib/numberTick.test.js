@@ -27,3 +27,12 @@ test("prefersReducedMotion: returns false when window is undefined", () => {
   const result = _testing.prefersReducedMotion();
   assert.equal(typeof result, "boolean");
 });
+
+test("resolveAnimationStartValue resumes from the current displayed value", () => {
+  assert.equal(_testing.resolveAnimationStartValue(100.8, 100, 101), 100.8);
+});
+
+test("resolveAnimationStartValue falls back to the previous target only without a display value", () => {
+  assert.equal(_testing.resolveAnimationStartValue(null, 100, 101), 100);
+  assert.equal(_testing.resolveAnimationStartValue(null, null, 101), 101);
+});

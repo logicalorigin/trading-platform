@@ -1,21 +1,50 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  HEADER_BROADCAST_SCROLL_MIN_SECONDS,
+  HEADER_BROADCAST_SPEED_PRESETS,
+  buildHeaderAlgoTapeItems,
   buildHeaderSignalContextSymbols,
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
-  getHeaderBroadcastSpeedDurations,
+  getHeaderBroadcastScrollDurationSeconds,
   resolveHeaderBroadcastSpeedPreset,
 } from "./headerBroadcastModel.js";
 
-test("header broadcast speed presets default to slower lanes", () => {
+test("header broadcast speed presets default to shared visual pace", () => {
   assert.equal(resolveHeaderBroadcastSpeedPreset("missing"), "slow");
   assert.equal(resolveHeaderBroadcastSpeedPreset("fast"), "fast");
-  assert.deepEqual(getHeaderBroadcastSpeedDurations("slow"), {
+  assert.deepEqual(HEADER_BROADCAST_SPEED_PRESETS.slow, {
     label: "Slow",
-    signalDurationSeconds: 64,
-    unusualDurationSeconds: 84,
+    pixelsPerSecond: 18,
   });
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("slow", { scrollDistancePx: 1440 }),
+    80,
+  );
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("normal", { scrollDistancePx: 1440 }),
+    60,
+  );
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("fast", { scrollDistancePx: 1440 }),
+    40,
+  );
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("fast", { scrollDistancePx: 1 }),
+    HEADER_BROADCAST_SCROLL_MIN_SECONDS,
+  );
+});
+
+test("header broadcast scroll duration scales with lane distance", () => {
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("normal", { scrollDistancePx: 720 }),
+    30,
+  );
+  assert.equal(
+    getHeaderBroadcastScrollDurationSeconds("normal", { scrollDistancePx: 1440 }),
+    60,
+  );
 });
 
 test("buildHeaderSignalTapeItems merges active state and recent events", () => {
@@ -281,4 +310,268 @@ test("buildHeaderUnusualTapeItems ranks scanner-selected flow events", () => {
     ["SPY", "QQQ", "NVDA"],
   );
   assert.equal(items[1].right, "P");
+});
+
+test("buildHeaderUnusualTapeItems drops radar fallback activity labels", () => {
+  const items = buildHeaderUnusualTapeItems([
+    {
+      id: "radar-spy",
+      underlying: "SPY",
+      optionTicker: "SPY CALL ACTIVITY",
+      providerContractId: null,
+      sourceBasis: "fallback_estimate",
+      confidence: "fallback_estimate",
+      strike: 500,
+      right: "call",
+      expirationDate: "2026-05-21T17:00:00.000Z",
+      premium: 500_000,
+      size: 10,
+      openInterest: 0,
+      unusualScore: 10,
+      isUnusual: true,
+      occurredAt: "2026-05-21T17:00:00.000Z",
+    },
+  ]);
+
+  assert.deepEqual(items, []);
+});
+
+test("buildHeaderAlgoTapeItems keeps all recent algo event types newest first", () => {
+  const items = buildHeaderAlgoTapeItems([
+    {
+      id: "skip-1",
+      symbol: "msft",
+      eventType: "signal_options_skipped",
+      summary: "MSFT skipped liquidity",
+      occurredAt: "2026-04-27T15:45:00Z",
+    },
+    {
+      id: "entry-1",
+      symbol: "spy",
+      eventType: "signal_options_shadow_entry",
+      summary: "SPY shadow CALL 500 2026-05-01 x2",
+      occurredAt: "2026-04-27T15:55:00Z",
+    },
+    {
+      id: "profile-1",
+      eventType: "signal_options_profile_updated",
+      summary: "Signal options profile updated",
+      occurredAt: "2026-04-27T15:50:00Z",
+    },
+  ]);
+
+  assert.deepEqual(
+    items.map((item) => item.actionLabel),
+    ["ENTRY", "CONFIG", "SKIP"],
+  );
+  assert.deepEqual(
+    items.map((item) => item.iconKind),
+    ["entry", "config", "skip"],
+  );
+  assert.deepEqual(
+    items.map((item) => item.symbol),
+    ["SPY", "ALGO", "MSFT"],
+  );
+  assert.equal(items[1].toneKind, "accent");
+});
+
+test("buildHeaderAlgoTapeItems dedupes event ids and classifies exits and blocks", () => {
+  const items = buildHeaderAlgoTapeItems([
+    {
+      id: "exit-1",
+      symbol: "qqq",
+      eventType: "signal_options_shadow_exit",
+      summary: "QQQ shadow exit stop at 1.10",
+      occurredAt: "2026-04-27T15:55:00Z",
+    },
+    {
+      id: "exit-1",
+      symbol: "qqq",
+      eventType: "signal_options_shadow_exit",
+      summary: "QQQ shadow exit stop at 1.20",
+      occurredAt: "2026-04-27T15:56:00Z",
+    },
+    {
+      id: "blocked-1",
+      eventType: "signal_options_gateway_blocked",
+      summary: "Gateway blocked algo order",
+      occurredAt: "2026-04-27T15:54:00Z",
+    },
+    {
+      id: "mark-1",
+      payload: { position: { symbol: "aapl" } },
+      eventType: "signal_options_shadow_mark",
+      summary: "AAPL mark update",
+      occurredAt: "2026-04-27T15:53:00Z",
+    },
+  ]);
+
+  assert.equal(items.length, 3);
+  assert.deepEqual(
+    items.map((item) => [item.actionLabel, item.iconKind, item.symbol, item.toneKind]),
+    [
+      ["EXIT", "exit", "QQQ", "danger"],
+      ["BLOCK", "blocked", "ALGO", "warning"],
+      ["MARK", "mark", "AAPL", "info"],
+    ],
+  );
+  assert.equal(items[0].detail, "QQQ shadow exit stop at 1.20");
+});
+
+test("buildHeaderAlgoTapeItems derives entry trade context icons", () => {
+  const [item] = buildHeaderAlgoTapeItems([
+    {
+      id: "entry-context",
+      symbol: "SPY",
+      eventType: "signal_options_shadow_entry",
+      summary: "SPY shadow CALL 500 2026-05-01 x3",
+      occurredAt: "2026-04-27T15:55:00Z",
+      payload: {
+        selectedContract: { right: "call" },
+        selectedExpiration: { dte: 4 },
+        orderPlan: { quantity: 3, premiumAtRisk: 2450 },
+      },
+    },
+  ]);
+
+  assert.deepEqual(
+    item.contextIcons.map((context) => [
+      context.kind,
+      context.iconKind,
+      context.toneKind,
+      context.valueLabel || "",
+    ]),
+    [
+      ["contract", "call", "success", ""],
+      ["status", "filled", "success", ""],
+      ["money", "money", "accent", "$2.5K"],
+      ["quantity", "quantity", "info", "x3"],
+    ],
+  );
+});
+
+test("buildHeaderAlgoTapeItems derives exit pnl context icons", () => {
+  const [item] = buildHeaderAlgoTapeItems([
+    {
+      id: "exit-context",
+      symbol: "QQQ",
+      eventType: "signal_options_shadow_exit",
+      summary: "QQQ shadow exit stop at 1.10",
+      occurredAt: "2026-04-27T15:55:00Z",
+      payload: {
+        pnl: -87.2,
+        selectedContract: { right: "put" },
+        position: { quantity: 2 },
+      },
+    },
+  ]);
+
+  assert.deepEqual(
+    item.contextIcons.map((context) => [
+      context.kind,
+      context.iconKind,
+      context.toneKind,
+      context.valueLabel || "",
+    ]),
+    [
+      ["contract", "put", "danger", ""],
+      ["status", "loss", "danger", ""],
+      ["money", "money", "danger", "-$87"],
+      ["quantity", "quantity", "info", "x2"],
+    ],
+  );
+});
+
+test("buildHeaderAlgoTapeItems prioritizes skip and block reasons in context icons", () => {
+  const items = buildHeaderAlgoTapeItems([
+    {
+      id: "skip-context",
+      symbol: "MSFT",
+      eventType: "signal_options_skipped",
+      summary: "MSFT skipped liquidity",
+      occurredAt: "2026-04-27T15:55:00Z",
+      payload: {
+        reason: "liquidity_gate_failed",
+        candidate: { optionRight: "put" },
+        position: { quantity: 5 },
+      },
+    },
+    {
+      id: "blocked-context",
+      symbol: "AAPL",
+      eventType: "signal_options_gateway_blocked",
+      summary: "Gateway blocked algo order",
+      occurredAt: "2026-04-27T15:54:00Z",
+      payload: {
+        readiness: { reason: "algo_gateway_not_ready" },
+      },
+    },
+  ]);
+
+  assert.deepEqual(
+    items[0].contextIcons.map((context) => [
+      context.kind,
+      context.iconKind,
+      context.toneKind,
+      context.valueLabel || "",
+    ]),
+    [
+      ["contract", "put", "danger", ""],
+      ["status", "warning", "warning", ""],
+      ["reason", "reason", "warning", "LIQ"],
+      ["quantity", "quantity", "info", "x5"],
+    ],
+  );
+  assert.deepEqual(
+    items[1].contextIcons.map((context) => [
+      context.kind,
+      context.iconKind,
+      context.toneKind,
+      context.valueLabel || "",
+    ]),
+    [
+      ["status", "blocked", "warning", ""],
+      ["reason", "reason", "warning", "GATEWAY"],
+    ],
+  );
+});
+
+test("buildHeaderAlgoTapeItems uses readable operational reason labels", () => {
+  const items = buildHeaderAlgoTapeItems([
+    {
+      id: "position-mark",
+      symbol: "AAPL",
+      eventType: "signal_options_skipped",
+      occurredAt: "2026-04-27T15:55:00Z",
+      payload: { reason: "position_mark_unavailable" },
+    },
+    {
+      id: "option-chain",
+      symbol: "MSFT",
+      eventType: "signal_options_skipped",
+      occurredAt: "2026-04-27T15:54:00Z",
+      payload: { reason: "option_chain_backoff" },
+    },
+    {
+      id: "missing-bid",
+      symbol: "CLSK",
+      eventType: "signal_options_skipped",
+      occurredAt: "2026-04-27T15:53:00Z",
+      payload: { reason: "missing_bid" },
+    },
+    {
+      id: "market-session",
+      eventType: "signal_options_gateway_blocked",
+      occurredAt: "2026-04-27T15:52:00Z",
+      payload: { readiness: { reason: "market_session_quiet" } },
+    },
+  ]);
+
+  assert.deepEqual(
+    items.map((item) =>
+      item.contextIcons.find((context) => context.kind === "reason")
+        ?.valueLabel,
+    ),
+    ["NO MARK", "CHAIN", "NO BID", "SESSION"],
+  );
 });

@@ -5,6 +5,7 @@ import {
   DEFAULT_USER_PREFERENCES,
   MAX_CHART_FUTURE_EXPANSION_BARS,
   USER_PREFERENCES_STORAGE_KEY,
+  LEGACY_USER_PREFERENCES_STORAGE_KEY,
   formatPreferenceDateTime,
   normalizeUserPreferences,
   resolvePreferenceTimeZone,
@@ -102,6 +103,68 @@ test("startup theme falls back to system when no cached preference exists", () =
     assert.equal(resolveEffectiveThemeFromState({}), "light");
   } finally {
     (globalThis as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("appearance defaults to the PYRUS accent and preserves legacy presets", () => {
+  assert.equal(DEFAULT_USER_PREFERENCES.appearance.accentPreset, "pyrus");
+  assert.equal(normalizeUserPreferences({}).appearance.accentPreset, "pyrus");
+  assert.equal(
+    normalizeUserPreferences({ appearance: { accentPreset: "coral" } }).appearance
+      .accentPreset,
+    "coral",
+  );
+});
+
+test("preference cache reads legacy RayAlgo storage and writes PYRUS storage", () => {
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  const storage = new Map<string, string>();
+  const dispatched: string[] = [];
+  (globalThis as { window?: unknown }).window = {
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    },
+    dispatchEvent: (event: Event) => {
+      dispatched.push(event.type);
+      return true;
+    },
+  };
+
+  try {
+    storage.set(
+      LEGACY_USER_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({
+        theme: "dark",
+        userPreferences: {
+          appearance: {
+            theme: "light",
+            accentPreset: "aurora",
+          },
+        },
+      }),
+    );
+
+    writeCachedUserPreferences({
+      ...DEFAULT_USER_PREFERENCES,
+      appearance: {
+        ...DEFAULT_USER_PREFERENCES.appearance,
+        accentPreset: "pyrus",
+      },
+    });
+
+    assert.ok(storage.has(USER_PREFERENCES_STORAGE_KEY));
+    assert.ok(dispatched.includes("pyrus:user-preferences-updated"));
+    assert.ok(dispatched.includes("rayalgo:user-preferences-updated"));
+    assert.ok(dispatched.includes("pyrus:workspace-settings-updated"));
+    assert.ok(dispatched.includes("rayalgo:workspace-settings-updated"));
+  } finally {
+    if (previousWindow === undefined) {
+      delete (globalThis as { window?: unknown }).window;
+    } else {
+      (globalThis as { window?: unknown }).window = previousWindow;
+    }
   }
 });
 

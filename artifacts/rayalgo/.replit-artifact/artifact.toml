@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "RayAlgo Platform"
+title = "PYRUS Platform"
 version = "1.0.0"
 id = "artifacts/rayalgo"
 router = "path"
@@ -15,12 +15,12 @@ paths = [ "/" ]
 localPort = 18747
 
 [services.development]
-run = "pnpm --filter @workspace/rayalgo run dev"
+run = "pnpm --filter @workspace/pyrus run dev:replit"
 
 [services.production]
 
 [services.production.build]
-args = ["pnpm", "run", "build:rayalgo-app"]
+args = ["pnpm", "run", "build:pyrus-app"]
 
 [services.production.build.env]
 NODE_ENV = "production"
@@ -32,6 +32,7 @@ args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
 PORT = "18747"
 NODE_ENV = "production"
 RAYALGO_SERVE_WEB = "1"
+PYRUS_SERVE_WEB = "1"
 
 [services.production.health.startup]
 path = "/api/healthz"

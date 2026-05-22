@@ -1609,6 +1609,47 @@ export interface OptionChainQuote {
   ageMs?: number | null;
 }
 
+export type PositionOpenedAtSource = typeof PositionOpenedAtSource[keyof typeof PositionOpenedAtSource];
+
+
+export const PositionOpenedAtSource = {
+  broker: 'broker',
+  execution: 'execution',
+  lot: 'lot',
+  flex_open_position: 'flex_open_position',
+  flex_snapshot: 'flex_snapshot',
+  shadow_position: 'shadow_position',
+  automation: 'automation',
+  unknown: 'unknown',
+} as const;
+
+export type PositionQuoteSource = typeof PositionQuoteSource[keyof typeof PositionQuoteSource];
+
+
+export const PositionQuoteSource = {
+  bridge_quote: 'bridge_quote',
+  option_quote: 'option_quote',
+  position_mark: 'position_mark',
+  shadow_ledger: 'shadow_ledger',
+  unknown: 'unknown',
+} as const;
+
+export interface PositionQuote {
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  last: number | null;
+  mark: number | null;
+  spread: number | null;
+  spreadPercent: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  updatedAt: string | null;
+  freshness: string | null;
+  marketDataMode: string | null;
+  source: PositionQuoteSource;
+}
+
 export interface Position {
   id: string;
   accountId: string;
@@ -1621,6 +1662,9 @@ export interface Position {
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
   optionContract: OptionContract | null;
+  openedAt?: string | null;
+  openedAtSource?: PositionOpenedAtSource | null;
+  quote?: PositionQuote | null;
 }
 
 export interface Order {
@@ -2474,25 +2518,6 @@ export interface AccountEquityHistoryResponse {
   events: AccountCashEvent[];
 }
 
-export interface CreateAccountTradingPatternsSnapshotRequest {
-  range?: AccountHistoryRange;
-}
-
-export interface AccountTradingPatternsResponse {
-  snapshot: JsonObject;
-  context: JsonObject;
-  summary: JsonObject;
-  tickerStats: JsonObject[];
-  sourceStats: JsonObject[];
-  timeStats: JsonObject;
-  equityAnnotations: JsonObject[];
-  tradeEvents: JsonObject[];
-  roundTrips: JsonObject[];
-  openLots: JsonObject[];
-  anomalies: JsonObject[];
-  fullPacketIncluded: boolean;
-}
-
 export interface AccountAllocationBucket {
   label: string;
   value: number;
@@ -2579,6 +2604,9 @@ export interface AccountPositionRow {
   strategyLabel?: string | null;
   attributionStatus?: AccountPositionRowAttributionStatus;
   sourceAttribution?: JsonObject[];
+  openedAt?: string | null;
+  openedAtSource?: PositionOpenedAtSource | null;
+  quote?: PositionQuote | null;
 }
 
 export interface AccountPositionsResponse {
@@ -2944,12 +2972,28 @@ export interface GexOptionRow {
   expireMonth: number;
   expireDay: number;
   cp: GexOptionRowCp;
+  /** @nullable */
+  ticker?: string | null;
+  /** @nullable */
+  underlying?: string | null;
+  expirationDate?: string;
+  /** @nullable */
+  providerContractId?: string | null;
   gamma: number;
   delta: number;
   openInterest: number;
   impliedVol: number;
   bid: number;
   ask: number;
+  multiplier?: number;
+  sharesPerContract?: number;
+  volume?: number;
+  /** @nullable */
+  updatedAt?: string | null;
+  /** @nullable */
+  quoteFreshness?: string | null;
+  /** @nullable */
+  marketDataMode?: string | null;
 }
 
 export interface GexSnapshot {
@@ -2985,6 +3029,7 @@ export type GexSourceProvider = typeof GexSourceProvider[keyof typeof GexSourceP
 
 
 export const GexSourceProvider = {
+  ibkr: 'ibkr',
   massive: 'massive',
   polygon: 'polygon',
 } as const;
@@ -3297,6 +3342,7 @@ export type OptionChartBarsDataSource = typeof OptionChartBarsDataSource[keyof t
 
 export const OptionChartBarsDataSource = {
   'ibkr-history': 'ibkr-history',
+  'mixed-history': 'mixed-history',
   'polygon-option-aggregates': 'polygon-option-aggregates',
   none: 'none',
 } as const;
@@ -3439,6 +3485,11 @@ export interface SignalOptionsExecutionProfile {
   entryGate: JsonObject;
   fillPolicy: JsonObject;
   exitPolicy: JsonObject;
+  riskHaltControls: JsonObject;
+  entryHaltControls: JsonObject;
+  liquidityHaltControls: JsonObject;
+  positionHaltControls: JsonObject;
+  infrastructureHaltControls: JsonObject;
 }
 
 export type SignalOptionsAutomationStateMode = typeof SignalOptionsAutomationStateMode[keyof typeof SignalOptionsAutomationStateMode];
@@ -3886,6 +3937,39 @@ export interface SignalMonitorStateResponse {
   universe: SignalMonitorUniverseSummary;
 }
 
+export type SignalMonitorMatrixResponseCacheStatus = typeof SignalMonitorMatrixResponseCacheStatus[keyof typeof SignalMonitorMatrixResponseCacheStatus];
+
+
+export const SignalMonitorMatrixResponseCacheStatus = {
+  hit: 'hit',
+  stale: 'stale',
+  inflight: 'inflight',
+  miss: 'miss',
+} as const;
+
+export type SignalMonitorMatrixResponseCoverageCacheStatus = typeof SignalMonitorMatrixResponseCoverageCacheStatus[keyof typeof SignalMonitorMatrixResponseCoverageCacheStatus];
+
+
+export const SignalMonitorMatrixResponseCoverageCacheStatus = {
+  hit: 'hit',
+  stale: 'stale',
+  inflight: 'inflight',
+  miss: 'miss',
+} as const;
+
+export type SignalMonitorMatrixResponseCoverage = {
+  requestedSymbols: number;
+  evaluatedSymbols: number;
+  pendingSymbols: number;
+  totalSymbols: number;
+  timeframes: number;
+  taskCount: number;
+  cacheStatus: SignalMonitorMatrixResponseCoverageCacheStatus;
+  durationMs: number;
+  skippedSymbols: number;
+  truncated: boolean;
+};
+
 export interface SignalMonitorMatrixResponse {
   profile: SignalMonitorProfile;
   states: SignalMonitorMatrixState[];
@@ -3893,6 +3977,9 @@ export interface SignalMonitorMatrixResponse {
   timeframes: SignalMonitorMatrixTimeframe[];
   truncated: boolean;
   skippedSymbols: string[];
+  cacheStatus?: SignalMonitorMatrixResponseCacheStatus;
+  refreshing?: boolean;
+  coverage?: SignalMonitorMatrixResponseCoverage;
 }
 
 export interface SignalMonitorEventsResponse {
@@ -4823,11 +4910,6 @@ export type GetAccountEquityHistoryParams = {
 range?: AccountHistoryRange;
 benchmark?: string;
 mode?: EnvironmentMode;
-};
-
-export type GetAccountTradingPatternsParams = {
-range?: AccountHistoryRange;
-snapshotId?: string;
 };
 
 export type GetAccountAllocationParams = {

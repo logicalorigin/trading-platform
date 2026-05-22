@@ -28,6 +28,7 @@ export const AlgoDiagnosticsTab = ({
   setDiagExpansion,
   algoIsPhone,
   algoIsNarrow,
+  readOnly = false,
 }) => {
   const diagPanels = [
     { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: T.red },
@@ -40,12 +41,15 @@ export const AlgoDiagnosticsTab = ({
   ];
   const gateHealthy = isGateSummaryHealthy(cockpitTradePath);
   const resolveExpanded = (panel) => {
+    if (readOnly) return true;
     const healthy = isDiagRowsHealthy(panel.rows);
     const override = diagExpansion[panel.key];
     return typeof override === "boolean" ? override : !healthy;
   };
   const expandedPanels = diagPanels.filter((panel) => resolveExpanded(panel));
-  const collapsedPanels = diagPanels.filter((panel) => !resolveExpanded(panel));
+  const collapsedPanels = readOnly
+    ? []
+    : diagPanels.filter((panel) => !resolveExpanded(panel));
   return (
     <div
       data-testid="algo-cockpit-diagnostics"
@@ -56,59 +60,61 @@ export const AlgoDiagnosticsTab = ({
         minWidth: 0,
       }}
     >
-      <SectionHeader
-        title="Diagnostics"
-        right={
-          <div style={{ display: "flex", gap: sp(5) }}>
-            <button
-              type="button"
-              data-testid="algo-diag-expand-all"
-              onClick={() =>
-                setDiagExpansion(
-                  Object.fromEntries(diagPanels.map((p) => [p.key, true])),
-                )
-              }
-              style={{
-                padding: sp("4px 10px"),
-                fontSize: textSize("caption"),
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.medium,
-                color: T.textSec,
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(RADII.pill),
-                cursor: "pointer",
-                letterSpacing: "0.02em",
-              }}
-            >
-              Expand all
-            </button>
-            <button
-              type="button"
-              data-testid="algo-diag-collapse-all"
-              onClick={() =>
-                setDiagExpansion(
-                  Object.fromEntries(diagPanels.map((p) => [p.key, false])),
-                )
-              }
-              style={{
-                padding: sp("4px 10px"),
-                fontSize: textSize("caption"),
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.medium,
-                color: T.textSec,
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
-                borderRadius: dim(RADII.pill),
-                cursor: "pointer",
-                letterSpacing: "0.02em",
-              }}
-            >
-              Collapse all
-            </button>
-          </div>
-        }
-      />
+      {!readOnly ? (
+        <SectionHeader
+          title="Diagnostics"
+          right={
+            <div style={{ display: "flex", gap: sp(5) }}>
+              <button
+                type="button"
+                data-testid="algo-diag-expand-all"
+                onClick={() =>
+                  setDiagExpansion(
+                    Object.fromEntries(diagPanels.map((p) => [p.key, true])),
+                  )
+                }
+                style={{
+                  padding: sp("4px 10px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.medium,
+                  color: T.textSec,
+                  background: T.bg1,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(RADII.pill),
+                  cursor: "pointer",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                Expand all
+              </button>
+              <button
+                type="button"
+                data-testid="algo-diag-collapse-all"
+                onClick={() =>
+                  setDiagExpansion(
+                    Object.fromEntries(diagPanels.map((p) => [p.key, false])),
+                  )
+                }
+                style={{
+                  padding: sp("4px 10px"),
+                  fontSize: textSize("caption"),
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.medium,
+                  color: T.textSec,
+                  background: T.bg1,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(RADII.pill),
+                  cursor: "pointer",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                Collapse all
+              </button>
+            </div>
+          }
+        />
+      ) : null}
 
       <div
         data-testid="algo-diag-gate-summary"
@@ -193,6 +199,7 @@ export const AlgoDiagnosticsTab = ({
                   [panel.key]: false,
                 }))
               }
+              readOnly={readOnly}
             />
           ))}
         </div>

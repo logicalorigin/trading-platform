@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * RayAlgo motion roles.
+ * PYRUS motion roles.
  *
  * Each motion in the app maps to exactly one role and uses exactly one
  * timing + one easing pair. Inline transitions that don't match a role

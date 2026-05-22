@@ -11,6 +11,8 @@ import type { AccountPositionRowSourceType } from './accountPositionRowSourceTyp
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
 import type { Order } from './order';
+import type { PositionOpenedAtSource } from './positionOpenedAtSource';
+import type { PositionQuote } from './positionQuote';
 
 export interface AccountPositionRow {
   id: string;
@@ -43,4 +45,7 @@ export interface AccountPositionRow {
   strategyLabel?: string | null;
   attributionStatus?: AccountPositionRowAttributionStatus;
   sourceAttribution?: JsonObject[];
+  openedAt?: Date | null;
+  openedAtSource?: PositionOpenedAtSource | null;
+  quote?: PositionQuote | null;
 }

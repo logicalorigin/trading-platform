@@ -7,7 +7,8 @@ export type AlgoGatewayReadinessReason =
   | "gateway_socket_disconnected"
   | "gateway_login_required"
   | "accounts_unavailable"
-  | "live_market_data_not_configured";
+  | "live_market_data_not_configured"
+  | "market_session_quiet";
 
 export type AlgoGatewayReadiness = {
   ready: boolean;
@@ -84,6 +85,18 @@ export function resolveAlgoGatewayReadiness(
       ready: false,
       reason: "live_market_data_not_configured",
       message: "IB Gateway is authenticated, but live market-data mode is not configured.",
+      diagnostics: ibkr,
+    };
+  }
+
+  if (
+    ibkr.strictReason === "market_session_quiet" ||
+    ibkr.streamStateReason === "market_session_quiet"
+  ) {
+    return {
+      ready: false,
+      reason: "market_session_quiet",
+      message: "The market session is closed for algorithm execution.",
       diagnostics: ibkr,
     };
   }

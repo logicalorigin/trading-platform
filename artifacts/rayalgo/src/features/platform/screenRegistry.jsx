@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { T, dim, sp } from "../../lib/uiTokens.jsx";
+import LogoLoader from "../../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../../lib/dynamicImport";
 
 const SCREEN_LOADERS = {
@@ -106,65 +106,10 @@ export const MemoDiagnosticsScreen = memo(
 export const MemoSettingsScreen = memo(SettingsScreen, skipStableHiddenScreenRender);
 
 export const ScreenLoadingFallback = ({ label = "Loading" }) => (
-  <div
-    data-testid="screen-loading-fallback"
-    style={{
-      flex: 1,
-      minHeight: 0,
-      display: "grid",
-      gridTemplateRows: "minmax(180px, 44%) 1fr",
-      gap: sp(14),
-      padding: sp(20),
-      background: T.bg0,
-      color: T.textDim,
-      fontFamily: T.sans,
-    }}
-  >
-    <style>
-      {`
-        @keyframes rayalgoScreenFallbackPulse {
-          0%, 100% { opacity: 0.55; }
-          50% { opacity: 0.85; }
-        }
-      `}
-    </style>
-    <div
-      style={{
-        border: "none",
-        borderRadius: dim(12),
-        background: T.bg1,
-        animation: "rayalgoScreenFallbackPulse 1.45s ease-in-out infinite",
-      }}
-    />
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        gap: sp(14),
-      }}
-    >
-      {[0, 1, 2].map((index) => (
-        <div
-          key={index}
-          style={{
-            border: "none",
-            borderRadius: dim(12),
-            background: T.bg1,
-            animation: `rayalgoScreenFallbackPulse ${1.55 + index * 0.12}s ease-in-out infinite`,
-          }}
-        />
-      ))}
-    </div>
-    <span
-      style={{
-        position: "absolute",
-        width: 1,
-        height: 1,
-        overflow: "hidden",
-        clip: "rect(0 0 0 0)",
-      }}
-    >
-      {label}
-    </span>
-  </div>
+  <LogoLoader
+    tone="panel"
+    label={label}
+    minHeight="100%"
+    testId="screen-loading-fallback"
+  />
 );

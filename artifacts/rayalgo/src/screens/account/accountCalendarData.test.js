@@ -51,9 +51,18 @@ test("resolveReturnsCalendarData uses the dedicated calendar query payload", () 
 test("account screen wires shadow account queries through the paper ledger path", () => {
   const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
 
-  assert.match(source, /mode:\s*shadowMode\s*\?\s*"paper"\s*:\s*environment\s*\|\|\s*"paper"/);
+  assert.match(source, /const resolveAccountMode = \(\{ shadowMode = false, environment \} = \{\}\) =>/);
+  assert.match(source, /if \(shadowMode\) \{\s*return "paper";\s*\}/);
+  assert.match(source, /return environment === "paper" \? "paper" : "live";/);
+  assert.match(source, /mode:\s*resolveAccountMode\(\{ shadowMode, environment \}\)/);
+  assert.match(
+    source,
+    /mode:\s*resolveAccountMode\(\{\s*shadowMode: nextShadowMode,\s*environment,\s*\}\)/,
+  );
+  assert.doesNotMatch(source, /mode:\s*shadowMode\s*\?\s*"paper"\s*:\s*environment\s*\|\|\s*"paper"/);
+  assert.doesNotMatch(source, /mode:\s*nextShadowMode\s*\?\s*"paper"\s*:\s*environment\s*\|\|\s*"paper"/);
   assert.match(source, /const accountDataParams = useMemo/);
-  assert.match(source, /sourceType: "all"/);
+  assert.match(source, /defaultTradingAnalysisFilters/);
   assert.match(source, /const shadowSourceLabel = shadowMode \? "Shadow Ledger" : "Flex"/);
   assert.doesNotMatch(source, /accountShadowSourceFilter/);
   assert.doesNotMatch(source, /SHADOW_SOURCE_FILTERS/);
@@ -65,11 +74,17 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /useGetAccountSummary\(accountRequestId,\s*accountDataParams/);
   assert.match(source, /tab:\s*effectiveOrderTab/);
   assert.match(source, /summary: displaySummaryData/);
-  assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.from\)/);
-  assert.match(source, /accountDateFilterBoundaryIso\(tradeFilters\.to, \{ endOfDay: true \}\)/);
+  assert.match(source, /buildAccountAnalysisQueryParams\(\{/);
+  assert.match(source, /filters: tradeFilters/);
   assert.match(source, /buildPerformanceCalendarParams\(accountDataParams\)/);
-  assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
+  assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(accountQueriesEnabled\)/);
+  assert.match(source, /const secondaryAccountQueriesEnabled\s*=\s*Boolean\(accountQueriesEnabled\)/);
+  assert.match(source, /const benchmarkQueriesEnabled\s*=\s*Boolean\(equityHistoryQueriesEnabled\)/);
+  assert.doesNotMatch(source, /const benchmarkQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
   assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
+  assert.match(source, /shadowMode &&\s*\(range === "1D" \|\| range === "1W"\)/);
+  assert.match(source, /performanceCalendarEquityQuery\.data\?\.range === "1Y"/);
+  assert.match(source, /setRange\("1Y"\)/);
   assert.match(source, /visibleEquityBenchmarks/);
   assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.SPY\)/);
   assert.match(source, /enabled:\s*Boolean\(benchmarkQueriesEnabled && visibleEquityBenchmarks\.QQQ\)/);
@@ -106,6 +121,18 @@ test("account screen always renders equity-date positions below the equity curve
   assert.doesNotMatch(positionsPanelBlock, /activeEquityDate/);
   assert.doesNotMatch(positionsPanelBlock, /pinnedEquityDate/);
   assert.doesNotMatch(positionsPanelBlock, /onClearEquityPin/);
+});
+
+test("equity curve footer prints plotted detail for backfill review", () => {
+  const source = readFileSync(new URL("./EquityCurvePanel.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /const formatChartDetailTimestamp =/);
+  assert.match(source, /const latestChartTimestamp =/);
+  assert.match(source, /const chartPointCountLabel = `\$\{data\.length\.toLocaleString\(\)\} pts`/);
+  assert.match(source, /const visibleAvailableBenchmarks = useMemo/);
+  assert.match(source, /latest \{formatChartDetailTimestamp\(latestChartTimestamp\)\}/);
+  assert.match(source, /\{sourceLabel\} snapshot \{formatChartDetailTimestamp\(latestSnapshotTimestamp\)\}/);
+  assert.match(source, /visibleAvailableBenchmarks\.map/);
 });
 
 test("shadow account treemap empty state does not mention bridge streaming", () => {

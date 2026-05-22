@@ -436,7 +436,7 @@ async function openTrade(page: Page, workspaceState: Record<string, unknown> = {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "SPY",
@@ -491,7 +491,7 @@ async function openPlatformScreen(
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: initialScreen,
         sym: "SPY",
@@ -605,7 +605,7 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
     window.sessionStorage.clear();
     window.sessionStorage.setItem("trade-workspace-seeded", "true");
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "SPY",
@@ -678,7 +678,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
     window.sessionStorage.clear();
     window.sessionStorage.setItem("trade-ticket-mode-seeded", "true");
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "SPY",
@@ -738,7 +738,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const stored = window.localStorage.getItem("rayalgo:state:v1");
+        const stored = window.localStorage.getItem("pyrus:state:v1");
         return stored ? JSON.parse(stored).tradeExecutionMode : null;
       }),
     )
@@ -1138,7 +1138,7 @@ test("Trade supports switching across more than eight ticker tabs", async ({
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "AAPL",
@@ -1181,7 +1181,7 @@ test("Trade persists drag-reordered ticker tabs", async ({ page }) => {
     window.sessionStorage.clear();
     window.sessionStorage.setItem("trade-reorder-seeded", "true");
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "AAPL",
@@ -1250,7 +1250,7 @@ test("Trade watchlist click replaces persisted active ticker in the viewing area
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "AAPL",
@@ -1302,7 +1302,7 @@ test("Trade workspace does not show the notes strip above the chart grid", async
     window.sessionStorage.clear();
     window.sessionStorage.setItem("trade-workspace-seeded", "true");
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "trade",
         sym: "SPY",

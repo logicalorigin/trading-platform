@@ -5,6 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { SignalMonitorMatrixResponseCacheStatus } from './signalMonitorMatrixResponseCacheStatus';
+import type { SignalMonitorMatrixResponseCoverage } from './signalMonitorMatrixResponseCoverage';
 import type { SignalMonitorMatrixState } from './signalMonitorMatrixState';
 import type { SignalMonitorMatrixTimeframe } from './signalMonitorMatrixTimeframe';
 import type { SignalMonitorProfile } from './signalMonitorProfile';
@@ -16,4 +18,7 @@ export interface SignalMonitorMatrixResponse {
   timeframes: SignalMonitorMatrixTimeframe[];
   truncated: boolean;
   skippedSymbols: string[];
+  cacheStatus?: SignalMonitorMatrixResponseCacheStatus;
+  refreshing?: boolean;
+  coverage?: SignalMonitorMatrixResponseCoverage;
 }

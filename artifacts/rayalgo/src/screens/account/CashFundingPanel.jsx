@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate } from "../../lib/timeZone";
+import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import {
   EmptyState,
   Panel,
@@ -12,6 +14,8 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
+
+const CASH_ACTIVITY_PAGE_SIZE = 25;
 
 const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
   <div
@@ -47,22 +51,33 @@ const sourceTone = (sourceType) =>
       ? "purple"
       : "default";
 
-export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
-  <Panel
-    title="Cash & Funding"
-    subtitle="Cash balances, deposits, withdrawals, dividends, interest, and fees"
-    rightRail="Flex cash activity + dividends"
-    loading={query.isLoading}
-    error={query.error}
-    onRetry={query.refetch}
-    minHeight={168}
-  >
-    {!query.data ? (
-      <EmptyState
-        title="Cash activity unavailable"
-        body="Cash activity, dividends, and fees populate from Flex cash transactions and dividend rows."
-      />
-    ) : (
+export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
+  const [page, setPage] = useState(0);
+  const activities = query.data?.activities || [];
+  const paginatedActivities = paginateRows(activities, page, CASH_ACTIVITY_PAGE_SIZE);
+
+  useEffect(() => {
+    if (paginatedActivities.safePage !== page) {
+      setPage(paginatedActivities.safePage);
+    }
+  }, [page, paginatedActivities.safePage]);
+
+  return (
+    <Panel
+      title="Cash & Funding"
+      subtitle="Cash balances, deposits, withdrawals, dividends, interest, and fees"
+      rightRail="Flex cash activity + dividends"
+      loading={query.isLoading}
+      error={query.error}
+      onRetry={query.refetch}
+      minHeight={168}
+    >
+      {!query.data ? (
+        <EmptyState
+          title="Cash activity unavailable"
+          body="Cash activity, dividends, and fees populate from Flex cash transactions and dividend rows."
+        />
+      ) : (
       <div style={{ display: "grid", gap: sp(5) }}>
         <div
           style={{
@@ -109,12 +124,13 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
             alignItems: "start",
           }}
         >
-          <div
-            data-testid="account-cash-activity-table-scroll"
-            className="ra-hide-scrollbar"
-            style={{ overflowX: "auto" }}
-          >
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}>
+          <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
+            <div
+              data-testid="account-cash-activity-table-scroll"
+              className="ra-hide-scrollbar"
+              style={{ overflowX: "auto" }}
+            >
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 650 }}>
               <thead>
                 <tr style={tableHeaderStyle}>
                   {["Date", "Type", "Description", "Amount", "Source"].map((column) => (
@@ -125,7 +141,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                 </tr>
               </thead>
               <tbody>
-                {(query.data.activities || []).map((activity) => (
+                {paginatedActivities.pageRows.map((activity) => (
                   <tr
                     key={activity.id}
                     className="ra-table-row"
@@ -154,7 +170,18 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
+            <PaginationFooter
+              dataTestId="account-cash-activity-pagination"
+              label="Rows"
+              onPageChange={setPage}
+              page={paginatedActivities.safePage}
+              pageCount={paginatedActivities.pageCount}
+              pageSize={CASH_ACTIVITY_PAGE_SIZE}
+              total={paginatedActivities.total}
+              style={{ paddingTop: sp(4), borderTop: `1px solid ${T.border}` }}
+            />
           </div>
 
           <div
@@ -214,8 +241,9 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
           </div>
         </div>
       </div>
-    )}
-  </Panel>
-);
+      )}
+    </Panel>
+  );
+};
 
 export default CashFundingPanel;

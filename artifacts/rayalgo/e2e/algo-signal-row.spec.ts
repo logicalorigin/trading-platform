@@ -459,7 +459,7 @@ async function openAlgo(page: Page, width: number, height: number) {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "algo",
         sym: "AAPL",
@@ -482,12 +482,100 @@ async function openAlgo(page: Page, width: number, height: number) {
 test("visual review: desktop signal hero rows", async ({ page }) => {
   await openAlgo(page, 1440, 900);
 
-  const table = page.getByTestId("algo-operations-signal-table");
   await expect(page.getByTestId("algo-verdict-try")).toBeVisible();
-  await expect(page.getByTestId("algo-confluence-chip")).toBeVisible();
+  await expect(page.getByTestId("algo-signal-dots").first()).toBeVisible();
+  await expect(page.getByTestId("algo-signal-row-action-submit").first()).toBeVisible();
   await expect(page.getByTestId("algo-spread-gauge").first()).toBeVisible();
+  await expect(page.getByTestId("algo-right-rail")).toBeVisible();
+  await expect(page.getByTestId("algo-halt-strip")).toBeVisible();
+  await expect(page.getByTestId("algo-halt-toggle-dailyLoss")).toBeVisible();
+  await expect(page.getByTestId("algo-halt-toggle-bidAskRequired")).toBeVisible();
+  const rightRail = page.getByTestId("algo-right-rail");
+  await expect(rightRail.getByTestId("algo-halt-label-dailyLoss")).toHaveText("Daily");
+  await expect(rightRail.getByTestId("algo-halt-input-dailyLoss")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-label-maxContracts")).toHaveText("Contracts");
+  await expect(rightRail.getByTestId("algo-halt-input-maxContracts")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-controls-container")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-settings-container")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-diagnostics-container")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-diagnostics-footer")).toBeVisible();
+  const containerAudit = await rightRail.evaluate((node) => {
+    const body = node.querySelector('[data-testid="algo-right-rail-body"]');
+    const controls = node.querySelector('[data-testid="algo-controls-container"]');
+    const halt = node.querySelector('[data-testid="algo-halt-strip"]');
+    const settings = node.querySelector('[data-testid="algo-settings-container"]');
+    const quality = node.querySelector('[data-testid="algo-compact-group-qualityExits"]');
+    const diagnostics = node.querySelector('[data-testid="algo-diagnostics-container"]');
+    return {
+      controlsContainHalt: Boolean(controls && halt && controls.contains(halt)),
+      controlsContainSettings: Boolean(controls && settings && controls.contains(settings)),
+      controlsContainQuality: Boolean(controls && quality && controls.contains(quality)),
+      controlsContainDiagnostics: Boolean(controls && diagnostics && controls.contains(diagnostics)),
+      diagnosticsInsideSettings: Boolean(settings && diagnostics && settings.contains(diagnostics)),
+      bodyOverflow: body ? getComputedStyle(body).overflowY : "",
+      controlsOverflow: controls ? getComputedStyle(controls).overflowY : "",
+      diagnosticsOverflow: diagnostics ? getComputedStyle(diagnostics).overflowY : "",
+      controlsScrollable: controls
+        ? controls.scrollHeight > controls.clientHeight + 20
+        : false,
+    };
+  });
+  expect(containerAudit).toEqual({
+    controlsContainHalt: true,
+    controlsContainSettings: true,
+    controlsContainQuality: true,
+    controlsContainDiagnostics: false,
+    diagnosticsInsideSettings: false,
+    bodyOverflow: "hidden",
+    controlsOverflow: "auto",
+    diagnosticsOverflow: "auto",
+    controlsScrollable: true,
+  });
+  await expect(rightRail.getByTestId("algo-compact-group-signal")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-compact-group-quote")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-compact-control-mtfPolicy")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-compact-input-mtfPolicy")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-compact-toggle-freshQuotePolicy")).toBeVisible();
+  await expect(rightRail.getByText("MAX OPEN SYMBOLS")).toHaveCount(0);
+  await expect(rightRail.getByText("MAX CONTRACTS")).toHaveCount(0);
+  await expect(rightRail.getByText("TIME HORIZON")).toHaveCount(0);
+  await expect(rightRail.getByText("FILL TTL SECONDS")).toHaveCount(0);
+  const dailyControlBorder = await rightRail
+    .getByTestId("algo-halt-control-dailyLoss")
+    .evaluate((node) => getComputedStyle(node).borderTopStyle);
+  expect(dailyControlBorder).toBe("none");
+  const desktopHaltColumns = await rightRail
+    .getByTestId("algo-halt-group-quote")
+    .evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").filter(Boolean).length);
+  expect(desktopHaltColumns).toBeGreaterThanOrEqual(4);
+  await rightRail.getByTestId("algo-halt-input-dailyLoss").fill("1200");
+  await rightRail.getByTestId("algo-halt-toggle-bidAskRequired").click();
+  await rightRail.getByTestId("algo-compact-input-mtfPolicy").fill("3");
+  await expect(rightRail.getByTestId("algo-save-bar")).toContainText("3 unsaved changes");
+  await rightRail.screenshot({
+    path: "/tmp/algo-right-rail-desktop.png",
+    animations: "disabled",
+  });
+  await rightRail.getByTestId("algo-controls-container").evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(rightRail.getByTestId("algo-compact-group-qualityExits")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-diagnostics-container")).toBeVisible();
+  const diagnosticsGap = await rightRail.evaluate((node) => {
+    const controls = node.querySelector('[data-testid="algo-controls-container"]');
+    const diagnostics = node.querySelector('[data-testid="algo-diagnostics-container"]');
+    if (!controls || !diagnostics) return -1;
+    return Math.round(
+      diagnostics.getBoundingClientRect().top - controls.getBoundingClientRect().bottom,
+    );
+  });
+  expect(diagnosticsGap).toBeGreaterThanOrEqual(6);
+  await rightRail.screenshot({
+    path: "/tmp/algo-right-rail-bottom.png",
+    animations: "disabled",
+  });
 
-  await table.screenshot({
+  await page.getByTestId("algo-operations-signal-table").screenshot({
     path: "/tmp/algo-signal-row-desktop.png",
     animations: "disabled",
   });
@@ -496,9 +584,34 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
 test("visual review: mobile signal hero rows", async ({ page }) => {
   await openAlgo(page, 390, 844);
 
-  const table = page.getByTestId("algo-operations-signal-table");
   await expect(page.getByTestId("algo-signal-row-AAPL")).toBeVisible();
-  await table.screenshot({
+  await page.getByTestId("algo-settings-drawer-open").click();
+  const drawer = page.getByTestId("algo-settings-drawer");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByTestId("algo-settings-drawer-close")).toBeVisible();
+  await expect(drawer.getByTestId("algo-halt-strip")).toBeVisible();
+  await expect(drawer.getByTestId("algo-halt-toggle-freshQuoteRequired")).toBeVisible();
+  await expect(drawer.getByTestId("algo-halt-label-freshQuoteRequired")).toHaveText("Fresh");
+  await expect(drawer.getByTestId("algo-halt-input-spreadGate")).toBeVisible();
+  await expect(drawer.getByTestId("algo-controls-container")).toBeVisible();
+  await expect(drawer.getByTestId("algo-settings-container")).toBeVisible();
+  await expect(drawer.getByTestId("algo-diagnostics-container")).toBeVisible();
+  await expect(drawer.getByTestId("algo-compact-group-signal")).toBeVisible();
+  await expect(drawer.getByTestId("algo-compact-toggle-minDtePolicy")).toBeVisible();
+  const mobileHaltColumns = await drawer
+    .getByTestId("algo-halt-group-quote")
+    .evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").filter(Boolean).length);
+  expect(mobileHaltColumns).toBe(2);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("algo-settings-drawer")).toHaveCount(0);
+  await page.getByTestId("algo-settings-drawer-open").click();
+  await page.getByTestId("algo-settings-drawer").screenshot({
+    path: "/tmp/algo-right-rail-mobile.png",
+    animations: "disabled",
+  });
+  await page.getByTestId("algo-settings-drawer").getByTestId("algo-settings-drawer-close").click();
+  await expect(page.getByTestId("algo-settings-drawer")).toHaveCount(0);
+  await page.getByTestId("algo-operations-signal-table").screenshot({
     path: "/tmp/algo-signal-row-mobile.png",
     animations: "disabled",
   });

@@ -1293,7 +1293,7 @@ test("platform app loads without root crash diagnostics", async ({ page }) => {
       (event) =>
         event.category === "react-root-crash" ||
         (event.raw as Record<string, unknown> | undefined)?.kind ===
-          "rayalgo-root-crash",
+          "pyrus-root-crash",
     ),
   ).toEqual([]);
 });
@@ -1481,21 +1481,26 @@ test("account desktop tables grow without vertical inner scroll caps", async ({
     "Positions table",
   );
 
-  const tradesOrdersPanel = page.getByTestId("account-deferred-trades-orders");
-  await tradesOrdersPanel.scrollIntoViewIfNeeded();
-  await expect(tradesOrdersPanel).toHaveAttribute(
+  const tradingAnalysisPanel = page.getByTestId("account-deferred-trading-analysis");
+  await tradingAnalysisPanel.scrollIntoViewIfNeeded();
+  await expect(tradingAnalysisPanel).toHaveAttribute(
     "data-deferred-render",
     "mounted",
   );
+  await tradingAnalysisPanel.getByRole("button", { name: /^Trades$/ }).click();
+  await expect(page.getByTestId("account-analysis-trades-view")).toBeVisible();
+  await expectNoVerticalInnerScroll(
+    page.getByTestId("account-analysis-trades-view"),
+    "Trading analysis trades view",
+  );
+
+  const ordersPanel = page.getByTestId("account-deferred-orders");
+  await ordersPanel.scrollIntoViewIfNeeded();
+  await expect(ordersPanel).toHaveAttribute("data-deferred-render", "mounted");
   await expect(page.getByTestId("account-orders-table-scroll")).toBeVisible();
-  await expect(page.getByTestId("account-closed-trades-table-scroll")).toBeVisible();
   await expectNoVerticalInnerScroll(
     page.getByTestId("account-orders-table-scroll"),
     "Orders table",
-  );
-  await expectNoVerticalInnerScroll(
-    page.getByTestId("account-closed-trades-table-scroll"),
-    "Closed trades table",
   );
 
   const supportPanel = page.getByTestId("account-deferred-support");
@@ -1548,6 +1553,7 @@ test("platform phone layout navigates all primary screens without document overf
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
   await expect(page.getByTestId("mobile-top-chrome")).toBeVisible();
+  await expect(page.getByTestId("mobile-header-context")).toBeVisible();
   await expect(page.getByTestId("mobile-bottom-nav")).toBeVisible();
   await page.getByTestId("mobile-bottom-nav-more").click();
   await expect(page.getByTestId("mobile-more-sheet")).toBeVisible();
@@ -1703,20 +1709,24 @@ test("account phone layout renders dense scan rows for positions trades and orde
   await positionRows.first().click();
   await expect(page.getByTestId("account-position-expanded-details").first()).toBeVisible();
 
-  const tradesOrdersPanel = page.getByTestId("account-deferred-trades-orders");
-  await tradesOrdersPanel.scrollIntoViewIfNeeded();
-  await expect(tradesOrdersPanel).toHaveAttribute(
+  const tradingAnalysisPanel = page.getByTestId("account-deferred-trading-analysis");
+  await tradingAnalysisPanel.scrollIntoViewIfNeeded();
+  await expect(tradingAnalysisPanel).toHaveAttribute(
     "data-deferred-render",
     "mounted",
   );
-  await page.getByTestId("account-trades-row-list").scrollIntoViewIfNeeded();
-  const tradeRows = page.getByTestId("account-trade-scan-row");
+  await tradingAnalysisPanel.getByRole("button", { name: /^Trades$/ }).click();
+  await page.getByTestId("account-analysis-trades-view").scrollIntoViewIfNeeded();
+  const tradeRows = page.getByTestId("account-analysis-trade-row");
   await expect(tradeRows.first()).toBeVisible({ timeout: 30_000 });
   await expect(tradeRows).toHaveCount(2);
-  expect(await maxCollapsedHeight(tradeRows)).toBeLessThanOrEqual(42);
+  expect(await maxCollapsedHeight(tradeRows)).toBeLessThanOrEqual(56);
   await tradeRows.first().click();
-  await expect(page.getByTestId("account-trade-expanded-details").first()).toBeVisible();
+  await expect(page.getByTestId("account-analysis-trade-expanded").first()).toBeVisible();
 
+  const ordersPanel = page.getByTestId("account-deferred-orders");
+  await ordersPanel.scrollIntoViewIfNeeded();
+  await expect(ordersPanel).toHaveAttribute("data-deferred-render", "mounted");
   await page.getByTestId("account-orders-row-list").scrollIntoViewIfNeeded();
   const orderRows = page.getByTestId("account-order-scan-row");
   await expect(orderRows.first()).toBeVisible({ timeout: 30_000 });
@@ -2216,10 +2226,10 @@ test("market chart ticker search keeps a single active chart owner", async ({
   await page.goto("/");
 
   const firstSearchButton = page
-    .getByTestId("market-mini-chart-0")
+    .getByTestId("market-chart-0")
     .getByTestId("chart-symbol-search-button");
   const secondSearchButton = page
-    .getByTestId("market-mini-chart-1")
+    .getByTestId("market-chart-1")
     .getByTestId("chart-symbol-search-button");
 
   await expect(firstSearchButton).toBeVisible({ timeout: 30_000 });
@@ -2248,7 +2258,7 @@ test("market chart ticker search updates the shared selected symbol", async ({
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",
@@ -2264,7 +2274,7 @@ test("market chart ticker search updates the shared selected symbol", async ({
   await page.goto("/");
 
   const searchButton = page
-    .getByTestId("market-mini-chart-0")
+    .getByTestId("market-chart-0")
     .getByTestId("chart-symbol-search-button");
   await expect(searchButton).toHaveAttribute("title", "Search SPY", {
     timeout: 30_000,
@@ -2288,7 +2298,7 @@ test("market chart ticker search updates the shared selected symbol", async ({
     .poll(() =>
       page.evaluate(() => {
         const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+          window.localStorage.getItem("pyrus:state:v1") || "{}",
         );
         return state.sym || null;
       }),
@@ -2310,7 +2320,7 @@ test("market watchlist selection replaces the visible solo chart ticker", async 
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",
@@ -2325,7 +2335,7 @@ test("market watchlist selection replaces the visible solo chart ticker", async 
   await mockShellApi(page, { barsRequests });
   await page.goto("/");
 
-  const soloChart = page.getByTestId("market-mini-chart-0");
+  const soloChart = page.getByTestId("market-chart-0");
   const searchButton = soloChart.getByTestId("chart-symbol-search-button");
   await expect(searchButton).toHaveAttribute("title", "Search SPY", {
     timeout: 30_000,
@@ -2346,7 +2356,7 @@ test("market watchlist selection replaces the visible solo chart ticker", async 
     .poll(() =>
       page.evaluate(() => {
         const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+          window.localStorage.getItem("pyrus:state:v1") || "{}",
         );
         return state.sym || null;
       }),
@@ -2367,7 +2377,7 @@ test("market watchlist selection promotes an already-visible ticker into the pri
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",
@@ -2389,10 +2399,10 @@ test("market watchlist selection promotes an already-visible ticker into the pri
   await page.goto("/");
 
   const primarySearchButton = page
-    .getByTestId("market-mini-chart-0")
+    .getByTestId("market-chart-0")
     .getByTestId("chart-symbol-search-button");
   const priorAaplSlotSearchButton = page
-    .getByTestId("market-mini-chart-2")
+    .getByTestId("market-chart-2")
     .getByTestId("chart-symbol-search-button");
 
   await expect(primarySearchButton).toHaveAttribute("title", "Search SPY", {
@@ -2410,7 +2420,7 @@ test("market watchlist selection promotes an already-visible ticker into the pri
     .poll(() =>
       page.evaluate(() => {
         const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+          window.localStorage.getItem("pyrus:state:v1") || "{}",
         );
         return state.marketGridSlots?.[0]?.ticker || null;
       }),
@@ -2431,15 +2441,15 @@ test("spot market mini chart hydrates every interval selection", async ({
   await mockShellApi(page, { barsRequests });
   await page.goto("/");
 
-  await expect(page.getByTestId("market-mini-chart-0")).toBeVisible({
+  await expect(page.getByTestId("market-chart-0")).toBeVisible({
     timeout: 30_000,
   });
 
   for (const interval of spotChartIntervals) {
-    await selectChartInterval(page, "market-mini-chart-0", interval);
+    await selectChartInterval(page, "market-chart-0", interval);
     await expectSpotBarsRequestForInterval(barsRequests, interval);
-    await expectChartHydrated(page, "market-mini-chart-0-surface");
-    await expectChartLiveEdgeSource(page, "market-mini-chart-0-surface");
+    await expectChartHydrated(page, "market-chart-0-surface");
+    await expectChartLiveEdgeSource(page, "market-chart-0-surface");
   }
 
   expect(barsRequests.length).toBeGreaterThan(0);
@@ -2486,15 +2496,15 @@ test("market chart frame changes timeframe from the dropdown and zooms", async (
   await mockShellApi(page, { barsRequests });
   await page.goto("/");
 
-  const chart = page.getByTestId("market-mini-chart-0");
-  const surface = page.getByTestId("market-mini-chart-0-surface");
+  const chart = page.getByTestId("market-chart-0");
+  const surface = page.getByTestId("market-chart-0-surface");
   await expect(chart).toBeVisible({ timeout: 30_000 });
   await expect(surface).toHaveAttribute(
     "data-chart-visible-logical-range",
     /^(?!none$).+/,
     { timeout: 15_000 },
   );
-  await expectChartHydrated(page, "market-mini-chart-0-surface");
+  await expectChartHydrated(page, "market-chart-0-surface");
 
   const trigger = chart.getByTestId("chart-timeframe-menu-trigger");
   await expect(trigger).toHaveAttribute("data-chart-timeframe", "15m");
@@ -2510,7 +2520,7 @@ test("market chart frame changes timeframe from the dropdown and zooms", async (
     )
     .toBe(true);
 
-  const plot = page.getByTestId("market-mini-chart-0-surface-plot");
+  const plot = page.getByTestId("market-chart-0-surface-plot");
   const box = await plot.boundingBox();
   expect(box, "market chart plot should have a geometry box").not.toBeNull();
   await page.mouse.up();

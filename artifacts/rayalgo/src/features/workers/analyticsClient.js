@@ -40,7 +40,7 @@ export const getAnalyticsWorkerApi = () => {
     return analyticsWorkerApi;
   } catch (error) {
     analyticsWorkerUnavailable = true;
-    console.warn("[rayalgo] analytics worker unavailable; using sync transforms", error);
+    console.warn("[pyrus] analytics worker unavailable; using sync transforms", error);
     return null;
   }
 };
@@ -154,7 +154,7 @@ export const useFlowChartEventConversion = (
       .catch((error) => {
         if (!cancelled) {
           clearTimeout(fallbackTimer);
-          console.warn("[rayalgo] analytics worker flow conversion failed", error);
+          console.warn("[pyrus] analytics worker flow conversion failed", error);
           conversionSymbolRef.current = symbol;
           setConversion(flowEventsToChartEventConversion(inputEvents, symbol));
         }

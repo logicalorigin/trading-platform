@@ -351,7 +351,7 @@ Polygon/Massive premium distribution mapping:
 - Options trades provide the tick-test fallback for top contracts; condition and exchange
   codes are retained for audits but are not side signals yet.
 - Grouped daily stock aggregates only choose candidate underlyings. Bucket thresholds are
-  RayAlgo display heuristics, not vendor-defined Webull buckets.
+  PYRUS display heuristics, not vendor-defined Webull buckets.
 */
 
 export type PolygonApiDiagnosticsStatus =

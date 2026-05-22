@@ -22,7 +22,7 @@ async function openScreen(page: Page, screen: string, anchorTestId: string, sett
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: s,
         sym: "SPY",

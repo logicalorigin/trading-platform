@@ -8,17 +8,19 @@ import {
 } from "./gexModel.js";
 import { resolveTokenColor } from "../../lib/uiTokens.jsx";
 
-export const GEX_DASHBOARD_QUERY_STALE_MS = 30_000;
-export const GEX_DASHBOARD_QUERY_REFETCH_MS = 60_000;
+export const GEX_DASHBOARD_QUERY_STALE_MS = 15_000;
+export const GEX_DASHBOARD_QUERY_REFETCH_MS = 15_000;
 export const GEX_ZERO_GAMMA_STALE_MS = 15 * 60_000;
 export const GEX_ZERO_GAMMA_LABEL = "γ flip";
 
 const GEX_ZERO_GAMMA_TOKEN = "--ra-gex-zero-gamma";
-const GEX_ZERO_GAMMA_FALLBACK = "#6FB5C2";
+const GEX_ZERO_GAMMA_FALLBACK = "#24C8DB";
 const GEX_ZERO_GAMMA_STALE_BLEND_TOKEN = "--ra-surface-1";
-const GEX_ZERO_GAMMA_STALE_BLEND_FALLBACK = "#1E1D22";
+const GEX_ZERO_GAMMA_STALE_BLEND_FALLBACK = "#090D18";
 const THEME_ATTRIBUTE_FILTER = [
+  "data-pyrus-theme",
   "data-rayalgo-theme",
+  "data-pyrus-color-mode",
   "data-rayalgo-color-mode",
   "class",
   "style",
@@ -217,6 +219,7 @@ export function useGexZeroGamma(ticker, options = {}) {
     staleTime: GEX_DASHBOARD_QUERY_STALE_MS,
     refetchInterval: enabled ? GEX_DASHBOARD_QUERY_REFETCH_MS : false,
     refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
     retry: 1,
   });
 

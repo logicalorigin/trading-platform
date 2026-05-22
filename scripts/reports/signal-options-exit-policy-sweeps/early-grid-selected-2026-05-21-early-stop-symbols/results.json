@@ -1,0 +1,2741 @@
+{
+  "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/early-grid-selected-2026-05-21-early-stop-symbols",
+  "deployment": {
+    "id": "7e2e4e6f-749f-4e65-a011-87d3559a23b0",
+    "name": "RayReplica Signal Options Shadow Paper",
+    "mode": "paper",
+    "symbolUniverse": [
+      "NVDA",
+      "TQQQ",
+      "HOOD",
+      "SMCI",
+      "VRT",
+      "CLS",
+      "SOXX",
+      "SMH",
+      "MRVL"
+    ]
+  },
+  "config": {
+    "start": "2026-05-21",
+    "end": "2026-05-21",
+    "signalTimeframe": "5m",
+    "session": "regular",
+    "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/early-grid-selected-2026-05-21-early-stop-symbols",
+    "lockWaitMs": 0,
+    "heartbeatMs": 30000,
+    "variantTimeoutMs": 1200000,
+    "timeHorizon": 8,
+    "symbols": [
+      "MRVL",
+      "NVDA",
+      "HOOD",
+      "SMCI",
+      "CLS",
+      "SOXX",
+      "TQQQ",
+      "SMH",
+      "VRT"
+    ]
+  },
+  "results": [
+    {
+      "variant": {
+        "id": "early-grid-disabled",
+        "description": "Winning combo with early invalidation disabled.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 0,
+            "earlyExitLossPct": 0
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:50:51.134Z",
+      "finishedAt": "2026-05-21T20:52:29.531Z",
+      "durationMs": 98397,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 17,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 13,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 10,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b2-loss12p5",
+        "description": "Winning combo, early invalidation after 2 bars at -12.5%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 2,
+            "earlyExitLossPct": 12.5
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:52:29.532Z",
+      "finishedAt": "2026-05-21T20:54:47.147Z",
+      "durationMs": 137615,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 17,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 13,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 10,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b3-loss15",
+        "description": "Winning combo, early invalidation after 3 bars at -15%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 3,
+            "earlyExitLossPct": 15
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:54:47.148Z",
+      "finishedAt": "2026-05-21T20:55:45.353Z",
+      "durationMs": 58205,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 17,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 13,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 10,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b4-loss15",
+        "description": "Winning combo, early invalidation after 4 bars at -15%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 4,
+            "earlyExitLossPct": 15
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:55:45.353Z",
+      "finishedAt": "2026-05-21T20:55:57.207Z",
+      "durationMs": 11854,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 15,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 2,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 2
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b4-loss20",
+        "description": "Winning combo, early invalidation after 4 bars at -20%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 4,
+            "earlyExitLossPct": 20
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:55:57.207Z",
+      "finishedAt": "2026-05-21T20:56:08.405Z",
+      "durationMs": 11198,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 15,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 2,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 2
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b6-loss20",
+        "description": "Winning combo, early invalidation after 6 bars at -20%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:56:08.405Z",
+      "finishedAt": "2026-05-21T20:56:19.683Z",
+      "durationMs": 11278,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 15,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 2,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 2
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b8-loss20",
+        "description": "Winning combo, early invalidation after 8 bars at -20%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 8,
+            "earlyExitLossPct": 20
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:56:19.683Z",
+      "finishedAt": "2026-05-21T20:56:31.262Z",
+      "durationMs": 11579,
+      "metrics": {
+        "realizedPnl": 538,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 3,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 1.076
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 15,
+        "entriesOpened": 4,
+        "exitsClosed": 3,
+        "marksRecorded": 109,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 2,
+        "realizedPnl": 538,
+        "winningTrades": 3,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 2
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 2
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779383100000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T17:05:00.000Z",
+            "closedAt": "2026-05-21T18:54:00.000Z",
+            "entryPrice": 3.9,
+            "exitPrice": 4.45,
+            "quantity": 3,
+            "pnl": 165,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00072000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 72,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 81.4,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 7.4,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 81.4
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1170
+              },
+              "adx": 12.389446,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 6,
+              "highPrice": 4.93,
+              "highAt": "2026-05-21T19:23:00.000Z",
+              "lowPrice": 4.4,
+              "lowAt": "2026-05-21T19:00:00.000Z",
+              "lastClose": 4.85,
+              "lastAt": "2026-05-21T19:49:00.000Z",
+              "highVsExitPct": 10.8,
+              "lastVsExitPct": 9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b8-loss25",
+        "description": "Winning combo, early invalidation after 8 bars at -25%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 8,
+            "earlyExitLossPct": 25
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:56:31.262Z",
+      "finishedAt": "2026-05-21T20:56:41.507Z",
+      "durationMs": 10245,
+      "metrics": {
+        "realizedPnl": 248,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.496
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 13,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 76,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 248,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 8,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b10-loss25",
+        "description": "Winning combo, early invalidation after 10 bars at -25%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 10,
+            "earlyExitLossPct": 25
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:56:41.508Z",
+      "finishedAt": "2026-05-21T20:56:51.645Z",
+      "durationMs": 10137,
+      "metrics": {
+        "realizedPnl": 248,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.496
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 13,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 76,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 248,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 8,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "early-grid-b12-loss30",
+        "description": "Winning combo, early invalidation after 12 bars at -30%.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 12,
+            "earlyExitLossPct": 30
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:56:51.646Z",
+      "finishedAt": "2026-05-21T20:57:01.954Z",
+      "durationMs": 10308,
+      "metrics": {
+        "realizedPnl": 248,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.496
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 13,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 76,
+        "candidatesSkipped": 11,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 248,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 8,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    }
+  ],
+  "ranked": []
+}

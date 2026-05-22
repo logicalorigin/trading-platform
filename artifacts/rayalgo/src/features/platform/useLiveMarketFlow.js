@@ -38,6 +38,30 @@ import {
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
 const FLOW_SCANNER_AGGREGATE_QUERY_KEY = ["/api/flow/events/aggregate"];
+const EMPTY_FLOW_ANALYTICS = Object.freeze({
+  flowTide: Object.freeze([]),
+  tickerFlow: Object.freeze([]),
+  flowClock: Object.freeze([]),
+  sectorFlow: Object.freeze([]),
+  dteBuckets: Object.freeze([]),
+  marketOrderFlow: Object.freeze({
+    buyXL: 0,
+    buyL: 0,
+    buyM: 0,
+    buyS: 0,
+    sellXL: 0,
+    sellL: 0,
+    sellM: 0,
+    sellS: 0,
+  }),
+  putCall: Object.freeze({
+    total: null,
+    equities: null,
+    indices: null,
+    calls: 0,
+    puts: 0,
+  }),
+});
 
 const normalizeFlowUniverseSymbols = (symbols = []) => [
   ...new Set(
@@ -100,6 +124,17 @@ const fetchAggregateFlowEvents = async ({
   });
 };
 
+const RADAR_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
+
+const isRadarActivityFallbackEvent = (event) => {
+  const basis = String(event?.sourceBasis || event?.confidence || "")
+    .trim()
+    .toLowerCase();
+  if (basis !== "fallback_estimate") return false;
+  if (event?.providerContractId) return false;
+  return RADAR_ACTIVITY_OPTION_TICKER_RE.test(String(event?.optionTicker || ""));
+};
+
 let liveMarketFlowInstanceCounter = 0;
 
 export const useLiveMarketFlow = (
@@ -121,6 +156,7 @@ export const useLiveMarketFlow = (
     scannerConfig,
     intervalMs = 10_000,
     workloadLabel = null,
+    includeAnalytics = true,
   } = {},
 ) => {
   const { preferences: userPreferences } = useUserPreferences();
@@ -530,6 +566,9 @@ export const useLiveMarketFlow = (
   const aggregatedEvents = useMemo(() => {
     const seen = new Set();
     return responses.flatMap((response) => response.events || []).filter((event) => {
+      if (isRadarActivityFallbackEvent(event)) {
+        return false;
+      }
       const key =
         event?.id ||
         [
@@ -753,17 +792,26 @@ export const useLiveMarketFlow = (
     effectiveScannerConfig,
   ]);
 
+  const analytics = useMemo(() => {
+    if (!includeAnalytics) {
+      return EMPTY_FLOW_ANALYTICS;
+    }
+    return {
+      flowTide: buildFlowTideFromEvents(flowEvents),
+      tickerFlow: buildTickerFlowFromEvents(flowEvents, ensureTradeTickerInfo),
+      flowClock: buildFlowClockFromEvents(flowEvents),
+      sectorFlow: buildSectorFlowFromEvents(flowEvents),
+      dteBuckets: buildDteBucketsFromEvents(flowEvents),
+      marketOrderFlow: buildMarketOrderFlowFromEvents(flowEvents),
+      putCall: buildPutCallSummaryFromEvents(flowEvents),
+    };
+  }, [flowEvents, includeAnalytics]);
+
   return {
     hasLiveFlow,
     flowStatus,
     providerSummary,
     flowEvents,
-    flowTide: buildFlowTideFromEvents(flowEvents),
-    tickerFlow: buildTickerFlowFromEvents(flowEvents, ensureTradeTickerInfo),
-    flowClock: buildFlowClockFromEvents(flowEvents),
-    sectorFlow: buildSectorFlowFromEvents(flowEvents),
-    dteBuckets: buildDteBucketsFromEvents(flowEvents),
-    marketOrderFlow: buildMarketOrderFlowFromEvents(flowEvents),
-    putCall: buildPutCallSummaryFromEvents(flowEvents),
+    ...analytics,
   };
 };

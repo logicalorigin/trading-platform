@@ -12,7 +12,7 @@ import {
   getFlexHealth,
 } from "./account";
 import type { AccountRange } from "./account-ranges";
-import { getShadowTradingPatterns, isShadowAccountId } from "./shadow-account";
+import { isShadowAccountId } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 import { invalidateShadowAccountSnapshotBaseCache } from "./shadow-account-streams";
 
@@ -73,7 +73,6 @@ export type AccountPageSnapshotPayload = {
   risk: Awaited<ReturnType<typeof getAccountRisk>>;
   cashActivity: Awaited<ReturnType<typeof getAccountCashActivity>>;
   flexHealth: Awaited<ReturnType<typeof getFlexHealth>> | null;
-  tradingPatterns: Awaited<ReturnType<typeof getShadowTradingPatterns>> | null;
 };
 
 export type AccountPageCriticalPayload = {
@@ -120,7 +119,6 @@ export type AccountPageDerivedPayload = {
   closedTrades: AccountPageSnapshotPayload["closedTrades"];
   cashActivity: AccountPageSnapshotPayload["cashActivity"];
   flexHealth: AccountPageSnapshotPayload["flexHealth"];
-  tradingPatterns: AccountPageSnapshotPayload["tradingPatterns"];
 };
 
 const accountPageSnapshotCache = new Map<
@@ -243,7 +241,6 @@ function derivedPayloadFromBootstrap(
     closedTrades: payload.closedTrades,
     cashActivity: payload.cashActivity,
     flexHealth: payload.flexHealth,
-    tradingPatterns: payload.tradingPatterns,
   };
 }
 
@@ -425,7 +422,6 @@ export async function fetchAccountPageDerivedPayload(
       closedTrades,
       cashActivity,
       flexHealth,
-      tradingPatterns,
     ] = await Promise.all([
       getAccountEquityHistory({ ...common, range: normalized.range }),
       Promise.all(
@@ -445,9 +441,6 @@ export async function fetchAccountPageDerivedPayload(
       getAccountClosedTrades(closedTradeInput),
       getAccountCashActivity(common),
       isShadowAccountId(normalized.accountId) ? Promise.resolve(null) : getFlexHealth(),
-      isShadowAccountId(normalized.accountId)
-        ? getShadowTradingPatterns({ range: normalized.range, snapshotId: "latest" })
-        : Promise.resolve(null),
     ]);
 
     const value: AccountPageDerivedPayload = {
@@ -476,7 +469,6 @@ export async function fetchAccountPageDerivedPayload(
       closedTrades,
       cashActivity,
       flexHealth,
-      tradingPatterns,
     };
     if (version === accountPageSnapshotCacheVersion) {
       accountPageDerivedCache.set(cacheKey, {
@@ -541,7 +533,6 @@ export async function fetchAccountPageSnapshotPayload(
       risk: live.risk,
       cashActivity: derived.cashActivity,
       flexHealth: derived.flexHealth,
-      tradingPatterns: derived.tradingPatterns,
     };
     if (version === accountPageSnapshotCacheVersion) {
       accountPageSnapshotCache.set(cacheKey, {

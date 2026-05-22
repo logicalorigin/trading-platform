@@ -1621,6 +1621,7 @@ test("buildHeaderIbkrPopoverModel uses one active line meter with pending reconc
   assert.equal(model.lineUsage.activeLineCount, 143);
   assert.equal(model.lineUsage.requestedLineCount, 143);
   assert.equal(model.lineUsage.pendingLineCount, 128);
+  assert.equal(model.lineUsage.foregroundPendingLineCount, 27);
   assert.equal(model.lineUsage.requestedSummary, "143 of 190");
   assert.equal(model.lineUsage.demandSummary, "143 of 190");
   assert.equal(model.lineUsage.bridge.summary, "15 of 190");

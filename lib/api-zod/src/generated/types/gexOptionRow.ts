@@ -13,10 +13,26 @@ export interface GexOptionRow {
   expireMonth: number;
   expireDay: number;
   cp: GexOptionRowCp;
+  /** @nullable */
+  ticker?: string | null;
+  /** @nullable */
+  underlying?: string | null;
+  expirationDate?: string;
+  /** @nullable */
+  providerContractId?: string | null;
   gamma: number;
   delta: number;
   openInterest: number;
   impliedVol: number;
   bid: number;
   ask: number;
+  multiplier?: number;
+  sharesPerContract?: number;
+  volume?: number;
+  /** @nullable */
+  updatedAt?: Date | null;
+  /** @nullable */
+  quoteFreshness?: string | null;
+  /** @nullable */
+  marketDataMode?: string | null;
 }

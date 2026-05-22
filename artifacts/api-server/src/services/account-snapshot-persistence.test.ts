@@ -8,12 +8,15 @@ process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 const { recordAccountSnapshots } = await import("./account");
 const { __accountPositionInternalsForTests } = await import("./account");
 
-function account(id: string): BrokerAccountSnapshot {
+function account(
+  id: string,
+  mode: BrokerAccountSnapshot["mode"] = "live",
+): BrokerAccountSnapshot {
   return {
     id,
     providerAccountId: id,
     provider: "ibkr",
-    mode: "live",
+    mode,
     displayName: `IBKR ${id}`,
     currency: "USD",
     buyingPower: 100,
@@ -24,6 +27,26 @@ function account(id: string): BrokerAccountSnapshot {
     updatedAt: new Date("2026-05-07T16:00:00.000Z"),
   };
 }
+
+test("account snapshot throttling treats paper and live accounts separately", async () => {
+  let persistedAccounts: BrokerAccountSnapshot[] = [];
+
+  await recordAccountSnapshots(
+    [account("U-SAME-ID", "live"), account("U-SAME-ID", "paper")],
+    {
+      nowMs: () => 300_000,
+      backoff: createTransientPostgresBackoff(),
+      persistSnapshots: async (accounts) => {
+        persistedAccounts = accounts;
+      },
+    },
+  );
+
+  assert.deepEqual(
+    persistedAccounts.map((persistedAccount) => persistedAccount.mode),
+    ["live", "paper"],
+  );
+});
 
 test("account snapshot persistence quietly backs off transient database failures", async () => {
   let nowMs = 100_000;

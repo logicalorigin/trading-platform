@@ -1050,7 +1050,7 @@ const useTickerSearchController = ({
   };
 };
 
-export const MiniChartTickerSearch = ({
+export const MarketChartTickerSearch = ({
   open,
   ticker,
   recentTickerRows = [],
@@ -1756,7 +1756,7 @@ export function TickerSearchLab() {
           visible row. The popover below uses the same live search component as the chart grid.
         </div>
 
-        <MiniChartTickerSearch
+        <MarketChartTickerSearch
           open={searchOpen}
           ticker={selectedTicker}
           recentTickerRows={selectedRow ? [selectedRow] : []}

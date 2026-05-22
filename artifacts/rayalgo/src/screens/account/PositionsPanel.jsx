@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import {
@@ -7,6 +7,7 @@ import {
   useStoredOptionQuoteSnapshotVersion,
 } from "../../features/platform/live-streams";
 import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -26,7 +27,19 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { Button, MicroSparkline } from "../../components/platform/primitives.jsx";
+import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
+import {
+  buildPositionDisplayModel,
+  formatPositionBidAskLabel,
+  formatPositionQuoteFreshnessLabel,
+  formatPositionSpreadLabel,
+  positionCostBasis,
+} from "../../features/account/positionDisplayModel.js";
+import {
+  POSITION_TABLE_SURFACE_ACCOUNT,
+  getPositionTableColumns,
+} from "../../features/account/positionTableColumns.js";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
@@ -54,6 +67,8 @@ const SOURCE_FILTERS = [
   { value: "watchlist_backtest", label: "Watchlist BT" },
   { value: "mixed", label: "Mixed" },
 ];
+
+const POSITIONS_PAGE_SIZE = 50;
 
 const sourceTone = (sourceType) =>
   sourceType === "automation"
@@ -104,10 +119,11 @@ const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
   <button
     type="button"
     onClick={() =>
-      setSort((current) => ({
-        id,
-        dir: current.id === id && current.dir === "desc" ? "asc" : "desc",
-      }))
+      setSort((current) => {
+        if (current.id !== id) return { id, dir: "desc" };
+        if (current.dir === "desc") return { id, dir: "asc" };
+        return { id: null, dir: null };
+      })
     }
     style={{
       border: "none",
@@ -211,12 +227,19 @@ const formatOptionExpiryLabel = (value) => {
 
 const optionContractLabel = (contract) => {
   const underlying = firstDisplayText(contract?.underlying, contract?.symbol);
+  const terms = optionContractTermsLabel(contract);
+  return [underlying, terms]
+    .filter((value) => value && value !== MISSING_VALUE)
+    .join(" ") || MISSING_VALUE;
+};
+
+const optionContractTermsLabel = (contract) => {
   const expiry = formatOptionExpiryLabel(
     firstText(contract?.expirationDate, contract?.exp, contract?.expiry),
   );
   const strike = contract?.strike == null ? "" : formatNumber(contract.strike, 4);
   const right = formatOptionRightLabel(contract?.right || contract?.cp);
-  return [underlying, expiry, strike, right]
+  return [expiry, strike, right]
     .filter((value) => value && value !== MISSING_VALUE)
     .join(" ") || MISSING_VALUE;
 };
@@ -230,6 +253,9 @@ const formatQuoteBidAsk = (quote, maskValues) => {
   if (bid == null && ask == null) return MISSING_VALUE;
   return `${formatOptionPrice(bid, maskValues)} / ${formatOptionPrice(ask, maskValues)}`;
 };
+
+const optionDisplayQuote = (row) =>
+  buildPositionDisplayModel(row, row?.optionQuote).quote ?? row?.optionQuote ?? row?.quote ?? null;
 
 const quoteMid = (quote) => {
   const bid = firstFiniteNumber(quote?.bid);
@@ -396,6 +422,7 @@ const buildDisplayTotals = (rows, fallbackTotals) => {
       const marketValue = firstFiniteNumber(row.marketValue);
       const unrealizedPnl = firstFiniteNumber(row.unrealizedPnl);
       const dayChange = firstFiniteNumber(row.dayChange);
+      const weightPercent = firstFiniteNumber(row.weightPercent);
       if (marketValue != null) {
         acc.netExposure += marketValue;
         if (marketValue >= 0) acc.grossLong += marketValue;
@@ -403,6 +430,9 @@ const buildDisplayTotals = (rows, fallbackTotals) => {
       }
       if (unrealizedPnl != null) acc.unrealizedPnl += unrealizedPnl;
       if (dayChange != null) acc.dayChange += dayChange;
+      if (weightPercent != null) {
+        acc.weightPercent = (acc.weightPercent ?? 0) + weightPercent;
+      }
       return acc;
     },
     {
@@ -411,23 +441,12 @@ const buildDisplayTotals = (rows, fallbackTotals) => {
       grossShort: 0,
       unrealizedPnl: 0,
       dayChange: 0,
-      weightPercent: rows.length ? 100 : null,
+      weightPercent: null,
     },
   );
 };
 
-const applyDisplayWeights = (rows) => {
-  const totalAbsMarketValue = rows.reduce(
-    (sum, row) => sum + Math.abs(firstFiniteNumber(row.marketValue) ?? 0),
-    0,
-  );
-  if (totalAbsMarketValue <= 0) return rows;
-  return rows.map((row) => ({
-    ...row,
-    weightPercent:
-      (Math.abs(firstFiniteNumber(row.marketValue) ?? 0) / totalAbsMarketValue) * 100,
-  }));
-};
+const applyDisplayWeights = (rows) => rows;
 
 const formatQuoteMarkLast = (quote, maskValues) => {
   const mark = firstFiniteNumber(quote?.mark, quote?.mid);
@@ -472,6 +491,103 @@ const quoteFreshnessDetail = (quote) =>
     .filter(Boolean)
     .join(" · ");
 
+const formatReasonChip = (value) =>
+  formatEnumLabel(value)
+    .replace(/^Mtf\b/, "MTF")
+    .replace(/\bAdx\b/, "ADX");
+
+const formatAutomationStopDistanceLabel = (stopDistancePct, maskValues) => {
+  const distance = firstFiniteNumber(stopDistancePct);
+  if (distance == null) return null;
+  const formatted = formatAccountPercent(Math.abs(distance), 1, maskValues);
+  return distance <= 0 ? `${formatted} past stop` : `${formatted} from stop`;
+};
+
+const automationStopTone = (stopDistancePct) => {
+  const distance = firstFiniteNumber(stopDistancePct);
+  if (distance == null) return T.textSec;
+  if (distance <= 0) return T.red;
+  return distance <= 20 ? T.amber : T.textSec;
+};
+
+const automationPositionMetrics = (row, currency, maskValues) => {
+  const automation = row?.automationContext || null;
+  if (!automation) return null;
+
+  const mark = firstFiniteNumber(row?.mark);
+  const stop = firstFiniteNumber(automation.stopPrice);
+  const peak = firstFiniteNumber(automation.peakPrice);
+  const entry = firstFiniteNumber(automation.entryPrice, row?.averageCost);
+  const signalScore = firstFiniteNumber(automation.signalScore);
+  const barsSinceSignal = firstFiniteNumber(automation.barsSinceSignal);
+  const barsSinceSignalLabel =
+    barsSinceSignal != null ? `${Math.round(barsSinceSignal)} bars since signal` : null;
+  const stopDistancePct =
+    mark != null && stop != null && mark !== 0 ? ((mark - stop) / Math.abs(mark)) * 100 : null;
+  const stopDistanceLabel = formatAutomationStopDistanceLabel(stopDistancePct, maskValues);
+  const stopTone = automationStopTone(stopDistancePct);
+  const givebackPct =
+    mark != null && peak != null && peak > 0 ? ((mark - peak) / peak) * 100 : null;
+  const returnPct =
+    mark != null && entry != null && entry > 0 ? ((mark - entry) / entry) * 100 : null;
+  const purchasedAt = firstText(automation.purchasedAt, automation.openedAt, automation.signalAt);
+  const signalAt = firstText(automation.signalAt);
+  const reasons = Array.isArray(automation.signalReasons)
+    ? automation.signalReasons.slice(0, 3).map(formatReasonChip)
+    : [];
+  const signalMain = [
+    signalScore != null ? `${signalScore.toFixed(1)} score` : null,
+    automation.signalTier ? formatEnumLabel(automation.signalTier) : null,
+    automation.timeframe,
+  ].filter(Boolean).join(" · ") || MISSING_VALUE;
+  const signalDetail = [
+    barsSinceSignalLabel,
+    signalAt ? `signal ${formatRelativeTimeShort(signalAt)}` : null,
+    purchasedAt ? `bought ${formatRelativeTimeShort(purchasedAt)}` : null,
+  ].filter(Boolean).join(" · ");
+  const riskMain = [
+    stopDistanceLabel,
+    automation.premiumAtRisk != null
+      ? `risk ${formatAccountMoney(automation.premiumAtRisk, currency, true, maskValues)}`
+      : null,
+  ].filter(Boolean).join(" · ") || MISSING_VALUE;
+  const riskDetail = [
+    returnPct != null ? `return ${formatAccountPercent(returnPct, 1, maskValues)}` : null,
+    givebackPct != null ? `giveback ${formatAccountPercent(givebackPct, 1, maskValues)}` : null,
+    automation.lastMarkedAt ? `marked ${formatRelativeTimeShort(automation.lastMarkedAt)}` : null,
+  ].filter(Boolean).join(" · ");
+  const tableDetail = [
+    stopDistanceLabel,
+    barsSinceSignalLabel,
+    purchasedAt ? `bought ${formatRelativeTimeShort(purchasedAt)}` : null,
+    automation.premiumAtRisk != null
+      ? `risk ${formatAccountMoney(automation.premiumAtRisk, currency, true, maskValues)}`
+      : null,
+  ].filter(Boolean).join(" · ");
+  const mobileSummary = [
+    signalScore != null ? `${signalScore.toFixed(1)} score` : null,
+    barsSinceSignalLabel,
+    stopDistanceLabel,
+  ].filter(Boolean).join(" · ");
+
+  return {
+    signalMain,
+    signalDetail,
+    riskMain,
+    riskDetail,
+    tableDetail,
+    mobileSummary,
+    reasons,
+    purchasedAt,
+    signalAt,
+    stopDistancePct,
+    stopDistanceLabel,
+    stopTone,
+    givebackPct,
+    returnPct,
+  };
+};
+
 const optionInlineDetail = (row, maskValues) => {
   const contract = row?.optionContract || null;
   if (!contract) {
@@ -483,7 +599,7 @@ const optionInlineDetail = (row, maskValues) => {
       .join(" · ");
   }
 
-  const quoteBidAsk = formatQuoteBidAsk(row?.optionQuote, maskValues);
+  const quoteBidAsk = formatQuoteBidAsk(optionDisplayQuote(row), maskValues);
   const underlying = row?.underlyingMarket || null;
   const underlyingPrice = firstFiniteNumber(underlying?.price);
   const underlyingBid = firstFiniteNumber(underlying?.bid);
@@ -499,7 +615,7 @@ const optionInlineDetail = (row, maskValues) => {
       : null;
 
   return [
-    optionContractLabel(contract),
+    optionContractTermsLabel(contract),
     quoteBidAsk !== MISSING_VALUE ? `Opt ${quoteBidAsk}` : null,
     underlyingMarket || null,
     underlyingBidAsk,
@@ -510,22 +626,24 @@ const optionInlineDetail = (row, maskValues) => {
 
 const optionDetailMetrics = (row, currency, maskValues) => {
   const contract = row?.optionContract || null;
-  const quote = row?.optionQuote || null;
+  const quote = contract ? optionDisplayQuote(row) : null;
+  const greeksQuote = row?.optionQuote || quote;
   const underlying = row?.underlyingMarket || null;
   const automation = row?.automationContext || null;
+  const automationMetrics = automationPositionMetrics(row, currency, maskValues);
   if (!contract && !quote && !underlying && !automation) return [];
 
   const greeksMain = [
-    formatGreek("Δ", quote?.delta, 2),
-    formatIv(quote?.impliedVolatility),
+    formatGreek("Δ", greeksQuote?.delta, 2),
+    formatIv(greeksQuote?.impliedVolatility),
   ].filter(Boolean);
   const greeksDetail = [
-    formatGreek("Γ", quote?.gamma, 3),
-    formatGreek("θ", quote?.theta, 3),
-    formatGreek("V", quote?.vega, 3),
+    formatGreek("Γ", greeksQuote?.gamma, 3),
+    formatGreek("θ", greeksQuote?.theta, 3),
+    formatGreek("V", greeksQuote?.vega, 3),
   ].filter(Boolean);
-  const openInterest = formatMetricCount(quote?.openInterest);
-  const volume = formatMetricCount(quote?.volume);
+  const openInterest = formatMetricCount(greeksQuote?.openInterest);
+  const volume = formatMetricCount(greeksQuote?.volume);
   const underlyingPrice = firstFiniteNumber(underlying?.price);
   const underlyingBid = firstFiniteNumber(underlying?.bid);
   const underlyingAsk = firstFiniteNumber(underlying?.ask);
@@ -534,9 +652,8 @@ const optionDetailMetrics = (row, currency, maskValues) => {
     contract
       ? {
           label: "Contract",
-          value: optionContractLabel(contract),
+          value: optionContractTermsLabel(contract),
           detail: [
-            firstDisplayText(contract?.ticker, contract?.localSymbol),
             contract?.providerContractId ? `conid ${contract.providerContractId}` : null,
             contract?.multiplier ? `x${formatNumber(contract.multiplier, 0)}` : null,
           ].filter(Boolean).join(" · "),
@@ -589,6 +706,35 @@ const optionDetailMetrics = (row, currency, maskValues) => {
       : null,
     automation
       ? {
+          label: "Entry Signal",
+          value: automationMetrics?.signalMain || MISSING_VALUE,
+          detail: [
+            automationMetrics?.signalDetail,
+            automationMetrics?.reasons?.length
+              ? automationMetrics.reasons.join(" · ")
+              : null,
+            automation?.signalAt
+              ? `Signal ${formatTimestampDetail(automation.signalAt)}`
+              : null,
+          ].filter(Boolean).join(" · "),
+        }
+      : null,
+    automation
+      ? {
+          label: "Purchased",
+          value: firstText(automation?.purchasedAt, automation?.openedAt)
+            ? formatTimestampDetail(firstText(automation?.purchasedAt, automation?.openedAt))
+            : MISSING_VALUE,
+          detail: [
+            automation?.purchasedAt ? `${formatRelativeTimeShort(automation.purchasedAt)} ago` : null,
+            automation?.openedAt && automation?.openedAt !== automation?.purchasedAt
+              ? `Opened ${formatTimestampDetail(automation.openedAt)}`
+              : null,
+          ].filter(Boolean).join(" · "),
+        }
+      : null,
+    automation
+      ? {
           label: "Exit / Risk",
           value: [
             automation?.stopPrice != null
@@ -599,9 +745,13 @@ const optionDetailMetrics = (row, currency, maskValues) => {
               : null,
           ].filter(Boolean).join(" · ") || MISSING_VALUE,
           detail: [
+            automationMetrics?.riskMain !== MISSING_VALUE
+              ? automationMetrics?.riskMain
+              : null,
             automation?.peakPrice != null
               ? `Peak ${formatAccountPrice(automation.peakPrice, 2, maskValues)}`
               : null,
+            automationMetrics?.riskDetail,
             automation?.timeframe,
             automation?.lastMarkedAt
               ? `Marked ${formatTimestampDetail(automation.lastMarkedAt)}`
@@ -780,14 +930,23 @@ export const useLiveOptionPositionRows = ({
 
 export const __positionsPanelInternalsForTests = {
   applyLiveOptionQuoteToRow,
+  automationPositionMetrics,
+  automationStopTone,
+  formatAutomationStopDistanceLabel,
+  optionDetailMetrics,
+  optionInlineDetail,
 };
 
 const marketForAssetClass = (assetClass) => {
   const normalized = String(assetClass || "").toLowerCase();
   if (normalized === "etf") return "etf";
-  if (normalized === "options") return "options";
+  if (normalized === "option" || normalized === "options") return "options";
   return "stocks";
 };
+
+const isOptionPosition = (row) =>
+  Boolean(row?.optionContract) ||
+  ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
 
 const resolvePositionSparklineSymbol = (row) => {
   const symbol = firstDisplayText(
@@ -877,7 +1036,7 @@ const mobileRowListStyle = {
   padding: sp("4px 5px 5px"),
 };
 
-const mobilePositionGrid = "minmax(44px, 0.76fr) minmax(54px, 0.88fr) minmax(46px, 0.7fr) minmax(54px, 0.82fr) minmax(50px, 0.76fr) 48px";
+const mobilePositionGrid = "minmax(104px, 1.35fr) minmax(54px, 0.72fr) minmax(42px, 0.56fr) minmax(50px, 0.62fr) minmax(48px, 0.62fr) 42px";
 
 const mobileHeaderStyle = {
   display: "grid",
@@ -1051,6 +1210,608 @@ const MobileDetailMetric = ({ label, value, tone = T.textSec }) => (
   </div>
 );
 
+const positionDisplayForRow = (row) => buildPositionDisplayModel(row, row?.optionQuote);
+
+const quoteSourceLabel = (quote) =>
+  quote?.source ? formatEnumLabel(quote.source) : null;
+
+const formatQuoteUpdatedDetail = (quote) =>
+  [
+    formatPositionQuoteFreshnessLabel(quote),
+    quoteSourceLabel(quote),
+    quote?.marketDataMode ? formatEnumLabel(quote.marketDataMode) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+const PositionOpenedCell = ({ row }) => {
+  const display = positionDisplayForRow(row);
+  const detail = [display.ageLabel, display.openedSourceLabel]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <td style={{ ...tableCellStyle, minWidth: dim(86) }}>
+      <div style={{ color: display.openedLabel ? T.text : T.textDim, fontFamily: T.data }}>
+        {display.openedLabel || MISSING_VALUE}
+      </div>
+      <div style={cellSubTextStyle(T.textDim)}>{detail || "open date unavailable"}</div>
+    </td>
+  );
+};
+
+const PositionQuoteCell = ({ row, maskValues }) => {
+  const display = positionDisplayForRow(row);
+  const quote = display.quote;
+  const bidAsk = formatPositionBidAskLabel(quote, (value) =>
+    formatAccountPrice(value, 2, maskValues),
+  );
+  const spread = formatPositionSpreadLabel(quote, (value) =>
+    formatAccountPercent(value, 1, maskValues),
+  );
+  const detail = [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · ");
+  return (
+    <td style={{ ...tableCellStyle, textAlign: "right", minWidth: dim(104) }}>
+      <div style={{ color: bidAsk ? T.text : T.textDim, fontFamily: T.data }}>
+        {bidAsk || MISSING_VALUE}
+      </div>
+      <div style={cellSubTextStyle(T.textDim)}>
+        {detail || (quote?.mark != null ? "mark only" : "quote unavailable")}
+      </div>
+    </td>
+  );
+};
+
+const StackedMetricCell = ({
+  primary,
+  secondary,
+  primaryTone = T.text,
+  secondaryTone = T.textDim,
+  align = "right",
+  minWidth = 88,
+}) => (
+  <td style={{ ...tableCellStyle, textAlign: align, minWidth: dim(minWidth) }}>
+    <div style={{ color: primaryTone, fontFamily: T.data }}>{primary}</div>
+    <div style={cellSubTextStyle(secondaryTone)}>{secondary}</div>
+  </td>
+);
+
+const PositionFactsDetails = ({ row, currency, maskValues }) => {
+  const display = positionDisplayForRow(row);
+  const quote = display.quote;
+  const bidAsk = formatPositionBidAskLabel(quote, (value) =>
+    formatAccountPrice(value, 2, maskValues),
+  );
+  const spread = formatPositionSpreadLabel(quote, (value) =>
+    formatAccountPercent(value, 2, maskValues),
+  );
+  const metrics = [
+    {
+      label: "Opened",
+      value: display.openedLabel || MISSING_VALUE,
+      detail:
+        [display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") ||
+        "Open date unavailable from broker data.",
+    },
+    {
+      label: "Cost Basis",
+      value: formatAccountMoney(display.costBasis, currency, false, maskValues),
+      detail: "Avg cost × quantity × multiplier",
+    },
+    {
+      label: "Bid / Ask",
+      value: bidAsk || MISSING_VALUE,
+      detail: [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · "),
+    },
+    {
+      label: "Mark / Mid",
+      value: [
+        quote?.mark != null ? `Mark ${formatAccountPrice(quote.mark, 2, maskValues)}` : null,
+        quote?.mid != null ? `Mid ${formatAccountPrice(quote.mid, 2, maskValues)}` : null,
+      ].filter(Boolean).join(" · ") || formatAccountPrice(row.mark, 2, maskValues),
+      detail: quoteSourceLabel(quote) || "",
+    },
+    {
+      label: "Size",
+      value: [
+        quote?.bidSize != null ? `Bid ${formatNumber(quote.bidSize, 0)}` : null,
+        quote?.askSize != null ? `Ask ${formatNumber(quote.askSize, 0)}` : null,
+      ].filter(Boolean).join(" · ") || MISSING_VALUE,
+      detail: quote?.updatedAt ? `Updated ${formatRelativeTimeShort(quote.updatedAt)}` : "",
+    },
+  ];
+
+  return (
+    <div style={optionDetailGridStyle}>
+      {metrics.map((metric) => (
+        <OptionDetailMetric key={metric.label} metric={metric} />
+      ))}
+    </div>
+  );
+};
+
+const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
+  const metrics = automationPositionMetrics(row, currency, maskValues);
+  if (!metrics) {
+    return (
+      <td style={{ ...tableCellStyle, color: T.textDim, minWidth: dim(132) }}>
+        {MISSING_VALUE}
+      </td>
+    );
+  }
+  return (
+    <td style={{ ...tableCellStyle, minWidth: dim(174), maxWidth: dim(224) }}>
+      <div
+        style={{
+          color: T.textSec,
+          fontFamily: T.data,
+          fontSize: textSize("body"),
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+        title={[
+          metrics.signalMain,
+          metrics.signalDetail,
+          metrics.riskMain,
+          metrics.riskDetail,
+        ].filter((item) => item && item !== MISSING_VALUE).join(" · ")}
+      >
+        {metrics.signalMain}
+      </div>
+      <div
+        style={{
+          marginTop: sp(1),
+          color: metrics.stopTone,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {metrics.tableDetail || MISSING_VALUE}
+      </div>
+    </td>
+  );
+};
+
+const denseTableBorder = () => `1px solid ${T.borderLight}`;
+
+const denseColumnTextStyle = ({
+  align = "right",
+  color = T.textSec,
+  fontFamily = T.data,
+  fontSize = textSize("body"),
+  fontWeight = FONT_WEIGHTS.regular,
+} = {}) => ({
+  color,
+  fontFamily,
+  fontSize,
+  fontWeight,
+  fontVariantNumeric: "tabular-nums",
+  textAlign: align,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  minWidth: 0,
+});
+
+const denseTableCellStyle = (column, expanded = false) => ({
+  padding: sp("4px 8px"),
+  borderBottom: denseTableBorder(),
+  height: dim(32),
+  verticalAlign: "middle",
+  textAlign: column.align,
+  background: column.sticky ? T.bg1 : "transparent",
+  position: column.sticky ? "sticky" : undefined,
+  left: column.sticky ? 0 : undefined,
+  zIndex: column.sticky ? 2 : undefined,
+  boxShadow: column.sticky
+    ? `${expanded ? `inset 1px 0 0 ${T.accent}, ` : ""}2px 0 0 ${T.borderLight}`
+    : "none",
+});
+
+const denseHeaderCellStyle = (column, active) => ({
+  ...tableHeaderStyle,
+  padding: sp("5px 8px"),
+  color: active ? T.text : T.textMuted,
+  fontSize: textSize("caption"),
+  letterSpacing: "0.04em",
+  textAlign: column.align,
+  background: T.bg1,
+  position: "sticky",
+  top: 0,
+  left: column.sticky ? 0 : undefined,
+  zIndex: column.sticky ? 4 : 3,
+  boxShadow: column.sticky ? `2px 0 0 ${T.borderLight}` : undefined,
+});
+
+const denseActionButtonStyle = {
+  width: dim(22),
+  height: dim(22),
+  border: "none",
+  borderRadius: dim(RADII.xs),
+  background: T.bg0,
+  color: T.textSec,
+  display: "inline-grid",
+  placeItems: "center",
+  cursor: "pointer",
+  padding: 0,
+};
+
+const signedPercent = (value, digits = 2, maskValues = false) => {
+  if (maskValues) return formatAccountPercent(value, digits, true);
+  const numeric = finiteNumber(value);
+  if (numeric == null) return MISSING_VALUE;
+  return `${numeric > 0 ? "+" : ""}${formatAccountPercent(numeric, digits, false)}`;
+};
+
+const denseDisplayQuote = (row) => positionDisplayForRow(row).quote;
+
+const denseColumnSortValue = (row, id) => {
+  const quote = denseDisplayQuote(row);
+  if (id === "symbol") return row.symbol;
+  if (id === "openedAt") {
+    const openedAt = positionDisplayForRow(row).openedAt;
+    const timestamp = openedAt ? new Date(openedAt).getTime() : null;
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  if (id === "last") return quote?.mark ?? quote?.last ?? row.mark;
+  if (id === "bid") return quote?.bid;
+  if (id === "ask") return quote?.ask;
+  if (id === "spreadPercent") return quote?.spreadPercent;
+  if (id === "costBasis") return positionCostBasis(row);
+  if (id === "delta") return row?.optionQuote?.delta;
+  if (id === "theta") return row?.optionQuote?.theta;
+  if (id === "signalContext") return row?.automationContext?.signalScore;
+  return row[id];
+};
+
+const positionSearchText = (row) =>
+  [
+    row?.symbol,
+    row?.description,
+    row?.assetClass,
+    row?.sector,
+    row?.strategyLabel,
+    row?.sourceType,
+    row?.optionContract?.underlying,
+    optionInlineDetail(row, false),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+const DensePositionSymbol = ({
+  row,
+  expanded,
+  maskValues,
+  onJumpToChart,
+  onPositionSelect,
+  onToggle,
+}) => (
+  <div style={{ display: "flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle(row);
+      }}
+      aria-label={expanded ? `Collapse ${row.symbol}` : `Expand ${row.symbol}`}
+      aria-expanded={expanded}
+      style={{
+        ...denseActionButtonStyle,
+        width: dim(18),
+        height: dim(18),
+        flexShrink: 0,
+      }}
+    >
+      {expanded ? "−" : "+"}
+    </button>
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onPositionSelect?.(row);
+        onJumpToChart?.(row.symbol);
+      }}
+      style={{
+        border: "none",
+        padding: 0,
+        background: "transparent",
+        color: T.text,
+        cursor: "pointer",
+        textAlign: "left",
+        minWidth: 0,
+      }}
+      title={optionInlineDetail(row, maskValues) || row.description || row.symbol}
+    >
+      <MarketIdentityInline
+        item={{
+          ticker: row.symbol,
+          name: row.description || row.symbol,
+          market: marketForAssetClass(row.assetClass),
+          sector: row.sector || null,
+        }}
+        size={14}
+        showMark={false}
+        showChips={!isOptionPosition(row)}
+        style={{
+          maxWidth: dim(178),
+          fontFamily: T.mono,
+          fontSize: textSize("body"),
+        }}
+      />
+    </button>
+  </div>
+);
+
+const DenseSignalCell = ({ row, currency, maskValues }) => {
+  const metrics = automationPositionMetrics(row, currency, maskValues);
+  if (!metrics) {
+    return (
+      <span style={denseColumnTextStyle({ align: "left", color: T.textDim, fontFamily: T.sans })}>
+        {MISSING_VALUE}
+      </span>
+    );
+  }
+  return (
+    <span
+      title={[metrics.signalMain, metrics.signalDetail, metrics.riskMain, metrics.riskDetail]
+        .filter((item) => item && item !== MISSING_VALUE)
+        .join(" · ")}
+      style={denseColumnTextStyle({ align: "left", color: T.textSec, fontFamily: T.sans })}
+    >
+      {metrics.tableDetail || metrics.signalMain}
+    </span>
+  );
+};
+
+const DensePositionActions = ({ row, expanded, onJumpToChart, onToggle }) => (
+  <span style={{ display: "inline-flex", justifyContent: "flex-end", gap: sp(3), width: "100%" }}>
+    <AppTooltip content={`Open ${row.symbol} chart`}>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onJumpToChart?.(row.symbol);
+        }}
+        style={denseActionButtonStyle}
+      >
+        <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+    </AppTooltip>
+    <AppTooltip content={expanded ? `Collapse ${row.symbol}` : `Expand ${row.symbol}`}>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(row);
+        }}
+        aria-expanded={expanded}
+        style={denseActionButtonStyle}
+      >
+        {expanded ? (
+          <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+        )}
+      </button>
+    </AppTooltip>
+  </span>
+);
+
+const DensePositionCell = ({
+  row,
+  column,
+  currency,
+  maskValues,
+  expanded,
+  onJumpToChart,
+  onPositionSelect,
+  onToggle,
+}) => {
+  const quote = denseDisplayQuote(row);
+  let content = MISSING_VALUE;
+  let color = T.textSec;
+  let title = undefined;
+
+  if (column.id === "symbol") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)}>
+        <DensePositionSymbol
+          row={row}
+          expanded={expanded}
+          maskValues={maskValues}
+          onJumpToChart={onJumpToChart}
+          onPositionSelect={onPositionSelect}
+          onToggle={onToggle}
+        />
+      </td>
+    );
+  }
+
+  if (column.id === "actions") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)}>
+        <DensePositionActions
+          row={row}
+          expanded={expanded}
+          onJumpToChart={onJumpToChart}
+          onToggle={onToggle}
+        />
+      </td>
+    );
+  }
+
+  if (column.id === "signalContext") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)}>
+        <DenseSignalCell row={row} currency={currency} maskValues={maskValues} />
+      </td>
+    );
+  }
+
+  if (column.id === "quantity") {
+    content = formatNumber(row.quantity, 4);
+    color = row.quantity < 0 ? T.red : T.textSec;
+  } else if (column.id === "averageCost") {
+    content = formatAccountPrice(row.averageCost, 2, maskValues);
+  } else if (column.id === "last") {
+    content = formatAccountPrice(quote?.mark ?? quote?.last ?? row.mark, 2, maskValues);
+  } else if (column.id === "bid") {
+    content = formatAccountPrice(quote?.bid, 2, maskValues);
+  } else if (column.id === "ask") {
+    content = formatAccountPrice(quote?.ask, 2, maskValues);
+  } else if (column.id === "spreadPercent") {
+    content = formatAccountPercent(quote?.spreadPercent, 1, maskValues);
+    title = [formatPositionSpreadLabel(quote, (value) => formatAccountPercent(value, 2, maskValues)), formatQuoteUpdatedDetail(quote)]
+      .filter(Boolean)
+      .join(" · ");
+  } else if (column.id === "dayChange") {
+    content = formatAccountSignedMoney(row.dayChange, currency, false, maskValues);
+    color = toneForValue(row.dayChange);
+  } else if (column.id === "dayChangePercent") {
+    content = signedPercent(row.dayChangePercent, 2, maskValues);
+    color = toneForValue(row.dayChangePercent);
+  } else if (column.id === "unrealizedPnl") {
+    content = formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues);
+    color = toneForValue(row.unrealizedPnl);
+  } else if (column.id === "unrealizedPnlPercent") {
+    content = signedPercent(row.unrealizedPnlPercent, 2, maskValues);
+    color = toneForValue(row.unrealizedPnlPercent);
+  } else if (column.id === "marketValue") {
+    content = formatAccountMoney(row.marketValue, currency, false, maskValues);
+    color = T.text;
+  } else if (column.id === "weightPercent") {
+    content = formatAccountPercent(row.weightPercent, 2, maskValues);
+  } else if (column.id === "delta") {
+    content = formatNumber(row?.optionQuote?.delta, 2);
+  } else if (column.id === "theta") {
+    content = formatNumber(row?.optionQuote?.theta, 2);
+  }
+
+  return (
+    <td style={denseTableCellStyle(column, expanded)} title={title}>
+      <span style={denseColumnTextStyle({ align: column.align, color })}>
+        {content}
+      </span>
+    </td>
+  );
+};
+
+const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskValues }) => {
+  const netDelta = rows.reduce(
+    (sum, row) => sum + (firstFiniteNumber(row.betaWeightedDelta) ?? 0),
+    0,
+  );
+  const netTheta = rows.reduce(
+    (sum, row) => sum + (firstFiniteNumber(row?.optionQuote?.theta) ?? 0),
+    0,
+  );
+  return [
+    { label: "SUMMARY", value: `${formatNumber(rows.length, 0)} positions`, color: T.text },
+    {
+      label: "Net",
+      value: formatAccountMoney(displayTotals.netExposure, currency, false, maskValues),
+      color: T.textSec,
+    },
+    {
+      label: "Day",
+      value: formatAccountSignedMoney(totalDayChange, currency, false, maskValues),
+      extra: signedPercent(
+        displayTotals.netExposure
+          ? (totalDayChange / Math.abs(displayTotals.netExposure)) * 100
+          : null,
+        2,
+        maskValues,
+      ),
+      color: toneForValue(totalDayChange),
+    },
+    {
+      label: "Unreal",
+      value: formatAccountSignedMoney(displayTotals.unrealizedPnl, currency, false, maskValues),
+      extra: signedPercent(
+        displayTotals.netExposure
+          ? (displayTotals.unrealizedPnl / Math.abs(displayTotals.netExposure)) * 100
+          : null,
+        2,
+        maskValues,
+      ),
+      color: toneForValue(displayTotals.unrealizedPnl),
+    },
+    {
+      label: "Wt",
+      value: formatAccountPercent(displayTotals.weightPercent, 2, maskValues),
+      color: T.textSec,
+    },
+    {
+      label: "Net Delta",
+      value: formatNumber(netDelta, 1),
+      color: T.textSec,
+    },
+    netTheta
+      ? {
+          label: "Net Theta",
+          value: formatNumber(netTheta, 1),
+          color: T.textSec,
+        }
+      : null,
+  ].filter(Boolean);
+};
+
+const DenseSummaryRow = ({
+  columns,
+  rows,
+  displayTotals,
+  totalDayChange,
+  currency,
+  maskValues,
+}) => {
+  const segments = summarySegments({
+    rows,
+    displayTotals,
+    totalDayChange,
+    currency,
+    maskValues,
+  });
+  return (
+    <tr
+      data-testid="account-positions-summary-row"
+      style={{
+        background: T.bg1,
+        position: "sticky",
+        bottom: 0,
+        zIndex: 2,
+      }}
+    >
+      <td
+        colSpan={columns.length}
+        style={{
+          padding: sp("6px 8px"),
+          borderTop: `1px solid ${T.border}`,
+          borderBottom: denseTableBorder(),
+          color: T.textSec,
+          fontFamily: T.data,
+          fontSize: textSize("body"),
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ display: "inline-flex", gap: sp(8), alignItems: "center" }}>
+          {segments.map((segment) => (
+            <span key={segment.label} style={{ color: segment.color }}>
+              <span style={{ color: T.textDim }}>{segment.label}</span>{" "}
+              {segment.value}
+              {segment.extra && segment.extra !== MISSING_VALUE ? ` (${segment.extra})` : ""}
+            </span>
+          ))}
+        </span>
+      </td>
+    </tr>
+  );
+};
+
 const positionMobileRowSignature = (row) =>
   JSON.stringify([
     row?.id,
@@ -1072,6 +1833,9 @@ const positionMobileRowSignature = (row) =>
     row?.lots,
     row?.optionContract,
     row?.optionQuote,
+    row?.quote,
+    row?.openedAt,
+    row?.openedAtSource,
     row?.underlyingMarket,
     row?.automationContext,
   ]);
@@ -1084,86 +1848,141 @@ const MobilePositionRow = memo(({
   snapshotsBySymbol,
   onRowAction,
   onRowKeyDown,
-}) => (
-  <article style={mobileScanShellStyle(expanded)}>
-    <div
-      data-testid="account-position-scan-row"
-      data-action="toggle"
-      data-row-id={row.id}
-      role="button"
-      tabIndex={0}
-      onClick={onRowAction}
-      onKeyDown={onRowKeyDown}
-      style={mobileScanRowStyle}
-    >
+}) => {
+  const automationMetrics = automationPositionMetrics(row, currency, maskValues);
+  const display = positionDisplayForRow(row);
+  const quoteBidAsk = formatPositionBidAskLabel(display.quote, (value) =>
+    formatAccountPrice(value, 2, maskValues),
+  );
+  const quoteSpread = formatPositionSpreadLabel(display.quote, (value) =>
+    formatAccountPercent(value, 1, maskValues),
+  );
+  const symbolDetail =
+    [
+      optionInlineDetail(row, maskValues),
+      display.ageLabel ? `open ${display.ageLabel}` : null,
+    ].filter(Boolean).join(" · ") ||
+    `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`;
+  return (
+    <article style={mobileScanShellStyle(expanded)}>
       <div
-        style={{
-          ...mobileMinWidthStyle,
-          display: "flex",
-          alignItems: "flex-start",
-          gap: sp(5),
-        }}
+        data-testid="account-position-scan-row"
+        data-action="toggle"
+        data-row-id={row.id}
+        role="button"
+        tabIndex={0}
+        onClick={onRowAction}
+        onKeyDown={onRowKeyDown}
+        style={mobileScanRowStyle}
       >
-        <PositionTrendSparkline
-          row={row}
-          snapshotsBySymbol={snapshotsBySymbol}
-          compact
-          inline
-        />
-        <div style={mobileMinWidthStyle}>
-          <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
-          <div style={cellSubTextStyle(T.textDim)}>
-            {optionInlineDetail(row, maskValues) ||
-              `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`}
+        <div
+          style={{
+            ...mobileMinWidthStyle,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: sp(5),
+          }}
+        >
+          <PositionTrendSparkline
+            row={row}
+            snapshotsBySymbol={snapshotsBySymbol}
+            compact
+            inline
+          />
+          <div style={mobileMinWidthStyle}>
+            <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
+            <div style={cellSubTextStyle(T.textDim)}>
+              {symbolDetail}
+            </div>
           </div>
         </div>
-      </div>
-      <div
-        title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
-        style={mobileCellTextStyle(row.quantity < 0 ? T.red : T.textSec)}
-      >
-        {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
-      </div>
-      <div style={mobileCellTextStyle(toneForValue(row.dayChange))}>
-        {formatAccountMoney(row.dayChange, currency, true, maskValues)}
-      </div>
-      <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
-        {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
-      </div>
-      <div style={mobileCellTextStyle(T.textSec)}>
-        {formatAccountMoney(row.marketValue, currency, true, maskValues)}
-      </div>
-      <div style={mobileActionRailStyle}>
-        <MobileIconButton
-          label={`Open ${row.symbol} chart`}
-          data-action="chart"
-          data-row-id={row.id}
-          data-symbol={row.symbol}
-          onClick={onRowAction}
+        <div
+          title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
+          style={mobileCellTextStyle(row.quantity < 0 ? T.red : T.textSec)}
         >
-          <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
-        </MobileIconButton>
-        <MobileIconButton
-          label={expanded ? `Collapse ${row.symbol} details` : `Expand ${row.symbol} details`}
-          data-action="expand"
-          data-row-id={row.id}
-          expanded={expanded}
-          onClick={onRowAction}
-        >
-          {expanded ? (
-            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-          ) : (
-            <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-          )}
-        </MobileIconButton>
+          {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
+        </div>
+        <div style={mobileCellTextStyle(toneForValue(row.dayChange))}>
+          {formatAccountMoney(row.dayChange, currency, true, maskValues)}
+        </div>
+        <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
+          {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
+        </div>
+        <div style={mobileCellTextStyle(T.textSec)}>
+          {formatAccountMoney(row.marketValue, currency, true, maskValues)}
+        </div>
+        <div style={mobileActionRailStyle}>
+          <MobileIconButton
+            label={`Open ${row.symbol} chart`}
+            data-action="chart"
+            data-row-id={row.id}
+            data-symbol={row.symbol}
+            onClick={onRowAction}
+          >
+            <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
+          </MobileIconButton>
+          <MobileIconButton
+            label={expanded ? `Collapse ${row.symbol} details` : `Expand ${row.symbol} details`}
+            data-action="expand"
+            data-row-id={row.id}
+            expanded={expanded}
+            onClick={onRowAction}
+          >
+            {expanded ? (
+              <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+            ) : (
+              <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+            )}
+          </MobileIconButton>
+        </div>
       </div>
-    </div>
+      {automationMetrics?.mobileSummary ? (
+        <div
+          style={{
+            padding: sp("0 7px 5px 7px"),
+            color: automationMetrics.stopTone,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={automationMetrics.mobileSummary}
+        >
+          {automationMetrics.mobileSummary}
+        </div>
+      ) : null}
     {expanded ? (
       <div
         data-testid="account-position-expanded-details"
         style={mobileDetailStyle}
       >
         <MobileDetailMetric label="Avg Cost" value={formatAccountPrice(row.averageCost, 2, maskValues)} />
+        <MobileDetailMetric
+          label="Opened"
+          value={
+            display.openedLabel
+              ? [display.openedLabel, display.ageLabel].filter(Boolean).join(" · ")
+              : MISSING_VALUE
+          }
+        />
+        <MobileDetailMetric
+          label="Bid / Ask"
+          value={quoteBidAsk || MISSING_VALUE}
+          tone={quoteBidAsk ? T.textSec : T.textDim}
+        />
+        <MobileDetailMetric
+          label="Spread"
+          value={
+            [quoteSpread, formatPositionQuoteFreshnessLabel(display.quote)]
+              .filter(Boolean)
+              .join(" · ") || MISSING_VALUE
+          }
+        />
+        <MobileDetailMetric
+          label="Cost Basis"
+          value={formatAccountMoney(display.costBasis, currency, false, maskValues)}
+        />
         <MobileDetailMetric
           label="Unreal %"
           value={formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}
@@ -1175,6 +1994,31 @@ const MobilePositionRow = memo(({
           tone={toneForValue(row.dayChangePercent)}
         />
         <MobileDetailMetric label="Weight" value={formatAccountPercent(row.weightPercent, 2, maskValues)} />
+        {automationMetrics ? (
+          <>
+            <MobileDetailMetric
+              label="Purchased"
+              value={
+                automationMetrics.purchasedAt
+                  ? formatAppDateTime(automationMetrics.purchasedAt)
+                  : MISSING_VALUE
+              }
+            />
+            <MobileDetailMetric
+              label="Signal"
+              value={[automationMetrics.signalMain, automationMetrics.signalDetail]
+                .filter((item) => item && item !== MISSING_VALUE)
+                .join(" · ") || MISSING_VALUE}
+            />
+            <MobileDetailMetric
+              label="Risk"
+              value={[automationMetrics.riskMain, automationMetrics.riskDetail]
+                .filter((item) => item && item !== MISSING_VALUE)
+                .join(" · ") || MISSING_VALUE}
+              tone={automationMetrics.stopTone}
+            />
+          </>
+        ) : null}
         <PositionOptionDetails
           row={row}
           currency={currency}
@@ -1238,7 +2082,8 @@ const MobilePositionRow = memo(({
       </div>
     ) : null}
   </article>
-), (previous, next) => (
+  );
+}, (previous, next) => (
   previous.expanded === next.expanded &&
   previous.currency === next.currency &&
   previous.maskValues === next.maskValues &&
@@ -1414,10 +2259,10 @@ export const PositionsAtDateInspector = ({
             }}
           >
             <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
                 <thead>
                   <tr style={tableHeaderStyle}>
-                    {["Symbol", "Qty", "Mark", "Unreal P&L", "Mkt Value"].map((column) => (
+                    {["Symbol", "Opened", "Qty", "Mark", "Unreal P&L", "Mkt Value"].map((column) => (
                       <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
                         {column}
                       </th>
@@ -1447,10 +2292,13 @@ export const PositionsAtDateInspector = ({
                             }}
                             size={14}
                             showMark={false}
-                            showChips
+                            showChips={!isOptionPosition(row)}
                             style={{ maxWidth: dim(150) }}
                           />
                         </button>
+                      </td>
+                      <td style={{ ...tableCellStyle, color: T.textSec }}>
+                        {positionDisplayForRow(row).openedLabel || MISSING_VALUE}
                       </td>
                       <td style={{ ...tableCellStyle, textAlign: "right" }}>
                         {formatNumber(row.quantity, 3)}
@@ -1544,9 +2392,13 @@ export const PositionsPanel = ({
   onPositionSelect,
   liveOptionQuotesEnabled = true,
   streamLiveOptionQuotes = true,
+  surfaceId = POSITION_TABLE_SURFACE_ACCOUNT,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
+  const [page, setPage] = useState(0);
+  const [symbolSearch, setSymbolSearch] = useState("");
+  const visibleColumns = useMemo(() => getPositionTableColumns(surfaceId), [surfaceId]);
   const sourceFilteredRows = useMemo(
     () =>
       getOpenPositionRows(query.data?.positions || []).filter((row) =>
@@ -1554,16 +2406,22 @@ export const PositionsPanel = ({
       ),
     [query.data?.positions, sourceFilter],
   );
+  const filteredRows = useMemo(() => {
+    const needle = symbolSearch.trim().toLowerCase();
+    if (!needle) return sourceFilteredRows;
+    return sourceFilteredRows.filter((row) => positionSearchText(row).includes(needle));
+  }, [sourceFilteredRows, symbolSearch]);
   const { rows, displayTotals, optionQuoteGroups } = useLiveOptionPositionRows({
-    rows: sourceFilteredRows,
+    rows: filteredRows,
     enabled: liveOptionQuotesEnabled,
     totals: query.data?.totals,
   });
   const sortedRows = useMemo(() => {
+    if (!sort.id || !sort.dir) return rows;
     const copy = [...rows];
     copy.sort((a, b) => {
-      const av = a[sort.id];
-      const bv = b[sort.id];
+      const av = denseColumnSortValue(a, sort.id);
+      const bv = denseColumnSortValue(b, sort.id);
       const numericA = Number(av);
       const numericB = Number(bv);
       const result =
@@ -1574,13 +2432,15 @@ export const PositionsPanel = ({
     });
     return copy;
   }, [rows, sort]);
-  const positionSparklineSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(sortedRows.map(resolvePositionSparklineSymbol).filter(Boolean)),
-      ),
-    [sortedRows],
-  );
+  const paginatedPositions = paginateRows(sortedRows, page, POSITIONS_PAGE_SIZE);
+  const pageRows = paginatedPositions.pageRows;
+	  const positionSparklineSymbols = useMemo(
+	    () =>
+	      Array.from(
+	        new Set(pageRows.map(resolvePositionSparklineSymbol).filter(Boolean)),
+	      ),
+	    [pageRows],
+	  );
   const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(positionSparklineSymbols);
   const totalDayChange = useMemo(
     () =>
@@ -1592,7 +2452,7 @@ export const PositionsPanel = ({
     [rows],
   );
 
-  const toggleExpanded = useCallback((rowId) => {
+	  const toggleExpanded = useCallback((rowId) => {
     setExpandedRows((current) => {
       const next = new Set(current);
       if (next.has(rowId)) {
@@ -1602,7 +2462,15 @@ export const PositionsPanel = ({
       }
       return next;
     });
-  }, []);
+	  }, []);
+  useEffect(() => {
+    setPage(0);
+  }, [assetFilter, sourceFilter, sort.id, sort.dir, symbolSearch]);
+  useEffect(() => {
+    if (paginatedPositions.safePage !== page) {
+      setPage(paginatedPositions.safePage);
+    }
+  }, [page, paginatedPositions.safePage]);
 
   const handlePositionToggle = useCallback(
     (row) => {
@@ -1661,16 +2529,42 @@ export const PositionsPanel = ({
       onRetry={query.refetch}
       minHeight={rows.length ? 144 : 174}
       noPad
-      action={showFilters ? (
-        <div style={isPhone ? mobileFilterRailStyle : { display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-          <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
-          {onSourceFilterChange ? (
+      action={(showFilters || !isPhone) ? (
+        <div
+          style={
+            isPhone
+              ? mobileFilterRailStyle
+              : { display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }
+          }
+        >
+          {showFilters ? (
+            <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
+          ) : null}
+          {showFilters && onSourceFilterChange ? (
             <ToggleGroup
               options={SOURCE_FILTERS}
               value={sourceFilter}
               onChange={onSourceFilterChange}
             />
           ) : null}
+          <input
+            aria-label="Search positions by symbol"
+            value={symbolSearch}
+            onChange={(event) => setSymbolSearch(event.target.value)}
+            placeholder="Search symbol"
+            style={{
+              width: isPhone ? dim(118) : dim(138),
+              height: dim(24),
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(RADII.xs),
+              background: T.bg0,
+              color: T.text,
+              fontFamily: T.sans,
+              fontSize: textSize("body"),
+              outline: "none",
+              padding: sp("0 8px"),
+            }}
+          />
         </div>
       ) : null}
     >
@@ -1700,7 +2594,7 @@ export const PositionsPanel = ({
             <span style={mobileHeaderEndStyle}>Value</span>
             <span />
           </div>
-          {sortedRows.map((row) => (
+	          {pageRows.map((row) => (
             <MobilePositionRow
               key={row.id}
               row={row}
@@ -1750,171 +2644,69 @@ export const PositionsPanel = ({
           className="ra-hide-scrollbar"
           style={{ overflowX: "auto" }}
         >
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: surfaceId === "algo" ? 1320 : 980 }}>
+            <colgroup>
+              {visibleColumns.map((column) => (
+                <col key={column.id} style={{ width: column.width }} />
+              ))}
+            </colgroup>
             <thead>
-              <tr style={tableHeaderStyle}>
-                {[
-                  ["symbol", "Symbol", "left"],
-                  ["quantity", "Qty"],
-                  ["averageCost", "Avg Cost"],
-                  ["mark", "Mark"],
-                  ["dayChangePercent", "Day %"],
-                  ["dayChange", "Day $"],
-                  ["unrealizedPnl", "Unreal P&L"],
-                  ["unrealizedPnlPercent", "Unreal %"],
-                  ["marketValue", "Mkt Value"],
-                  ["weightPercent", "Weight"],
-                  ["betaWeightedDelta", "β Δ"],
-                ].map(([id, label, align]) => (
-                  <th key={id} style={headerCellStyle(sort.id === id)}>
-                    <SortButton
-                      id={id}
-                      label={label}
-                      sort={sort}
-                      setSort={setSort}
-                      align={align === "left" ? "left" : "right"}
-                    />
+              <tr>
+                {visibleColumns.map((column) => (
+                  <th key={column.id} style={denseHeaderCellStyle(column, sort.id === column.id)}>
+                    {column.sortable ? (
+                      <SortButton
+                        id={column.id}
+                        label={column.label}
+                        sort={sort}
+                        setSort={setSort}
+                        align={column.align}
+                      />
+                    ) : (
+                      column.label
+                    )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map((row) => (
-                <Fragment key={row.id}>
-                  <tr
-                    tabIndex={0}
-                    onKeyDown={moveTableFocus}
-                    style={{
-                      outline: "none",
-                      cursor: "pointer",
-                      background: expandedRows.has(row.id) ? `${T.accent}14` : "transparent",
-                    }}
-                    onClick={() => handlePositionToggle(row)}
-                  >
-                    <td style={{ ...tableCellStyle, minWidth: 164 }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: sp(6) }}>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handlePositionToggle(row);
-                          }}
-                          aria-expanded={expandedRows.has(row.id)}
-                          style={{
-                            width: 16,
-                            height: 16,
-                            border: "none",
-                            borderRadius: dim(RADII.xs),
-                            background: T.bg0,
-                            color: T.textSec,
-                            cursor: "pointer",
-                            fontSize: textSize("caption"),
-                            fontWeight: FONT_WEIGHTS.regular,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {expandedRows.has(row.id) ? "−" : "+"}
-                        </button>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "flex-start",
-                            gap: sp(6),
-                            minWidth: 0,
-                          }}
-                        >
-                          <PositionTrendSparkline
-                            row={row}
-                            snapshotsBySymbol={tickerSnapshotsBySymbol}
-                            inline
-                          />
-                          <div style={{ minWidth: 0 }}>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onPositionSelect?.(row);
-                                onJumpToChart?.(row.symbol);
-                              }}
-                              style={{
-                                border: "none",
-                                padding: 0,
-                                background: "transparent",
-                                color: T.text,
-                                fontSize: textSize("body"),
-                                fontWeight: FONT_WEIGHTS.regular,
-                                cursor: "pointer",
-                                textAlign: "left",
-                              }}
-                            >
-                              <MarketIdentityInline
-                                item={{
-                                  ticker: row.symbol,
-                                  name: row.description || row.symbol,
-                                  market: marketForAssetClass(row.assetClass),
-                                  sector: row.sector || null,
-                                }}
-                                size={14}
-                                showMark={false}
-                                showChips
-                                style={{ maxWidth: dim(148) }}
-                              />
-                            </button>
-                            <div
-                              style={{
-                                marginTop: sp(1),
-                                color: T.textDim,
-                                fontSize: textSize("body"),
-                                whiteSpace: "normal",
-                                lineHeight: 1.25,
-                              }}
-                            >
-                              {optionInlineDetail(row, maskValues)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: row.quantity < 0 ? T.red : T.text }}>
-                      {formatNumber(row.quantity, 4)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatAccountPrice(row.averageCost, 2, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
-                      {formatAccountPrice(row.mark, 2, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChangePercent) }}>
-                      {formatAccountPercent(row.dayChangePercent, 2, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChange) }}>
-                      {formatAccountMoney(row.dayChange, currency, false, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: FONT_WEIGHTS.regular }}>
-                      {formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnlPercent) }}>
-                      {formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
-                      {formatAccountMoney(row.marketValue, currency, false, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatAccountPercent(row.weightPercent, 2, maskValues)}
-                    </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatNumber(row.betaWeightedDelta, 2)}
-                    </td>
-                  </tr>
+              {pageRows.map((row) => {
+                const expanded = expandedRows.has(row.id);
+                return (
+                  <Fragment key={row.id}>
+                    <tr
+                      className={expanded ? "ra-table-row ra-table-row--selected" : "ra-table-row"}
+                      tabIndex={0}
+                      onKeyDown={moveTableFocus}
+                      style={{
+                        outline: "none",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => handlePositionToggle(row)}
+                    >
+                      {visibleColumns.map((column) => (
+                        <DensePositionCell
+                          key={column.id}
+                          row={row}
+                          column={column}
+                          currency={currency}
+                          maskValues={maskValues}
+                          expanded={expanded}
+                          onJumpToChart={onJumpToChart}
+                          onPositionSelect={onPositionSelect}
+                          onToggle={handlePositionToggle}
+                        />
+                      ))}
+                    </tr>
                   {expandedRows.has(row.id) ? (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={visibleColumns.length}
                         style={{
                           ...tableCellStyle,
                           padding: sp("6px 8px 7px 24px"),
                           whiteSpace: "normal",
-                          background: `${T.accent}08`,
+                          background: T.bg0,
                         }}
                       >
                           <div style={{ display: "grid", gap: sp(6) }}>
@@ -1924,7 +2716,9 @@ export const PositionsPanel = ({
                                 {accountId}
                               </Pill>
                             ))}
-                            {row.assetClass ? <Pill tone="purple">{row.assetClass}</Pill> : null}
+                            {row.assetClass && !isOptionPosition(row) ? (
+                              <Pill tone="purple">{row.assetClass}</Pill>
+                            ) : null}
                             {row.sourceType ? (
                               <Pill tone={sourceTone(row.sourceType)}>
                                 {row.strategyLabel || row.sourceType}
@@ -1936,6 +2730,12 @@ export const PositionsPanel = ({
                               </Pill>
                               ) : null}
                             </div>
+
+                            <PositionFactsDetails
+                              row={row}
+                              currency={currency}
+                              maskValues={maskValues}
+                            />
 
                             <PositionOptionDetails
                               row={row}
@@ -2112,50 +2912,33 @@ export const PositionsPanel = ({
                     </tr>
                   ) : null}
                 </Fragment>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
-              <tr
-                style={{
-                  background: T.bg1,
-                  position: "sticky",
-                  bottom: 0,
-                  zIndex: 1,
-                }}
-              >
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }} colSpan={5}>
-                  Totals
-                </td>
-                <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(totalDayChange), fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(totalDayChange, currency, false, maskValues)}
-                </td>
-                <td
-                  style={{
-                    ...tableCellStyle,
-                    textAlign: "right",
-                    color: toneForValue(displayTotals.unrealizedPnl),
-                    fontWeight: FONT_WEIGHTS.regular,
-                  }}
-                >
-                  {formatAccountMoney(displayTotals.unrealizedPnl, currency, false, maskValues)}
-                </td>
-                <td />
-                <td style={{ ...tableCellStyle, textAlign: "right", color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountMoney(displayTotals.netExposure, currency, true, maskValues)}
-                </td>
-                <td style={{ ...tableCellStyle, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
-                  {formatAccountPercent(displayTotals.weightPercent, 2, maskValues)}
-                </td>
-                <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                  Long {formatAccountMoney(displayTotals.grossLong, currency, true, maskValues)} · Short{" "}
-                  {formatAccountMoney(displayTotals.grossShort, currency, true, maskValues)}
-                </td>
-              </tr>
+              <DenseSummaryRow
+                columns={visibleColumns}
+                rows={rows}
+                displayTotals={displayTotals}
+                totalDayChange={totalDayChange}
+                currency={currency}
+                maskValues={maskValues}
+              />
             </tfoot>
           </table>
         </div>
-      )}
-    </Panel>
+	      )}
+      <PaginationFooter
+        dataTestId="account-positions-pagination"
+        label="Rows"
+        onPageChange={setPage}
+        page={paginatedPositions.safePage}
+        pageCount={paginatedPositions.pageCount}
+        pageSize={POSITIONS_PAGE_SIZE}
+        total={paginatedPositions.total}
+        style={{ padding: sp("6px 10px 8px"), borderTop: `1px solid ${T.border}` }}
+      />
+	    </Panel>
   );
 
   return positionsTablePanel;

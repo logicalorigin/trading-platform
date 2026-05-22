@@ -105,14 +105,14 @@ async function defaultStorageHealthProbe(): Promise<void> {
   try {
     await client.query("begin");
     await client.query(
-      "create temp table if not exists rayalgo_storage_health_probe (id text primary key, value text not null) on commit drop",
+      "create temp table if not exists pyrus_storage_health_probe (id text primary key, value text not null) on commit drop",
     );
     await client.query(
-      "insert into rayalgo_storage_health_probe (id, value) values ($1, $2)",
+      "insert into pyrus_storage_health_probe (id, value) values ($1, $2)",
       [probeId, "ok"],
     );
     const result = await client.query(
-      "select value from rayalgo_storage_health_probe where id = $1",
+      "select value from pyrus_storage_health_probe where id = $1",
       [probeId],
     );
     if (result.rows[0]?.value !== "ok") {

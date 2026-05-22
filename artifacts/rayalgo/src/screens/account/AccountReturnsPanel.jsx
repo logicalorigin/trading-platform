@@ -14,6 +14,7 @@ import {
   buildYearPnlCalendarModel,
   findLatestCalendarActivityDate,
   formatCalendarPnlValue,
+  resolveActivePnlCalendarDay,
 } from "./accountPnlCalendarModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -142,6 +143,12 @@ const dayTooltip = (day, currency, maskValues) => {
   ].join("\n");
 };
 
+const dayAriaLabel = (day, currency, maskValues) => {
+  const pnlFmt = formatAccountSignedMoney(day.pnl || 0, currency, true, maskValues);
+  const tradeLabel = `${day.trades} trade${day.trades === 1 ? "" : "s"}`;
+  return `${day.iso} P&L ${pnlFmt}, ${tradeLabel}`;
+};
+
 const CalendarNavButton = ({ label, onClick, children, calendarStyle, isPhone = false }) => (
   <AppTooltip content={label}>
     <button
@@ -156,69 +163,132 @@ const CalendarNavButton = ({ label, onClick, children, calendarStyle, isPhone = 
   </AppTooltip>
 );
 
-const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone = false }) => (
-  <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-        gap: sp(isPhone ? 1 : 2),
-      }}
-    >
-      {PNL_CALENDAR_WEEKDAYS.map((day) => (
-        <div
-          key={day}
-          style={{
-            color: T.textMuted,
-            fontSize: fs(isPhone ? 7 : 8),
-            fontFamily: T.sans,
-            fontWeight: FONT_WEIGHTS.medium,
-            letterSpacing: "0.04em",
-            lineHeight: 1,
-            textAlign: "center",
-            padding: sp("1px 0 4px"),
-          }}
-        >
-          {day}
-        </div>
-      ))}
-    </div>
-    <div
-      data-testid="account-pnl-calendar-month-grid"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-        gap: sp(1),
-        background: calendarStyle.gridLine,
-        borderRadius: dim(RADII.xs),
-        overflow: "hidden",
-      }}
-    >
-      {model.days.map((day) => {
-        const dayNumber = String(day.date.getDate());
-        const displayPnl = day.inMonth ? day.pnl : 0;
-        const tone = calendarCellTone(
-          displayPnl,
-          !day.inMonth,
-          calendarStyle,
-        );
-        return (
-          <AppTooltip key={day.iso} content={dayTooltip(day, currency, maskValues)}>
-            <div
+const MonthCalendarGrid = ({
+  model,
+  currency,
+  maskValues,
+  calendarStyle,
+  activeDayIso,
+  pinnedDayIso,
+  onHoverDay,
+  onClearHoverDay,
+  onPinDay,
+  isPhone = false,
+}) => {
+  const calendarWeeks = [];
+  for (let index = 0; index < model.days.length; index += 7) {
+    calendarWeeks.push(model.days.slice(index, index + 7));
+  }
+  const renderedDays = calendarWeeks
+    .filter((week) => week.some((day) => day.inMonth))
+    .flat();
+
+  return (
+    <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+          gap: sp(isPhone ? 1 : 2),
+        }}
+      >
+        {PNL_CALENDAR_WEEKDAYS.map((day) => (
+          <div
+            key={day}
+            style={{
+              color: T.textMuted,
+              fontSize: fs(isPhone ? 7 : 8),
+              fontFamily: T.sans,
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.04em",
+              lineHeight: 1,
+              textAlign: "center",
+              padding: sp("1px 0 4px"),
+            }}
+          >
+            {day}
+          </div>
+        ))}
+      </div>
+      <div
+        data-testid="account-pnl-calendar-month-grid"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            onClearHoverDay();
+          }
+        }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+          gap: sp(1),
+          background: calendarStyle.gridLine,
+          borderRadius: dim(RADII.xs),
+          overflow: "hidden",
+        }}
+      >
+        {renderedDays.map((day) => {
+          if (!day.inMonth) {
+            return (
+              <div
+                key={day.iso}
+                aria-hidden="true"
+                style={{
+                  minWidth: 0,
+                  minHeight: dim(isPhone ? 32 : 44),
+                  border: `1px solid ${calendarStyle.gridLine}`,
+                  borderRadius: dim(RADII.xs),
+                  visibility: "hidden",
+                }}
+              />
+            );
+          }
+
+          const dayNumber = String(day.date.getDate());
+          const displayPnl = day.pnl;
+          const isActive = activeDayIso === day.iso;
+          const isPinned = pinnedDayIso === day.iso;
+          const tone = calendarCellTone(
+            displayPnl,
+            false,
+            calendarStyle,
+          );
+          return (
+            <button
+              key={day.iso}
+              type="button"
+              className="ra-interactive"
+              data-testid="account-pnl-calendar-day"
+              data-active={isActive ? "true" : undefined}
+              data-pinned={isPinned ? "true" : undefined}
+              aria-label={dayAriaLabel(day, currency, maskValues)}
+              aria-pressed={isPinned ? "true" : "false"}
+              aria-current={day.isToday ? "date" : undefined}
+              title={dayTooltip(day, currency, maskValues)}
+              onPointerEnter={() => onHoverDay(day.iso)}
+              onFocus={() => onHoverDay(day.iso)}
+              onClick={() => onPinDay(day.iso)}
               style={{
+                appearance: "none",
                 minWidth: 0,
+                width: "100%",
                 minHeight: dim(isPhone ? 32 : 44),
                 display: "grid",
                 gridTemplateRows: "auto minmax(0, 1fr)",
                 alignItems: "stretch",
                 gap: sp(isPhone ? 1 : 3),
                 padding: sp(isPhone ? "4px 3px 3px" : "5px 5px 4px"),
-                border: `1px solid ${tone.borderColor}`,
+                border: `1px solid ${isActive ? T.accent : tone.borderColor}`,
                 borderRadius: dim(RADII.xs),
-                background: tone.background,
-                boxShadow: tone.boxShadow,
-                opacity: day.inMonth ? 1 : 0.5,
+                background: isActive
+                  ? `linear-gradient(0deg, ${T.accent}12, ${T.accent}12), ${tone.background}`
+                  : tone.background,
+                boxShadow: isPinned
+                  ? `inset 0 0 0 1px ${T.accent}88`
+                  : isActive
+                    ? `inset 0 0 0 1px ${T.accent}55`
+                    : tone.boxShadow,
                 overflow: "hidden",
+                cursor: "pointer",
               }}
             >
               <div
@@ -238,30 +308,130 @@ const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle, isPhone
               </div>
               <div
                 style={{
-                  color: tone.color,
-                  fontSize: fs(isPhone ? 8 : 10),
-                  fontFamily: T.sans,
-                  fontWeight: FONT_WEIGHTS.medium,
-                  lineHeight: 1,
-                  textAlign: "center",
                   alignSelf: "end",
                   justifySelf: "center",
-                  fontVariantNumeric: "tabular-nums",
-                  whiteSpace: "nowrap",
+                  display: "grid",
+                  gap: sp(1),
+                  minWidth: 0,
                   minHeight: dim(10),
-                  overflow: "hidden",
-                  textOverflow: "clip",
                 }}
               >
-                {formatCalendarCellValue(displayPnl, maskValues)}
+                <span
+                  style={{
+                    color: tone.color,
+                    fontSize: fs(isPhone ? 8 : 10),
+                    fontFamily: T.sans,
+                    fontWeight: FONT_WEIGHTS.medium,
+                    lineHeight: 1,
+                    textAlign: "center",
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "clip",
+                  }}
+                >
+                  {formatCalendarCellValue(displayPnl, maskValues)}
+                </span>
               </div>
-            </div>
-          </AppTooltip>
-        );
-      })}
+            </button>
+          );
+        })}
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+const CalendarDayDetail = ({ day, currency, maskValues, calendarStyle }) => {
+  const pnlTone = !day
+    ? T.textDim
+    : day.pnl > 0
+      ? calendarStyle.positiveText
+      : day.pnl < 0
+        ? calendarStyle.negativeText
+        : T.textDim;
+  const source = day?.pnlSource === "total" ? "NAV total" : day ? "Realized fallback" : "—";
+  const detailItemStyle = {
+    display: "inline-flex",
+    alignItems: "baseline",
+    gap: sp(2),
+    minWidth: 0,
+    whiteSpace: "nowrap",
+  };
+  const labelStyle = {
+    color: T.textMuted,
+    fontSize: textSize("micro"),
+    fontFamily: T.sans,
+    lineHeight: 1,
+  };
+  const valueStyle = {
+    color: T.textSec,
+    fontSize: textSize("caption"),
+    fontFamily: T.sans,
+    fontWeight: FONT_WEIGHTS.regular,
+    fontVariantNumeric: "tabular-nums",
+    lineHeight: 1,
+  };
+  return (
+    <div
+      data-testid="account-pnl-calendar-day-detail"
+      style={{
+        minHeight: dim(30),
+        display: "flex",
+        alignItems: "center",
+        gap: sp("4px 10px"),
+        flexWrap: "wrap",
+        padding: sp("5px 6px"),
+        border: `1px solid ${calendarStyle.gridLine}`,
+        borderRadius: dim(RADII.xs),
+        background: T.bg1,
+        minWidth: 0,
+      }}
+    >
+      <span
+        data-testid="account-pnl-calendar-active-date"
+        style={{
+          color: day ? T.text : T.textMuted,
+          fontSize: textSize("caption"),
+          fontFamily: T.sans,
+          fontWeight: FONT_WEIGHTS.medium,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {day?.iso || "No activity"}
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>P&L</span>
+        <span style={{ ...valueStyle, color: pnlTone }}>
+          {day ? formatAccountSignedMoney(day.pnl || 0, currency, true, maskValues) : "—"}
+        </span>
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>Total</span>
+        <span style={valueStyle}>{day ? calendarMoneyOrDash(day.total, currency, maskValues) : "—"}</span>
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>Realized</span>
+        <span style={valueStyle}>
+          {day ? formatAccountSignedMoney(day.realized || 0, currency, true, maskValues) : "—"}
+        </span>
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>Unrealized</span>
+        <span style={valueStyle}>{day ? calendarMoneyOrDash(day.unrealized, currency, maskValues) : "—"}</span>
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>Trades</span>
+        <span style={valueStyle}>{day ? day.trades : "—"}</span>
+      </span>
+      <span style={detailItemStyle}>
+        <span style={labelStyle}>Source</span>
+        <span style={valueStyle}>{source}</span>
+      </span>
+    </div>
+  );
+};
 
 const YearCalendarGrid = ({
   model,
@@ -463,6 +633,8 @@ const DailyPnlCalendar = ({
     () => new Date(today.getFullYear(), today.getMonth(), 1),
   );
   const [visibleYear, setVisibleYear] = useState(() => today.getFullYear());
+  const [hoveredDayIso, setHoveredDayIso] = useState(null);
+  const [pinnedDayIso, setPinnedDayIso] = useState(null);
   const userSelectedCalendarRef = useRef(false);
   const latestActivityDate = useMemo(
     () => findLatestCalendarActivityDate({ trades, equityPoints }),
@@ -490,6 +662,18 @@ const DailyPnlCalendar = ({
   );
   const activeLabel = view === "month" ? monthModel.label : yearModel.label;
   const activeSummary = view === "month" ? monthModel.summary : yearModel.summary;
+  const activeDay = useMemo(
+    () =>
+      view === "month"
+        ? resolveActivePnlCalendarDay({
+            days: monthModel.days,
+            hoveredDayIso,
+            pinnedDayIso,
+          })
+        : null,
+    [hoveredDayIso, monthModel.days, pinnedDayIso, view],
+  );
+  const activeDayIso = activeDay?.iso || null;
   useEffect(() => {
     if (!latestActivityDate || userSelectedCalendarRef.current) return;
     const latestMonth = new Date(
@@ -510,6 +694,8 @@ const DailyPnlCalendar = ({
     );
   }, [latestActivityDate]);
   const handleViewChange = (nextView) => {
+    setHoveredDayIso(null);
+    setPinnedDayIso(null);
     if (nextView === "year") {
       setVisibleYear(visibleMonth.getFullYear());
     } else {
@@ -519,6 +705,8 @@ const DailyPnlCalendar = ({
   };
   const shiftCalendar = (delta) => {
     userSelectedCalendarRef.current = true;
+    setHoveredDayIso(null);
+    setPinnedDayIso(null);
     if (view === "month") {
       setVisibleMonth((current) => addCalendarMonths(current, delta));
       return;
@@ -527,9 +715,14 @@ const DailyPnlCalendar = ({
   };
   const selectYearMonth = (date) => {
     userSelectedCalendarRef.current = true;
+    setHoveredDayIso(null);
+    setPinnedDayIso(null);
     setVisibleMonth(date);
     setVisibleYear(date.getFullYear());
     setView("month");
+  };
+  const pinDay = (iso) => {
+    setPinnedDayIso((current) => (current === iso ? null : iso));
   };
   const periodLabel = (
     <span
@@ -587,13 +780,21 @@ const DailyPnlCalendar = ({
           </div>
         }
       >
-        <div style={{ display: "grid", gap: sp(2), minWidth: 0 }}>
+        <div
+          onPointerLeave={() => setHoveredDayIso(null)}
+          style={{ display: "grid", gap: sp(2), minWidth: 0 }}
+        >
           {view === "month" ? (
             <MonthCalendarGrid
               model={monthModel}
               currency={currency}
               maskValues={maskValues}
               calendarStyle={calendarStyle}
+              activeDayIso={activeDayIso}
+              pinnedDayIso={pinnedDayIso}
+              onHoverDay={setHoveredDayIso}
+              onClearHoverDay={() => setHoveredDayIso(null)}
+              onPinDay={pinDay}
               isPhone={isPhone}
             />
           ) : (
@@ -606,6 +807,14 @@ const DailyPnlCalendar = ({
               isPhone={isPhone}
             />
           )}
+          {view === "month" ? (
+            <CalendarDayDetail
+              day={activeDay}
+              currency={currency}
+              maskValues={maskValues}
+              calendarStyle={calendarStyle}
+            />
+          ) : null}
           <CalendarSummary
             summary={activeSummary}
             currency={currency}

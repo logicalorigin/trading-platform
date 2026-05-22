@@ -148,7 +148,7 @@ test("IBKR bridge remote launch detection covers Replit preview browsers", () =>
     assert.equal(shouldUseRemoteIbkrLaunchBrowser(), true);
 
     globalThis.window = {
-      document: { referrer: "https://replit.com/@owner/rayalgo" },
+      document: { referrer: "https://replit.com/@owner/pyrus" },
       innerWidth: 1280,
       location: { hostname: "localhost" },
       matchMedia: () => ({ matches: false }),

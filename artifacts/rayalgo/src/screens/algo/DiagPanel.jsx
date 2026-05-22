@@ -17,6 +17,7 @@ export const DiagPanel = ({
   healthy,
   expanded,
   onToggle,
+  readOnly = false,
 }) => {
   const aggregate = totalCount(rows);
   const showExpanded = expanded;
@@ -58,6 +59,30 @@ export const DiagPanel = ({
     );
   }
 
+  const headerStyle = {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: sp(5),
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    marginBottom: sp(6),
+    cursor: readOnly ? "default" : "pointer",
+    color,
+    fontFamily: T.sans,
+    fontSize: textSize("caption"),
+    letterSpacing: "0.04em",
+    textAlign: "left",
+  };
+  const headerContent = (
+    <>
+      <ChevronDown size={11} />
+      <span style={{ flex: 1 }}>{String(title).toUpperCase()}</span>
+      {!healthy ? <span style={{ color }}>{aggregate}</span> : null}
+    </>
+  );
+
   return (
     <div
       data-testid={`algo-diag-panel-${title.toLowerCase().replace(/\s+/g, "-")}`}
@@ -70,31 +95,18 @@ export const DiagPanel = ({
         minWidth: 0,
       }}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        className="ra-interactive"
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          gap: sp(5),
-          background: "transparent",
-          border: "none",
-          padding: 0,
-          marginBottom: sp(6),
-          cursor: "pointer",
-          color,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          letterSpacing: "0.04em",
-          textAlign: "left",
-        }}
-      >
-        <ChevronDown size={11} />
-        <span style={{ flex: 1 }}>{String(title).toUpperCase()}</span>
-        {!healthy ? <span style={{ color }}>{aggregate}</span> : null}
-      </button>
+      {readOnly ? (
+        <div style={headerStyle}>{headerContent}</div>
+      ) : (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="ra-interactive"
+          style={headerStyle}
+        >
+          {headerContent}
+        </button>
+      )}
       {rows && rows.length ? (
         <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
           {rows.map(([label, count]) => (

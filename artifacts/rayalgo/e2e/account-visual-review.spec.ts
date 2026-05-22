@@ -55,9 +55,7 @@ test("capture account screen for visual review", async ({ page }) => {
   await shotByText(page, "Position Heatmap", "P-PositionTreemapPanel.png");
   await shotByText(page, "Intraday P&L", "P-IntradayPnlPanel.png");
   await shotByText(page, "Current Positions · 0", "P-PositionsPanel.png");
-  await shotByText(page, "Trading Analysis", "P-TradingPatternsPanel.png");
-  await shotByText(page, "Closed Trades · 0", "P-ClosedTradesPanel.png");
-  await shotByText(page, "Selected Trade", "P-SelectedTradeAnalysisPanel.png");
+  await shotByText(page, "Trading Analysis", "P-TradingAnalysisWorkbench.png");
   await shotByText(page, "Cash & Funding", "P-CashFundingPanel.png");
   await shotByText(page, "Setup & Health", "P-SetupHealthPanel.png");
 

@@ -10,21 +10,23 @@ import {
 } from "./chartHydrationRuntime.js";
 
 test("chart hydration policy preserves role-specific candle windows", () => {
-  const miniPolicy = resolveChartHydrationPolicy({
-    timeframe: "5m",
-    role: "mini",
-  });
-  const primaryPolicy = resolveChartHydrationPolicy({
+  const marketPolicy = resolveChartHydrationPolicy({
     timeframe: "5m",
     role: "primary",
   });
+  const optionPolicy = resolveChartHydrationPolicy({
+    timeframe: "5m",
+    role: "option",
+  });
 
   assert.equal(normalizeChartHydrationRole("unknown"), "primary");
-  assert.equal(miniPolicy.role, "mini");
-  assert.equal(miniPolicy.initialLimit, 240);
-  assert.equal(miniPolicy.targetLimit, 900);
-  assert.equal(miniPolicy.maxLimit, 1800);
-  assert.equal(primaryPolicy.targetLimit, 1800);
+  assert.equal(normalizeChartHydrationRole("mini"), "primary");
+  assert.equal(marketPolicy.role, "primary");
+  assert.equal(marketPolicy.initialLimit, 360);
+  assert.equal(marketPolicy.targetLimit, 1800);
+  assert.equal(marketPolicy.maxLimit, 12000);
+  assert.equal(optionPolicy.role, "option");
+  assert.equal(optionPolicy.targetLimit, 720);
 });
 
 test("chart hydration request policy expands rolled intervals by base timeframe", () => {
@@ -108,6 +110,51 @@ test("visible range hydration prepends older bars after a zoom-out into left whi
   assert.equal(action.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
   assert.equal(action.reason, "near-left-edge");
   assert.equal(action.pageSize >= 840, true);
+});
+
+test("visible range hydration continues prepending after the warmed window max is loaded", () => {
+  const action = resolveVisibleRangeHydrationAction({
+    range: { from: -120, to: 120 },
+    loadedBarCount: 5000,
+    requestedLimit: 5000,
+    targetLimit: 1000,
+    maxLimit: 5000,
+    timeframe: "5m",
+    canPrependOlderHistory: true,
+    oldestLoadedAtMs: Date.parse("2026-05-01T13:30:00.000Z"),
+  });
+
+  assert.equal(action.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+  assert.equal(action.reason, "near-left-edge");
+});
+
+test("visible range hydration keeps user-requested prepends pressure-aware", () => {
+  const normal = resolveVisibleRangeHydrationAction({
+    range: { from: -600, to: 200 },
+    loadedBarCount: 5000,
+    requestedLimit: 5000,
+    targetLimit: 1000,
+    maxLimit: 5000,
+    timeframe: "1m",
+    canPrependOlderHistory: true,
+    oldestLoadedAtMs: Date.parse("2026-05-01T13:30:00.000Z"),
+  });
+  const backoff = resolveVisibleRangeHydrationAction({
+    range: { from: -600, to: 200 },
+    loadedBarCount: 5000,
+    requestedLimit: 5000,
+    targetLimit: 1000,
+    maxLimit: 5000,
+    timeframe: "1m",
+    canPrependOlderHistory: true,
+    oldestLoadedAtMs: Date.parse("2026-05-01T13:30:00.000Z"),
+    pressure: "backoff",
+  });
+
+  assert.equal(normal.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+  assert.equal(backoff.action, CHART_HYDRATION_ACTION.PREPEND_OLDER);
+  assert.equal(backoff.pageSize < normal.pageSize, true);
+  assert.equal(backoff.pageSize >= 360, true);
 });
 
 test("visible range hydration does not request older bars while a prepend is active", () => {

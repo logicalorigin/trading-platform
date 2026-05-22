@@ -14,16 +14,51 @@ directory to define separate Replit app runners.
   `timeHorizon`/structure sensitivity sweep through the existing shadow backfill
   path, holds the signal-options worker advisory lock, writes JSON/CSV/Markdown
   reports, and can replay the top eligible variant into the shadow ledger.
+- `signal-options:exit-policy-sweep` runs the exit-policy variant sweep for the
+  enabled RayReplica signal-options shadow deployment. By default it is a dry
+  run only and writes JSON/CSV/Markdown reports under
+  `scripts/reports/signal-options-exit-policy-sweeps/`.
+  - Dry run:
+    `DATABASE_URL=postgres://... pnpm --filter @workspace/scripts run signal-options:exit-policy-sweep`
+  - Replay the top eligible ranked variant into the shadow ledger:
+    `DATABASE_URL=postgres://... SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER=1 pnpm --filter @workspace/scripts run signal-options:exit-policy-sweep`
+  - Replay a specific eligible variant:
+    `DATABASE_URL=postgres://... SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_WINNER=1 SIGNAL_OPTIONS_EXIT_SWEEP_REPLAY_VARIANT=trail-ladder-aggressive-early8-loss25 pnpm --filter @workspace/scripts run signal-options:exit-policy-sweep`
+  - Common selectors: `SIGNAL_OPTIONS_EXIT_SWEEP_START`,
+    `SIGNAL_OPTIONS_EXIT_SWEEP_END`, `SIGNAL_OPTIONS_EXIT_SWEEP_FAMILIES`,
+    `SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS`, and
+    `SIGNAL_OPTIONS_EXIT_SWEEP_SYMBOLS`.
 - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` is a manual
   Polygon sampling utility for inspecting premium-distribution aggregation.
+- `shadow:polygon-options-audit` reads the existing shadow option ledger rows,
+  checks their recorded trade/aggregate provenance against Polygon-compatible
+  historical options endpoints, and writes JSON/CSV/Markdown reports under
+  `scripts/reports/shadow-polygon-options-audit/`.
+  - Run:
+    `DATABASE_URL=postgres://... MASSIVE_API_KEY=... pnpm --filter @workspace/scripts run shadow:polygon-options-audit`
+  - Optional selectors: `SHADOW_POLYGON_AUDIT_ACCOUNT_ID`,
+    `SHADOW_POLYGON_AUDIT_CONCURRENCY`, `SHADOW_POLYGON_AUDIT_MAX_ROWS`, and
+    `SHADOW_POLYGON_AUDIT_REPORT_DIR`.
+- `shadow:management-review` reads the committed shadow option `automation`
+  ledger, ranks management leaks by exit reason/symbol/signal quality, folds in
+  prior dry sweep evidence when present, and writes Markdown/JSON/CSV reports
+  under `scripts/reports/shadow-options-management-review/`.
+  - Run:
+    `DATABASE_URL=postgres://... pnpm --filter @workspace/scripts run shadow:management-review`
+  - Optional selectors: `SHADOW_OPTIONS_MANAGEMENT_REVIEW_ACCOUNT_ID`,
+    `SHADOW_OPTIONS_MANAGEMENT_REVIEW_START`,
+    `SHADOW_OPTIONS_MANAGEMENT_REVIEW_END`,
+    `SHADOW_OPTIONS_MANAGEMENT_REVIEW_TOP_LEAKS`,
+    `SHADOW_OPTIONS_MANAGEMENT_REVIEW_SWEEP_ROOT`, and
+    `SHADOW_OPTIONS_MANAGEMENT_REVIEW_REPORT_DIR`.
 
 ## Audit Guardrails
 
 - `check-env-example.mjs` verifies that JS/TS app-code environment references are
   documented in `.env.example`.
 - `check-replit-startup-guards.mjs` verifies that `.replit` stays in
-  `PNPM_WORKSPACE` artifact mode, RayAlgo keeps its artifact identity, and the
-  RayAlgo web artifact owns full app bring-up. It also guards the
+  `PNPM_WORKSPACE` artifact mode, PYRUS keeps its guarded artifact identity, and the
+  PYRUS web artifact owns full app bring-up. It also guards the
   Replit-workflow replacement path in `reap-dev-port.mjs`.
 - `protect-replit-config.mjs` locks or unlocks Replit startup config files
   (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
@@ -41,5 +76,7 @@ directory to define separate Replit app runners.
   `run-local-postgres.sh` support manual workspace-local Postgres fallback
   diagnosis. They are not part of normal Replit app bring-up.
 - `reap-dev-port.mjs` clears same-cgroup dev processes before package dev
-  scripts start. When run by Replit itself (`REPLIT_MODE=workflow`), it can
-  replace older Replit execution scopes on the same pinned port.
+  scripts start. When run by Replit itself (`REPLIT_MODE=workflow`) or by the
+  PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`, with `RAYALGO_REPLIT_RUN=1` as
+  a legacy alias), it can replace older Replit
+  execution scopes on the same pinned port.

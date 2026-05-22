@@ -129,6 +129,30 @@ export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
 
 const runtimeTickerSnapshotListeners = new Map();
 const runtimeTickerSnapshotVersions = new Map();
+const RUNTIME_QUOTE_FIELDS = new Set([
+  "price",
+  "bid",
+  "ask",
+  "last",
+  "mark",
+  "chg",
+  "change",
+  "pct",
+  "changePercent",
+  "open",
+  "high",
+  "low",
+  "prevClose",
+  "volume",
+  "updatedAt",
+  "dataUpdatedAt",
+  "freshness",
+  "marketDataMode",
+  "delayed",
+  "source",
+  "transport",
+  "latency",
+]);
 
 const normalizeRuntimeTickerSymbols = (symbols) => (
   Array.from(
@@ -139,6 +163,54 @@ const normalizeRuntimeTickerSymbols = (symbols) => (
     ),
   ).sort()
 );
+
+const RUNTIME_TICKER_NOTIFY_DEBOUNCE_MS = 100;
+const pendingRuntimeTickerSnapshotSymbols = new Set();
+let runtimeTickerSnapshotFlushTimer = null;
+
+const flushRuntimeTickerSnapshotNotifications = () => {
+  if (runtimeTickerSnapshotFlushTimer != null) {
+    globalThis.clearTimeout?.(runtimeTickerSnapshotFlushTimer);
+    runtimeTickerSnapshotFlushTimer = null;
+  }
+
+  const symbols = normalizeRuntimeTickerSymbols(
+    Array.from(pendingRuntimeTickerSnapshotSymbols),
+  );
+  pendingRuntimeTickerSnapshotSymbols.clear();
+  if (!symbols.length) {
+    return;
+  }
+
+  const listenersToNotify = new Set();
+  symbols.forEach((symbol) => {
+    runtimeTickerSnapshotVersions.set(
+      symbol,
+      (runtimeTickerSnapshotVersions.get(symbol) ?? 0) + 1,
+    );
+    Array.from(runtimeTickerSnapshotListeners.get(symbol) || []).forEach(
+      (listener) => {
+        listenersToNotify.add(listener);
+      },
+    );
+  });
+  listenersToNotify.forEach((listener) => listener());
+};
+
+const scheduleRuntimeTickerSnapshotNotifications = () => {
+  if (runtimeTickerSnapshotFlushTimer != null) {
+    return;
+  }
+  if (typeof globalThis.setTimeout !== "function") {
+    flushRuntimeTickerSnapshotNotifications();
+    return;
+  }
+
+  runtimeTickerSnapshotFlushTimer = globalThis.setTimeout(() => {
+    runtimeTickerSnapshotFlushTimer = null;
+    flushRuntimeTickerSnapshotNotifications();
+  }, RUNTIME_TICKER_NOTIFY_DEBOUNCE_MS);
+};
 
 const areDateValuesEqual = (left, right) => {
   if (left === right) {
@@ -163,6 +235,36 @@ const areDateValuesEqual = (left, right) => {
   }
 
   return leftMs === rightMs;
+};
+
+const readRuntimeQuoteTimestampMs = (value) => {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const timestamp = Date.parse(String(value));
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  return null;
+};
+
+const readRuntimeSnapshotTimestampMs = (value) =>
+  readRuntimeQuoteTimestampMs(value?.dataUpdatedAt) ??
+  readRuntimeQuoteTimestampMs(value?.updatedAt);
+
+const readRuntimeWrapperTimestampMs = (value) =>
+  readRuntimeQuoteTimestampMs(value?.updatedAt);
+
+const readRuntimeReceivedAtMs = (value) => {
+  const latency = value?.latency;
+  return readRuntimeQuoteTimestampMs(
+    latency && typeof latency === "object"
+      ? latency.apiServerReceivedAt ?? latency.apiServerEmittedAt
+      : null,
+  );
 };
 
 const areSparkPointsEqual = (left, right) => {
@@ -250,8 +352,58 @@ const isRuntimeTickerFieldEqual = (field, currentValue, nextValue) => {
 export const applyRuntimeTickerInfoPatch = (symbol, fallbackName, patch) => {
   const tradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
   let changed = false;
+  const hasQuoteFields = Object.keys(patch || {}).some((field) =>
+    RUNTIME_QUOTE_FIELDS.has(field),
+  );
+  const currentQuoteTimestampMs = readRuntimeSnapshotTimestampMs(tradeInfo);
+  const incomingQuoteTimestampMs = readRuntimeSnapshotTimestampMs(patch);
+  let quotePatchIsOlder =
+    hasQuoteFields &&
+    currentQuoteTimestampMs !== null &&
+    (incomingQuoteTimestampMs === null ||
+      incomingQuoteTimestampMs < currentQuoteTimestampMs);
+  let quotePatchHasSameTimestamp =
+    hasQuoteFields &&
+    currentQuoteTimestampMs !== null &&
+    incomingQuoteTimestampMs !== null &&
+    incomingQuoteTimestampMs === currentQuoteTimestampMs;
+
+  if (quotePatchHasSameTimestamp) {
+    const currentWrapperTimestampMs = readRuntimeWrapperTimestampMs(tradeInfo);
+    const incomingWrapperTimestampMs = readRuntimeWrapperTimestampMs(patch);
+    if (
+      currentWrapperTimestampMs !== null &&
+      incomingWrapperTimestampMs !== null &&
+      incomingWrapperTimestampMs !== currentWrapperTimestampMs
+    ) {
+      quotePatchIsOlder = incomingWrapperTimestampMs < currentWrapperTimestampMs;
+      quotePatchHasSameTimestamp = false;
+    } else {
+      const currentReceivedAtMs = readRuntimeReceivedAtMs(tradeInfo);
+      const incomingReceivedAtMs = readRuntimeReceivedAtMs(patch);
+      if (
+        currentReceivedAtMs !== null &&
+        incomingReceivedAtMs !== null &&
+        incomingReceivedAtMs !== currentReceivedAtMs
+      ) {
+        quotePatchIsOlder = incomingReceivedAtMs < currentReceivedAtMs;
+        quotePatchHasSameTimestamp = false;
+      }
+    }
+  }
 
   Object.entries(patch).forEach(([field, nextValue]) => {
+    if (quotePatchIsOlder && RUNTIME_QUOTE_FIELDS.has(field)) {
+      return;
+    }
+    if (
+      quotePatchHasSameTimestamp &&
+      RUNTIME_QUOTE_FIELDS.has(field) &&
+      tradeInfo[field] != null &&
+      !isRuntimeTickerFieldEqual(field, tradeInfo[field], nextValue)
+    ) {
+      return;
+    }
     if (isRuntimeTickerFieldEqual(field, tradeInfo[field], nextValue)) {
       return;
     }
@@ -267,15 +419,14 @@ export const applyRuntimeTickerInfoPatch = (symbol, fallbackName, patch) => {
 };
 
 export const notifyRuntimeTickerSnapshotSymbols = (symbols) => {
-  normalizeRuntimeTickerSymbols(symbols).forEach((symbol) => {
-    runtimeTickerSnapshotVersions.set(
-      symbol,
-      (runtimeTickerSnapshotVersions.get(symbol) ?? 0) + 1,
-    );
-    Array.from(runtimeTickerSnapshotListeners.get(symbol) || []).forEach((listener) =>
-      listener(),
-    );
+  const normalizedSymbols = normalizeRuntimeTickerSymbols(symbols);
+  if (!normalizedSymbols.length) {
+    return;
+  }
+  normalizedSymbols.forEach((symbol) => {
+    pendingRuntimeTickerSnapshotSymbols.add(symbol);
   });
+  scheduleRuntimeTickerSnapshotNotifications();
 };
 
 const subscribeToRuntimeTickerSnapshotSymbols = (symbols, listener) => {
@@ -298,6 +449,18 @@ const subscribeToRuntimeTickerSnapshotSymbols = (symbols, listener) => {
       }
     });
   };
+};
+
+export const __runtimeTickerStoreTestHooks = {
+  subscribeToRuntimeTickerSnapshotSymbols,
+  flushRuntimeTickerSnapshotNotifications,
+  clearPendingRuntimeTickerSnapshotNotifications: () => {
+    if (runtimeTickerSnapshotFlushTimer != null) {
+      globalThis.clearTimeout?.(runtimeTickerSnapshotFlushTimer);
+      runtimeTickerSnapshotFlushTimer = null;
+    }
+    pendingRuntimeTickerSnapshotSymbols.clear();
+  },
 };
 
 export const getRuntimeTickerSnapshot = (symbol, fallback = null) => {

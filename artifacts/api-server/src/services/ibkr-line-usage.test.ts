@@ -51,6 +51,19 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.equal(snapshot.allocation.elasticLineCount, 0);
   assert.equal(snapshot.allocation.reclaimableElasticLineCount, 0);
   assert.equal(snapshot.allocation.fillerLineCount, 0);
+  assert.equal(snapshot.lineUtilizationAudit.targetLineCount, 200);
+  assert.equal(snapshot.lineUtilizationAudit.admissionActiveLineCount, 1);
+  assert.equal(snapshot.lineUtilizationAudit.idleToTargetLineCount, 199);
+  assert.equal(
+    snapshot.lineUtilizationAudit.topLimitingReason,
+    "bridge-diagnostics-unavailable",
+  );
+  assert.equal(
+    snapshot.lineUtilizationAudit.scanner.configuredConcurrency,
+    2,
+  );
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
+  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 40);
   assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 0);
   assert.equal(snapshot.admission.poolUsage["account-monitor"].dynamic, true);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
@@ -130,6 +143,12 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
   assert.equal(snapshot.policy.targetFillLines, 190);
   assert.equal(snapshot.allocation.bridgeLineBudget, 190);
   assert.equal(snapshot.allocation.remainingToTargetLineCount, 188);
+  assert.equal(snapshot.lineUtilizationAudit.bridgeLineBudget, 190);
+  assert.equal(snapshot.lineUtilizationAudit.bridgeActiveLineCount, 3);
+  assert.equal(snapshot.lineUtilizationAudit.bridgeRemainingLineCount, 187);
+  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, -1);
+  assert.equal(snapshot.lineUtilizationAudit.driftStatus, "mixed");
+  assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "line-drift");
   assert.equal(snapshot.drift.admissionVsBridgeLineDelta, -1);
   assert.equal(snapshot.drift.reconciliation.status, "mixed");
   assert.equal(snapshot.drift.reconciliation.matchedLineCount, 1);

@@ -2,7 +2,7 @@ import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
 import { lazyWithRetry } from "../lib/dynamicImport";
-import { FONT_CSS_VAR } from "../lib/typography";
+import LogoLoader from "../components/LogoLoader";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
   RootCrashDiagnosticsFallback,
@@ -57,7 +57,7 @@ const resolveDevCrashMode = (): string | null => {
 
 function DevCrashTrigger({ mode }: { mode: string | null }) {
   if (mode === "render") {
-    throw new Error("RayAlgo dev crash diagnostics trigger");
+    throw new Error("PYRUS dev crash diagnostics trigger");
   }
   return null;
 }
@@ -83,113 +83,6 @@ function diagnosticErrorCode(
 ): string {
   const file = filename?.split("/").at(-1) || "unknown";
   return `${file}:${lineno ?? 0}:${colno ?? 0}`.slice(0, 96);
-}
-
-const APP_LOADING_FALLBACK_PALETTES = {
-  dark: {
-    shellBg: "#16151A",
-    text: "#B8B4AC",
-    border: "#2F2E35",
-    accent: "#E08F76",
-  },
-  light: {
-    shellBg: "#FFFFFF",
-    text: "#3F3F46",
-    border: "#E5E5EA",
-    accent: "#D97757",
-  },
-} as const;
-
-const resolveAppLoadingFallbackTheme = (): keyof typeof APP_LOADING_FALLBACK_PALETTES => {
-  if (typeof document !== "undefined") {
-    return document.documentElement.dataset.rayalgoTheme === "light"
-      ? "light"
-      : "dark";
-  }
-
-  return "dark";
-};
-
-function AppLoadingFallback() {
-  const themeKey = resolveAppLoadingFallbackTheme();
-  const palette = APP_LOADING_FALLBACK_PALETTES[themeKey];
-
-  // Boot screen — brand wordmark + a 3-segment progress bar that
-  // cycles through its segments to communicate "the app is loading,
-  // not stuck." Replaces the blank-then-spinner gap that previously
-  // showed during first-paint. No external assets; everything is
-  // inline CSS so it renders even if the main bundle is still in flight.
-  return (
-    <div
-      data-testid="app-loading-fallback"
-      data-theme={themeKey}
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 18,
-        background: palette.shellBg,
-        color: palette.text,
-        fontFamily: FONT_CSS_VAR.sans,
-      }}
-    >
-      <style>
-        {`
-          @keyframes rayalgoBootFade {
-            from { opacity: 0; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-          @keyframes rayalgoBootBar {
-            0%, 100% { opacity: 0.25; }
-            50% { opacity: 1; }
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .rayalgo-boot-wordmark { animation: none; }
-            .rayalgo-boot-bar { animation: none; opacity: 0.6; }
-          }
-        `}
-      </style>
-      <span
-        aria-label="RayAlgo"
-        role="status"
-        className="rayalgo-boot-wordmark"
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          color: palette.accent,
-          animation: "rayalgoBootFade 420ms cubic-bezier(0, 0, 0.2, 1) both",
-        }}
-      >
-        RayAlgo
-      </span>
-      <span
-        aria-hidden="true"
-        style={{
-          display: "inline-flex",
-          gap: 4,
-        }}
-      >
-        {[0, 1, 2].map((index) => (
-          <span
-            key={index}
-            className="rayalgo-boot-bar"
-            style={{
-              width: 18,
-              height: 2,
-              background: palette.accent,
-              borderRadius: 1,
-              opacity: 0.25,
-              animation: `rayalgoBootBar 1200ms ease-in-out ${index * 200}ms infinite`,
-            }}
-          />
-        ))}
-      </span>
-    </div>
-  );
 }
 
 function App() {
@@ -247,7 +140,7 @@ function App() {
 
   return (
     <PlatformErrorBoundary
-      label="Rayalgo app shell"
+      label="PYRUS app shell"
       resetKeys={[labMode, crashMode]}
       reportCategory="react-root-crash"
       reportSeverity="critical"
@@ -257,7 +150,7 @@ function App() {
     >
       <DevCrashTrigger mode={crashMode} />
       <AppProviders>
-        <Suspense fallback={<AppLoadingFallback />}>
+        <Suspense fallback={<LogoLoader testId="app-loading-fallback" />}>
           {labMode === "chart-parity" ? (
             <ChartParityLab />
           ) : labMode === "ticker-search" ? (

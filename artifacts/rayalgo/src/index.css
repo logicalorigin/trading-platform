@@ -7,36 +7,36 @@
   --ra-font-display: var(--ra-font-sans);
   --ra-font-data: var(--ra-font-sans);
   --ra-font-code: var(--ra-font-data);
-  --ra-accent-500: #E08F76;
-  --ra-blue-500: #7CA7D9;
-  --ra-green-400: #6BC498;
-  --ra-green-500: #4FB286;
-  --ra-red-500: #EA5E5B;
-  --ra-amber-300: #EBCB9C;
-  --ra-amber-400: #E2B97E;
-  --ra-amber-500: #D9A864;
-  --ra-amber-600: #C09354;
-  --ra-orange-500: #DB8C56;
-  --ra-cyan-500: #6FB5C2;
-  --ra-pink-500: #D9849B;
-  --ra-purple-400: #B7A4DC;
-  --ra-purple-500: #A189CF;
-  --ra-grey-0: #16151A;
-  --ra-grey-1: #1E1D22;
-  --ra-grey-2: #26252B;
-  --ra-grey-3: #2F2E35;
-  --ra-grey-4: #3A3940;
-  --ra-grey-5: #2F2E35;
-  --ra-grey-6: #3A3940;
-  --ra-grey-7: #605C57;
-  --ra-grey-8: #86837D;
-  --ra-grey-9: #B8B4AC;
+  --ra-accent-500: #168BFF;
+  --ra-blue-500: #168BFF;
+  --ra-green-400: #5CE3A2;
+  --ra-green-500: #2ED889;
+  --ra-red-500: #FF3048;
+  --ra-amber-300: #F2D891;
+  --ra-amber-400: #EFCB6A;
+  --ra-amber-500: #E9B949;
+  --ra-amber-600: #C99623;
+  --ra-orange-500: #F28A3A;
+  --ra-cyan-500: #24C8DB;
+  --ra-pink-500: #FF5F9E;
+  --ra-purple-400: #C39CFF;
+  --ra-purple-500: #A14DFF;
+  --ra-grey-0: #050814;
+  --ra-grey-1: #090D18;
+  --ra-grey-2: #101624;
+  --ra-grey-3: #172033;
+  --ra-grey-4: #1F2B42;
+  --ra-grey-5: #1D2A3F;
+  --ra-grey-6: #2A3A54;
+  --ra-grey-7: #566276;
+  --ra-grey-8: #7E8DA4;
+  --ra-grey-9: #B8C4D6;
   --ra-surface-0: var(--ra-grey-0);
   --ra-surface-1: var(--ra-grey-1);
   --ra-surface-2: var(--ra-grey-2);
   --ra-surface-3: var(--ra-grey-3);
   --ra-surface-4: var(--ra-grey-4);
-  --ra-text-primary: #F2EFE9;
+  --ra-text-primary: #F4F8FF;
   --ra-text-secondary: var(--ra-grey-9);
   --ra-text-dim: var(--ra-grey-8);
   --ra-text-muted: var(--ra-grey-7);
@@ -112,18 +112,18 @@
   --ra-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ra-motion-enter: cubic-bezier(0, 0, 0.2, 1);
   --ra-motion-exit: cubic-bezier(0.4, 0, 1, 1);
-  --ra-motion-accent: #E08F76;
-  --ra-motion-up: #4FB286;
-  --ra-motion-down: #EA5E5B;
-  --ra-motion-warn: #D9A864;
-  --ra-tooltip-bg: #1E1D22;
-  --ra-tooltip-border: #3A3940;
-  --ra-tooltip-text: #F2EFE9;
-  --ra-tooltip-muted: #B8B4AC;
+  --ra-motion-accent: #168BFF;
+  --ra-motion-up: #2ED889;
+  --ra-motion-down: #FF3048;
+  --ra-motion-warn: #E9B949;
+  --ra-tooltip-bg: #090D18;
+  --ra-tooltip-border: #2A3A54;
+  --ra-tooltip-text: #F4F8FF;
+  --ra-tooltip-muted: #B8C4D6;
   --ra-tooltip-shadow: 0 10px 24px rgba(0, 0, 0, 0.36), 0 4px 8px rgba(0, 0, 0, 0.24);
-  --ra-skeleton-base: #2A292F;
-  --ra-skeleton-highlight: #3A3940;
-  --ra-focus-ring: 0 0 0 2px rgba(224, 143, 118, 0.32);
+  --ra-skeleton-base: #111A2A;
+  --ra-skeleton-highlight: #1F2B42;
+  --ra-focus-ring: 0 0 0 2px rgba(22, 139, 255, 0.34);
   --ra-card-top-highlight: rgba(255, 255, 255, 0.05);
   --ra-card-inner-shadow: inset 0 1px 0 var(--ra-card-top-highlight);
   --ra-selected-glow: inset 0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 32%, transparent);
@@ -196,37 +196,38 @@
     0 4px 14px color-mix(in srgb, var(--ra-color-accent) 22%, transparent);
 }
 
+:root[data-pyrus-theme="light"],
 :root[data-rayalgo-theme="light"] {
-  --ra-accent-500: #D97757;
-  --ra-blue-500: #2E5A8E;
-  --ra-green-400: #2A8A6B;
-  --ra-green-500: #0F6E51;
-  --ra-red-500: #B5403B;
-  --ra-amber-300: #DDB07C;
-  --ra-amber-400: #D49A55;
-  --ra-amber-500: #C28526;
-  --ra-amber-600: #A0691E;
-  --ra-orange-500: #C16D34;
-  --ra-cyan-500: #2D7A8B;
-  --ra-pink-500: #B8567A;
-  --ra-purple-400: #8B6FAE;
-  --ra-purple-500: #6B4E8E;
-  --ra-grey-0: #FFFFFF;
+  --ra-accent-500: #0B66D8;
+  --ra-blue-500: #0B66D8;
+  --ra-green-400: #119B73;
+  --ra-green-500: #07805F;
+  --ra-red-500: #D92840;
+  --ra-amber-300: #D79A39;
+  --ra-amber-400: #C88A1E;
+  --ra-amber-500: #B87507;
+  --ra-amber-600: #966005;
+  --ra-orange-500: #C96B1E;
+  --ra-cyan-500: #047C90;
+  --ra-pink-500: #C73374;
+  --ra-purple-400: #9A6CFF;
+  --ra-purple-500: #7A3FF0;
+  --ra-grey-0: #F7FAFF;
   --ra-grey-1: #FFFFFF;
-  --ra-grey-2: #FAFAFB;
-  --ra-grey-3: #F4F4F6;
-  --ra-grey-4: #E8E8EC;
-  --ra-grey-5: #E5E5EA;
-  --ra-grey-6: #F2F2F4;
-  --ra-grey-7: #9999A1;
-  --ra-grey-8: #6B6B73;
-  --ra-grey-9: #3F3F46;
+  --ra-grey-2: #F2F6FC;
+  --ra-grey-3: #E8EEF8;
+  --ra-grey-4: #DDE6F3;
+  --ra-grey-5: #D9E2F0;
+  --ra-grey-6: #EDF2F8;
+  --ra-grey-7: #96A2B3;
+  --ra-grey-8: #66758C;
+  --ra-grey-9: #33435A;
   --ra-surface-0: var(--ra-grey-0);
   --ra-surface-1: var(--ra-grey-1);
   --ra-surface-2: var(--ra-grey-2);
   --ra-surface-3: var(--ra-grey-3);
   --ra-surface-4: var(--ra-grey-4);
-  --ra-text-primary: #19171A;
+  --ra-text-primary: #101827;
   --ra-text-secondary: var(--ra-grey-9);
   --ra-text-dim: var(--ra-grey-8);
   --ra-text-muted: var(--ra-grey-7);
@@ -242,13 +243,13 @@
   --ra-color-status-info: var(--ra-stream-checking);
   --ra-table-row-bg-hover: color-mix(in srgb, var(--ra-surface-3) 86%, transparent);
   --ra-tooltip-bg: #FFFFFF;
-  --ra-tooltip-border: #EBE9E3;
-  --ra-tooltip-text: #19171A;
-  --ra-tooltip-muted: #4E4B4F;
-  --ra-tooltip-shadow: 0 10px 24px rgba(25, 23, 26, 0.10), 0 4px 8px rgba(25, 23, 26, 0.06);
-  --ra-skeleton-base: #F0F0F2;
-  --ra-skeleton-highlight: #F8F8FA;
-  --ra-focus-ring: 0 0 0 2px rgba(217, 119, 87, 0.30);
+  --ra-tooltip-border: #D9E2F0;
+  --ra-tooltip-text: #101827;
+  --ra-tooltip-muted: #66758C;
+  --ra-tooltip-shadow: 0 10px 24px rgba(16, 24, 39, 0.10), 0 4px 8px rgba(16, 24, 39, 0.06);
+  --ra-skeleton-base: #E8EEF8;
+  --ra-skeleton-highlight: #F7FAFF;
+  --ra-focus-ring: 0 0 0 2px rgba(11, 102, 216, 0.30);
   --ra-card-top-highlight: rgba(255, 255, 255, 0.72);
   --ra-card-inner-shadow: inset 0 1px 0 var(--ra-card-top-highlight), inset 0 0 0 1px rgba(25, 23, 26, 0.02);
   --ra-selected-glow: inset 0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 28%, transparent);
@@ -259,21 +260,58 @@
      highlight here: light surfaces don't need a lit-from-above hint
      because they're already lighter than the page background. */
   --ra-elevation-sm:
-    0 1px 2px rgba(25, 23, 26, 0.05),
-    0 2px 6px rgba(25, 23, 26, 0.05);
+    0 1px 2px rgba(16, 24, 39, 0.05),
+    0 2px 6px rgba(16, 24, 39, 0.05);
   --ra-elevation-md:
-    0 4px 8px rgba(25, 23, 26, 0.06),
-    0 10px 20px rgba(25, 23, 26, 0.06);
+    0 4px 8px rgba(16, 24, 39, 0.06),
+    0 10px 20px rgba(16, 24, 39, 0.06);
   --ra-elevation-lg:
-    0 10px 24px rgba(25, 23, 26, 0.10),
-    0 16px 32px rgba(25, 23, 26, 0.08);
+    0 10px 24px rgba(16, 24, 39, 0.10),
+    0 16px 32px rgba(16, 24, 39, 0.08);
   --ra-elevation-hover:
     0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 18%, transparent),
     0 4px 12px color-mix(in srgb, var(--ra-color-accent) 18%, transparent);
 }
 
 /* Accent presets — rotate the brand accent only (preset CSS vars override theme-specified accent).
-   Coral is the default (no selector needed). Each preset has dark and light variants. */
+   PYRUS blue is the default. Each preset has dark and light variants. */
+:root[data-pyrus-accent-preset="pyrus"],
+:root[data-rayalgo-accent-preset="pyrus"] {
+  --ra-accent-500: #168BFF;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #168BFF;
+  --ra-focus-ring: 0 0 0 2px rgba(22, 139, 255, 0.34);
+}
+:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="pyrus"][data-rayalgo-theme="light"],
+:root[data-rayalgo-accent-preset="pyrus"][data-pyrus-theme="light"],
+:root[data-rayalgo-accent-preset="pyrus"][data-rayalgo-theme="light"] {
+  --ra-accent-500: #0B66D8;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #0B66D8;
+  --ra-focus-ring: 0 0 0 2px rgba(11, 102, 216, 0.30);
+}
+:root[data-pyrus-accent-preset="coral"],
+:root[data-rayalgo-accent-preset="coral"] {
+  --ra-accent-500: #E08F76;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #E08F76;
+  --ra-focus-ring: 0 0 0 2px rgba(224, 143, 118, 0.32);
+}
+:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="coral"][data-rayalgo-theme="light"],
+:root[data-rayalgo-accent-preset="coral"][data-pyrus-theme="light"],
+:root[data-rayalgo-accent-preset="coral"][data-rayalgo-theme="light"] {
+  --ra-accent-500: #D97757;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #D97757;
+  --ra-focus-ring: 0 0 0 2px rgba(217, 119, 87, 0.30);
+}
+:root[data-pyrus-accent-preset="amber"],
 :root[data-rayalgo-accent-preset="amber"] {
   --ra-accent-500: #D9A864;
   --ra-color-accent: var(--ra-accent-500);
@@ -281,6 +319,9 @@
   --ra-motion-accent: #D9A864;
   --ra-focus-ring: 0 0 0 2px rgba(217, 168, 100, 0.32);
 }
+:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="amber"][data-rayalgo-theme="light"],
+:root[data-rayalgo-accent-preset="amber"][data-pyrus-theme="light"],
 :root[data-rayalgo-accent-preset="amber"][data-rayalgo-theme="light"] {
   --ra-accent-500: #C28526;
   --ra-color-accent: var(--ra-accent-500);
@@ -289,6 +330,7 @@
   --ra-focus-ring: 0 0 0 2px rgba(194, 133, 38, 0.30);
 }
 
+:root[data-pyrus-accent-preset="green"],
 :root[data-rayalgo-accent-preset="green"] {
   --ra-accent-500: #4FB286;
   --ra-color-accent: var(--ra-accent-500);
@@ -296,6 +338,9 @@
   --ra-motion-accent: #4FB286;
   --ra-focus-ring: 0 0 0 2px rgba(79, 178, 134, 0.34);
 }
+:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="green"][data-rayalgo-theme="light"],
+:root[data-rayalgo-accent-preset="green"][data-pyrus-theme="light"],
 :root[data-rayalgo-accent-preset="green"][data-rayalgo-theme="light"] {
   --ra-accent-500: #0F6E51;
   --ra-color-accent: var(--ra-accent-500);
@@ -304,6 +349,7 @@
   --ra-focus-ring: 0 0 0 2px rgba(15, 110, 81, 0.30);
 }
 
+:root[data-pyrus-accent-preset="aurora"],
 :root[data-rayalgo-accent-preset="aurora"] {
   --ra-accent-500: #A189CF;
   --ra-color-accent: var(--ra-accent-500);
@@ -311,6 +357,9 @@
   --ra-motion-accent: #A189CF;
   --ra-focus-ring: 0 0 0 2px rgba(161, 137, 207, 0.34);
 }
+:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="aurora"][data-rayalgo-theme="light"],
+:root[data-rayalgo-accent-preset="aurora"][data-pyrus-theme="light"],
 :root[data-rayalgo-accent-preset="aurora"][data-rayalgo-theme="light"] {
   --ra-accent-500: #6B4E8E;
   --ra-color-accent: var(--ra-accent-500);
@@ -337,16 +386,18 @@ html, body, #root {
   width: 100%;
   margin: 0;
   padding: 0;
-  background: #FAFAF7;
+  background: #F7FAFF;
   font-family: var(--ra-font-sans);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "kern" 1, "ss01" 1, "ss03" 1, "calt" 1, "dlig" 1, "cv11" 1;
   overflow: hidden;
 }
 
+:root[data-pyrus-theme="dark"] body,
+:root[data-pyrus-theme="dark"] #root,
 :root[data-rayalgo-theme="dark"] body,
 :root[data-rayalgo-theme="dark"] #root {
-  background: #16151A;
+  background: #050814;
 }
 
 *, *::before, *::after {
@@ -539,6 +590,7 @@ table {
   }
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-error-shake,
 html[data-rayalgo-reduced-motion="on"] .ra-error-shake {
   animation: none;
 }
@@ -583,6 +635,7 @@ html[data-rayalgo-reduced-motion="on"] .ra-error-shake {
   }
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-screen-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
   animation: none;
 }
@@ -668,6 +721,7 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
     animation: none;
   }
 }
+[data-pyrus-reduced-motion="on"] .ra-pulse-orb,
 [data-rayalgo-reduced-motion="on"] .ra-pulse-orb {
   animation: none;
 }
@@ -920,6 +974,7 @@ html[data-rayalgo-reduced-motion="on"] .ra-screen-enter {
   }
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator,
 html[data-rayalgo-reduced-motion="on"] .ra-segmented-indicator {
   transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
 }
@@ -1174,6 +1229,24 @@ summary,
 
 .ra-hide-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+.ra-account-analysis-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.ra-account-analysis-card-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .ra-account-analysis-card-grid,
+  .ra-account-analysis-card-grid--two {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Global scrollbar refresh — slimmer, tone-aware, brightens on hover.
@@ -1498,7 +1571,89 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 @media (max-width: 767px) {
   .ra-shell[data-layout="phone"] {
     min-width: 0;
+    background: var(--ra-surface-0);
+    overscroll-behavior: none;
     touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-screen-stack"] {
+    min-height: 0;
+    background: var(--ra-surface-0);
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-compact-header"] {
+    box-shadow:
+      0 1px 0 var(--ra-border-default),
+      0 8px 24px color-mix(in srgb, var(--ra-surface-0) 70%, transparent) !important;
+  }
+
+  .ra-mobile-app-header,
+  .ra-mobile-bottom-nav {
+    backdrop-filter: blur(20px) saturate(165%);
+    -webkit-backdrop-filter: blur(20px) saturate(165%);
+  }
+
+  .ra-mobile-title-bar {
+    min-height: 32px;
+  }
+
+  .ra-mobile-kpi-rail {
+    scroll-padding-inline: 4px;
+  }
+
+  .ra-mobile-header-chip,
+  .ra-mobile-header-context,
+  .ra-mobile-icon-button,
+  .ra-mobile-broadcast-lane,
+  .ra-mobile-nav-item {
+    box-shadow: inset 0 1px 0 var(--ra-card-top-highlight);
+  }
+
+  .ra-mobile-broadcast-stack {
+    position: relative;
+    z-index: 4;
+  }
+
+  .ra-mobile-broadcast-lane [data-header-broadcast-track] {
+    gap: 5px !important;
+  }
+
+  .ra-mobile-bottom-nav {
+    position: relative;
+    z-index: 20;
+    box-shadow: 0 -10px 28px color-mix(in srgb, var(--ra-surface-0) 74%, transparent);
+  }
+
+  .ra-mobile-nav-item {
+    line-height: 1;
+  }
+
+  .ra-mobile-nav-item[aria-current="page"]::before {
+    display: block;
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--ra-motion-accent);
+    content: "";
+    transform: translateX(-50%);
+  }
+
+  .ra-mobile-nav-item svg {
+    flex-shrink: 0;
+  }
+
+  .ra-mobile-nav-item span {
+    line-height: 1;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="mobile-top-chrome"],
+  .ra-shell[data-layout="phone"] [data-testid="mobile-kpi-rail"],
+  .ra-shell[data-layout="phone"] [data-testid="header-broadcast-scrollers"] {
+    max-width: 100%;
   }
 
   .ra-shell[data-layout="phone"] button,
@@ -1508,6 +1663,17 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   [data-testid="diagnostics-screen"][data-layout="phone"] button,
   [data-testid="backtest-workspace"][data-layout="phone"] button,
   .photonics-research-root button {
+    min-height: 32px;
+  }
+
+  .ra-shell[data-layout="phone"] input,
+  .ra-shell[data-layout="phone"] select,
+  [data-testid="settings-screen"][data-layout="phone"] input,
+  [data-testid="settings-screen"][data-layout="phone"] select,
+  [data-testid="diagnostics-screen"][data-layout="phone"] input,
+  [data-testid="diagnostics-screen"][data-layout="phone"] select,
+  .photonics-research-root input,
+  .photonics-research-root select {
     min-height: 32px;
   }
 
@@ -1531,13 +1697,24 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
   [data-trade-layout="phone"] [data-testid="trade-equity-chart"],
   [data-trade-layout="phone"] [data-testid="trade-contract-chart-panel"] {
-    min-height: clamp(320px, 46vh, 460px) !important;
-    max-height: clamp(320px, 46vh, 460px) !important;
+    min-height: clamp(260px, 36vh, 360px) !important;
+    max-height: clamp(260px, 36vh, 360px) !important;
   }
 
   [data-trade-layout="phone"] [data-testid="trade-options-chain-panel"],
   [data-trade-layout="phone"] [data-testid="trade-order-ticket"] {
     min-height: 0 !important;
+  }
+
+  [data-trade-layout="phone"],
+  [data-testid="algo-screen"][data-layout="phone"],
+  [data-testid="settings-screen"][data-layout="phone"],
+  [data-testid="diagnostics-screen"][data-layout="phone"],
+  [data-testid="backtest-workspace"][data-layout="phone"],
+  [data-testid="account-screen"][data-layout="phone"],
+  [data-testid="gex-screen"][data-layout="phone"],
+  .photonics-research-root {
+    scroll-padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
 
   [data-trade-layout="phone"] [data-testid="trade-order-ticket"] [style*="grid-template-columns"],
@@ -1559,7 +1736,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   }
 
   [data-testid="account-screen"] > div {
-    padding: 5px !important;
+    padding: 8px 8px max(18px, env(safe-area-inset-bottom)) !important;
   }
 
   [data-testid="account-screen"] .ra-account-overview-grid,
@@ -1581,6 +1758,34 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .photonics-research-root {
     min-width: 0 !important;
     overflow-x: hidden !important;
+  }
+
+  .photonics-research-root .photonics-research-header {
+    padding: 10px 10px 0 !important;
+  }
+
+  .photonics-research-root .photonics-research-title-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
+    align-items: start !important;
+    margin-bottom: 6px !important;
+  }
+
+  .photonics-research-root .photonics-research-title-row h1 {
+    font-size: 24px !important;
+    line-height: 1.05 !important;
+  }
+
+  .photonics-research-root .photonics-research-meta {
+    text-align: left !important;
+  }
+
+  .photonics-research-root .photonics-research-filter-row,
+  .photonics-research-root .photonics-research-view-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    padding-bottom: 2px !important;
   }
 
   .photonics-research-root > div {
@@ -1671,6 +1876,21 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   }
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-panel-enter,
+html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
+html[data-pyrus-reduced-motion="on"] .ra-row-enter,
+html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
+html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
+html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
+html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
+html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
+html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
 html[data-rayalgo-reduced-motion="on"] .ra-panel-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-popover-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-row-enter,
@@ -1689,20 +1909,26 @@ html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
   animation: none !important;
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
 html[data-rayalgo-reduced-motion="on"] .ra-sparkline-tail {
   transform: none !important;
   opacity: 1;
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-interactive,
 html[data-rayalgo-reduced-motion="on"] .ra-interactive {
   transition-duration: 1ms !important;
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
 html[data-rayalgo-reduced-motion="on"] .ra-interactive:hover,
 html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
   transform: none !important;
 }
 
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
 html[data-rayalgo-reduced-motion="on"] .ra-sparkline polyline,
 html[data-rayalgo-reduced-motion="on"] .ra-sparkline path {
   stroke-dashoffset: 0 !important;

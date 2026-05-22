@@ -38,13 +38,21 @@ import {
   resolveSqueezeNarrative,
 } from "../features/gex/gexModel.js";
 import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
+import { PaginationFooter, paginateRows } from "../components/platform/TablePagination.jsx";
 import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
 import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
+import {
+  GEX_DASHBOARD_QUERY_REFETCH_MS,
+  GEX_DASHBOARD_QUERY_STALE_MS,
+} from "../features/gex/useGexZeroGamma.js";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
+
+const GEX_HEATMAP_PAGE_SIZE = 40;
+const GEX_PROFILE_PAGE_SIZE = 40;
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
@@ -466,7 +474,7 @@ const tooltipBoxStyle = {
   boxShadow: ELEVATION.md,
 };
 
-const GammaPriceChart = ({ rows, spot }) => {
+const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
   const data = useMemo(() => gammaPriceProfile(rows, spot), [rows, spot]);
   const zeroPrice = useMemo(() => {
     for (let index = 0; index < data.length - 1; index += 1) {
@@ -486,62 +494,70 @@ const GammaPriceChart = ({ rows, spot }) => {
   return (
     <ChartShell
       title="Gamma Price Profile"
-      subtitle="Projected Net Gamma at different price levels. Assumes constant IV."
+      subtitle={`Projected Net Gamma across spot levels using provider IV (${providerIvCount}/${rows.length} contracts).`}
     >
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
-          <XAxis
-            dataKey="price"
-            type="number"
-            domain={["dataMin", "dataMax"]}
-            tickFormatter={(value) => `$${value.toFixed(0)}`}
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            cursor={{ fill: `${T.textMuted}14` }}
-            content={({ active, payload }) => {
-              if (!active || !payload?.length) return null;
-              const row = payload[0].payload;
-              return (
-                <div style={tooltipBoxStyle}>
-                  <b>{fmtPrice(row.price)}</b>
-                  <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
-                    Net {fmtCurrency(row.netGex)}
-                  </div>
-                </div>
-              );
-            }}
-          />
-          <ReferenceLine
-            x={spot}
-            stroke={T.cyan}
-            strokeDasharray="4 4"
-            label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
-          />
-          {zeroPrice != null ? (
-            <ReferenceLine
-              x={zeroPrice}
-              stroke={T.amber}
-              strokeDasharray="2 4"
-              label={{ value: "Zero", fill: T.amber, fontSize: fs(10), position: "top" }}
+      {data.length ? (
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
+            <XAxis
+              dataKey="price"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={(value) => `$${value.toFixed(0)}`}
+              tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
             />
-          ) : null}
-          <Bar dataKey="netGex" isAnimationActive={false}>
-            {data.map((row) => (
-              <Cell key={row.price} fill={row.netGex >= 0 ? T.green : T.red} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+            <YAxis
+              tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
+              tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              cursor={{ fill: `${T.textMuted}14` }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const row = payload[0].payload;
+                return (
+                  <div style={tooltipBoxStyle}>
+                    <b>{fmtPrice(row.price)}</b>
+                    <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
+                      Net {fmtCurrency(row.netGex)}
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <ReferenceLine
+              x={spot}
+              stroke={T.cyan}
+              strokeDasharray="4 4"
+              label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
+            />
+            {zeroPrice != null ? (
+              <ReferenceLine
+                x={zeroPrice}
+                stroke={T.amber}
+                strokeDasharray="2 4"
+                label={{ value: "Zero", fill: T.amber, fontSize: fs(10), position: "top" }}
+              />
+            ) : null}
+            <Bar dataKey="netGex" isAnimationActive={false}>
+              {data.map((row) => (
+                <Cell key={row.price} fill={row.netGex >= 0 ? T.green : T.red} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <DataUnavailableState
+          title="Provider IV unavailable"
+          detail="IBKR did not return implied volatility for these contracts, so the projected gamma profile is withheld instead of using a local IV estimate."
+          minHeight={160}
+        />
+      )}
     </ChartShell>
   );
 };
@@ -613,6 +629,7 @@ const OiChart = ({ rows, spot }) => {
 
 const HeatmapCard = ({ rows, spot }) => {
   const [expanded, setExpanded] = useState(false);
+  const [page, setPage] = useState(0);
   const model = useMemo(() => {
     const expirationMap = new Map();
     const cellMap = new Map();
@@ -644,13 +661,23 @@ const HeatmapCard = ({ rows, spot }) => {
       maxAbs,
     };
   }, [rows, spot]);
-  const visibleStrikes = useMemo(() => {
-    if (expanded) return model.strikes;
+  const focusedStrikes = useMemo(() => {
     const spotIndex = model.strikes.findIndex((strike) => strike >= spot);
     const centerIndex = spotIndex === -1 ? model.strikes.length - 1 : spotIndex;
     const start = Math.max(0, centerIndex - 8);
     return model.strikes.slice(start, start + 17);
+  }, [model.strikes, spot]);
+  const paginatedStrikes = paginateRows(model.strikes, page, GEX_HEATMAP_PAGE_SIZE);
+  const visibleStrikes = expanded ? paginatedStrikes.pageRows : focusedStrikes;
+
+  useEffect(() => {
+    setPage(0);
   }, [expanded, model.strikes, spot]);
+  useEffect(() => {
+    if (paginatedStrikes.safePage !== page) {
+      setPage(paginatedStrikes.safePage);
+    }
+  }, [page, paginatedStrikes.safePage]);
 
   const cellColor = (value) => {
     if (!value || !model.maxAbs) return T.bg0;
@@ -685,60 +712,73 @@ const HeatmapCard = ({ rows, spot }) => {
       }
       minHeight={280}
     >
-      <div style={{ overflow: "auto", maxHeight: expanded ? dim(440) : dim(260) }}>
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontFamily: T.sans,
-            fontSize: textSize("caption"),
-          }}
-        >
-          <thead>
-            <tr>
-              <th style={heatmapHeaderStyle}>Strike</th>
-              {model.expirations.map((expiration) => (
-                <th key={expiration.key} style={heatmapHeaderStyle}>
-                  {expiration.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleStrikes.map((strike) => (
-              <tr key={strike}>
-                <td
-                  style={{
-                    ...heatmapHeaderStyle,
-                    color: Math.abs(strike - spot) < 0.5 ? T.cyan : T.textSec,
-                  }}
-                >
-                  ${strike}
-                </td>
-                {model.expirations.map((expiration) => {
-                  const value = model.cellMap.get(strike)?.get(expiration.key) || 0;
-                  return (
-                    <td
-                      key={expiration.key}
-                      title={`${strike} ${expiration.key} ${fmtCurrency(value)}`}
-                      style={{
-                        padding: sp("5px 6px"),
-                        textAlign: "center",
-                        borderBottom: `1px solid ${T.border}`,
-                        background: cellColor(value),
-                        color: Math.abs(value) > model.maxAbs * 0.5 ? T.text : T.textSec,
-                      }}
-                    >
-                      {Math.abs(value) > model.maxAbs * 0.04
-                        ? `${(value / 1e3).toFixed(0)}K`
-                        : ""}
-                    </td>
-                  );
-                })}
+      <div style={{ display: "grid", gap: sp(4) }}>
+        <div style={{ overflow: "auto", maxHeight: expanded ? dim(440) : dim(260) }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={heatmapHeaderStyle}>Strike</th>
+                {model.expirations.map((expiration) => (
+                  <th key={expiration.key} style={heatmapHeaderStyle}>
+                    {expiration.label}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleStrikes.map((strike) => (
+                <tr key={strike}>
+                  <td
+                    style={{
+                      ...heatmapHeaderStyle,
+                      color: Math.abs(strike - spot) < 0.5 ? T.cyan : T.textSec,
+                    }}
+                  >
+                    ${strike}
+                  </td>
+                  {model.expirations.map((expiration) => {
+                    const value = model.cellMap.get(strike)?.get(expiration.key) || 0;
+                    return (
+                      <td
+                        key={expiration.key}
+                        title={`${strike} ${expiration.key} ${fmtCurrency(value)}`}
+                        style={{
+                          padding: sp("5px 6px"),
+                          textAlign: "center",
+                          borderBottom: `1px solid ${T.border}`,
+                          background: cellColor(value),
+                          color: Math.abs(value) > model.maxAbs * 0.5 ? T.text : T.textSec,
+                        }}
+                      >
+                        {Math.abs(value) > model.maxAbs * 0.04
+                          ? `${(value / 1e3).toFixed(0)}K`
+                          : ""}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {expanded ? (
+          <PaginationFooter
+            dataTestId="gex-heatmap-pagination"
+            label="Strikes"
+            onPageChange={setPage}
+            page={paginatedStrikes.safePage}
+            pageCount={paginatedStrikes.pageCount}
+            pageSize={GEX_HEATMAP_PAGE_SIZE}
+            total={paginatedStrikes.total}
+          />
+        ) : null}
       </div>
       <HeatmapColorLegend />
     </ChartShell>
@@ -811,13 +851,13 @@ const SignalsCard = ({ signals }) => (
 
 const formatFlowClassificationDetail = (source) => {
   if (!source) {
-    return "Squeeze scoring waits for Massive-derived flow context instead of using neutral placeholders.";
+    return "Squeeze scoring waits for IBKR-backed flow context instead of using neutral placeholders.";
   }
 
   const rawCount = Number(source.flowEventCount || 0);
   const classifiedCount = Number(source.classifiedFlowEventCount || 0);
   if (rawCount <= 0) {
-    return "No Massive option flow events were returned for the current GEX window.";
+    return "No IBKR-backed option flow context is available for the current GEX window.";
   }
 
   const coverage =
@@ -825,7 +865,7 @@ const formatFlowClassificationDetail = (source) => {
       ? source.flowClassificationCoverage
       : classifiedCount / rawCount;
   const basis = source.flowClassificationBasisCounts || {};
-  return `${classifiedCount}/${rawCount} Massive flow events classified (${Math.round(
+  return `${classifiedCount}/${rawCount} IBKR-backed flow events classified (${Math.round(
     coverage * 100,
   )}%). Quote-match ${Number(basis.quoteMatch || 0)}, tick-test ${Number(
     basis.tickTest || 0,
@@ -919,11 +959,11 @@ const SqueezeCard = ({ squeeze, source }) => {
               fontSize: textSize("caption"),
             }}
           >
-            Flow factors are waiting for Massive-derived flow context.
+            Flow factors are waiting for IBKR-backed flow context.
           </div>
         ) : (
           <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
-            Massive flow events: {displayedClassifiedFlowCount}/{displayedRawFlowCount} classified
+            IBKR-backed flow events: {displayedClassifiedFlowCount}/{displayedRawFlowCount} classified
           </div>
         )}
         <div style={{ display: "grid", gap: sp(6) }}>
@@ -1016,37 +1056,62 @@ const SqueezeCard = ({ squeeze, source }) => {
   );
 };
 
-const ProfileTable = ({ profile }) => (
-  <ChartShell title="Strike Profile Table">
-    <div style={{ maxHeight: dim(320), overflow: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: textSize("caption") }}>
-        <thead>
-          <tr>
-            {["Strike", "Net GEX", "Call GEX", "Put GEX", "Call OI", "Put OI"].map((heading) => (
-              <th key={heading} style={tableHeaderStyle}>
-                {heading}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {profile.map((row) => (
-            <tr key={row.strike}>
-              <td style={tableCellStyle}>${row.strike}</td>
-              <td style={{ ...tableCellStyle, color: row.netGex >= 0 ? T.green : T.red }}>
-                {fmtCurrency(row.netGex)}
-              </td>
-              <td style={{ ...tableCellStyle, color: T.green }}>{fmtCurrency(row.callGex)}</td>
-              <td style={{ ...tableCellStyle, color: T.red }}>{fmtCurrency(row.putGex)}</td>
-              <td style={tableCellStyle}>{fmtNumber(row.callOi)}</td>
-              <td style={tableCellStyle}>{fmtNumber(row.putOi)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </ChartShell>
-);
+const ProfileTable = ({ profile }) => {
+  const [page, setPage] = useState(0);
+  const paginatedProfile = paginateRows(profile, page, GEX_PROFILE_PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(0);
+  }, [profile]);
+  useEffect(() => {
+    if (paginatedProfile.safePage !== page) {
+      setPage(paginatedProfile.safePage);
+    }
+  }, [page, paginatedProfile.safePage]);
+
+  return (
+    <ChartShell title="Strike Profile Table">
+      <div style={{ display: "grid", gap: sp(4) }}>
+        <div style={{ maxHeight: dim(320), overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: textSize("caption") }}>
+            <thead>
+              <tr>
+                {["Strike", "Net GEX", "Call GEX", "Put GEX", "Call OI", "Put OI"].map((heading) => (
+                  <th key={heading} style={tableHeaderStyle}>
+                    {heading}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedProfile.pageRows.map((row) => (
+                <tr key={row.strike}>
+                  <td style={tableCellStyle}>${row.strike}</td>
+                  <td style={{ ...tableCellStyle, color: row.netGex >= 0 ? T.green : T.red }}>
+                    {fmtCurrency(row.netGex)}
+                  </td>
+                  <td style={{ ...tableCellStyle, color: T.green }}>{fmtCurrency(row.callGex)}</td>
+                  <td style={{ ...tableCellStyle, color: T.red }}>{fmtCurrency(row.putGex)}</td>
+                  <td style={tableCellStyle}>{fmtNumber(row.callOi)}</td>
+                  <td style={tableCellStyle}>{fmtNumber(row.putOi)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <PaginationFooter
+          dataTestId="gex-profile-pagination"
+          label="Rows"
+          onPageChange={setPage}
+          page={paginatedProfile.safePage}
+          pageCount={paginatedProfile.pageCount}
+          pageSize={GEX_PROFILE_PAGE_SIZE}
+          total={paginatedProfile.total}
+        />
+      </div>
+    </ChartShell>
+  );
+};
 
 const tableHeaderStyle = {
   padding: sp("5px 7px"),
@@ -1123,8 +1188,8 @@ export default function GexScreen({
     queryKey: ["gex-dashboard", ticker],
     queryFn: ({ signal }) => fetchGexData({ ticker, signal }),
     enabled: Boolean(isVisible && ticker),
-    staleTime: 30_000,
-    refetchInterval: isVisible ? 60_000 : false,
+    staleTime: GEX_DASHBOARD_QUERY_STALE_MS,
+    refetchInterval: isVisible ? GEX_DASHBOARD_QUERY_REFETCH_MS : false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -1174,21 +1239,27 @@ export default function GexScreen({
     if (expirationFilter === "all") return rows;
     return rows.filter((row) => row.expirationDate === expirationFilter);
   }, [expirationFilter, rows]);
-  const adjustedRows = useMemo(() => {
+  const ivScenarioRows = useMemo(() => {
     if (ivAdjustment === 0) return filteredRows;
-    const scale = 1 / Math.max(0.5, 1 + ivAdjustment);
-    return filteredRows.map((row) => ({ ...row, gamma: row.gamma * scale }));
+    const scale = Math.max(0.5, 1 + ivAdjustment);
+    return filteredRows.map((row) => ({
+      ...row,
+      impliedVol:
+        isFiniteNumber(row.impliedVol) && row.impliedVol > 0
+          ? row.impliedVol * scale
+          : row.impliedVol,
+    }));
   }, [filteredRows, ivAdjustment]);
   const metrics = useMemo(
-    () => (spot != null ? aggregateMetrics(adjustedRows, spot) : null),
-    [adjustedRows, spot],
+    () => (spot != null ? aggregateMetrics(filteredRows, spot) : null),
+    [filteredRows, spot],
   );
   const concentration = useMemo(
     () =>
       spot != null
-        ? expConcentration(rows, spot)
+        ? expConcentration(filteredRows, spot)
         : { zeroDTE: 0, weekly: 0, monthly: 0 },
-    [rows, spot],
+    [filteredRows, spot],
   );
   const flowContext =
     gexData?.flowContextStatus === "ok" ? gexData.flowContext : null;
@@ -1210,12 +1281,15 @@ export default function GexScreen({
   const noExpirations = !loading && expirationDates.length === 0;
   const backgroundLoading = gexQuery.isFetching && !gexQuery.isPending;
   const selectedExpirationCount =
-    expirationFilter === "all" ? expirationDates.length : adjustedRows.length ? 1 : 0;
+    expirationFilter === "all" ? expirationDates.length : filteredRows.length ? 1 : 0;
   const coverageRatio = pct(
     Math.min(coverage.withGamma, coverage.withOpenInterest),
     coverage.usable,
   );
-  const dataReady = Boolean(metrics && spot != null && adjustedRows.length);
+  const providerIvCount = filteredRows.filter(
+    (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
+  ).length;
+  const dataReady = Boolean(metrics && spot != null && filteredRows.length);
   const expirationOptions = useMemo(
     () => [
       { value: "all", label: "All loaded expirations" },
@@ -1303,13 +1377,14 @@ export default function GexScreen({
         background: T.bg0,
         color: T.text,
         fontFamily: T.sans,
+        WebkitOverflowScrolling: isPhone ? "touch" : undefined,
       }}
     >
       <div
         style={{
           display: "grid",
           gap: sp(isPhone ? 12 : 18),
-          padding: sp(isPhone ? "12px 12px 20px" : "20px 28px 28px"),
+          padding: sp(isPhone ? "8px 10px 18px" : "20px 28px 28px"),
           width: "100%",
         }}
       >
@@ -1401,12 +1476,21 @@ export default function GexScreen({
             gridTemplateColumns: isPhone
               ? "minmax(0, 1fr)"
               : "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
-            gap: sp(10),
+            gap: sp(isPhone ? 7 : 10),
+            padding: isPhone ? sp("8px 10px") : undefined,
           }}
         >
-          <div>
+          <div
+            style={{
+              display: isPhone ? "flex" : "block",
+              alignItems: isPhone ? "baseline" : undefined,
+              justifyContent: isPhone ? "space-between" : undefined,
+              gap: sp(8),
+              minWidth: 0,
+            }}
+          >
             <div style={{ color: T.textDim, fontSize: textSize("caption") }}>Spot</div>
-            <div style={{ color: T.text, fontSize: fs(24), fontWeight: FONT_WEIGHTS.emphasis }}>
+            <div style={{ color: T.text, fontSize: fs(isPhone ? 20 : 24), fontWeight: FONT_WEIGHTS.emphasis }}>
               {fmtPrice(spot)}
             </div>
             <div
@@ -1422,7 +1506,7 @@ export default function GexScreen({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isPhone ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
               gap: sp(6),
             }}
           >
@@ -1450,7 +1534,7 @@ export default function GexScreen({
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), color: T.textSec }}>
               <SlidersHorizontal size={14} />
               <span style={{ fontSize: textSize("caption"), display: "inline-flex", alignItems: "center", gap: sp(3) }}>
-                IV simulation
+                IV scenario
                 <InfoTooltipIcon entry={getGexGlossaryEntry("ivSimulation")} />
               </span>
               <span style={{ marginLeft: "auto", color: T.amber, fontWeight: FONT_WEIGHTS.emphasis }}>
@@ -1468,7 +1552,7 @@ export default function GexScreen({
               style={{ width: "100%", accentColor: T.accent, marginTop: sp(8) }}
             />
             <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
-              Coverage {Math.round(coverageRatio * 100)}% · {coverage.usable} contracts
+              Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
             </div>
           </div>
         </Card>
@@ -1488,14 +1572,15 @@ export default function GexScreen({
           <DataUnavailableState
             loading
             title={`Loading GEX for ${ticker}`}
-            detail="Waiting for quote, expiration, and option-chain metadata."
+            detail="Waiting for quote, expiration, and IBKR option-chain snapshots."
+            minHeight={isPhone ? 92 : 72}
           />
         ) : spot == null ? (
           <DataUnavailableState
             title={`Spot unavailable for ${ticker}`}
             detail="GEX needs a current underlying price before it can scale gamma exposure."
           />
-        ) : !adjustedRows.length ? (
+        ) : !filteredRows.length ? (
           <DataUnavailableState
             title={`No GEX contracts for ${ticker}`}
             detail="The loaded option chains did not contain usable call or put contracts."
@@ -1562,7 +1647,7 @@ export default function GexScreen({
             {coverageRatio < 0.5 ? (
               <DataUnavailableState
                 title="Greek/OI coverage is partial"
-                detail={`${coverage.withGamma}/${coverage.usable} contracts have gamma and ${coverage.withOpenInterest}/${coverage.usable} have open interest. Charts render from available fields.`}
+                detail={`${coverage.withGamma}/${coverage.usable} IBKR contracts have gamma and ${coverage.withOpenInterest}/${coverage.usable} have open interest. Charts render from available fields.`}
               />
             ) : null}
 
@@ -1586,7 +1671,7 @@ export default function GexScreen({
                 ) : (
                   <ProfileTable profile={metrics.profile} />
                 )}
-                <HeatmapCard rows={adjustedRows} spot={spot} />
+                <HeatmapCard rows={filteredRows} spot={spot} />
                 <div
                   style={{
                     display: "grid",
@@ -1594,11 +1679,15 @@ export default function GexScreen({
                     gap: sp(10),
                   }}
                 >
-                  <ExpiryChart rows={adjustedRows} spot={spot} />
-                  <GammaPriceChart rows={adjustedRows} spot={spot} />
+                  <ExpiryChart rows={filteredRows} spot={spot} />
+                  <GammaPriceChart
+                    rows={ivScenarioRows}
+                    providerIvCount={providerIvCount}
+                    spot={spot}
+                  />
                 </div>
                 <SectionHeading title="Open Interest Analysis" />
-                <OiChart rows={adjustedRows} spot={spot} />
+                <OiChart rows={filteredRows} spot={spot} />
               </div>
               <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
                 <IntradayCard snapshots={snapshots} />
@@ -1767,7 +1856,7 @@ const IntradayCard = ({ snapshots }) => {
           </div>
         )}
         <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
-          {snapshots.length} API snapshot{snapshots.length === 1 ? "" : "s"}
+          {snapshots.length} full-chain IBKR snapshot{snapshots.length === 1 ? "" : "s"}
           {intraday.isSparse && hasSeries
             ? " · sparse — Δ Recent uses last 5 points"
             : ""}

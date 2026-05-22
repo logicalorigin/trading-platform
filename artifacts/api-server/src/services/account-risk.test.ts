@@ -120,3 +120,201 @@ test("account risk internals bucket option expiry notional", async () => {
     next90Days: 600,
   });
 });
+
+test("account risk internals treat equity notional as market value exposure", async () => {
+  const { __accountRiskInternalsForTests } = await import("./account");
+  const summary = __accountRiskInternalsForTests.buildNotionalExposure(
+    [
+      {
+        id: "U1:AAPL",
+        accountId: "U1",
+        symbol: "AAPL",
+        assetClass: "equity",
+        quantity: 10,
+        averagePrice: 180,
+        marketPrice: 200,
+        marketValue: 2_000,
+        unrealizedPnl: 200,
+        unrealizedPnlPercent: 11.11,
+        optionContract: null,
+      },
+    ] as any,
+    { nav: 10_000 },
+  );
+
+  assert.equal(summary.grossUnderlyingNotional, 2_000);
+  assert.equal(summary.netDirectionalNotional, 2_000);
+  assert.equal(summary.deltaAdjustedNotional, 2_000);
+  assert.equal(summary.notionalToNavPercent, 20);
+  assert.deepEqual(summary.coverage, {
+    totalPositions: 1,
+    pricedPositions: 1,
+    deltaAdjustedPositions: 1,
+  });
+});
+
+test("account risk internals calculate option gross, directional, and delta-adjusted notional", async () => {
+  const { __accountRiskInternalsForTests } = await import("./account");
+  const expirationDate = new Date("2026-06-19T00:00:00.000Z");
+  const positions = [
+    {
+      id: "U1:AAPL-C",
+      accountId: "U1",
+      symbol: "AAPL 200C",
+      assetClass: "option",
+      quantity: 2,
+      averagePrice: 5,
+      marketPrice: 6,
+      marketValue: 1_200,
+      unrealizedPnl: 200,
+      unrealizedPnlPercent: 20,
+      optionContract: {
+        ticker: "AAPL 200C",
+        underlying: "AAPL",
+        expirationDate,
+        strike: 200,
+        right: "call",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "1",
+      },
+    },
+    {
+      id: "U1:MSFT-P",
+      accountId: "U1",
+      symbol: "MSFT 300P",
+      assetClass: "option",
+      quantity: 1,
+      averagePrice: 4,
+      marketPrice: 5,
+      marketValue: 500,
+      unrealizedPnl: 100,
+      unrealizedPnlPercent: 25,
+      optionContract: {
+        ticker: "MSFT 300P",
+        underlying: "MSFT",
+        expirationDate,
+        strike: 300,
+        right: "put",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "2",
+      },
+    },
+    {
+      id: "U1:TSLA-C",
+      accountId: "U1",
+      symbol: "TSLA 250C",
+      assetClass: "option",
+      quantity: -1,
+      averagePrice: 8,
+      marketPrice: 7,
+      marketValue: -700,
+      unrealizedPnl: 100,
+      unrealizedPnlPercent: 12.5,
+      optionContract: {
+        ticker: "TSLA 250C",
+        underlying: "TSLA",
+        expirationDate,
+        strike: 250,
+        right: "call",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "3",
+      },
+    },
+  ];
+  const summary = __accountRiskInternalsForTests.buildNotionalExposure(
+    positions as any,
+    {
+      nav: 50_000,
+      underlyingPrices: new Map([
+        ["AAPL", 200],
+        ["MSFT", 300],
+        ["TSLA", 250],
+      ]),
+      greekByPositionId: new Map([
+        ["U1:AAPL-C", { delta: 120 }],
+        ["U1:MSFT-P", { delta: -40 }],
+        ["U1:TSLA-C", { delta: -55 }],
+      ] as any),
+    },
+  );
+
+  assert.equal(summary.grossUnderlyingNotional, 95_000);
+  assert.equal(summary.netDirectionalNotional, -15_000);
+  assert.equal(summary.deltaAdjustedNotional, -1_750);
+  assert.equal(summary.notionalToNavPercent, 190);
+  assert.deepEqual(summary.coverage, {
+    totalPositions: 3,
+    pricedPositions: 3,
+    deltaAdjustedPositions: 3,
+  });
+});
+
+test("account risk internals report partial notional coverage for missing option quote or greek", async () => {
+  const { __accountRiskInternalsForTests } = await import("./account");
+  const expirationDate = new Date("2026-06-19T00:00:00.000Z");
+  const summary = __accountRiskInternalsForTests.buildNotionalExposure(
+    [
+      {
+        id: "U1:AAPL-C",
+        accountId: "U1",
+        symbol: "AAPL 200C",
+        assetClass: "option",
+        quantity: 1,
+        averagePrice: 5,
+        marketPrice: 6,
+        marketValue: 600,
+        unrealizedPnl: 100,
+        unrealizedPnlPercent: 20,
+        optionContract: {
+          ticker: "AAPL 200C",
+          underlying: "AAPL",
+          expirationDate,
+          strike: 200,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "1",
+        },
+      },
+      {
+        id: "U1:MSFT-P",
+        accountId: "U1",
+        symbol: "MSFT 300P",
+        assetClass: "option",
+        quantity: 1,
+        averagePrice: 4,
+        marketPrice: 5,
+        marketValue: 500,
+        unrealizedPnl: 100,
+        unrealizedPnlPercent: 25,
+        optionContract: {
+          ticker: "MSFT 300P",
+          underlying: "MSFT",
+          expirationDate,
+          strike: 300,
+          right: "put",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "2",
+        },
+      },
+    ] as any,
+    {
+      nav: 50_000,
+      underlyingPrices: new Map([["AAPL", 200]]),
+      greekByPositionId: new Map([["U1:AAPL-C", { delta: null }]] as any),
+    },
+  );
+
+  assert.equal(summary.grossUnderlyingNotional, 20_000);
+  assert.equal(summary.netDirectionalNotional, 20_000);
+  assert.equal(summary.deltaAdjustedNotional, null);
+  assert.deepEqual(summary.coverage, {
+    totalPositions: 2,
+    pricedPositions: 1,
+    deltaAdjustedPositions: 0,
+  });
+});

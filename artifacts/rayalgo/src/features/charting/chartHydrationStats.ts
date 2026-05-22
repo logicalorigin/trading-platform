@@ -28,6 +28,8 @@ export type ChartHydrationCounterKey =
   | "visibleRangeRealtimeFollow"
   | "visibleRangePrependAdjusted"
   | "visibleRangeResetSkipped"
+  | "visibleRangeExpandRequested"
+  | "visibleRangePrependRequested"
   | "liveFallbackFetch"
   | "olderPageFetch"
   | "olderPageDuplicate"
@@ -45,7 +47,7 @@ type ScopeHydrationCounters = Partial<Record<ChartHydrationCounterKey, number>> 
 export type ChartBarScopeState = {
   scope: string;
   timeframe: string;
-  role: "mini" | "primary" | "option";
+  role: "primary" | "option";
   requestedLimit: number;
   initialLimit: number;
   targetLimit: number;
@@ -111,6 +113,8 @@ const hydrationCounters: Record<ChartHydrationCounterKey, number> = {
   visibleRangeRealtimeFollow: 0,
   visibleRangePrependAdjusted: 0,
   visibleRangeResetSkipped: 0,
+  visibleRangeExpandRequested: 0,
+  visibleRangePrependRequested: 0,
   liveFallbackFetch: 0,
   olderPageFetch: 0,
   olderPageDuplicate: 0,

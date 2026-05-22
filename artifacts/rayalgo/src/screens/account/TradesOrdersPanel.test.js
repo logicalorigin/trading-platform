@@ -29,14 +29,14 @@ test("account order ids stay distinct when broker order ids are missing", () => 
   assert.match(first, /^shadow:PLTR:buy:LMT:/);
 });
 
-test("orders and trades source filters are views within the shadow ledger", () => {
+test("orders source filters are views within the shadow ledger", () => {
   assert.match(source, /label: "All Sources"/);
   assert.match(source, /label: "Watchlist BT"/);
   assert.doesNotMatch(source, /label: "Options BT"/);
   assert.doesNotMatch(source, /label: "Live Ledger"/);
 });
 
-test("orders and trades panel maps option assets to option market identity", () => {
+test("orders panel maps option assets to option market identity", () => {
   assert.match(source, /normalized === "options"/);
   assert.match(source, /return "options"/);
 });

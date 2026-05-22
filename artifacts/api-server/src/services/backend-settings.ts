@@ -118,9 +118,13 @@ function writeIsolationSettings(settings: IsolationSettings): void {
 }
 
 function envIsolationSettings(): IsolationSettings {
-  const mode = process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"];
-  const coop = process.env["RAYALGO_COOP_POLICY"];
-  const coep = process.env["RAYALGO_COEP_POLICY"];
+  const mode =
+    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
+    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"];
+  const coop =
+    process.env["PYRUS_COOP_POLICY"] ?? process.env["RAYALGO_COOP_POLICY"];
+  const coep =
+    process.env["PYRUS_COEP_POLICY"] ?? process.env["RAYALGO_COEP_POLICY"];
   return {
     mode: mode && ISOLATION_MODE_OPTIONS.has(mode) ? mode : DEFAULT_ISOLATION.mode,
     coop: coop && COOP_OPTIONS.has(coop) ? coop : DEFAULT_ISOLATION.coop,
@@ -151,6 +155,12 @@ function isolationSetting(
   const hasPending = Boolean(desired && pendingValue !== effective[key]);
   const envName =
     key === "mode"
+      ? "PYRUS_CROSS_ORIGIN_ISOLATION"
+      : key === "coop"
+        ? "PYRUS_COOP_POLICY"
+        : "PYRUS_COEP_POLICY";
+  const legacyEnvName =
+    key === "mode"
       ? "RAYALGO_CROSS_ORIGIN_ISOLATION"
       : key === "coop"
         ? "RAYALGO_COOP_POLICY"
@@ -164,7 +174,12 @@ function isolationSetting(
     value: effective[key],
     defaultValue,
     pendingValue: hasPending ? pendingValue : undefined,
-    source: hasPending ? "pending_restart" : process.env[envName] ? "env" : "default",
+    source:
+      hasPending || process.env[envName] || process.env[legacyEnvName]
+        ? hasPending
+          ? "pending_restart"
+          : "env"
+        : "default",
     editable: true,
     requiresRestart: true,
     risk: key === "mode" ? "risky" : "operational",

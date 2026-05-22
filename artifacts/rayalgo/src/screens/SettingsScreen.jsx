@@ -19,7 +19,7 @@ import {
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
 import { IbkrLaneArchitecturePanel } from "./settings/IbkrLaneArchitecturePanel";
-import { buildRayalgoRuntimeFingerprint } from "../app/runtimeDiagnostics";
+import { buildPyrusRuntimeFingerprint } from "../app/runtimeDiagnostics";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_CONFIG_LIMITS,
@@ -44,7 +44,12 @@ import {
   setFlowScannerControlState,
   useFlowScannerControlState,
 } from "../features/platform/marketFlowStore";
+import { useToast } from "../features/platform/platformContexts.jsx";
 import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
+import {
+  IBKR_BRIDGE_SESSION_KEYS,
+  readIbkrBridgeSessionValue,
+} from "../features/platform/ibkrBridgeSession";
 import {
   getChartTimeframeOptions,
   resolveChartTimeframeFavorites,
@@ -57,7 +62,21 @@ import {
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, RAYALGO_STORAGE_KEY, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  LEGACY_RAYALGO_STORAGE_KEY,
+  LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+  MISSING_VALUE,
+  PYRUS_STORAGE_KEY,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
@@ -166,10 +185,16 @@ const CHART_TIMEFRAME_ROLES = [
   { value: "mini", label: "Market Grid" },
   { value: "option", label: "Option Chart" },
 ];
-const CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
-const OPTION_HYDRATION_HISTORY_STORAGE_KEY = "rayalgo.optionHydrationDiagnostics.v1";
-const MARKET_GRID_TRACK_SESSION_KEY = "rayalgo:market-grid-track-sizes";
-const DIAGNOSTIC_ALERT_PREF_EVENT = "rayalgo:diagnostic-alert-preferences-updated";
+const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
+const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
+const OPTION_HYDRATION_HISTORY_STORAGE_KEY = "pyrus.optionHydrationDiagnostics.v1";
+const LEGACY_OPTION_HYDRATION_HISTORY_STORAGE_KEY =
+  "rayalgo.optionHydrationDiagnostics.v1";
+const MARKET_GRID_TRACK_SESSION_KEY = "pyrus:market-grid-track-sizes";
+const LEGACY_MARKET_GRID_TRACK_SESSION_KEY = "rayalgo:market-grid-track-sizes";
+const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
+const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
+  "rayalgo:diagnostic-alert-preferences-updated";
 const TIME_ZONE_OPTIONS = [
   { value: "America/New_York", label: "New York / ET" },
   { value: "America/Denver", label: "Denver / MT" },
@@ -206,14 +231,6 @@ const DEFAULT_SCREEN_OPTIONS = [
   { value: "settings", label: "Settings" },
 ];
 
-const readSessionValue = (key) => {
-  try {
-    return window.sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-
 const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -241,7 +258,9 @@ const estimateStorageBytes = (key, value) =>
 
 function readWorkspaceState() {
   try {
-    const raw = window.localStorage.getItem(RAYALGO_STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(PYRUS_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_RAYALGO_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -252,8 +271,13 @@ function writeWorkspaceState(patch) {
   try {
     const current = readWorkspaceState();
     const next = { ...current, ...patch };
-    window.localStorage.setItem(RAYALGO_STORAGE_KEY, JSON.stringify(next));
-    window.dispatchEvent(new CustomEvent("rayalgo:workspace-settings-updated", { detail: next }));
+    window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(next));
+    for (const eventName of [
+      PYRUS_WORKSPACE_SETTINGS_EVENT,
+      LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+    ]) {
+      window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
+    }
     return next;
   } catch {
     return null;
@@ -315,7 +339,7 @@ function labelStyle() {
 function AboutPanel({ summary, providers }) {
   const fingerprint = useMemo(() => {
     try {
-      return buildRayalgoRuntimeFingerprint();
+      return buildPyrusRuntimeFingerprint();
     } catch (_e) {
       return null;
     }
@@ -344,7 +368,7 @@ function AboutPanel({ summary, providers }) {
 
   return (
     <Panel title="About">
-      <StateRow label="Application" value="RayAlgo" />
+      <StateRow label="Application" value="PYRUS" />
       <StateRow
         label="Build SHA"
         value={shortSha}
@@ -617,6 +641,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
 }
 
 function useBackendSettings() {
+  const toast = useToast();
   const [snapshot, setSnapshot] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -669,14 +694,31 @@ function useBackendSettings() {
         setSnapshot(payload.snapshot);
         setDrafts({});
         if (payload.rejected?.length) {
-          setError(payload.rejected.map((item) => item.reason).join(" "));
+          const message = payload.rejected.map((item) => item.reason).join(" ");
+          setError(message);
+          toast.push({
+            kind: "warn",
+            title: "Backend settings partially applied",
+            body: message,
+          });
+        } else {
+          toast.push({
+            kind: "success",
+            title: "Backend settings applied",
+          });
         }
       })
       .catch((err) => {
-        setError(err?.detail || err?.message || "Failed to apply backend settings.");
+        const message = err?.detail || err?.message || "Failed to apply backend settings.";
+        setError(message);
+        toast.push({
+          kind: "error",
+          title: "Backend settings failed",
+          body: message,
+        });
       })
       .finally(() => setSaving(false));
-  }, [drafts]);
+  }, [drafts, toast]);
 
   return {
     snapshot,
@@ -719,6 +761,7 @@ function useWatchlists() {
 }
 
 function useSignalMonitorSettings() {
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(null);
   const [localError, setLocalError] = useState(null);
@@ -819,9 +862,19 @@ function useSignalMonitorSettings() {
           });
         }
         setDraft(payload);
+        toast.push({
+          kind: "success",
+          title: "Signal monitor settings saved",
+        });
       },
       onError: (err) => {
-        setLocalError(describeError(err, "Failed to save signal monitor settings."));
+        const message = describeError(err, "Failed to save signal monitor settings.");
+        setLocalError(message);
+        toast.push({
+          kind: "error",
+          title: "Signal settings failed",
+          body: message,
+        });
       },
     },
   });
@@ -853,9 +906,20 @@ function useSignalMonitorSettings() {
           }
           setDraft(payload.profile);
         }
+        toast.push({
+          kind: "success",
+          title: "Signal monitor scan complete",
+          body: `${payload?.states?.length || 0} symbols evaluated.`,
+        });
       },
       onError: (err) => {
-        setLocalError(describeError(err, "Signal monitor evaluation failed."));
+        const message = describeError(err, "Signal monitor evaluation failed.");
+        setLocalError(message);
+        toast.push({
+          kind: "error",
+          title: "Signal scan failed",
+          body: message,
+        });
       },
     },
   });
@@ -962,10 +1026,12 @@ function useWorkspaceDefaults() {
 
   useEffect(() => {
     const listener = () => setState(readWorkspaceState());
-    window.addEventListener("rayalgo:workspace-settings-updated", listener);
+      window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+      window.addEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
     window.addEventListener("storage", listener);
     return () => {
-      window.removeEventListener("rayalgo:workspace-settings-updated", listener);
+      window.removeEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+      window.removeEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
       window.removeEventListener("storage", listener);
     };
   }, []);
@@ -975,8 +1041,13 @@ function useWorkspaceDefaults() {
     keys.forEach((key) => {
       delete current[key];
     });
-    window.localStorage.setItem(RAYALGO_STORAGE_KEY, JSON.stringify(current));
-    window.dispatchEvent(new CustomEvent("rayalgo:workspace-settings-updated", { detail: current }));
+    window.localStorage.setItem(PYRUS_STORAGE_KEY, JSON.stringify(current));
+    for (const eventName of [
+      PYRUS_WORKSPACE_SETTINGS_EVENT,
+      LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+    ]) {
+      window.dispatchEvent(new CustomEvent(eventName, { detail: current }));
+    }
     setState(current);
   }, []);
 
@@ -989,10 +1060,12 @@ function useStorageFootprint() {
 
   useEffect(() => {
     const listener = () => refresh();
-    window.addEventListener("rayalgo:workspace-settings-updated", listener);
+    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+    window.addEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
     window.addEventListener("storage", listener);
     return () => {
-      window.removeEventListener("rayalgo:workspace-settings-updated", listener);
+      window.removeEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+      window.removeEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
       window.removeEventListener("storage", listener);
     };
   }, [refresh]);
@@ -1005,7 +1078,12 @@ function useStorageFootprint() {
         if (key && predicate(key)) keys.push(key);
       }
       keys.forEach((key) => window.localStorage.removeItem(key));
-      window.dispatchEvent(new CustomEvent("rayalgo:workspace-settings-updated", { detail: readWorkspaceState() }));
+      for (const eventName of [
+        PYRUS_WORKSPACE_SETTINGS_EVENT,
+        LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+      ]) {
+        window.dispatchEvent(new CustomEvent(eventName, { detail: readWorkspaceState() }));
+      }
       refresh();
     } catch {}
   }, [refresh]);
@@ -1055,7 +1133,12 @@ function useDiagnosticAlertPreferences() {
     writeLocalAlertPreferences(nextPreferences);
     const normalized = readLocalAlertPreferences();
     setPreferences(normalized);
-    window.dispatchEvent(new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }));
+    for (const eventName of [
+      DIAGNOSTIC_ALERT_PREF_EVENT,
+      LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
+    ]) {
+      window.dispatchEvent(new CustomEvent(eventName, { detail: normalized }));
+    }
     return normalized;
   }, []);
 
@@ -1064,7 +1147,12 @@ function useDiagnosticAlertPreferences() {
       const next = { ...current, ...patchValue };
       writeLocalAlertPreferences(next);
       const normalized = readLocalAlertPreferences();
-      window.dispatchEvent(new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: normalized }));
+      for (const eventName of [
+        DIAGNOSTIC_ALERT_PREF_EVENT,
+        LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
+      ]) {
+        window.dispatchEvent(new CustomEvent(eventName, { detail: normalized }));
+      }
       return normalized;
     });
   }, []);
@@ -1088,6 +1176,7 @@ function useDiagnosticAlertPreferences() {
 }
 
 function useIbkrLaneSettings() {
+  const toast = useToast();
   const [snapshot, setSnapshot] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [policyDrafts, setPolicyDrafts] = useState({});
@@ -1143,9 +1232,17 @@ function useIbkrLaneSettings() {
   }, []);
 
   const save = useCallback(() => {
-    const managementToken = readSessionValue("rayalgo.ibkrBridgeManagementToken");
+    const managementToken = readIbkrBridgeSessionValue(
+      IBKR_BRIDGE_SESSION_KEYS.managementToken,
+    );
     if (!managementToken) {
-      setError("Start or reconnect IB Gateway before saving lane overrides.");
+      const message = "Start or reconnect IB Gateway before saving lane overrides.";
+      setError(message);
+      toast.push({
+        kind: "warn",
+        title: "Gateway required",
+        body: message,
+      });
       return;
     }
     if (Object.keys(drafts).length === 0 && Object.keys(policyDrafts).length === 0) {
@@ -1171,12 +1268,22 @@ function useIbkrLaneSettings() {
         setSnapshot(payload);
         setDrafts({});
         setPolicyDrafts({});
+        toast.push({
+          kind: "success",
+          title: "IBKR lane settings saved",
+        });
       })
       .catch((err) => {
-        setError(err?.detail || err?.message || "Failed to save IBKR lane overrides.");
+        const message = err?.detail || err?.message || "Failed to save IBKR lane overrides.";
+        setError(message);
+        toast.push({
+          kind: "error",
+          title: "IBKR lane save failed",
+          body: message,
+        });
       })
       .finally(() => setSaving(false));
-  }, [drafts, policyDrafts]);
+  }, [drafts, policyDrafts, toast]);
 
   return {
     snapshot,
@@ -1184,7 +1291,9 @@ function useIbkrLaneSettings() {
     policyDrafts,
     saving,
     error,
-    bridgeReady: Boolean(readSessionValue("rayalgo.ibkrBridgeManagementToken")),
+    bridgeReady: Boolean(
+      readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.managementToken),
+    ),
     onChange: (id, value) => setDrafts((current) => ({ ...current, [id]: value })),
     onReset: (id) => setDrafts((current) => ({ ...current, [id]: null })),
     onPolicyChange: (laneId, patch) =>
@@ -1246,6 +1355,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const lineUsage = runtimeControl.lineUsage;
   const accountMonitor = lineUsage.accountMonitor || {};
   const accountMonitorDetails = safeRecord(snapshot?.accountMonitor);
+  const watchlistPool = lineUsage.watchlist || lineUsage.pools.watchlist || {};
   const flowScanner = lineUsage.flowScanner || {};
   const signalOptions = lineUsage.signalOptions || {};
   const automation = lineUsage.pools.automation || {};
@@ -1299,6 +1409,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? T.amber : T.green} />
           <StateRow label="Bridge line budget" value={formatCount(bridge.lineBudget)} />
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
+          <StateRow label="Bridge equity lines" value={formatCount(lineUsage.bridge.activeEquity)} />
+          <StateRow label="Bridge option lines" value={formatCount(lineUsage.bridge.activeOptions)} />
           <StateRow
             label="Bridge pressure"
             value={String(bridgeDiagnostics.pressure || MISSING_VALUE)}
@@ -1313,6 +1425,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           />
         </div>
         <div>
+          <StateRow
+            label="Watchlist lines"
+            value={`${formatCount(watchlistPool.used)} active · ${formatCount(watchlistPool.effectiveCap ?? watchlistPool.cap)} reserved`}
+          />
+          <StateRow label="Watchlist available" value={formatCount(watchlistPool.free)} />
           <StateRow
             label="Flow scanner lines"
             value={`${formatCount(flowScanner.used)} active · ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)} available`}
@@ -1364,6 +1481,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             tone={Number(warmup.accountPendingLineCount) > 0 ? T.amber : T.green}
           />
           <StateRow
+            label="Watchlist pending"
+            value={`${formatCount(warmup.watchlistPendingLineCount)} / ${formatCount(warmup.watchlistTargetLineCount)}`}
+            tone={Number(warmup.watchlistPendingLineCount) > 0 ? T.amber : T.green}
+          />
+          <StateRow
             label="Drift status"
             value={String(driftReconciliation.status || MISSING_VALUE).replace(/_/g, " ")}
             tone={
@@ -1409,7 +1531,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
                 {formatCount(pool.used)} of {formatCount(pool.effectiveCap ?? pool.cap)}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
-                {pool.elastic ? "elastic slack" : pool.strict ? "execution protected" : pool.dynamic ? "dynamic expansion" : "borrowable"}
+                {pool.elastic ? "elastic slack" : pool.strict ? "reserved pool" : pool.dynamic ? "dynamic expansion" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
             </div>
@@ -1442,6 +1564,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
 }
 
 function StoragePrunePanel() {
+  const toast = useToast();
   const [olderThanDays, setOlderThanDays] = useState(7);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState(null);
@@ -1467,8 +1590,25 @@ function StoragePrunePanel() {
           ? response.json()
           : response.json().then((payload) => Promise.reject(payload)),
       )
-      .then(setResult)
-      .catch((err) => setError(err?.detail || err?.message || "Storage prune failed."))
+      .then((payload) => {
+        setResult(payload);
+        toast.push({
+          kind: dryRun ? "info" : "success",
+          title: dryRun ? "Storage dry run complete" : "Diagnostic storage pruned",
+          body: dryRun
+            ? "Review the prune result before running the destructive action."
+            : "Diagnostic storage cleanup completed.",
+        });
+      })
+      .catch((err) => {
+        const message = err?.detail || err?.message || "Storage prune failed.";
+        setError(message);
+        toast.push({
+          kind: "error",
+          title: "Storage prune failed",
+          body: message,
+        });
+      })
       .finally(() => setRunning(false));
   };
 
@@ -1565,21 +1705,38 @@ function BrowserStorageFootprintPanel() {
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginTop: sp(12) }}>
         <button
           type="button"
-          onClick={() => storage.clearLocalKeys((key) => key.startsWith(CHART_SCALE_PREFS_STORAGE_PREFIX))}
+          onClick={() =>
+            storage.clearLocalKeys(
+              (key) =>
+                key.startsWith(CHART_SCALE_PREFS_STORAGE_PREFIX) ||
+                key.startsWith(LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX),
+            )
+          }
           style={smallButton()}
         >
           Clear chart scale prefs
         </button>
         <button
           type="button"
-          onClick={() => storage.clearLocalKeys((key) => key === OPTION_HYDRATION_HISTORY_STORAGE_KEY)}
+          onClick={() =>
+            storage.clearLocalKeys(
+              (key) =>
+                key === OPTION_HYDRATION_HISTORY_STORAGE_KEY ||
+                key === LEGACY_OPTION_HYDRATION_HISTORY_STORAGE_KEY,
+            )
+          }
           style={smallButton()}
         >
           Clear option hydration history
         </button>
         <button
           type="button"
-          onClick={() => storage.clearSessionKeys([MARKET_GRID_TRACK_SESSION_KEY])}
+          onClick={() =>
+            storage.clearSessionKeys([
+              MARKET_GRID_TRACK_SESSION_KEY,
+              LEGACY_MARKET_GRID_TRACK_SESSION_KEY,
+            ])
+          }
           style={smallButton()}
         >
           Reset market grid sizing
@@ -1627,6 +1784,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
   const setAccentPreset = (value) => {
     patchSection("appearance", { accentPreset: value });
     if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-pyrus-accent-preset", value);
       document.documentElement.setAttribute("data-rayalgo-accent-preset", value);
     }
   };
@@ -1669,10 +1827,11 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
           />
           <SelectField
             label="Accent Preset"
-            value={prefs.appearance.accentPreset || "coral"}
+            value={prefs.appearance.accentPreset || "pyrus"}
             onChange={setAccentPreset}
             options={[
-              { value: "coral", label: "Coral (default)" },
+              { value: "pyrus", label: "PYRUS Blue" },
+              { value: "coral", label: "Coral" },
               { value: "amber", label: "Bloomberg Amber" },
               { value: "green", label: "Robinhood Green" },
               { value: "aurora", label: "Aurora Purple" },
@@ -1820,7 +1979,7 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
           ]}
         />
         <SelectField
-          label="RayAlgo Panel"
+          label="PYRUS Panel"
           value={chart.rayAlgoDashboard}
           onChange={(value) => patchChart({ rayAlgoDashboard: value })}
           options={[
@@ -1924,7 +2083,12 @@ function NotificationPreferencePanel({ userPreferences }) {
           : {}),
       };
       writeLocalAlertPreferences(next);
-      window.dispatchEvent(new CustomEvent(DIAGNOSTIC_ALERT_PREF_EVENT, { detail: next }));
+      for (const eventName of [
+        DIAGNOSTIC_ALERT_PREF_EVENT,
+        LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT,
+      ]) {
+        window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
+      }
     }
     if (
       patch.desktopNotifications === "on" &&
@@ -2514,7 +2678,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
   );
 }
 
-function SettingsStatusStrip({ summary, dirtyCount }) {
+function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
   const providers = safeRecord(summary.providers);
   const items = [
     {
@@ -2546,11 +2710,15 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
 
   return (
     <div
+      className="ra-hide-scrollbar"
       style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(135)}px, 1fr))`,
-        gap: sp(8),
-        marginBottom: sp(14),
+        display: compact ? "flex" : "grid",
+        gridTemplateColumns: compact ? undefined : `repeat(auto-fit, minmax(${dim(135)}px, 1fr))`,
+        gap: sp(compact ? 6 : 8),
+        marginBottom: sp(compact ? 10 : 14),
+        overflowX: compact ? "auto" : undefined,
+        paddingBottom: compact ? sp(2) : undefined,
+        minWidth: 0,
       }}
     >
       {items.map((item) => (
@@ -2559,11 +2727,12 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
           style={{
             border: "none",
             background: T.bg1,
-            borderRadius: dim(RADII.md),
-            padding: sp("10px 12px"),
+            borderRadius: dim(compact ? RADII.sm : RADII.md),
+            padding: sp(compact ? "6px 10px" : "10px 12px"),
             display: "grid",
-            gap: sp(3),
-            minWidth: 0,
+            gap: sp(compact ? 1 : 3),
+            minWidth: compact ? dim(92) : 0,
+            flex: compact ? "0 0 auto" : undefined,
           }}
         >
           <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
@@ -2597,6 +2766,7 @@ function ResearchProviderPanel({ backendSnapshot }) {
 }
 
 function IbkrBridgeOverridePanel({ active, onReload }) {
+  const toast = useToast();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -2622,9 +2792,19 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
       .then((payload) => {
         setResult(payload);
         onReload?.();
+        toast.push({
+          kind: payload?.cleared ? "success" : "info",
+          title: payload?.cleared ? "IBKR bridge override cleared" : "No IBKR override active",
+        });
       })
       .catch((err) => {
-        setError(err?.detail || err?.message || "Failed to clear IBKR bridge override.");
+        const message = err?.detail || err?.message || "Failed to clear IBKR bridge override.";
+        setError(message);
+        toast.push({
+          kind: "error",
+          title: "IBKR override clear failed",
+          body: message,
+        });
       })
       .finally(() => setRunning(false));
   };
@@ -2879,19 +3059,21 @@ export default function SettingsScreen({
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(settingsIsPhone ? "12px 12px" : "20px 28px"),
+        padding: sp(settingsIsPhone ? "8px 10px 18px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
+        WebkitOverflowScrolling: settingsIsPhone ? "touch" : undefined,
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
+          justifyContent: settingsIsPhone ? "space-between" : "flex-end",
           gap: sp(8),
           flexWrap: "wrap",
           minWidth: 0,
+          marginBottom: sp(settingsIsPhone ? 8 : 0),
         }}
       >
         <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
@@ -2930,7 +3112,11 @@ export default function SettingsScreen({
         </div>
       )}
 
-      <SettingsStatusStrip summary={summary} dirtyCount={backend.dirtyCount} />
+      <SettingsStatusStrip
+        summary={summary}
+        dirtyCount={backend.dirtyCount}
+        compact={settingsIsPhone}
+      />
 
       <div
         style={{
@@ -2946,7 +3132,7 @@ export default function SettingsScreen({
             border: "none",
             background: T.bg1,
             borderRadius: dim(RADII.md),
-            padding: sp(12),
+            padding: sp(settingsIsPhone ? 8 : 12),
             display: "grid",
             gap: sp(8),
             boxShadow: ELEVATION.sm,
@@ -2963,32 +3149,49 @@ export default function SettingsScreen({
             placeholder="Search settings"
             style={inputStyle()}
           />
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                border: "none",
-                background: activeTab === tab.id ? T.bg2 : "transparent",
-                color: activeTab === tab.id ? T.text : T.textSec,
-                fontWeight: activeTab === tab.id ? 600 : 500,
-                borderRadius: dim(RADII.pill),
-                padding: sp("8px 12px"),
-                textAlign: "left",
-                cursor: "pointer",
-                fontFamily: T.sans,
-              }}
-            >
-              <div style={{ fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
-                {tab.label}
-              </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(2) }}>
-                {tab.description}
-              </div>
-            </button>
-          ))}
+          <div
+            className="ra-hide-scrollbar"
+            style={{
+              display: "flex",
+              flexDirection: settingsIsPhone ? "row" : "column",
+              gap: sp(settingsIsPhone ? 5 : 8),
+              overflowX: settingsIsPhone ? "auto" : undefined,
+              paddingBottom: settingsIsPhone ? sp(2) : undefined,
+              minWidth: 0,
+            }}
+          >
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  border: "none",
+                  background: activeTab === tab.id ? T.bg2 : "transparent",
+                  color: activeTab === tab.id ? T.text : T.textSec,
+                  fontWeight: activeTab === tab.id ? 600 : 500,
+                  borderRadius: dim(settingsIsPhone ? RADII.sm : RADII.pill),
+                  padding: sp(settingsIsPhone ? "7px 10px" : "8px 12px"),
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: T.sans,
+                  flex: settingsIsPhone ? "0 0 auto" : undefined,
+                  minWidth: settingsIsPhone ? dim(132) : undefined,
+                  maxWidth: settingsIsPhone ? dim(170) : undefined,
+                }}
+              >
+                <div style={{ fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, whiteSpace: "nowrap" }}>
+                  {tab.label}
+                </div>
+                {!settingsIsPhone ? (
+                  <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(2) }}>
+                    {tab.description}
+                  </div>
+                ) : null}
+              </button>
+            ))}
+          </div>
           {!visibleTabs.length && (
             <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), padding: sp(8) }}>
               No matching sections

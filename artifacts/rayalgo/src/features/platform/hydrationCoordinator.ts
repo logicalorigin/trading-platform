@@ -23,6 +23,15 @@ export type HydrationGateInput = {
 };
 
 export type HydrationPressureState = "normal" | "degraded" | "backoff" | "stalled";
+export type HydrationRequestOptionsInput =
+  | HydrationPriorityTier
+  | number
+  | null
+  | undefined
+  | {
+      priority?: HydrationPriorityTier | number | null;
+      family?: string | null;
+    };
 
 export const HYDRATION_PRIORITY = {
   idle: -8,
@@ -32,7 +41,8 @@ export const HYDRATION_PRIORITY = {
   active: 8,
 } as const satisfies Record<HydrationPriorityTier, number>;
 
-export const HYDRATION_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+export const HYDRATION_PRIORITY_HEADER = "x-pyrus-fetch-priority";
+export const HYDRATION_FAMILY_HEADER = "x-pyrus-request-family";
 
 type StoredHydrationIntent = Required<Pick<HydrationIntent, "key" | "family">> &
   Omit<HydrationIntent, "key" | "family" | "priority" | "active"> & {
@@ -84,17 +94,37 @@ export const resolveHydrationPriority = (
   return HYDRATION_PRIORITY.background;
 };
 
+const normalizeHydrationRequestFamily = (
+  family: string | null | undefined,
+): string => {
+  const normalized =
+    typeof family === "string"
+      ? family.trim().toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-")
+      : "";
+  return normalized ? normalized.slice(0, 64) : "";
+};
+
+const isHydrationRequestObject = (
+  input: HydrationRequestOptionsInput,
+): input is Extract<HydrationRequestOptionsInput, { priority?: unknown }> =>
+  Boolean(input && typeof input === "object" && !Array.isArray(input));
+
 export const buildHydrationRequestOptions = (
-  priority: HydrationPriorityTier | number | null | undefined,
+  input: HydrationRequestOptionsInput,
+  family?: string | null,
 ) => {
+  const priority = isHydrationRequestObject(input) ? input.priority : input;
+  const requestFamily = isHydrationRequestObject(input) ? input.family : family;
   const resolvedPriority = resolveHydrationPriority(priority);
-  return Number.isFinite(resolvedPriority)
-    ? {
-        headers: {
-          [HYDRATION_PRIORITY_HEADER]: String(resolvedPriority),
-        },
-      }
-    : undefined;
+  const normalizedFamily = normalizeHydrationRequestFamily(requestFamily);
+  const headers: Record<string, string> = {};
+  if (Number.isFinite(resolvedPriority)) {
+    headers[HYDRATION_PRIORITY_HEADER] = String(resolvedPriority);
+  }
+  if (normalizedFamily) {
+    headers[HYDRATION_FAMILY_HEADER] = normalizedFamily;
+  }
+  return Object.keys(headers).length ? { headers } : undefined;
 };
 
 export const setHydrationPressureState = (
@@ -175,7 +205,10 @@ export const useHydrationGate = (input: HydrationGateInput = {}) => {
       enabled: input.enabled !== false && allowed,
       family: input.family || "other",
       priority,
-      requestOptions: buildHydrationRequestOptions(priority),
+      requestOptions: buildHydrationRequestOptions({
+        priority,
+        family: input.family,
+      }),
       pressure: hydrationPressureState,
     }),
     [allowed, input.enabled, input.family, priority],

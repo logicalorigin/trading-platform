@@ -1,3 +1,5 @@
+import { getChartTimeframeStepMs } from "./timeframes";
+
 export type ChartEventType = "unusual_flow" | "earnings";
 export type ChartEventPlacement = "bar" | "timescale";
 export type ChartEventSeverity = "low" | "medium" | "high" | "extreme";
@@ -74,6 +76,11 @@ export type FlowEventSourceBasis =
   | "snapshot_activity"
   | "fallback_estimate"
   | "other";
+
+export type FlowEventChartLoadedWindow = {
+  fromMs: number;
+  toMs: number;
+};
 
 const finiteNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -778,10 +785,10 @@ export const resolveFlowEventChartTimeResolution = (
   if (snapshotEvent) {
     return readFirstDateCandidateResolution(
       [
+        { field: "occurredAt", value: event.occurredAt },
+        { field: "time", value: event.time },
         { field: "updatedAt", value: event.updatedAt },
         { field: "createdAt", value: event.createdAt },
-        { field: "time", value: event.time },
-        { field: "occurredAt", value: event.occurredAt },
       ],
       { allowDateOnly: true, timeBasis: "snapshot_observed" },
     );
@@ -819,6 +826,118 @@ export const resolveFlowEventChartTimeMs = (
   event: Record<string, unknown>,
 ): number | null => {
   return resolveFlowEventChartTimeResolution(event)?.timeMs ?? null;
+};
+
+const resolveChartBarTimeMs = (bar: unknown): number | null => {
+  if (!bar || typeof bar !== "object") {
+    return null;
+  }
+
+  const record = bar as Record<string, unknown>;
+  const value =
+    record.time ??
+    record.t ??
+    record.timestamp ??
+    record.dateTime ??
+    record.datetime ??
+    record.date;
+
+  if (value instanceof Date) {
+    const timeMs = value.getTime();
+    return Number.isFinite(timeMs) ? timeMs : null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
+  }
+
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric > 1e12 ? Math.floor(numeric) : Math.floor(numeric * 1000);
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  if (value && typeof value === "object") {
+    const businessDay = value as Record<string, unknown>;
+    const year = Number(businessDay.year);
+    const month = Number(businessDay.month);
+    const day = Number(businessDay.day);
+    if (
+      Number.isInteger(year) &&
+      Number.isInteger(month) &&
+      Number.isInteger(day)
+    ) {
+      return Date.UTC(year, month - 1, day);
+    }
+  }
+
+  return null;
+};
+
+export const resolveFlowEventChartLoadedWindow = (
+  bars: Array<Record<string, unknown>> = [],
+  timeframe: string,
+): FlowEventChartLoadedWindow | null => {
+  const times = (Array.isArray(bars) ? bars : [])
+    .map(resolveChartBarTimeMs)
+    .filter((timeMs): timeMs is number => Number.isFinite(timeMs));
+  if (!times.length) {
+    return null;
+  }
+
+  const paddingMs = Math.max(60_000, getChartTimeframeStepMs(timeframe) || 0);
+  return {
+    fromMs: Math.max(0, Math.min(...times) - paddingMs),
+    toMs: Math.max(...times) + paddingMs,
+  };
+};
+
+export const filterFlowEventsForLoadedChartWindow = (
+  events: Array<Record<string, unknown>> = [],
+  loadedWindow: FlowEventChartLoadedWindow | null,
+  {
+    pinnedEvents = [],
+  }: { pinnedEvents?: Array<Record<string, unknown>> } = {},
+): Array<Record<string, unknown>> => {
+  const input = Array.isArray(events) ? events : [];
+  if (!input.length) {
+    return [];
+  }
+  if (
+    !loadedWindow ||
+    !Number.isFinite(loadedWindow.fromMs) ||
+    !Number.isFinite(loadedWindow.toMs)
+  ) {
+    return input;
+  }
+
+  const pinnedSet = new Set(pinnedEvents);
+  const pinnedIds = new Set(
+    pinnedEvents
+      .map((event) => event?.id)
+      .filter(
+        (id): id is string | number =>
+          typeof id === "string" || typeof id === "number",
+      )
+      .map(String),
+  );
+
+  return input.filter((event) => {
+    if (pinnedSet.has(event) || pinnedIds.has(String(event?.id ?? ""))) {
+      return true;
+    }
+
+    const timeMs = resolveFlowEventChartTimeMs(event);
+    return (
+      typeof timeMs === "number" &&
+      Number.isFinite(timeMs) &&
+      timeMs >= loadedWindow.fromMs &&
+      timeMs <= loadedWindow.toMs
+    );
+  });
 };
 
 export const filterFlowEventsForChartLookbackWindow = (

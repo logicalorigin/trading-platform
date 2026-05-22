@@ -81,27 +81,36 @@ export const findLatestCalendarActivityDate = ({
   trades = [],
   equityPoints = [],
 } = {}) => {
-  let latest = null;
+  const candidateDays = [];
   const consider = (value) => {
-    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
-    if (Number.isNaN(date.getTime())) return;
-    if (!latest || date.getTime() > latest.getTime()) {
-      latest = date;
-    }
+    const day = pnlBucketDay(value);
+    if (day) candidateDays.push(day);
   };
 
   trades.forEach((trade) => {
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
     if (realized == null) return;
-    consider(pnlBucketDay(trade?.closeDate));
+    consider(trade?.closeDate);
   });
 
   equityPoints.forEach((point) => {
     if (finiteNumber(point?.netLiquidation) == null) return;
-    consider(pnlBucketDay(point?.timestamp ?? point?.timestampMs));
+    consider(point?.timestamp ?? point?.timestampMs);
   });
 
-  return latest ? startOfCalendarDay(latest) : null;
+  if (!candidateDays.length) return null;
+  const sortedDays = candidateDays.sort((a, b) => a.getTime() - b.getTime());
+  const series = buildDailyPnlSeries({
+    trades,
+    equityPoints,
+    startDate: sortedDays[0],
+    endDate: sortedDays[sortedDays.length - 1],
+  });
+  for (let index = series.length - 1; index >= 0; index -= 1) {
+    const day = series[index];
+    if (day.trades > 0 || day.pnl !== 0) return startOfCalendarDay(day.date);
+  }
+  return null;
 };
 
 const dayRange = (startDate, endDate) => {
@@ -263,7 +272,16 @@ const summarizeDays = (days) => {
     (max, day) => Math.max(max, Math.abs(day.pnl)),
     0,
   );
-  return { pnl, realized, wins, losses, trades, best, worst, maxAbs };
+  return {
+    pnl,
+    realized,
+    wins,
+    losses,
+    trades,
+    best,
+    worst,
+    maxAbs,
+  };
 };
 
 export const buildMonthPnlCalendarModel = ({
@@ -331,6 +349,28 @@ export const buildYearPnlCalendarModel = ({
     months,
     summary: summarizeDays(days),
   };
+};
+
+export const findLatestVisiblePnlCalendarDay = (days = []) =>
+  days.reduce((latest, day) => {
+    if (!day?.inMonth || !(day.trades > 0 || day.pnl !== 0)) return latest;
+    if (!latest || day.date.getTime() > latest.date.getTime()) return day;
+    return latest;
+  }, null);
+
+export const resolveActivePnlCalendarDay = ({
+  days = [],
+  hoveredDayIso = null,
+  pinnedDayIso = null,
+} = {}) => {
+  const visibleDaysByIso = new Map(
+    days.filter((day) => day?.inMonth).map((day) => [day.iso, day]),
+  );
+  return (
+    visibleDaysByIso.get(hoveredDayIso) ||
+    visibleDaysByIso.get(pinnedDayIso) ||
+    findLatestVisiblePnlCalendarDay(days)
+  );
 };
 
 export const formatCalendarPnlValue = (value, maskValues = false) => {

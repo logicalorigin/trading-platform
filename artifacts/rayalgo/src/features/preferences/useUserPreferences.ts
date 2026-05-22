@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   DEFAULT_USER_PREFERENCES,
+  LEGACY_USER_PREFERENCES_UPDATED_EVENT,
   USER_PREFERENCES_UPDATED_EVENT,
   buildLocalPreferenceSnapshot,
   deepMergeRecords,
@@ -94,6 +95,10 @@ const ensureBrowserPreferenceListeners = () => {
   if (browserListenerReady || typeof window === "undefined") return;
   browserListenerReady = true;
   window.addEventListener(USER_PREFERENCES_UPDATED_EVENT, refreshFromLocalCache);
+  window.addEventListener(
+    LEGACY_USER_PREFERENCES_UPDATED_EVENT,
+    refreshFromLocalCache,
+  );
   window.addEventListener("storage", refreshFromLocalCache);
 };
 

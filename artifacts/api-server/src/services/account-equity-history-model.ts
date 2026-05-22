@@ -41,6 +41,8 @@ type ExternalCashTransferCandidate = {
   amount: string | number;
 };
 
+const INITIAL_COMBINED_ACCOUNT_COHORT_WINDOW_MS = 5 * 60_000;
+
 function toHistoryNumber(value: unknown): number | null {
   if (value === null || value === undefined) {
     return null;
@@ -100,6 +102,119 @@ export function filterPlaceholderZeroEquitySnapshotRows(
   return rows.filter((row) => !isPlaceholderZeroBalanceSnapshot(row));
 }
 
+export function dedupeEquitySnapshotRows(
+  rows: EquitySnapshotRow[],
+): EquitySnapshotRow[] {
+  const byAccountTimestamp = new Map<string, EquitySnapshotRow>();
+  rows.forEach((row) => {
+    byAccountTimestamp.set(
+      `${row.providerAccountId}:${row.asOf.getTime()}`,
+      row,
+    );
+  });
+
+  return Array.from(byAccountTimestamp.values()).sort(
+    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
+  );
+}
+
+export function aggregateCombinedEquitySnapshotRows(
+  rows: EquitySnapshotRow[],
+): EquitySnapshotRow[] {
+  const sortedRows = rows
+    .slice()
+    .sort((left, right) => left.asOf.getTime() - right.asOf.getTime());
+  const firstTimestampByAccount = new Map<string, number>();
+  sortedRows.forEach((row) => {
+    if (!firstTimestampByAccount.has(row.providerAccountId)) {
+      firstTimestampByAccount.set(row.providerAccountId, row.asOf.getTime());
+    }
+  });
+  if (firstTimestampByAccount.size <= 1) {
+    return rows;
+  }
+
+  const firstTimestamp = Math.min(...firstTimestampByAccount.values());
+  const initialAccountIds = new Set(
+    Array.from(firstTimestampByAccount.entries())
+      .filter(
+        ([, timestamp]) =>
+          timestamp - firstTimestamp <= INITIAL_COMBINED_ACCOUNT_COHORT_WINDOW_MS,
+      )
+      .map(([accountId]) => accountId),
+  );
+  const latestByAccount = new Map<string, EquitySnapshotRow>();
+  const combinedRows: EquitySnapshotRow[] = [];
+  sortedRows.forEach((row) => {
+    latestByAccount.set(row.providerAccountId, row);
+    const initialAccountsReady = Array.from(initialAccountIds).every((accountId) =>
+      latestByAccount.has(accountId),
+    );
+    if (!initialAccountsReady) {
+      return;
+    }
+
+    let netLiquidation = 0;
+    let cash = 0;
+    let buyingPower = 0;
+    let hasCash = false;
+    let hasBuyingPower = false;
+    latestByAccount.forEach((accountRow) => {
+      netLiquidation += toHistoryNumber(accountRow.netLiquidation) ?? 0;
+      const accountCash = toHistoryNumber(accountRow.cash);
+      if (accountCash !== null) {
+        cash += accountCash;
+        hasCash = true;
+      }
+      const accountBuyingPower = toHistoryNumber(accountRow.buyingPower);
+      if (accountBuyingPower !== null) {
+        buyingPower += accountBuyingPower;
+        hasBuyingPower = true;
+      }
+    });
+
+    combinedRows.push({
+      providerAccountId: "combined",
+      asOf: row.asOf,
+      currency: row.currency,
+      netLiquidation: String(netLiquidation),
+      cash: hasCash ? String(cash) : null,
+      buyingPower: hasBuyingPower ? String(buyingPower) : null,
+    });
+  });
+
+  return combinedRows;
+}
+
+export function equitySnapshotBucketSizeMs(
+  range: AccountRange,
+  rows: EquitySnapshotRow[],
+): number | null {
+  const defaultBucketSizeMs = accountSnapshotBucketSizeMs(range);
+  if (range !== "ALL" || rows.length <= 1) {
+    return defaultBucketSizeMs;
+  }
+
+  const timestampsMs = rows
+    .map((row) => row.asOf.getTime())
+    .filter((timestampMs) => Number.isFinite(timestampMs));
+  if (timestampsMs.length <= 1) {
+    return defaultBucketSizeMs;
+  }
+
+  const spanMs = Math.max(...timestampsMs) - Math.min(...timestampsMs);
+  if (spanMs <= 31 * 24 * 60 * 60_000) {
+    return 5 * 60_000;
+  }
+  if (spanMs <= 120 * 24 * 60 * 60_000) {
+    return 30 * 60_000;
+  }
+  if (spanMs <= 370 * 24 * 60 * 60_000) {
+    return 2 * 60 * 60_000;
+  }
+  return defaultBucketSizeMs;
+}
+
 export function calculateTransferAdjustedReturnPoints(
   seedPoints: AccountEquityHistorySeedPoint[],
 ) {
@@ -154,7 +269,7 @@ export function compactEquitySnapshotRows(
   rows: EquitySnapshotRow[],
   range: AccountRange,
 ): EquitySnapshotRow[] {
-  const bucketSizeMs = accountSnapshotBucketSizeMs(range);
+  const bucketSizeMs = equitySnapshotBucketSizeMs(range, rows);
   if (!bucketSizeMs || rows.length <= 1) {
     return rows;
   }

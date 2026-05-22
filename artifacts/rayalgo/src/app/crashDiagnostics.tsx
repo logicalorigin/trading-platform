@@ -3,14 +3,15 @@ import type { ErrorInfo } from "react";
 import { Activity, AlertTriangle, Copy, RefreshCcw } from "lucide-react";
 import type { FallbackProps } from "react-error-boundary";
 import {
-  buildRayalgoRuntimeFingerprint,
-  type RayalgoRuntimeFingerprint,
+  buildPyrusRuntimeFingerprint,
+  type PyrusRuntimeFingerprint,
 } from "./runtimeDiagnostics";
 import { FONT_CSS_VAR } from "../lib/typography";
 
-const RAYALGO_STORAGE_KEY = "rayalgo:state:v1";
-const LAST_CRASH_KEY = "rayalgo:last-crash-diagnostics:v1";
-const RECENT_BROWSER_EVENTS_KEY = "rayalgo:recent-browser-diagnostics:v1";
+const PYRUS_STORAGE_KEY = "pyrus:state:v1";
+const LEGACY_RAYALGO_STORAGE_KEY = "rayalgo:state:v1";
+const LAST_CRASH_KEY = "pyrus:last-crash-diagnostics:v1";
+const RECENT_BROWSER_EVENTS_KEY = "pyrus:recent-browser-diagnostics:v1";
 const MAX_RECENT_BROWSER_EVENTS = 8;
 const MAX_STRING_LENGTH = 1_500;
 const MAX_ARRAY_ITEMS = 12;
@@ -27,7 +28,7 @@ type BrowserDiagnosticEvent = {
 };
 
 export type RootCrashDiagnosticBundle = {
-  kind: "rayalgo-root-crash";
+  kind: "pyrus-root-crash";
   capturedAt: string;
   label: string;
   error: {
@@ -38,7 +39,7 @@ export type RootCrashDiagnosticBundle = {
   componentStack: string | null;
   route: string;
   userAgent: string;
-  runtime: RayalgoRuntimeFingerprint;
+  runtime: PyrusRuntimeFingerprint;
   recentBrowserEvents: unknown[];
 };
 
@@ -153,7 +154,7 @@ export const buildRootCrashDiagnosticBundle = ({
 }): RootCrashDiagnosticBundle => {
   const normalizedError = normalizeError(error);
   return {
-    kind: "rayalgo-root-crash",
+    kind: "pyrus-root-crash",
     capturedAt: new Date().toISOString(),
     label,
     error: {
@@ -164,7 +165,7 @@ export const buildRootCrashDiagnosticBundle = ({
     componentStack: componentStack || null,
     route: typeof window === "undefined" ? "" : window.location.href,
     userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
-    runtime: buildRayalgoRuntimeFingerprint(),
+    runtime: buildPyrusRuntimeFingerprint(),
     recentBrowserEvents: readRecentBrowserEvents(),
   };
 };
@@ -231,10 +232,12 @@ const loadLatestDiagnostics = async (): Promise<LatestDiagnosticsSummary | null>
 
 export const openDiagnosticsScreen = () => {
   try {
-    const raw = window.localStorage?.getItem(RAYALGO_STORAGE_KEY);
+    const raw =
+      window.localStorage?.getItem(PYRUS_STORAGE_KEY) ??
+      window.localStorage?.getItem(LEGACY_RAYALGO_STORAGE_KEY);
     const state = raw ? JSON.parse(raw) : {};
     window.localStorage?.setItem(
-      RAYALGO_STORAGE_KEY,
+      PYRUS_STORAGE_KEY,
       JSON.stringify({ ...state, screen: "diagnostics" }),
     );
   } catch {}
@@ -351,7 +354,7 @@ export function RootCrashDiagnosticsFallback({
             }}
           >
             <AlertTriangle size={18} aria-hidden="true" />
-            RayAlgo root crash
+            PYRUS root crash
           </div>
           <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>
             {bundle.error.message || "Render failed"}

@@ -13,7 +13,9 @@ import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
 const isSignalDirection = (value) => value === "buy" || value === "sell";
 
 const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
-  if (!fallbackState || fallbackState.timeframe !== timeframe) return null;
+  if (!fallbackState) return null;
+  const fallbackTimeframe = String(fallbackState.timeframe || "5m").trim();
+  if (fallbackTimeframe !== timeframe) return null;
   return fallbackState;
 };
 

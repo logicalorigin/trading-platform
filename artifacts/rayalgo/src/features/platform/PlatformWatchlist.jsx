@@ -16,7 +16,6 @@ import {
   motionVars,
   useValueFlash,
 } from "../../lib/motion.jsx";
-import { useNumberTick } from "../../lib/numberTick.js";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
@@ -151,11 +150,7 @@ const WatchlistRow = memo(
 	      ? snapshot.price
 	      : null;
 	    const priceFlashClassName = useValueFlash(quotePriceForFlash);
-	    // 380ms is shorter than the KPI strip's 420ms — watchlist updates
-	    // arrive more often per row and a slightly faster tween keeps the
-	    // animation from queueing into the next streaming tick.
-	    const animatedPrice = useNumberTick(priceValue, 380);
-	    const displayedPrice = animatedPrice ?? priceValue;
+	    const displayedPrice = priceValue;
 	    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
     const identityItem = {
       ticker: item.sym,

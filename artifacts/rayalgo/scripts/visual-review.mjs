@@ -40,7 +40,10 @@ process.env.LD_LIBRARY_PATH = process.env.LD_LIBRARY_PATH
   ? `${NIX_LIB_PATHS}:${process.env.LD_LIBRARY_PATH}`
   : NIX_LIB_PATHS;
 
-const BASE_URL = process.env.RAYALGO_DEV_URL || "http://127.0.0.1:18747";
+const BASE_URL =
+  process.env.PYRUS_DEV_URL ||
+  process.env.RAYALGO_DEV_URL ||
+  "http://127.0.0.1:18747";
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },

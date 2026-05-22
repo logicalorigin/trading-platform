@@ -11,8 +11,9 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
-const HEAVY_GET_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
-const API_TIMING_EVENT = "rayalgo:api-request-timing";
+const HEAVY_GET_PRIORITY_HEADER = "x-pyrus-fetch-priority";
+const LEGACY_HEAVY_GET_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+const API_TIMING_EVENT = "pyrus:api-request-timing";
 const TRANSIENT_API_GET_STATUS_CODES = new Set([502, 503, 504]);
 const DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const HEAVY_GET_PATHS = new Set([
@@ -210,12 +211,15 @@ function headersFingerprint(headers: Headers): string {
 }
 
 function readHeavyGetPriorityHeader(headers: Headers): number | null {
-  const raw = headers.get(HEAVY_GET_PRIORITY_HEADER);
+  const raw =
+    headers.get(HEAVY_GET_PRIORITY_HEADER) ??
+    headers.get(LEGACY_HEAVY_GET_PRIORITY_HEADER);
   if (raw == null) {
     return null;
   }
 
   headers.delete(HEAVY_GET_PRIORITY_HEADER);
+  headers.delete(LEGACY_HEAVY_GET_PRIORITY_HEADER);
   const priority = Number(raw);
   return Number.isFinite(priority) ? priority : null;
 }

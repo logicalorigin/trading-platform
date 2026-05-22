@@ -1007,52 +1007,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountEquityHistoryResponse"
 
-  /accounts/{accountId}/trading-patterns:
-    get:
-      operationId: getAccountTradingPatterns
-      tags: [accounts]
-      summary: Get Shadow trading pattern analytics and AI packet
-      parameters:
-        - $ref: "#/components/parameters/AccountIdPath"
-        - name: range
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/AccountHistoryRange"
-        - name: snapshotId
-          in: query
-          required: false
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Trading pattern analytics
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountTradingPatternsResponse"
-
-  /accounts/{accountId}/trading-patterns/snapshots:
-    post:
-      operationId: createAccountTradingPatternsSnapshot
-      tags: [accounts]
-      summary: Persist a Shadow trading pattern analysis snapshot
-      parameters:
-        - $ref: "#/components/parameters/AccountIdPath"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateAccountTradingPatternsSnapshotRequest"
-      responses:
-        "201":
-          description: Persisted trading pattern analytics snapshot
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountTradingPatternsResponse"
-
   /accounts/{accountId}/allocation:
     get:
       operationId: getAccountAllocation
@@ -6376,6 +6330,18 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        openedAt:
+          type: string
+          format: date-time
+          nullable: true
+        openedAtSource:
+          oneOf:
+            - $ref: "#/components/schemas/PositionOpenedAtSource"
+            - type: "null"
+        quote:
+          oneOf:
+            - $ref: "#/components/schemas/PositionQuote"
+            - type: "null"
       required:
         - id
         - accountId
@@ -6388,6 +6354,81 @@ components:
         - unrealizedPnl
         - unrealizedPnlPercent
         - optionContract
+
+    PositionOpenedAtSource:
+      type: string
+      enum:
+        [
+          broker,
+          execution,
+          lot,
+          flex_open_position,
+          flex_snapshot,
+          shadow_position,
+          automation,
+          unknown,
+        ]
+
+    PositionQuoteSource:
+      type: string
+      enum: [bridge_quote, option_quote, position_mark, shadow_ledger, unknown]
+
+    PositionQuote:
+      type: object
+      properties:
+        bid:
+          type: number
+          nullable: true
+        ask:
+          type: number
+          nullable: true
+        mid:
+          type: number
+          nullable: true
+        last:
+          type: number
+          nullable: true
+        mark:
+          type: number
+          nullable: true
+        spread:
+          type: number
+          nullable: true
+        spreadPercent:
+          type: number
+          nullable: true
+        bidSize:
+          type: number
+          nullable: true
+        askSize:
+          type: number
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        freshness:
+          type: string
+          nullable: true
+        marketDataMode:
+          type: string
+          nullable: true
+        source:
+          $ref: "#/components/schemas/PositionQuoteSource"
+      required:
+        - bid
+        - ask
+        - mid
+        - last
+        - mark
+        - spread
+        - spreadPercent
+        - bidSize
+        - askSize
+        - updatedAt
+        - freshness
+        - marketDataMode
+        - source
 
     Order:
       type: object
@@ -7593,67 +7634,6 @@ components:
         - points
         - events
 
-    CreateAccountTradingPatternsSnapshotRequest:
-      type: object
-      properties:
-        range:
-          $ref: "#/components/schemas/AccountHistoryRange"
-
-    AccountTradingPatternsResponse:
-      type: object
-      properties:
-        snapshot:
-          $ref: "#/components/schemas/JsonObject"
-        context:
-          $ref: "#/components/schemas/JsonObject"
-        summary:
-          $ref: "#/components/schemas/JsonObject"
-        tickerStats:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        sourceStats:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        timeStats:
-          $ref: "#/components/schemas/JsonObject"
-        equityAnnotations:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        tradeEvents:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        roundTrips:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        openLots:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        anomalies:
-          type: array
-          items:
-            $ref: "#/components/schemas/JsonObject"
-        fullPacketIncluded:
-          type: boolean
-      required:
-        - snapshot
-        - context
-        - summary
-        - tickerStats
-        - sourceStats
-        - timeStats
-        - equityAnnotations
-        - tradeEvents
-        - roundTrips
-        - openLots
-        - anomalies
-        - fullPacketIncluded
-
     AccountAllocationBucket:
       type: object
       properties:
@@ -7828,6 +7808,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/JsonObject"
+        openedAt:
+          type: string
+          format: date-time
+          nullable: true
+        openedAtSource:
+          oneOf:
+            - $ref: "#/components/schemas/PositionOpenedAtSource"
+            - type: "null"
+        quote:
+          oneOf:
+            - $ref: "#/components/schemas/PositionQuote"
+            - type: "null"
       required:
         - id
         - accountId
@@ -8707,6 +8699,14 @@ components:
         cp:
           type: string
           enum: [C, P]
+        ticker:
+          type: [string, "null"]
+        underlying:
+          type: [string, "null"]
+        expirationDate:
+          type: string
+        providerContractId:
+          type: [string, "null"]
         gamma:
           type: number
         delta:
@@ -8719,6 +8719,19 @@ components:
           type: number
         ask:
           type: number
+        multiplier:
+          type: number
+        sharesPerContract:
+          type: number
+        volume:
+          type: number
+        updatedAt:
+          type: [string, "null"]
+          format: date-time
+        quoteFreshness:
+          type: [string, "null"]
+        marketDataMode:
+          type: [string, "null"]
       required:
         - strike
         - expireYear
@@ -8806,7 +8819,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [massive, polygon]
+          enum: [ibkr, massive, polygon]
         status:
           type: string
           enum: [ok, partial, unavailable]
@@ -9282,7 +9295,7 @@ components:
 
     OptionChartBarsDataSource:
       type: string
-      enum: [ibkr-history, polygon-option-aggregates, none]
+      enum: [ibkr-history, mixed-history, polygon-option-aggregates, none]
 
     OptionChartBarsResponse:
       allOf:
@@ -9493,6 +9506,16 @@ components:
           $ref: "#/components/schemas/JsonObject"
         exitPolicy:
           $ref: "#/components/schemas/JsonObject"
+        riskHaltControls:
+          $ref: "#/components/schemas/JsonObject"
+        entryHaltControls:
+          $ref: "#/components/schemas/JsonObject"
+        liquidityHaltControls:
+          $ref: "#/components/schemas/JsonObject"
+        positionHaltControls:
+          $ref: "#/components/schemas/JsonObject"
+        infrastructureHaltControls:
+          $ref: "#/components/schemas/JsonObject"
       required:
         - version
         - mode
@@ -9502,6 +9525,11 @@ components:
         - entryGate
         - fillPolicy
         - exitPolicy
+        - riskHaltControls
+        - entryHaltControls
+        - liquidityHaltControls
+        - positionHaltControls
+        - infrastructureHaltControls
 
     SignalOptionsAutomationState:
       type: object
@@ -10349,6 +10377,46 @@ components:
           type: array
           items:
             type: string
+        cacheStatus:
+          type: string
+          enum: [hit, stale, inflight, miss]
+        refreshing:
+          type: boolean
+        coverage:
+          type: object
+          properties:
+            requestedSymbols:
+              type: integer
+            evaluatedSymbols:
+              type: integer
+            pendingSymbols:
+              type: integer
+            totalSymbols:
+              type: integer
+            timeframes:
+              type: integer
+            taskCount:
+              type: integer
+            cacheStatus:
+              type: string
+              enum: [hit, stale, inflight, miss]
+            durationMs:
+              type: integer
+            skippedSymbols:
+              type: integer
+            truncated:
+              type: boolean
+          required:
+            - requestedSymbols
+            - evaluatedSymbols
+            - pendingSymbols
+            - totalSymbols
+            - timeframes
+            - taskCount
+            - cacheStatus
+            - durationMs
+            - skippedSymbols
+            - truncated
       required:
         - profile
         - states

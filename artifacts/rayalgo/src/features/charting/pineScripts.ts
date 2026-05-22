@@ -79,7 +79,7 @@ const RAY_REPLICA_FALLBACK_RECORD: PineScriptRecord = {
   scriptKey: RAY_REPLICA_PINE_SCRIPT_KEY,
   name: "RayReplica",
   description:
-    "RayAlgo SMC Pro V3 replica indicator (built-in JS runtime adapter).",
+    "PYRUS SMC Pro V3 replica indicator (built-in JS runtime adapter).",
   sourceCode: "",
   status: "ready",
   defaultPaneType: "price",

@@ -282,3 +282,22 @@ export const buildAnchoredValueDomain = (
     ceiling === null ? upper : Math.min(ceiling, upper),
   ];
 };
+
+export const buildBenchmarkValueDomain = (
+  values = [],
+  { anchorRatio = null } = {},
+) => {
+  if (anchorRatio == null || !Number.isFinite(Number(anchorRatio))) {
+    return buildPaddedValueDomain(values, {
+      paddingRatio: 0.12,
+      minPadding: 1,
+    });
+  }
+
+  return buildAnchoredValueDomain(values, {
+    anchorValue: 0,
+    anchorRatio,
+    paddingRatio: 0.12,
+    minPadding: 1,
+  });
+};

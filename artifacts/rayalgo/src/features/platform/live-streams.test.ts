@@ -156,6 +156,22 @@ test("broker account and order streams refresh freshness on readiness and poll s
   assert.match(source, /markBrokerStreamEvent\("order"\)/);
 });
 
+test("stock quote stream batches React Query cache writes", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const hookSource = source.match(
+    /export const useIbkrQuoteSnapshotStream = \([\s\S]*?\nexport const useIbkrAccountSnapshotStream/,
+  )?.[0];
+
+  assert.match(source, /QUOTE_STREAM_CACHE_FLUSH_MS\s*=\s*100/);
+  assert.match(hookSource ?? "", /pendingQuoteStreamSnapshotsRef/);
+  assert.match(
+    hookSource ?? "",
+    /setTimeout\(\s*flushQuoteStreamSnapshots,\s*QUOTE_STREAM_CACHE_FLUSH_MS/,
+  );
+  assert.match(hookSource ?? "", /queryClient\.setQueryData/);
+  assert.match(hookSource ?? "", /flushQuoteStreamSnapshots\(\)/);
+});
+
 test("shadow account stream refreshes freshness on readiness and poll success", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
 
@@ -225,6 +241,21 @@ test("algo cockpit stream hydrates query caches and gates fallback polling", () 
   assert.match(algoScreenSource, /algoDerivedQueriesEnabled/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoCriticalFresh/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoFullFresh/);
+});
+
+test("algo cockpit stream exposes live event callback without replaying bootstrap", () => {
+  const liveStreamsSource = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const bootstrapHandler =
+    liveStreamsSource.match(/const handleBootstrap =[\s\S]*?};/)?.[0] ?? "";
+
+  assert.match(liveStreamsSource, /onLiveEvents\?:/);
+  assert.match(liveStreamsSource, /const onLiveEventsRef = useRef\(onLiveEvents\)/);
+  assert.match(liveStreamsSource, /onLiveEventsRef\.current = onLiveEvents/);
+  assert.match(
+    liveStreamsSource,
+    /if \(expectedStream === "algo-cockpit-live"\) \{[\s\S]*onLiveEventsRef\.current\?\.\(payload\.events\?\.events \?\? \[\], \{[\s\S]*phase: payload\.phase \?\? null/,
+  );
+  assert.doesNotMatch(bootstrapHandler, /onLiveEvents/);
 });
 
 test("platform root subscribes only to coarse broker stream freshness", () => {
@@ -470,7 +501,12 @@ test("option quote cache merge preserves usable prices from partial zero snapsho
   assert.equal(merged.updatedAt, "2026-04-28T14:30:00.000Z");
 });
 
-const stockQuote = (symbol: string, price: number, updatedAt: string) => ({
+const stockQuote = (
+  symbol: string,
+  price: number,
+  updatedAt: string,
+  dataUpdatedAt = updatedAt,
+) => ({
   symbol,
   price,
   bid: price - 0.01,
@@ -489,6 +525,7 @@ const stockQuote = (symbol: string, price: number, updatedAt: string) => ({
   transport: "tws" as const,
   delayed: false,
   updatedAt,
+  dataUpdatedAt,
 });
 
 test("isQuoteSnapshotAtLeastAsFresh rejects older quote snapshots", () => {
@@ -498,6 +535,52 @@ test("isQuoteSnapshotAtLeastAsFresh rejects older quote snapshots", () => {
 
   assert.equal(isQuoteSnapshotAtLeastAsFresh(older, current), false);
   assert.equal(isQuoteSnapshotAtLeastAsFresh(newer, current), true);
+});
+
+test("isQuoteSnapshotAtLeastAsFresh compares dataUpdatedAt before wrapper updatedAt", () => {
+  const current = stockQuote(
+    "SPY",
+    502,
+    "2026-04-28T14:30:05.000Z",
+    "2026-04-28T14:30:02.000Z",
+  );
+  const staleRewrapped = stockQuote(
+    "SPY",
+    499,
+    "2026-04-28T14:31:00.000Z",
+    "2026-04-28T14:29:58.000Z",
+  );
+
+  assert.equal(isQuoteSnapshotAtLeastAsFresh(staleRewrapped, current), false);
+});
+
+test("isQuoteSnapshotAtLeastAsFresh accepts newer same-data-time quote events", () => {
+  const current = {
+    ...stockQuote(
+      "SPY",
+      502,
+      "2026-04-28T14:30:02.000Z",
+      "2026-04-28T14:30:02.000Z",
+    ),
+    latency: {
+      apiServerReceivedAt: "2026-04-28T14:30:02.100Z",
+      apiServerEmittedAt: "2026-04-28T14:30:02.200Z",
+    },
+  };
+  const incoming = {
+    ...stockQuote(
+      "SPY",
+      503,
+      "2026-04-28T14:30:02.000Z",
+      "2026-04-28T14:30:02.000Z",
+    ),
+    latency: {
+      apiServerReceivedAt: "2026-04-28T14:30:02.300Z",
+      apiServerEmittedAt: "2026-04-28T14:30:02.400Z",
+    },
+  };
+
+  assert.equal(isQuoteSnapshotAtLeastAsFresh(incoming, current), true);
 });
 
 test("mergeQuotesIntoCache keeps canonical quote when incoming snapshot is older", () => {
@@ -514,6 +597,52 @@ test("mergeQuotesIntoCache keeps canonical quote when incoming snapshot is older
   );
 
   assert.equal(merged?.quotes[0]?.price, 502);
+});
+
+test("mergeQuotesIntoCache keeps canonical quote when same-timestamp values conflict", () => {
+  const current = {
+    quotes: [stockQuote("SPY", 502, "2026-04-28T14:30:02.000Z")],
+    transport: "tws" as const,
+    delayed: false,
+    fallbackUsed: false,
+  };
+  const conflicting = {
+    ...stockQuote("SPY", 499, "2026-04-28T14:30:02.000Z"),
+    latency: {
+      apiServerReceivedAt: "2026-04-28T14:30:05.000Z",
+      apiServerEmittedAt: "2026-04-28T14:30:05.100Z",
+    },
+  };
+  const merged = mergeQuotesIntoCache(current, [conflicting], ["SPY"]);
+
+  assert.equal(merged?.quotes[0]?.price, 502);
+});
+
+test("mergeQuotesIntoCache accepts same-timestamp quote with newer receive time", () => {
+  const current = {
+    quotes: [
+      {
+        ...stockQuote("SPY", 502, "2026-04-28T14:30:02.000Z"),
+        latency: {
+          apiServerReceivedAt: "2026-04-28T14:30:02.100Z",
+          apiServerEmittedAt: "2026-04-28T14:30:02.200Z",
+        },
+      },
+    ],
+    transport: "tws" as const,
+    delayed: false,
+    fallbackUsed: false,
+  };
+  const incoming = {
+    ...stockQuote("SPY", 503, "2026-04-28T14:30:02.000Z"),
+    latency: {
+      apiServerReceivedAt: "2026-04-28T14:30:02.300Z",
+      apiServerEmittedAt: "2026-04-28T14:30:02.400Z",
+    },
+  };
+  const merged = mergeQuotesIntoCache(current, [incoming], ["SPY"]);
+
+  assert.equal(merged?.quotes[0]?.price, 503);
 });
 
 const createMockQueryClient = (
@@ -770,7 +899,6 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
       points: [{ timestamp: "calendar" }],
     },
     flexHealth: { flexConfigured: true },
-    tradingPatterns: null,
   } as any);
 
   assert.equal(

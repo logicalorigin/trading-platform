@@ -62,7 +62,7 @@ const reportPlatformBoundaryError = (
     raw?: Record<string, unknown>;
   } = {},
 ) => {
-  console.error("[rayalgo] UI boundary caught render error", {
+  console.error("[pyrus] UI boundary caught render error", {
     label,
     error,
     componentStack: info.componentStack,

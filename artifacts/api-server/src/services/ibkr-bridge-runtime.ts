@@ -872,7 +872,7 @@ function assertBridgeHealth(health: unknown): void {
       {
         code: "ibkr_bridge_live_data_not_active",
         detail:
-          "RayAlgo expects IB Gateway live mode on API port 4001 with market data type 1.",
+          "PYRUS expects IB Gateway live mode on API port 4001 with market data type 1.",
       },
     );
   }
@@ -1530,7 +1530,7 @@ export function cancelLegacyIbkrBridgeActivation(
       activationId,
       status: "canceled",
       step: "cancel_requested",
-      message: "IB Gateway bridge launch was canceled from RayAlgo.",
+      message: "IB Gateway bridge launch was canceled from PYRUS.",
       helperVersion: BRIDGE_HELPER_VERSION,
       bridgeUrl: null,
       updatedAt: new Date(),

@@ -8,15 +8,39 @@ const accountScreenSource = readFileSync(new URL("../AccountScreen.jsx", import.
 test("hero owns net liq, day P&L, and the performance summary", () => {
   assert.match(source, /data-testid="account-hero-block"/);
   assert.match(source, /data-testid="account-hero-primary-row"/);
-  assert.match(source, /data-testid="account-hero-performance-summary"/);
-  assert.match(source, /data-testid="account-hero-performance-grid"/);
-  assert.match(source, /fontSize:\s*fs\(isPhone \? 18 : 24\)/);
+  assert.match(source, /data-testid="account-hero-performance-rail"/);
+  assert.match(source, /fontSize:\s*fs\(isPhone \? 16 : 20\)/);
   assert.match(source, /background:\s*`\$\{dayTone\}12`/);
   assert.match(source, /returnsModel/);
   assert.match(source, /label:\s*"Adj return"/);
   assert.match(source, /label:\s*"P&L Δ"/);
   assert.doesNotMatch(source, /marginLeft:\s*"auto"/);
   assert.doesNotMatch(source, /sectionControl/);
+});
+
+test("hero uses tightened one-line spacing", () => {
+  assert.match(source, /gap:\s*sp\(isPhone \? 4 : 6\)/);
+  assert.match(source, /padding:\s*sp\("1px 3px 1px"\)/);
+  assert.match(source, /gap:\s*sp\(2\)/);
+  assert.match(source, /minHeight:\s*dim\(18\)/);
+  assert.match(source, /maxWidth:\s*dim\(104\)/);
+  assert.match(source, /padding:\s*sp\("0 5px"\)/);
+  assert.match(source, /<DayIcon size=\{10\} \/>/);
+  assert.doesNotMatch(source, /fontSize:\s*fs\(isPhone \? 18 : 24\)/);
+  assert.doesNotMatch(source, /maxWidth:\s*dim\(112\)/);
+  assert.doesNotMatch(source, /<DayIcon size=\{11\} \/>/);
+});
+
+test("hero keeps the old one-row height by using a horizontal performance rail", () => {
+  assert.match(source, /display:\s*"flex"/);
+  assert.match(source, /overflow:\s*"hidden"/);
+  assert.match(source, /overflowX:\s*"auto"/);
+  assert.match(source, /whiteSpace:\s*"nowrap"/);
+  assert.match(source, /const performanceRailMetrics = \[\.\.\.performanceSummary, \.\.\.performanceMetrics\]/);
+  assert.match(source, /<HeroMetricPill/);
+  assert.doesNotMatch(source, /data-testid="account-hero-performance-grid"/);
+  assert.doesNotMatch(source, /gridTemplateColumns:\s*isPhone/);
+  assert.doesNotMatch(source, /flexWrap:\s*"wrap"/);
 });
 
 test("hero carries the full former performance metric set", () => {

@@ -76,9 +76,14 @@ const DEFERRED_MODULE_PRELOAD_PATTERNS = [
   /vendor-lightweight-charts/,
 ];
 
-const isolationMode = process.env.RAYALGO_CROSS_ORIGIN_ISOLATION || "report-only";
-const coopPolicy = process.env.RAYALGO_COOP_POLICY || "same-origin";
-const coepPolicy = process.env.RAYALGO_COEP_POLICY || "require-corp";
+const isolationMode =
+  process.env.PYRUS_CROSS_ORIGIN_ISOLATION ||
+  process.env.RAYALGO_CROSS_ORIGIN_ISOLATION ||
+  "report-only";
+const coopPolicy =
+  process.env.PYRUS_COOP_POLICY || process.env.RAYALGO_COOP_POLICY || "same-origin";
+const coepPolicy =
+  process.env.PYRUS_COEP_POLICY || process.env.RAYALGO_COEP_POLICY || "require-corp";
 const reactRoot = resolvePackageRoot("react");
 const reactDomRoot = resolvePackageRoot("react-dom");
 const reactQueryRoot = resolvePackageRoot("@tanstack/react-query");
@@ -87,7 +92,7 @@ const queryCoreRoot = path.dirname(
 );
 const sourceTreeDirty = readGitValue(["status", "--short"]).length > 0;
 const runtimeBuildFingerprint = {
-  packageName: "@workspace/rayalgo",
+  packageName: "@workspace/pyrus",
   viteConfigPath: "artifacts/rayalgo/vite.config.ts",
   gitSha: readGitValue(["rev-parse", "--short=12", "HEAD"]) || "unknown",
   gitBranch: readGitValue(["branch", "--show-current"]) || "unknown",
@@ -110,17 +115,18 @@ const isolationHeaders =
               ? "credentialless"
               : coepPolicy,
           "Cross-Origin-Resource-Policy": "same-origin",
-          "Reporting-Endpoints": 'rayalgo="/api/diagnostics/browser-reports"',
+          "Reporting-Endpoints": 'pyrus="/api/diagnostics/browser-reports"',
         }
       : {
-          "Cross-Origin-Opener-Policy-Report-Only": `${coopPolicy}; report-to="rayalgo"`,
-          "Cross-Origin-Embedder-Policy-Report-Only": `${coepPolicy}; report-to="rayalgo"`,
-          "Reporting-Endpoints": 'rayalgo="/api/diagnostics/browser-reports"',
+          "Cross-Origin-Opener-Policy-Report-Only": `${coopPolicy}; report-to="pyrus"`,
+          "Cross-Origin-Embedder-Policy-Report-Only": `${coepPolicy}; report-to="pyrus"`,
+          "Reporting-Endpoints": 'pyrus="/api/diagnostics/browser-reports"',
         };
 
 export default defineConfig({
   base: basePath,
   define: {
+    __PYRUS_BUILD_FINGERPRINT__: JSON.stringify(runtimeBuildFingerprint),
     __RAYALGO_BUILD_FINGERPRINT__: JSON.stringify(runtimeBuildFingerprint),
   },
   plugins: [
@@ -199,6 +205,70 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
+
+          if (
+            normalizedId.includes("/src/features/preferences/useUserPreferences") ||
+            normalizedId.includes("/src/features/preferences/userPreferenceModel") ||
+            normalizedId.includes("/src/lib/motion") ||
+            normalizedId.includes("/src/lib/responsive") ||
+            normalizedId.includes("/src/lib/timeZone") ||
+            normalizedId.includes("/src/lib/uiTokens") ||
+            normalizedId.includes("/src/lib/formatters") ||
+            normalizedId.includes("/src/lib/tooltipStyles") ||
+            normalizedId.includes("/src/lib/workspaceState") ||
+            normalizedId.includes("/src/components/LogoLoader") ||
+            normalizedId.includes("/src/components/platform/BottomSheet") ||
+            normalizedId.includes("/src/components/platform/DeferredRender") ||
+            normalizedId.includes("/src/components/platform/Drawer") ||
+            normalizedId.includes("/src/components/platform/PlatformErrorBoundary") ||
+            normalizedId.includes("/src/components/platform/primitives") ||
+            normalizedId.includes("/src/components/platform/InfoTooltipIcon") ||
+            normalizedId.includes("/src/components/ui/Button") ||
+            normalizedId.includes("/src/components/ui/CockpitHeader") ||
+            normalizedId.includes("/src/components/ui/PulseDot") ||
+            normalizedId.includes("/src/components/ui/SectionHeader") ||
+            normalizedId.includes("/src/components/ui/Stat") ||
+            normalizedId.includes("/src/components/ui/dropdown-menu") ||
+            normalizedId.includes("/src/components/ui/popover") ||
+            normalizedId.includes("/src/components/ui/tabs") ||
+            normalizedId.includes("/src/components/ui/tooltip")
+          ) {
+            return "ui-core";
+          }
+
+          if (
+            normalizedId.includes("/src/features/platform/live-streams") ||
+            normalizedId.includes("/src/features/platform/flowFilterStore") ||
+            normalizedId.includes("/src/features/platform/hydrationCoordinator") ||
+            normalizedId.includes("/src/features/platform/marketFlowStore") ||
+            normalizedId.includes("/src/features/platform/platformContexts") ||
+            normalizedId.includes("/src/features/platform/platformJsonRequest") ||
+            normalizedId.includes("/src/features/platform/queryDefaults") ||
+            normalizedId.includes("/src/features/platform/runtimeCache") ||
+            normalizedId.includes("/src/features/platform/runtimeTickerStore") ||
+            normalizedId.includes("/src/features/platform/signalMonitorStore") ||
+            normalizedId.includes("/src/features/platform/tickerIdentity") ||
+            normalizedId.includes("/src/features/platform/tradeFlowStore") ||
+            normalizedId.includes("/src/features/platform/tradeOptionChainStore") ||
+            normalizedId.includes("/src/features/platform/workloadStats")
+          ) {
+            return "platform-runtime";
+          }
+
+          if (
+            normalizedId.includes("/src/features/charting/activeChartBarStore") ||
+            normalizedId.includes("/src/features/charting/chartEvents") ||
+            normalizedId.includes("/src/features/charting/chartHydrationRuntime") ||
+            normalizedId.includes("/src/features/charting/chartHydrationStats") ||
+            normalizedId.includes("/src/features/charting/indicators") ||
+            normalizedId.includes("/src/features/charting/model") ||
+            normalizedId.includes("/src/features/charting/timeframeRollups") ||
+            normalizedId.includes("/src/features/charting/useDrawingHistory") ||
+            normalizedId.includes("/src/features/charting/useMassiveStockAggregateStream") ||
+            normalizedId.includes("/src/features/charting/timeframes")
+          ) {
+            return "charting-runtime";
+          }
 
           if (
             normalizedId.includes("/src/app/runtime-config") ||
@@ -312,10 +382,16 @@ export default defineConfig({
           }
 
           if (
+            normalizedId.includes("/src/features/charting/RayReplicaSettingsMenu") ||
+            normalizedId.includes("/src/features/charting/rayReplicaPineAdapter")
+          ) {
+            return "feature-rayreplica-settings";
+          }
+
+          if (
             normalizedId.includes("/src/features/charting/ResearchChartSurface") ||
             normalizedId.includes("/src/features/charting/ResearchChartFrame") ||
-            normalizedId.includes("/src/features/charting/ResearchChartWidgetChrome") ||
-            normalizedId.includes("/src/features/charting/RayReplicaSettingsMenu")
+            normalizedId.includes("/src/features/charting/ResearchChartWidgetChrome")
           ) {
             return "feature-charting-surface";
           }

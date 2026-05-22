@@ -9,6 +9,8 @@ process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] = "1";
 
 const diagnosticsModule = await import("./diagnostics");
+const requestMetricsModule = await import("./request-metrics");
+const resourcePressureModule = await import("./resource-pressure");
 const signalOptionsWorkerStateModule = await import("./signal-options-worker-state");
 const storageHealthModule = await import("./storage-health");
 const {
@@ -17,11 +19,12 @@ const {
   listDiagnosticHistory,
   listDiagnosticEvents,
   recordBrowserReports,
-  recordApiRequest,
   recordBrowserDiagnosticEvent,
   recordClientDiagnosticsMetrics,
   recordServerDiagnosticEvent,
 } = diagnosticsModule;
+const { recordApiRequest, __resetRequestMetricsForTests } = requestMetricsModule;
+const { __resetApiResourcePressureForTests } = resourcePressureModule;
 const {
   __resetStorageHealthForTests,
   __setStorageHealthProbeForTests,
@@ -86,6 +89,8 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
+  __resetRequestMetricsForTests();
+  __resetApiResourcePressureForTests();
   __resetStorageHealthForTests();
   registerEmptySignalOptionsWorkerSnapshot();
 });
@@ -1173,7 +1178,7 @@ test("diagnostics keep non-isolation browser reports out of isolation alerts", a
   const result = await recordBrowserReports([
     {
       type: "threshold",
-      url: "https://rayalgo.local/",
+      url: "https://pyrus.local/",
       body: {
         id: "layout-shift",
         message: "Browser threshold report",
@@ -1220,7 +1225,7 @@ test("diagnostics record COOP/COEP browser reports as isolation events", async (
   const result = await recordBrowserReports([
     {
       type: "coep",
-      url: "https://rayalgo.local/",
+      url: "https://pyrus.local/",
       body: {
         blockedURL: "https://s3-symbol-logo.tradingview.com/aapl.svg",
         disposition: "reporting",

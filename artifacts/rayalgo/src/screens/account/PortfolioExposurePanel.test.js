@@ -11,6 +11,7 @@ test("portfolio exposure panel renders compact dashboard regions", () => {
   assert.match(source, /data-testid="portfolio-exposure-main-grid"/);
   assert.match(source, /data-testid="portfolio-exposure-allocation"/);
   assert.match(source, /data-testid="portfolio-exposure-risk-level"/);
+  assert.match(source, /data-testid="portfolio-exposure-notional"/);
   assert.match(source, /data-testid="portfolio-exposure-concentration"/);
   assert.match(source, /data-testid="portfolio-exposure-risk-strip"/);
 });
@@ -19,6 +20,12 @@ test("portfolio exposure panel uses dense local composition instead of stacked s
   assert.match(source, /PieChart/);
   assert.match(source, /ExposureMetricRail/);
   assert.match(source, /RiskStrip/);
+  assert.match(source, /NotionalExposureStrip/);
+  assert.match(source, /Notional Exposure/);
+  assert.match(source, /Gross Notional/);
+  assert.match(source, /Net Direction/);
+  assert.match(source, /Delta Adj/);
+  assert.match(source, /Notional \/ NLV/);
   assert.match(source, /label=\{riskDisplay\.mode === "capital" \? "Buffer" : "Cushion"\}/);
   assert.match(source, /RiskLevelDonut/);
   assert.match(source, /Risk Level/);
@@ -38,6 +45,22 @@ test("portfolio exposure panel uses dense local composition instead of stacked s
   assert.doesNotMatch(source, /from\s+"\.\/RiskDashboardPanel"/);
   assert.doesNotMatch(source, /SectionHeader\s+title="Holdings"/);
   assert.doesNotMatch(source, /SectionHeader\s+title="Risk"/);
+});
+
+test("portfolio exposure panel tightens local density tokens", () => {
+  assert.match(source, /const DashboardBlock = \(\{ title, children \}\) => \(\s*<div style=\{\{ minWidth: 0, display: "grid", gap: sp\(3\) \}\}>/);
+  assert.match(source, /minmax\(\$\{dim\(74\)\}px, 0\.76fr\)/);
+  assert.match(source, /height:\s*dim\(76\)/);
+  assert.match(source, /minmax\(\$\{dim\(92\)\}px, 1fr\)/);
+  assert.match(source, /maxWidth:\s*dim\(92\)/);
+  assert.match(source, /minmax\(\$\{dim\(68\)\}px, 1fr\)/);
+  assert.match(source, /minmax\(\$\{dim\(44\)\}px, 1fr\)/);
+  assert.match(source, /data-testid="portfolio-exposure-dashboard"[\s\S]*gap:\s*sp\(4\)/);
+  assert.match(source, /data-testid="portfolio-exposure-main-grid"[\s\S]*gap:\s*sp\(4\)/);
+  assert.doesNotMatch(source, /dim\(86\)/);
+  assert.doesNotMatch(source, /dim\(88\)/);
+  assert.doesNotMatch(source, /dim\(108\)/);
+  assert.doesNotMatch(source, /dim\(52\)/);
 });
 
 test("portfolio exposure panel guards per-half loading and error states", () => {

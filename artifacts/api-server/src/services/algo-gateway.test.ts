@@ -64,3 +64,18 @@ test("algo Gateway readiness accepts the live-data configured state", () => {
   assert.equal(readiness.ready, true);
   assert.equal(readiness.reason, null);
 });
+
+test("algo Gateway readiness blocks quiet market sessions", () => {
+  const readiness = resolveAlgoGatewayReadiness({
+    configured: true,
+    healthFresh: true,
+    connected: true,
+    authenticated: true,
+    accountsLoaded: true,
+    configuredLiveMarketDataMode: true,
+    strictReason: "market_session_quiet",
+  });
+
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.reason, "market_session_quiet");
+});

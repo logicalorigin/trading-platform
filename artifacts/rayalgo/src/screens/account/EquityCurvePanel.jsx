@@ -25,6 +25,7 @@ import {
 } from "./accountUtils";
 import {
   buildAnchoredValueDomain,
+  buildBenchmarkValueDomain,
   buildPaddedValueDomain,
   buildTransferAdjustedPnlSeries,
   buildEquityCurvePointSummary,
@@ -280,6 +281,14 @@ const formatAxisTick = (value, range) =>
         day: "numeric",
       });
 
+const formatChartDetailTimestamp = (value) =>
+  formatAppDateTime(value, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
 const inspectionDateFromPoint = (point) => {
   const timestampMs = finiteNumber(point?.timestampMs);
   if (timestampMs == null) return null;
@@ -309,8 +318,15 @@ const EquityCurveChartSurface = memo(({
   activeInspectionPoint,
   pinnedInspectionDate,
   setActiveEvent,
-}) => (
-  <div style={{ width: "100%", height: dim(compact ? 148 : 158) }}>
+}) => {
+  const hasVisibleBenchmark = benchmarks.some(
+    (benchmark) =>
+      visibleBenchmarks[benchmark.key] &&
+      availableBenchmarkKeys.has(benchmark.key),
+  );
+
+  return (
+    <div style={{ width: "100%", height: dim(compact ? 148 : 158) }}>
     <ResponsiveContainer>
       <ComposedChart
         data={data}
@@ -365,17 +381,19 @@ const EquityCurveChartSurface = memo(({
           tickLine={false}
           axisLine={false}
         />
-        <YAxis
-          yAxisId="right"
-          orientation="right"
-          domain={rightAxisDomain}
-          tick={{ fill: T.textMuted, fontSize: textSize(compact ? "label" : "caption") }}
-          tickFormatter={(value) => `${value.toFixed(0)}%`}
-          width={compact ? 28 : 42}
-          stroke="none"
-          tickLine={false}
-          axisLine={false}
-        />
+        {hasVisibleBenchmark ? (
+          <YAxis
+            yAxisId="right"
+            orientation="right"
+            domain={rightAxisDomain}
+            tick={{ fill: T.textMuted, fontSize: textSize(compact ? "label" : "caption") }}
+            tickFormatter={(value) => `${value.toFixed(0)}%`}
+            width={compact ? 28 : 42}
+            stroke="none"
+            tickLine={false}
+            axisLine={false}
+          />
+        ) : null}
         <Tooltip
           content={
             <ChartTooltip
@@ -441,8 +459,9 @@ const EquityCurveChartSurface = memo(({
           : null}
       </ComposedChart>
     </ResponsiveContainer>
-  </div>
-));
+    </div>
+  );
+});
 
 EquityCurveChartSurface.displayName = "EquityCurveChartSurface";
 
@@ -630,6 +649,10 @@ export const EquityCurvePanel = ({
     maxPnl,
     transferAdjustedPnl: delta,
   } = chartSummary;
+  const latestChartTimestamp =
+    chartData?.asOf ?? chartData?.latestSnapshotAt ?? lastPoint?.timestamp ?? null;
+  const latestSnapshotTimestamp = chartData?.latestSnapshotAt ?? latestChartTimestamp;
+  const chartPointCountLabel = `${data.length.toLocaleString()} pts`;
   const deltaPercent = finiteNumber(lastPoint?.returnPercent);
   const headlineNetLiquidation =
     currentNetLiquidation != null && Number.isFinite(Number(currentNetLiquidation))
@@ -647,6 +670,13 @@ export const EquityCurvePanel = ({
   const availableBenchmarkKeys = useMemo(
     () => new Set(availableBenchmarks.map((benchmark) => benchmark.key)),
     [availableBenchmarks],
+  );
+  const visibleAvailableBenchmarks = useMemo(
+    () =>
+      availableBenchmarks.filter(
+        (benchmark) => visibleBenchmarks[benchmark.key],
+      ),
+    [availableBenchmarks, visibleBenchmarks],
   );
   const hasPoints = data.length > 0;
   const chartDataKey = chartMode === "pnl" ? "cumulativePnl" : "netLiquidation";
@@ -688,18 +718,15 @@ export const EquityCurvePanel = ({
   );
   const rightAxisDomain = useMemo(
     () =>
-      buildAnchoredValueDomain(
+      buildBenchmarkValueDomain(
         data.flatMap((point) =>
           visibleBenchmarkDataKeys.map((dataKey) => point[dataKey]),
         ),
         {
-          anchorValue: 0,
-          anchorRatio: benchmarkAnchorRatio ?? 0.5,
-          paddingRatio: 0.12,
-          minPadding: 1,
+          anchorRatio: chartMode === "pnl" ? benchmarkAnchorRatio : null,
         },
       ),
-    [benchmarkAnchorRatio, data, visibleBenchmarkDataKeys],
+    [benchmarkAnchorRatio, chartMode, data, visibleBenchmarkDataKeys],
   );
   const headlineValue =
     chartMode === "pnl" ? delta : headlineNetLiquidation;
@@ -961,9 +988,12 @@ export const EquityCurvePanel = ({
             }}
           >
             <span>
-              {formatAppDate(firstPoint?.timestamp)}
+              {formatChartDetailTimestamp(firstPoint?.timestamp)}
               {" -> "}
-              {formatAppDate(lastPoint?.timestamp)}
+              {formatChartDetailTimestamp(lastPoint?.timestamp)}
+            </span>
+            <span>
+              {chartPointCountLabel} · latest {formatChartDetailTimestamp(latestChartTimestamp)}
             </span>
             <span>
               {chartMode === "pnl" ? (
@@ -979,15 +1009,12 @@ export const EquityCurvePanel = ({
               )}
             </span>
             <span>
-              {sourceLabel}{" "}
-              {chartData?.lastFlexRefreshAt
-                ? formatAppDate(chartData.lastFlexRefreshAt)
-                : "—"}
+              {sourceLabel} snapshot {formatChartDetailTimestamp(latestSnapshotTimestamp)}
             </span>
             <span>
               Benchmarks{" "}
-              {availableBenchmarks.length
-                ? availableBenchmarks.map((benchmark) => benchmark.label).join(" · ")
+              {visibleAvailableBenchmarks.length
+                ? visibleAvailableBenchmarks.map((benchmark) => benchmark.label).join(" · ")
                 : "n/a"}
             </span>
           </div>

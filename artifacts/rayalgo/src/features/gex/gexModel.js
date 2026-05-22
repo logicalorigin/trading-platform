@@ -167,6 +167,7 @@ export const normalizeGexResponseOptions = (options = []) => {
     const gamma = finiteOrNull(option?.gamma);
     const openInterest = finiteOrNull(option?.openInterest);
     const impliedVolatility = finiteOrNull(option?.impliedVol);
+    const multiplier = finiteOrNull(option?.multiplier) ?? 100;
 
     if (gamma != null) coverage.withGamma += 1;
     if (openInterest != null) coverage.withOpenInterest += 1;
@@ -195,6 +196,7 @@ export const normalizeGexResponseOptions = (options = []) => {
       ticker: option?.ticker || null,
       underlying: option?.underlying || null,
       expirationDate,
+      providerContractId: option?.providerContractId || null,
       expireYear,
       expireMonth,
       expireDay,
@@ -206,7 +208,12 @@ export const normalizeGexResponseOptions = (options = []) => {
       impliedVol: impliedVolatility ?? 0,
       bid: finiteOrNull(option?.bid),
       ask: finiteOrNull(option?.ask),
-      multiplier: finiteOrNull(option?.multiplier) ?? 100,
+      multiplier,
+      sharesPerContract: finiteOrNull(option?.sharesPerContract) ?? multiplier,
+      volume: finiteOrNull(option?.volume),
+      updatedAt: option?.updatedAt || null,
+      quoteFreshness: option?.quoteFreshness || null,
+      marketDataMode: option?.marketDataMode || null,
     });
   });
 
@@ -434,9 +441,10 @@ export const gammaPriceProfile = (rows = [], spot, now = new Date()) => {
   const steps = 60;
   const baked = rows
     .map((option) => {
+      const sigma = finiteOrNull(option.impliedVol);
+      if (!sigma || sigma <= 0) return null;
       const days = Math.max(0.5, expirationDayDistance(option, now));
       const tenor = days / 365;
-      const sigma = Math.max(0.05, finiteOrZero(option.impliedVol));
       const sigmaK = option.strike * sigma * Math.sqrt(tenor);
       return {
         strike: option.strike,
@@ -447,7 +455,9 @@ export const gammaPriceProfile = (rows = [], spot, now = new Date()) => {
         oneOverScale: 1 / (sigma * Math.sqrt(tenor) * Math.sqrt(2 * Math.PI)),
       };
     })
-    .filter((option) => option.oi > 0 && option.sigmaK > 0);
+    .filter((option) => option && option.oi > 0 && option.sigmaK > 0);
+
+  if (!baked.length) return [];
 
   return Array.from({ length: steps + 1 }, (_, index) => {
     const projectedSpot = minPrice + ((maxPrice - minPrice) * index) / steps;

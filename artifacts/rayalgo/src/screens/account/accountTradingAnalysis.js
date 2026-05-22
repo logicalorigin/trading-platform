@@ -782,20 +782,11 @@ export const buildAccountTradingAnalysisModel = ({
   trades = [],
   orders = [],
   positions = [],
-  patternPacket = {},
   selectedTradeId = "",
 } = {}) => {
   const tradeRows = arrayValue(trades);
   const computedSummary = summarizeTrades(tradeRows);
-  const summary = tradeRows.length
-    ? {
-        ...(patternPacket?.summary || {}),
-        ...computedSummary,
-      }
-    : {
-        ...computedSummary,
-        ...(patternPacket?.summary || {}),
-      };
+  const summary = computedSummary;
   const bySymbol = groupTrades(tradeRows, "symbol", (trade) => normalizeSymbol(trade.symbol) || "UNKNOWN");
   const bySource = groupTrades(tradeRows, "source", tradeSourceType);
   const bySide = groupTrades(tradeRows, "side", tradeSide);

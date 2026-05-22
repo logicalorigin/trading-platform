@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountAllocationQueryKey,
@@ -9,7 +9,6 @@ import {
   getGetAccountPositionsQueryKey,
   getGetAccountRiskQueryKey,
   getGetAccountSummaryQueryKey,
-  getGetAccountTradingPatternsQueryKey,
   getGetFlexHealthQueryKey,
   getListAlgoDeploymentsQueryKey,
   getListExecutionEventsQueryKey,
@@ -34,7 +33,6 @@ import type {
   AccountRiskResponse,
   AccountSummaryResponse,
   AccountEquityHistoryResponse,
-  AccountTradingPatternsResponse,
   AccountEquityPoint,
   AccountsResponse,
   AlgoCockpitSnapshotResponse,
@@ -69,6 +67,8 @@ type AccountTradeFilterInput = Partial<AccountTradeFilters>;
 type QuoteStreamPayload = {
   quotes: QuoteSnapshot[];
 };
+
+const QUOTE_STREAM_CACHE_FLUSH_MS = 100;
 
 type AccountStreamPayload = {
   accounts: AccountsResponse["accounts"];
@@ -117,7 +117,6 @@ type AccountPageBootstrapPayload = {
   risk: AccountRiskResponse;
   cashActivity: AccountCashActivityResponse;
   flexHealth: FlexHealthResponse | null;
-  tradingPatterns: AccountTradingPatternsResponse | null;
 };
 
 type AccountPageLivePayload = {
@@ -164,7 +163,6 @@ type AccountPageDerivedPayload = {
   closedTrades: AccountClosedTradesResponse;
   cashActivity: AccountCashActivityResponse;
   flexHealth: FlexHealthResponse | null;
-  tradingPatterns: AccountTradingPatternsResponse | null;
 };
 
 type AlgoCockpitStreamPayload = {
@@ -239,6 +237,7 @@ type OptionQuoteStreamIntent =
   | "account-monitor-live"
   | "visible-live"
   | "automation-live"
+  | "watchlist-live"
   | "flow-scanner-live"
   | "convenience-live"
   | "delayed-ok"
@@ -945,6 +944,40 @@ const readQuoteReceivedAtMs = (quote: QuoteSnapshot | undefined): number | null 
   );
 };
 
+const QUOTE_VALUE_FIELDS: Array<keyof QuoteSnapshot> = [
+  "price",
+  "bid",
+  "ask",
+  "change",
+  "changePercent",
+  "open",
+  "high",
+  "low",
+  "prevClose",
+  "volume",
+  "delayed",
+  "freshness",
+  "marketDataMode",
+  "source",
+  "transport",
+];
+
+const hasSameTimestampQuoteConflict = (
+  incoming: QuoteSnapshot,
+  current: QuoteSnapshot,
+): boolean =>
+  QUOTE_VALUE_FIELDS.some((field) => {
+    const currentValue = current[field];
+    const incomingValue = incoming[field];
+    return (
+      currentValue !== undefined &&
+      currentValue !== null &&
+      incomingValue !== undefined &&
+      incomingValue !== null &&
+      !Object.is(currentValue, incomingValue)
+    );
+  });
+
 export const isQuoteSnapshotAtLeastAsFresh = (
   incoming: QuoteSnapshot,
   current: QuoteSnapshot | undefined,
@@ -953,8 +986,12 @@ export const isQuoteSnapshotAtLeastAsFresh = (
     return true;
   }
 
-  const incomingUpdatedAt = readQuoteTimestampMs(incoming.updatedAt);
-  const currentUpdatedAt = readQuoteTimestampMs(current.updatedAt);
+  const incomingUpdatedAt =
+    readQuoteTimestampMs(incoming.dataUpdatedAt) ??
+    readQuoteTimestampMs(incoming.updatedAt);
+  const currentUpdatedAt =
+    readQuoteTimestampMs(current.dataUpdatedAt) ??
+    readQuoteTimestampMs(current.updatedAt);
 
   if (incomingUpdatedAt !== null && currentUpdatedAt !== null) {
     if (incomingUpdatedAt > currentUpdatedAt) {
@@ -962,6 +999,16 @@ export const isQuoteSnapshotAtLeastAsFresh = (
     }
     if (incomingUpdatedAt < currentUpdatedAt) {
       return false;
+    }
+    const incomingWrapperUpdatedAt = readQuoteTimestampMs(incoming.updatedAt);
+    const currentWrapperUpdatedAt = readQuoteTimestampMs(current.updatedAt);
+    if (incomingWrapperUpdatedAt !== null && currentWrapperUpdatedAt !== null) {
+      if (incomingWrapperUpdatedAt > currentWrapperUpdatedAt) {
+        return true;
+      }
+      if (incomingWrapperUpdatedAt < currentWrapperUpdatedAt) {
+        return false;
+      }
     }
   } else if (incomingUpdatedAt === null && currentUpdatedAt !== null) {
     return false;
@@ -971,11 +1018,10 @@ export const isQuoteSnapshotAtLeastAsFresh = (
 
   const incomingReceivedAt = readQuoteReceivedAtMs(incoming);
   const currentReceivedAt = readQuoteReceivedAtMs(current);
-  return (
-    currentReceivedAt === null ||
-    incomingReceivedAt === null ||
-    incomingReceivedAt >= currentReceivedAt
-  );
+  if (incomingReceivedAt !== null && currentReceivedAt !== null) {
+    return incomingReceivedAt >= currentReceivedAt;
+  }
+  return !hasSameTimestampQuoteConflict(incoming, current);
 };
 
 const collectLatestCachedQuotesBySymbol = (
@@ -2581,16 +2627,6 @@ const seedAccountPageDerivedQueryKeys = (
       payload.flexHealth,
     );
   }
-  if (payload.tradingPatterns) {
-    setAccountPageQueryData(
-      queryClient,
-      getGetAccountTradingPatternsQueryKey(payload.accountId, {
-        range,
-        snapshotId: "latest",
-      }),
-      payload.tradingPatterns,
-    );
-  }
 };
 
 export const applyAccountPageCriticalPayloadToCache = (
@@ -2808,13 +2844,6 @@ export const applyAccountPageDerivedPayloadToCache = (
         } else if (range === "1Y") {
           queryClient.setQueryData(query.queryKey, payload.performanceCalendarEquity);
         }
-      } else if (
-        path === `/api/accounts/${payload.accountId}/trading-patterns` &&
-        payload.tradingPatterns &&
-        (normalizeAccountHistoryRange(params?.range) ?? "ALL") === payload.range &&
-        (!params?.snapshotId || params.snapshotId === "latest")
-      ) {
-        queryClient.setQueryData(query.queryKey, payload.tradingPatterns);
       }
     });
 };
@@ -2852,7 +2881,6 @@ export const applyAccountPagePayloadToCache = (
     closedTrades: payload.closedTrades,
     cashActivity: payload.cashActivity,
     flexHealth: payload.flexHealth,
-    tradingPatterns: payload.tradingPatterns,
   });
 };
 
@@ -3444,6 +3472,10 @@ export const useIbkrQuoteSnapshotStream = ({
 }) => {
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
+  const pendingQuoteStreamSnapshotsRef = useRef(new Map<string, QuoteSnapshot>());
+  const quoteStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
   const streamUrl = useMemo(
     () =>
@@ -3454,28 +3486,16 @@ export const useIbkrQuoteSnapshotStream = ({
   );
 
   useEffect(() => {
-    if (
-      !enabled ||
-      !pageVisible ||
-      !streamUrl ||
-      typeof window === "undefined" ||
-      typeof window.EventSource === "undefined"
-    ) {
-      return;
-    }
-
-    const source = new EventSource(streamUrl);
-    const handleQuotes = (event: MessageEvent<string>) => {
-      const payload = parseJsonPayload<QuoteStreamPayload>(event.data);
-      if (!payload?.quotes?.length) {
-        return;
+    const flushQuoteStreamSnapshots = () => {
+      if (quoteStreamFlushTimerRef.current != null) {
+        clearTimeout(quoteStreamFlushTimerRef.current);
+        quoteStreamFlushTimerRef.current = null;
       }
 
-      const latestBySymbol = collectLatestCachedQuotesBySymbol(queryClient);
-      const acceptedQuotes = filterAcceptedQuoteSnapshots(
-        payload.quotes,
-        latestBySymbol,
+      const acceptedQuotes = Array.from(
+        pendingQuoteStreamSnapshotsRef.current.values(),
       );
+      pendingQuoteStreamSnapshotsRef.current.clear();
       if (!acceptedQuotes.length) {
         return;
       }
@@ -3498,10 +3518,62 @@ export const useIbkrQuoteSnapshotStream = ({
         });
     };
 
+    const scheduleQuoteStreamFlush = () => {
+      if (quoteStreamFlushTimerRef.current != null) {
+        return;
+      }
+      quoteStreamFlushTimerRef.current = setTimeout(
+        flushQuoteStreamSnapshots,
+        QUOTE_STREAM_CACHE_FLUSH_MS,
+      );
+    };
+
+    if (
+      !enabled ||
+      !pageVisible ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return;
+    }
+
+    const source = new EventSource(streamUrl);
+    const handleQuotes = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<QuoteStreamPayload>(event.data);
+      if (!payload?.quotes?.length) {
+        return;
+      }
+
+      const latestBySymbol = collectLatestCachedQuotesBySymbol(queryClient);
+      pendingQuoteStreamSnapshotsRef.current.forEach((quote, symbol) => {
+        if (isQuoteSnapshotAtLeastAsFresh(quote, latestBySymbol.get(symbol))) {
+          latestBySymbol.set(symbol, quote);
+        }
+      });
+      const acceptedQuotes = filterAcceptedQuoteSnapshots(
+        payload.quotes,
+        latestBySymbol,
+      );
+      if (!acceptedQuotes.length) {
+        return;
+      }
+
+      acceptedQuotes.forEach((quote) => {
+        const symbol = quote.symbol?.toUpperCase?.();
+        if (symbol) {
+          pendingQuoteStreamSnapshotsRef.current.set(symbol, quote);
+          latestBySymbol.set(symbol, quote);
+        }
+      });
+      scheduleQuoteStreamFlush();
+    };
+
     source.addEventListener("quotes", handleQuotes as EventListener);
     return () => {
       source.removeEventListener("quotes", handleQuotes as EventListener);
       source.close();
+      flushQuoteStreamSnapshots();
     };
   }, [enabled, onQuotes, pageVisible, queryClient, streamUrl]);
 };
@@ -3868,21 +3940,31 @@ export const useAlgoCockpitStream = ({
   mode,
   eventLimit = 20,
   enabled = true,
+  onLiveEvents,
 }: {
   deploymentId?: string | null;
   mode: StreamMode;
   eventLimit?: number;
   enabled?: boolean;
+  onLiveEvents?: (
+    events: ExecutionEventsResponse["events"],
+    context: { phase: "critical" | "full" | null },
+  ) => void;
 }) => {
   const queryClient = useQueryClient();
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
   const [lastCriticalEventAt, setLastCriticalEventAt] = useState<number | null>(null);
   const [lastFullEventAt, setLastFullEventAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const onLiveEventsRef = useRef(onLiveEvents);
   const streamUrl = useMemo(
     () => getAlgoCockpitStreamUrl({ deploymentId, mode, eventLimit }),
     [deploymentId, eventLimit, mode],
   );
+
+  useEffect(() => {
+    onLiveEventsRef.current = onLiveEvents;
+  }, [onLiveEvents]);
 
   useEffect(() => {
     if (!enabled) {
@@ -3931,6 +4013,11 @@ export const useAlgoCockpitStream = ({
       }
       markFresh(payload.phase === "full" ? "full" : "critical");
       applyAlgoCockpitPayloadToCache(queryClient, payload);
+      if (expectedStream === "algo-cockpit-live") {
+        onLiveEventsRef.current?.(payload.events?.events ?? [], {
+          phase: payload.phase ?? null,
+        });
+      }
     };
     const handleBootstrap = (event: MessageEvent<string>) => {
       applyPayload(event, "algo-cockpit-bootstrap");

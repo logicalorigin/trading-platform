@@ -12,7 +12,14 @@ import {
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
+import { HttpError } from "../lib/errors";
 import { __resetMarketDataAdmissionForTests } from "./market-data-admission";
+import {
+  __resetBridgeGovernorForTests,
+  getBridgeGovernorSnapshot,
+  resetBridgeGovernorOverrides,
+  setBridgeGovernorOverrides,
+} from "./bridge-governor";
 
 const ENV_KEYS = [
   "IBKR_MARKET_DATA_APP_MAX_LINES",
@@ -39,7 +46,12 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | undef
   });
 }
 
-function quote(symbol: string, price: number, updatedAt: string): QuoteSnapshot {
+function quote(
+  symbol: string,
+  price: number,
+  updatedAt: string,
+  dataUpdatedAt = updatedAt,
+): QuoteSnapshot {
   return {
     symbol,
     price,
@@ -61,6 +73,7 @@ function quote(symbol: string, price: number, updatedAt: string): QuoteSnapshot 
     theta: null,
     vega: null,
     updatedAt: new Date(updatedAt),
+    dataUpdatedAt: dataUpdatedAt ? new Date(dataUpdatedAt) : null,
     providerContractId: `${symbol}-conid`,
     transport: "tws",
     delayed: false,
@@ -71,6 +84,8 @@ test.afterEach(() => {
   __resetBridgeQuoteStreamForTests();
   __setBridgeQuoteClientForTests(null);
   __resetMarketDataAdmissionForTests();
+  __resetBridgeGovernorForTests();
+  resetBridgeGovernorOverrides();
   setEnv(originalEnv);
 });
 
@@ -85,6 +100,65 @@ test("bridge quote cache rejects older quote events for the same symbol", () => 
   assert.equal(cached.length, 1);
   assert.equal(cached[0]?.symbol, "SPY");
   assert.equal(cached[0]?.price, 502);
+  assert.equal(getBridgeQuoteStreamDiagnostics().staleQuoteRejectedCount, 1);
+});
+
+test("bridge quote cache compares market data time before wrapper time", () => {
+  const current = quote(
+    "SPY",
+    502,
+    "2026-04-28T14:30:05.000Z",
+    "2026-04-28T14:30:02.000Z",
+  );
+  const staleRewrapped = quote(
+    "SPY",
+    499,
+    "2026-04-28T14:30:10.000Z",
+    "2026-04-28T14:29:58.000Z",
+  );
+
+  assert.ok(__cacheBridgeQuoteForTests(current));
+  assert.equal(__cacheBridgeQuoteForTests(staleRewrapped), null);
+
+  const cached = getCurrentBridgeQuoteSnapshots(["SPY"]);
+  assert.equal(cached[0]?.price, 502);
+  assert.equal(cached[0]?.dataUpdatedAt?.toISOString(), "2026-04-28T14:30:02.000Z");
+  assert.equal(getBridgeQuoteStreamDiagnostics().staleQuoteRejectedCount, 1);
+});
+
+test("bridge quote cache accepts newer wrapper quote values for the same data time", () => {
+  const current = quote("SPY", 502, "2026-04-28T14:30:02.000Z");
+  const conflicting = quote(
+    "SPY",
+    503,
+    "2026-04-28T14:30:03.000Z",
+    "2026-04-28T14:30:02.000Z",
+  );
+
+  assert.ok(__cacheBridgeQuoteForTests(current));
+  assert.ok(__cacheBridgeQuoteForTests(conflicting));
+
+  assert.equal(getCurrentBridgeQuoteSnapshots(["SPY"])[0]?.price, 503);
+  assert.equal(
+    getBridgeQuoteStreamDiagnostics().sameTimestampQuoteRejectedCount,
+    0,
+  );
+});
+
+test("bridge quote cache rejects same-data-time conflicts received out of order", () => {
+  const current = quote("SPY", 502, "2026-04-28T14:30:02.000Z");
+  const conflicting = quote("SPY", 499, "2026-04-28T14:30:02.000Z");
+
+  __setBridgeQuoteStreamNowForTests(new Date("2026-04-28T14:30:10.000Z"));
+  assert.ok(__cacheBridgeQuoteForTests(current));
+  __setBridgeQuoteStreamNowForTests(new Date("2026-04-28T14:30:09.000Z"));
+  assert.equal(__cacheBridgeQuoteForTests(conflicting), null);
+
+  assert.equal(getCurrentBridgeQuoteSnapshots(["SPY"])[0]?.price, 502);
+  assert.equal(
+    getBridgeQuoteStreamDiagnostics().sameTimestampQuoteRejectedCount,
+    1,
+  );
 });
 
 test("fetchBridgeQuoteSnapshots hydrates missing symbols through the shared bridge client", async () => {
@@ -168,7 +242,7 @@ test("fetchBridgeQuoteSnapshots refreshes stale cached symbols through the share
     async getQuoteSnapshots(symbols) {
       requestedSymbols.push(symbols);
       return symbols.map((symbol) =>
-        quote(symbol, 501, "2026-04-28T14:30:00.000Z"),
+        quote(symbol, 501, "2026-04-28T14:30:03.000Z"),
       );
     },
     streamQuoteSnapshots() {
@@ -184,6 +258,32 @@ test("fetchBridgeQuoteSnapshots refreshes stale cached symbols through the share
   assert.equal(payload.quotes[0]?.price, 501);
   assert.equal(payload.quotes[0]?.freshness, "live");
   assert.equal(payload.quotes[0]?.cacheAgeMs, 0);
+});
+
+test("fetchBridgeQuoteSnapshots backs off repeated quote bootstrap failures", async () => {
+  setBridgeGovernorOverrides({
+    quotes: { failureThreshold: 1, backoffMs: 60_000 },
+  });
+  let snapshotCalls = 0;
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      snapshotCalls += 1;
+      throw new HttpError(502, "quote bootstrap timeout", {
+        code: "upstream_request_failed",
+      });
+    },
+    streamQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const first = await fetchBridgeQuoteSnapshots(["spy"]);
+  const second = await fetchBridgeQuoteSnapshots(["spy"]);
+
+  assert.deepEqual(first.quotes, []);
+  assert.deepEqual(second.quotes, []);
+  assert.equal(snapshotCalls, 1);
+  assert.equal(getBridgeGovernorSnapshot().quotes.circuitOpen, true);
 });
 
 test("bridge quote stream records synchronous start failures without crashing", async () => {

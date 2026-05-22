@@ -11,6 +11,14 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 
+export const SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS = [
+  { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+  { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },
+  { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
+  { activationPct: 65, minLockedGainPct: 40, givebackPct: 20 },
+  { activationPct: 100, minLockedGainPct: 60, givebackPct: 15 },
+];
+
 export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
   mode: "shadow",
@@ -67,8 +75,10 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     trailActivationPct: 35,
     minLockedGainPct: 15,
     trailGivebackPct: 20,
-    tightenAtFiveXGivebackPct: 35,
-    tightenAtTenXGivebackPct: 25,
+    tightenAtFiveXGivebackPct: 30,
+    tightenAtTenXGivebackPct: 15,
+    progressiveTrailEnabled: true,
+    progressiveTrailSteps: SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
     flipOnOppositeSignal: true,
     earlyExitBars: 6,
     earlyExitLossPct: 20,
@@ -83,6 +93,32 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     weakLiquidityTrailGivebackPct: 15,
     strongLiquidityTrailGivebackPct: 25,
     highQualityOvernightMinGainPct: -100,
+  },
+  riskHaltControls: {
+    dailyLossHaltEnabled: true,
+    openSymbolCapEnabled: true,
+    premiumBudgetEnabled: true,
+  },
+  entryHaltControls: {
+    mtfAlignmentEnabled: true,
+    inversePutBlocklistEnabled: true,
+    bearishRegimeEnabled: true,
+  },
+  liquidityHaltControls: {
+    bidAskRequiredEnabled: true,
+    freshQuoteRequiredEnabled: true,
+    spreadGateEnabled: true,
+    minBidGateEnabled: true,
+  },
+  positionHaltControls: {
+    sameDirectionPositionBlockEnabled: true,
+    oppositeSignalFlipBlockEnabled: true,
+    positionMarkFeedHaltEnabled: true,
+  },
+  infrastructureHaltControls: {
+    gatewayReadinessBlockEnabled: true,
+    resourcePressureScanBlockEnabled: true,
+    contractResolutionBackoffEnabled: true,
   },
 };
 
@@ -134,6 +170,7 @@ export const SIGNAL_OPTIONS_LIQUIDITY_REASON_LABELS = {
 export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   position_mark_unavailable: "marking",
   position_mark_failed: "marking",
+  position_mark_feed_degraded: "marking",
   invalid_position_mark: "marking",
   no_contract_for_strike_slot: "contract_resolution",
   no_expiration_in_dte_window: "contract_resolution",
@@ -152,12 +189,18 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   max_open_symbols_reached: "risk",
   daily_loss_halt_active: "risk",
   premium_budget_exceeded: "risk",
+  premium_budget_too_small: "risk",
   quantity_below_minimum: "risk",
   algo_gateway_not_ready: "gateway",
+  accounts_unavailable: "gateway",
+  bridge_health_unavailable: "gateway",
   ibkr_not_configured: "gateway",
+  gateway_login_required: "gateway",
   gateway_socket_disconnected: "gateway",
   gateway_not_ready: "gateway",
   bridge_unavailable: "gateway",
+  live_market_data_not_configured: "gateway",
+  market_session_quiet: "gateway",
   bear_regime_gate_failed: "signal_policy",
   mtf_not_aligned: "signal_policy",
   inverse_put_blocked: "signal_policy",
@@ -320,6 +363,267 @@ export const entryQualityLabel = (quality) => {
   return parts.join(" · ");
 };
 
+const clampMetric = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const finiteNumberOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const firstFiniteMetric = (...values) => {
+  for (const value of values) {
+    const numeric = finiteNumberOrNull(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const metricDateOrNull = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const formatElapsedShort = (value, now = Date.now()) => {
+  const date = metricDateOrNull(value);
+  if (!date) return MISSING_VALUE;
+  const currentMs = now instanceof Date ? now.getTime() : Number(now);
+  const deltaMs = Math.max(0, currentMs - date.getTime());
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+};
+
+export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
+  const record = asRecord(signal);
+  const barsSinceSignal = finiteNumberOrNull(record.barsSinceSignal);
+  const windowBars = clampMetric(
+    Math.round(finiteNumberOrNull(freshWindowBars ?? record.freshWindowBars) ?? 3),
+    1,
+    20,
+  );
+  const signalAt = record.signalAt ?? record.currentSignalAt;
+  const elapsed = formatElapsedShort(signalAt, now);
+  const barsLabel =
+    barsSinceSignal != null ? `${Math.round(barsSinceSignal)}/${windowBars} bars` : MISSING_VALUE;
+  const freshnessPct =
+    barsSinceSignal != null
+      ? clampMetric(1 - barsSinceSignal / windowBars, 0, 1) * 100
+      : record.fresh === true
+        ? 100
+        : 0;
+  return {
+    signalAt: signalAt || null,
+    barsSinceSignal,
+    freshWindowBars: windowBars,
+    freshnessPct,
+    label: barsLabel !== MISSING_VALUE ? barsLabel : elapsed,
+    detail:
+      elapsed !== MISSING_VALUE
+        ? `${elapsed} since signal`
+        : record.fresh === false
+          ? "stale signal"
+          : MISSING_VALUE,
+  };
+};
+
+export const resolveSignalMove = (signal, tickerSnapshot = null) => {
+  const record = asRecord(signal);
+  const snapshot = asRecord(tickerSnapshot);
+  const signalPrice = finiteNumberOrNull(record.signalPrice);
+  const currentPrice = firstFiniteMetric(
+    snapshot.price,
+    snapshot.last,
+    snapshot.mark,
+    record.currentPrice,
+  );
+  if (signalPrice == null || currentPrice == null || signalPrice <= 0) {
+    return { value: null, pct: null, label: MISSING_VALUE, detail: MISSING_VALUE };
+  }
+  const value = currentPrice - signalPrice;
+  const pct = (value / signalPrice) * 100;
+  return {
+    value,
+    pct,
+    label: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
+    detail: `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% since signal`,
+  };
+};
+
+const scoreReasonLabel = (reason) =>
+  formatEnumLabel(reason)
+    .replace(/^Mtf\b/, "MTF")
+    .replace(/\bAdx\b/, "ADX");
+
+export const resolveSignalScoreBreakdown = ({
+  signal,
+  candidate,
+  quote,
+  liquidity,
+  freshWindowBars,
+} = {}) => {
+  const candidateRecord = asRecord(candidate);
+  const signalRecord = asRecord(signal ?? candidateRecord.signal);
+  const quality = asRecord(candidateRecord.signalQuality);
+  if (Object.keys(quality).length) {
+    const score = finiteNumberOrNull(quality.score);
+    return {
+      tier: String(quality.tier || "standard"),
+      score,
+      liquidityTier: String(quality.liquidityTier || "standard"),
+      reasons: Array.isArray(quality.reasons) ? quality.reasons : [],
+      reasonLabels: (Array.isArray(quality.reasons) ? quality.reasons : [])
+        .slice(0, 3)
+        .map(scoreReasonLabel),
+      components: asRecord(quality.components),
+      raw: asRecord(quality.raw),
+      label: entryQualityLabel(quality),
+    };
+  }
+
+  const filterState = asRecord(signalRecord.filterState);
+  const direction = String(candidateRecord.direction || signalRecord.direction || "buy").toLowerCase();
+  const directionSign = direction === "sell" ? -1 : 1;
+  const mtfDirections = Array.isArray(filterState.mtfDirections)
+    ? filterState.mtfDirections.map(Number).filter(Number.isFinite).slice(0, 3)
+    : [];
+  const mtfMatches = mtfDirections.filter((item) => item === directionSign).length;
+  const adx = finiteNumberOrNull(filterState.adx);
+  const signalAge = resolveSignalAge(signalRecord, { freshWindowBars });
+  const quoteRecord = asRecord(quote ?? candidateRecord.quote);
+  const orderPlanRecord = asRecord(candidateRecord.orderPlan);
+  const orderLiquidity = asRecord(orderPlanRecord.liquidity);
+  const liquidityRecord = asRecord(liquidity ?? candidateRecord.liquidity);
+  const spreadPctOfMid = firstFiniteMetric(
+    liquidityRecord.spreadPctOfMid,
+    orderLiquidity.spreadPctOfMid,
+    quoteRecord.spreadPctOfMid,
+  );
+  const liquidityTier =
+    spreadPctOfMid == null
+      ? "standard"
+      : spreadPctOfMid <= 15
+        ? "strong"
+        : spreadPctOfMid >= 30
+          ? "weak"
+          : "standard";
+  const premiumAtRisk = finiteNumberOrNull(orderPlanRecord.premiumAtRisk);
+  const quoteFreshness = firstText(
+    quoteRecord.quoteFreshness,
+    quoteRecord.freshness,
+    orderLiquidity.freshness,
+  );
+  const marketDataMode = firstText(
+    quoteRecord.marketDataMode,
+    orderLiquidity.marketDataMode,
+  );
+  const mtfAlignment = mtfDirections.length
+    ? (mtfMatches / Math.min(3, Math.max(1, mtfDirections.length))) * 25
+    : 8;
+  const freshness = (signalAge.freshnessPct / 100) * 20;
+  const trendStrength = adx == null ? 7.5 : clampMetric(adx / 25, 0, 1) * 15;
+  const liquidityScore =
+    liquidityTier === "strong" ? 20 : liquidityTier === "weak" ? 0 : 12;
+  const riskFit = premiumAtRisk != null && premiumAtRisk > 0 ? 10 : 5;
+  const dataQuality =
+    quoteFreshness === "live" || marketDataMode === "live"
+      ? 10
+      : quoteFreshness || marketDataMode
+        ? 7
+        : signalRecord.status === "unavailable"
+          ? 3
+          : 8;
+  const score =
+    mtfAlignment + freshness + trendStrength + liquidityScore + riskFit + dataQuality;
+  const reasons = [
+    mtfMatches >= 3 ? "mtf_full_alignment" : mtfMatches >= 2 ? "mtf_partial_alignment" : null,
+    signalAge.freshnessPct >= 67 ? "fresh_signal" : signalAge.freshnessPct <= 20 ? "aging_signal" : null,
+    adx != null && adx >= 25 ? "adx_confirmed" : null,
+    liquidityTier === "strong" ? "strong_liquidity" : liquidityTier === "weak" ? "weak_liquidity" : null,
+    premiumAtRisk != null && premiumAtRisk > 0 ? "risk_sized" : null,
+  ].filter(Boolean);
+  const roundedScore = Number(score.toFixed(1));
+  const tier =
+    roundedScore >= 75 && liquidityTier !== "weak"
+      ? "high"
+      : roundedScore < 50 || liquidityTier === "weak"
+        ? "low"
+        : "standard";
+  return {
+    tier,
+    score: roundedScore,
+    liquidityTier,
+    reasons,
+    reasonLabels: reasons.slice(0, 3).map(scoreReasonLabel),
+    components: {
+      mtfAlignment: Number(mtfAlignment.toFixed(1)),
+      freshness: Number(freshness.toFixed(1)),
+      trendStrength: Number(trendStrength.toFixed(1)),
+      liquidity: Number(liquidityScore.toFixed(1)),
+      riskFit: Number(riskFit.toFixed(1)),
+      dataQuality: Number(dataQuality.toFixed(1)),
+      total: roundedScore,
+    },
+    raw: {
+      barsSinceSignal: signalAge.barsSinceSignal,
+      freshWindowBars: signalAge.freshWindowBars,
+      adx,
+      mtfMatches,
+      mtfDirections,
+      spreadPctOfMid,
+      premiumAtRisk,
+      quoteFreshness,
+      marketDataMode,
+    },
+    label: `${formatEnumLabel(tier)} · ${roundedScore.toFixed(1)}`,
+  };
+};
+
+export const resolveCandidateGateDisplay = (candidate) => {
+  const record = asRecord(candidate);
+  const reason = String(record.reason || "").trim();
+  if (!reason) {
+    return { category: "clear", label: "Gate clear", detail: "no blocker", tone: T.green };
+  }
+  const category = candidateReasonCategory(record);
+  return {
+    category,
+    label: formatEnumLabel(category),
+    detail: formatEnumLabel(reason),
+    tone:
+      category === "risk" || category === "gateway"
+        ? T.red
+        : category === "liquidity" || category === "contract_resolution" || category === "marking"
+          ? T.amber
+          : T.textDim,
+  };
+};
+
+export const resolveCandidateSyncDisplay = (candidate) => {
+  const record = asRecord(candidate);
+  const shadowLink = asRecord(record.shadowLink);
+  const syncStatus = String(record.syncStatus || "").trim();
+  const actionStatus = String(record.actionStatus || record.status || "").trim();
+  if (syncStatus === "mismatch" || actionStatus === "mismatch") {
+    return { label: "Mismatch", detail: shadowLinkSummary(shadowLink), tone: T.red };
+  }
+  if (syncStatus === "event_only") {
+    return { label: "Event only", detail: shadowLinkSummary(shadowLink), tone: T.amber };
+  }
+  if (shadowLink.fillId || shadowLink.orderId || shadowLink.positionId) {
+    return { label: "Synced", detail: shadowLinkSummary(shadowLink), tone: T.green };
+  }
+  return {
+    label: syncStatus ? formatEnumLabel(syncStatus) : "Pending",
+    detail: actionStatus ? signalOptionsActionLabel(actionStatus) : "shadow link pending",
+    tone: syncStatus ? T.textSec : T.textDim,
+  };
+};
+
 export const candidateReasonCategory = (candidate) =>
   SIGNAL_OPTIONS_REASON_CATEGORIES[String(asRecord(candidate).reason || "")] ||
   "other";
@@ -439,6 +743,26 @@ export const mergeSignalOptionsProfile = (source) => {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy,
       ...asRecord(rawProfile.exitPolicy),
     },
+    riskHaltControls: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.riskHaltControls,
+      ...asRecord(rawProfile.riskHaltControls),
+    },
+    entryHaltControls: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryHaltControls,
+      ...asRecord(rawProfile.entryHaltControls),
+    },
+    liquidityHaltControls: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.liquidityHaltControls,
+      ...asRecord(rawProfile.liquidityHaltControls),
+    },
+    positionHaltControls: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.positionHaltControls,
+      ...asRecord(rawProfile.positionHaltControls),
+    },
+    infrastructureHaltControls: {
+      ...SIGNAL_OPTIONS_DEFAULT_PROFILE.infrastructureHaltControls,
+      ...asRecord(rawProfile.infrastructureHaltControls),
+    },
   });
 
   if (parameters.executionMode === "signal_options") {
@@ -552,6 +876,51 @@ export const parseChaseSteps = (value, fallback = []) => {
     .filter((item) => Number.isFinite(item))
     .map((item) => Math.min(1, Math.max(0, item > 1 ? item / 100 : item)));
   return parsed.length ? Array.from(new Set(parsed)).sort((a, b) => a - b) : fallback;
+};
+
+export const formatProgressiveTrailSteps = (steps) =>
+  Array.isArray(steps)
+    ? steps
+        .map((step) =>
+          [
+            Number(step?.activationPct),
+            Number(step?.minLockedGainPct),
+            Number(step?.givebackPct),
+          ]
+            .map((part) => (Number.isFinite(part) ? String(part) : ""))
+            .join("/"),
+        )
+        .join(", ")
+    : "";
+
+export const parseProgressiveTrailSteps = (value, fallback = []) => {
+  const parsed = String(value || "")
+    .split(/\s*,\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [activationPct, minLockedGainPct, givebackPct] = item
+        .split(/[/:|\s]+/)
+        .map((part) => Number(part.trim().replace(/%$/, "")));
+      return {
+        activationPct,
+        minLockedGainPct,
+        givebackPct,
+      };
+    })
+    .filter(
+      (step) =>
+        Number.isFinite(step.activationPct) &&
+        Number.isFinite(step.minLockedGainPct) &&
+        Number.isFinite(step.givebackPct),
+    )
+    .map((step) => ({
+      activationPct: Math.min(10_000, Math.max(0, step.activationPct)),
+      minLockedGainPct: Math.min(10_000, Math.max(0, step.minLockedGainPct)),
+      givebackPct: Math.min(100, Math.max(0, step.givebackPct)),
+    }))
+    .sort((left, right) => left.activationPct - right.activationPct);
+  return parsed.length ? parsed : fallback;
 };
 
 export const formatContractLabel = (contract) => {
@@ -847,6 +1216,13 @@ export const PROFILE_NUMBER_FIELDS = [
   ["exitPolicy", "earlyExitLossPct", "Early exit loss %", 1],
   ["exitPolicy", "overnightMinGainPct", "Overnight min gain %", 1],
   ["exitPolicy", "overnightRunnerGivebackPct", "Overnight giveback %", 1],
+  ["exitPolicy", "lowQualityEarlyExitBars", "Low-quality exit bars", 1],
+  ["exitPolicy", "lowQualityEarlyExitLossPct", "Low-quality loss %", 1],
+  ["exitPolicy", "highQualityEarlyExitBars", "High-quality exit bars", 1],
+  ["exitPolicy", "highQualityEarlyExitLossPct", "High-quality loss %", 1],
+  ["exitPolicy", "weakLiquidityTrailGivebackPct", "Weak liquidity giveback %", 1],
+  ["exitPolicy", "strongLiquidityTrailGivebackPct", "Strong liquidity giveback %", 1],
+  ["exitPolicy", "highQualityOvernightMinGainPct", "High-quality overnight min %", 1],
 ];
 
 export const PROFILE_BOOLEAN_FIELDS = [
@@ -855,7 +1231,269 @@ export const PROFILE_BOOLEAN_FIELDS = [
   ["liquidityGate", "requireFreshQuote", "Require fresh quote"],
   ["exitPolicy", "flipOnOppositeSignal", "Exit on opposite signal"],
   ["exitPolicy", "overnightExitEnabled", "Overnight exit enabled"],
+  ["exitPolicy", "progressiveTrailEnabled", "Progressive trail enabled"],
+  ["exitPolicy", "conditionalQualityExitsEnabled", "Quality exits enabled"],
 ];
+
+export const SIGNAL_OPTIONS_HALT_CONTROL_GROUPS = [
+  {
+    id: "risk",
+    label: "Risk",
+    controls: [
+      {
+        id: "dailyLoss",
+        section: "riskHaltControls",
+        key: "dailyLossHaltEnabled",
+        label: "Daily loss",
+        title: "Blocks new entries once daily P&L breaches the configured loss halt.",
+        reasons: ["daily_loss_halt_active"],
+      },
+      {
+        id: "openSymbols",
+        section: "riskHaltControls",
+        key: "openSymbolCapEnabled",
+        label: "Open symbols",
+        title: "Blocks new symbols once open exposure reaches the configured cap.",
+        reasons: ["max_open_symbols_reached"],
+      },
+      {
+        id: "premiumBudget",
+        section: "riskHaltControls",
+        key: "premiumBudgetEnabled",
+        label: "Premium budget",
+        title: "Caps entry quantity by the configured premium-per-entry budget.",
+        reasons: ["premium_budget_too_small", "premium_budget_exceeded"],
+      },
+    ],
+  },
+  {
+    id: "signal",
+    label: "Signal",
+    controls: [
+      {
+        id: "mtfAlignment",
+        section: "entryHaltControls",
+        key: "mtfAlignmentEnabled",
+        label: "MTF alignment",
+        title: "Blocks entries when multi-timeframe alignment is below the configured count.",
+        reasons: ["mtf_not_aligned"],
+      },
+      {
+        id: "inversePutBlocklist",
+        section: "entryHaltControls",
+        key: "inversePutBlocklistEnabled",
+        label: "Inverse puts",
+        title: "Blocks put entries on inverse ETF symbols in the configured blocklist.",
+        reasons: ["inverse_put_blocked"],
+      },
+      {
+        id: "bearishRegime",
+        section: "entryHaltControls",
+        key: "bearishRegimeEnabled",
+        label: "Bear regime",
+        title: "Blocks put entries that fail the configured bearish-regime filter.",
+        reasons: ["bear_regime_gate_failed", "adx_below_minimum", "mtf_fully_bullish"],
+      },
+    ],
+  },
+  {
+    id: "quote",
+    label: "Quote",
+    controls: [
+      {
+        id: "bidAskRequired",
+        section: "liquidityHaltControls",
+        key: "bidAskRequiredEnabled",
+        label: "Bid/ask",
+        title: "Blocks entries without a usable bid/ask quote when bid/ask is required.",
+        reasons: ["missing_bid_ask"],
+      },
+      {
+        id: "freshQuoteRequired",
+        section: "liquidityHaltControls",
+        key: "freshQuoteRequiredEnabled",
+        label: "Fresh quote",
+        title: "Blocks entries when the option quote is stale, pending, or unavailable.",
+        reasons: ["quote_not_fresh"],
+      },
+      {
+        id: "spreadGate",
+        section: "liquidityHaltControls",
+        key: "spreadGateEnabled",
+        label: "Spread",
+        title: "Blocks entries when bid/ask spread exceeds the configured percent of mid.",
+        reasons: ["spread_too_wide"],
+      },
+      {
+        id: "minBidGate",
+        section: "liquidityHaltControls",
+        key: "minBidGateEnabled",
+        label: "Minimum bid",
+        title: "Blocks entries when bid is below the configured minimum.",
+        reasons: ["bid_below_minimum"],
+      },
+    ],
+  },
+  {
+    id: "position",
+    label: "Position",
+    controls: [
+      {
+        id: "sameDirectionPosition",
+        section: "positionHaltControls",
+        key: "sameDirectionPositionBlockEnabled",
+        label: "Same direction",
+        title: "Blocks duplicate same-direction entries for a symbol that already has an active position.",
+        reasons: ["same_direction_position_open"],
+      },
+      {
+        id: "oppositeSignalFlip",
+        section: "positionHaltControls",
+        key: "oppositeSignalFlipBlockEnabled",
+        label: "Opposite flip",
+        title: "Blocks opposite-signal flips when the exit policy has flipping disabled.",
+        reasons: ["opposite_signal_flip_disabled"],
+      },
+      {
+        id: "positionMarkFeed",
+        section: "positionHaltControls",
+        key: "positionMarkFeedHaltEnabled",
+        label: "Mark feed",
+        title: "Blocks new entries while open positions cannot be marked reliably.",
+        reasons: ["position_mark_feed_degraded"],
+      },
+    ],
+  },
+  {
+    id: "infrastructure",
+    label: "Infrastructure",
+    controls: [
+      {
+        id: "gatewayReadiness",
+        section: "infrastructureHaltControls",
+        key: "gatewayReadinessBlockEnabled",
+        label: "Gateway",
+        title: "Blocks entries when broker/data gateway readiness is not green.",
+        reasons: [
+          "algo_gateway_not_ready",
+          "accounts_unavailable",
+          "bridge_health_unavailable",
+          "ibkr_not_configured",
+          "gateway_login_required",
+          "gateway_socket_disconnected",
+          "gateway_not_ready",
+          "bridge_unavailable",
+          "live_market_data_not_configured",
+          "market_session_quiet",
+        ],
+      },
+      {
+        id: "resourcePressure",
+        section: "infrastructureHaltControls",
+        key: "resourcePressureScanBlockEnabled",
+        label: "Resource load",
+        title: "Lets API resource-pressure automation skip deployment scans under load.",
+        reasons: [],
+      },
+      {
+        id: "contractBackoff",
+        section: "infrastructureHaltControls",
+        key: "contractResolutionBackoffEnabled",
+        label: "Contract backoff",
+        title: "Lets option-chain and expiration backoff skips suppress repeat contract resolution attempts.",
+        reasons: ["option_chain_backoff", "option_expiration_backoff"],
+      },
+    ],
+  },
+];
+
+export const signalOptionsHaltControlValue = (profile, control) => {
+  const section = asRecord(asRecord(profile)[control.section]);
+  const defaults = asRecord(SIGNAL_OPTIONS_DEFAULT_PROFILE[control.section]);
+  const value = section[control.key];
+  if (typeof value === "boolean") return value;
+  const defaultValue = defaults[control.key];
+  return typeof defaultValue === "boolean" ? defaultValue : true;
+};
+
+const allSignalOptionsHaltControls = () =>
+  SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.flatMap((group) => group.controls);
+
+export const signalOptionsHaltControlsChanged = (draft, saved) =>
+  allSignalOptionsHaltControls().some(
+    (control) =>
+      signalOptionsHaltControlValue(draft, control) !==
+      signalOptionsHaltControlValue(saved, control),
+  );
+
+const incrementHaltReasonCounter = (counter, reason) => {
+  const key = String(reason || "").trim();
+  if (!key) return;
+  counter[key] = (counter[key] || 0) + 1;
+};
+
+const signalOptionsHaltReasonCounts = (cockpit) => {
+  const record = asRecord(cockpit);
+  const counts = { ...asRecord(asRecord(record.diagnostics).skipReasons) };
+  (Array.isArray(record.events) ? record.events : []).forEach((event) => {
+    const payload = asRecord(asRecord(event).payload);
+    incrementHaltReasonCounter(counts, payload.reason || payload.skipReason);
+  });
+  (Array.isArray(record.candidates) ? record.candidates : []).forEach((candidate) => {
+    const candidateRecord = asRecord(candidate);
+    incrementHaltReasonCounter(counts, candidateRecord.reason);
+    const entryGate = asRecord(candidateRecord.entryGate);
+    if (Array.isArray(entryGate.reasons)) {
+      entryGate.reasons.forEach((reason) =>
+        incrementHaltReasonCounter(counts, reason),
+      );
+    }
+  });
+  return counts;
+};
+
+const haltReasonCount = (counts, reasons = []) =>
+  reasons.reduce((sum, reason) => sum + Number(counts[reason] || 0), 0);
+
+export const deriveSignalOptionsHaltControlStatus = ({
+  control,
+  profile,
+  cockpit,
+} = {}) => {
+  const enabled = signalOptionsHaltControlValue(profile, control);
+  const counts = signalOptionsHaltReasonCounts(cockpit);
+  const record = asRecord(cockpit);
+  const risk = asRecord(record.risk);
+  const kpis = asRecord(record.kpis);
+  const readiness = asRecord(record.readiness);
+  const reasonCount = haltReasonCount(counts, control?.reasons);
+  const openSymbols = Number(risk.openSymbols ?? kpis.openSymbols);
+  const maxOpenSymbols = Number(risk.maxOpenSymbols ?? kpis.maxOpenSymbols);
+  const gatewayNotReady =
+    control?.id === "gatewayReadiness" && readiness.ready === false;
+  const breachedDailyLoss =
+    control?.id === "dailyLoss" &&
+    (risk.dailyHaltActive === true || risk.dailyLossBreached === true);
+  const atOpenSymbolCap =
+    control?.id === "openSymbols" &&
+    Number.isFinite(openSymbols) &&
+    Number.isFinite(maxOpenSymbols) &&
+    openSymbols >= maxOpenSymbols;
+  const active = Boolean(
+    reasonCount > 0 || breachedDailyLoss || atOpenSymbolCap || gatewayNotReady,
+  );
+
+  if (!enabled && gatewayNotReady) {
+    return { state: "forced", label: "FORCED", reasonCount };
+  }
+  if (!enabled) {
+    return { state: "off", label: "OFF", reasonCount };
+  }
+  if (active) {
+    return { state: "active", label: "ACTIVE", reasonCount };
+  }
+  return { state: "armed", label: "ARMED", reasonCount };
+};
 
 export const compactButtonStyle = ({
   active = false,

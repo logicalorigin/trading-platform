@@ -374,7 +374,9 @@ async function benchmarkJsonRequest(
       responseBytes = Buffer.byteLength(text);
     }
 
-    const cacheStatus = response.headers.get("x-rayalgo-cache-status");
+    const cacheStatus =
+      response.headers.get("x-pyrus-cache-status") ??
+      response.headers.get("x-rayalgo-cache-status");
     if (cacheStatus === "hit") {
       cacheHitCount += 1;
     } else if (cacheStatus === "miss") {
@@ -383,17 +385,24 @@ async function benchmarkJsonRequest(
       cacheInflightCount += 1;
     }
 
-    const serverTotalMs = readNumberHeader(response, "x-rayalgo-request-ms");
+    const serverTotalMs =
+      readNumberHeader(response, "x-pyrus-request-ms") ??
+      readNumberHeader(response, "x-rayalgo-request-ms");
     if (serverTotalMs !== null) {
       serverTotalDurations.push(serverTotalMs);
     }
 
-    const upstreamMs = readNumberHeader(response, "x-rayalgo-upstream-ms");
+    const upstreamMs =
+      readNumberHeader(response, "x-pyrus-upstream-ms") ??
+      readNumberHeader(response, "x-rayalgo-upstream-ms");
     if (upstreamMs !== null) {
       upstreamDurations.push(upstreamMs);
     }
 
-    if (response.headers.get("x-rayalgo-gap-filled") === "1") {
+    if (
+      (response.headers.get("x-pyrus-gap-filled") ??
+        response.headers.get("x-rayalgo-gap-filled")) === "1"
+    ) {
       gapFilledCount += 1;
     }
   }

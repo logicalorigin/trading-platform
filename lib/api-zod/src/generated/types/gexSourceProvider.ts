@@ -10,6 +10,7 @@ export type GexSourceProvider = typeof GexSourceProvider[keyof typeof GexSourceP
 
 
 export const GexSourceProvider = {
+  ibkr: 'ibkr',
   massive: 'massive',
   polygon: 'polygon',
 } as const;

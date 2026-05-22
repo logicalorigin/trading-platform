@@ -64,6 +64,27 @@ const TRADE_FLOW_MARKERS = Object.fromEntries(
   ]),
 );
 
+const buildRuntimeQuotePatch = (quote, current = {}) => ({
+  price: quote?.price ?? current.price ?? null,
+  bid: quote?.bid ?? current.bid ?? null,
+  ask: quote?.ask ?? current.ask ?? null,
+  chg: quote?.change ?? current.chg ?? null,
+  pct: quote?.changePercent ?? current.pct ?? null,
+  open: quote?.open ?? current.open ?? null,
+  high: quote?.high ?? current.high ?? null,
+  low: quote?.low ?? current.low ?? null,
+  prevClose: quote?.prevClose ?? current.prevClose ?? null,
+  volume: quote?.volume ?? current.volume ?? null,
+  updatedAt: quote?.updatedAt ?? current.updatedAt ?? null,
+  dataUpdatedAt: quote?.dataUpdatedAt ?? current.dataUpdatedAt ?? null,
+  freshness: quote?.freshness ?? current.freshness ?? null,
+  marketDataMode: quote?.marketDataMode ?? current.marketDataMode ?? null,
+  delayed: quote?.delayed ?? current.delayed ?? null,
+  source: quote?.source ?? current.source ?? null,
+  transport: quote?.transport ?? current.transport ?? null,
+  latency: quote?.latency ?? current.latency ?? null,
+});
+
 export const buildFallbackWatchlistItem = (symbol, index, name) => {
   const existing = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
   if (existing) {
@@ -89,6 +110,72 @@ export const buildFallbackWatchlistItem = (symbol, index, name) => {
   };
 };
 
+const buildWatchlistNameBySymbol = (watchlistItems = []) =>
+  Object.fromEntries(
+    (watchlistItems || []).map((item) => {
+      const symbol = item?.symbol?.toUpperCase?.() || item?.sym?.toUpperCase?.();
+      const fallbackName =
+        item?.name ||
+        DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name ||
+        TRADE_TICKER_INFO[symbol]?.name ||
+        symbol;
+      return symbol ? [symbol, fallbackName] : null;
+    }).filter(Boolean),
+  );
+
+const resolveRuntimeQuoteFallbackName = (symbol, watchlistNameBySymbol = {}) =>
+  watchlistNameBySymbol[symbol] ||
+  DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name ||
+  INDICES.find((item) => item.sym === symbol)?.name ||
+  MACRO_TICKERS.find((item) => item.sym === symbol)?.name ||
+  TRADE_TICKER_INFO[symbol]?.name ||
+  symbol;
+
+export const applyRuntimeQuoteSnapshots = (quotes = [], watchlistItems = []) => {
+  const changedSymbols = new Set();
+  const watchlistNameBySymbol = buildWatchlistNameBySymbol(watchlistItems);
+
+  (quotes || []).forEach((quote) => {
+    const symbol = quote?.symbol?.toUpperCase?.();
+    if (!symbol) {
+      return;
+    }
+    const fallbackName = resolveRuntimeQuoteFallbackName(
+      symbol,
+      watchlistNameBySymbol,
+    );
+    const currentTradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
+    const prevClose = quote?.prevClose ?? currentTradeInfo.prevClose ?? null;
+    const price = quote?.price ?? currentTradeInfo.price ?? null;
+    const chg =
+      Number.isFinite(price) && Number.isFinite(prevClose)
+        ? price - prevClose
+        : (quote?.change ?? currentTradeInfo.chg ?? null);
+    const pct =
+      Number.isFinite(price) && Number.isFinite(prevClose) && prevClose !== 0
+        ? ((price - prevClose) / prevClose) * 100
+        : (quote?.changePercent ?? currentTradeInfo.pct ?? null);
+
+    if (
+      applyRuntimeTickerInfoPatch(symbol, fallbackName, {
+        name: fallbackName,
+        ...buildRuntimeQuotePatch(quote, currentTradeInfo),
+        price,
+        chg,
+        pct,
+      }).changed
+    ) {
+      changedSymbols.add(symbol);
+    }
+  });
+
+  if (changedSymbols.size > 0) {
+    notifyRuntimeTickerSnapshotSymbols(Array.from(changedSymbols));
+  }
+
+  return changedSymbols.size;
+};
+
 export const syncRuntimeMarketData = (
   symbols,
   watchlistItems,
@@ -99,16 +186,7 @@ export const syncRuntimeMarketData = (
   const quoteBySymbol = Object.fromEntries(
     (quotes || []).map((quote) => [quote.symbol.toUpperCase(), quote]),
   );
-  const watchlistNameBySymbol = Object.fromEntries(
-    (watchlistItems || []).map((item) => {
-      const symbol = item.symbol.toUpperCase();
-      const fallbackName =
-        DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name ||
-        TRADE_TICKER_INFO[symbol]?.name ||
-        symbol;
-      return [symbol, fallbackName];
-    }),
-  );
+  const watchlistNameBySymbol = buildWatchlistNameBySymbol(watchlistItems);
 
   const nextItems = symbols.map((symbol, index) => {
     const normalized = symbol.toUpperCase();
@@ -142,15 +220,10 @@ export const syncRuntimeMarketData = (
     if (
       applyRuntimeTickerInfoPatch(normalized, base.name, {
         name: base.name,
+        ...buildRuntimeQuotePatch(quote, tradeInfo),
         price,
         chg,
         pct,
-        open,
-        high,
-        low,
-        prevClose,
-        volume,
-        updatedAt,
         spark,
         sparkBars: sparklineBarsBySymbol[normalized] || [],
       }).changed
@@ -184,26 +257,17 @@ export const syncRuntimeMarketData = (
   WATCHLIST.splice(0, WATCHLIST.length, ...nextItems);
 
   Object.entries(quoteBySymbol).forEach(([symbol, quote]) => {
-    const fallbackName =
-      watchlistNameBySymbol[symbol] ||
-      INDICES.find((item) => item.sym === symbol)?.name ||
-      TRADE_TICKER_INFO[symbol]?.name ||
-      symbol;
+    const fallbackName = resolveRuntimeQuoteFallbackName(
+      symbol,
+      watchlistNameBySymbol,
+    );
     const runtimeSparkBars = sparklineBarsBySymbol[symbol] || [];
 
     const currentTradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
     if (
       applyRuntimeTickerInfoPatch(symbol, fallbackName, {
         name: fallbackName,
-        price: quote.price ?? currentTradeInfo.price,
-        chg: quote.change ?? currentTradeInfo.chg,
-        pct: quote.changePercent ?? currentTradeInfo.pct,
-        open: quote.open ?? currentTradeInfo.open ?? null,
-        high: quote.high ?? currentTradeInfo.high ?? null,
-        low: quote.low ?? currentTradeInfo.low ?? null,
-        prevClose: quote.prevClose ?? currentTradeInfo.prevClose ?? null,
-        volume: quote.volume ?? currentTradeInfo.volume ?? null,
-        updatedAt: quote.updatedAt ?? currentTradeInfo.updatedAt ?? null,
+        ...buildRuntimeQuotePatch(quote, currentTradeInfo),
         spark: buildSparklineFromHistoricalBars(
           runtimeSparkBars,
           currentTradeInfo.spark,

@@ -2,9 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 
 declare global {
   interface Window {
-    __RAYALGO_BLOOMBERG_STARTUP_TIMEOUT_MS__?: number;
-    __RAYALGO_BLOOMBERG_SOURCE_COOLDOWN_MS__?: number;
-    __RAYALGO_BLOOMBERG_DIAGNOSTICS__?: () => Record<string, unknown>;
+    __PYRUS_BLOOMBERG_STARTUP_TIMEOUT_MS__?: number;
+    __PYRUS_BLOOMBERG_SOURCE_COOLDOWN_MS__?: number;
+    __PYRUS_BLOOMBERG_DIAGNOSTICS__?: () => Record<string, unknown>;
   }
 }
 
@@ -95,12 +95,12 @@ async function mockPlatformApi(page: Page) {
 
 async function openBloombergDock(page: Page) {
   await page.addInitScript(() => {
-    window.__RAYALGO_BLOOMBERG_STARTUP_TIMEOUT_MS__ = 2_000;
-    window.__RAYALGO_BLOOMBERG_SOURCE_COOLDOWN_MS__ = 30_000;
+    window.__PYRUS_BLOOMBERG_STARTUP_TIMEOUT_MS__ = 2_000;
+    window.__PYRUS_BLOOMBERG_SOURCE_COOLDOWN_MS__ = 30_000;
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",
@@ -117,7 +117,7 @@ async function openBloombergDock(page: Page) {
 }
 
 async function getBloombergDiagnostics(page: Page) {
-  return page.evaluate(() => window.__RAYALGO_BLOOMBERG_DIAGNOSTICS__?.() ?? null);
+  return page.evaluate(() => window.__PYRUS_BLOOMBERG_DIAGNOSTICS__?.() ?? null);
 }
 
 function livePlaylist(segmentName: string) {

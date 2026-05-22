@@ -6,12 +6,17 @@ import type {
   OptionChainContract,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
+import { HttpError } from "../lib/errors";
 import {
   __resetMarketDataAdmissionForTests,
   admitMarketDataLeases,
+  getMarketDataAdmissionDiagnostics,
 } from "./market-data-admission";
 import {
+  __resetBridgeGovernorForTests,
+  getBridgeGovernorSnapshot,
   resetBridgeGovernorOverrides,
+  runBridgeWork,
   setBridgeGovernorOverrides,
 } from "./bridge-governor";
 import { createOptionsFlowScanner } from "./options-flow-scanner";
@@ -43,6 +48,9 @@ const platformModule = await import("./platform");
 const {
   __resetOptionChainCachesForTests,
   __holdOptionsFlowScannerBackgroundForTests,
+  __fetchOptionsFlowRadarQuotesForTests,
+  __queueOptionsFlowScannerRefreshForTests,
+  __runOptionsFlowRadarScannerOnceForTests,
   __runOptionsFlowScannerOnceForTests,
   __setIbkrBridgeClientFactoryForTests,
   __setHistoricalFlowDirectFallbackTimeoutMsForTests,
@@ -50,20 +58,53 @@ const {
   __setHistoricalFlowStoreReadTimeoutMsForTests,
   __setPolygonMarketDataClientFactoryForTests,
   getOptionsFlowScannerDiagnostics,
+  getOptionsFlowRadarIntervalMs,
   getOptionsFlowRuntimeConfig,
   listAggregateFlowEvents,
   resetOptionsFlowRuntimeOverrides,
   resolveOptionsFlowScannerEffectiveConcurrency,
   listFlowEvents,
   setOptionsFlowRuntimeOverrides,
+  startOptionsFlowScanner,
 } = platformModule;
 const {
   __resetBridgeOptionQuoteStreamForTests,
   __setBridgeOptionQuoteClientForTests,
 } = await import("./bridge-option-quote-stream");
+const {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} = await import("./resource-pressure");
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await wait(0);
+  }
+}
+
+async function openOptionsLaneBackoff(): Promise<void> {
+  setBridgeGovernorOverrides({
+    options: { failureThreshold: 1, backoffMs: 60_000 },
+  });
+  await assert.rejects(
+    runBridgeWork("options", async () => {
+      throw new HttpError(504, "options lane timeout", {
+        code: "ibkr_bridge_request_timeout",
+      });
+    }),
+    HttpError,
+  );
 }
 
 function optionContract(symbol = "SPY"): OptionChainContract {
@@ -132,6 +173,17 @@ function optionQuote(
   };
 }
 
+function radarQuote(symbol = "SPY"): QuoteSnapshot {
+  return {
+    ...optionQuote(`${symbol}-RADAR`),
+    symbol,
+    price: 500,
+    optionCallVolume: 1_000,
+    optionCallOpenInterest: 10,
+    impliedVolatility: 0.35,
+  } as QuoteSnapshot;
+}
+
 function polygonFlowEvent(id: string, premium: number) {
   return {
     id,
@@ -198,8 +250,10 @@ test.afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetOptionChainCachesForTests();
   __resetMarketDataAdmissionForTests();
+  __resetBridgeGovernorForTests();
   resetBridgeGovernorOverrides();
   resetOptionsFlowRuntimeOverrides();
+  __resetApiResourcePressureForTests();
   __setHistoricalFlowStoreDisabledForTests(false);
   __setHistoricalFlowStoreReadTimeoutMsForTests(3_000);
   __setHistoricalFlowDirectFallbackTimeoutMsForTests(4_000);
@@ -221,21 +275,25 @@ test.after(() => {
   });
 });
 
-test("options flow runtime defaults cover the broad scanner cycle", () => {
+test("options flow runtime defaults use the reserved flow scanner lane", () => {
   const config = getOptionsFlowRuntimeConfig();
 
-  assert.equal(config.scannerBatchSize, 25);
-  assert.equal(config.scannerLineBudget, 10);
-  assert.equal(config.scannerConcurrency, 20);
-  assert.equal(config.scannerStrikeCoverage, "standard");
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 20);
+  assert.equal(config.radarBatchSize, 30);
+  assert.equal(config.radarDeepCandidateCount, 3);
+  assert.equal(config.radarFallbackDeepCandidateCount, 1);
+  assert.equal(config.radarDeepLineBudget, 40);
+  assert.equal(config.scannerBatchSize, 2);
+  assert.equal(config.scannerLineBudget, 40);
+  assert.equal(config.scannerConcurrency, 2);
+  assert.equal(config.scannerStrikeCoverage, "full");
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
       ...config,
       scannerConcurrency: 8,
       scannerLineBudget: 40,
     }),
-    5,
+    2,
   );
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -243,11 +301,15 @@ test("options flow runtime defaults cover the broad scanner cycle", () => {
       scannerConcurrency: 8,
       scannerLineBudget: 20,
     }),
-    8,
+    4,
   );
 });
 
 test("options flow scanner concurrency shrinks when visible demand uses line headroom", () => {
+  setOptionsFlowRuntimeOverrides({
+    scannerConcurrency: 10,
+    scannerLineBudget: 10,
+  });
   const config = getOptionsFlowRuntimeConfig();
 
   setBridgeGovernorOverrides({ options: { concurrency: 10 } });
@@ -284,6 +346,224 @@ test("options flow scanner reports zero capacity when higher-priority demand con
   assert.equal(diagnostics.backgroundBlockedReason, "line-cap-exhausted");
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 0);
   assert.equal(diagnostics.lineUtilization.effectivePoolCap, 0);
+});
+
+test("options flow radar skips while the options lane is backed off", async () => {
+  let quoteCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionActivitySnapshots: async () => {
+          quoteCalls += 1;
+          return [radarQuote("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await openOptionsLaneBackoff();
+
+  const result = await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
+    batchSize: 1,
+    promoteCount: 1,
+  });
+
+  assert.equal(quoteCalls, 0);
+  assert.deepEqual(result.scannedSymbols, []);
+  assert.deepEqual(result.promotedSymbols, []);
+  assert.equal(result.error, "options-lane-backoff");
+  assert.equal(
+    getOptionsFlowScannerDiagnostics().backgroundBlockedReason,
+    "options-lane-backoff",
+  );
+});
+
+test("options flow radar skips while options work is queued", async () => {
+  let releaseActiveWork: () => void = () => {};
+  const activeWork = runBridgeWork(
+    "options",
+    () =>
+      new Promise<void>((resolve) => {
+        releaseActiveWork = resolve;
+      }),
+  );
+  await waitFor(() => getBridgeGovernorSnapshot().options.active === 1);
+
+  const queuedWork = runBridgeWork("options", async () => undefined);
+  await waitFor(() => getBridgeGovernorSnapshot().options.queued === 1);
+
+  let quoteCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionActivitySnapshots: async () => {
+          quoteCalls += 1;
+          return [radarQuote("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  try {
+    const result = await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
+      batchSize: 1,
+      promoteCount: 1,
+    });
+
+    assert.equal(quoteCalls, 0);
+    assert.deepEqual(result.scannedSymbols, []);
+    assert.equal(result.error, "options-lane-queued");
+  } finally {
+    releaseActiveWork();
+    await Promise.all([activeWork, queuedWork]);
+  }
+});
+
+test("options flow radar promotion does not enqueue deep scans after backoff starts", async () => {
+  setOptionsFlowRuntimeOverrides({
+    radarDeepCandidateCount: 1,
+    radarFallbackDeepCandidateCount: 0,
+    radarDeepLineBudget: 1,
+    scannerLineBudget: 1,
+    scannerLimit: 5,
+  });
+
+  let quoteCalls = 0;
+  let chainCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionActivitySnapshots: async () => {
+          quoteCalls += 1;
+          await openOptionsLaneBackoff();
+          return [radarQuote("SPY")];
+        },
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => {
+          chainCalls += 1;
+          return [optionContract("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
+    batchSize: 1,
+    promoteCount: 1,
+    fallbackPromoteCount: 0,
+  });
+
+  assert.equal(quoteCalls, 1);
+  assert.deepEqual(result.promotedSymbols, ["SPY"]);
+  assert.equal(result.error, null);
+  await wait(25);
+  assert.equal(chainCalls, 0);
+  assert.equal(getOptionsFlowScannerDiagnostics().deepScanner.queuedCount, 0);
+});
+
+test("non-radar options flow scanner rotation does not enqueue during options backoff", async () => {
+  setOptionsFlowRuntimeOverrides({
+    radarEnabled: false,
+    scannerBatchSize: 1,
+    scannerIntervalMs: 1_000,
+  });
+  let chainCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => {
+          chainCalls += 1;
+          return [optionContract("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await openOptionsLaneBackoff();
+  startOptionsFlowScanner();
+  await wait(25);
+
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+  assert.equal(chainCalls, 0);
+  assert.equal(diagnostics.backgroundBlockedReason, "options-lane-backoff");
+  assert.equal(diagnostics.deepScanner.queuedCount, 0);
+  assert.deepEqual(diagnostics.lastBatch, []);
+});
+
+test("options flow scanner refresh queue respects options backoff", async () => {
+  await openOptionsLaneBackoff();
+
+  const queued = __queueOptionsFlowScannerRefreshForTests({
+    underlying: "SPY",
+    scannerRequest: { limit: 5, lineBudget: 1 },
+    phase: "test",
+  });
+
+  assert.equal(queued, false);
+  assert.equal(getOptionsFlowScannerDiagnostics().deepScanner.queuedCount, 0);
+});
+
+test("options flow scanner blocks background work under critical resource pressure", () => {
+  updateApiResourcePressure({ rssMb: 1_650 });
+
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+
+  assert.equal(diagnostics.backgroundBlockedReason, "resource-pressure-critical");
+  assert.equal(diagnostics.resourcePressure.level, "critical");
+  assert.equal(diagnostics.resourcePressure.caps.backgroundEnabled, false);
+});
+
+test("options flow radar interval uses the outside-hours scanner multiplier", () => {
+  assert.equal(
+    getOptionsFlowRadarIntervalMs(
+      {
+        ...getOptionsFlowRuntimeConfig(),
+        scannerAlwaysOn: true,
+        scannerIntervalMs: 15_000,
+      },
+      new Date("2026-04-28T22:30:00.000Z"),
+    ),
+    60_000,
+  );
+});
+
+test("options flow radar quote failures open the quotes governor", async () => {
+  setBridgeGovernorOverrides({
+    quotes: { failureThreshold: 1, backoffMs: 60_000 },
+  });
+  let quoteCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionActivitySnapshots: async () => {
+          quoteCalls += 1;
+          throw new HttpError(502, "quote timeout", {
+            code: "upstream_request_failed",
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const quotes = await __fetchOptionsFlowRadarQuotesForTests(["spy"]);
+
+  assert.deepEqual(quotes, []);
+  assert.equal(quoteCalls, 1);
+  assert.equal(getBridgeGovernorSnapshot().quotes.circuitOpen, true);
 });
 
 test("options flow scanner skips fan-out when transport is unavailable", async () => {
@@ -782,6 +1062,148 @@ test("listAggregateFlowEvents reuses default scanner snapshots with request thre
   assert.equal(result.source.ibkrStatus, "loaded");
 });
 
+test("listAggregateFlowEvents backfills underfilled aggregate scanner snapshots", async () => {
+  const chainCalls: string[] = [];
+  let activityCalls = 0;
+  setOptionsFlowRuntimeOverrides({ scannerBatchSize: 2 });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionActivitySnapshots: async () => {
+          activityCalls += 1;
+          return [];
+        },
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async (input: { underlying?: string }) => {
+          const symbol = input.underlying || "SPY";
+          chainCalls.push(symbol);
+          return [optionContract(symbol)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await __runOptionsFlowScannerOnceForTests(["spy"], { limit: 10 });
+  await __runOptionsFlowRadarScannerOnceForTests(["spy", "qqq", "iwm"], {
+    batchSize: 3,
+    promoteCount: 0,
+    fallbackPromoteCount: 0,
+  });
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  chainCalls.length = 0;
+
+  const first = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 10,
+      scope: "all",
+      unusualThreshold: 1,
+    }),
+  );
+
+  assert.equal(activityCalls, 1);
+  assert.deepEqual(
+    [...new Set(first.events.map((event) => event.underlying))],
+    ["SPY"],
+  );
+
+  for (let attempt = 0; attempt < 20 && chainCalls.length < 2; attempt += 1) {
+    await wait(50);
+  }
+
+  assert.deepEqual(chainCalls, ["QQQ", "IWM"]);
+
+  let warmed = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 10,
+      scope: "all",
+      unusualThreshold: 1,
+    }),
+  );
+  for (
+    let attempt = 0;
+    attempt < 20 &&
+    new Set(warmed.events.map((event) => event.underlying)).size < 3;
+    attempt += 1
+  ) {
+    await wait(50);
+    warmed = ListFlowEventsResponse.parse(
+      await listAggregateFlowEvents({
+        limit: 10,
+        scope: "all",
+        unusualThreshold: 1,
+      }),
+    );
+  }
+
+  assert.deepEqual(
+    [...new Set(warmed.events.map((event) => event.underlying))].sort(),
+    ["IWM", "QQQ", "SPY"],
+  );
+});
+
+test("listAggregateFlowEvents does not serve radar fallback rows as lane flow", async () => {
+  let activityCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionActivitySnapshots: async (symbols: string[]) => {
+          activityCalls += 1;
+          return symbols.map((symbol) => radarQuote(symbol));
+        },
+        getOptionExpirations: async () => [],
+        getOptionChain: async () => [],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await __runOptionsFlowRadarScannerOnceForTests(["spy", "qqq", "iwm"], {
+    batchSize: 3,
+    promoteCount: 0,
+    fallbackPromoteCount: 0,
+  });
+
+  const result = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 10,
+      scope: "all",
+      unusualThreshold: 1,
+    }),
+  );
+
+  assert.equal(activityCalls, 1);
+  assert.equal(result.events.length, 0);
+  assert.equal(result.source.provider, "none");
+  assert.equal(result.source.status, "empty");
+  assert.equal(result.source.fallbackUsed, false);
+  assert.equal(result.source.ibkrStatus, "empty");
+  assert.notEqual(
+    result.source.ibkrReason,
+    "options_flow_radar_observation_fallback",
+  );
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const diagnostics = getOptionsFlowScannerDiagnostics().deepScanner;
+    if (diagnostics.queuedCount === 0 && !diagnostics.draining) {
+      break;
+    }
+    await wait(50);
+  }
+});
+
 test("listAggregateFlowEvents seeds the scanner when no current batch exists", async () => {
   const scannedSymbols: string[] = [];
   setOptionsFlowRuntimeOverrides({ scannerBatchSize: 1 });
@@ -878,6 +1300,48 @@ test("listAggregateFlowEvents seeds foreground aggregate scans during live warmu
   }
 
   assert.ok(scannedSymbols.length > 0);
+});
+
+test("listAggregateFlowEvents does not seed scanner work during options backoff", async () => {
+  let chainCalls = 0;
+  setOptionsFlowRuntimeOverrides({ scannerBatchSize: 1 });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => {
+          chainCalls += 1;
+          return [optionContract("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await openOptionsLaneBackoff();
+
+  const pending = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 5,
+      scope: "all",
+    }),
+  );
+
+  assert.equal(pending.events.length, 0);
+  assert.equal(
+    pending.source.ibkrReason,
+    "options_flow_scanner_options_lane_backoff",
+  );
+  await wait(25);
+  assert.equal(chainCalls, 0);
+  assert.equal(getOptionsFlowScannerDiagnostics().deepScanner.queuedCount, 0);
 });
 
 test("listFlowEvents serves partial scanner snapshots to nonblocking callers", async () => {
@@ -1434,6 +1898,66 @@ test("listFlowEvents caps nonblocking scanner refreshes to the scanner quote bud
   assert.equal(
     requestedProviderContractIds.length,
     getOptionsFlowRuntimeConfig().scannerLineBudget,
+  );
+});
+
+test("flow scanner quote leases stay active through the next rotation interval", async () => {
+  setOptionsFlowRuntimeOverrides({
+    scannerAlwaysOn: false,
+    scannerIntervalMs: 60_000,
+    scannerLimit: 1,
+    scannerLineBudget: 1,
+  });
+
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      return (input.providerContractIds || []).map((providerContractId) =>
+        optionQuote(providerContractId, { volume: 250 }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [optionContract("SPY")],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const startedAt = Date.now();
+  const result = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 1, lineBudget: 1 }),
+  );
+  assert.equal(result.events.length, 1);
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  const flowScannerLeases = diagnostics.leases.filter(
+    (lease) => lease.intent === "flow-scanner-live",
+  );
+  assert.equal(diagnostics.flowScannerLineCount, 1);
+  assert.equal(flowScannerLeases.length, 1);
+  assert.ok(flowScannerLeases[0]?.expiresAt);
+  assert.ok(
+    Date.parse(flowScannerLeases[0]!.expiresAt!) - startedAt >= 70_000,
   );
 });
 

@@ -5,9 +5,12 @@ import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
   PROFILE_NUMBER_FIELDS,
+  SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
+  SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
   candidateBlockerLabel,
   candidateLatestActivityLabel,
+  deriveSignalOptionsHaltControlStatus,
   entryQualityLabel,
   formatCompactMetric,
   formatContractDetail,
@@ -17,10 +20,18 @@ import {
   findSignalOptionsCandidateForSignal,
   formatQuoteGreeksSummary,
   formatQuoteSummary,
+  formatProgressiveTrailSteps,
   mergeOptionQuoteSnapshot,
   mergeSignalOptionsProfile,
   optionProviderContractId,
+  parseProgressiveTrailSteps,
+  resolveCandidateGateDisplay,
+  resolveCandidateSyncDisplay,
+  resolveSignalAge,
+  resolveSignalMove,
+  resolveSignalScoreBreakdown,
   resolveStrategySignalSettings,
+  signalOptionsHaltControlsChanged,
 } from "./algoHelpers";
 import {
   buildAlgoAccountPositionRows,
@@ -29,6 +40,18 @@ import {
   filterAccountPositionRowsForDeployment,
   filterAccountPositionRowsForRuntimePositions,
 } from "./algoAccountPositions";
+import {
+  COMPACT_HALT_SETTING_PAIRS,
+  COMPACT_HALT_STANDALONE_SETTINGS,
+  allSettingFields,
+  compactRailSettingGroups,
+  getCompactHaltSettingField,
+  getCompactHaltStandaloneFields,
+  isCompactRailSettingPath,
+  settingsRegionFields,
+} from "./algoSettingsFields";
+import { saveAllAlgoAdjustments } from "./saveAllAlgoAdjustments";
+import { __internalsForTests as draftInternals } from "./useServerSyncedDraft";
 
 test("algo profile defaults match the tuned h8 signal-options profile", () => {
   assert.equal(DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe, "5m");
@@ -49,6 +72,14 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.minLockedGainPct,
       trailGivebackPct:
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.trailGivebackPct,
+      tightenAtFiveXGivebackPct:
+        SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.tightenAtFiveXGivebackPct,
+      tightenAtTenXGivebackPct:
+        SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.tightenAtTenXGivebackPct,
+      progressiveTrailEnabled:
+        SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.progressiveTrailEnabled,
+      progressiveTrailSteps:
+        SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.progressiveTrailSteps,
       overnightExitEnabled:
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.overnightExitEnabled,
       overnightMinGainPct:
@@ -64,12 +95,25 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
       trailActivationPct: 35,
       minLockedGainPct: 15,
       trailGivebackPct: 20,
+      tightenAtFiveXGivebackPct: 30,
+      tightenAtTenXGivebackPct: 15,
+      progressiveTrailEnabled: true,
+      progressiveTrailSteps: SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
       overnightExitEnabled: true,
       overnightMinGainPct: 10,
       overnightRunnerGivebackPct: 15,
       earlyExitBars: 6,
       earlyExitLossPct: 20,
     },
+  );
+  assert.deepEqual(SIGNAL_OPTIONS_DEFAULT_PROFILE.riskHaltControls, {
+    dailyLossHaltEnabled: true,
+    openSymbolCapEnabled: true,
+    premiumBudgetEnabled: true,
+  });
+  assert.equal(
+    SIGNAL_OPTIONS_DEFAULT_PROFILE.positionHaltControls.positionMarkFeedHaltEnabled,
+    true,
   );
 });
 
@@ -121,6 +165,147 @@ test("profile merge preserves tuned early and overnight defaults", () => {
   assert.equal(profile.exitPolicy.earlyExitLossPct, 20);
   assert.equal(profile.exitPolicy.overnightExitEnabled, true);
   assert.equal(profile.exitPolicy.overnightMinGainPct, 10);
+  assert.equal(profile.exitPolicy.trailActivationPct, 35);
+  assert.equal(profile.exitPolicy.minLockedGainPct, 15);
+  assert.equal(profile.exitPolicy.trailGivebackPct, 20);
+  assert.equal(profile.exitPolicy.tightenAtFiveXGivebackPct, 30);
+  assert.equal(profile.exitPolicy.tightenAtTenXGivebackPct, 15);
+  assert.equal(profile.exitPolicy.progressiveTrailEnabled, true);
+  assert.deepEqual(
+    profile.exitPolicy.progressiveTrailSteps,
+    SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
+  );
+  assert.equal(profile.exitPolicy.conditionalQualityExitsEnabled, false);
+  assert.equal(profile.exitPolicy.lowQualityEarlyExitBars, 4);
+  assert.equal(profile.exitPolicy.lowQualityEarlyExitLossPct, 15);
+  assert.equal(profile.exitPolicy.highQualityEarlyExitBars, 8);
+  assert.equal(profile.exitPolicy.highQualityEarlyExitLossPct, 25);
+  assert.equal(profile.exitPolicy.weakLiquidityTrailGivebackPct, 15);
+  assert.equal(profile.exitPolicy.strongLiquidityTrailGivebackPct, 25);
+  assert.equal(profile.exitPolicy.highQualityOvernightMinGainPct, -100);
+  assert.equal(profile.positionHaltControls.positionMarkFeedHaltEnabled, true);
+  assert.equal(profile.infrastructureHaltControls.gatewayReadinessBlockEnabled, true);
+});
+
+test("progressive trail ladder text round-trips through settings helpers", () => {
+  const text = formatProgressiveTrailSteps(
+    SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
+  );
+
+  assert.equal(text, "20/0/30, 30/15/25, 45/25/20, 65/40/20, 100/60/15");
+  assert.deepEqual(
+    parseProgressiveTrailSteps("45/25/20, 20/0/30"),
+    [
+      { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+      { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
+    ],
+  );
+});
+
+test("algo halt control helpers detect dirty controls and active states", () => {
+  const dailyLossControl = SIGNAL_OPTIONS_HALT_CONTROL_GROUPS[0].controls[0];
+  const gatewayControl = SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.find(
+    (group) => group.id === "infrastructure",
+  ).controls[0];
+  const draft = mergeSignalOptionsProfile({
+    signalOptions: {
+      riskHaltControls: {
+        dailyLossHaltEnabled: false,
+      },
+    },
+  });
+
+  assert.equal(signalOptionsHaltControlsChanged(draft, SIGNAL_OPTIONS_DEFAULT_PROFILE), true);
+  assert.deepEqual(
+    deriveSignalOptionsHaltControlStatus({
+      control: dailyLossControl,
+      profile: SIGNAL_OPTIONS_DEFAULT_PROFILE,
+      cockpit: { risk: { dailyHaltActive: true } },
+    }),
+    { state: "active", label: "ACTIVE", reasonCount: 0 },
+  );
+  assert.equal(
+    deriveSignalOptionsHaltControlStatus({
+      control: gatewayControl,
+      profile: {
+        ...SIGNAL_OPTIONS_DEFAULT_PROFILE,
+        infrastructureHaltControls: {
+          ...SIGNAL_OPTIONS_DEFAULT_PROFILE.infrastructureHaltControls,
+          gatewayReadinessBlockEnabled: false,
+        },
+      },
+      cockpit: { readiness: { ready: false } },
+    }).state,
+    "forced",
+  );
+});
+
+test("server-synced draft model keeps dirty local edits across stale refreshes", () => {
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const isEqual = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const baseline = { profile: { riskCaps: { maxOpenSymbols: 5 } } };
+  const dirtyDraft = { profile: { riskCaps: { maxOpenSymbols: 12 } } };
+
+  assert.deepEqual(
+    draftInternals.createServerSyncedDraftState({
+      draft: dirtyDraft,
+      baseline,
+      serverValue: baseline,
+      syncChanged: false,
+      clone,
+      isEqual,
+    }).draft,
+    dirtyDraft,
+  );
+
+  const switched = draftInternals.createServerSyncedDraftState({
+    draft: dirtyDraft,
+    baseline,
+    serverValue: { profile: { riskCaps: { maxOpenSymbols: 3 } } },
+    syncChanged: true,
+    clone,
+    isEqual,
+  });
+  assert.equal(switched.draft.profile.riskCaps.maxOpenSymbols, 3);
+  assert.deepEqual(switched.draft, switched.baseline);
+});
+
+test("unified algo save fans out only dirty slices and reports partial failure", async () => {
+  const calls = [];
+  const profileMutation = {
+    mutateAsync: async (payload) => {
+      calls.push(["profile", payload]);
+      return { profile: payload.data };
+    },
+  };
+  const strategyMutation = {
+    mutateAsync: async (payload) => {
+      calls.push(["strategy", payload]);
+      throw new Error("strategy failed");
+    },
+  };
+  const failures = [];
+
+  const result = await saveAllAlgoAdjustments({
+    deploymentId: "dep-1",
+    profileDraft: SIGNAL_OPTIONS_DEFAULT_PROFILE,
+    strategySettingsDraft: {
+      ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
+      timeHorizon: 99,
+    },
+    profileDirty: true,
+    strategyDirty: true,
+    updateProfileMutation: profileMutation,
+    updateStrategySettingsMutation: strategyMutation,
+    onPartialFailure: (payload) => failures.push(payload),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failures[0].section, "Signal");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][1].silent, true);
+  assert.equal(calls[1][1].data.timeHorizon, 50);
+  assert.equal(failures.length, 1);
 });
 
 test("algo row helpers summarize blocker, timeline, and entry quality fields", () => {
@@ -154,6 +339,103 @@ test("algo row helpers summarize blocker, timeline, and entry quality fields", (
     entryQualityLabel({ tier: "high", score: 87.234 }),
     "High · 87.2",
   );
+});
+
+test("algo signal enrichment derives counters scoring gates and sync", () => {
+  const signal = {
+    symbol: "SPY",
+    direction: "buy",
+    signalAt: "2026-05-21T14:00:00.000Z",
+    signalPrice: 500,
+    barsSinceSignal: 1,
+    freshWindowBars: 4,
+    fresh: true,
+    filterState: {
+      mtfDirections: [1, 1, 1],
+      adx: 31,
+    },
+  };
+  const candidate = {
+    status: "open",
+    actionStatus: "shadow_filled",
+    syncStatus: "synced",
+    signal,
+    orderPlan: {
+      premiumAtRisk: 240,
+      liquidity: { spreadPctOfMid: 12 },
+    },
+    quote: { marketDataMode: "live" },
+    shadowLink: {
+      orderId: "order-1",
+      fillId: "fill-1",
+      positionId: "position-1",
+      attributionStatus: "attributed",
+    },
+  };
+
+  assert.deepEqual(
+    resolveSignalAge(signal, { now: Date.parse("2026-05-21T14:30:00.000Z") }),
+    {
+      signalAt: "2026-05-21T14:00:00.000Z",
+      barsSinceSignal: 1,
+      freshWindowBars: 4,
+      freshnessPct: 75,
+      label: "1/4 bars",
+      detail: "30m since signal",
+    },
+  );
+
+  assert.deepEqual(resolveSignalMove(signal, { price: 510 }), {
+    value: 10,
+    pct: 2,
+    label: "+10.00",
+    detail: "+2.0% since signal",
+  });
+
+  const score = resolveSignalScoreBreakdown({ signal, candidate });
+  assert.equal(score.tier, "high");
+  assert.equal(score.score, 95);
+  assert.deepEqual(score.reasonLabels.slice(0, 3), [
+    "MTF Full Alignment",
+    "Fresh Signal",
+    "ADX Confirmed",
+  ]);
+
+  assert.equal(resolveCandidateGateDisplay(candidate).label, "Gate clear");
+  assert.equal(resolveCandidateSyncDisplay(candidate).label, "Synced");
+  assert.equal(
+    resolveCandidateGateDisplay({ reason: "spread_too_wide" }).category,
+    "liquidity",
+  );
+  assert.equal(
+    resolveCandidateGateDisplay({ reason: "market_session_quiet" }).category,
+    "gateway",
+  );
+});
+
+test("signal quality score overrides raw signal score", () => {
+  const score = resolveSignalScoreBreakdown({
+    signal: {
+      symbol: "SPY",
+      score: 12,
+      filterState: {
+        mtfDirections: [-1, -1, -1],
+      },
+    },
+    candidate: {
+      signalQuality: {
+        tier: "high",
+        score: 88.4,
+        liquidityTier: "strong",
+        reasons: ["mtf_full_alignment", "risk_sized"],
+      },
+    },
+  });
+
+  assert.equal(score.score, 88.4);
+  assert.equal(score.tier, "high");
+  assert.equal(score.label, "High · 88.4");
+  assert.deepEqual(score.reasonLabels, ["MTF Full Alignment", "Risk Sized"]);
 });
 
 test("signal rows match candidates by key and signal identity fallback", () => {
@@ -324,8 +606,15 @@ test("algo positions adapt to the account positions row contract with live optio
         symbol: "SPY",
         quantity: 2,
         entryPrice: 1.1,
+        openedAt: "2026-05-21T14:33:00.000Z",
+        signalAt: "2026-05-21T14:30:00.000Z",
         lastMarkPrice: 1.2,
         premiumAtRisk: 220,
+        signalQuality: {
+          tier: "high",
+          score: 88.5,
+          reasons: ["fresh_signal", "strong_liquidity"],
+        },
         selectedContract: {
           ticker:
             "twsopt:eyJ2IjoxLCJ1IjoiU1BZIiwiZSI6IjIwMjYwNTIyIiwicyI6NzAwLCJyIjoiQyJ9",
@@ -341,7 +630,7 @@ test("algo positions adapt to the account positions row contract with live optio
     ],
     symbolIndex: {
       SPY: {
-        signal: { score: 91.2, signalPrice: 504.12 },
+        signal: { score: 91.2, signalPrice: 504.12, barsSinceSignal: 2 },
         candidate: {
           quote: { bid: 1.05, ask: 1.2, delta: 0.4 },
           liquidity: { mid: 1.125, spreadPctOfMid: 13.3 },
@@ -371,6 +660,14 @@ test("algo positions adapt to the account positions row contract with live optio
   assert.equal(rows[0].marketValue, 280);
   assert.equal(rows[0].unrealizedPnl, 59.99999999999997);
   assert.equal(rows[0].underlyingMarket.price, 504.12);
+  assert.equal(rows[0].automationContext.purchasedAt, "2026-05-21T14:33:00.000Z");
+  assert.equal(rows[0].automationContext.signalAt, "2026-05-21T14:30:00.000Z");
+  assert.equal(rows[0].automationContext.barsSinceSignal, 2);
+  assert.equal(rows[0].automationContext.signalScore, 88.5);
+  assert.deepEqual(rows[0].automationContext.signalReasons, [
+    "fresh_signal",
+    "strong_liquidity",
+  ]);
 
   const response = buildAlgoAccountPositionsResponse(rows);
   assert.equal(response.totals.netExposure, 280);
@@ -439,12 +736,26 @@ test("algo account ledger rows can be scoped to the focused deployment without r
 });
 
 test("algo profile UI exposes and saves expanded strategy and exit fields", () => {
-  const profileTabSource = readFileSync(
-    new URL("./AlgoProfileTab.jsx", import.meta.url),
+  const settingPaths = new Set(allSettingFields.map((field) => field.path));
+  const regionSettingPaths = new Set(
+    settingsRegionFields.flatMap((section) =>
+      section.fields.map((field) => field.path),
+    ),
+  );
+  const settingsFieldsSource = readFileSync(
+    new URL("./algoSettingsFields.js", import.meta.url),
+    "utf8",
+  );
+  const settingsRegionSource = readFileSync(
+    new URL("./AlgoSettingsRegion.jsx", import.meta.url),
     "utf8",
   );
   const screenSource = readFileSync(
     new URL("../AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const saveAllSource = readFileSync(
+    new URL("./saveAllAlgoAdjustments.js", import.meta.url),
     "utf8",
   );
 
@@ -459,12 +770,129 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
         section === "exitPolicy" && key === "overnightExitEnabled",
     ),
   );
-  assert.match(profileTabSource, /BOS CONFIRMATION/);
-  assert.match(profileTabSource, /CHOCH ATR BUFFER/);
-  assert.match(profileTabSource, /overnightExitEnabled/);
-  assert.match(screenSource, /bosConfirmation,/);
-  assert.match(screenSource, /chochBodyExpansionAtr:/);
-  assert.match(screenSource, /chochVolumeGate:/);
+  [
+    "entryGate.mtfAlignment.enabled",
+    "entryGate.mtfAlignment.requiredCount",
+    "exitPolicy.tightenAtFiveXGivebackPct",
+    "exitPolicy.tightenAtTenXGivebackPct",
+    "exitPolicy.progressiveTrailEnabled",
+    "exitPolicy.progressiveTrailSteps",
+    "exitPolicy.conditionalQualityExitsEnabled",
+    "exitPolicy.lowQualityEarlyExitBars",
+    "exitPolicy.lowQualityEarlyExitLossPct",
+    "exitPolicy.highQualityEarlyExitBars",
+    "exitPolicy.highQualityEarlyExitLossPct",
+    "exitPolicy.weakLiquidityTrailGivebackPct",
+    "exitPolicy.strongLiquidityTrailGivebackPct",
+    "exitPolicy.highQualityOvernightMinGainPct",
+  ].forEach((path) => {
+    assert.ok(settingPaths.has(path), `${path} should be editable in settings`);
+  });
+  assert.deepEqual(
+    COMPACT_HALT_SETTING_PAIRS.map((pair) => [
+      pair.controlId,
+      getCompactHaltSettingField(pair.controlId)?.path,
+    ]),
+    [
+      ["dailyLoss", "riskCaps.maxDailyLoss"],
+      ["openSymbols", "riskCaps.maxOpenSymbols"],
+      ["premiumBudget", "riskCaps.maxPremiumPerEntry"],
+      ["bearishRegime", "entryGate.bearishRegime.minAdx"],
+      ["spreadGate", "liquidityGate.maxSpreadPctOfMid"],
+      ["minBidGate", "liquidityGate.minBid"],
+    ],
+  );
+  assert.deepEqual(COMPACT_HALT_STANDALONE_SETTINGS, [
+    { groupId: "risk", id: "maxContracts", settingPath: "riskCaps.maxContracts", label: "Contracts" },
+  ]);
+  assert.equal(
+    getCompactHaltStandaloneFields("risk")[0]?.path,
+    "riskCaps.maxContracts",
+  );
+  [
+    ...COMPACT_HALT_SETTING_PAIRS.map((pair) => pair.settingPath),
+    ...COMPACT_HALT_STANDALONE_SETTINGS.map((item) => item.settingPath),
+  ].forEach((settingPath) => {
+    assert.ok(settingPaths.has(settingPath), `${settingPath} should stay dirty-trackable`);
+    assert.equal(
+      regionSettingPaths.has(settingPath),
+      false,
+      `${settingPath} should render in compact halt strip only`,
+    );
+  });
+  const compactRailPaths = compactRailSettingGroups.flatMap((group) =>
+    group.items.flatMap((item) =>
+      item.kind === "compound"
+        ? [item.toggleField.path, item.valueField.path]
+        : [item.path],
+    ),
+  );
+  [
+    "signalTimeframe",
+    "entryGate.mtfAlignment.enabled",
+    "entryGate.mtfAlignment.requiredCount",
+    "liquidityGate.requireFreshQuote",
+    "fillPolicy.ttlSeconds",
+    "optionSelection.allowZeroDte",
+    "optionSelection.minDte",
+    "exitPolicy.progressiveTrailEnabled",
+    "exitPolicy.progressiveTrailSteps",
+    "exitPolicy.overnightExitEnabled",
+    "exitPolicy.overnightMinGainPct",
+    "exitPolicy.conditionalQualityExitsEnabled",
+  ].forEach((settingPath) => {
+    assert.ok(compactRailPaths.includes(settingPath), `${settingPath} should render compact`);
+    assert.ok(isCompactRailSettingPath(settingPath), `${settingPath} should be a compact rail path`);
+    assert.equal(
+      regionSettingPaths.has(settingPath),
+      false,
+      `${settingPath} should not duplicate in fallback settings rows`,
+    );
+  });
+  assert.ok(
+    PROFILE_NUMBER_FIELDS.some(
+      ([section, key]) =>
+        section === "exitPolicy" && key === "highQualityOvernightMinGainPct",
+    ),
+  );
+  assert.ok(
+    PROFILE_BOOLEAN_FIELDS.some(
+      ([section, key]) =>
+        section === "exitPolicy" && key === "progressiveTrailEnabled",
+    ),
+  );
+  assert.ok(
+    PROFILE_BOOLEAN_FIELDS.some(
+      ([section, key]) =>
+        section === "exitPolicy" && key === "conditionalQualityExitsEnabled",
+    ),
+  );
+  assert.match(settingsFieldsSource, /BOS CONFIRMATION/);
+  assert.match(settingsFieldsSource, /MTF REQUIRED COUNT/);
+  assert.match(settingsFieldsSource, /CHOCH ATR BUFFER/);
+  assert.match(settingsFieldsSource, /5X GIVEBACK %/);
+  assert.match(settingsFieldsSource, /10X GIVEBACK %/);
+  assert.match(settingsFieldsSource, /PROGRESSIVE TRAIL/);
+  assert.match(settingsFieldsSource, /conditionalQualityExitsEnabled/);
+  assert.match(settingsFieldsSource, /highQualityOvernightMinGainPct/);
+  assert.match(settingsFieldsSource, /overnightExitEnabled/);
+  assert.match(settingsRegionSource, /settingsRegionFields\.map/);
+  assert.match(settingsRegionSource, /compactRailSettingGroups\.map/);
+  assert.match(settingsRegionSource, /CompactCompoundSettingCell/);
+  assert.match(settingsRegionSource, /SettingsFormRow/);
+  assert.match(settingsRegionSource, /patchStrategySettingsPath/);
+  assert.match(
+    readFileSync(new URL("./HaltStrip.jsx", import.meta.url), "utf8"),
+    /algo-halt-input-/,
+  );
+  assert.match(
+    readFileSync(new URL("./AlgoSaveBar.jsx", import.meta.url), "utf8"),
+    /Save changes/,
+  );
+  assert.match(screenSource, /saveAllAlgoAdjustments/);
+  assert.match(saveAllSource, /bosConfirmation,/);
+  assert.match(saveAllSource, /chochBodyExpansionAtr:/);
+  assert.match(saveAllSource, /chochVolumeGate:/);
 });
 
 test("algo operations views surface contract quote and greeks fields", () => {
@@ -501,8 +929,8 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(positionsSource, /accountPositionsQuery/);
   assert.match(positionsSource, /Focused shadow ledger/);
   assert.match(positionsSource, /filterAccountPositionRowsForDeployment/);
-  assert.match(positionsSource, /liveOptionQuotesEnabled=\{!hasAccountPositionsQuery\}/);
-  assert.match(positionsSource, /streamLiveOptionQuotes=\{!hasAccountPositionsQuery\}/);
+  assert.match(positionsSource, /liveOptionQuotesEnabled=\{!accountQueryHasRows\}/);
+  assert.match(positionsSource, /streamLiveOptionQuotes=\{!accountQueryHasRows\}/);
   assert.match(positionsSource, /hasAccountPositionsQuery/);
   assert.doesNotMatch(positionsSource, /scopedAccountRows\.length\s*>\s*0/);
   assert.match(positionsSource, /useStoredOptionQuoteSnapshotVersion/);

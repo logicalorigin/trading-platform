@@ -30,12 +30,13 @@ import {
 import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
 import { useOptionChartBars } from "../charting/useOptionChartBars.js";
 import { resolveOptionChartSourceState } from "../charting/chartApiBars.js";
-import { useFlowChartEventConversion } from "../workers/analyticsClient";
+import { useContractFlowChartEvents } from "../charting/useContractFlowChartEvents.js";
 import {
   normalizeFlowOptionExpirationIso,
   normalizeFlowOptionRight,
   normalizeFlowOptionStrike,
 } from "../platform/flowOptionChartIdentity";
+import { useFlowTapeFilterState } from "../platform/flowFilterStore";
 import { useToast } from "../platform/platformContexts.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import {
@@ -117,9 +118,15 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
   };
 };
 
-export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
+export const ContractDetailInline = ({
+  evt,
+  flowEvents = [],
+  onBack,
+  onJumpToTrade,
+}) => {
   const toast = useToast();
   const [alertSet, setAlertSet] = useState(false);
+  const flowTapeFilters = useFlowTapeFilterState();
 
   useEffect(() => {
     const onKey = (event) => {
@@ -403,12 +410,24 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       optionProgressiveBars.targetLimit,
     ],
   });
-  const optionChartFlowEvents = useMemo(() => (evt ? [evt] : []), [evt]);
-  const optionChartEventConversion = useFlowChartEventConversion(
-    optionChartFlowEvents,
-    chartSymbol,
-  );
-  const optionChartEvents = optionChartEventConversion.events;
+  const optionChartFlow = useContractFlowChartEvents({
+    flowEvents,
+    pinnedEvent: evt,
+    flowTapeFilters,
+    contract: {
+      symbol: chartSymbol,
+      providerContractId: effectiveProviderContractId || providerContractId,
+      optionTicker,
+      expirationDate: optionExpirationIso,
+      right: optionRight,
+      strike: optionStrike,
+    },
+    timeframe: optionChartTimeframe,
+    chartBars: optionDisplayBars,
+    symbol: chartSymbol,
+  });
+  const optionChartEventConversion = optionChartFlow.conversion;
+  const optionChartEvents = optionChartFlow.chartEvents;
   const optionLatestBar = optionDisplayBars[optionDisplayBars.length - 1] || null;
   const optionPreviousBar =
     optionDisplayBars.length > 1
@@ -773,6 +792,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             label: "FILL",
             value: `${formatQuotePrice(fillPrice)} ${fillSpread.shortLabel}`,
             color: fillSpread.color,
+            testId: "flow-mobile-fill-spread",
           },
           {
             label: "BID",
@@ -805,41 +825,46 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             color: flowProviderColor(evt.provider),
           },
         ].map((item) => (
-          <AppTooltip key={item.label} content={item.label === "FILL" ? fillSpread.label : undefined}><div
+          <AppTooltip
             key={item.label}
-            style={{
-              padding: sp("6px 8px"),
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(3),
-              minWidth: 0,
-            }}
+            content={item.label === "FILL" ? fillSpread.label : undefined}
           >
             <div
+              data-testid={item.testId}
               style={{
-                fontSize: fs(8),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.regular,
-                marginBottom: sp(2),
+                padding: sp("6px 8px"),
+                background: T.bg1,
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(3),
+                minWidth: 0,
               }}
             >
-              {item.label}
+              <div
+                style={{
+                  fontSize: fs(8),
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  marginBottom: sp(2),
+                }}
+              >
+                {item.label}
+              </div>
+              <div
+                style={{
+                  fontSize: fs(10),
+                  color: item.color,
+                  fontFamily: T.sans,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.value}
+              </div>
             </div>
-            <div
-              style={{
-                fontSize: fs(10),
-                color: item.color,
-                fontFamily: T.sans,
-                fontWeight: FONT_WEIGHTS.regular,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.value}
-            </div>
-          </div></AppTooltip>
+          </AppTooltip>
         ))}
       </div>
 

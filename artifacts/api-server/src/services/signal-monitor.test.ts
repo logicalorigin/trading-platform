@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { SignalMonitorProfileRow } from "./signal-monitor";
 
@@ -112,6 +113,68 @@ test("signal monitor bar queries are scoped to the latest completed boundary", (
       evaluatedAt: new Date("2026-04-24T14:35:02.000Z"),
     }).toISOString(),
     "2026-04-24T14:35:00.000Z",
+  );
+});
+
+test("signal monitor completed-bars cache key is stable for the same completed boundary", () => {
+  const keyA =
+    __signalMonitorInternalsForTests.buildSignalMonitorCompletedBarsCacheKey({
+      symbol: "spy",
+      timeframe: "5m",
+      providerTimeframe: "5m",
+      providerLimit: 120,
+      completedLimit: 120,
+      queryTo: new Date("2026-04-24T14:35:00.000Z"),
+    });
+  const keyB =
+    __signalMonitorInternalsForTests.buildSignalMonitorCompletedBarsCacheKey({
+      symbol: "SPY",
+      timeframe: "5m",
+      providerTimeframe: "5m",
+      providerLimit: 120,
+      completedLimit: 120,
+      queryTo: new Date("2026-04-24T14:35:00.000Z"),
+    });
+
+  assert.equal(keyA, keyB);
+});
+
+test("signal monitor matrix bars use the priority-aware bars lane", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const loadBlock = source.match(
+    /export async function loadSignalMonitorCompletedBars[\s\S]*?export async function evaluateSignalMonitorSymbolFromCompletedBars/,
+  )?.[0];
+
+  assert.match(source, /getBarsWithDebug/);
+  assert.match(source, /const SIGNAL_MONITOR_BARS_PRIORITY = 4;/);
+  assert.match(source, /const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";/);
+  assert.match(loadBlock ?? "", /priority:\s*SIGNAL_MONITOR_BARS_PRIORITY/);
+  assert.match(loadBlock ?? "", /family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
+  assert.match(loadBlock ?? "", /readSignalMonitorCompletedBarsCache/);
+  assert.match(loadBlock ?? "", /signalMonitorCompletedBarsInFlight/);
+});
+
+test("signal monitor matrix caps server work under API resource pressure", () => {
+  const configured = profile({
+    maxSymbols: 250,
+    evaluationConcurrency: 10,
+  });
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
+    { pressure: "normal", maxSymbols: 250, concurrency: 10 },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
+    { pressure: "watch", maxSymbols: 96, concurrency: 2 },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
+    { pressure: "high", maxSymbols: 32, concurrency: 1 },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
+    { pressure: "critical", maxSymbols: 8, concurrency: 1 },
   );
 });
 
@@ -258,6 +321,38 @@ test("signal monitor marks built-in fallback universes as non-authoritative", ()
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
   assert.equal(result.fallbackWatchlists, true);
+});
+
+test("signal monitor state hydration is scoped to the profile timeframe", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function getSignalMonitorState");
+  const end = source.indexOf("export async function evaluateSignalMonitor", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(
+    block,
+    /eq\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframe\)/,
+  );
+  assert.match(
+    block,
+    /const timeframe = resolveSignalMonitorTimeframe\(hydratedProfile\.timeframe\)/,
+  );
+});
+
+test("signal monitor full evaluation deactivates stale timeframe rows", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function evaluateSignalMonitorProfileUniverse");
+  const end = source.indexOf("function resolveSignalMonitorMatrixSymbols", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(
+    block,
+    /ne\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframe\)/,
+  );
 });
 
 test("signal matrix cache serves stale data while a refresh is in flight", async () => {

@@ -3,9 +3,11 @@ import {
   useGetDiagnosticThresholds,
   useUpdateDiagnosticThresholds,
 } from "@workspace/api-client-react";
+import { useToast } from "../../features/platform/platformContexts.jsx";
 import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
-const THRESHOLD_EVENT = "rayalgo:diagnostic-thresholds-updated";
+const THRESHOLD_EVENT = "pyrus:diagnostic-thresholds-updated";
+const LEGACY_THRESHOLD_EVENT = "rayalgo:diagnostic-thresholds-updated";
 
 function smallButton({ active = false } = {}) {
   return {
@@ -47,6 +49,7 @@ function inputStyle() {
 }
 
 export function useDiagnosticThresholdSettings() {
+  const toast = useToast();
   const [thresholds, setThresholds] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [error, setError] = useState(null);
@@ -67,9 +70,20 @@ export function useDiagnosticThresholdSettings() {
         applyThresholdPayload(payload);
         setError(null);
         window.dispatchEvent(new CustomEvent(THRESHOLD_EVENT));
+        window.dispatchEvent(new CustomEvent(LEGACY_THRESHOLD_EVENT));
+        toast.push({
+          kind: "success",
+          title: "Diagnostic thresholds saved",
+        });
       },
       onError: (err) => {
-        setError(err?.detail || err?.message || "Failed to save diagnostic thresholds.");
+        const message = err?.detail || err?.message || "Failed to save diagnostic thresholds.";
+        setError(message);
+        toast.push({
+          kind: "error",
+          title: "Threshold save failed",
+          body: message,
+        });
       },
     },
   });
@@ -97,7 +111,11 @@ export function useDiagnosticThresholdSettings() {
   useEffect(() => {
     const listener = () => load();
     window.addEventListener(THRESHOLD_EVENT, listener);
-    return () => window.removeEventListener(THRESHOLD_EVENT, listener);
+    window.addEventListener(LEGACY_THRESHOLD_EVENT, listener);
+    return () => {
+      window.removeEventListener(THRESHOLD_EVENT, listener);
+      window.removeEventListener(LEGACY_THRESHOLD_EVENT, listener);
+    };
   }, [load]);
 
   const dirtyCount = useMemo(() => {
@@ -175,13 +193,14 @@ export function DiagnosticThresholdSettingsPanel({
         border: "none",
         background: T.bg1,
         borderRadius: dim(RADII.sm),
-        padding: sp(12),
+        padding: sp(compact ? 10 : 12),
         minWidth: 0,
       }}
     >
       <div
         style={{
           display: "flex",
+          flexDirection: compact ? "column" : "row",
           alignItems: "flex-start",
           justifyContent: "space-between",
           gap: sp(10),
@@ -230,9 +249,9 @@ export function DiagnosticThresholdSettingsPanel({
           style={{
             display: "grid",
             gridTemplateColumns: compact
-              ? "repeat(auto-fit, minmax(230px, 1fr))"
+              ? "minmax(0, 1fr)"
               : "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: sp(10),
+            gap: sp(compact ? 8 : 10),
           }}
         >
           {drafts.map((threshold, index) => (
@@ -241,8 +260,8 @@ export function DiagnosticThresholdSettingsPanel({
               style={{
                 border: "none",
                 borderRadius: dim(RADII.sm),
-                padding: sp(9),
-                background: T.bg1,
+                padding: sp(compact ? 8 : 9),
+                background: T.bg0,
               }}
             >
               <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11), marginBottom: sp(6) }}>
@@ -275,22 +294,32 @@ export function DiagnosticThresholdSettingsPanel({
                   />
                 </label>
               </div>
-              <label style={{ ...inputLabel(), flexDirection: "row", alignItems: "center", marginTop: sp(8) }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(threshold.enabled)}
-                  onChange={(event) => updateDraft(index, { enabled: event.target.checked })}
-                />
-                Enabled
-              </label>
-              <label style={{ ...inputLabel(), flexDirection: "row", alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(threshold.audible)}
-                  onChange={(event) => updateDraft(index, { audible: event.target.checked })}
-                />
-                Audible
-              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(14),
+                  flexWrap: "wrap",
+                  marginTop: sp(8),
+                }}
+              >
+                <label style={{ ...inputLabel(), flexDirection: "row", alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(threshold.enabled)}
+                    onChange={(event) => updateDraft(index, { enabled: event.target.checked })}
+                  />
+                  Enabled
+                </label>
+                <label style={{ ...inputLabel(), flexDirection: "row", alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(threshold.audible)}
+                    onChange={(event) => updateDraft(index, { audible: event.target.checked })}
+                  />
+                  Audible
+                </label>
+              </div>
             </div>
           ))}
         </div>

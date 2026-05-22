@@ -132,11 +132,11 @@ test("page-level styling avoids legacy hardcoded palettes and negative tracking"
   }
 });
 
-test("redesign brand accent is the terracotta family on both themes", () => {
-  assert.equal(THEMES.dark.accent, "#E08F76");
-  assert.equal(THEMES.light.accent, "#D97757");
-  assert.equal(THEMES.dark.borderFocus, "#E08F76");
-  assert.equal(THEMES.light.borderFocus, "#D97757");
+test("redesign brand accent is the PYRUS blue family on both themes", () => {
+  assert.equal(THEMES.dark.accent, "#168BFF");
+  assert.equal(THEMES.light.accent, "#0B66D8");
+  assert.equal(THEMES.dark.borderFocus, "#168BFF");
+  assert.equal(THEMES.light.borderFocus, "#0B66D8");
 });
 
 test("pulse-state aliases mirror green/amber/red on both themes", () => {
@@ -298,7 +298,7 @@ test("fs and dim scale and round numerically with the active scale", () => {
 test("motion: error-shake keyframe + class + reduced-motion override", () => {
   // raErrorShake is the only horizontal-jitter motion in the app. The
   // class must respect prefers-reduced-motion AND the
-  // data-rayalgo-reduced-motion="on" opt-in, so users who explicitly
+  // data-pyrus-reduced-motion="on" opt-in, so users who explicitly
   // disable motion don't see the jitter on invalid submits.
   const cssSource = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"),
@@ -316,6 +316,10 @@ test("motion: error-shake keyframe + class + reduced-motion override", () => {
   );
   assert.match(
     cssSource,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-error-shake[\s\S]*?animation: none/,
+  );
+  assert.match(
+    cssSource,
     /html\[data-rayalgo-reduced-motion="on"\] \.ra-error-shake[\s\S]*?animation: none/,
   );
 });
@@ -329,7 +333,7 @@ test("motion roles documented in motion.jsx", () => {
     join(dirname(fileURLToPath(import.meta.url)), "motion.jsx"),
     "utf8",
   );
-  assert.match(motionSource, /RayAlgo motion roles/);
+  assert.match(motionSource, /PYRUS motion roles/);
   for (const role of [
     "entrance",
     "hover",

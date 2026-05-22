@@ -560,6 +560,53 @@ test("flow scanner option quote snapshots are not blocked by option-chain govern
   assert.equal(payload.debug?.rejectedCount, 0);
 });
 
+test("signal options automation quote snapshots are not blocked by option-chain governor backoff", async () => {
+  await assert.rejects(
+    runBridgeWork("options", async () => {
+      throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {
+        code: "upstream_http_error",
+      });
+    }),
+  );
+  assert.equal(isBridgeWorkBackedOff("options"), true);
+
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "NVDA",
+    providerContractIds: ["3102", "3101"],
+    owner: "signal-options-position-mark:deploy-1:position-1",
+    intent: "automation-live",
+    fallbackProvider: "cache",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.deepEqual(bridgeRequests, [["3101", "3102"]]);
+  assert.equal(payload.quotes.length, 2);
+  assert.equal(payload.debug?.returnedCount, 2);
+  assert.equal(payload.debug?.acceptedCount, 2);
+  assert.equal(payload.debug?.rejectedCount, 0);
+});
+
 test("flow scanner option quote snapshots bypass quote governor backoff", async () => {
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"] = "1";
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"] = "1000";
@@ -645,6 +692,9 @@ test("option quote snapshots expose bridge hydration errors in debug metadata", 
   assert.equal(payload.debug?.acceptedCount, 1);
   assert.equal(payload.debug?.returnedCount, 0);
   assert.deepEqual(payload.debug?.missingProviderContractIds, ["5001"]);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.flowScannerLineCount, 0);
+  assert.equal(diagnostics.activeLineCount, 0);
 });
 
 test("option quote snapshots do not release same-owner live stream leases", async () => {

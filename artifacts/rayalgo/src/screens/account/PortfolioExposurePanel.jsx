@@ -80,7 +80,7 @@ const getCompactTextStyle = () => ({
 });
 
 const DashboardBlock = ({ title, children }) => (
-  <div style={{ minWidth: 0, display: "grid", gap: sp(4) }}>
+  <div style={{ minWidth: 0, display: "grid", gap: sp(3) }}>
     <div style={getSectionLabelStyle()}>{title}</div>
     {children}
   </div>
@@ -243,8 +243,8 @@ const DonutLegend = ({ data, maskValues, valueFormatter }) => (
 );
 
 const AllocationDonut = ({ rows, currency, maskValues }) => (
-  <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(86)}px, 0.76fr) minmax(0, 1fr)`, gap: sp(5), alignItems: "center" }}>
-    <div style={{ height: dim(88), minWidth: 0 }}>
+  <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(74)}px, 0.76fr) minmax(0, 1fr)`, gap: sp(4), alignItems: "center" }}>
+    <div style={{ height: dim(76), minWidth: 0 }}>
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -438,12 +438,12 @@ const RiskLevelDonut = ({ margin, exposure, allocationRows, currency, maskValues
       data-testid="portfolio-exposure-risk-level"
       style={{
         display: "grid",
-        gridTemplateColumns: `minmax(${dim(86)}px, 0.76fr) minmax(0, 1fr)`,
-        gap: sp(5),
+        gridTemplateColumns: `minmax(${dim(74)}px, 0.76fr) minmax(0, 1fr)`,
+        gap: sp(4),
         alignItems: "center",
       }}
     >
-      <div style={{ height: dim(88), minWidth: 0, position: "relative" }}>
+      <div style={{ height: dim(76), minWidth: 0, position: "relative" }}>
         <ResponsiveContainer>
           <PieChart>
             <Pie
@@ -521,7 +521,7 @@ const RiskLevelDonut = ({ margin, exposure, allocationRows, currency, maskValues
           style={{
             display: "grid",
             gap: sp(2),
-            paddingTop: sp(4),
+            paddingTop: sp(2),
             borderTop: `1px solid ${T.border}`,
           }}
         >
@@ -597,8 +597,8 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(108)}px, 1fr))`,
-        gap: sp(5),
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(92)}px, 1fr))`,
+        gap: sp(3),
         minWidth: 0,
       }}
     >
@@ -608,7 +608,7 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
           style={{
             display: "grid",
             gap: sp(1),
-            paddingBottom: sp(2),
+            paddingBottom: sp(1),
             borderBottom: `1px solid ${T.border}`,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
@@ -621,7 +621,7 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
                 size={14}
                 showMark={false}
                 showChips
-                style={{ maxWidth: dim(108) }}
+                style={{ maxWidth: dim(92) }}
               />
             ) : (
               row.sector || "Unknown"
@@ -676,6 +676,89 @@ const RiskMetric = ({ label, value, tone = T.text }) => (
   </div>
 );
 
+const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
+  if (!notional) {
+    return null;
+  }
+
+  const coverage = notional.coverage || {};
+  const totalPositions = finiteMetric(coverage.totalPositions) ?? 0;
+  const pricedPositions = finiteMetric(coverage.pricedPositions) ?? 0;
+  const deltaAdjustedPositions = finiteMetric(coverage.deltaAdjustedPositions) ?? 0;
+  const pricedIncomplete = totalPositions > 0 && pricedPositions < totalPositions;
+  const deltaIncomplete = totalPositions > 0 && deltaAdjustedPositions < totalPositions;
+  const coverageLabel = [
+    pricedIncomplete ? `${pricedPositions}/${totalPositions} priced` : null,
+    deltaIncomplete ? `${deltaAdjustedPositions}/${totalPositions} delta` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div
+      data-testid="portfolio-exposure-notional"
+      style={{
+        display: "grid",
+        gap: sp(3),
+        paddingTop: sp(2),
+        borderTop: `1px solid ${T.border}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: sp(4),
+          alignItems: "center",
+        }}
+      >
+        <div style={getSectionLabelStyle()}>Notional Exposure</div>
+        {coverageLabel ? (
+          <div style={{ ...mutedLabelStyle, color: T.amber }}>{coverageLabel}</div>
+        ) : null}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(68)}px, 1fr))`,
+          gap: sp(3),
+          minWidth: 0,
+        }}
+      >
+        <RiskMetric
+          label="Gross Notional"
+          value={formatAccountMoney(notional.grossUnderlyingNotional, currency, true, maskValues)}
+        />
+        <RiskMetric
+          label="Net Direction"
+          value={formatAccountMoney(notional.netDirectionalNotional, currency, true, maskValues)}
+          tone={toneForValue(notional.netDirectionalNotional)}
+        />
+        <RiskMetric
+          label="Delta Adj"
+          value={formatAccountMoney(notional.deltaAdjustedNotional, currency, true, maskValues)}
+          tone={toneForValue(notional.deltaAdjustedNotional)}
+        />
+        <RiskMetric
+          label="Notional / NLV"
+          value={
+            notional.notionalToNavPercent == null
+              ? "—"
+              : formatAccountPercent(notional.notionalToNavPercent, 1, maskValues)
+          }
+          tone={
+            notional.notionalToNavPercent == null
+              ? T.text
+              : notional.notionalToNavPercent > 100
+                ? T.amber
+                : T.text
+          }
+        />
+      </div>
+    </div>
+  );
+};
+
 const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => {
   if (!data) {
     return <div style={getCompactTextStyle()}>Risk metrics load after account and position streams connect.</div>;
@@ -696,9 +779,9 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
       data-testid="portfolio-exposure-risk-strip"
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(52)}px, 1fr))`,
-        gap: sp(5),
-        paddingTop: sp(4),
+        gridTemplateColumns: `repeat(auto-fit, minmax(${dim(44)}px, 1fr))`,
+        gap: sp(3),
+        paddingTop: sp(2),
         borderTop: `1px solid ${T.border}`,
         minWidth: 0,
       }}
@@ -821,7 +904,7 @@ export const PortfolioExposurePanel = ({
           body="Open positions, cash balances, and IBKR risk metrics will populate this panel."
         />
       ) : (
-        <div data-testid="portfolio-exposure-dashboard" style={{ display: "grid", gap: sp(6) }}>
+        <div data-testid="portfolio-exposure-dashboard" style={{ display: "grid", gap: sp(4) }}>
           <ExposureMetricRail
             exposure={allocationData.exposure}
             riskModel={riskModel}
@@ -834,7 +917,7 @@ export const PortfolioExposurePanel = ({
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(auto-fit, minmax(${dim(154)}px, 1fr))`,
-              gap: sp(7),
+              gap: sp(4),
               alignItems: "start",
               minWidth: 0,
             }}
@@ -862,6 +945,12 @@ export const PortfolioExposurePanel = ({
               </DashboardBlock>
             </div>
           </div>
+
+          <NotionalExposureStrip
+            notional={riskModel?.notional}
+            currency={currency}
+            maskValues={maskValues}
+          />
 
           <div data-testid="portfolio-exposure-concentration">
             <DashboardBlock title="Concentration">

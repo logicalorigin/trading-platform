@@ -3,6 +3,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import {
   getGetSignalMonitorProfileQueryKey,
   getGetSignalOptionsAutomationStateQueryKey,
   getGetSignalOptionsPerformanceQueryKey,
+  getListAlgoDeploymentsQueryKey,
   useGetAccountPositions,
   useGetSignalMonitorProfile,
   useCreateAlgoDeployment,
@@ -31,6 +33,8 @@ import {
 import { AlgoAuditPanel } from "./algo/AlgoAuditPanel";
 import { AlgoLivePage } from "./algo/AlgoLivePage";
 import { AlgoRightRail } from "./algo/AlgoRightRail";
+import { saveAllAlgoAdjustments } from "./algo/saveAllAlgoAdjustments";
+import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -96,6 +100,7 @@ import {
   parseSymbolUniverseInput,
 } from "../lib/formatters";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
   FONT_WEIGHTS,
@@ -140,6 +145,8 @@ import { HeroKpi } from "./algo/HeroKpi.jsx";
 import { AttentionList } from "./algo/AttentionList.jsx";
 import { PipelineStrip } from "./algo/PipelineStrip.jsx";
 
+const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
+const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
 
 const signalOptionsRuleColor = (status) => {
   if (status === "fail") return T.red;
@@ -151,6 +158,11 @@ const formatCockpitMetric = (metrics, key, formatter = (value) => value) =>
   Object.prototype.hasOwnProperty.call(asRecord(metrics), key)
     ? formatter(asRecord(metrics)[key])
     : MISSING_VALUE;
+
+const cloneStrategySettings = (settings) => ({
+  ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
+  ...(settings || {}),
+});
 
 
 const isGatewayReadyForAlgo = (session) => {
@@ -226,15 +238,8 @@ export const AlgoScreen = ({
   const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
   const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
   const [diagExpansion, setDiagExpansion] = useState({});
-  const [profileSectionOpen, setProfileSectionOpen] = useState("signal");
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
-  const [profileDraft, setProfileDraft] = useState(
-    SIGNAL_OPTIONS_DEFAULT_PROFILE,
-  );
-  const [strategySettingsDraft, setStrategySettingsDraft] = useState(
-    DEFAULT_STRATEGY_SIGNAL_SETTINGS,
-  );
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
@@ -261,6 +266,12 @@ export const AlgoScreen = ({
   });
   const [algoCriticalFallbackReady, setAlgoCriticalFallbackReady] = useState(false);
   const [algoDerivedFallbackReady, setAlgoDerivedFallbackReady] = useState(false);
+  const algoTimingStagesRef = useRef(new Set());
+  useEffect(() => {
+    if (!isVisible) {
+      algoTimingStagesRef.current = new Set();
+    }
+  }, [isVisible]);
   useEffect(() => {
     if (!isVisible || algoCockpitStreamFreshness.algoCriticalFresh) {
       setAlgoCriticalFallbackReady(false);
@@ -268,7 +279,7 @@ export const AlgoScreen = ({
     }
     const timer = window.setTimeout(() => {
       setAlgoCriticalFallbackReady(true);
-    }, 2_500);
+    }, ALGO_CRITICAL_FALLBACK_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [algoCockpitStreamFreshness.algoCriticalFresh, isVisible]);
   useEffect(() => {
@@ -278,32 +289,74 @@ export const AlgoScreen = ({
     }
     const timer = window.setTimeout(() => {
       setAlgoDerivedFallbackReady(true);
-    }, 6_000);
+    }, ALGO_DERIVED_FALLBACK_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [algoCockpitStreamFreshness.algoFullFresh, isVisible]);
+  const algoCriticalReady = Boolean(
+    isVisible &&
+      (algoCockpitStreamFreshness.algoCriticalFresh ||
+        algoCriticalFallbackReady),
+  );
   useEffect(() => {
-    const criticalReady = Boolean(
-      isVisible &&
-        (algoCockpitStreamFreshness.algoCriticalFresh ||
-          algoCriticalFallbackReady),
-    );
     const derivedReady = Boolean(
       isVisible &&
         (algoCockpitStreamFreshness.algoFullFresh ||
           algoDerivedFallbackReady),
     );
     onReadinessChange?.({
-      criticalReady,
+      criticalReady: algoCriticalReady,
       derivedReady,
       backgroundAllowed: derivedReady,
     });
   }, [
-    algoCockpitStreamFreshness.algoCriticalFresh,
+    algoCriticalReady,
     algoCockpitStreamFreshness.algoFullFresh,
-    algoCriticalFallbackReady,
     algoDerivedFallbackReady,
     isVisible,
     onReadinessChange,
+  ]);
+  const markAlgoTiming = useCallback((stage, detail) => {
+    if (algoTimingStagesRef.current.has(stage)) {
+      return;
+    }
+    algoTimingStagesRef.current.add(stage);
+    markRouteDataTiming("algo", stage, detail);
+  }, []);
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+    markAlgoTiming("route-module-loaded");
+  }, [isVisible, markAlgoTiming]);
+  useEffect(() => {
+    if (!algoCriticalReady) {
+      return;
+    }
+    markAlgoTiming("critical-data-ready", {
+      source: algoCockpitStreamFreshness.algoCriticalFresh
+        ? "stream"
+        : "rest-fallback",
+    });
+  }, [
+    algoCockpitStreamFreshness.algoCriticalFresh,
+    algoCriticalReady,
+    markAlgoTiming,
+  ]);
+  useEffect(() => {
+    if (
+      !isVisible ||
+      !(algoCockpitStreamFreshness.algoFullFresh || algoDerivedFallbackReady)
+    ) {
+      return;
+    }
+    markAlgoTiming("derived-data-ready", {
+      source: algoCockpitStreamFreshness.algoFullFresh ? "stream" : "rest-fallback",
+    });
+  }, [
+    algoCockpitStreamFreshness.algoFullFresh,
+    algoDerivedFallbackReady,
+    isVisible,
+    markAlgoTiming,
   ]);
   const algoCriticalQueriesEnabled = Boolean(
     isVisible &&
@@ -739,26 +792,27 @@ export const AlgoScreen = ({
     }
   }, [deployments, focusedDeploymentId]);
 
-  useEffect(() => {
-    setProfileDraft(cloneProfile(signalOptionsProfile));
-  }, [focusedDeployment?.id, signalOptionsProfile]);
-
   const resolvedStrategySignalSettings = useMemo(
     () => resolveStrategySignalSettings(focusedDeployment, signalMonitorProfile),
     [focusedDeployment, signalMonitorProfile],
   );
 
-  useEffect(() => {
-    setStrategySettingsDraft(resolvedStrategySignalSettings);
-  }, [
-    focusedDeployment?.id,
-    resolvedStrategySignalSettings.bosConfirmation,
-    resolvedStrategySignalSettings.chochAtrBuffer,
-    resolvedStrategySignalSettings.chochBodyExpansionAtr,
-    resolvedStrategySignalSettings.chochVolumeGate,
-    resolvedStrategySignalSettings.signalTimeframe,
-    resolvedStrategySignalSettings.timeHorizon,
-  ]);
+  const profileDraftState = useServerSyncedDraft(signalOptionsProfile, {
+    syncKeys: [focusedDeployment?.id],
+    clone: cloneProfile,
+  });
+  const strategySettingsDraftState = useServerSyncedDraft(
+    resolvedStrategySignalSettings,
+    {
+      syncKeys: [focusedDeployment?.id],
+      clone: cloneStrategySettings,
+    },
+  );
+  const profileDraft = profileDraftState.draft;
+  const setProfileDraft = profileDraftState.replace;
+  const profileDirty = profileDraftState.isDirty;
+  const strategySettingsDraft = strategySettingsDraftState.draft;
+  const strategyDirty = strategySettingsDraftState.isDirty;
 
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
@@ -775,19 +829,47 @@ export const AlgoScreen = ({
     }
   }, [selectedCandidateId, signalOptionsCandidates]);
 
-  const refreshAlgoQueries = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/algo/deployments"] });
+  const setDeploymentCache = (deployment) => {
+    if (!deployment?.id) return;
+    queryClient.setQueryData(getListAlgoDeploymentsQueryKey(), (current) => {
+      const deployments = Array.isArray(current?.deployments)
+        ? current.deployments
+        : null;
+      if (!deployments) return current;
+      return {
+        ...current,
+        deployments: deployments.map((item) =>
+          item.id === deployment.id ? deployment : item,
+        ),
+      };
+    });
+  };
+
+  const refreshAlgoQueries = ({
+    includeDeployments = true,
+    includeSignalMonitorProfile = true,
+    includeSignalOptionsState = true,
+  } = {}) => {
+    if (includeDeployments) {
+      queryClient.invalidateQueries({ queryKey: ["/api/algo/deployments"] });
+    }
     queryClient.invalidateQueries({ queryKey: ["/api/algo/events"] });
     queryClient.invalidateQueries({ queryKey: ["/api/session"] });
-    queryClient.invalidateQueries({
-      queryKey: getGetSignalMonitorProfileQueryKey({
-        environment: focusedDeployment?.mode || environment,
-      }),
-    });
-    if (focusedDeployment?.id) {
+    if (includeSignalMonitorProfile) {
       queryClient.invalidateQueries({
-        queryKey: getGetSignalOptionsAutomationStateQueryKey(focusedDeployment.id),
+        queryKey: getGetSignalMonitorProfileQueryKey({
+          environment: focusedDeployment?.mode || environment,
+        }),
       });
+    }
+    if (focusedDeployment?.id) {
+      if (includeSignalOptionsState) {
+        queryClient.invalidateQueries({
+          queryKey: getGetSignalOptionsAutomationStateQueryKey(
+            focusedDeployment.id,
+          ),
+        });
+      }
       queryClient.invalidateQueries({
         queryKey: getGetAlgoDeploymentCockpitQueryKey(focusedDeployment.id),
       });
@@ -827,7 +909,7 @@ export const AlgoScreen = ({
         setBridgeLauncherError(
           variables.useRemoteDesktopLaunch
             ? "No paired Windows desktop accepted the IBKR bridge launch request."
-            : "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
+            : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
         );
       }
       toast.push({
@@ -838,9 +920,9 @@ export const AlgoScreen = ({
             : "Bridge launcher opened"
           : "Bridge launcher ready",
         body: launched && variables.useRemoteDesktopLaunch
-          ? "The paired Windows desktop should start the RayAlgo IBKR helper."
+          ? "The paired Windows desktop should start the PYRUS IBKR helper."
           : launched
-          ? "Your browser should ask to open the RayAlgo IBKR PowerShell launcher."
+          ? "Your browser should ask to open the PYRUS IBKR PowerShell launcher."
           : "The one-click IBKR bridge handler did not open.",
       });
     },
@@ -900,16 +982,41 @@ export const AlgoScreen = ({
 
   const updateProfileMutation = useUpdateSignalOptionsExecutionProfile({
     mutation: {
-      onSuccess: (state) => {
-        refreshAlgoQueries();
-        setProfileDraft(cloneProfile(state?.profile));
-        toast.push({
-          kind: "success",
-          title: "Profile saved",
-          body: "Signal-options automation settings were updated.",
-        });
+      onMutate: async (variables) => {
+        if (variables?.deploymentId) {
+          await queryClient.cancelQueries({
+            queryKey: getGetSignalOptionsAutomationStateQueryKey(
+              variables.deploymentId,
+            ),
+          });
+        }
       },
-      onError: (error) => {
+      onSuccess: (state, variables) => {
+        const deploymentId = variables?.deploymentId || focusedDeployment?.id;
+        if (deploymentId && state) {
+          queryClient.setQueryData(
+            getGetSignalOptionsAutomationStateQueryKey(deploymentId),
+            state,
+          );
+        }
+        if (state?.deployment) {
+          setDeploymentCache(state.deployment);
+        }
+        refreshAlgoQueries({
+          includeDeployments: !state?.deployment,
+          includeSignalOptionsState: false,
+        });
+        profileDraftState.markClean(state?.profile || variables?.data);
+        if (!variables?.silent) {
+          toast.push({
+            kind: "success",
+            title: "Profile saved",
+            body: "Signal-options automation settings were updated.",
+          });
+        }
+      },
+      onError: (error, variables) => {
+        if (variables?.silent) return;
         toast.push({
           kind: "error",
           title: "Profile save failed",
@@ -921,8 +1028,14 @@ export const AlgoScreen = ({
 
   const updateStrategySettingsMutation = useUpdateAlgoDeploymentStrategySettings({
     mutation: {
-      onSuccess: (payload) => {
-        refreshAlgoQueries();
+      onMutate: async () => {
+        await queryClient.cancelQueries({
+          queryKey: getGetSignalMonitorProfileQueryKey({
+            environment: focusedDeployment?.mode || environment,
+          }),
+        });
+      },
+      onSuccess: (payload, variables) => {
         if (payload?.signalMonitorProfile?.environment) {
           queryClient.setQueryData(
             getGetSignalMonitorProfileQueryKey({
@@ -931,19 +1044,29 @@ export const AlgoScreen = ({
             payload.signalMonitorProfile,
           );
         }
-        setStrategySettingsDraft(
+        if (payload?.deployment) {
+          setDeploymentCache(payload.deployment);
+        }
+        refreshAlgoQueries({
+          includeDeployments: !payload?.deployment,
+          includeSignalMonitorProfile: !payload?.signalMonitorProfile,
+        });
+        strategySettingsDraftState.markClean(
           resolveStrategySignalSettings(
             payload?.deployment || focusedDeployment,
             payload?.signalMonitorProfile || signalMonitorProfile,
           ),
         );
-        toast.push({
-          kind: "success",
-          title: "Signal settings saved",
-          body: "RayAlgo signal timeframe and RayReplica settings were updated.",
-        });
+        if (!variables?.silent) {
+          toast.push({
+            kind: "success",
+            title: "Signal settings saved",
+            body: "PYRUS signal timeframe and RayReplica settings were updated.",
+          });
+        }
       },
-      onError: (error) => {
+      onError: (error, variables) => {
+        if (variables?.silent) return;
         toast.push({
           kind: "error",
           title: "Signal settings failed",
@@ -1131,89 +1254,12 @@ export const AlgoScreen = ({
     runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
   };
 
-  const handleSaveStrategySettings = () => {
-    if (!focusedDeployment?.id) {
-      return;
-    }
-    const timeHorizon = Math.min(
-      50,
-      Math.max(2, Math.round(numberFrom(strategySettingsDraft.timeHorizon, 8))),
-    );
-    const signalTimeframe = STRATEGY_SIGNAL_TIMEFRAMES.includes(
-      strategySettingsDraft.signalTimeframe,
-    )
-      ? strategySettingsDraft.signalTimeframe
-      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe;
-    const bosConfirmation = RAY_REPLICA_BOS_CONFIRMATION_OPTIONS.includes(
-      strategySettingsDraft.bosConfirmation,
-    )
-      ? strategySettingsDraft.bosConfirmation
-      : DEFAULT_STRATEGY_SIGNAL_SETTINGS.bosConfirmation;
-
-    updateStrategySettingsMutation.mutate({
-      deploymentId: focusedDeployment.id,
-      data: {
-        signalTimeframe,
-        timeHorizon,
-        bosConfirmation,
-        chochAtrBuffer: boundedNumberFrom(
-          strategySettingsDraft.chochAtrBuffer,
-          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochAtrBuffer,
-          0,
-          20,
-        ),
-        chochBodyExpansionAtr: boundedNumberFrom(
-          strategySettingsDraft.chochBodyExpansionAtr,
-          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochBodyExpansionAtr,
-          0,
-          20,
-        ),
-        chochVolumeGate: boundedNumberFrom(
-          strategySettingsDraft.chochVolumeGate,
-          DEFAULT_STRATEGY_SIGNAL_SETTINGS.chochVolumeGate,
-          0,
-          20,
-        ),
-      },
-    });
+  const patchProfileDraftPath = (path, value) => {
+    profileDraftState.patch(path, value);
   };
 
-  const patchProfileDraft = (section, key, value) => {
-    setProfileDraft((current) => ({
-      ...cloneProfile(current),
-      [section]: {
-        ...cloneProfile(current)[section],
-        [key]: value,
-      },
-    }));
-  };
-
-  const patchProfileDraftNested = (section, key, nestedKey, value) => {
-    setProfileDraft((current) => {
-      const currentProfile = cloneProfile(current);
-      const sectionValue = asRecord(currentProfile[section]);
-      const nestedValue = asRecord(sectionValue[key]);
-      return {
-        ...currentProfile,
-        [section]: {
-          ...sectionValue,
-          [key]: {
-            ...nestedValue,
-            [nestedKey]: value,
-          },
-        },
-      };
-    });
-  };
-
-  const handleSaveProfile = () => {
-    if (!focusedDeployment?.id) {
-      return;
-    }
-    updateProfileMutation.mutate({
-      deploymentId: focusedDeployment.id,
-      data: profileDraft,
-    });
+  const patchStrategySettingsPath = (path, value) => {
+    strategySettingsDraftState.patch(path, value);
   };
 
   const handleApplyExpandedCapacity = () => {
@@ -1222,10 +1268,45 @@ export const AlgoScreen = ({
     }
     const nextProfile = buildExpandedSignalOptionsProfile(profileDraft);
     setProfileDraft(nextProfile);
-    updateProfileMutation.mutate({
-      deploymentId: focusedDeployment.id,
-      data: nextProfile,
+  };
+
+  const handleDiscardAllAdjustments = () => {
+    profileDraftState.reset();
+    strategySettingsDraftState.reset();
+  };
+
+  const handleSaveAllAdjustments = async () => {
+    const result = await saveAllAlgoAdjustments({
+      deploymentId: focusedDeployment?.id,
+      profileDraft,
+      strategySettingsDraft,
+      profileDirty,
+      strategyDirty,
+      updateProfileMutation,
+      updateStrategySettingsMutation,
+      onPartialFailure: ({ failures }) => {
+        toast.push({
+          kind: "error",
+          title: "Save partially failed",
+          body: failures
+            .map(
+              (failure) =>
+                `${failure.section}: ${
+                  failure.error?.message || "save failed"
+                }`,
+            )
+            .join(" · "),
+        });
+      },
     });
+
+    if (result.ok) {
+      toast.push({
+        kind: "success",
+        title: "Algo settings saved",
+        body: "Signal and profile adjustments were updated.",
+      });
+    }
   };
 
   const handleOpenCandidateInTrade = (candidate) => {
@@ -1412,18 +1493,16 @@ export const AlgoScreen = ({
     cockpitStageItems.find((stage) => stage.id === selectedPipelineStageId) ||
     cockpitStageItems[0] ||
     null;
-  const visibleSignalRows = (
-    signalOptionsSignals.length
-      ? signalOptionsSignals
-      : signalOptionsCandidates.map((candidate) => ({
-          ...asRecord(candidate.signal),
-          symbol: candidate.symbol,
-          timeframe: candidate.timeframe,
-          direction: candidate.direction,
-          signalAt: candidate.signalAt,
-          signalPrice: candidate.signalPrice,
-        }))
-  ).slice(0, algoIsPhone ? 8 : 20);
+  const visibleSignalRows = signalOptionsSignals.length
+    ? signalOptionsSignals
+    : signalOptionsCandidates.map((candidate) => ({
+        ...asRecord(candidate.signal),
+        symbol: candidate.symbol,
+        timeframe: candidate.timeframe,
+        direction: candidate.direction,
+        signalAt: candidate.signalAt,
+        signalPrice: candidate.signalPrice,
+      }));
 
   return (
     <div
@@ -1436,15 +1515,16 @@ export const AlgoScreen = ({
         width: "100%",
         overflowY: "auto",
         minWidth: 0,
+        WebkitOverflowScrolling: algoIsPhone ? "touch" : undefined,
       }}
     >
     <div
       style={{
         width: "100%",
-        padding: sp(algoIsPhone ? "10px 10px 14px" : "16px 24px 20px"),
+        padding: sp(algoIsPhone ? "8px 8px 18px" : "16px 24px 20px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(algoIsPhone ? 8 : 10),
+        gap: sp(algoIsPhone ? 7 : 10),
         minWidth: 0,
       }}
     >
@@ -1625,6 +1705,7 @@ export const AlgoScreen = ({
           signalMatrixStates={signalMatrixStates}
           selectedCandidate={selectedCandidate}
           signalOptionsProfile={signalOptionsProfile}
+          onOpenCandidateInTrade={handleOpenCandidateInTrade}
           signalOptionsPositions={signalOptionsPositions}
           signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
           symbolIndex={symbolIndex}
@@ -1632,9 +1713,6 @@ export const AlgoScreen = ({
           userPreferences={userPreferences}
           signalMonitorProfile={signalMonitorProfile}
           strategySettingsDraft={strategySettingsDraft}
-          setStrategySettingsDraft={setStrategySettingsDraft}
-          handleSaveStrategySettings={handleSaveStrategySettings}
-          updateStrategySettingsMutation={updateStrategySettingsMutation}
           activitySummary={activitySummary}
           focusedDeployment={focusedDeployment}
           handleToggleDeployment={handleToggleDeployment}
@@ -1656,19 +1734,18 @@ export const AlgoScreen = ({
             <AlgoRightRail
               cockpit={cockpit}
               signalOptionsPositions={signalOptionsPositions}
-              signalOptionsProfile={signalOptionsProfile}
               profileDraft={profileDraft}
-              patchProfileDraft={patchProfileDraft}
-              patchProfileDraftNested={patchProfileDraftNested}
+              profileBaseline={profileDraftState.baseline}
+              profileDirty={profileDirty}
+              patchProfileDraftPath={patchProfileDraftPath}
               strategySettingsDraft={strategySettingsDraft}
-              setStrategySettingsDraft={setStrategySettingsDraft}
-              signalMonitorProfile={signalMonitorProfile}
+              strategyBaseline={strategySettingsDraftState.baseline}
+              strategyDirty={strategyDirty}
+              patchStrategySettingsPath={patchStrategySettingsPath}
               focusedDeployment={focusedDeployment}
-              profileSectionOpen={profileSectionOpen}
-              setProfileSectionOpen={setProfileSectionOpen}
               handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-              handleSaveStrategySettings={handleSaveStrategySettings}
-              handleSaveProfile={handleSaveProfile}
+              handleSaveAllAdjustments={handleSaveAllAdjustments}
+              handleDiscardAllAdjustments={handleDiscardAllAdjustments}
               updateProfileMutation={updateProfileMutation}
               updateStrategySettingsMutation={updateStrategySettingsMutation}
               cockpitSkipCategoryRows={cockpitSkipCategoryRows}

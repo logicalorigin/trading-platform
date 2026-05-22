@@ -92,6 +92,7 @@ import {
 } from "./backtestingDateRanges";
 import { deriveSweepDimensions } from "./sweepDimensions";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
+import { useToast } from "../platform/platformContexts.jsx";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
   formatAppDateTimeForPreferences,
@@ -208,7 +209,7 @@ const SPOT_HISTORY_INITIAL_FETCH_CONCURRENCY = 1;
 const SPOT_HISTORY_EXPANDED_FETCH_CONCURRENCY = 1;
 const SPOT_HISTORY_REFRESH_MS = 5 * 60_000;
 const SPOT_HISTORY_INITIAL_STALE_MS = 10 * 60_000;
-const SPOT_HISTORY_REQUEST_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+const SPOT_HISTORY_REQUEST_PRIORITY_HEADER = "x-pyrus-fetch-priority";
 const SPOT_HISTORY_REQUEST_PRIORITY = 8;
 const TRADING_DAYS_PER_YEAR = 252;
 const CALENDAR_DAYS_PER_YEAR = 365;
@@ -1410,6 +1411,7 @@ export function BacktestWorkspace({
     priority: 8,
   });
   const queryClient = useQueryClient();
+  const toast = useToast();
   const strategiesQuery = useListBacktestStrategies({
     query: {
       queryKey: getListBacktestStrategiesQueryKey(),
@@ -1442,6 +1444,17 @@ export function BacktestWorkspace({
   } = useIndicatorLibrary();
 
   const [banner, setBanner] = useState<BannerState>(null);
+  const showBanner = useCallback(
+    (nextBanner: NonNullable<BannerState>) => {
+      setBanner(nextBanner);
+      toast.push({
+        kind: nextBanner.kind,
+        title: nextBanner.title,
+        body: nextBanner.detail,
+      });
+    },
+    [toast],
+  );
   const [selectedStudyId, setSelectedStudyId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [strategyKey, setStrategyKey] = useState("");
@@ -1483,7 +1496,7 @@ export function BacktestWorkspace({
   const [rayReplicaSettings, setRayReplicaSettings] = useState(() =>
     resolveRayReplicaRuntimeSettings(),
   );
-  const [hasAutoEnabledRayAlgoOverlay, setHasAutoEnabledRayAlgoOverlay] =
+  const [hasAutoEnabledRayReplicaOverlay, setHasAutoEnabledRayReplicaOverlay] =
     useState(false);
   const [summaryTradeLens, setSummaryTradeLens] =
     useState<SummaryTradeLens>("all");
@@ -2273,7 +2286,7 @@ export function BacktestWorkspace({
   );
 
   useEffect(() => {
-    if (hasAutoEnabledRayAlgoOverlay) {
+    if (hasAutoEnabledRayReplicaOverlay) {
       return;
     }
 
@@ -2281,11 +2294,11 @@ export function BacktestWorkspace({
       return;
     }
 
-    const hasChartReadyRayAlgo = chartReadyPineScripts.some(
+    const hasChartReadyRayReplica = chartReadyPineScripts.some(
       (script) => script.scriptKey === RAY_REPLICA_PINE_SCRIPT_KEY,
     );
 
-    if (!hasChartReadyRayAlgo) {
+    if (!hasChartReadyRayReplica) {
       return;
     }
 
@@ -2294,11 +2307,11 @@ export function BacktestWorkspace({
         ? current
         : [RAY_REPLICA_PINE_SCRIPT_KEY, ...current],
     );
-    setHasAutoEnabledRayAlgoOverlay(true);
+    setHasAutoEnabledRayReplicaOverlay(true);
   }, [
     activeBacktestStrategyId,
     chartReadyPineScripts,
-    hasAutoEnabledRayAlgoOverlay,
+    hasAutoEnabledRayReplicaOverlay,
   ]);
 
   useEffect(() => {
@@ -2501,7 +2514,7 @@ export function BacktestWorkspace({
     const tags = parseDelimitedList(pineTagsText);
 
     if (!trimmedName) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Pine name required",
         detail:
@@ -2511,7 +2524,7 @@ export function BacktestWorkspace({
     }
 
     if (!pineScriptSourceCode.trim()) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Pine source required",
         detail: "Paste the Pine source before saving the script.",
@@ -2552,7 +2565,7 @@ export function BacktestWorkspace({
       await refreshPineQueries();
 
       const chartState = resolvePineScriptChartState(savedScript);
-      setBanner({
+      showBanner({
         kind: chartState.chartReady ? "success" : "info",
         title: editingPineScriptId
           ? "Pine script updated"
@@ -2562,7 +2575,7 @@ export function BacktestWorkspace({
           : `${savedScript.name} was saved. ${chartState.reason}`,
       });
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: editingPineScriptId ? "Pine update failed" : "Pine save failed",
         detail: safeErrorMessage(error),
@@ -2572,7 +2585,7 @@ export function BacktestWorkspace({
 
   async function handleCreateStudy(): Promise<void> {
     if (!selectedStrategy) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Strategy required",
         detail: "Pick a backtest strategy before saving the study.",
@@ -2581,7 +2594,7 @@ export function BacktestWorkspace({
     }
 
     if (startsOn > endsOn) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Invalid study window",
         detail: "The end date must be on or after the start date.",
@@ -2590,7 +2603,7 @@ export function BacktestWorkspace({
     }
 
     if (universeMode === "symbols" && parsedSymbols.length === 0) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Universe required",
         detail: "Enter at least one ticker or choose a watchlist universe.",
@@ -2599,7 +2612,7 @@ export function BacktestWorkspace({
     }
 
     if (universeMode === "watchlist" && !watchlistId) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Watchlist required",
         detail: "Choose a watchlist before saving the study.",
@@ -2611,7 +2624,7 @@ export function BacktestWorkspace({
       const startsAt = toStartOfDayIso(startsOn);
       const endsAt = toEndOfDayIso(endsOn);
       if (!startsAt || !endsAt) {
-        setBanner({
+        showBanner({
           kind: "error",
           title: "Invalid date range",
           detail: "Choose valid start and end dates before saving the study.",
@@ -2644,14 +2657,14 @@ export function BacktestWorkspace({
       });
 
       setSelectedStudyId(createdStudy.id);
-      setBanner({
+      showBanner({
         kind: "success",
         title: "Study saved",
         detail: `${createdStudy.name} is ready for queued runs and sweeps.`,
       });
       await refreshBacktestQueries();
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Study creation failed",
         detail: safeErrorMessage(error),
@@ -2674,14 +2687,14 @@ export function BacktestWorkspace({
       });
 
       setSelectedRunId(createdRun.run.id);
-      setBanner({
+      showBanner({
         kind: "success",
         title: "Run queued",
         detail: `${createdRun.run.name} is waiting for the worker.`,
       });
       await refreshBacktestQueries();
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Run queue failed",
         detail: safeErrorMessage(error),
@@ -2695,7 +2708,7 @@ export function BacktestWorkspace({
     }
 
     if (derivedSweepDimensions.length === 0) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Sweep dimensions unavailable",
         detail:
@@ -2733,14 +2746,14 @@ export function BacktestWorkspace({
         },
       });
 
-      setBanner({
+      showBanner({
         kind: "success",
         title: "Sweep queued",
         detail: `${createdSweep.mode} sweep accepted for ${selectedStudy.name}.`,
       });
       await refreshBacktestQueries();
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Sweep queue failed",
         detail: safeErrorMessage(error),
@@ -2762,14 +2775,14 @@ export function BacktestWorkspace({
         },
       });
 
-      setBanner({
+      showBanner({
         kind: "success",
         title: "Run promoted",
         detail: `${draft.name} is now visible in the Algo draft queue.`,
       });
       await refreshBacktestQueries();
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Promotion failed",
         detail: safeErrorMessage(error),
@@ -2780,14 +2793,14 @@ export function BacktestWorkspace({
   async function handleCancelJob(jobId: string): Promise<void> {
     try {
       await cancelJobMutation.mutateAsync({ jobId });
-      setBanner({
+      showBanner({
         kind: "info",
         title: "Cancellation requested",
         detail: "The worker will stop the job at the next safe checkpoint.",
       });
       await refreshBacktestQueries();
     } catch (error) {
-      setBanner({
+      showBanner({
         kind: "error",
         title: "Cancel failed",
         detail: safeErrorMessage(error),
@@ -2801,7 +2814,7 @@ export function BacktestWorkspace({
       data-testid="backtest-workspace"
       data-layout={backtestIsPhone ? "phone" : backtestIsNarrow ? "tablet" : "desktop"}
       style={{
-        padding: scale.sp(backtestIsPhone ? 5 : 8),
+        padding: scale.sp(backtestIsPhone ? "6px 6px 18px" : 8),
         display: "flex",
         flexDirection: "column",
         gap: scale.sp(8),
@@ -2809,6 +2822,7 @@ export function BacktestWorkspace({
         width: "100%",
         overflowY: "auto",
         minWidth: 0,
+        WebkitOverflowScrolling: backtestIsPhone ? "touch" : undefined,
       }}
     >
       {banner ? (

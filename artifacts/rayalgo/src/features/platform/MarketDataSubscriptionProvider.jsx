@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   getBars as getBarsRequest,
@@ -18,7 +18,10 @@ import {
   HEAVY_PAYLOAD_GC_MS,
   buildBarsRequestOptions,
 } from "./queryDefaults";
-import { syncRuntimeMarketData } from "./runtimeMarketDataModel";
+import {
+  applyRuntimeQuoteSnapshots,
+  syncRuntimeMarketData,
+} from "./runtimeMarketDataModel";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "./sparklineConfig";
 
 const settleWithConcurrency = async (items, concurrency, mapper) => {
@@ -80,6 +83,8 @@ export const MarketDataSubscriptionProvider = ({
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
   lowPriorityHistoryEnabled = true,
+  sparklineHistoryRuntimeEnabled = true,
+  sparklineConcurrency = 4,
   children,
 }) => {
   const pageVisible = usePageVisible();
@@ -118,7 +123,7 @@ export const MarketDataSubscriptionProvider = ({
     [lowPriorityHistoryEnabled, prioritySparklineSymbols, sparklineSymbols],
   );
   const sparklineHistoryEnabled = Boolean(
-    requestedSparklineSymbols.length > 0,
+    sparklineHistoryRuntimeEnabled && requestedSparklineSymbols.length > 0,
   );
   const quoteStreamRuntimeActive = Boolean(
     pageVisible && quoteStreamRuntimeEnabled && streamedQuoteSymbols.length > 0,
@@ -185,7 +190,7 @@ export const MarketDataSubscriptionProvider = ({
     queryFn: async () => {
       const results = await settleWithConcurrency(
         requestedSparklineSymbols,
-        4,
+        Math.max(1, Math.floor(Number(sparklineConcurrency) || 1)),
         (symbol) =>
           getBarsRequest(
             {
@@ -195,7 +200,10 @@ export const MarketDataSubscriptionProvider = ({
               outsideRth: true,
               source: "trades",
             },
-            buildBarsRequestOptions(BARS_REQUEST_PRIORITY.background),
+            buildBarsRequestOptions(
+              BARS_REQUEST_PRIORITY.background,
+              "sparkline",
+            ),
           ),
       );
 
@@ -231,7 +239,10 @@ export const MarketDataSubscriptionProvider = ({
               outsideRth: false,
               source: "trades",
             },
-            buildBarsRequestOptions(BARS_REQUEST_PRIORITY.background),
+            buildBarsRequestOptions(
+              BARS_REQUEST_PRIORITY.background,
+              "market-baseline",
+            ),
           ),
       );
 
@@ -254,9 +265,17 @@ export const MarketDataSubscriptionProvider = ({
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
 
+  const handleStreamQuotes = useCallback(
+    (quotes) => {
+      applyRuntimeQuoteSnapshots(quotes, activeWatchlistItems);
+    },
+    [activeWatchlistItems],
+  );
+
   useIbkrQuoteSnapshotStream({
     symbols: streamedQuoteSymbols,
     enabled: quoteStreamRuntimeActive,
+    onQuotes: handleStreamQuotes,
   });
   useBrokerStockAggregateStream({
     symbols: streamedAggregateSymbols,

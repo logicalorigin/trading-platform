@@ -62,15 +62,20 @@ import {
 } from "../lib/motion";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
+import LogoLoader from "../components/LogoLoader";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 
 
 const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
 const MARKET_ACTIVATION_DELAY_MS = 70;
+const MARKET_SECONDARY_PANEL_DELAY_MS = 600;
+
+const loadRawMultiChartGridModule = () =>
+  import("../features/market/MultiChartGrid.jsx");
 
 const loadMultiChartGridModule = () =>
-  import("../features/market/MultiChartGrid.jsx").then((module) => ({
+  loadRawMultiChartGridModule().then((module) => ({
     default: module.MultiChartGrid,
   }));
 
@@ -81,6 +86,10 @@ const loadMarketActivityPanelModule = () =>
 
 const preloadMarketChartModules = () => {
   preloadDynamicImport(loadMultiChartGridModule, { label: "MultiChartGrid" });
+  void loadRawMultiChartGridModule()
+    .then((module) => module.preloadMarketChartRuntime?.())
+    .catch(() => {});
+  preloadDynamicImport(loadMarketActivityPanelModule, { label: "MarketActivityPanel" });
 };
 
 const LazyMultiChartGrid = lazyWithRetry(
@@ -102,30 +111,15 @@ const MarketChartGridFallback = () => (
     style={{
       minHeight: dim(340),
       display: "grid",
-      alignContent: "start",
-      gap: sp(10),
+      padding: 0,
+      overflow: "hidden",
     }}
   >
-    <CardTitle>Market Charts</CardTitle>
-    <div
-      aria-hidden="true"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        gap: sp(8),
-      }}
-    >
-      {[0, 1, 2].map((index) => (
-        <div
-          key={index}
-          style={{
-            minHeight: dim(220),
-            borderRadius: dim(RADII.sm),
-            background: T.bg2,
-          }}
-        />
-      ))}
-    </div>
+    <LogoLoader
+      tone="panel"
+      minHeight={dim(340)}
+      testId="market-chart-grid-loader"
+    />
   </Card>
 );
 
@@ -134,29 +128,15 @@ const MarketActivityPanelFallback = () => (
     style={{
       minHeight: dim(340),
       display: "grid",
-      alignContent: "start",
-      gap: sp(10),
+      padding: 0,
+      overflow: "hidden",
     }}
   >
-    <CardTitle>Market Activity</CardTitle>
-    <div
-      aria-hidden="true"
-      style={{
-        display: "grid",
-        gap: sp(8),
-      }}
-    >
-      {[0, 1, 2, 3].map((index) => (
-        <div
-          key={index}
-          style={{
-            height: dim(index === 0 ? 44 : 32),
-            borderRadius: dim(RADII.sm),
-            background: T.bg2,
-          }}
-        />
-      ))}
-    </div>
+    <LogoLoader
+      tone="panel"
+      minHeight={dim(340)}
+      testId="market-activity-loader"
+    />
   </Card>
 );
 
@@ -277,14 +257,17 @@ const MarketScreenInner = ({
       setSecondaryPanelsReady(false);
       return undefined;
     }
-    if (!chartGridReady || secondaryPanelsReady) return undefined;
-    const timerId = window.setTimeout(() => setSecondaryPanelsReady(true), 600);
+    if (secondaryPanelsReady) return undefined;
+    const timerId = window.setTimeout(
+      () => setSecondaryPanelsReady(true),
+      MARKET_SECONDARY_PANEL_DELAY_MS,
+    );
     return () => window.clearTimeout(timerId);
-  }, [chartGridReady, isVisible, secondaryPanelsReady]);
+  }, [isVisible, secondaryPanelsReady]);
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible && chartGridReady),
-      derivedReady: Boolean(isVisible && chartGridReady && secondaryPanelsReady),
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible && chartGridReady),
       backgroundAllowed: Boolean(isVisible && chartGridReady && secondaryPanelsReady),
     });
   }, [chartGridReady, isVisible, onReadinessChange, secondaryPanelsReady]);
@@ -352,12 +335,12 @@ const MarketScreenInner = ({
         return;
       }
       setMarketChartRetryRevision((current) => current + 1);
-      queryClient.invalidateQueries({ queryKey: ["market-mini-bars"] });
+      queryClient.invalidateQueries({ queryKey: ["market-chart-bars"] });
       queryClient.invalidateQueries({ queryKey: ["display-chart-price-bars"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bars"] });
       queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
       queryClient.refetchQueries({
-        queryKey: ["market-mini-bars"],
+        queryKey: ["market-chart-bars"],
         type: "active",
       });
       queryClient.refetchQueries({
@@ -664,10 +647,11 @@ const MarketScreenInner = ({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: sp(marketLayoutFlags.isPhone ? "10px 10px" : "12px 20px"),
+          padding: sp(marketLayoutFlags.isPhone ? "8px 8px 18px" : "12px 20px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(8),
+          gap: sp(marketLayoutFlags.isPhone ? 6 : 8),
+          WebkitOverflowScrolling: marketLayoutFlags.isPhone ? "touch" : undefined,
         }}
       >
         {/* ── ROW 1: Chart workspace + activity feed ── */}

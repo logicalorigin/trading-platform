@@ -94,7 +94,7 @@ import { T, getCurrentTheme } from "../../lib/uiTokens";
 import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
 
 const COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000;
-const MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 2_500;
+const MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 12_000;
 
 export const TradeEquityPanel = ({
   ticker,
@@ -225,6 +225,7 @@ export const TradeEquityPanel = ({
     effectiveChartHydrationRole === "mini"
       ? BARS_REQUEST_PRIORITY.favoritePrewarm
       : BARS_REQUEST_PRIORITY.visible;
+  const chartHydrationInteractivePriority = BARS_REQUEST_PRIORITY.visible;
   const baseBarsScopeKey = buildChartBarScopeKey(
     "trade-equity-base-bars",
     effectiveChartHydrationRole,
@@ -247,14 +248,17 @@ export const TradeEquityPanel = ({
     timeframe: tf,
     role: effectiveChartHydrationRole,
     hydrationPriority: chartHydrationWarmPriority,
+    interactiveHydrationPriority: chartHydrationInteractivePriority,
     enabled: Boolean(historicalDataEnabled && ticker),
     warmTargetLimit: useCallback(
-      (limit) => {
+      (limit, requestContext = {}) => {
         const requestPolicy = resolveChartHydrationRequestPolicy({
           timeframe: tf,
           role: effectiveChartHydrationRole,
           requestedLimit: limit,
         });
+        const requestPriority =
+          requestContext?.priority ?? chartHydrationWarmPriority;
 
         return queryClient.prefetchQuery({
           queryKey: [
@@ -280,7 +284,10 @@ export const TradeEquityPanel = ({
                   brokerRecentWindowMinutes:
                     requestPolicy.brokerRecentWindowMinutes,
                 },
-                buildBarsRequestOptions(chartHydrationWarmPriority),
+                buildBarsRequestOptions(
+                  requestPriority,
+                  "chart-warmup",
+                ),
               ),
             }),
           ...BARS_QUERY_DEFAULTS,
@@ -378,7 +385,10 @@ export const TradeEquityPanel = ({
             allowHistoricalSynthesis: true,
             brokerRecentWindowMinutes: baseBrokerRecentWindowMinutes,
           },
-          buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
+          buildBarsRequestOptions(
+            BARS_REQUEST_PRIORITY.active,
+            "chart-visible",
+          ),
         ),
       });
       void writeCachedChartBars(barsRuntimeCacheKey, payload, {
@@ -484,7 +494,10 @@ export const TradeEquityPanel = ({
                   brokerRecentWindowMinutes:
                     favoriteRequestPolicy.brokerRecentWindowMinutes,
                 },
-                buildBarsRequestOptions(BARS_REQUEST_PRIORITY.favoritePrewarm),
+                buildBarsRequestOptions(
+                  BARS_REQUEST_PRIORITY.favoritePrewarm,
+                  "chart-warmup",
+                ),
               ),
           }),
         ...BARS_QUERY_DEFAULTS,
@@ -565,7 +578,10 @@ export const TradeEquityPanel = ({
                   preferCursor: historyCursor && preferCursor ? true : undefined,
                   brokerRecentWindowMinutes,
                 },
-                buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
+                buildBarsRequestOptions(
+                  BARS_REQUEST_PRIORITY.active,
+                  "chart-backfill",
+                ),
               ),
             }),
             ...BARS_QUERY_DEFAULTS,
@@ -602,7 +618,7 @@ export const TradeEquityPanel = ({
     loadedBarCount: hydratedBaseBars.length,
     requestedLimit: progressiveBars.requestedLimit,
     minPageSize: chartHydrationBasePolicy.initialLimit,
-    hydrationPriority: chartHydrationWarmPriority,
+    hydrationPriority: chartHydrationInteractivePriority,
     isPrependingOlder: prependableBars.isPrependingOlder,
     hasExhaustedOlderHistory: prependableBars.hasExhaustedOlderHistory,
     prependOlderBars: prependableBars.prependOlderBars,
@@ -636,6 +652,7 @@ export const TradeEquityPanel = ({
     ),
     scopeKey: chartHydrationScopeKey,
     priority: BARS_REQUEST_PRIORITY.active,
+    family: "chart-visible",
     metric: "displayPriceFallbackRequestMs",
   });
   useEffect(() => {

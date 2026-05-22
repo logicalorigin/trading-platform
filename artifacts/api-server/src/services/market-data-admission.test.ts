@@ -19,6 +19,7 @@ const ENV_KEYS = [
   "IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES",
   "IBKR_MARKET_DATA_VISIBLE_LINES",
   "IBKR_MARKET_DATA_AUTOMATION_LINES",
+  "IBKR_MARKET_DATA_WATCHLIST_LINES",
   "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
   "IBKR_MARKET_DATA_CONVENIENCE_LINES",
   "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
@@ -46,7 +47,7 @@ afterEach(() => {
   setEnv(originalEnv);
 });
 
-test("uses a 200-line IBKR budget and targets full line utilization by default", () => {
+test("uses a 200-line IBKR budget and reserves watchlist plus flow lines by default", () => {
   setEnv({});
 
   const budget = getMarketDataAdmissionBudget();
@@ -56,13 +57,15 @@ test("uses a 200-line IBKR budget and targets full line utilization by default",
   assert.equal(budget.targetFillLines, 200);
   assert.equal(budget.automationLineCap, 0);
   assert.equal(budget.accountMonitorLineCap, 0);
-  assert.equal(budget.flowScannerLineCap, 200);
+  assert.equal(budget.watchlistLineCap, 80);
+  assert.equal(budget.flowScannerLineCap, 80);
   assert.deepEqual(budget.poolLineCaps, {
     execution: 12,
     "account-monitor": 0,
     visible: 0,
     automation: 0,
-    "flow-scanner": 200,
+    watchlist: 80,
+    "flow-scanner": 80,
     convenience: 0,
   });
 });
@@ -83,43 +86,56 @@ test("uses the bridge-reported line budget when it is lower than the app cap", (
     "account-monitor": 0,
     visible: 0,
     automation: 0,
-    "flow-scanner": 190,
+    watchlist: 80,
+    "flow-scanner": 80,
     convenience: 0,
   });
 });
 
-test("scanner fills the full idle budget and account demand reclaims it", () => {
+test("scanner respects the reserved flow lane cap by default", () => {
   setEnv({});
 
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 200 }, (_, index) => ({
+    requests: Array.from({ length: 85 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `FLOW${index}`,
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 200);
-  assert.equal(scanner.rejected.length, 0);
-  assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 200);
-
-  const account = admitMarketDataLeases({
-    owner: "account-monitor:paper:all",
-    intent: "account-monitor-live",
-    requests: Array.from({ length: 6 }, (_, index) => ({
-      assetClass: "equity" as const,
-      symbol: `ACCT${index}`,
-    })),
-  });
-  assert.equal(account.admitted.length, 6);
-  assert.equal(account.rejected.length, 0);
-  assert.equal(account.demoted.length, 6);
+  assert.equal(scanner.admitted.length, 80);
+  assert.equal(scanner.rejected.length, 5);
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.activeLineCount, 200);
-  assert.equal(diagnostics.accountMonitor.coveredLineCount, 6);
-  assert.equal(diagnostics.flowScannerLineCount, 194);
+  assert.equal(diagnostics.activeLineCount, 80);
+  assert.equal(diagnostics.flowScannerLineCount, 80);
+});
+
+test("watchlist live lines use a first-class reserved pool", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "100",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_WATCHLIST_LINES: "3",
+  });
+
+  const watchlist = admitMarketDataLeases({
+    owner: "watchlist-prewarm",
+    intent: "watchlist-live",
+    requests: ["AAPL", "MSFT", "NVDA", "TSLA"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  assert.equal(watchlist.admitted.length, 3);
+  assert.equal(watchlist.rejected.length, 1);
+  assert.equal(watchlist.rejected[0].reason, "pool-cap");
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.watchlistLineCount, 3);
+  assert.equal(diagnostics.poolUsage.watchlist.maxLines, 3);
+  assert.equal(diagnostics.poolUsage.watchlist.strict, true);
+  assert.equal(diagnostics.intentUsage["watchlist-live"], 3);
 });
 
 test("allows target fill lines below the active budget and clamps them to the budget", () => {
@@ -154,6 +170,7 @@ test("derives scanner headroom from runtime scanner line budget and concurrency"
     "account-monitor": 0,
     visible: 0,
     automation: 0,
+    watchlist: 80,
     "flow-scanner": 80,
     convenience: 0,
   });
@@ -330,6 +347,98 @@ test("same-owner refresh revalidates strict pool caps instead of preserving over
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 3);
 });
 
+test("flow scanner rotates older same-priority scanner owners when its pool is full", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "3",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "flow-scanner:AAA",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 3 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `AAA${index}`,
+      underlying: "AAA",
+    })),
+  });
+
+  const rotated = admitMarketDataLeases({
+    owner: "flow-scanner:BBB",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 2 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `BBB${index}`,
+      underlying: "BBB",
+    })),
+  });
+
+  assert.equal(rotated.admitted.length, 2);
+  assert.equal(rotated.demoted.length, 2);
+  assert.equal(rotated.rejected.length, 0);
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.flowScannerLineCount, 3);
+  assert.equal(diagnostics.flowScannerActivity.recentRotatedCount, 2);
+  assert.deepEqual(diagnostics.flowScannerActivity.recentRotatedOwnerSample, [
+    "flow-scanner:AAA",
+  ]);
+  assert.equal(
+    getMarketDataLeasesSnapshot().filter(
+      (lease) => lease.owner === "flow-scanner:BBB",
+    ).length,
+    2,
+  );
+});
+
+test("flow scanner does not reclaim visible lines when active demand leaves no scanner headroom", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "2",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "2",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "visible-chart",
+    intent: "visible-live",
+    requests: ["VIS1", "VIS2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  const scanner = admitMarketDataLeases({
+    owner: "flow-scanner:AAA",
+    intent: "flow-scanner-live",
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "AAA0",
+        underlying: "AAA",
+      },
+    ],
+  });
+
+  assert.equal(scanner.admitted.length, 0);
+  assert.equal(scanner.rejected.length, 1);
+  assert.equal(scanner.rejected[0].reason, "pool-cap");
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.intentUsage["visible-live"], 2);
+  assert.equal(diagnostics.flowScannerLineCount, 0);
+});
+
 test("signal option quote leases are classified and can reclaim background scanner lines", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "5",
@@ -354,7 +463,7 @@ test("signal option quote leases are classified and can reclaim background scann
 
   const signal = admitMarketDataLeases({
     owner: "signal-options-position-mark:deploy-1:position-1",
-    intent: "account-monitor-live",
+    intent: "automation-live",
     requests: Array.from({ length: 3 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `SIG${index}`,
@@ -367,16 +476,54 @@ test("signal option quote leases are classified and can reclaim background scann
   assert.equal(signal.demoted.length, 3);
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 2);
-  assert.equal(diagnostics.accountMonitorLineCount, 3);
-  assert.equal(diagnostics.signalOptions.activeLineCount, 0);
+  assert.equal(diagnostics.accountMonitorLineCount, 0);
+  assert.equal(diagnostics.automationLineCount, 3);
+  assert.equal(diagnostics.signalOptions.activeLineCount, 3);
   assert.equal(
-    diagnostics.ownerClasses.summaries["account-monitor"].recentCacheFallbackCount,
+    diagnostics.ownerClasses.summaries["signal-options"].recentCacheFallbackCount,
     3,
   );
   assert.equal(
     diagnostics.ownerClasses.summaries["flow-scanner"].activeLineCount,
     2,
   );
+});
+
+test("visible requests can reclaim signal option maintenance lines", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "2",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "signal-options-position-mark:deploy-1:position-1",
+    intent: "automation-live",
+    requests: ["SIG1", "SIG2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "cache",
+  });
+
+  const visible = admitMarketDataLeases({
+    owner: "visible-chart",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "VIS1" }],
+  });
+
+  assert.equal(visible.admitted.length, 1);
+  assert.equal(visible.demoted.length, 1);
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.intentUsage["visible-live"], 1);
+  assert.equal(diagnostics.signalOptions.activeLineCount, 1);
+  assert.equal(diagnostics.accountMonitorLineCount, 0);
 });
 
 test("explicit owner release cleans stale websocket leases", () => {
@@ -482,7 +629,7 @@ test("shrinks scanner headroom when active visible demand borrows idle lines", (
   assert.equal(diagnostics.pressure.state, "protected");
 });
 
-test("flow scanner leases can reclaim lower-priority convenience filler lines", () => {
+test("flow scanner leases can reclaim lower-priority filler lines while preserving watchlist lines", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "20",
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
@@ -496,7 +643,7 @@ test("flow scanner leases can reclaim lower-priority convenience filler lines", 
 
   admitMarketDataLeases({
     owner: "watchlist-prewarm",
-    intent: "convenience-live",
+    intent: "watchlist-live",
     requests: Array.from({ length: 5 }, (_, index) => ({
       assetClass: "equity" as const,
       symbol: `CORE${index}`,
@@ -527,8 +674,10 @@ test("flow scanner leases can reclaim lower-priority convenience filler lines", 
   assert.equal(result.demoted.length, 10);
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.activeLineCount, 20);
+  assert.equal(diagnostics.watchlistLineCount, 5);
   assert.equal(diagnostics.fillerLineCount, 5);
   assert.equal(diagnostics.flowScannerLineCount, 10);
+  assert.equal(diagnostics.poolUsage.watchlist.activeLineCount, 5);
   assert.equal(
     diagnostics.leases.filter((lease) => lease.owner === "watchlist-prewarm")
       .length,

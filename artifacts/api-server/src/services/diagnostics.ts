@@ -29,6 +29,15 @@ import {
 } from "../lib/transient-db-error";
 import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import {
+  getRecentRequestSamples,
+  type ApiRequestSample,
+} from "./request-metrics";
+import {
+  normalizeApiResourcePressureLevel,
+  updateApiResourcePressure,
+  type ApiResourcePressureLevel,
+} from "./resource-pressure";
+import {
   markStorageHealthDegraded,
   refreshStorageHealthSnapshot,
 } from "./storage-health";
@@ -113,14 +122,6 @@ type DiagnosticEventInput = {
 
 export type DiagnosticEventStatus = "open" | "resolved";
 
-type ApiRequestSample = {
-  method: string;
-  path: string;
-  statusCode: number;
-  durationMs: number;
-  recordedAt: number;
-};
-
 type DiagnosticsStreamMessage =
   | { type: "snapshot"; payload: DiagnosticsLatestPayload }
   | { type: "event"; payload: DiagnosticEventPayload }
@@ -175,7 +176,6 @@ const DEFAULT_COLLECTION_INTERVAL_MS = 15_000;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
 const API_LATENCY_ALERT_MIN_SAMPLES = 20;
 const SLOW_API_ROUTE_MS = 1_000;
-const MAX_REQUEST_SAMPLES = 2_000;
 const MAX_MEMORY_SNAPSHOTS = 2_000;
 const MAX_MEMORY_EVENTS = 500;
 const MAX_RECENT_EVENTS = 50;
@@ -184,7 +184,7 @@ const CLIENT_METRIC_MAX_SAMPLES = 500;
 const ACTIONABLE_ISOLATION_REPORT_TYPES = new Set(["coep", "coop"]);
 const ACTIONABLE_ISOLATION_BODY_TYPES = new Set(["coep", "coop", "corp"]);
 
-type ResourcePressureLevel = "normal" | "watch" | "shed" | "critical";
+type ResourcePressureLevel = ApiResourcePressureLevel | "shed";
 
 type ClientDiagnosticsMetric = {
   id: string;
@@ -405,7 +405,6 @@ const IBKR_CODE_CATEGORY: Record<string, string> = {
   "10197": "competing-session",
 };
 
-const requestSamples: ApiRequestSample[] = [];
 const memorySnapshots: DiagnosticSnapshotPayload[] = [];
 const memoryEvents = new Map<string, DiagnosticEventPayload>();
 const clientMetrics: ClientDiagnosticsMetric[] = [];
@@ -482,12 +481,13 @@ function mb(value: number): number {
 
 function pressureSeverity(level: ResourcePressureLevel): DiagnosticSeverity {
   if (level === "critical") return "critical";
-  if (level === "shed" || level === "watch") return "warning";
+  if (level === "shed" || level === "high" || level === "watch") return "warning";
   return "info";
 }
 
 function maxPressureLevel(levels: ResourcePressureLevel[]): ResourcePressureLevel {
   if (levels.includes("critical")) return "critical";
+  if (levels.includes("high")) return "high";
   if (levels.includes("shed")) return "shed";
   if (levels.includes("watch")) return "watch";
   return "normal";
@@ -496,7 +496,7 @@ function maxPressureLevel(levels: ResourcePressureLevel[]): ResourcePressureLeve
 function pressureLevelFromRatio(value: number | null): ResourcePressureLevel {
   if (value === null) return "normal";
   if (value >= 0.9) return "critical";
-  if (value >= 0.8) return "shed";
+  if (value >= 0.8) return "high";
   if (value >= 0.7) return "watch";
   return "normal";
 }
@@ -668,14 +668,6 @@ function broadcast(message: DiagnosticsStreamMessage): void {
       logger.debug({ err: error }, "Diagnostics subscriber failed");
     }
   });
-}
-
-function getRecentRequestSamples(): ApiRequestSample[] {
-  const cutoff = Date.now() - REQUEST_WINDOW_MS;
-  while (requestSamples.length && requestSamples[0]!.recordedAt < cutoff) {
-    requestSamples.shift();
-  }
-  return requestSamples;
 }
 
 function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
@@ -2138,7 +2130,10 @@ function buildIsolationMetrics(): JsonRecord {
     const origin = textValue(event.dimensions["blockedOrigin"]);
     if (origin) byOrigin[origin] = (byOrigin[origin] ?? 0) + event.eventCount;
   });
-  const mode = process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] || "report-only";
+  const mode =
+    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
+    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] ??
+    "report-only";
   const reportCount = reports.reduce((total, event) => total + event.eventCount, 0);
   const rawReportCount = rawReports.reduce(
     (total, event) => total + event.eventCount,
@@ -2147,8 +2142,14 @@ function buildIsolationMetrics(): JsonRecord {
   return {
     mode,
     crossOriginIsolated: isolation["crossOriginIsolated"] === true,
-    coopMode: process.env["RAYALGO_COOP_POLICY"] || "same-origin",
-    coepMode: process.env["RAYALGO_COEP_POLICY"] || "require-corp",
+    coopMode:
+      process.env["PYRUS_COOP_POLICY"] ??
+      process.env["RAYALGO_COOP_POLICY"] ??
+      "same-origin",
+    coepMode:
+      process.env["PYRUS_COEP_POLICY"] ??
+      process.env["RAYALGO_COEP_POLICY"] ??
+      "require-corp",
     reportOnly: !String(mode).startsWith("enforce"),
     reportCount5m: reportCount,
     report_count_5m: reportCount,
@@ -2171,10 +2172,10 @@ function classifyIsolationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
 
 function toResourcePressureLevel(
   value: unknown,
-): ResourcePressureLevel | null {
+): ApiResourcePressureLevel | null {
   const normalized = textValue(value);
   if (normalized === "critical") return "critical";
-  if (normalized === "high" || normalized === "shed") return "shed";
+  if (normalized === "high" || normalized === "shed") return "high";
   if (normalized === "watch") return "watch";
   if (normalized === "normal") return "normal";
   return null;
@@ -2209,7 +2210,10 @@ function sanitizeDominantDrivers(
   });
 }
 
-function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
+function buildResourcePressureMetrics(
+  runtime: JsonRecord,
+  automationMetrics: JsonRecord = {},
+): JsonRecord {
   const api = buildApiMetrics(runtime);
   const latest = latestClientMetric();
   const browserMemory = asJsonRecord(latest?.memory);
@@ -2242,14 +2246,48 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
         : null,
     );
   });
-  const level = maxPressureLevel([
+  const cacheLevel = maxPressureLevel(cacheLevels);
+  const baseLevel = maxPressureLevel([
     heapLevel,
     browserLevel as ResourcePressureLevel,
     ...(clientLevel ? [clientLevel] : []),
-    ...cacheLevels,
+    cacheLevel,
   ]);
+  const ibkr = asJsonRecord(runtime["ibkr"]);
+  const streams = asJsonRecord(ibkr["streams"]);
+  const marketDataAdmission = asJsonRecord(streams["marketDataAdmission"]);
+  const optionsFlowScanner = asJsonRecord(
+    marketDataAdmission["optionsFlowScanner"],
+  );
+  const resourcePressure = updateApiResourcePressure({
+    rssMb: numeric(api["rssMb"]),
+    apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
+    dominantSlowRouteP95Ms: numeric(api["dominantSlowRouteP95Ms"]),
+    clientLevel: clientLevel
+      ? normalizeApiResourcePressureLevel(clientLevel)
+      : null,
+    cacheLevel: normalizeApiResourcePressureLevel(cacheLevel),
+    optionsBackgroundBlockedReason: textValue(
+      optionsFlowScanner["backgroundBlockedReason"],
+    ),
+    automationActiveLongScanCount: numeric(
+      automationMetrics["activeLongScanCount"],
+    ),
+  });
+  const level = resourcePressure.level;
+  const dominantDrivers = [
+    ...sanitizeDominantDrivers(clientPressure["dominantDrivers"]),
+    ...resourcePressure.drivers.map((entry) => ({
+      kind: entry.kind,
+      label: entry.label,
+      level: entry.level,
+      detail: entry.detail,
+      score: entry.score,
+    })),
+  ].slice(0, 6);
   return {
     pressureLevel: level,
+    basePressureLevel: baseLevel,
     clientPressureLevel: normalizeFooterPressureLevel(clientPressure["level"]),
     clientPressureTrend: textValue(clientPressure["trend"]) ?? "steady",
     heapUsedPercent,
@@ -2265,7 +2303,9 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
     sourceQuality:
       textValue(clientPressure["sourceQuality"]) ??
       textValue(browserMemory["confidence"]),
-    dominantDrivers: sanitizeDominantDrivers(clientPressure["dominantDrivers"]),
+    dominantDrivers,
+    apiResourcePressure: resourcePressure,
+    pressureCaps: resourcePressure.caps,
     browserObservedAt: latest?.observedAt ?? null,
     latestClientAt: latest?.observedAt ?? null,
     activeDiagnosticsClients: subscribers.size,
@@ -2280,7 +2320,7 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
     recommendedAction:
       level === "critical"
         ? "Pause optional scanners and clear stale caches."
-        : level === "shed"
+        : level === "high"
           ? "Shed background hydration and stale cache entries."
           : level === "watch"
             ? "Monitor growth and prepare to shed optional work."
@@ -2918,24 +2958,6 @@ async function evaluateThresholds(
   return activeIncidentKeys;
 }
 
-export function recordApiRequest(input: {
-  method: string;
-  path: string;
-  statusCode: number;
-  durationMs: number;
-}): void {
-  requestSamples.push({
-    method: input.method,
-    path: input.path,
-    statusCode: input.statusCode,
-    durationMs: Math.max(0, Math.round(input.durationMs)),
-    recordedAt: Date.now(),
-  });
-  if (requestSamples.length > MAX_REQUEST_SAMPLES) {
-    requestSamples.splice(0, requestSamples.length - MAX_REQUEST_SAMPLES);
-  }
-}
-
 export async function recordBrowserDiagnosticEvent(input: {
   category?: string;
   severity?: DiagnosticSeverity;
@@ -3009,6 +3031,9 @@ export async function recordClientDiagnosticsMetrics(input: {
   };
   clientMetrics.push(sample);
   trimClientMetrics();
+  updateApiResourcePressure({
+    clientLevel: toResourcePressureLevel(sample.memoryPressure["level"]),
+  });
   return { accepted: true, id };
 }
 
@@ -3111,7 +3136,10 @@ export async function collectDiagnosticSnapshot(
   const automationSeverity = classifyAutomationSnapshot(automation.metrics);
   const storageMetrics = await buildStorageMetrics();
   const storageSeverity = classifyStorageSnapshot(storageMetrics);
-  const resourceMetrics = buildResourcePressureMetrics(runtime);
+  const resourceMetrics = buildResourcePressureMetrics(
+    runtime,
+    automation.metrics,
+  );
   const resourceSeverity = classifyResourcePressureSnapshot(resourceMetrics);
   const isolationMetrics = buildIsolationMetrics();
   const isolationSeverity = classifyIsolationSnapshot(isolationMetrics);

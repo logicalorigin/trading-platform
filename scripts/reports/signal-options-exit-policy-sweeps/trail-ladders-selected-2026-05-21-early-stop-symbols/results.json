@@ -1,0 +1,1047 @@
+{
+  "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/trail-ladders-selected-2026-05-21-early-stop-symbols",
+  "deployment": {
+    "id": "7e2e4e6f-749f-4e65-a011-87d3559a23b0",
+    "name": "RayReplica Signal Options Shadow Paper",
+    "mode": "paper",
+    "symbolUniverse": [
+      "NVDA",
+      "TQQQ",
+      "HOOD",
+      "SMCI",
+      "VRT",
+      "CLS",
+      "SOXX",
+      "SMH",
+      "MRVL"
+    ]
+  },
+  "config": {
+    "start": "2026-05-21",
+    "end": "2026-05-21",
+    "signalTimeframe": "5m",
+    "session": "regular",
+    "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/trail-ladders-selected-2026-05-21-early-stop-symbols",
+    "lockWaitMs": 0,
+    "heartbeatMs": 30000,
+    "variantTimeoutMs": 1200000,
+    "timeHorizon": 8,
+    "symbols": [
+      "MRVL",
+      "NVDA",
+      "HOOD",
+      "SMCI",
+      "CLS",
+      "SOXX",
+      "TQQQ",
+      "SMH",
+      "VRT"
+    ]
+  },
+  "results": [
+    {
+      "variant": {
+        "id": "combo-hard30-trail35-overnight10-early6",
+        "description": "Hard stop -30%, trail 35/15/20 with 5x/10x tightening, overnight +10%, early loss after 6 bars.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:57:30.597Z",
+      "finishedAt": "2026-05-21T20:57:54.706Z",
+      "durationMs": 24109,
+      "metrics": {
+        "realizedPnl": 248,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.496
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 14,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 76,
+        "candidatesSkipped": 12,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 248,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:14:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.77,
+            "quantity": 4,
+            "pnl": 248,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 101,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -15.1,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "trail-ladder-soft",
+        "description": "Winning combo with progressive trail: flat at +25%, then slower profit locks.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20,
+            "progressiveTrailEnabled": true,
+            "progressiveTrailSteps": [
+              {
+                "activationPct": 25,
+                "minLockedGainPct": 0,
+                "givebackPct": 40
+              },
+              {
+                "activationPct": 35,
+                "minLockedGainPct": 10,
+                "givebackPct": 30
+              },
+              {
+                "activationPct": 50,
+                "minLockedGainPct": 20,
+                "givebackPct": 30
+              },
+              {
+                "activationPct": 75,
+                "minLockedGainPct": 30,
+                "givebackPct": 25
+              },
+              {
+                "activationPct": 100,
+                "minLockedGainPct": 45,
+                "givebackPct": 25
+              }
+            ]
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:57:54.707Z",
+      "finishedAt": "2026-05-21T20:58:05.663Z",
+      "durationMs": 10956,
+      "metrics": {
+        "realizedPnl": 160,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.32
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 14,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 94,
+        "candidatesSkipped": 12,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 160,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:33:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.55,
+            "quantity": 4,
+            "pnl": 160,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 83,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T19:31:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 6.2,
+              "lastVsExitPct": -9.9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "trail-ladder-balanced",
+        "description": "Winning combo with progressive trail: lower activation and steadily rising locks.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20,
+            "progressiveTrailEnabled": true,
+            "progressiveTrailSteps": [
+              {
+                "activationPct": 25,
+                "minLockedGainPct": 0,
+                "givebackPct": 35
+              },
+              {
+                "activationPct": 35,
+                "minLockedGainPct": 15,
+                "givebackPct": 25
+              },
+              {
+                "activationPct": 50,
+                "minLockedGainPct": 25,
+                "givebackPct": 25
+              },
+              {
+                "activationPct": 75,
+                "minLockedGainPct": 35,
+                "givebackPct": 20
+              },
+              {
+                "activationPct": 100,
+                "minLockedGainPct": 50,
+                "givebackPct": 20
+              }
+            ]
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:58:05.663Z",
+      "finishedAt": "2026-05-21T20:58:15.842Z",
+      "durationMs": 10179,
+      "metrics": {
+        "realizedPnl": 204,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.408
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 14,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 78,
+        "candidatesSkipped": 12,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 204,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:16:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.66,
+            "quantity": 4,
+            "pnl": 204,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 99,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T18:26:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 3,
+              "lastVsExitPct": -12.6,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "trail-ladder-aggressive",
+        "description": "Winning combo with progressive trail: early activation and faster profit locks.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20,
+            "progressiveTrailEnabled": true,
+            "progressiveTrailSteps": [
+              {
+                "activationPct": 20,
+                "minLockedGainPct": 0,
+                "givebackPct": 30
+              },
+              {
+                "activationPct": 30,
+                "minLockedGainPct": 15,
+                "givebackPct": 25
+              },
+              {
+                "activationPct": 45,
+                "minLockedGainPct": 25,
+                "givebackPct": 20
+              },
+              {
+                "activationPct": 65,
+                "minLockedGainPct": 40,
+                "givebackPct": 20
+              },
+              {
+                "activationPct": 100,
+                "minLockedGainPct": 60,
+                "givebackPct": 15
+              }
+            ]
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:58:15.842Z",
+      "finishedAt": "2026-05-21T20:58:26.720Z",
+      "durationMs": 10878,
+      "metrics": {
+        "realizedPnl": 320,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 1,
+        "maxDrawdownAbs": 0,
+        "openPositions": 1,
+        "riskAdjustedScore": 0.64
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 14,
+        "entriesOpened": 2,
+        "exitsClosed": 1,
+        "marksRecorded": 73,
+        "candidatesSkipped": 12,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 320,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "exitReasons": {
+          "hard_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 9,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:11:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.95,
+            "quantity": 4,
+            "pnl": 320,
+            "reason": "hard_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 104,
+              "highPrice": 3.95,
+              "highAt": "2026-05-21T18:12:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 0,
+              "lastVsExitPct": -19,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    },
+    {
+      "variant": {
+        "id": "trail-ladder-runner-friendly",
+        "description": "Winning combo with progressive trail: earlier flat protection while leaving sub-5x runners wider.",
+        "profilePatch": {
+          "riskCaps": {
+            "maxOpenSymbols": 10,
+            "maxPremiumPerEntry": 1500
+          },
+          "exitPolicy": {
+            "hardStopPct": -30,
+            "trailActivationPct": 35,
+            "minLockedGainPct": 15,
+            "trailGivebackPct": 20,
+            "tightenAtFiveXGivebackPct": 30,
+            "tightenAtTenXGivebackPct": 15,
+            "overnightExitEnabled": true,
+            "overnightMinGainPct": 10,
+            "overnightRunnerGivebackPct": 15,
+            "earlyExitBars": 6,
+            "earlyExitLossPct": 20,
+            "progressiveTrailEnabled": true,
+            "progressiveTrailSteps": [
+              {
+                "activationPct": 25,
+                "minLockedGainPct": 0,
+                "givebackPct": 45
+              },
+              {
+                "activationPct": 40,
+                "minLockedGainPct": 10,
+                "givebackPct": 35
+              },
+              {
+                "activationPct": 75,
+                "minLockedGainPct": 25,
+                "givebackPct": 30
+              },
+              {
+                "activationPct": 150,
+                "minLockedGainPct": 60,
+                "givebackPct": 25
+              }
+            ]
+          }
+        }
+      },
+      "status": "succeeded",
+      "eligible": false,
+      "ineligibleReason": "closed trades below 20",
+      "startedAt": "2026-05-21T20:58:26.720Z",
+      "finishedAt": "2026-05-21T20:58:51.522Z",
+      "durationMs": 24802,
+      "metrics": {
+        "realizedPnl": 285,
+        "winRate": 1,
+        "profitFactor": null,
+        "closedTrades": 2,
+        "maxDrawdownAbs": 0,
+        "openPositions": 2,
+        "riskAdjustedScore": 0.57
+      },
+      "window": {
+        "start": "2026-05-21",
+        "end": "2026-05-21",
+        "session": "regular",
+        "from": "2026-05-21T00:00:00.000Z",
+        "to": "2026-05-21T23:59:59.999Z"
+      },
+      "summary": {
+        "symbolsEvaluated": 9,
+        "symbolUniverse": {
+          "source": "deployment",
+          "symbols": [
+            "NVDA",
+            "TQQQ",
+            "HOOD",
+            "SMCI",
+            "VRT",
+            "CLS",
+            "SOXX",
+            "SMH",
+            "MRVL"
+          ],
+          "watchlistId": null,
+          "skippedSymbols": [],
+          "truncated": false
+        },
+        "signalsEvaluated": 17,
+        "entriesOpened": 4,
+        "exitsClosed": 2,
+        "marksRecorded": 134,
+        "candidatesSkipped": 13,
+        "existingEvents": 0,
+        "mirrorRepairsAttempted": 0,
+        "missingOptionBars": 3,
+        "realizedPnl": 285,
+        "winningTrades": 2,
+        "losingTrades": 0,
+        "exitReasons": {
+          "opposite_signal": 1,
+          "runner_trail_stop": 1
+        },
+        "skippedReasons": {
+          "mtf_not_aligned": 10,
+          "historical_option_bars_unavailable": 3
+        },
+        "closedTrades": [
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-TQQQ-buy-1779371400000",
+            "symbol": "TQQQ",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T13:50:00.000Z",
+            "closedAt": "2026-05-21T14:15:00.000Z",
+            "entryPrice": 2.09,
+            "exitPrice": 2.34,
+            "quantity": 5,
+            "pnl": 125,
+            "reason": "opposite_signal",
+            "selectedContract": {
+              "ticker": "O:TQQQ260522C00074000",
+              "underlying": "TQQQ",
+              "expirationDate": "2026-05-22",
+              "strike": 74,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "high",
+              "liquidityTier": "standard",
+              "score": 85.3,
+              "reasons": [
+                "mtf_full_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 25,
+                "freshness": 20,
+                "trendStrength": 11.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 85.3
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1045
+              },
+              "adx": 18.903969,
+              "mtfMatches": 3,
+              "mtfDirections": [
+                1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 140,
+              "highPrice": 4,
+              "highAt": "2026-05-21T17:55:00.000Z",
+              "lowPrice": 1.69,
+              "lowAt": "2026-05-21T14:21:00.000Z",
+              "lastClose": 3.3,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 70.9,
+              "lastVsExitPct": 41,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": true,
+              "reachedFiftyPctGain": true,
+              "finalAboveExit": true,
+              "finalAboveEntry": true
+            }
+          },
+          {
+            "candidateId": "SIGOPT-7e2e4e6f-NVDA-buy-1779382500000",
+            "symbol": "NVDA",
+            "direction": "buy",
+            "optionRight": "call",
+            "openedAt": "2026-05-21T16:55:00.000Z",
+            "closedAt": "2026-05-21T18:33:00.000Z",
+            "entryPrice": 3.15,
+            "exitPrice": 3.55,
+            "quantity": 4,
+            "pnl": 160,
+            "reason": "runner_trail_stop",
+            "selectedContract": {
+              "ticker": "O:NVDA260526C00220000",
+              "underlying": "NVDA",
+              "expirationDate": "2026-05-26",
+              "strike": 220,
+              "right": "call",
+              "multiplier": 100,
+              "sharesPerContract": 100,
+              "providerContractId": null
+            },
+            "signalQuality": {
+              "tier": "standard",
+              "liquidityTier": "standard",
+              "score": 74,
+              "reasons": [
+                "mtf_partial_alignment",
+                "fresh_signal",
+                "risk_sized"
+              ],
+              "components": {
+                "mtfAlignment": 16.7,
+                "freshness": 20,
+                "trendStrength": 8.3,
+                "liquidity": 12,
+                "riskFit": 10,
+                "dataQuality": 7,
+                "total": 74
+              },
+              "raw": {
+                "barsSinceSignal": 0,
+                "freshWindowBars": 3,
+                "freshnessRatio": 100,
+                "quoteFreshness": null,
+                "marketDataMode": "historical",
+                "premiumAtRisk": 1260
+              },
+              "adx": 13.814815,
+              "mtfMatches": 2,
+              "mtfDirections": [
+                -1,
+                1,
+                1
+              ],
+              "spreadPctOfMid": null,
+              "bullishRegime": false
+            },
+            "postExitOutcome": {
+              "bars": 83,
+              "highPrice": 3.77,
+              "highAt": "2026-05-21T19:31:00.000Z",
+              "lowPrice": 2.98,
+              "lowAt": "2026-05-21T18:54:00.000Z",
+              "lastClose": 3.2,
+              "lastAt": "2026-05-21T19:59:00.000Z",
+              "highVsExitPct": 6.2,
+              "lastVsExitPct": -9.9,
+              "recoveredEntry": true,
+              "reachedTwentyFivePctGain": false,
+              "reachedFiftyPctGain": false,
+              "finalAboveExit": false,
+              "finalAboveEntry": true
+            }
+          }
+        ],
+        "errors": []
+      },
+      "error": null
+    }
+  ],
+  "ranked": []
+}

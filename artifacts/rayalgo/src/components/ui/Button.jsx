@@ -58,14 +58,14 @@ const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
       borderRadius: dim(RADII.pill),
       border: `2px solid ${color}40`,
       borderTopColor: color,
-      animation: "rayalgoBtnSpin 720ms linear infinite",
+      animation: "pyrusBtnSpin 720ms linear infinite",
       flexShrink: 0,
     }}
   />
 );
 
 const BUTTON_CSS = `
-@keyframes rayalgoBtnSpin {
+@keyframes pyrusBtnSpin {
   to { transform: rotate(360deg); }
 }
 .ra-btn { transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease; }

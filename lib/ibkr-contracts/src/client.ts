@@ -102,6 +102,42 @@ export type BrokerPositionSnapshot = {
   optionContract:
     | (OptionContractSnapshot & { providerContractId: string | null })
     | null;
+  openedAt?: Date | null;
+  openedAtSource?: PositionOpenedAtSource | null;
+  quote?: PositionQuoteSnapshot | null;
+};
+
+export type PositionOpenedAtSource =
+  | "broker"
+  | "execution"
+  | "lot"
+  | "flex_open_position"
+  | "flex_snapshot"
+  | "shadow_position"
+  | "automation"
+  | "unknown";
+
+export type PositionQuoteSource =
+  | "bridge_quote"
+  | "option_quote"
+  | "position_mark"
+  | "shadow_ledger"
+  | "unknown";
+
+export type PositionQuoteSnapshot = {
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  last: number | null;
+  mark: number | null;
+  spread: number | null;
+  spreadPercent: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  updatedAt: Date | null;
+  freshness: string | null;
+  marketDataMode: string | null;
+  source: PositionQuoteSource;
 };
 
 export type BrokerOrderSnapshot = {

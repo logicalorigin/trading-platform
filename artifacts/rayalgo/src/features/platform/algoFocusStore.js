@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-const ALGO_FOCUS_STORE_KEY = Symbol.for("rayalgo.algoFocusStore");
+const ALGO_FOCUS_STORE_KEY = Symbol.for("pyrus.algoFocusStore");
 
 const DEFAULT_STATE = Object.freeze({
   focusedSymbol: null,

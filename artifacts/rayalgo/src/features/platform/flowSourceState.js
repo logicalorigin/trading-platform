@@ -7,6 +7,9 @@ const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
   "queued",
   "quote_hydration",
   "refreshing",
+  "resource pressure",
+  "resource-pressure",
+  "resource_pressure",
   "saturated",
   "timed out",
   "timeout",
@@ -14,6 +17,12 @@ const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
 ];
 
 const PENDING_EMPTY_FLOW_SOURCE_PATTERNS = ["queued", "refreshing"];
+const SCANNER_PENDING_EMPTY_FLOW_SOURCE_PATTERNS = [
+  "no_cached_events",
+  "no cached",
+  "snapshot_pending",
+  "snapshot pending",
+];
 const VISIBLE_FLOW_DEGRADATION_MAX_AGE_MS = 120_000;
 
 const parseTimestampMs = (value) => {
@@ -61,9 +70,8 @@ export const flowReasonLooksPending = (reason) => {
   const normalized = String(reason || "").toLowerCase();
   return Boolean(
     normalized &&
-      PENDING_EMPTY_FLOW_SOURCE_PATTERNS.some((pattern) =>
-        normalized.includes(pattern),
-      ),
+      [...PENDING_EMPTY_FLOW_SOURCE_PATTERNS, ...SCANNER_PENDING_EMPTY_FLOW_SOURCE_PATTERNS]
+        .some((pattern) => normalized.includes(pattern)),
   );
 };
 

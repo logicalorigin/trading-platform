@@ -33,24 +33,24 @@ test("crash diagnostic redaction removes sensitive keys and account-like values"
 
 test("root crash bundle includes runtime and normalized error metadata", () => {
   const bundle = buildRootCrashDiagnosticBundle({
-    label: "Rayalgo app shell",
+    label: "PYRUS app shell",
     error: new TypeError("Render failed"),
     componentStack: "\n    at Crash",
   });
 
-  assert.equal(bundle.kind, "rayalgo-root-crash");
-  assert.equal(bundle.label, "Rayalgo app shell");
+  assert.equal(bundle.kind, "pyrus-root-crash");
+  assert.equal(bundle.label, "PYRUS app shell");
   assert.equal(bundle.error.name, "TypeError");
   assert.equal(bundle.error.message, "Render failed");
   assert.equal(bundle.componentStack, "\n    at Crash");
-  assert.equal(bundle.runtime.packageName, "@workspace/rayalgo");
+  assert.equal(bundle.runtime.packageName, "@workspace/pyrus");
 });
 
 test("root crash fallback always renders the diagnostic screen", () => {
   const markup = renderToStaticMarkup(
     createElement(RootCrashDiagnosticsFallback, {
       error: new TypeError("Render failed"),
-      label: "Rayalgo app shell",
+      label: "PYRUS app shell",
       normalizedError: new TypeError("Render failed"),
       componentStack: "\n    at Crash",
       resetErrorBoundary() {},

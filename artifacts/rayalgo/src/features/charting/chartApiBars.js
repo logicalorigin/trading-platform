@@ -119,6 +119,8 @@ export const describeBrokerChartSource = (source) => {
   if (source === "ibkr-option-quote-derived") return "LIVE";
   if (source === "ibkr+massive-gap-fill") return "IBKR + GAP";
   if (source === "ibkr-history") return "IBKR";
+  if (source === "mixed-option-history") return "IBKR + POLY";
+  if (source === "polygon-option-aggregates") return "POLY";
   return source ? "REST" : "";
 };
 
@@ -374,6 +376,18 @@ export const resolveOptionChartSourceState = ({
         freshness,
       };
     }
+    if (dataSource === "mixed-history") {
+      return {
+        ...sourceState,
+        state: "historical",
+        label: "IBKR + Polygon history",
+        shortLabel: "MIXED",
+        sourceLabel: "IBKR + Polygon history",
+        tone: "neutral",
+        freshness,
+        isRealtime: false,
+      };
+    }
     if (dataSource === "polygon-option-aggregates") {
       return {
         ...sourceState,
@@ -469,6 +483,7 @@ export const useDisplayChartPriceFallbackBars = ({
   enabled,
   scopeKey,
   priority = BARS_REQUEST_PRIORITY.visible,
+  family = "chart-visible",
   metric = "displayPriceRequestMs",
 }) => {
   const normalizedSymbol = normalizeChartSymbol(symbol);
@@ -498,7 +513,7 @@ export const useDisplayChartPriceFallbackBars = ({
               allowHistoricalSynthesis: false,
               providerContractId: normalizedProviderContractId || undefined,
             },
-            buildBarsRequestOptions(priority),
+            buildBarsRequestOptions(priority, family),
           ),
       }),
     enabled: Boolean(enabled && normalizedSymbol),

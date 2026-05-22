@@ -406,7 +406,7 @@ export function useOptionChartBars({
                 historyCursor: historyCursor || undefined,
                 preferCursor: historyCursor && preferCursor ? true : undefined,
               }),
-              buildHydrationRequestOptions(requestPriority),
+              buildHydrationRequestOptions(requestPriority, "chart-backfill"),
             ),
           ...queryDefaults,
         });

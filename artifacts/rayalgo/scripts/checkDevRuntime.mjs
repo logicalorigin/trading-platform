@@ -17,9 +17,14 @@ const repoRoot = path.resolve(packageRoot, "../..");
 const strict = process.argv.includes("--strict");
 const jsonOnly = process.argv.includes("--json");
 const canonicalFrontendPort = String(
-  process.env.RAYALGO_FRONTEND_PORT || process.env.PORT || "18747",
+  process.env.PYRUS_FRONTEND_PORT ||
+    process.env.RAYALGO_FRONTEND_PORT ||
+    process.env.PORT ||
+    "18747",
 );
-const canonicalApiPort = String(process.env.RAYALGO_API_PORT || "8080");
+const canonicalApiPort = String(
+  process.env.PYRUS_API_PORT || process.env.RAYALGO_API_PORT || "8080",
+);
 const canonicalBasePath = process.env.BASE_PATH || "/";
 const commandEnv = { ...process.env };
 delete commandEnv.LD_LIBRARY_PATH;
@@ -384,7 +389,7 @@ const readReplitPlaywrightStatus = () => {
     packageRoot,
     "scripts/preparePlaywrightChromium.mjs",
   );
-  const command = "pnpm --filter @workspace/rayalgo run test:e2e:replit";
+  const command = "pnpm --filter @workspace/pyrus run test:e2e:replit";
   if (!existsSync(prepareScript)) {
     return {
       command,
@@ -470,20 +475,20 @@ const viteServers = processes
     };
   });
 
-const rayalgoViteServers = viteServers.filter(
+const pyrusViteServers = viteServers.filter(
   (server) => server.cwd && path.resolve(server.cwd) === packageRoot,
 );
 
 const warnings = [];
 const failures = [];
 
-if (rayalgoViteServers.length !== 1) {
-  const message = `expected exactly one Rayalgo Vite server, found ${rayalgoViteServers.length}`;
+if (pyrusViteServers.length !== 1) {
+  const message = `expected exactly one PYRUS Vite server, found ${pyrusViteServers.length}`;
   warnings.push(message);
   if (strict) failures.push(message);
 }
 
-for (const server of rayalgoViteServers) {
+for (const server of pyrusViteServers) {
   if (!server.port) {
     const message = `Vite server ${server.pid} is missing PORT`;
     warnings.push(message);
@@ -498,7 +503,7 @@ for (const server of rayalgoViteServers) {
     warnings.push(`Vite server ${server.pid} is running ${server.kind}, not dev`);
   }
   if (server.port && String(server.port) !== canonicalFrontendPort) {
-    const message = `Vite server ${server.pid} is on PORT=${server.port}; canonical Rayalgo frontend port is ${canonicalFrontendPort}`;
+    const message = `Vite server ${server.pid} is on PORT=${server.port}; canonical PYRUS frontend port is ${canonicalFrontendPort}`;
     warnings.push(message);
     if (strict) failures.push(message);
   }
@@ -576,14 +581,14 @@ for (const port of nonCanonicalFrontendListeners) {
   if (strict) failures.push(message);
 }
 
-if (rayalgoViteServers.length > 0 && apiServerProcesses.length !== 1) {
-  const message = `expected exactly one Rayalgo API server on ${canonicalApiPort}, found ${apiServerProcesses.length}`;
+if (pyrusViteServers.length > 0 && apiServerProcesses.length !== 1) {
+  const message = `expected exactly one PYRUS API server on ${canonicalApiPort}, found ${apiServerProcesses.length}`;
   warnings.push(message);
   if (strict) failures.push(message);
 }
 
 if (apiServerProcesses.length > 0 && !apiHealth.ok) {
-  const message = `Rayalgo API health probe failed at ${apiHealth.url}${apiHealth.error ? `: ${apiHealth.error}` : ""}`;
+  const message = `PYRUS API health probe failed at ${apiHealth.url}${apiHealth.error ? `: ${apiHealth.error}` : ""}`;
   warnings.push(message);
   if (strict) failures.push(message);
 } else if (
@@ -591,7 +596,7 @@ if (apiServerProcesses.length > 0 && !apiHealth.ok) {
   apiHealth.json &&
   apiHealth.json.status !== "ok"
 ) {
-  const message = `Rayalgo API health probe returned unexpected status ${JSON.stringify(apiHealth.json)}`;
+  const message = `PYRUS API health probe returned unexpected status ${JSON.stringify(apiHealth.json)}`;
   warnings.push(message);
   if (strict) failures.push(message);
 }
@@ -652,7 +657,7 @@ const snapshot = {
     readTextCommand("git", ["branch", "--show-current"]).trim() || "unknown",
   gitDirty: readTextCommand("git", ["status", "--short"]).trim().length > 0,
   viteServers,
-  rayalgoViteServers,
+  pyrusViteServers,
   projectPorts,
   listeningProjectPorts,
   apiServerProcesses,
@@ -671,7 +676,7 @@ const snapshot = {
 if (jsonOnly) {
   console.log(JSON.stringify(snapshot, null, 2));
 } else {
-  console.log(`Rayalgo runtime check (${snapshot.checkedAt})`);
+  console.log(`PYRUS runtime check (${snapshot.checkedAt})`);
   console.log(`repo: ${snapshot.gitBranch}@${snapshot.gitSha}${snapshot.gitDirty ? " dirty" : ""}`);
   console.log(`canonical local url: ${snapshot.canonicalLocalUrl}`);
   console.log(
@@ -696,20 +701,20 @@ if (jsonOnly) {
   console.log(
     `browser verification: ${browserVerification.prepared ? "patched chromium ready" : "patched chromium unavailable"}; command=${browserVerification.command}`,
   );
-  console.log(`rayalgo vite servers: ${rayalgoViteServers.length}`);
-  for (const server of rayalgoViteServers) {
+  console.log(`pyrus vite servers: ${pyrusViteServers.length}`);
+  for (const server of pyrusViteServers) {
     console.log(
       `- pid ${server.pid} ${server.kind} cwd=${server.cwdRelative} PORT=${server.port || ""} BASE_PATH=${server.basePath || ""} proxy=${server.proxyApiTarget}`,
     );
   }
-  console.log(`rayalgo api servers: ${apiServerProcesses.length}`);
+  console.log(`pyrus api servers: ${apiServerProcesses.length}`);
   for (const server of apiServerProcesses) {
     console.log(
       `- pid ${server.pid} cwd=${server.cwdRelative} ${server.cmd}`,
     );
   }
-  if (viteServers.length !== rayalgoViteServers.length) {
-    console.log(`other vite servers: ${viteServers.length - rayalgoViteServers.length}`);
+  if (viteServers.length !== pyrusViteServers.length) {
+    console.log(`other vite servers: ${viteServers.length - pyrusViteServers.length}`);
   }
   if (listeningProjectPorts.length) {
     console.log("listening project ports:");

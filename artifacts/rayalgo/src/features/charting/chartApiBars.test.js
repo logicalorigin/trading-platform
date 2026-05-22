@@ -228,6 +228,30 @@ test("resolveOptionChartSourceState exposes stale cached option history", () => 
   assert.equal(state.freshness, "stale");
 });
 
+test("resolveOptionChartSourceState labels mixed IBKR and Polygon option history", () => {
+  const state = resolveOptionChartSourceState({
+    identityReady: true,
+    latestBar: {
+      source: "mixed-option-history",
+      freshness: "live",
+      marketDataMode: "live",
+    },
+    status: "live",
+    timeframe: "1m",
+    liveDataEnabled: true,
+    dataSource: "mixed-history",
+    responseFreshness: "live",
+  });
+
+  assert.equal(state.label, "IBKR + Polygon history");
+  assert.equal(state.state, "historical");
+  assert.equal(state.shortLabel, "MIXED");
+  assert.equal(state.sourceLabel, "IBKR + Polygon history");
+  assert.equal(state.tone, "neutral");
+  assert.equal(state.freshness, "live");
+  assert.equal(state.isRealtime, false);
+});
+
 test("display chart price fallback stays on IBKR-only bars", () => {
   const source = readLocalSource("./chartApiBars.js");
   const fallbackBody = source.match(

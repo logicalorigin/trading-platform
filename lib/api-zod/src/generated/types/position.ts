@@ -7,6 +7,8 @@
  */
 import type { AssetClass } from './assetClass';
 import type { OptionContract } from './optionContract';
+import type { PositionOpenedAtSource } from './positionOpenedAtSource';
+import type { PositionQuote } from './positionQuote';
 
 export interface Position {
   id: string;
@@ -20,4 +22,7 @@ export interface Position {
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
   optionContract: OptionContract | null;
+  openedAt?: Date | null;
+  openedAtSource?: PositionOpenedAtSource | null;
+  quote?: PositionQuote | null;
 }

@@ -30,7 +30,6 @@ import type {
   AccountPositionsResponse,
   AccountRiskResponse,
   AccountSummaryResponse,
-  AccountTradingPatternsResponse,
   AccountsResponse,
   AlgoCockpitSnapshotResponse,
   AlgoDeployment,
@@ -54,7 +53,6 @@ import type {
   CancelAccountOrderRequest,
   CancelOrderRequest,
   CancelOrderResponse,
-  CreateAccountTradingPatternsSnapshotRequest,
   CreateAlgoDeploymentRequest,
   CreateBacktestRunRequest,
   CreateBacktestSweepRequest,
@@ -88,7 +86,6 @@ import type {
   GetAccountPositionsParams,
   GetAccountRiskParams,
   GetAccountSummaryParams,
-  GetAccountTradingPatternsParams,
   GetBacktestRunChartParams,
   GetBarsParams,
   GetFlowPremiumDistributionParams,
@@ -4003,165 +4000,6 @@ export function useGetAccountEquityHistory<TData = Awaited<ReturnType<typeof get
 
 
 
-
-/**
- * @summary Get Shadow trading pattern analytics and AI packet
- */
-export const getGetAccountTradingPatternsUrl = (accountId: string,
-    params?: GetAccountTradingPatternsParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/accounts/${accountId}/trading-patterns?${stringifiedParams}` : `/api/accounts/${accountId}/trading-patterns`
-}
-
-export const getAccountTradingPatterns = async (accountId: string,
-    params?: GetAccountTradingPatternsParams, options?: RequestInit): Promise<AccountTradingPatternsResponse> => {
-
-  return customFetch<AccountTradingPatternsResponse>(getGetAccountTradingPatternsUrl(accountId,params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetAccountTradingPatternsQueryKey = (accountId: string,
-    params?: GetAccountTradingPatternsParams,) => {
-    return [
-    `/api/accounts/${accountId}/trading-patterns`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetAccountTradingPatternsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountTradingPatterns>>, TError = ErrorType<unknown>>(accountId: string,
-    params?: GetAccountTradingPatternsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTradingPatterns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAccountTradingPatternsQueryKey(accountId,params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountTradingPatterns>>> = ({ signal }) => getAccountTradingPatterns(accountId,params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountTradingPatterns>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetAccountTradingPatternsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountTradingPatterns>>>
-export type GetAccountTradingPatternsQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get Shadow trading pattern analytics and AI packet
- */
-
-export function useGetAccountTradingPatterns<TData = Awaited<ReturnType<typeof getAccountTradingPatterns>>, TError = ErrorType<unknown>>(
- accountId: string,
-    params?: GetAccountTradingPatternsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountTradingPatterns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetAccountTradingPatternsQueryOptions(accountId,params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
- * @summary Persist a Shadow trading pattern analysis snapshot
- */
-export const getCreateAccountTradingPatternsSnapshotUrl = (accountId: string,) => {
-
-
-
-
-  return `/api/accounts/${accountId}/trading-patterns/snapshots`
-}
-
-export const createAccountTradingPatternsSnapshot = async (accountId: string,
-    createAccountTradingPatternsSnapshotRequest?: CreateAccountTradingPatternsSnapshotRequest, options?: RequestInit): Promise<AccountTradingPatternsResponse> => {
-
-  return customFetch<AccountTradingPatternsResponse>(getCreateAccountTradingPatternsSnapshotUrl(accountId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      createAccountTradingPatternsSnapshotRequest,)
-  }
-);}
-
-
-
-
-export const getCreateAccountTradingPatternsSnapshotMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>, TError,{accountId: string;data: BodyType<CreateAccountTradingPatternsSnapshotRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>, TError,{accountId: string;data: BodyType<CreateAccountTradingPatternsSnapshotRequest>}, TContext> => {
-
-const mutationKey = ['createAccountTradingPatternsSnapshot'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>, {accountId: string;data: BodyType<CreateAccountTradingPatternsSnapshotRequest>}> = (props) => {
-          const {accountId,data} = props ?? {};
-
-          return  createAccountTradingPatternsSnapshot(accountId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateAccountTradingPatternsSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>>
-    export type CreateAccountTradingPatternsSnapshotMutationBody = BodyType<CreateAccountTradingPatternsSnapshotRequest>
-    export type CreateAccountTradingPatternsSnapshotMutationError = ErrorType<unknown>
-
-    /**
- * @summary Persist a Shadow trading pattern analysis snapshot
- */
-export const useCreateAccountTradingPatternsSnapshot = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>, TError,{accountId: string;data: BodyType<CreateAccountTradingPatternsSnapshotRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof createAccountTradingPatternsSnapshot>>,
-        TError,
-        {accountId: string;data: BodyType<CreateAccountTradingPatternsSnapshotRequest>},
-        TContext
-      > => {
-      return useMutation(getCreateAccountTradingPatternsSnapshotMutationOptions(options));
-    }
 
 /**
  * @summary Get allocation and exposure summary

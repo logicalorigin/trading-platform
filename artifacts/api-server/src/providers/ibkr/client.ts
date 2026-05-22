@@ -26,6 +26,9 @@ import type {
   OrderStatus,
   OrderType,
   PlaceOrderInput,
+  PositionOpenedAtSource,
+  PositionQuoteSnapshot,
+  PositionQuoteSource,
   QuoteSnapshot,
   ReplaceOrderSnapshot,
   ResolvedIbkrContract,
@@ -58,6 +61,9 @@ export type {
   OrderStatus,
   OrderType,
   PlaceOrderInput,
+  PositionOpenedAtSource,
+  PositionQuoteSnapshot,
+  PositionQuoteSource,
   QuoteSnapshot,
   ReplaceOrderSnapshot,
   ResolvedIbkrContract,
@@ -980,7 +986,7 @@ export class IbkrClient {
   private buildHeaders(initHeaders?: HeaderInput): Headers {
     const headers = new Headers({
       Accept: "application/json",
-      "User-Agent": "rayalgo-ibkr/1.0",
+      "User-Agent": "pyrus-ibkr/1.0",
     });
 
     Object.entries(this.config.extraHeaders).forEach(([key, value]) => {

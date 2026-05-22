@@ -1,6 +1,6 @@
 import Dexie from "dexie";
 
-export const RUNTIME_CACHE_DB_NAME = "rayalgo-runtime-cache";
+export const RUNTIME_CACHE_DB_NAME = "pyrus-runtime-cache";
 export const RUNTIME_CACHE_DB_VERSION = 1;
 
 export const RUNTIME_CACHE_TTL_MS = {
@@ -105,7 +105,7 @@ const readCacheEntry = async (tableName, cacheKey, nowMs = Date.now()) => {
     return entry.payload ?? null;
   } catch (error) {
     runtimeCacheUnavailable = true;
-    console.warn(`[rayalgo] runtime cache read failed for ${tableName}`, error);
+    console.warn(`[pyrus] runtime cache read failed for ${tableName}`, error);
     return null;
   }
 };
@@ -118,7 +118,7 @@ const writeCacheEntry = async (tableName, record) => {
     return true;
   } catch (error) {
     runtimeCacheUnavailable = true;
-    console.warn(`[rayalgo] runtime cache write failed for ${tableName}`, error);
+    console.warn(`[pyrus] runtime cache write failed for ${tableName}`, error);
     return false;
   }
 };

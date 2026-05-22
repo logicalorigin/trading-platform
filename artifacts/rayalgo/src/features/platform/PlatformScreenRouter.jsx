@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   MemoAccountScreen,
   MemoAlgoScreen,
@@ -10,6 +11,19 @@ import {
   MemoSettingsScreen,
   MemoTradeScreen,
 } from "./screenRegistry.jsx";
+
+const SCREEN_IDS = [
+  "market",
+  "flow",
+  "gex",
+  "trade",
+  "account",
+  "research",
+  "algo",
+  "backtest",
+  "diagnostics",
+  "settings",
+];
 
 export const PlatformScreenRouter = ({
   screenId,
@@ -53,8 +67,17 @@ export const PlatformScreenRouter = ({
   onToggleSidebar,
   onScreenReadiness,
 }) => {
-  const buildReadinessHandler = (screenId) => (readiness) =>
-    onScreenReadiness?.(screenId, readiness);
+  const readinessHandlers = useMemo(
+    () =>
+      Object.fromEntries(
+        SCREEN_IDS.map((id) => [
+          id,
+          (readiness) => onScreenReadiness?.(id, readiness),
+        ]),
+      ),
+    [onScreenReadiness],
+  );
+  const buildReadinessHandler = (screenId) => readinessHandlers[screenId];
 
   const renderMarketScreen = () => (
     <MemoMarketScreen

@@ -34,7 +34,7 @@ export const publishCrosshairSync = (event: CrosshairSyncEvent): void => {
     } catch (error) {
       if (import.meta.env?.DEV) {
         // eslint-disable-next-line no-console
-        console.warn("[rayalgo] crosshair sync handler failed", error);
+        console.warn("[pyrus] crosshair sync handler failed", error);
       }
     }
   });

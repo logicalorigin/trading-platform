@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
-import { recordApiRequest } from "./services/diagnostics";
+import { recordApiRequest } from "./services/request-metrics";
 
 const app: Express = express();
 
@@ -29,10 +29,19 @@ function isZodError(error: unknown): error is ZodErrorLike {
 }
 
 function applyIsolationHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
-  const mode = process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] || "report-only";
-  const coop = process.env["RAYALGO_COOP_POLICY"] || "same-origin";
-  const coep = process.env["RAYALGO_COEP_POLICY"] || "require-corp";
-  res.setHeader("Reporting-Endpoints", 'rayalgo="/api/diagnostics/browser-reports"');
+  const mode =
+    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
+    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] ??
+    "report-only";
+  const coop =
+    process.env["PYRUS_COOP_POLICY"] ??
+    process.env["RAYALGO_COOP_POLICY"] ??
+    "same-origin";
+  const coep =
+    process.env["PYRUS_COEP_POLICY"] ??
+    process.env["RAYALGO_COEP_POLICY"] ??
+    "require-corp";
+  res.setHeader("Reporting-Endpoints", 'pyrus="/api/diagnostics/browser-reports"');
   if (mode === "off") {
     next();
     return;
@@ -45,8 +54,8 @@ function applyIsolationHeaders(_req: express.Request, res: express.Response, nex
     );
     res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   } else {
-    res.setHeader("Cross-Origin-Opener-Policy-Report-Only", `${coop}; report-to="rayalgo"`);
-    res.setHeader("Cross-Origin-Embedder-Policy-Report-Only", `${coep}; report-to="rayalgo"`);
+    res.setHeader("Cross-Origin-Opener-Policy-Report-Only", `${coop}; report-to="pyrus"`);
+    res.setHeader("Cross-Origin-Embedder-Policy-Report-Only", `${coep}; report-to="pyrus"`);
   }
   next();
 }
@@ -124,7 +133,10 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
-if (process.env["RAYALGO_SERVE_WEB"] === "1") {
+if (
+  process.env["PYRUS_SERVE_WEB"] === "1" ||
+  process.env["RAYALGO_SERVE_WEB"] === "1"
+) {
   const webPublicDir = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../rayalgo/dist/public",
@@ -150,7 +162,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     const issues = (error.issues as unknown[]).map((issue) => issue as ZodIssueLike);
 
     res.status(400).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/invalid-request",
+      type: "https://pyrus.local/problems/invalid-request",
       title: "Invalid request",
       status: 400,
       detail: issues
@@ -167,7 +179,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     }
 
     res.status(error.statusCode).type("application/problem+json").json({
-      type: "https://rayalgo.local/problems/upstream",
+      type: "https://pyrus.local/problems/upstream",
       title: error.message,
       status: error.statusCode,
       detail: error.detail,
@@ -179,7 +191,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   logger.error({ err: error }, "Unhandled request error");
 
   res.status(500).type("application/problem+json").json({
-    type: "https://rayalgo.local/problems/internal-server-error",
+    type: "https://pyrus.local/problems/internal-server-error",
     title: "Internal server error",
     status: 500,
     detail: "The API server hit an unexpected error.",

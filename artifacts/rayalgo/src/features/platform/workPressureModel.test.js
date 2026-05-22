@@ -41,6 +41,24 @@ test("resolveIbkrWorkPressure promotes lane backoff and stalls", () => {
   );
 });
 
+test("resolveIbkrWorkPressure reflects scheduler lane pressure", () => {
+  assert.equal(
+    resolveIbkrWorkPressure({
+      configured: true,
+      authenticated: true,
+      healthFresh: true,
+      streamFresh: true,
+      strictReady: true,
+      bridgeDiagnostics: {
+        scheduler: {
+          historical: { pressure: "degraded" },
+        },
+      },
+    }),
+    WORK_PRESSURE_STATE.degraded,
+  );
+});
+
 test("work pressure helpers keep foreground work ahead of background work", () => {
   assert.equal(isForegroundWorkAllowed(WORK_PRESSURE_STATE.degraded), true);
   assert.equal(isBackgroundWorkAllowed(WORK_PRESSURE_STATE.degraded), false);

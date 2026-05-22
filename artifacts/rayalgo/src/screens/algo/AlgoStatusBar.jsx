@@ -69,7 +69,7 @@ export const AlgoStatusBar = ({
         padding: sp(narrow ? "6px 8px" : "9px 12px"),
         display: "flex",
         flexDirection: "column",
-        gap: sp(narrow ? 4 : 5),
+        gap: sp(narrow ? 3 : 5),
       }}
     >
       <div
@@ -115,7 +115,8 @@ export const AlgoStatusBar = ({
               fontSize: textSize("body"),
               fontWeight: FONT_WEIGHTS.medium,
               outline: "none",
-              maxWidth: dim(260),
+              maxWidth: dim(narrow ? 220 : 260),
+              minWidth: 0,
             }}
           >
             {deployments.map((deployment) => (
@@ -148,7 +149,7 @@ export const AlgoStatusBar = ({
         {!narrow && bridgeTone && bridgeTone.color !== T.green ? (
           <Badge color={bridgeTone.color}>{bridgeTone.label.toUpperCase()}</Badge>
         ) : null}
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: narrow ? "0 0 100%" : 1 }} />
         <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
           <button
             type="button"

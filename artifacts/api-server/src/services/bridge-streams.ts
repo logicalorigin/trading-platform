@@ -73,6 +73,13 @@ const accountMonitorSnapshots = new Map<
   }
 >();
 
+function isBridgeWorkBackoffError(error: unknown): boolean {
+  return (
+    isHttpError(error) &&
+    error.code === "ibkr_bridge_work_backoff"
+  );
+}
+
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -188,10 +195,18 @@ function prewarmAccountMonitorQuotes(
         .filter(Boolean),
     ),
   ).sort();
+  syncAccountMonitorQuotePrewarm(owner, symbols);
+}
+
+function clearAccountMonitorQuotePrewarm(owner: string): void {
+  syncAccountMonitorQuotePrewarm(owner, []);
+}
+
+function syncAccountMonitorQuotePrewarm(
+  owner: string,
+  symbols: string[],
+): void {
   const signature = symbols.join(",");
-  if (!signature) {
-    return;
-  }
   const previousSync = accountMonitorPrewarmSignatures.get(owner);
   const now = Date.now();
   if (
@@ -210,8 +225,13 @@ function prewarmAccountMonitorQuotes(
     () => bridgeClient.prewarmQuoteSubscriptions(symbols, owner),
     { recordFailure: false },
   ).catch((error) => {
-    accountMonitorPrewarmSignatures.delete(owner);
-    logger.warn(
+    if (!isBridgeWorkBackoffError(error)) {
+      accountMonitorPrewarmSignatures.delete(owner);
+    }
+    const log = isBridgeWorkBackoffError(error)
+      ? logger.debug.bind(logger)
+      : logger.warn.bind(logger);
+    log(
       { err: error, symbols, owner },
       "IBKR account monitor quote prewarm failed",
     );
@@ -260,7 +280,7 @@ function refreshAccountMonitorLeases(input: {
   const requests = Array.from(requestsByKey.values());
   if (!requests.length) {
     releaseMarketDataLeases(key, "account_monitor_empty");
-    accountMonitorPrewarmSignatures.delete(key);
+    clearAccountMonitorQuotePrewarm(key);
     return;
   }
 

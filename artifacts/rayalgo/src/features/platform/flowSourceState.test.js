@@ -26,12 +26,41 @@ test("pending scanner queue states preserve flow without displaying degraded", (
   assert.equal(providerSummaryHasVisibleFlowDegradation(summary), false);
 });
 
+test("scanner cache gaps are pending states, not visible degraded states", () => {
+  for (const ibkrReason of [
+    "options_flow_scanner_no_cached_events",
+    "options_flow_scanner_snapshot_pending",
+  ]) {
+    const summary = providerSummaryWithSource({
+      provider: "none",
+      status: "empty",
+      ibkrStatus: "empty",
+      ibkrReason,
+    });
+
+    assert.equal(providerSummaryHasTransientFlowState(summary), true);
+    assert.equal(providerSummaryHasVisibleFlowDegradation(summary), false);
+  }
+});
+
 test("quote timeouts remain visible degraded states", () => {
   const summary = providerSummaryWithSource({
     provider: "ibkr",
     status: "empty",
     ibkrStatus: "degraded",
     ibkrReason: "IBKR bridge request to /options/quotes timed out after 12000ms.",
+  });
+
+  assert.equal(providerSummaryHasTransientFlowState(summary), true);
+  assert.equal(providerSummaryHasVisibleFlowDegradation(summary), true);
+});
+
+test("resource pressure scanner pauses preserve flow and display degraded", () => {
+  const summary = providerSummaryWithSource({
+    provider: "none",
+    status: "empty",
+    ibkrStatus: "empty",
+    ibkrReason: "options_flow_scanner_resource_pressure_critical",
   });
 
   assert.equal(providerSummaryHasTransientFlowState(summary), true);

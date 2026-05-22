@@ -108,7 +108,7 @@ test("buildResearchChartModel bounds sparse bar ranges to the selected timeframe
 test("buildResearchChartModel uses explicit target visible range counts", () => {
   [
     { timeframe: "1m", role: "primary", expectedVisibleBars: 1_800 },
-    { timeframe: "5s", role: "mini", expectedVisibleBars: 360 },
+    { timeframe: "5s", role: "primary", expectedVisibleBars: 900 },
     { timeframe: "5s", role: "option", expectedVisibleBars: 600 },
   ].forEach(({ timeframe, role, expectedVisibleBars }) => {
     const defaultVisibleBarCount = getChartBarLimit(timeframe, role);
@@ -143,7 +143,7 @@ test("buildResearchChartModel resets default range target across interval switch
   const bars = buildSequentialBars(2_500);
   const fiveSecondModel = buildResearchChartModel({
     timeframe: "5s",
-    defaultVisibleBarCount: getChartBarLimit("5s", "mini"),
+    defaultVisibleBarCount: getChartBarLimit("5s", "primary"),
     bars,
   });
   const oneMinuteModel = buildResearchChartModel({
@@ -153,7 +153,7 @@ test("buildResearchChartModel resets default range target across interval switch
   });
 
   assert.deepEqual(fiveSecondModel.defaultVisibleLogicalRange, {
-    from: 2_140,
+    from: 1_600,
     to: 2_499,
   });
   assert.deepEqual(oneMinuteModel.defaultVisibleLogicalRange, {
@@ -405,7 +405,7 @@ test("seconds rollup limits stay under the 5s base cap", () => {
 });
 
 test("chart broker recent windows stay bounded to the live edge", () => {
-  for (const role of ["mini", "primary"] as const) {
+  for (const role of ["primary", "option"] as const) {
     for (const { value: timeframe } of getChartTimeframeOptions(role)) {
       const targetLimit = getChartBarLimit(timeframe, role);
       const baseTimeframe = resolveLocalRollupBaseTimeframe(

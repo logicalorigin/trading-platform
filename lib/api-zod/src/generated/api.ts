@@ -1127,46 +1127,6 @@ export const GetAccountEquityHistoryResponse = zod.object({
 
 
 /**
- * @summary Get Shadow trading pattern analytics and AI packet
- */
-export const GetAccountTradingPatternsParams = zod.object({
-  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
-})
-
-export const GetAccountTradingPatternsQueryParams = zod.object({
-  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
-  "snapshotId": zod.coerce.string().optional()
-})
-
-export const GetAccountTradingPatternsResponse = zod.object({
-  "snapshot": zod.record(zod.string(), zod.unknown()),
-  "context": zod.record(zod.string(), zod.unknown()),
-  "summary": zod.record(zod.string(), zod.unknown()),
-  "tickerStats": zod.array(zod.record(zod.string(), zod.unknown())),
-  "sourceStats": zod.array(zod.record(zod.string(), zod.unknown())),
-  "timeStats": zod.record(zod.string(), zod.unknown()),
-  "equityAnnotations": zod.array(zod.record(zod.string(), zod.unknown())),
-  "tradeEvents": zod.array(zod.record(zod.string(), zod.unknown())),
-  "roundTrips": zod.array(zod.record(zod.string(), zod.unknown())),
-  "openLots": zod.array(zod.record(zod.string(), zod.unknown())),
-  "anomalies": zod.array(zod.record(zod.string(), zod.unknown())),
-  "fullPacketIncluded": zod.boolean()
-})
-
-
-/**
- * @summary Persist a Shadow trading pattern analysis snapshot
- */
-export const CreateAccountTradingPatternsSnapshotParams = zod.object({
-  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
-})
-
-export const CreateAccountTradingPatternsSnapshotBody = zod.object({
-  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional()
-})
-
-
-/**
  * @summary Get allocation and exposure summary
  */
 export const GetAccountAllocationParams = zod.object({
@@ -1288,7 +1248,24 @@ export const GetAccountPositionsResponse = zod.object({
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
-  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
+  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  "openedAt": zod.coerce.date().nullish(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "quote": zod.union([zod.object({
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "mid": zod.number().nullable(),
+  "last": zod.number().nullable(),
+  "mark": zod.number().nullable(),
+  "spread": zod.number().nullable(),
+  "spreadPercent": zod.number().nullable(),
+  "bidSize": zod.number().nullable(),
+  "askSize": zod.number().nullable(),
+  "updatedAt": zod.coerce.date().nullable(),
+  "freshness": zod.string().nullable(),
+  "marketDataMode": zod.string().nullable(),
+  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+}),zod.null()]).optional()
 })),
   "totals": zod.record(zod.string(), zod.unknown()),
   "updatedAt": zod.coerce.date()
@@ -1387,7 +1364,24 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
-  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
+  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  "openedAt": zod.coerce.date().nullish(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "quote": zod.union([zod.object({
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "mid": zod.number().nullable(),
+  "last": zod.number().nullable(),
+  "mark": zod.number().nullable(),
+  "spread": zod.number().nullable(),
+  "spreadPercent": zod.number().nullable(),
+  "bidSize": zod.number().nullable(),
+  "askSize": zod.number().nullable(),
+  "updatedAt": zod.coerce.date().nullable(),
+  "freshness": zod.string().nullable(),
+  "marketDataMode": zod.string().nullable(),
+  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+}),zod.null()]).optional()
 })),
   "activity": zod.array(zod.object({
   "id": zod.string(),
@@ -1847,7 +1841,24 @@ export const ListPositionsResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "openedAt": zod.coerce.date().nullish(),
+  "openedAtSource": zod.union([zod.enum(['broker', 'execution', 'lot', 'flex_open_position', 'flex_snapshot', 'shadow_position', 'automation', 'unknown']),zod.null()]).optional(),
+  "quote": zod.union([zod.object({
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "mid": zod.number().nullable(),
+  "last": zod.number().nullable(),
+  "mark": zod.number().nullable(),
+  "spread": zod.number().nullable(),
+  "spreadPercent": zod.number().nullable(),
+  "bidSize": zod.number().nullable(),
+  "askSize": zod.number().nullable(),
+  "updatedAt": zod.coerce.date().nullable(),
+  "freshness": zod.string().nullable(),
+  "marketDataMode": zod.string().nullable(),
+  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+}),zod.null()]).optional()
 }))
 })
 
@@ -2294,12 +2305,22 @@ export const GetGexDashboardResponse = zod.object({
   "expireMonth": zod.number(),
   "expireDay": zod.number(),
   "cp": zod.enum(['C', 'P']),
+  "ticker": zod.string().nullish(),
+  "underlying": zod.string().nullish(),
+  "expirationDate": zod.string().optional(),
+  "providerContractId": zod.string().nullish(),
   "gamma": zod.number(),
   "delta": zod.number(),
   "openInterest": zod.number(),
   "impliedVol": zod.number(),
   "bid": zod.number(),
-  "ask": zod.number()
+  "ask": zod.number(),
+  "multiplier": zod.number().optional(),
+  "sharesPerContract": zod.number().optional(),
+  "volume": zod.number().optional(),
+  "updatedAt": zod.coerce.date().nullish(),
+  "quoteFreshness": zod.string().nullish(),
+  "marketDataMode": zod.string().nullish()
 })),
   "snapshots": zod.array(zod.object({
   "ts": zod.coerce.date(),
@@ -2316,7 +2337,7 @@ export const GetGexDashboardResponse = zod.object({
 }),zod.null()]),
   "flowContextStatus": zod.enum(['ok', 'unavailable']),
   "source": zod.object({
-  "provider": zod.enum(['massive', 'polygon']),
+  "provider": zod.enum(['ibkr', 'massive', 'polygon']),
   "status": zod.enum(['ok', 'partial', 'unavailable']),
   "optionCount": zod.number(),
   "usableOptionCount": zod.number(),
@@ -2953,7 +2974,7 @@ export const GetOptionChartBarsResponse = zod.object({
 }),zod.null()]),
   "providerContractId": zod.string().nullable(),
   "resolutionSource": zod.enum(['chain', 'provided', 'resolver', 'none']),
-  "dataSource": zod.enum(['ibkr-history', 'polygon-option-aggregates', 'none']),
+  "dataSource": zod.enum(['ibkr-history', 'mixed-history', 'polygon-option-aggregates', 'none']),
   "feedIssue": zod.boolean(),
   "debug": zod.object({
   "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
@@ -4025,7 +4046,21 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "evaluatedAt": zod.coerce.date(),
   "timeframes": zod.array(zod.enum(['2m', '5m', '15m'])),
   "truncated": zod.boolean(),
-  "skippedSymbols": zod.array(zod.string())
+  "skippedSymbols": zod.array(zod.string()),
+  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
+  "refreshing": zod.boolean().optional(),
+  "coverage": zod.object({
+  "requestedSymbols": zod.number(),
+  "evaluatedSymbols": zod.number(),
+  "pendingSymbols": zod.number(),
+  "totalSymbols": zod.number(),
+  "timeframes": zod.number(),
+  "taskCount": zod.number(),
+  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']),
+  "durationMs": zod.number(),
+  "skippedSymbols": zod.number(),
+  "truncated": zod.boolean()
+}).optional()
 })
 
 
@@ -4559,7 +4594,12 @@ export const GetSignalOptionsAutomationStateResponse = zod.object({
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
   "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
-  "exitPolicy": zod.record(zod.string(), zod.unknown())
+  "exitPolicy": zod.record(zod.string(), zod.unknown()),
+  "riskHaltControls": zod.record(zod.string(), zod.unknown()),
+  "entryHaltControls": zod.record(zod.string(), zod.unknown()),
+  "liquidityHaltControls": zod.record(zod.string(), zod.unknown()),
+  "positionHaltControls": zod.record(zod.string(), zod.unknown()),
+  "infrastructureHaltControls": zod.record(zod.string(), zod.unknown())
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
@@ -4723,7 +4763,12 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
   "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
-  "exitPolicy": zod.record(zod.string(), zod.unknown())
+  "exitPolicy": zod.record(zod.string(), zod.unknown()),
+  "riskHaltControls": zod.record(zod.string(), zod.unknown()),
+  "entryHaltControls": zod.record(zod.string(), zod.unknown()),
+  "liquidityHaltControls": zod.record(zod.string(), zod.unknown()),
+  "positionHaltControls": zod.record(zod.string(), zod.unknown()),
+  "infrastructureHaltControls": zod.record(zod.string(), zod.unknown())
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
@@ -4802,7 +4847,12 @@ export const UpdateSignalOptionsExecutionProfileBody = zod.object({
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
   "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
-  "exitPolicy": zod.record(zod.string(), zod.unknown())
+  "exitPolicy": zod.record(zod.string(), zod.unknown()),
+  "riskHaltControls": zod.record(zod.string(), zod.unknown()),
+  "entryHaltControls": zod.record(zod.string(), zod.unknown()),
+  "liquidityHaltControls": zod.record(zod.string(), zod.unknown()),
+  "positionHaltControls": zod.record(zod.string(), zod.unknown()),
+  "infrastructureHaltControls": zod.record(zod.string(), zod.unknown())
 })
 
 export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
@@ -4829,7 +4879,12 @@ export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
   "liquidityGate": zod.record(zod.string(), zod.unknown()),
   "entryGate": zod.record(zod.string(), zod.unknown()),
   "fillPolicy": zod.record(zod.string(), zod.unknown()),
-  "exitPolicy": zod.record(zod.string(), zod.unknown())
+  "exitPolicy": zod.record(zod.string(), zod.unknown()),
+  "riskHaltControls": zod.record(zod.string(), zod.unknown()),
+  "entryHaltControls": zod.record(zod.string(), zod.unknown()),
+  "liquidityHaltControls": zod.record(zod.string(), zod.unknown()),
+  "positionHaltControls": zod.record(zod.string(), zod.unknown()),
+  "infrastructureHaltControls": zod.record(zod.string(), zod.unknown())
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),

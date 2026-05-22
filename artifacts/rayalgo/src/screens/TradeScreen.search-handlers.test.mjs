@@ -94,6 +94,12 @@ test("TradeScreen keeps option chart flow badge inside responsive chart chrome",
   assert.doesNotMatch(source, /surfaceTopOverlayHeight \+ 8/);
 });
 
+test("TradeScreen option chart uses shared contract flow marker hydration", () => {
+  assert.match(source, /useContractFlowChartEvents/);
+  assert.match(source, /flowEvents:\s*mergedFlowEvents/);
+  assert.match(source, /chartFlowDiagnostics=\{chartEventConversion\}/);
+});
+
 test("TradeScreen hydrates option charts from complete option identity without waiting for broker id", () => {
   assert.doesNotMatch(source, /requireProviderContractId:\s*true/);
   assert.doesNotMatch(source, /requireMarketIdentifier:\s*true/);

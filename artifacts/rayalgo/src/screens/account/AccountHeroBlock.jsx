@@ -50,58 +50,29 @@ const labelCapsStyle = {
   lineHeight: 1.15,
 };
 
-const HeroSummaryStat = ({ label, value, tone = T.text, title }) => (
+const HeroMetricPill = ({ label, value, tone = T.text, title, first = false }) => (
   <AppTooltip content={title}>
-    <div
+    <span
       style={{
-        display: "grid",
-        gap: sp(1),
-        minWidth: dim(86),
-        padding: sp("3px 7px"),
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(RADII.sm),
-        background: T.bg1,
-      }}
-    >
-      <span style={labelCapsStyle}>{label}</span>
-      <span
-        style={{
-          color: tone,
-          fontSize: textSize("body"),
-          fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1.1,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  </AppTooltip>
-);
-
-const HeroMetricCell = ({ label, value, tone = T.text, title }) => (
-  <AppTooltip content={title}>
-    <div
-      style={{
+        display: "inline-flex",
+        alignItems: "baseline",
+        gap: sp(2),
+        minHeight: dim(18),
+        maxWidth: dim(104),
         minWidth: 0,
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr)",
-        gap: sp(1),
-        padding: sp("4px 0 3px"),
-        borderTop: `1px solid ${T.border}`,
+        flex: "0 0 auto",
+        padding: sp("0 5px"),
+        borderLeft: first ? "none" : `1px solid ${T.border}`,
+        whiteSpace: "nowrap",
         overflow: "hidden",
       }}
     >
       <span
         style={{
           ...labelCapsStyle,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
+          flexShrink: 0,
+          fontSize: fs(6),
+          lineHeight: 1,
         }}
       >
         {label}
@@ -110,19 +81,18 @@ const HeroMetricCell = ({ label, value, tone = T.text, title }) => (
         style={{
           minWidth: 0,
           color: tone,
-          fontSize: textSize("body"),
+          fontSize: fs(9),
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
-          lineHeight: 1.2,
+          lineHeight: 1,
           fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}
       >
         {value}
       </span>
-    </div>
+    </span>
   </AppTooltip>
 );
 
@@ -287,6 +257,7 @@ export const AccountHeroBlock = ({
       title: "Year-to-date interest paid or earned.",
     },
   ];
+  const performanceRailMetrics = [...performanceSummary, ...performanceMetrics];
 
   // Animate the hero net liquidation value when it changes (rAF-driven,
   // respects prefers-reduced-motion). Disabled when masked since the
@@ -309,98 +280,81 @@ export const AccountHeroBlock = ({
     <section
       data-testid="account-hero-block"
       style={{
-        display: "grid",
-        gap: sp(isPhone ? 6 : 8),
-        padding: sp("2px 4px 2px"),
+        display: "flex",
+        alignItems: "center",
+        gap: sp(isPhone ? 4 : 6),
+        padding: sp("1px 3px 1px"),
         minWidth: 0,
+        overflow: "hidden",
       }}
     >
       <div
         data-testid="account-hero-primary-row"
         style={{
-          display: "grid",
-          gridTemplateColumns: isPhone ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
-          alignItems: "center",
-          gap: sp(isPhone ? 5 : 10),
+          color: T.text,
+          fontFamily: T.sans,
+          fontSize: fs(isPhone ? 16 : 20),
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          fontWeight: FONT_WEIGHTS.label,
+          whiteSpace: "nowrap",
+          flex: "0 1 auto",
           minWidth: 0,
+          maxWidth: isPhone ? "48%" : "36%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
         }}
       >
-        <div
-          style={{
-            color: T.text,
-            fontFamily: T.sans,
-            fontSize: fs(isPhone ? 18 : 24),
-            fontVariantNumeric: "tabular-nums",
-            lineHeight: 1,
-            fontWeight: FONT_WEIGHTS.label,
-            whiteSpace: "nowrap",
-            flexShrink: 1,
-            minWidth: 0,
-            maxWidth: "100%",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {formatMoney(displayNet, currency, maskValues)}
-        </div>
-        <div
-          data-testid="account-hero-performance-summary"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: isPhone ? "flex-start" : "flex-end",
-            flexWrap: "wrap",
-            gap: sp(4),
-            minWidth: 0,
-          }}
-        >
-          {dayPositive !== null ? (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: sp(4),
-                padding: sp("3px 7px"),
-                border: `1px solid ${dayTone}40`,
-                borderRadius: dim(RADII.pill),
-                background: `${dayTone}12`,
-                color: dayTone,
-                flexShrink: 0,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <DayIcon size={11} />
-              <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
-              {formatPercent(dayPnlPercent, maskValues) ? (
-                <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
-                  {formatPercent(dayPnlPercent, maskValues)}
-                </span>
-              ) : null}
-              <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
-            </span>
-          ) : null}
-          {performanceSummary.map((metric) => (
-            <HeroSummaryStat key={metric.label} {...metric} />
-          ))}
-        </div>
+        {formatMoney(displayNet, currency, maskValues)}
       </div>
       <div
-        data-testid="account-hero-performance-grid"
+        className="ra-hide-scrollbar"
+        data-testid="account-hero-performance-rail"
         style={{
-          display: "grid",
-          gridTemplateColumns: isPhone
-            ? "repeat(2, minmax(0, 1fr))"
-            : `repeat(auto-fit, minmax(${dim(86)}, 1fr))`,
-          columnGap: sp(isPhone ? 6 : 8),
-          rowGap: sp(2),
+          display: "flex",
+          alignItems: "center",
+          flex: "1 1 0",
           minWidth: 0,
+          overflowX: "auto",
+          overflowY: "hidden",
+          whiteSpace: "nowrap",
         }}
       >
-        {performanceMetrics.map((metric) => (
-          <HeroMetricCell key={metric.label} {...metric} />
+        {dayPositive !== null ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(3),
+              minHeight: dim(18),
+              padding: sp("0 5px"),
+              border: `1px solid ${dayTone}40`,
+              borderRadius: dim(RADII.pill),
+              background: `${dayTone}12`,
+              color: dayTone,
+              flex: "0 0 auto",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <DayIcon size={10} />
+            <span style={{ fontWeight: FONT_WEIGHTS.medium, fontVariantNumeric: "tabular-nums" }}>{formatMoney(displayDayPnl, currency, maskValues)}</span>
+            {formatPercent(dayPnlPercent, maskValues) ? (
+              <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
+                {formatPercent(dayPnlPercent, maskValues)}
+              </span>
+            ) : null}
+            <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
+          </span>
+        ) : null}
+        {performanceRailMetrics.map((metric, index) => (
+          <HeroMetricPill
+            key={metric.label}
+            first={dayPositive === null && index === 0}
+            {...metric}
+          />
         ))}
       </div>
     </section>

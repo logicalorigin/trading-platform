@@ -122,6 +122,7 @@ const buildLineUsageRows = (admission, lineUsageSnapshot) => {
     activeLineCount: normalized.activeLineCount,
     requestedLineCount: normalized.requestedLineCount,
     pendingLineCount: normalized.pendingLineCount,
+    foregroundPendingLineCount: normalized.foregroundPendingLineCount,
     requestedSummary: normalized.requestedSummary,
     demandSummary: normalized.demandSummary,
     bridgeSummary: normalized.bridgeSummary,

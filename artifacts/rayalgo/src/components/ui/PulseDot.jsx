@@ -1,12 +1,12 @@
 import { RADII, T, dim } from "../../lib/uiTokens.jsx";
 
 const PULSE_CSS = `
-@keyframes rayalgoPulse {
+@keyframes pyrusPulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--ra-pulse-color, currentColor); }
   50%      { box-shadow: 0 0 0 5px transparent; }
 }
 .ra-pulse {
-  animation: rayalgoPulse 2.4s ease-in-out infinite;
+  animation: pyrusPulse 2.4s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .ra-pulse { animation: none; }

@@ -346,6 +346,13 @@ export const buildAlgoAccountPositionRows = ({
       signal,
       optionContract,
     );
+    const signalAt = firstText(position?.signalAt, candidate.signalAt, signal.signalAt);
+    const purchasedAt = firstText(
+      position?.purchasedAt,
+      position?.filledAt,
+      position?.openedAt,
+      signalAt,
+    );
     const rowId = buildPositionId(position, optionContract);
     const description = [
       formatContractLabel(optionContract),
@@ -370,14 +377,35 @@ export const buildAlgoAccountPositionRows = ({
         peakPrice: firstPositiveNumber(position?.peakPrice),
         stopPrice: firstPositiveNumber(position?.stopPrice),
         premiumAtRisk: firstFiniteNumber(position?.premiumAtRisk),
-        openedAt: firstText(position?.openedAt, position?.signalAt),
+        purchasedAt,
+        openedAt: firstText(position?.openedAt, purchasedAt),
+        signalAt,
+        barsSinceSignal: firstFiniteNumber(
+          position?.barsSinceSignal,
+          signal.barsSinceSignal,
+          candidate.barsSinceSignal,
+        ),
+        signalDirection: firstText(position?.direction, candidate.direction, signal.direction),
         lastMarkedAt: firstText(position?.lastMarkedAt),
         timeframe: firstText(
           position?.timeframe,
           candidate.timeframe,
           signal.timeframe,
         ),
-        signalScore: firstFiniteNumber(signal.score),
+        signalScore: firstFiniteNumber(
+          position?.signalQuality?.score,
+          candidate.signalQuality?.score,
+          signal.score,
+        ),
+        signalTier: firstText(
+          position?.signalQuality?.tier,
+          candidate.signalQuality?.tier,
+        ),
+        signalReasons: Array.isArray(position?.signalQuality?.reasons)
+          ? position.signalQuality.reasons
+          : Array.isArray(candidate.signalQuality?.reasons)
+            ? candidate.signalQuality.reasons
+            : [],
       },
       sector: "",
       quantity,
@@ -425,6 +453,11 @@ export const buildAlgoAccountPositionRows = ({
             candidate.deploymentName,
             signal.deploymentName,
             "Algo signal-options",
+          ),
+          deploymentId: firstText(
+            position?.deploymentId,
+            candidate.deploymentId,
+            signal.deploymentId,
           ),
         },
       ],

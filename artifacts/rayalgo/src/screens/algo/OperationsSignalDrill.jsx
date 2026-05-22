@@ -30,6 +30,11 @@ import {
   formatPlainPrice,
   formatQuoteGreeksSummary,
   formatQuoteSummary,
+  resolveCandidateGateDisplay,
+  resolveCandidateSyncDisplay,
+  resolveSignalAge,
+  resolveSignalMove,
+  resolveSignalScoreBreakdown,
   shadowLinkSummary,
   signalActionLabel,
   signalFreshnessLabel,
@@ -79,6 +84,17 @@ const Row = ({ label, value, tone }) => (
   </div>
 );
 
+const qualityScoreLabel = (breakdown) => {
+  const score = breakdown?.score == null ? null : Number(breakdown.score);
+  if (Number.isFinite(score)) return `${score.toFixed(1)} score`;
+  return breakdown?.label || MISSING_VALUE;
+};
+
+const qualityTierLabel = (breakdown) => {
+  const tier = String(breakdown?.tier || "").trim();
+  return tier ? formatEnumLabel(tier) : null;
+};
+
 const firstDisplayValue = (...values) => {
   for (const value of values) {
     if (value !== null && value !== undefined && value !== "") return value;
@@ -118,6 +134,10 @@ const OverviewPane = ({ signal, candidate, position }) => {
   const direction = signal?.direction || candidate?.direction;
   const freshness = signalFreshnessLabel(signal);
   const action = signalActionLabel(signal, candidate?.action);
+  const signalAge = resolveSignalAge(signal);
+  const scoreBreakdown = resolveSignalScoreBreakdown({ signal, candidate });
+  const gate = resolveCandidateGateDisplay(candidate);
+  const sync = resolveCandidateSyncDisplay(candidate);
   const mark = position ? formatPlainPrice(position.lastMarkPrice, 2) : MISSING_VALUE;
   const entry = position ? formatPlainPrice(position.entryPrice, 2) : MISSING_VALUE;
   const qty = position ? Number(position.quantity ?? 0) : 0;
@@ -125,8 +145,20 @@ const OverviewPane = ({ signal, candidate, position }) => {
     <div style={{ display: "grid", gap: sp(1), padding: sp("8px 12px") }}>
       <Row
         label="Signal"
-        value={`${direction ? direction.toUpperCase() : MISSING_VALUE} · score ${signal?.score ?? "—"} · ${freshness}`}
+        value={
+          [
+            direction ? direction.toUpperCase() : MISSING_VALUE,
+            qualityScoreLabel(scoreBreakdown),
+            qualityTierLabel(scoreBreakdown),
+            freshness,
+          ].filter((item) => item && item !== MISSING_VALUE).join(" · ") ||
+          MISSING_VALUE
+        }
         tone={freshness === "FRESH" ? T.green : freshness === "STALE" ? T.amber : T.text}
+      />
+      <Row
+        label="Counter"
+        value={[signalAge.label, signalAge.detail].filter((item) => item !== MISSING_VALUE).join(" · ") || MISSING_VALUE}
       />
       <Row
         label="Mapped"
@@ -139,10 +171,18 @@ const OverviewPane = ({ signal, candidate, position }) => {
       <Row
         label="Status"
         value={
-          candidate?.actionStatus || candidate?.status || "candidate"
-            ? formatEnumLabel(candidate?.actionStatus || candidate?.status || "candidate")
-            : MISSING_VALUE
+          [
+            candidate?.actionStatus || candidate?.status || "candidate"
+              ? formatEnumLabel(candidate?.actionStatus || candidate?.status || "candidate")
+              : null,
+            sync.label,
+          ].filter(Boolean).join(" · ") || MISSING_VALUE
         }
+      />
+      <Row
+        label="Gate"
+        value={`${gate.label} · ${gate.detail}`}
+        tone={gate.tone}
       />
       {position ? (
         <Row
@@ -191,6 +231,14 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
   const provider = formatContractProviderLabel(selectedContract);
   const quoteSummary = formatQuoteSummary(quote, liquidity);
   const greeks = formatQuoteGreeksSummary(quote);
+  const scoreBreakdown = resolveSignalScoreBreakdown({
+    signal: candidate.signal,
+    candidate,
+    quote,
+    liquidity,
+  });
+  const gate = resolveCandidateGateDisplay(candidate);
+  const sync = resolveCandidateSyncDisplay(candidate);
   const selection = latestContractSelection(candidate, events);
   const selectionSummary = formatContractSelectionSummary(selection);
   const multiplier = firstDisplayValue(
@@ -229,6 +277,21 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
       <Row label="Limit" value={formatMoney(orderPlan.entryLimitPrice, 2)} />
       <Row label="Quantity" value={orderPlan.quantity ?? MISSING_VALUE} />
       <Row label="Premium" value={formatMoney(orderPlan.premiumAtRisk)} />
+      <Row
+        label="Quality"
+        value={
+          [
+            qualityScoreLabel(scoreBreakdown),
+            qualityTierLabel(scoreBreakdown),
+          ].filter((item) => item && item !== MISSING_VALUE).join(" · ") ||
+          MISSING_VALUE
+        }
+        tone={scoreBreakdown.tier === "high" ? T.green : scoreBreakdown.tier === "low" ? T.red : T.amber}
+      />
+      <Row
+        label="Reasons"
+        value={(scoreBreakdown.reasonLabels || []).join(" · ") || MISSING_VALUE}
+      />
       <Row label="Bid / Ask" value={quoteSummary.main} />
       <Row
         label="Mark / Mid"
@@ -265,11 +328,11 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
       />
       <Row
         label="Blocker"
-        value={blocker}
+        value={blocker !== MISSING_VALUE ? `${gate.label} · ${blocker}` : gate.label}
         tone={blocker !== MISSING_VALUE ? T.amber : T.textSec}
       />
       <Row label="Latest" value={candidateLatestActivityLabel(candidate)} />
-      <Row label="Shadow" value={shadowLinkSummary(candidate.shadowLink)} />
+      <Row label="Shadow" value={`${sync.label} · ${shadowLinkSummary(candidate.shadowLink)}`} tone={sync.tone} />
     </div>
   );
 };
@@ -318,12 +381,36 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
   const currentStop = Number(position.stopPrice ?? NaN);
   const peak = Number(position.peakPrice ?? NaN);
   const quality = entryQualityLabel(position.signalQuality);
+  const signalAge = resolveSignalAge({
+    signalAt: position.signalAt,
+    barsSinceSignal: asRecord(position.signal).barsSinceSignal,
+    fresh: true,
+  });
+  const move = resolveSignalMove(
+    {
+      signalPrice: firstDisplayValue(position.signalPrice, candidate?.signalPrice),
+    },
+    { price: firstDisplayValue(position.underlyingPrice, candidate?.underlyingPrice) },
+  );
+  const giveback =
+    Number.isFinite(peak) && Number.isFinite(mark) && peak > 0
+      ? ((mark - peak) / peak) * 100
+      : null;
+  const stopDistance =
+    Number.isFinite(currentStop) && Number.isFinite(mark) && mark > 0
+      ? ((mark - currentStop) / mark) * 100
+      : null;
   return (
     <div style={{ display: "grid", gap: sp(1), padding: sp("8px 12px") }}>
       <Row label="Contract" value={contract.main} />
       <Row label="Detail" value={contract.detail} />
       <Row label="Provider" value={provider} />
       <Row label="Qty" value={qty} />
+      <Row label="Purchased" value={formatRelativeTimeShort(position.openedAt)} />
+      <Row
+        label="Signal age"
+        value={[signalAge.label, signalAge.detail].filter((item) => item !== MISSING_VALUE).join(" · ") || MISSING_VALUE}
+      />
       <Row label="Entry → Mark" value={`${formatPlainPrice(entry, 2)} → ${formatPlainPrice(mark, 2)}`} />
       <Row label="Live quote" value={quoteSummary.main} />
       <Row
@@ -343,6 +430,17 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
       />
       <Row label="Premium" value={formatMoney(position.premiumAtRisk)} />
       <Row label="Peak" value={formatPlainPrice(peak, 2)} />
+      <Row
+        label="Giveback"
+        value={giveback == null ? MISSING_VALUE : formatPct(giveback, 1)}
+        tone={Number(giveback) < 0 ? T.amber : T.green}
+      />
+      <Row
+        label="Stop distance"
+        value={stopDistance == null ? MISSING_VALUE : formatPct(stopDistance, 1)}
+        tone={Number(stopDistance) <= 20 ? T.amber : T.textSec}
+      />
+      <Row label="Move signal" value={move.detail} tone={Number(move.pct) >= 0 ? T.green : T.red} />
       <Row label="Opened" value={formatRelativeTimeShort(position.openedAt)} />
       <Row label="Marked" value={formatRelativeTimeShort(position.lastMarkedAt)} />
       <Row label="Quality" value={quality} />

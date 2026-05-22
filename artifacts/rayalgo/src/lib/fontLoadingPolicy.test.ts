@@ -26,7 +26,7 @@ const collectSourceFiles = (directory: string): string[] =>
     return SOURCE_EXTENSIONS.has(extname(entry.name)) ? [path] : [];
   });
 
-test("RayAlgo self-hosts app fonts instead of loading Google Fonts at runtime", () => {
+test("PYRUS self-hosts app fonts instead of loading Google Fonts at runtime", () => {
   const indexHtml = readText("../../index.html");
   const indexCss = readText("../index.css");
   const mainTsx = readText("../main.tsx");
@@ -60,7 +60,7 @@ test("RayAlgo self-hosts app fonts instead of loading Google Fonts at runtime", 
   assert.equal(packageJson.dependencies?.["@fontsource/jetbrains-mono"], undefined);
 });
 
-test("RayAlgo root CSS routes all app typography through IBM Plex Sans", () => {
+test("PYRUS root CSS routes all app typography through IBM Plex Sans", () => {
   const indexCss = readText("../index.css");
 
   assert.match(indexCss, /--ra-font-sans:\s*'IBM Plex Sans'/);

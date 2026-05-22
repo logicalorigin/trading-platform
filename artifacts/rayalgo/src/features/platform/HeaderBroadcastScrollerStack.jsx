@@ -1,9 +1,43 @@
-import { ChevronDown, ChevronRight, RadioTower, Settings } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  AlertTriangle,
+  Clock3,
+  CheckCircle2,
+  CircleDollarSign,
+  Info,
+  Layers,
+  LogIn,
+  LogOut,
+  MinusCircle,
+  RadioTower,
+  Route,
+  Settings,
+  ShieldAlert,
+  SkipForward,
+  SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
+  XCircle,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  FONT_WEIGHTS,
+  LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+  MISSING_VALUE,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   formatOptionContractLabel,
   formatQuotePrice,
@@ -23,9 +57,10 @@ import {
 } from "./flowFilterStore";
 import {
   HEADER_BROADCAST_SPEED_PRESETS,
+  buildHeaderAlgoTapeItems,
   buildHeaderSignalTapeItems,
   buildHeaderUnusualTapeItems,
-  getHeaderBroadcastSpeedDurations,
+  getHeaderBroadcastScrollDurationSeconds,
   resolveHeaderBroadcastSpeedPreset,
 } from "./headerBroadcastModel";
 import {
@@ -56,6 +91,23 @@ const fmtCompactCurrency = (value) => {
   if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
 };
+
+const providerSummaryHasFlowState = (providerSummary) => {
+  if (!providerSummary || typeof providerSummary !== "object") {
+    return false;
+  }
+  const coverage = providerSummary.coverage || {};
+  return Boolean(
+    providerSummary.erroredSource ||
+      providerSummary.errorMessage ||
+      providerSummary.failures?.length ||
+      Object.keys(providerSummary.sourcesBySymbol || {}).length ||
+      coverage.degradedReason ||
+      Number(coverage.totalSymbols) > 0 ||
+      Number(coverage.activeTargetSize) > 0 ||
+      Number(coverage.selectedSymbols) > 0,
+  );
+};
 const HeaderBroadcastSegment = ({
   item,
   duplicate = false,
@@ -64,7 +116,12 @@ const HeaderBroadcastSegment = ({
   children,
   onClick,
   title,
+  ariaLabel,
   compact = false,
+  maxWidth,
+  border,
+  boxShadow,
+  background,
 }) => {
   const interactive = !duplicate && typeof onClick === "function";
   const Component = interactive ? "button" : "div";
@@ -73,6 +130,7 @@ const HeaderBroadcastSegment = ({
     <Component
       type={interactive ? "button" : undefined}
       aria-hidden={duplicate || undefined}
+      aria-label={interactive && ariaLabel ? ariaLabel : undefined}
       tabIndex={interactive ? 0 : undefined}
       onClick={interactive ? () => onClick(item) : undefined}
       className={interactive ? "ra-interactive" : undefined}
@@ -81,13 +139,15 @@ const HeaderBroadcastSegment = ({
         display: "inline-flex",
         alignItems: "center",
         gap: sp(compact ? 5 : 6),
-        height: dim(compact ? 22 : 24),
-        minHeight: dim(compact ? 22 : 24),
-        maxWidth: dim(compact ? 220 : 300),
-        padding: sp(compact ? "0px 8px" : "0px 10px"),
-        border: "none",
+        height: dim(compact ? 19 : 24),
+        minHeight: dim(compact ? 19 : 24),
+        maxWidth: dim(maxWidth ?? (compact ? 180 : 300)),
+        padding: sp(compact ? "0px 7px" : "0px 10px"),
+        boxSizing: "border-box",
+        border: border ?? "none",
         borderRadius: dim(RADII.xs),
-        background: `${tone}0d`,
+        background: background ?? `${tone}0d`,
+        boxShadow,
         color: T.textSec,
         fontFamily: T.sans,
         fontSize: textSize(compact ? "caption" : "body"),
@@ -412,6 +472,246 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
       ) : null}
       <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
+      </span>
+    </HeaderBroadcastSegment>
+  );
+};
+
+const resolveAlgoTone = (toneKind) => {
+  if (toneKind === "success") return T.green;
+  if (toneKind === "danger") return T.red;
+  if (toneKind === "warning") return T.amber;
+  if (toneKind === "accent") return T.accent;
+  return T.textSec;
+};
+
+const ALGO_EVENT_ICONS = {
+  entry: LogIn,
+  exit: LogOut,
+  skip: SkipForward,
+  blocked: ShieldAlert,
+  mark: Activity,
+  config: SlidersHorizontal,
+  deploy: RadioTower,
+  algo: Bot,
+};
+
+const ALGO_CONTEXT_ICONS = {
+  call: TrendingUp,
+  put: TrendingDown,
+  filled: CheckCircle2,
+  warning: AlertTriangle,
+  blocked: ShieldAlert,
+  loss: XCircle,
+  flat: MinusCircle,
+  mark: Activity,
+  config: SlidersHorizontal,
+  deploy: RadioTower,
+  money: CircleDollarSign,
+  quantity: Layers,
+  reason: AlertTriangle,
+  dte: Route,
+};
+
+const HeaderAlgoContextIcon = ({ context, compact = false }) => {
+  const tone = resolveAlgoTone(context.toneKind);
+  const Icon = ALGO_CONTEXT_ICONS[context.iconKind] || Info;
+  const hasValue = Boolean(context.valueLabel);
+  const isContract = context.kind === "contract";
+  const valueMaxWidth = context.kind === "reason"
+    ? dim(compact ? 64 : 78)
+    : dim(compact ? 52 : 64);
+  const label = context.valueLabel
+    ? `${context.label} ${context.valueLabel}`
+    : context.label;
+
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxSizing: "border-box",
+        flexShrink: 0,
+        gap: hasValue ? sp(2) : 0,
+        height: dim(isContract ? (compact ? 18 : 20) : compact ? 16 : 18),
+        minWidth: dim(isContract ? (compact ? 18 : 20) : compact ? 16 : 18),
+        maxWidth: hasValue
+          ? valueMaxWidth
+          : dim(isContract ? (compact ? 18 : 20) : compact ? 16 : 18),
+        padding: hasValue ? sp("0px 4px") : 0,
+        border: `1px solid ${colorWithAlpha(tone, 0.28)}`,
+        borderRadius: dim(RADII.xs),
+        background: `${tone}${isContract ? "18" : "12"}`,
+        color: tone,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.label,
+        fontVariantNumeric: "tabular-nums",
+        lineHeight: 1,
+        overflow: "hidden",
+      }}
+    >
+      <Icon
+        size={isContract ? (compact ? 12 : 13) : compact ? 10 : 11}
+        strokeWidth={isContract ? 2.5 : 2.2}
+        aria-hidden="true"
+      />
+      {hasValue ? (
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {context.valueLabel}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
+  const tone = resolveAlgoTone(item.toneKind);
+  const Icon = ALGO_EVENT_ICONS[item.iconKind] || Info;
+  const timeLabel = formatRelativeTimeShort(item.time);
+  const contextLabels = (item.contextIcons || []).map((context) => context.label);
+  const title = [
+    item.actionLabel,
+    item.symbol,
+    ...contextLabels,
+    timeLabel,
+  ].filter(Boolean).join(" ");
+  const iconLabel = `${item.actionLabel} algo event`;
+
+  return (
+    <HeaderBroadcastSegment
+      item={item}
+      duplicate={duplicate}
+      tone={tone}
+      accent={T.border}
+      onClick={(selected) => onClick?.(selected.raw)}
+      title={title}
+      ariaLabel={title}
+      compact={compact}
+      maxWidth={compact ? 300 : 390}
+      border={`1px solid ${colorWithAlpha(tone, 0.26)}`}
+      background={`linear-gradient(90deg, ${colorWithAlpha(tone, 0.14)}, ${colorWithAlpha(T.bg1, 0.86)})`}
+      boxShadow={`inset 0 0 0 1px ${colorWithAlpha(T.bg0, 0.36)}`}
+    >
+      <span
+        aria-label={iconLabel}
+        title={iconLabel}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+          flexShrink: 0,
+          gap: sp(3),
+          height: dim(compact ? 18 : 20),
+          minWidth: dim(compact ? 18 : 20),
+          maxWidth: dim(compact ? 64 : 78),
+          padding: sp(compact ? "0px 4px" : "0px 5px"),
+          border: `1px solid ${colorWithAlpha(tone, 0.32)}`,
+          borderRadius: dim(RADII.xs),
+          background: `${tone}18`,
+          color: tone,
+          overflow: "hidden",
+        }}
+      >
+        <Icon size={compact ? 13 : 14} strokeWidth={2.4} aria-hidden="true" />
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+            whiteSpace: "nowrap",
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.label,
+            lineHeight: 1,
+          }}
+        >
+          {item.actionLabel}
+        </span>
+      </span>
+      <span
+        aria-label={`Algo symbol ${item.symbol}`}
+        title={`Algo symbol ${item.symbol}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+          flexShrink: 1,
+          height: dim(compact ? 18 : 20),
+          minWidth: dim(compact ? 28 : 34),
+          maxWidth: dim(compact ? 58 : 72),
+          padding: sp(compact ? "0px 5px" : "0px 6px"),
+          border: `1px solid ${colorWithAlpha(T.textSec, 0.18)}`,
+          borderRadius: dim(RADII.xs),
+          background: colorWithAlpha(T.textSec, 0.08),
+          color: T.text,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.label,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {item.symbol}
+      </span>
+      {(item.contextIcons || []).map((context) => (
+        <HeaderAlgoContextIcon
+          key={context.kind}
+          context={context}
+          compact={compact}
+        />
+      ))}
+      <span
+        aria-label={`Algo event time ${timeLabel}`}
+        title={`Algo event time ${timeLabel}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+          flexShrink: 0,
+          gap: sp(2),
+          minWidth: dim(compact ? 16 : 18),
+          height: dim(compact ? 16 : 18),
+          padding: sp("0px 4px"),
+          border: `1px solid ${colorWithAlpha(T.textMuted, 0.2)}`,
+          borderRadius: dim(RADII.xs),
+          background: `${T.textMuted}10`,
+          color: T.textMuted,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          overflow: "hidden",
+        }}
+      >
+        <Clock3 size={compact ? 10 : 11} strokeWidth={2.2} aria-hidden="true" />
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {timeLabel}
+        </span>
       </span>
     </HeaderBroadcastSegment>
   );
@@ -904,7 +1204,7 @@ const HeaderBroadcastLane = ({
   testId,
   action,
   children,
-  durationSeconds = 34,
+  speedPreset = "slow",
   settingsOpen = false,
   onToggleSettings,
   labelTrigger,
@@ -912,6 +1212,57 @@ const HeaderBroadcastLane = ({
 }) => {
   const shouldScroll = items.length >= 4;
   const renderedItems = shouldScroll ? [...items, ...items] : items;
+  const trackRef = useRef(null);
+  const [scrollDistancePx, setScrollDistancePx] = useState(0);
+  const durationSeconds = useMemo(
+    () =>
+      getHeaderBroadcastScrollDurationSeconds(speedPreset, {
+        scrollDistancePx,
+      }),
+    [scrollDistancePx, speedPreset],
+  );
+
+  useEffect(() => {
+    if (!shouldScroll) {
+      setScrollDistancePx(0);
+      return undefined;
+    }
+
+    const track = trackRef.current;
+    if (!track) return undefined;
+
+    let frame = 0;
+    const measure = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const nextDistance = Math.round((track.scrollWidth || 0) / 2);
+        setScrollDistancePx((current) =>
+          current === nextDistance ? current : nextDistance,
+        );
+      });
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => {
+        if (frame) window.cancelAnimationFrame(frame);
+        window.removeEventListener("resize", measure);
+      };
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    window.addEventListener("resize", measure);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [compactSettings, items, shouldScroll]);
+
   const defaultTrigger = (
     <button
       type="button"
@@ -944,15 +1295,19 @@ const HeaderBroadcastLane = ({
   return (
     <div
       data-testid={testId}
-      className="ra-hairline-bottom"
+      className={compactSettings ? "ra-mobile-broadcast-lane" : "ra-hairline-bottom"}
       style={{
         display: "grid",
         gridTemplateColumns: compactSettings
-          ? `${dim(26)}px minmax(0, 1fr) auto`
+          ? `${dim(28)}px minmax(0, 1fr) ${dim(28)}px`
           : "56px minmax(0, 1fr) auto",
         alignItems: "center",
-        minHeight: dim(compactSettings ? 18 : 20),
+        minHeight: dim(compactSettings ? 22 : 20),
         minWidth: 0,
+        border: compactSettings ? `1px solid ${T.border}` : undefined,
+        borderRadius: compactSettings ? dim(RADII.sm) : undefined,
+        background: compactSettings ? T.bg0 : undefined,
+        overflow: compactSettings ? "hidden" : undefined,
       }}
     >
       <div
@@ -973,12 +1328,13 @@ const HeaderBroadcastLane = ({
           minWidth: 0,
           overflowX: "hidden",
           overflowY: "hidden",
-          padding: sp(compactSettings ? "1px 6px" : "1px 6px"),
+          padding: sp(compactSettings ? "1px 5px" : "1px 6px"),
         }}
       >
         {items.length ? (
           <div
             data-header-broadcast-track
+            ref={trackRef}
             role="list"
             style={{
               display: "inline-flex",
@@ -1067,6 +1423,8 @@ export const HeaderBroadcastScrollerStack = memo(({
   enabled = true,
   onSignalAction,
   onFlowAction,
+  onAlgoAction,
+  algoEvents = [],
   signalScanEnabled = false,
   signalScanPending = false,
   signalEvaluationPending = false,
@@ -1104,18 +1462,19 @@ export const HeaderBroadcastScrollerStack = memo(({
   const broadScanSnapshotHasEvents = Boolean(
     broadFlowSnapshot.flowEvents?.length,
   );
+  const broadScanSnapshotHasProviderState = providerSummaryHasFlowState(
+    broadFlowSnapshot.providerSummary,
+  );
   const broadScanSnapshotVisible = Boolean(
     broadScanSnapshotActive ||
       (broadScanEnabled &&
-        (broadScanSnapshotHasEvents || broadFlowSnapshot.staleFlowEvents)),
+        (broadScanSnapshotHasEvents ||
+          broadFlowSnapshot.staleFlowEvents ||
+          broadScanSnapshotHasProviderState)),
   );
   const [openSettingsLane, setOpenSettingsLane] = useState(null);
   const [speedPreset, setSpeedPreset] = useState(() =>
     resolveHeaderBroadcastSpeedPreset(_initialState.headerBroadcastSpeedPreset),
-  );
-  const speedDurations = useMemo(
-    () => getHeaderBroadcastSpeedDurations(speedPreset),
-    [speedPreset],
   );
   const changeSpeedPreset = useCallback((nextPreset) => {
     const resolved = resolveHeaderBroadcastSpeedPreset(nextPreset);
@@ -1128,9 +1487,11 @@ export const HeaderBroadcastScrollerStack = memo(({
       if (!nextPreset) return;
       setSpeedPreset(resolveHeaderBroadcastSpeedPreset(nextPreset));
     };
-    window.addEventListener("rayalgo:workspace-settings-updated", listener);
+    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+    window.addEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
     return () => {
-      window.removeEventListener("rayalgo:workspace-settings-updated", listener);
+      window.removeEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+      window.removeEventListener(LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT, listener);
     };
   }, []);
   const changeFlowScannerConfig = useCallback((patch) => {
@@ -1253,6 +1614,10 @@ export const HeaderBroadcastScrollerStack = memo(({
     () => buildHeaderUnusualTapeItems(unusualEvents),
     [unusualEvents],
   );
+  const algoItems = useMemo(
+    () => buildHeaderAlgoTapeItems(algoEvents),
+    [algoEvents],
+  );
 
   const signalBusy = Boolean(
     signalScanPending || signalEvaluationPending || signalSnapshot?.pending,
@@ -1303,8 +1668,6 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "live"
     : broadScanSnapshotVisible
       ? broadFlowSnapshot.flowStatus
-      : broadScanEnabled
-        ? "loading"
       : "empty";
   const flowProviderSummary = broadScanSnapshotVisible
     ? broadFlowSnapshot.providerSummary
@@ -1315,8 +1678,26 @@ export const HeaderBroadcastScrollerStack = memo(({
     Boolean(flowProviderSummary?.failures?.length);
   const flowDegraded =
     providerSummaryHasVisibleFlowDegradation(flowProviderSummary);
+  const flowCoverage = flowProviderSummary?.coverage || {};
+  const flowScanCoverageActive = Boolean(
+    broadScanEnabled &&
+      (flowCoverage.isFetching ||
+        flowCoverage.isRotating ||
+        (Array.isArray(flowCoverage.currentBatch) && flowCoverage.currentBatch.length > 0) ||
+        Number(flowCoverage.cycleScannedSymbols || flowCoverage.scannedSymbols || 0) > 0 ||
+        Number(
+          flowCoverage.activeTargetSize ||
+            flowCoverage.totalSymbols ||
+            flowCoverage.targetSize ||
+            flowCoverage.selectedSymbols ||
+            0,
+        ) > 0),
+  );
   const flowScanStale = Boolean(
     broadScanEnabled && !broadScanOwnerActive && broadScanSnapshotHasEvents,
+  );
+  const flowScanPaused = Boolean(
+    broadScanEnabled && !broadScanOwnerActive && !broadScanSnapshotVisible,
   );
   const flowScanHasError = Boolean(broadScanOwnerActive && flowHasError);
   const flowScanDegraded = Boolean(
@@ -1329,17 +1710,21 @@ export const HeaderBroadcastScrollerStack = memo(({
       (flowStatus === "loading" || flowProviderSummary?.coverage?.isFetching),
   );
   const unusualEmptyLabel =
-    flowStatus === "loading"
-      ? "SYNCING"
-      : flowHasError
-        ? "FLOW OFFLINE"
-        : flowDegraded
-          ? "FLOW DEGRADED"
-        : flowEventsFilteredOut
-          ? "FLOW FILTERED"
-        : unusualEvents.length
-          ? "NO UNUSUAL FLOW"
-          : "NO FLOW";
+    flowHasError
+      ? "FLOW OFFLINE"
+      : flowDegraded
+        ? "FLOW DEGRADED"
+        : flowScanPaused
+          ? "FLOW PAUSED"
+          : flowStatus === "loading"
+            ? "SYNCING"
+            : flowScanCoverageActive
+              ? "FLOW SCANNING"
+            : flowEventsFilteredOut
+              ? "FLOW FILTERED"
+              : unusualEvents.length
+                ? "NO UNUSUAL FLOW"
+                : "NO FLOW";
 
   // Status color semantics: green=active, accent=updating, amber=degraded, red=error.
   const flowScanTone = flowScanHasError
@@ -1350,6 +1735,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? T.accent
     : flowScanStale
       ? T.amber
+      : flowScanPaused
+        ? T.amber
       : broadScanSnapshotActive
         ? T.green
         : broadScanEnabled
@@ -1363,6 +1750,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "SCANNING"
     : flowScanStale
       ? "STALE"
+      : flowScanPaused
+        ? "PAUSED"
       : broadScanSnapshotActive
         ? "SCAN ON"
         : broadScanEnabled
@@ -1376,6 +1765,8 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "Flow scan updating"
     : flowScanStale
       ? "Flow scan paused; showing last snapshot"
+      : flowScanPaused
+        ? "Flow scan paused"
       : broadScanSnapshotActive
         ? "Flow scan active"
         : broadScanEnabled
@@ -1791,7 +2182,15 @@ export const HeaderBroadcastScrollerStack = memo(({
         <HeaderLaneInfoRow
           label="Flow"
           value={flowStatus.toUpperCase()}
-          tone={flowHasError ? T.red : flowStatus === "loading" ? T.accent : T.textSec}
+          tone={
+            flowHasError
+              ? T.red
+              : flowDegraded
+                ? T.amber
+                : flowStatus === "loading"
+                  ? T.accent
+                  : T.textSec
+          }
         />
       </HeaderLanePopoverSection>
     </HeaderLaneSettingsPopover>
@@ -1799,6 +2198,8 @@ export const HeaderBroadcastScrollerStack = memo(({
 
   const signalTriggerActive = openSettingsLane === "signals";
   const unusualTriggerActive = openSettingsLane === "unusual";
+  const algoLaneTone = algoItems.length ? T.accent : T.textMuted;
+  const algoEmptyLabel = enabled ? "NO ALGO EVENTS" : "ALGO SYNCING";
   const buildLaneTriggerButton = ({ testId, ariaLabel, active, accentTone, content }) => (
     <button
       type="button"
@@ -1835,13 +2236,16 @@ export const HeaderBroadcastScrollerStack = memo(({
     <div
       ref={rootRef}
       data-testid="header-broadcast-scrollers"
-      className="ra-hairline-bottom"
+      className={isPhone ? "ra-mobile-broadcast-stack" : "ra-hairline-bottom"}
       style={{
         flexShrink: 0,
         display: "grid",
-        gridTemplateRows: "auto auto",
+        gridTemplateRows: "auto auto auto",
+        gap: isPhone ? sp(3) : 0,
         minWidth: 0,
-        background: T.bg0,
+        padding: isPhone ? "0 7px 5px" : undefined,
+        background: isPhone ? T.bg1 : T.bg0,
+        boxShadow: isPhone ? `0 1px 0 ${T.border}` : undefined,
       }}
     >
       <Popover
@@ -1854,7 +2258,7 @@ export const HeaderBroadcastScrollerStack = memo(({
           emptyLabel={signalEmptyLabel}
           emptyTone={signalScanTone}
           testId="header-signal-tape"
-          durationSeconds={speedDurations.signalDurationSeconds}
+          speedPreset={speedPreset}
           compactSettings={isPhone}
           labelTrigger={
             <PopoverTrigger asChild>
@@ -1926,7 +2330,7 @@ export const HeaderBroadcastScrollerStack = memo(({
           emptyLabel={unusualEmptyLabel}
           emptyTone={flowScanTone}
           testId="header-unusual-tape"
-          durationSeconds={speedDurations.unusualDurationSeconds}
+          speedPreset={speedPreset}
           compactSettings={isPhone}
           labelTrigger={
             <PopoverTrigger asChild>
@@ -1985,6 +2389,77 @@ export const HeaderBroadcastScrollerStack = memo(({
           </PopoverContent>
         ) : null}
       </Popover>
+
+      <HeaderBroadcastLane
+        label="ALGO"
+        items={algoItems}
+        emptyLabel={algoEmptyLabel}
+        emptyTone={algoLaneTone}
+        testId="header-algo-tape"
+        speedPreset={speedPreset}
+        compactSettings={isPhone}
+        labelTrigger={
+          <button
+            type="button"
+            data-testid="header-algo-tape-trigger"
+            aria-label="Open ALGO"
+            onClick={() => onAlgoAction?.()}
+            style={{
+              width: "100%",
+              height: "100%",
+              minHeight: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: sp("0px 8px"),
+              border: "none",
+              background: "transparent",
+              color: T.textDim,
+              cursor: onAlgoAction ? "pointer" : "default",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.regular,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Bot size={14} strokeWidth={2} />
+          </button>
+        }
+        action={
+          <AppTooltip content="Open Algo">
+            <button
+              type="button"
+              data-testid="header-algo-open"
+              aria-label="Open Algo"
+              onClick={() => onAlgoAction?.()}
+              style={{
+                width: dim(isPhone ? 24 : 22),
+                height: dim(isPhone ? 22 : 20),
+                minHeight: dim(isPhone ? 22 : 20),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                borderRadius: dim(3),
+                background: algoItems.length ? `${algoLaneTone}18` : "transparent",
+                color: algoLaneTone,
+                cursor: onAlgoAction ? "pointer" : "default",
+              }}
+            >
+              <RadioTower size={14} strokeWidth={2.4} />
+            </button>
+          </AppTooltip>
+        }
+      >
+        {(item, duplicate, compact) => (
+          <HeaderAlgoTapeItem
+            item={item}
+            duplicate={duplicate}
+            compact={compact}
+            onClick={onAlgoAction}
+          />
+        )}
+      </HeaderBroadcastLane>
 
       <BottomSheet
         open={isPhone && openSettingsLane === "signals"}

@@ -1339,6 +1339,38 @@ function getTickValue(
   return null;
 }
 
+function getPositiveTick(
+  ticks: MarketDataTicks,
+  ...candidates: number[]
+) {
+  for (const candidate of candidates) {
+    const tick = ticks.get(candidate);
+    const value = tick?.value;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return tick;
+    }
+  }
+
+  return null;
+}
+
+function getPositiveTickValue(
+  ticks: MarketDataTicks,
+  ...candidates: number[]
+): number | null {
+  return getPositiveTick(ticks, ...candidates)?.value ?? null;
+}
+
+function getTickIngressDate(
+  tick: ReturnType<typeof getPositiveTick>,
+): Date | null {
+  const timestamp = tick?.ingressTm;
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return null;
+  }
+  return new Date(timestamp);
+}
+
 function resolveMarketDataFreshness(
   marketDataMode: IbkrMarketDataMode | null,
   delayed = false,
@@ -1695,20 +1727,19 @@ export function toQuoteSnapshot(
     getTickValue(ticks, TickType.DELAYED_LAST) !== null ||
     getTickValue(ticks, TickType.DELAYED_BID) !== null ||
     getTickValue(ticks, TickType.DELAYED_ASK) !== null;
-  const price =
-    firstDefined(
-      getTickValue(ticks, TickType.LAST, TickType.DELAYED_LAST),
-      getTickValue(ticks, TickType.BID, TickType.DELAYED_BID),
-      getTickValue(ticks, TickType.ASK, TickType.DELAYED_ASK),
-    ) ?? 0;
+  const priceTick =
+    getPositiveTick(ticks, TickType.LAST, TickType.DELAYED_LAST) ??
+    getPositiveTick(ticks, TickType.BID, TickType.DELAYED_BID) ??
+    getPositiveTick(ticks, TickType.ASK, TickType.DELAYED_ASK);
+  const price = priceTick?.value ?? 0;
   const bid =
     firstDefined(
-      getTickValue(ticks, TickType.BID, TickType.DELAYED_BID),
+      getPositiveTickValue(ticks, TickType.BID, TickType.DELAYED_BID),
       price,
     ) ?? 0;
   const ask =
     firstDefined(
-      getTickValue(ticks, TickType.ASK, TickType.DELAYED_ASK),
+      getPositiveTickValue(ticks, TickType.ASK, TickType.DELAYED_ASK),
       bid,
     ) ?? bid;
   const bidSize =
@@ -1750,7 +1781,8 @@ export function toQuoteSnapshot(
   const gamma = getOptionComputationValue(ticks, "gamma");
   const theta = getOptionComputationValue(ticks, "theta");
   const vega = getOptionComputationValue(ticks, "vega");
-  const updatedAt = new Date();
+  const dataUpdatedAt = getTickIngressDate(priceTick) ?? new Date();
+  const updatedAt = dataUpdatedAt;
   const change = prevClose !== null ? price - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
   const delayed =
@@ -1789,7 +1821,7 @@ export function toQuoteSnapshot(
     delayed,
     freshness: resolveMarketDataFreshness(marketDataMode, delayed),
     marketDataMode,
-    dataUpdatedAt: updatedAt,
+    dataUpdatedAt,
     ageMs: null,
   };
 }
@@ -4662,60 +4694,64 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
 
     const results: QuoteSnapshot[] = [];
-    const liveProviderContractIds = new Set(
-      await this.ensureOptionQuoteSubscriptionsForProviderContractIds(
-        normalizedProviderContractIds,
-      ),
-    );
+    try {
+      const liveProviderContractIds = new Set(
+        await this.ensureOptionQuoteSubscriptionsForProviderContractIds(
+          normalizedProviderContractIds,
+        ),
+      );
 
-    for (const providerContractId of normalizedProviderContractIds) {
-      try {
-        const resolved =
-          await this.resolveOptionContractByProviderContractId(
-            providerContractId,
-          );
-        const ensuredProviderContractId = providerContractId.trim();
+      for (const providerContractId of normalizedProviderContractIds) {
+        try {
+          const resolved =
+            await this.resolveOptionContractByProviderContractId(
+              providerContractId,
+            );
+          const ensuredProviderContractId = providerContractId.trim();
 
-        if (liveProviderContractIds.has(ensuredProviderContractId)) {
-          await this.waitForCondition(
-            () => this.quotesByProviderContractId.has(ensuredProviderContractId),
-            Math.max(1_000, this.genericTickSampleMs * 2),
-            50,
-          );
+          if (liveProviderContractIds.has(ensuredProviderContractId)) {
+            await this.waitForCondition(
+              () => this.quotesByProviderContractId.has(ensuredProviderContractId),
+              Math.max(1_000, this.genericTickSampleMs * 2),
+              50,
+            );
 
-          const liveQuote = this.quotesByProviderContractId.get(
-            ensuredProviderContractId,
-          );
-          if (liveQuote) {
-            results.push(this.decorateQuoteForEmit(liveQuote));
-            continue;
+            const liveQuote = this.quotesByProviderContractId.get(
+              ensuredProviderContractId,
+            );
+            if (liveQuote) {
+              results.push(this.decorateQuoteForEmit(liveQuote));
+              continue;
+            }
           }
-        }
 
-        const fallbackQuote = await this.getContractQuoteSnapshot({
-          contract: {
-            ...resolved.contract,
-            exchange: "SMART",
-          },
-          symbol: resolved.optionContract.ticker,
-          providerContractId: ensuredProviderContractId,
-          genericTickList: "100,101,106",
-          marketDataType: this.getOptionQuoteMarketDataType(),
-        });
+          const fallbackQuote = await this.getContractQuoteSnapshot({
+            contract: {
+              ...resolved.contract,
+              exchange: "SMART",
+            },
+            symbol: resolved.optionContract.ticker,
+            providerContractId: ensuredProviderContractId,
+            genericTickList: "100,101,106",
+            marketDataType: this.getOptionQuoteMarketDataType(),
+          });
 
-        if (fallbackQuote) {
-          this.quotesByProviderContractId.set(
-            ensuredProviderContractId,
-            fallbackQuote,
-          );
-          results.push(this.decorateQuoteForEmit(fallbackQuote));
+          if (fallbackQuote) {
+            this.quotesByProviderContractId.set(
+              ensuredProviderContractId,
+              fallbackQuote,
+            );
+            results.push(this.decorateQuoteForEmit(fallbackQuote));
+          }
+        } catch (error) {
+          this.recordError(error);
         }
-      } catch (error) {
-        this.recordError(error);
       }
-    }
 
-    return results;
+      return results;
+    } finally {
+      this.trimUnusedQuoteSubscriptions();
+    }
   }
 
   async subscribeOptionQuoteStream(

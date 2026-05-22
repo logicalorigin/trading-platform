@@ -145,11 +145,11 @@ export const GEX_GLOSSARY = Object.freeze({
       "When dealers are short delta in the same direction, every move forces buying that compounds the squeeze.",
   },
   ivSimulation: {
-    label: "IV Simulation",
+    label: "IV Scenario",
     definition:
-      "Scales the gamma estimate by an implied-volatility shift you choose (-50% to +50%).",
+      "Scales provider implied volatility for the projected Gamma Price Profile only.",
     interpretation:
-      "Use it to stress-test how a vol crush or expansion would change dealer gamma exposure.",
+      "Current GEX metrics stay anchored to IBKR gamma/open interest; no local IV estimate is used when provider IV is missing.",
   },
   heatmapColors: {
     label: "Heatmap Colors",

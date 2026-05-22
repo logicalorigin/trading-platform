@@ -17,7 +17,7 @@ async function openScreen(page: Page, screen: "trade" | "algo", anchorTestId: st
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: s,
         sym: "SPY",

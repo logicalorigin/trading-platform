@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   defaultSignalOptionsExecutionProfile,
   resolveSignalOptionsExecutionProfile,
+  tunedSignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
 import { resolveRayReplicaSignalSettings } from "@workspace/rayreplica-core";
 import {
@@ -657,6 +658,24 @@ test("historical backfill defaults to April 1 through the latest completed tradi
   );
 });
 
+test("historical backfill equity bar limit spans the full requested window plus warmup", () => {
+  const window =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsBackfillWindow(
+      {
+        start: "2026-04-01",
+        end: "2026-05-21",
+        now: new Date("2026-05-21T21:01:00.000Z"),
+      },
+    );
+  const limit =
+    __signalOptionsAutomationInternalsForTests.historicalBackfillEquityBarLimit({
+      timeframe: "5m",
+      window,
+    });
+
+  assert.ok(limit > 5_000);
+});
+
 test("RayReplica backfill settings patch overrides time horizon without dropping nested profile settings", () => {
   const baseSettings = {
     marketStructure: {
@@ -1183,7 +1202,7 @@ test("signal-options performance filters automation trades and reports rule bloc
     profile: expandedProfile,
     state: state as never,
     events: events as never,
-    shadowPatterns: {
+    shadowTradeDiagnostics: {
       context: { range: "1M" },
       tradeEvents: [
         {
@@ -1488,6 +1507,24 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
   );
   assert.deepEqual(
     Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "daily_loss_halt_active",
+              selectedContract: { ticker: "SPY20260522C500" },
+            },
+          },
+        ] as never,
+        { dailyLossHaltEnabled: false },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
       seenSignalKeys([
         {
           eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
@@ -1541,6 +1578,38 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
           },
         },
       ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "market_session_quiet",
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "market_session_quiet",
+              selectedContract: { ticker: "SPY20260522C500" },
+            },
+          },
+        ] as never,
+        { gatewayReady: true },
+      ),
     ),
     [],
   );
@@ -1818,6 +1887,23 @@ test("signal-options risk halts block execution after contract planning", () => 
     executionBlocker({
       dailyHaltActive: false,
       dailyPnl: 0,
+      profile,
+      openSymbols: 0,
+      positionMarkHaltActive: true,
+      degradedPositionSymbols: ["TQQQ", "SMH", "SMH"],
+    }),
+    {
+      reason: "position_mark_feed_degraded",
+      detail: {
+        symbols: ["SMH", "TQQQ"],
+        count: 2,
+      },
+    },
+  );
+  assert.deepEqual(
+    executionBlocker({
+      dailyHaltActive: false,
+      dailyPnl: 0,
       profile: {
         ...profile,
         riskCaps: { ...profile.riskCaps, maxOpenSymbols: 2 },
@@ -1842,6 +1928,54 @@ test("signal-options risk halts block execution after contract planning", () => 
     null,
   );
   assert.equal(
+    executionBlocker({
+      dailyHaltActive: false,
+      dailyPnl: 0,
+      profile: {
+        ...profile,
+        positionHaltControls: {
+          ...profile.positionHaltControls,
+          positionMarkFeedHaltEnabled: false,
+        },
+      },
+      openSymbols: 0,
+      positionMarkHaltActive: true,
+      degradedPositionSymbols: ["TQQQ"],
+    }),
+    null,
+  );
+  assert.equal(
+    executionBlocker({
+      dailyHaltActive: true,
+      dailyPnl: -1250,
+      profile: {
+        ...profile,
+        riskHaltControls: {
+          ...profile.riskHaltControls,
+          dailyLossHaltEnabled: false,
+        },
+      },
+      openSymbols: 0,
+    }),
+    null,
+  );
+  assert.equal(
+    executionBlocker({
+      dailyHaltActive: false,
+      dailyPnl: 0,
+      profile: {
+        ...profile,
+        riskCaps: { ...profile.riskCaps, maxOpenSymbols: 2 },
+        riskHaltControls: {
+          ...profile.riskHaltControls,
+          openSymbolCapEnabled: false,
+        },
+      },
+      openSymbols: 2,
+    }),
+    null,
+  );
+  assert.equal(
     gatewayExecutionBlocker({
       ready: true,
       reason: null,
@@ -1858,7 +1992,7 @@ test("signal-options risk halts block execution after contract planning", () => 
       diagnostics: { connected: false },
     }),
     {
-      reason: "algo_gateway_not_ready",
+      reason: "gateway_socket_disconnected",
       detail: {
         readiness: {
           ready: false,
@@ -1868,6 +2002,43 @@ test("signal-options risk halts block execution after contract planning", () => 
         },
       },
     },
+  );
+  assert.deepEqual(
+    gatewayExecutionBlocker({
+      ready: false,
+      reason: "market_session_quiet",
+      message: "The market session is closed for algorithm execution.",
+      diagnostics: { strictReason: "market_session_quiet" },
+    }),
+    {
+      reason: "market_session_quiet",
+      detail: {
+        readiness: {
+          ready: false,
+          reason: "market_session_quiet",
+          message: "The market session is closed for algorithm execution.",
+          diagnostics: { strictReason: "market_session_quiet" },
+        },
+      },
+    },
+  );
+  assert.equal(
+    gatewayExecutionBlocker(
+      {
+        ready: false,
+        reason: "gateway_socket_disconnected",
+        message: "IB Gateway disconnected.",
+        diagnostics: { connected: false },
+      },
+      {
+        ...profile,
+        infrastructureHaltControls: {
+          ...profile.infrastructureHaltControls,
+          gatewayReadinessBlockEnabled: false,
+        },
+      },
+    ),
+    null,
   );
 });
 
@@ -2317,6 +2488,25 @@ test("signal-options entry gate requires MTF alignment and blocks inverse puts",
       ),
       profile,
     });
+  const allEntryControlsOff =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate(
+        "sell",
+        {
+          adx: 10,
+          mtfDirections: [1, 1, 1],
+        },
+        "SQQQ",
+      ),
+      profile: {
+        ...profile,
+        entryHaltControls: {
+          mtfAlignmentEnabled: false,
+          inversePutBlocklistEnabled: false,
+          bearishRegimeEnabled: false,
+        },
+      },
+    });
 
   assert.equal(bullishPut.ok, false);
   assert.equal(bullishPut.reason, "mtf_not_aligned");
@@ -2337,33 +2527,115 @@ test("signal-options entry gate requires MTF alignment and blocks inverse puts",
   assert.equal(blockedInversePut.reason, "inverse_put_blocked");
   assert.deepEqual(blockedInversePut.reasons, ["inverse_put_blocked"]);
   assert.equal(allowedInverseCall.ok, true);
+  assert.equal(allEntryControlsOff.ok, true);
 });
 
-test("signal-options conservative exit profile tightens hard stop and runner trail", () => {
+test("signal-options tuned exit profile uses the aggressive trail ladder", () => {
+  const comboProfile = tunedSignalOptionsExecutionProfile;
   const inactive =
     __signalOptionsAutomationInternalsForTests.computePositionStop({
       entryPrice: 4,
-      peakPrice: 5.2,
-      markPrice: 4.5,
-      profile,
+      peakPrice: 4.5,
+      markPrice: 4.4,
+      profile: comboProfile,
     });
   const active =
     __signalOptionsAutomationInternalsForTests.computePositionStop({
       entryPrice: 4,
-      peakPrice: 5.7,
-      markPrice: 3.9,
-      profile,
+      peakPrice: 5.5,
+      markPrice: 4.5,
+      profile: comboProfile,
+    });
+  const fiveX =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 1,
+      peakPrice: 5,
+      markPrice: 3.4,
+      profile: comboProfile,
+    });
+  const tenX =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 1,
+      peakPrice: 10,
+      markPrice: 8.4,
+      profile: comboProfile,
     });
 
-  assert.equal(inactive.hardStopPrice, 2.4);
+  assert.equal(inactive.hardStopPrice, 2.8);
   assert.equal(inactive.trailActive, false);
-  assert.equal(inactive.stopPrice, 2.4);
-  assert.equal(active.hardStopPrice, 2.4);
+  assert.equal(inactive.stopPrice, 2.8);
+  assert.equal(active.hardStopPrice, 2.8);
   assert.equal(active.trailActive, true);
   assert.equal(active.givebackPct, 25);
-  assert.equal(active.trailStopPrice, 4.4);
-  assert.equal(active.stopPrice, 4.4);
+  assert.equal(active.trailStopPrice, 4.6);
+  assert.equal(active.stopPrice, 4.6);
   assert.equal(active.exitReason, "runner_trail_stop");
+  assert.deepEqual(active.progressiveTrailStep, {
+    activationPct: 30,
+    minLockedGainPct: 15,
+    givebackPct: 25,
+  });
+  assert.equal(fiveX.givebackPct, 30);
+  assert.equal(fiveX.trailStopPrice, 3.5);
+  assert.equal(fiveX.exitReason, "runner_trail_stop");
+  assert.equal(tenX.givebackPct, 15);
+  assert.equal(tenX.trailStopPrice, 8.5);
+  assert.equal(tenX.exitReason, "runner_trail_stop");
+});
+
+test("signal-options progressive trail ladder raises locked profit by peak gain", () => {
+  const ladderProfile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      hardStopPct: -30,
+      progressiveTrailEnabled: true,
+      progressiveTrailSteps: [
+        { activationPct: 25, minLockedGainPct: 0, givebackPct: 35 },
+        { activationPct: 35, minLockedGainPct: 15, givebackPct: 25 },
+        { activationPct: 50, minLockedGainPct: 25, givebackPct: 25 },
+      ],
+      tightenAtFiveXGivebackPct: 30,
+      tightenAtTenXGivebackPct: 15,
+    },
+  });
+
+  const inactive =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 10,
+      peakPrice: 12.4,
+      markPrice: 10,
+      profile: ladderProfile,
+    });
+  const firstStep =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 10,
+      peakPrice: 12.5,
+      markPrice: 9.9,
+      profile: ladderProfile,
+    });
+  const secondStep =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 10,
+      peakPrice: 13.5,
+      markPrice: 11.4,
+      profile: ladderProfile,
+    });
+  const thirdStep =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 10,
+      peakPrice: 15,
+      markPrice: 12.4,
+      profile: ladderProfile,
+    });
+
+  assert.equal(inactive.trailActive, false);
+  assert.equal(inactive.exitReason, null);
+  assert.equal(firstStep.trailActive, true);
+  assert.equal(firstStep.trailStopPrice, 10);
+  assert.equal(firstStep.exitReason, "runner_trail_stop");
+  assert.equal(secondStep.trailStopPrice, 11.5);
+  assert.equal(secondStep.exitReason, "runner_trail_stop");
+  assert.equal(thirdStep.trailStopPrice, 12.5);
+  assert.equal(thirdStep.exitReason, "runner_trail_stop");
 });
 
 test("signal-options early invalidation exits losing positions after configured signal bars", () => {
@@ -2435,6 +2707,32 @@ test("signal-options overnight policy exits weak holds and tightened runners", (
   assert.equal(runnerGiveback.exitReason, "overnight_runner_stop");
   assert.equal(runnerGiveback.overnightTrailStopPrice, 6.8);
   assert.equal(strongRunner.exitReason, null);
+});
+
+test("signal-options live overnight exit window is the final regular-session minutes", () => {
+  const { isLiveOvernightExitWindow } =
+    __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(
+    isLiveOvernightExitWindow(new Date("2026-05-21T19:44:00.000Z")),
+    false,
+  );
+  assert.equal(
+    isLiveOvernightExitWindow(new Date("2026-05-21T19:45:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isLiveOvernightExitWindow(new Date("2026-05-21T19:59:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isLiveOvernightExitWindow(new Date("2026-05-21T20:00:00.000Z")),
+    false,
+  );
+  assert.equal(
+    isLiveOvernightExitWindow(new Date("2026-05-23T19:50:00.000Z")),
+    false,
+  );
 });
 
 test("signal-options conditional quality exits tighten weak entries and loosen strong runners", () => {
@@ -2517,6 +2815,55 @@ test("signal-options conditional quality exits tighten weak entries and loosen s
   assert.equal(strongOvernight.conditionalExitPolicy?.overnightMinGainPct, -100);
 });
 
+test("signal-options entry quality returns a normalized 0-100 score breakdown", () => {
+  const quality =
+    __signalOptionsAutomationInternalsForTests.classifySignalOptionsEntryQuality({
+      candidate: {
+        id: "cand-1",
+        symbol: "SPY",
+        direction: "buy",
+        optionRight: "call",
+        timeframe: "5m",
+        signalAt: "2026-05-21T14:30:00.000Z",
+        signalPrice: 500,
+        status: "candidate",
+        quote: { marketDataMode: "live" },
+        signal: {
+          fresh: true,
+          barsSinceSignal: 1,
+          freshWindowBars: 4,
+          filterState: {
+            mtfDirections: [1, 1, 1],
+            adx: 31,
+          },
+        },
+      },
+      orderPlan: {
+        premiumAtRisk: 250,
+        liquidity: { spreadPctOfMid: 12 },
+      },
+    });
+
+  assert.equal(quality.score, 95);
+  assert.equal(quality.tier, "high");
+  assert.equal(quality.liquidityTier, "strong");
+  assert.deepEqual(quality.components, {
+    mtfAlignment: 25,
+    freshness: 15,
+    trendStrength: 15,
+    liquidity: 20,
+    riskFit: 10,
+    dataQuality: 10,
+    total: 95,
+  });
+  assert.deepEqual(quality.reasons.slice(0, 4), [
+    "mtf_full_alignment",
+    "adx_confirmed",
+    "fresh_signal",
+    "strong_liquidity",
+  ]);
+});
+
 test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", () => {
   const liquid = quote(101, "call");
   const orderPlan = buildSignalOptionsShadowOrderPlan(liquid, profile);
@@ -2574,6 +2921,30 @@ test("signal-options liquidity gate still blocks missing bid/ask when required",
   assert.equal(liquidity.ok, false);
   assert.ok(liquidity.reasons.includes("missing_bid_ask"));
   assert.ok(!liquidity.reasons.includes("spread_too_wide"));
+});
+
+test("signal-options liquidity controls can disable quote gate blockers", () => {
+  const staleWideQuote = {
+    ...quote(101, "call"),
+    bid: 0,
+    ask: 2,
+    mark: 1.1,
+    last: 1.05,
+    quoteFreshness: "stale",
+  };
+  const relaxedProfile = resolveSignalOptionsExecutionProfile({
+    liquidityHaltControls: {
+      bidAskRequiredEnabled: false,
+      freshQuoteRequiredEnabled: false,
+      spreadGateEnabled: false,
+      minBidGateEnabled: false,
+    },
+  });
+
+  const liquidity = resolveSignalOptionsLiquidity(staleWideQuote, relaxedProfile);
+
+  assert.equal(liquidity.ok, true);
+  assert.deepEqual(liquidity.reasons, []);
 });
 
 test("signal-options liquidity gate keeps freshness independent of bid/ask requirement", () => {

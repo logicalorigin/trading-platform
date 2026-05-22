@@ -296,7 +296,7 @@ router.get("/diagnostics/events/:eventId", async (req, res) => {
   const detail = await getDiagnosticEventDetail(req.params.eventId);
   if (!detail) {
     res.status(404).json({
-      type: "https://rayalgo.local/problems/not-found",
+      type: "https://pyrus.local/problems/not-found",
       title: "Diagnostic event not found",
       status: 404,
     });

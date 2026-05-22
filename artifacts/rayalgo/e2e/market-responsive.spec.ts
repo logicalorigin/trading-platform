@@ -404,7 +404,7 @@ async function openMarket(
         })),
       };
       window.localStorage.setItem(
-        "rayalgo:state:v1",
+        "pyrus:state:v1",
         JSON.stringify({
           ...baseState,
           ...statePatch,
@@ -530,7 +530,7 @@ test("Market startup resolves nested light theme before React mounts", async ({
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",
@@ -550,36 +550,39 @@ test("Market startup resolves nested light theme before React mounts", async ({
   await expect
     .poll(() =>
       page.evaluate(
-        () => document.documentElement.dataset.rayalgoRuntimeBuildMode,
+        () => document.documentElement.dataset.pyrusRuntimeBuildMode,
       ),
     )
     .toBe("vite-dev");
   const runtimeFingerprint = await page.evaluate(() => {
     const runtimeWindow = window as unknown as {
       __RAYALGO_GET_RUNTIME_FINGERPRINT__?: () => Record<string, unknown>;
+      __PYRUS_GET_RUNTIME_FINGERPRINT__?: () => Record<string, unknown>;
     };
-    return runtimeWindow.__RAYALGO_GET_RUNTIME_FINGERPRINT__?.() || null;
+    return runtimeWindow.__PYRUS_GET_RUNTIME_FINGERPRINT__?.() ||
+      runtimeWindow.__RAYALGO_GET_RUNTIME_FINGERPRINT__?.() ||
+      null;
   });
   expect(runtimeFingerprint).toMatchObject({
-    packageName: "@workspace/rayalgo",
-    entryModuleVersion: "app-entry-20260507-runtime-fingerprint-v1",
+    packageName: "@workspace/pyrus",
+    entryModuleVersion: "app-entry-20260522-pyrus-runtime-fingerprint-v1",
     buildMode: "vite-dev",
   });
   expect(
-    await page.evaluate(() => document.documentElement.dataset.rayalgoTheme),
+    await page.evaluate(() => document.documentElement.dataset.pyrusTheme),
   ).toBe("light");
   await expect
     .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
-    .toBe("rgb(250, 250, 247)");
+    .toBe("rgb(247, 250, 255)");
   const fallback = page.getByTestId("app-loading-fallback");
   await expect(fallback).toBeVisible();
   await expect(fallback).toHaveAttribute("data-theme", "light");
   expect(await fallback.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
-    "rgb(250, 250, 247)",
+    "rgb(247, 250, 255)",
   );
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
   await expect
-    .poll(() => page.evaluate(() => document.documentElement.dataset.rayalgoTheme))
+    .poll(() => page.evaluate(() => document.documentElement.dataset.pyrusTheme))
     .toBe("light");
 });
 
@@ -791,7 +794,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     .poll(() =>
       page.evaluate(() => {
         const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+          window.localStorage.getItem("pyrus:state:v1") || "{}",
         );
         return state.sym || null;
       }),
@@ -830,7 +833,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     .poll(() =>
       page.evaluate(() => {
         const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+          window.localStorage.getItem("pyrus:state:v1") || "{}",
         );
         return state.sym || null;
       }),

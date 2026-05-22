@@ -18,6 +18,38 @@ let signalMonitorSnapshot = EMPTY_SIGNAL_MONITOR_SNAPSHOT;
 let signalStatesBySymbol = Object.freeze({});
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
+const normalizeTimeframe = (timeframe) => String(timeframe || "").trim();
+
+const stateTimeMs = (state) =>
+  Math.max(
+    Date.parse(state?.lastEvaluatedAt || "") || 0,
+    Date.parse(state?.currentSignalAt || "") || 0,
+    Date.parse(state?.latestBarAt || "") || 0,
+  );
+
+export const selectPreferredSignalMonitorState = (
+  current,
+  candidate,
+  preferredTimeframe = "",
+) => {
+  if (!current) return candidate || null;
+  if (!candidate) return current;
+
+  const timeframe = normalizeTimeframe(preferredTimeframe);
+  if (timeframe) {
+    const currentMatches = normalizeTimeframe(current?.timeframe) === timeframe;
+    const candidateMatches = normalizeTimeframe(candidate?.timeframe) === timeframe;
+    if (currentMatches !== candidateMatches) {
+      return candidateMatches ? candidate : current;
+    }
+  }
+
+  if (Boolean(current?.fresh) !== Boolean(candidate?.fresh)) {
+    return candidate?.fresh ? candidate : current;
+  }
+
+  return stateTimeMs(candidate) >= stateTimeMs(current) ? candidate : current;
+};
 
 const areSignalStatesEquivalent = (left, right) => {
   if (left === right) return true;
@@ -57,10 +89,15 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
       ? signalMonitorSnapshot.events
       : nextSnapshot?.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events;
   const normalizedStates = {};
+  const preferredTimeframe = normalizeTimeframe(nextSnapshot?.profile?.timeframe);
   nextStates.forEach((state) => {
     const symbol = normalizeSymbol(state?.symbol);
     if (symbol) {
-      normalizedStates[symbol] = state;
+      normalizedStates[symbol] = selectPreferredSignalMonitorState(
+        normalizedStates[symbol],
+        state,
+        preferredTimeframe,
+      );
     }
   });
 

@@ -29,7 +29,7 @@ async function seedMarketWorkspace(page: Page) {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: symbols[0] || "SPY",

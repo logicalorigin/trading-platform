@@ -33,6 +33,7 @@ import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import * as d3 from "d3";
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis, LabelList } from "recharts";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { Settings as SettingsIcon } from "lucide-react";
 
 
 let {
@@ -4259,14 +4260,13 @@ export default function PhotonicsObservatory({
   const graphRef = useRef();
   const detailRef = useRef();
   useEffect(() => {
-    const criticalReady = Boolean(isVisible && researchMetaReady);
     const derivedReady = Boolean(isVisible && researchDataReady);
     onReadinessChange?.({
-      criticalReady,
+      criticalReady: Boolean(isVisible),
       derivedReady,
       backgroundAllowed: derivedReady,
     });
-  }, [isVisible, onReadinessChange, researchDataReady, researchMetaReady]);
+  }, [isVisible, onReadinessChange, researchDataReady]);
   useRuntimeWorkloadFlag("research:stream", isVisible, {
     kind: "stream",
     label: "Research live quotes",
@@ -4542,7 +4542,7 @@ export default function PhotonicsObservatory({
       `}</style>
 
       {/* Header */}
-      <div style={{ padding: sp("14px 14px 0"), position: "relative" }}>
+      <div className="photonics-research-header" style={{ padding: sp("14px 14px 0"), position: "relative" }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, ${toneAlpha(T.blue, 0.03)} 0%, transparent 40%)`, pointerEvents: "none" }} />
 
         {researchMetaReady ? (
@@ -4556,7 +4556,7 @@ export default function PhotonicsObservatory({
           </div>
         )}
 
-        <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: sp(8) }}>
+        <div className="photonics-research-title-row" style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: sp(8) }}>
           <div>
             <div style={{ fontSize: fs(11), color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
               {currentTheme.subtitle}
@@ -4565,7 +4565,7 @@ export default function PhotonicsObservatory({
               {currentTheme.title}
             </h1>
           </div>
-          <div style={{ textAlign: "right" }}>
+          <div className="photonics-research-meta" style={{ textAlign: "right" }}>
             <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color: currentTheme.accent }}>
               {researchDataReady ? fmtMC(themeUniverse.reduce((a, c) => a + c.mc, 0)) : "…"}
             </div>
@@ -4605,7 +4605,7 @@ export default function PhotonicsObservatory({
                     : `\u2713 ${histPrefetchProgress.done} 1H`}
                 </span></AppTooltip>
               )}
-              <button onClick={() => setShowSettings(s => !s)} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, padding: sp("1px 6px"), fontSize: fs(11), cursor: "pointer", color: T.textDim, marginLeft: sp(2) }}>\u2699</button>
+              <button aria-label="Research settings" onClick={() => setShowSettings(s => !s)} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, width: 28, minWidth: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
             </div>
           </div>
         </div>
@@ -4614,7 +4614,7 @@ export default function PhotonicsObservatory({
           <SettingsPanel refreshData={() => void refreshData(true)} dataStatus={dataStatus} liveData={liveData} researchStatus={researchStatus} />
         )}
 
-        <div style={{ position: "relative", marginBottom: sp(8) }}>
+        <div style={{ position: "relative", marginBottom: sp(6) }}>
           <input data-testid="research-search-input" type="text" value={q} onChange={e => setQ(e.target.value)}
             disabled={!researchDataReady}
             onKeyDown={e => { if (e.key === "Enter" && cos.length === 1) { setSel(cos[0].t); setQ(""); } if (e.key === "Escape") { setQ(""); setSel(null); } }}
@@ -4629,7 +4629,7 @@ export default function PhotonicsObservatory({
 
         {/* Vertical filter pills */}
         {researchMetaReady && (
-        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
+        <div className="photonics-research-filter-row" style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
           <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? T.bg1 : "transparent", border: !vf ? `1px solid ${T.borderLight}` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? T.text : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? ELEVATION.sm : "none" }}>ALL</button>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
             <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? T.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : T.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "all 0.15s" }}>
@@ -4653,7 +4653,7 @@ export default function PhotonicsObservatory({
 
         {/* View tabs */}
         {researchMetaReady && (
-        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginTop: sp(8) }}>
+        <div className="photonics-research-view-tabs" style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginTop: sp(8) }}>
           {[["graph", "Graph"], ["comps", "Comps"], ["macro", "Macro"], ["calendar", "📅 Calendar"]].map(([id, lb]) => (
             <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? `2px solid ${currentTheme.accent}` : "2px solid transparent", padding: sp("6px 12px"), color: view === id ? T.text : T.textDim, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3 }}>
               {lb}

@@ -111,6 +111,14 @@ const DEFAULT_PRIORITY: IbkrLaneSourceId[] = [
   "built-in",
 ];
 
+const LEGACY_FLOW_SCANNER_DEFAULT_PRIORITY: IbkrLaneSourceId[] = [
+  "manual",
+  "flow-universe",
+  "built-in",
+  "watchlists",
+  "system",
+];
+
 const DEFAULT_LANE_POLICY: IbkrLanePolicy = {
   version: 1,
   updatedAt: null,
@@ -143,12 +151,13 @@ const DEFAULT_LANE_POLICY: IbkrLanePolicy = {
       sources: {
         ...DEFAULT_SOURCES,
         "built-in": true,
+        watchlists: true,
         "flow-universe": true,
       },
       manualSymbols: [],
       excludedSymbols: [],
-      maxSymbols: 500,
-      priority: ["manual", "flow-universe", "built-in", "watchlists", "system"],
+      maxSymbols: 600,
+      priority: ["manual", "watchlists", "flow-universe", "built-in", "system"],
     },
     "option-chain-metadata": {
       enabled: true,
@@ -271,7 +280,45 @@ function normalizePriority(value: unknown): IbkrLaneSourceId[] {
   ];
 }
 
-function normalizePersistedPolicy(value: unknown): IbkrLanePolicy {
+function samePriority(
+  left: readonly IbkrLaneSourceId[],
+  right: readonly IbkrLaneSourceId[],
+): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isLegacyFlowScannerDefault(rawLane: Record<string, unknown>): boolean {
+  const rawSources = safeRecord(rawLane.sources);
+  const normalizedSources = Object.fromEntries(
+    SOURCE_IDS.map((sourceId) => [
+      sourceId,
+      typeof rawSources[sourceId] === "boolean"
+        ? rawSources[sourceId]
+        : DEFAULT_SOURCES[sourceId],
+    ]),
+  ) as Record<IbkrLaneSourceId, boolean>;
+
+  return (
+    (typeof rawLane.enabled !== "boolean" || rawLane.enabled === true) &&
+    normalizedSources["built-in"] === true &&
+    normalizedSources["flow-universe"] === true &&
+    normalizedSources.watchlists === false &&
+    normalizedSources.manual === true &&
+    normalizedSources.system === false &&
+    normalizeSymbolList(rawLane.manualSymbols).length === 0 &&
+    normalizeSymbolList(rawLane.excludedSymbols).length === 0 &&
+    normalizeMaxSymbols("flow-scanner", rawLane.maxSymbols) === 500 &&
+    samePriority(
+      normalizePriority(rawLane.priority),
+      LEGACY_FLOW_SCANNER_DEFAULT_PRIORITY,
+    )
+  );
+}
+
+function normalizePersistedPolicy(value: unknown): {
+  policy: IbkrLanePolicy;
+  migrated: boolean;
+} {
   const record = safeRecord(value);
   const rawLanes = safeRecord(record.lanes);
   const lanes = Object.fromEntries(
@@ -303,11 +350,20 @@ function normalizePersistedPolicy(value: unknown): IbkrLanePolicy {
       ];
     }),
   ) as Record<IbkrDataLaneId, IbkrLaneMembershipPolicy>;
+  let migrated = false;
+  const rawFlowScannerLane = safeRecord(rawLanes["flow-scanner"]);
+  if (isLegacyFlowScannerDefault(rawFlowScannerLane)) {
+    lanes["flow-scanner"] = clonePolicy(DEFAULT_LANE_POLICY).lanes["flow-scanner"];
+    migrated = true;
+  }
 
   return {
-    version: 1,
-    lanes,
-    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
+    policy: {
+      version: 1,
+      lanes,
+      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
+    },
+    migrated,
   };
 }
 
@@ -319,9 +375,13 @@ function ensureLoaded(): void {
   const lanePolicyFile = getLanePolicyFile();
   try {
     if (existsSync(lanePolicyFile)) {
-      currentPolicy = normalizePersistedPolicy(
+      const loadedPolicy = normalizePersistedPolicy(
         JSON.parse(readFileSync(lanePolicyFile, "utf8")) as unknown,
       );
+      currentPolicy = loadedPolicy.policy;
+      if (loadedPolicy.migrated) {
+        persistPolicy();
+      }
     }
   } catch (error) {
     logger.warn({ err: error, lanePolicyFile }, "Failed to load IBKR lane policy");

@@ -5,6 +5,7 @@ import {
   chunkGexExpirations,
   computeSqueeze,
   contractGex,
+  gammaPriceProfile,
   gexByExpiry,
   maxPainStrike,
   normalizeGexOptionChain,
@@ -142,6 +143,22 @@ test("expiry aggregation and max pain use normalized option rows", () => {
   assert.equal(expiryRows[0].label, "0DTE");
   assert.equal(expiryRows[1].sublabel, "7d");
   assert.equal(maxPainStrike(rows), 95);
+});
+
+test("gamma price profile uses provider IV and does not estimate missing IV", () => {
+  const { rows } = normalizeGexOptionChain([
+    quote({ right: "call", strike: 100, impliedVolatility: 0.2 }),
+    quote({ right: "put", strike: 95, impliedVolatility: null }),
+  ]);
+  const profile = gammaPriceProfile(rows, 100, new Date("2026-05-08T15:00:00Z"));
+  const missingIvProfile = gammaPriceProfile(
+    rows.map((row) => ({ ...row, impliedVol: 0 })),
+    100,
+    new Date("2026-05-08T15:00:00Z"),
+  );
+
+  assert.equal(profile.length, 61);
+  assert.equal(missingIvProfile.length, 0);
 });
 
 test("squeeze scoring uses real flow direction and conservative volume when baseline is unavailable", () => {

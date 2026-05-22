@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AlgoDeployment } from "@workspace/db";
 import { createSignalOptionsWorker } from "./signal-options-worker";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 function createNoopLogger() {
   return {
@@ -121,6 +125,66 @@ test("signal-options worker runs shadow option maintenance without deployments",
   });
   assert.ok(worker.getRuntimeSnapshot().maintenance.lastRunAt);
 });
+
+test("signal-options worker keeps maintenance but skips scans under critical pressure", async () => {
+  let maintenanceCalls = 0;
+  let scanCalls = 0;
+  updateApiResourcePressure({ rssMb: 1_650 });
+  try {
+    const worker = createSignalOptionsWorker({
+      listDeployments: async () => [deployment()],
+      scanDeployment: async () => {
+        scanCalls += 1;
+      },
+      runMaintenance: async () => {
+        maintenanceCalls += 1;
+        return emptyMaintenance();
+      },
+      acquireTickLock: async () => async () => {},
+      logger: createNoopLogger(),
+    });
+
+    await worker.runOnce();
+
+    assert.equal(maintenanceCalls, 1);
+    assert.equal(scanCalls, 0);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("signal-options worker honors per-deployment resource-pressure override", async () => {
+  let scanCalls = 0;
+  updateApiResourcePressure({ rssMb: 1_650 });
+  try {
+    const worker = createSignalOptionsWorker({
+      listDeployments: async () => [
+        deployment({
+          config: {
+            signalOptions: {
+              infrastructureHaltControls: {
+                resourcePressureScanBlockEnabled: false,
+              },
+            },
+          },
+        }),
+      ],
+      scanDeployment: async () => {
+        scanCalls += 1;
+      },
+      runMaintenance: emptyMaintenance,
+      acquireTickLock: async () => async () => {},
+      logger: createNoopLogger(),
+    });
+
+    await worker.runOnce();
+
+    assert.equal(scanCalls, 1);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
 
 test("signal-options worker backs off transient database lock failures", async () => {
   let now = new Date("2026-04-28T14:00:00.000Z");

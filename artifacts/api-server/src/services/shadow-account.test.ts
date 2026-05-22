@@ -306,6 +306,26 @@ test("shadow option maintenance waits until expiration close", () => {
   assert.equal(helper(contract, new Date("2026-05-16T14:00:00.000Z")), true);
 });
 
+test("shadow option maintenance skips historical signal-options rows", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.isHistoricalSignalOptionsShadowOrder;
+
+  assert.equal(
+    helper({ payload: { backfill: { source: "signal_options_backfill" } } } as never),
+    true,
+  );
+  assert.equal(
+    helper({
+      payload: {
+        backfill: { source: "signal_options_replay" },
+        metadata: { sourceType: "signal_options_replay" },
+      },
+    } as never),
+    true,
+  );
+  assert.equal(helper({ payload: { metadata: { runSource: "worker" } } } as never), false);
+});
+
 test("buildShadowPositionDayChange uses daily baseline instead of total unrealized pnl", () => {
   const helper =
     __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChange;
@@ -564,6 +584,55 @@ test("shadow equity history terminal points only use current time for open posit
   );
 });
 
+test("shadow equity history historical terminal prefers market time over refresh time", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const timestamp = internals.latestHistoricalShadowTotalsDate(
+    [
+      {
+        asOf: new Date("2026-04-21T19:40:00.000Z"),
+        updatedAt: new Date("2026-05-22T01:20:55.445Z"),
+      },
+      {
+        asOf: new Date("2026-04-21T19:45:00.000Z"),
+        updatedAt: new Date("2026-05-22T01:20:57.112Z"),
+      },
+    ],
+    [{ occurredAt: new Date("2026-04-21T19:50:00.000Z") }],
+    new Date("2026-05-22T01:21:00.000Z"),
+  );
+
+  assert.equal(timestamp.toISOString(), "2026-04-21T19:50:00.000Z");
+});
+
+test("shadow equity history keeps historical backfill positions on historical time", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const totalsBody = source.match(
+    /async function computeShadowTotalsForSource\([\s\S]*?\nasync function computeShadowTotals\(\)/,
+  )?.[0];
+
+  assert.ok(totalsBody);
+  assert.match(totalsBody, /historicalSignalOptionsOpenPositions/);
+  assert.match(totalsBody, /isHistoricalSignalOptionsShadowOrder\(sourceOrder\)/);
+  assert.match(
+    totalsBody,
+    /options\.useCurrentTimestampForOpenPositions &&\s+!historicalSignalOptionsOpenPositions/,
+  );
+  assert.match(totalsBody, /updatedAt: latestHistoricalShadowTotalsDate/);
+});
+
+test("shadow equity history initial transfer uses the account starting balance", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const historyBody = source.match(
+    /export async function getShadowAccountEquityHistory\([\s\S]*?\nfunction buildShadowAccountAllocationResponse/,
+  )?.[0];
+
+  assert.ok(historyBody);
+  assert.match(historyBody, /const accountStartingBalance =\s+toNumber\(account\.startingBalance\) \?\? SHADOW_STARTING_BALANCE;/);
+  assert.match(historyBody, /netLiquidation: accountStartingBalance/);
+  assert.match(historyBody, /deposits: accountStartingBalance/);
+  assert.match(historyBody, /amount: accountStartingBalance/);
+});
+
 test("shadow mark snapshots keep replay-key positions on the replay ledger", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
 
@@ -746,7 +815,7 @@ test("watchlist backtest closed-trade metrics summarize wins and expectancy", ()
   assert.equal(metrics.profitFactor, 4);
 });
 
-test("Shadow trading pattern packet attributes ticker performance and chart annotations", () => {
+test("Shadow trade diagnostics attribute ticker performance and chart annotations", () => {
   const order = ({
     id,
     symbol,
@@ -870,7 +939,7 @@ test("Shadow trading pattern packet attributes ticker performance and chart anno
   ];
 
   const packet =
-    __shadowWatchlistBacktestInternalsForTests.buildShadowTradingPatternsFromRows({
+    __shadowWatchlistBacktestInternalsForTests.buildShadowTradeDiagnosticsFromRows({
       range: "YTD",
       windowStart: new Date("2026-01-01T00:00:00.000Z"),
       windowEnd: new Date("2026-05-03T00:00:00.000Z"),
@@ -1956,6 +2025,58 @@ test("shadow live source filters reject simulation and forward-test rows", () =>
   );
   assert.equal(
     internals.isLiveShadowPosition({
+      positionKey: "watchlist_backtest:2026-05-12:SPY",
+    } as any),
+    false,
+  );
+});
+
+test("default shadow analytics ledger includes signal-options replay rows", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({ source: "automation" } as any),
+    true,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({ source: "manual" } as any),
+    true,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({ source: "signal_options_replay" } as any),
+    true,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({
+      source: "automation",
+      payload: {
+        replay: { source: "signal_options_replay" },
+        metadata: {
+          positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
+        },
+      },
+    } as any),
+    true,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({ source: "watchlist_backtest" } as any),
+    false,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({
+      source: "automation",
+      payload: { forwardTest: true },
+    } as any),
+    false,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsPosition({
+      positionKey: "signal_options_replay:2026-05-12:deployment:candidate",
+    } as any),
+    true,
+  );
+  assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsPosition({
       positionKey: "watchlist_backtest:2026-05-12:SPY",
     } as any),
     false,

@@ -227,7 +227,7 @@ test("MicroSparkline centers flat series without invalid coordinates", () => {
 test("named app sparkline surfaces compose the shared MicroSparkline", () => {
   const surfaces = [
     ["features/flow/FlowScannerStatusPanel.jsx", 1],
-    ["features/market/MiniChartPremiumFlowIndicator.jsx", 1],
+    ["features/market/MarketChartPremiumFlowIndicator.jsx", 1],
     ["features/research/PhotonicsObservatory.jsx", 3],
     ["screens/DiagnosticsScreen.jsx", 1],
   ];
@@ -310,7 +310,7 @@ test("Tables: selected-row class uses motion-accent for tone customization", () 
 test("SegmentedControl indicator respects reduced motion", () => {
   // The .ra-segmented-indicator class must have its transform/width
   // transitions zeroed out under prefers-reduced-motion or the
-  // data-rayalgo-reduced-motion="on" opt-in; opacity transition is fine
+  // data-pyrus-reduced-motion="on" opt-in; opacity transition is fine
   // (no spatial motion).
   const css = readFileSync(
     join(here, "..", "..", "index.css"),
@@ -323,6 +323,10 @@ test("SegmentedControl indicator respects reduced motion", () => {
   assert.match(
     css,
     /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-segmented-indicator[\s\S]*?transition: opacity/,
+  );
+  assert.match(
+    css,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-segmented-indicator[\s\S]*?transition: opacity/,
   );
   assert.match(
     css,

@@ -75,6 +75,18 @@ export type OptionGreekEnrichmentResult = {
   warnings: string[];
 };
 
+export type NotionalExposureSummary = {
+  grossUnderlyingNotional: number | null;
+  netDirectionalNotional: number | null;
+  deltaAdjustedNotional: number | null;
+  notionalToNavPercent: number | null;
+  coverage: {
+    totalPositions: number;
+    pricedPositions: number;
+    deltaAdjustedPositions: number;
+  };
+};
+
 function formatDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -150,6 +162,96 @@ export function exposureSummary(
     grossLong,
     grossShort,
     netExposure,
+  };
+}
+
+function optionDirectionalMultiplier(position: OptionPositionSnapshot): number {
+  const right = String(position.optionContract.right || "").toLowerCase();
+  return right === "put" ? -1 : 1;
+}
+
+function underlyingPriceForPosition(
+  position: OptionPositionSnapshot,
+  underlyingPrices: Map<string, number>,
+): number | null {
+  const price = underlyingPrices.get(normalizeSymbol(position.optionContract.underlying));
+  return Number.isFinite(price) && Number(price) > 0 ? Number(price) : null;
+}
+
+export function buildNotionalExposure(
+  positions: BrokerPositionSnapshot[],
+  input: {
+    nav?: number | null;
+    marketHydration?: Map<string, PositionMarketHydration>;
+    greekByPositionId?: Map<string, PositionGreekSnapshot>;
+    underlyingPrices?: Map<string, number>;
+  } = {},
+): NotionalExposureSummary {
+  const marketHydration = input.marketHydration ?? new Map<string, PositionMarketHydration>();
+  const greekByPositionId = input.greekByPositionId ?? new Map<string, PositionGreekSnapshot>();
+  const underlyingPrices = input.underlyingPrices ?? new Map<string, number>();
+  let grossUnderlyingNotional = 0;
+  let netDirectionalNotional = 0;
+  let deltaAdjustedNotional = 0;
+  let pricedPositions = 0;
+  let deltaAdjustedPositions = 0;
+
+  positions.forEach((position) => {
+    if (!hasOptionContract(position)) {
+      const marketValue = hydratedPositionMarketValue(position, marketHydration);
+      if (!Number.isFinite(marketValue)) {
+        return;
+      }
+      grossUnderlyingNotional += Math.abs(marketValue);
+      netDirectionalNotional += marketValue;
+      deltaAdjustedNotional += marketValue;
+      pricedPositions += 1;
+      deltaAdjustedPositions += 1;
+      return;
+    }
+
+    const underlyingPrice = underlyingPriceForPosition(position, underlyingPrices);
+    if (underlyingPrice === null) {
+      return;
+    }
+
+    const quantity = Number(position.quantity);
+    const multiplier = contractMultiplierForPosition(position);
+    if (
+      !Number.isFinite(quantity) ||
+      !Number.isFinite(multiplier) ||
+      Math.abs(quantity) <= 0 ||
+      multiplier <= 0
+    ) {
+      return;
+    }
+
+    const rawNotional = underlyingPrice * Math.abs(quantity) * multiplier;
+    const direction = Math.sign(quantity) * optionDirectionalMultiplier(position);
+    grossUnderlyingNotional += rawNotional;
+    netDirectionalNotional += rawNotional * direction;
+    pricedPositions += 1;
+
+    const deltaShares = greekByPositionId.get(position.id)?.delta;
+    if (typeof deltaShares === "number" && Number.isFinite(deltaShares)) {
+      deltaAdjustedNotional += deltaShares * underlyingPrice;
+      deltaAdjustedPositions += 1;
+    }
+  });
+
+  const hasPricedPositions = pricedPositions > 0;
+  const hasDeltaAdjustedPositions = deltaAdjustedPositions > 0;
+  return {
+    grossUnderlyingNotional: hasPricedPositions ? grossUnderlyingNotional : null,
+    netDirectionalNotional: hasPricedPositions ? netDirectionalNotional : null,
+    deltaAdjustedNotional: hasDeltaAdjustedPositions ? deltaAdjustedNotional : null,
+    notionalToNavPercent:
+      hasPricedPositions && input.nav ? (grossUnderlyingNotional / input.nav) * 100 : null,
+    coverage: {
+      totalPositions: positions.length,
+      pricedPositions,
+      deltaAdjustedPositions,
+    },
   };
 }
 

@@ -10,6 +10,7 @@ import {
   getRuntimeDiagnostics,
   listOrders,
   listPositions,
+  startIbkrWatchlistPrewarmRuntime,
   startOptionsFlowScanner,
 } from "./services/platform";
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
@@ -153,6 +154,7 @@ server.listen(port, () => {
   logger.info({ port }, "Server listening");
   ensureIbkrLaneRuntimeOverridesLoaded();
   startAccountFlexRefreshScheduler();
+  startIbkrWatchlistPrewarmRuntime();
   startOptionsFlowScanner();
   startTradeMonitorWorker();
   void ensureDefaultSignalOptionsPaperDeployment({

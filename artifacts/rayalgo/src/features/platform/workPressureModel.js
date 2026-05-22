@@ -7,6 +7,16 @@ export const WORK_PRESSURE_STATE = Object.freeze({
 
 const normalizeText = (value) => String(value || "").toLowerCase();
 
+const schedulerLanePressures = (bridge = null) => {
+  const scheduler = bridge?.bridgeDiagnostics?.scheduler;
+  if (!scheduler || typeof scheduler !== "object") {
+    return [];
+  }
+  return Object.values(scheduler)
+    .map((lane) => normalizeText(lane?.pressure))
+    .filter(Boolean);
+};
+
 export const resolveIbkrWorkPressure = (bridge = null) => {
   if (!bridge?.configured && !bridge?.authenticated) {
     return WORK_PRESSURE_STATE.normal;
@@ -32,6 +42,17 @@ export const resolveIbkrWorkPressure = (bridge = null) => {
     errorText.includes("lane queue")
   ) {
     return WORK_PRESSURE_STATE.backoff;
+  }
+
+  const lanePressures = schedulerLanePressures(bridge);
+  if (lanePressures.some((pressure) => pressure === WORK_PRESSURE_STATE.stalled)) {
+    return WORK_PRESSURE_STATE.stalled;
+  }
+  if (lanePressures.some((pressure) => pressure === WORK_PRESSURE_STATE.backoff)) {
+    return WORK_PRESSURE_STATE.backoff;
+  }
+  if (lanePressures.some((pressure) => pressure === WORK_PRESSURE_STATE.degraded)) {
+    return WORK_PRESSURE_STATE.degraded;
   }
 
   if (

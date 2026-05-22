@@ -162,7 +162,7 @@ test("renders the live RayReplica parity fixture and settings surface", async ({
   await expect(page.getByTitle("Tune RayReplica overlay settings")).toBeVisible();
   await expect(primary.getByTestId("rayreplica-dashboard-panel")).toBeVisible();
   await expect(
-    primary.getByTestId("rayreplica-dashboard-panel").getByText(/^(RA|RayAlgo)$/),
+    primary.getByTestId("rayreplica-dashboard-panel").getByText(/^(RA|PYRUS)$/),
   ).toBeVisible();
   await expect(primary.getByTestId("rayreplica-badge-swing-label").first()).toBeVisible();
   await expect(primary.locator('[data-testid="rayreplica-dot-bull-break"], [data-testid="rayreplica-dot-bear-break"]').first()).toBeVisible();

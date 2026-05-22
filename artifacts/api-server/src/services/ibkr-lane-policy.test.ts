@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import {
   __resetIbkrLanePolicyForTests,
+  getIbkrLanePolicySnapshot,
   resolveIbkrLaneSymbols,
   updateIbkrLanePolicy,
 } from "./ibkr-lane-policy";
@@ -61,6 +62,69 @@ test("lane policy resolves sources, manual symbols, exclusions, and capacity", (
   assert.equal(resolution.sourceCounts.manual, 2);
   assert.equal(resolution.sourceCounts["flow-universe"], 3);
   assert.equal(resolution.sourceCounts.watchlists, 0);
+});
+
+test("default flow scanner policy includes watchlists ahead of the broader universe", () => {
+  const resolution = resolveIbkrLaneSymbols("flow-scanner", {
+    "built-in": ["MSFT"],
+    "flow-universe": ["NVDA"],
+    watchlists: ["AAPL"],
+  });
+
+  assert.equal(resolution.maxSymbols, 600);
+  assert.deepEqual(resolution.admittedSymbols.slice(0, 3), [
+    "AAPL",
+    "NVDA",
+    "MSFT",
+  ]);
+  assert.equal(resolution.sourceCounts.watchlists, 1);
+});
+
+test("persisted legacy flow scanner defaults are migrated to the current defaults", () => {
+  writeFileSync(
+    policyFile,
+    JSON.stringify({
+      version: 1,
+      updatedAt: null,
+      lanes: {
+        "flow-scanner": {
+          enabled: true,
+          sources: {
+            "built-in": true,
+            watchlists: false,
+            "flow-universe": true,
+            manual: true,
+            system: false,
+          },
+          manualSymbols: [],
+          excludedSymbols: [],
+          maxSymbols: 500,
+          priority: [
+            "manual",
+            "flow-universe",
+            "built-in",
+            "watchlists",
+            "system",
+          ],
+        },
+      },
+    }),
+  );
+
+  const snapshot = getIbkrLanePolicySnapshot();
+  assert.equal(snapshot.policy.lanes["flow-scanner"].sources.watchlists, true);
+  assert.equal(snapshot.policy.lanes["flow-scanner"].maxSymbols, 600);
+  assert.deepEqual(snapshot.policy.lanes["flow-scanner"].priority, [
+    "manual",
+    "watchlists",
+    "flow-universe",
+    "built-in",
+    "system",
+  ]);
+
+  const persisted = JSON.parse(readFileSync(policyFile, "utf8"));
+  assert.equal(persisted.lanes["flow-scanner"].sources.watchlists, true);
+  assert.equal(persisted.lanes["flow-scanner"].maxSymbols, 600);
 });
 
 test("disabled lane reports all desired symbols as dropped", () => {

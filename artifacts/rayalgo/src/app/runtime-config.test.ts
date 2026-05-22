@@ -6,14 +6,14 @@ test("runtime config ignores loopback API bases on external browser origins", ()
   assert.equal(
     resolveBrowserApiBaseUrl(
       "http://127.0.0.1:8080",
-      "https://rayalgo.example.replit.dev/",
+      "https://pyrus.example.replit.dev/",
     ),
     null,
   );
   assert.equal(
     resolveBrowserApiBaseUrl(
       "http://localhost:8080/",
-      "https://rayalgo.example.replit.dev/",
+      "https://pyrus.example.replit.dev/",
     ),
     null,
   );

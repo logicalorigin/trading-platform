@@ -253,8 +253,10 @@ const prefersReducedTreemapMotion = () => {
   return Boolean(
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ||
       (typeof document !== "undefined" &&
-        document.documentElement?.getAttribute("data-rayalgo-reduced-motion") ===
-          "on"),
+        (document.documentElement?.getAttribute("data-pyrus-reduced-motion") ===
+          "on" ||
+          document.documentElement?.getAttribute("data-rayalgo-reduced-motion") ===
+            "on")),
   );
 };
 

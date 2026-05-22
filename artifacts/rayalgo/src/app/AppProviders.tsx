@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/TooltipProvider";
-import { useRayalgoPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
+import { usePyrusPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,20 +44,20 @@ const auditLocalStorageOnce = () => {
         .map((entry) => `${entry.key} (${Math.round(entry.bytes / 1024)} KB)`)
         .join(", ");
       console.warn(
-        `[rayalgo] localStorage holds ~${totalKb} KB across ${breakdown.length} keys. Top: ${top}`,
+        `[pyrus] localStorage holds ~${totalKb} KB across ${breakdown.length} keys. Top: ${top}`,
       );
     } else {
       console.info(
-        `[rayalgo] localStorage audit: ~${totalKb} KB across ${breakdown.length} keys.`,
+        `[pyrus] localStorage audit: ~${totalKb} KB across ${breakdown.length} keys.`,
       );
     }
   } catch (error) {
-    console.warn("[rayalgo] localStorage audit failed", error);
+    console.warn("[pyrus] localStorage audit failed", error);
   }
 };
 
 export function AppProviders({ children }: PropsWithChildren) {
-  useRayalgoPerformanceMetricsReporter();
+  usePyrusPerformanceMetricsReporter();
 
   useEffect(() => {
     auditLocalStorageOnce();

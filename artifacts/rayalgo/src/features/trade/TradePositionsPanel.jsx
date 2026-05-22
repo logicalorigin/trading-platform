@@ -27,6 +27,11 @@ import {
 } from "./tradeBrokerRequests";
 import { isOpenPositionRow } from "../account/accountPositionRows.js";
 import {
+  buildPositionDisplayModel,
+  formatPositionQuoteFreshnessLabel,
+  formatPositionSpreadLabel,
+} from "../account/positionDisplayModel.js";
+import {
   formatEnumLabel,
   formatExpirationLabel,
   formatOptionContractLabel,
@@ -124,7 +129,35 @@ const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
 };
 
 const OPEN_POSITION_GRID_TEMPLATE =
-  "72px 30px 72px 22px 44px 44px 40px 38px 18px";
+  "72px 36px 76px 42px 48px 48px 38px 48px 48px 52px 44px 18px";
+
+const tradeNumericCellStyle = (color = T.textSec) => ({
+  color,
+  textAlign: "right",
+  fontFamily: T.data,
+  fontVariantNumeric: "tabular-nums",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});
+
+const tradePnlTone = (value) =>
+  !isFiniteNumber(value) ? T.textDim : value >= 0 ? T.green : T.red;
+
+const tradeSignedMoney = (value) =>
+  isFiniteNumber(value) ? `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(0)}` : MISSING_VALUE;
+
+const tradePositionDisplay = (position) =>
+  buildPositionDisplayModel({
+    ...position,
+    quantity: position?.qty ?? position?.quantity,
+    averageCost: position?.entry ?? position?.averageCost,
+    averagePrice: position?.entry ?? position?.averagePrice,
+    mark: position?.mark ?? position?.marketPrice,
+  });
+
+const formatTradeSpread = (quote) =>
+  formatPositionSpreadLabel(quote, (value) => `${value.toFixed(1)}%`);
 
 const TradePositionSparkline = ({ position, snapshotsBySymbol }) => {
   const symbol = normalizeTickerSymbol(position?.ticker);
@@ -358,6 +391,9 @@ export const TradePositionsPanel = ({
           mark: position.marketPrice,
           pnl: position.unrealizedPnl,
           pct: position.unrealizedPnlPercent,
+          openedAt: position.openedAt ?? null,
+          openedAtSource: position.openedAtSource ?? null,
+          quote: position.quote ?? null,
           sl: null,
           tp: null,
         };
@@ -406,6 +442,9 @@ export const TradePositionsPanel = ({
         mark: null,
         pnl: null,
         pct: null,
+        openedAt: p.openedAt ?? p.createdAt ?? null,
+        openedAtSource: p.openedAt || p.createdAt ? "manual" : null,
+        quote: null,
         sl: p.stopLoss ?? +(p.entry * 0.65).toFixed(2),
         tp: p.takeProfit ?? +(p.entry * 1.75).toFixed(2),
       };
@@ -1108,16 +1147,32 @@ export const TradePositionsPanel = ({
                 <span>TICK</span>
                 <span>SIDE</span>
                 <span>CONTRACT</span>
+                <span style={{ textAlign: "right" }}>OPEN</span>
+                <span style={{ textAlign: "right" }}>BID</span>
+                <span style={{ textAlign: "right" }}>ASK</span>
                 <span style={{ textAlign: "right" }}>QTY</span>
                 <span style={{ textAlign: "right" }}>ENTRY</span>
                 <span style={{ textAlign: "right" }}>MARK</span>
-                <span style={{ textAlign: "right" }}>P&L</span>
-                <span style={{ textAlign: "right" }}>%</span>
+                <span style={{ textAlign: "right" }}>P&L $</span>
+                <span style={{ textAlign: "right" }}>P&L %</span>
                 <span></span>
               </div>
               {openPositions.map((p) => {
                 const isLoadable = Boolean(p.optionLoadContract);
                 const closeDisabled = gatewayActionDisabled;
+                const display = tradePositionDisplay(p);
+                const spread = formatTradeSpread(display.quote);
+                const quoteFreshness = formatPositionQuoteFreshnessLabel(display.quote);
+                const bidText =
+                  display.quote?.bid != null ? formatPriceValue(display.quote.bid) : MISSING_VALUE;
+                const askText =
+                  display.quote?.ask != null ? formatPriceValue(display.quote.ask) : MISSING_VALUE;
+                const entryText = isFiniteNumber(p.entry) ? formatPriceValue(p.entry) : MISSING_VALUE;
+                const markText = isFiniteNumber(p.mark) ? formatPriceValue(p.mark) : MISSING_VALUE;
+                const openedText =
+                  display.openedLabel && display.ageLabel
+                    ? `${display.openedLabel} · ${display.ageLabel}`
+                    : display.openedLabel || MISSING_VALUE;
                 return (
                   <AppTooltip key={p._id} content={
                       isLoadable
@@ -1144,15 +1199,14 @@ export const TradePositionsPanel = ({
                       cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
                       transition: "background 0.1s",
-                      background: p._isUser ? `${T.accent}08` : "transparent",
+                      background: "transparent",
+                      boxShadow: p._isUser ? `inset 1px 0 0 ${T.accent}` : "none",
                     }}
                     onMouseEnter={(e) => {
-                      if (isLoadable) e.currentTarget.style.background = T.accentHoverBg;
+                      e.currentTarget.style.background = T.bg2;
                     }}
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = p._isUser
-                        ? `${T.accent}08`
-                        : "transparent")
+                      (e.currentTarget.style.background = "transparent")
                     }
                   >
 	                    <span
@@ -1179,17 +1233,16 @@ export const TradePositionsPanel = ({
 	                      >
 	                        {p.ticker}
 	                      </span>
-	                    </span>
+                    </span>
                     <span
                       style={{
-                        color: p.side === "LONG" ? T.green : T.red,
+                        color: T.textSec,
                         fontWeight: FONT_WEIGHTS.regular,
                         fontSize: textSize("caption"),
                         padding: sp("1px 4px"),
-                        background:
-                          p.side === "LONG" ? `${T.green}15` : `${T.red}15`,
+                        background: T.bg0,
                         borderRadius: dim(2),
-                        border: `1px solid ${p.side === "LONG" ? T.green : T.red}30`,
+                        border: `1px solid ${T.border}`,
                         textAlign: "center",
                         alignSelf: "center",
                       }}
@@ -1199,52 +1252,37 @@ export const TradePositionsPanel = ({
                     <span style={{ color: T.textSec, fontSize: textSize("body") }}>
                       {p.contract}
                     </span>
-                    <span style={{ color: T.textDim, textAlign: "right" }}>
+                    <span
+                      title={display.openedSourceLabel || undefined}
+                      style={{ color: display.openedLabel ? T.textSec : T.textDim, textAlign: "right" }}
+                    >
+                      {openedText}
+                    </span>
+                    <span
+                      title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
+                      style={tradeNumericCellStyle(display.quote?.bid != null ? T.textSec : T.textDim)}
+                    >
+                      {bidText}
+                    </span>
+                    <span
+                      title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
+                      style={tradeNumericCellStyle(display.quote?.ask != null ? T.textSec : T.textDim)}
+                    >
+                      {askText}
+                    </span>
+                    <span style={tradeNumericCellStyle(T.textDim)}>
                       {p.qty}
                     </span>
-                    <span style={{ color: T.textDim, textAlign: "right" }}>
-                      {isFiniteNumber(p.entry) ? formatPriceValue(p.entry) : MISSING_VALUE}
+                    <span style={tradeNumericCellStyle(T.textSec)}>
+                      {entryText}
                     </span>
-                    <span
-                      style={{
-                        color: T.text,
-                        fontWeight: FONT_WEIGHTS.regular,
-                        textAlign: "right",
-                      }}
-                    >
-                      {isFiniteNumber(p.mark)
-                        ? p.mark.toFixed(2)
-                        : MISSING_VALUE}
+                    <span style={tradeNumericCellStyle(T.text)}>
+                      {markText}
                     </span>
-                    <span
-                      style={{
-                        color:
-                          !isFiniteNumber(p.pnl)
-                            ? T.textDim
-                            : p.pnl >= 0
-                              ? T.green
-                              : T.red,
-                        fontWeight: FONT_WEIGHTS.regular,
-                        textAlign: "right",
-                      }}
-                    >
-                      {isFiniteNumber(p.pnl)
-                        ? `${p.pnl >= 0 ? "+" : ""}$${p.pnl.toFixed(0)}`
-                        : MISSING_VALUE}
+                    <span style={tradeNumericCellStyle(tradePnlTone(p.pnl))}>
+                      {tradeSignedMoney(p.pnl)}
                     </span>
-                    <span
-                      style={{
-                        color:
-                          !isFiniteNumber(p.pct)
-                            ? T.textDim
-                            : p.pct >= 0
-                              ? T.green
-                              : T.red,
-                        fontWeight: FONT_WEIGHTS.regular,
-                        textAlign: "right",
-                        fontSize: textSize("body"),
-                      }}
-                    >
+                    <span style={tradeNumericCellStyle(tradePnlTone(p.pct))}>
                       {formatSignedPercent(p.pct, 1)}
                     </span>
                     <AppTooltip content={

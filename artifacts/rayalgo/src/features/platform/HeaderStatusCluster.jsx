@@ -535,8 +535,10 @@ const HeaderIbkrTriggerSummary = ({
   const streamTile = getHeaderIbkrTile(model, "Stream");
   const lineUsage = model?.lineUsage;
   const compactLineUsage = model?.compactLineUsage;
-  const pendingLineCount = Number.isFinite(lineUsage?.pendingLineCount)
-    ? Math.max(0, lineUsage.pendingLineCount)
+  const pendingLineCount = Number.isFinite(lineUsage?.foregroundPendingLineCount)
+    ? Math.max(0, lineUsage.foregroundPendingLineCount)
+    : Number.isFinite(lineUsage?.warmup?.pendingLineCount)
+      ? Math.max(0, lineUsage.warmup.pendingLineCount)
     : 0;
   const lineValue = compactLineUsage?.summary || lineUsage?.summary || MISSING_VALUE;
   const shortLineValue = lineValue.replace(/\s*\/\s*/g, "/");
@@ -711,8 +713,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
   }
 
   const warmup = lineUsage.warmup || {};
-  const pendingLineCount = Number.isFinite(lineUsage.pendingLineCount)
-    ? Math.max(0, lineUsage.pendingLineCount)
+  const pendingLineCount = Number.isFinite(lineUsage.foregroundPendingLineCount)
+    ? Math.max(0, lineUsage.foregroundPendingLineCount)
     : Number.isFinite(warmup.pendingLineCount)
       ? Math.max(0, warmup.pendingLineCount)
       : 0;
@@ -1747,7 +1749,7 @@ export const HeaderStatusCluster = ({
         setBridgeLauncherError(
           useRemoteDesktopLaunch
             ? "No paired Windows desktop accepted the IBKR launch request."
-            : "Could not open the RayAlgo IBKR PowerShell launcher from this browser.",
+            : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
         );
         return;
       }

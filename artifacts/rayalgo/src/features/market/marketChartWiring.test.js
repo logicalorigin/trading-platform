@@ -39,13 +39,10 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
     "historical flow must not outrank active candle hydration",
   );
   assert.match(source, /listFlowEventsRequest/);
-  assert.match(source, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
+  assert.match(source, /buildBarsRequestOptions\([\s\S]*MARKET_CHART_FLOW_REQUEST_PRIORITY[\s\S]*"chart-flow"/);
   assert.match(source, /historicalChartFlowRequests/);
   assert.match(source, /const chartFlowHydrationReady =/);
-  assert.match(
-    source,
-    /effectiveHydrationSlotLimit >= visibleSlotEntries\.length/,
-  );
+  assert.match(source, /firstChartReady && chartFlowHydrationGate\.enabled/);
   assert.match(source, /historicalBucketSeconds/);
   assert.match(source, /getChartEventLookbackWindow/);
   assert.match(source, /alignMarketChartFlowHistoryWindow/);
@@ -87,21 +84,21 @@ test("Market activity panel uses the same broad scanner feed as the flow lane", 
 });
 
 test("Market chart cells delegate rendering to the Trade spot chart path", () => {
-  const source = readLocalSource("./MiniChartCell.jsx");
+  const source = readLocalSource("./MarketChartCell.jsx");
 
   assert.match(source, /const LazyTradeEquityPanel = lazyWithRetry/);
   assert.match(source, /import\("\.\.\/trade\/TradeEquityPanel\.jsx"\)/);
-  assert.match(source, /const LazyMiniChartTickerSearch = lazyWithRetry/);
+  assert.match(source, /const LazyMarketChartTickerSearch = lazyWithRetry/);
   assert.match(source, /import\("\.\.\/platform\/tickerSearch\/TickerSearch\.jsx"\)/);
-  assert.doesNotMatch(source, /import \{ MiniChartTickerSearch \}/);
-  assert.match(source, /getChartTimeframeValues\("mini"\)/);
+  assert.doesNotMatch(source, /import \{ MarketChartTickerSearch \}/);
+  assert.match(source, /getChartTimeframeValues\("primary"\)/);
   assert.match(source, /<LazyTradeEquityPanel/);
   assert.match(source, /surfaceUiStateKey=\{`market-spot-chart:\$\{slotId\}:\$\{timeframe\}`\}/);
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
   assert.match(source, /prewarmFavoriteTimeframesEnabled=\{false\}/);
   assert.match(source, /flowEventsSourceMode="provided"/);
-  assert.match(source, /chartHydrationRole="mini"/);
+  assert.doesNotMatch(source, /chartHydrationRole="mini"/);
   assert.match(source, /onWorkspaceChartChange=\{handleWorkspaceChartChange\}/);
   assert.doesNotMatch(source, /resolveSignalFrameState/);
   assert.doesNotMatch(source, /useSignalMonitorStateForSymbol/);
@@ -117,31 +114,38 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.doesNotMatch(source, /useUnderfilledChartBackfill/);
 });
 
-test("Market active mini chart adds the GEX zero-gamma reference line", () => {
-  const source = readLocalSource("./MiniChartCell.jsx");
+test("Market active chart adds the GEX zero-gamma reference line", () => {
+  const source = readLocalSource("./MarketChartCell.jsx");
 
-  assert.match(source, /useGexZeroGamma\(ticker,\s*\{ enabled: isActive \}\)/);
+  assert.match(source, /MARKET_GEX_REFERENCE_DELAY_MS\s*=\s*15_000/);
+  assert.match(source, /setGexReferenceReady\(true\)/);
+  assert.match(source, /useGexZeroGamma\(ticker,\s*\{\s*enabled: isActive && gexReferenceReady/);
   assert.match(source, /useGexZeroGammaReferenceLine\(gexZeroGamma\)/);
   assert.match(source, /const gexReferenceLines = useMemo/);
   assert.match(source, /referenceLines=\{gexReferenceLines\}/);
 });
 
-test("Market mini chart grid uses one-column phone density", () => {
+test("Market chart grid uses one-column phone density", () => {
   const source = readLocalSource("./MultiChartGrid.jsx");
 
   assert.match(source, /const phoneGrid = gridBodyWidth > 0 && gridBodyWidth < 768;/);
   assert.match(source, /const renderedCols = phoneGrid \? 1/);
   assert.match(source, /visibleSlotEntries\.length/);
   assert.match(source, /const showGridResizeControl =\s*\n\s*!phoneGrid/);
-  assert.match(source, /phoneGrid\s*\?\s*430/);
+  assert.match(source, /phoneGrid\s*\?\s*360/);
+  assert.match(source, /const renderedSlotEntries = phoneGrid/);
 });
 
-test("Market mini chart grid staggers candle hydration without hiding chart frames", () => {
+test("Market chart grid staggers candle hydration without hiding chart frames", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
-  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const cellSource = readLocalSource("./MarketChartCell.jsx");
 
-  assert.match(gridSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 2;/);
-  assert.match(gridSource, /const MARKET_CHART_HYDRATION_STAGGER_MS = 450;/);
+  assert.match(gridSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 4;/);
+  assert.match(gridSource, /const MARKET_CHART_HYDRATION_STAGGER_MS = 1_200;/);
+  assert.match(gridSource, /const MARKET_CHART_BACKOFF_HYDRATION_STAGGER_MS = 2_500;/);
+  assert.match(gridSource, /useHydrationGate/);
+  assert.match(gridSource, /const allowProgressiveChartHydration = Boolean/);
+  assert.match(gridSource, /const allowProgressiveChartHydration = Boolean\(chartHydrationGate\.enabled\)/);
   assert.match(gridSource, /const \[hydrationSlotLimit, setHydrationSlotLimit\]/);
   assert.match(gridSource, /const readySignaledRef = useRef\(false\)/);
   assert.match(gridSource, /const handleFirstVisibleChartReady = useCallback/);
@@ -151,19 +155,30 @@ test("Market mini chart grid staggers candle hydration without hiding chart fram
     gridSource,
     /window\.setTimeout\(\(\) => \{[\s\S]*setHydrationSlotLimit\(\(current\) =>[\s\S]*Math\.max\(current, nextSlotLimit\)/,
   );
+  assert.match(gridSource, /const effectiveHydrationStaggerMs =/);
+  assert.match(gridSource, /MARKET_CHART_BACKOFF_HYDRATION_STAGGER_MS/);
+  assert.match(gridSource, /chartHydrationGate\.pressure === "stalled"/);
+  assert.match(gridSource, /data-chart-hydration-pressure=\{chartHydrationGate\.pressure\}/);
+  assert.match(gridSource, /data-chart-hydration-slot-limit=\{effectiveHydrationSlotLimit\}/);
   assert.match(gridSource, /const chartHydrationEnabled =\s*\n\s*visibleIndex < effectiveHydrationSlotLimit;/);
   assert.match(gridSource, /historicalDataEnabled=\{chartHydrationEnabled\}/);
+  assert.match(gridSource, /fullFrame=\{layout === "1x1"\}/);
   assert.match(
     gridSource,
     /stockAggregateStreamingEnabled=\{\s*stockAggregateStreamingEnabled && chartHydrationEnabled\s*\}/,
   );
   assert.match(gridSource, /onReady=\{\s*visibleIndex === 0 && chartHydrationEnabled/);
   assert.match(cellSource, /historicalDataEnabled = true/);
-  assert.match(cellSource, /const MiniChartReadyProbe =/);
+  assert.match(cellSource, /fullFrame = false/);
+  assert.match(cellSource, /compact=\{fullFrame \? dense : true\}/);
+  assert.match(cellSource, /prewarmFavoriteTimeframesEnabled=\{false\}/);
+  assert.match(cellSource, /export const preloadMarketChartRuntime = \(\) =>/);
+  assert.match(cellSource, /preloadDynamicImport\(loadTradeEquityPanelModule/);
+  assert.match(cellSource, /const MarketChartReadyProbe =/);
   assert.match(cellSource, /requestAnimationFrame\(\(\) => \{\s*onReady\(\);/);
-  assert.match(cellSource, /<MiniChartReadyProbe onReady=\{onReady\} \/>/);
+  assert.match(cellSource, /<MarketChartReadyProbe onReady=\{onReady\} \/>/);
   assert.match(cellSource, /historicalDataEnabled=\{historicalDataEnabled\}/);
-  assert.match(cellSource, /<MiniChartPanelFallback dataTestId=\{dataTestId\} \/>/);
+  assert.match(cellSource, /<MarketChartPanelFallback dataTestId=\{dataTestId\} \/>/);
 });
 
 test("Trade spot chart forwards market viewport layout context to the chart surface", () => {
@@ -193,7 +208,7 @@ test("Trade spot chart uses the IBKR aggregate stream as its live stock layer", 
 });
 
 test("Market chart cells leave signal frame ownership inside the shared chart frame", () => {
-  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const cellSource = readLocalSource("./MarketChartCell.jsx");
   const panelSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");
 
@@ -217,10 +232,13 @@ test("Research chart frames expose signal frame state as first-class attributes"
 });
 
 test("Shared chart frames own responsive chrome density", () => {
-  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const cellSource = readLocalSource("./MarketChartCell.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
   const contractDetailSource = readLocalSource("../flow/ContractDetailInline.jsx");
+  const contractFlowSource = readLocalSource(
+    "../charting/useContractFlowChartEvents.js",
+  );
   const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");
 
   assert.match(frameSource, /data-chart-frame-density=\{frameDensity\}/);
@@ -232,9 +250,19 @@ test("Shared chart frames own responsive chrome density", () => {
   assert.match(contractDetailSource, /dataTestId="flow-inspection-option-chart"/);
 });
 
+test("Flow inspection option charts receive contract flow history", () => {
+  const flowScreenSource = readLocalSource("../../screens/FlowScreen.jsx");
+  const contractDetailSource = readLocalSource("../flow/ContractDetailInline.jsx");
+
+  assert.match(flowScreenSource, /flowEvents=\{flowEvents\}/);
+  assert.match(contractDetailSource, /useContractFlowChartEvents/);
+  assert.match(contractDetailSource, /pinnedEvent:\s*evt/);
+  assert.match(contractDetailSource, /chartFlowDiagnostics=\{optionChartEventConversion\}/);
+});
+
 test("Market chart flow events publish to the shared Trade spot chart path", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
-  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const cellSource = readLocalSource("./MarketChartCell.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const marketFlowRuntimeSource = readLocalSource(
     "../platform/MarketFlowRuntimeLayer.jsx",
@@ -243,7 +271,7 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(gridSource, /isTransientEmptyFlowSource/);
   assert.match(gridSource, /historicalChartFlowRetainedRef/);
   assert.match(gridSource, /mergeFlowEventFeeds\(retainedEvents,\s*incomingEvents\)/);
-  assert.match(gridSource, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
+  assert.match(gridSource, /buildBarsRequestOptions\([\s\S]*MARKET_CHART_FLOW_REQUEST_PRIORITY[\s\S]*"chart-flow"/);
   assert.match(gridSource, /BROAD_MARKET_FLOW_STORE_KEY/);
   assert.match(gridSource, /useMarketFlowSnapshotForStoreKey/);
   assert.match(gridSource, /mergeFlowEventFeeds/);
@@ -271,7 +299,7 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(tradeSpotSource, /prewarmFavoriteTimeframesEnabled = true/);
   assert.match(tradeSpotSource, /!prewarmFavoriteTimeframesEnabled/);
   assert.match(tradeSpotSource, /COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000/);
-  assert.match(tradeSpotSource, /MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 2_500/);
+  assert.match(tradeSpotSource, /MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 12_000/);
   assert.match(
     tradeSpotSource,
     /if \(!resolvedChartFrameCompact \|\| intervalChangeRevision > 0\) \{/,
@@ -295,6 +323,9 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
   const contractDetailSource = readLocalSource("../flow/ContractDetailInline.jsx");
+  const contractFlowSource = readLocalSource(
+    "../charting/useContractFlowChartEvents.js",
+  );
 
   assert.match(gridSource, /useFlowTapeFilterState\(\{ subscribe:\s*isVisible \}\)/);
   assert.match(
@@ -317,30 +348,31 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
   );
   assert.match(tradeSpotSource, /useFlowChartEventConversion\(\s*chartWindowFlowEvents,\s*ticker,\s*\)/);
   assert.match(tradeScreenSource, /useFlowTapeFilterState\(\)/);
-  assert.match(tradeScreenSource, /filterFlowEventsForChartDisplay/);
+  assert.match(tradeScreenSource, /useContractFlowChartEvents/);
   assert.match(tradeScreenSource, /const activeTickerChartFlowEvents = useMemo/);
   assert.match(tradeScreenSource, /mergeFlowEventFeeds\(\s*activeTickerTradeFlowSnapshot\.events \|\| \[\],\s*activeTickerBroadFlowEvents,\s*\)/);
   assert.match(tradeScreenSource, /flowEvents=\{activeTickerChartFlowEvents\}/);
   assert.match(tradeScreenSource, /const parentFlowEventsProvided = flowEvents !== undefined/);
   assert.match(
-    tradeScreenSource,
-    /filterFlowEventsForOptionContract\(\s*filterFlowEventsForChartDisplay\(mergedFlowEvents,\s*flowTapeFilters\)/,
+    contractFlowSource,
+    /filterFlowEventsForChartDisplay\(\s*mergedEvents,\s*flowTapeFilters,\s*\)/,
   );
   assert.match(
-    tradeScreenSource,
-    /filterFlowEventsForChartLookbackWindow\(\s*selectedContractFlowEvents,\s*optionChartTimeframe,\s*\)/,
+    contractFlowSource,
+    /filterFlowEventsForOptionContract\(\s*displayEvents,\s*contract,\s*\)/,
   );
   assert.match(
-    tradeScreenSource,
-    /const selectedContractChartWindowFlowEvents = useMemo/,
+    contractFlowSource,
+    /filterFlowEventsForChartLookbackWindow\(\s*eventsWithPinnedSelection,\s*timeframe,\s*\)/,
   );
+  assert.match(contractFlowSource, /useFlowChartEventConversion\(/);
   assert.match(
     tradeScreenSource,
-    /useFlowChartEventConversion\(\s*selectedContractChartWindowFlowEvents,\s*ticker,\s*\)/,
+    /const contractChartFlow = useContractFlowChartEvents/,
   );
   assert.match(
     contractDetailSource,
-    /useFlowChartEventConversion\(\s*optionChartFlowEvents,\s*chartSymbol,\s*\)/,
+    /useContractFlowChartEvents\(/,
   );
   assert.match(contractDetailSource, /chartEvents=\{optionChartEvents\}/);
   assert.match(
@@ -369,7 +401,7 @@ test("Trade option chart exposes the same workspace chart controls as spot", () 
 
 test("Market chart frames leave viewport ownership inside the Trade spot chart", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
-  const cellSource = readLocalSource("./MiniChartCell.jsx");
+  const cellSource = readLocalSource("./MarketChartCell.jsx");
 
   assert.match(gridSource, /chartViewportResetRevision/);
   assert.match(gridSource, /chartViewportLayoutRevision/);
@@ -381,7 +413,7 @@ test("Market chart frames leave viewport ownership inside the Trade spot chart",
   assert.doesNotMatch(gridSource, /from "\.\.\/charting\/ResearchChartSurface"/);
   assert.match(gridSource, /from "\.\.\/platform\/tickerSearch\/model"/);
   assert.doesNotMatch(gridSource, /from "\.\.\/platform\/tickerSearch\/TickerSearch\.jsx"/);
-  assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart",\s*"mini"/);
+  assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart",\s*"primary"/);
   assert.doesNotMatch(gridSource, /buildMarketGridViewportRevisionIdentity/);
   assert.doesNotMatch(cellSource, /rangeIdentityKey/);
   assert.doesNotMatch(cellSource, /persistScalePrefs/);
@@ -426,8 +458,8 @@ test("Market chart persisted row heights normalize safely", () => {
   );
 });
 
-test("Market mini chart no longer owns a provider-contract chart data path", () => {
-  const source = readLocalSource("./MiniChartCell.jsx");
+test("Market chart no longer owns a provider-contract chart data path", () => {
+  const source = readLocalSource("./MarketChartCell.jsx");
 
   assert.match(source, /TradeEquityPanel/);
   assert.doesNotMatch(source, /resolveMarketGridChartProviderContractId/);
@@ -435,6 +467,6 @@ test("Market mini chart no longer owns a provider-contract chart data path", () 
   assert.doesNotMatch(
     source,
     /slot\?\.providerContractId/,
-    "MiniChartCell should not pass raw provider contracts into chart requests",
+    "MarketChartCell should not pass raw provider contracts into chart requests",
   );
 });

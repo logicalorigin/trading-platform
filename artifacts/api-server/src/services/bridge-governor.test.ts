@@ -3,6 +3,7 @@ import test from "node:test";
 import { HttpError } from "../lib/errors";
 import {
   __resetBridgeGovernorForTests,
+  getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   runBridgeWork,
@@ -13,10 +14,31 @@ test.afterEach(() => {
   delete process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_CONCURRENCY"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_BACKOFF_MS"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_FAILURE_THRESHOLD"];
+  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_CONCURRENCY"];
+  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"];
+  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ACCOUNT_BACKOFF_MS"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ACCOUNT_FAILURE_THRESHOLD"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_BACKOFF_MS"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_FAILURE_THRESHOLD"];
+});
+
+test("bridge governor keeps quote bootstrap work conservative by default", async () => {
+  const config = getBridgeGovernorConfigSnapshot().quotes;
+
+  assert.equal(config.concurrency, 1);
+  assert.equal(config.failureThreshold, 1);
+  assert.equal(config.backoffMs, 15_000);
+
+  await assert.rejects(
+    runBridgeWork("quotes", async () => {
+      throw new HttpError(502, "quote bootstrap timeout", {
+        code: "upstream_request_failed",
+      });
+    }),
+  );
+
+  assert.equal(isBridgeWorkBackedOff("quotes"), true);
 });
 
 test("bridge governor caps concurrent work by category", async () => {

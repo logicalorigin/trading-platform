@@ -1,20 +1,33 @@
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 
-const enabled = process.env.RAYALGO_MEMORY_SOAK === "1";
-const useLiveApi = process.env.RAYALGO_MEMORY_SOAK_LIVE_API === "1";
+const enabled =
+  process.env.PYRUS_MEMORY_SOAK === "1" ||
+  process.env.RAYALGO_MEMORY_SOAK === "1";
+const useLiveApi =
+  process.env.PYRUS_MEMORY_SOAK_LIVE_API === "1" ||
+  process.env.RAYALGO_MEMORY_SOAK_LIVE_API === "1";
 const soakMinutes = Math.max(
   1,
-  Number.parseFloat(process.env.RAYALGO_MEMORY_SOAK_MINUTES || "3"),
+  Number.parseFloat(
+    process.env.PYRUS_MEMORY_SOAK_MINUTES ||
+      process.env.RAYALGO_MEMORY_SOAK_MINUTES ||
+      "3",
+  ),
 );
 const soakMs = Math.round(soakMinutes * 60_000);
 const sampleEveryCycles = Math.max(
   1,
-  Number.parseInt(process.env.RAYALGO_MEMORY_SOAK_SAMPLE_EVERY || "3", 10),
+  Number.parseInt(
+    process.env.PYRUS_MEMORY_SOAK_SAMPLE_EVERY ||
+      process.env.RAYALGO_MEMORY_SOAK_SAMPLE_EVERY ||
+      "3",
+    10,
+  ),
 );
 const STREAM_STALE_WARNING_MS = 10_000;
 const STOCK_AGGREGATE_STALE_WARNING_MS = 20_000;
 
-test.skip(!enabled, "Set RAYALGO_MEMORY_SOAK=1 to run the memory soak.");
+test.skip(!enabled, "Set PYRUS_MEMORY_SOAK=1 to run the memory soak.");
 test.setTimeout(soakMs + 120_000);
 
 const symbols = ["SPY", "QQQ", "IWM", "VIXY", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN"];
@@ -53,7 +66,7 @@ test.afterEach(async ({ page }, testInfo) => {
   });
 
   if (soakSummary) {
-    await testInfo.attach("rayalgo-soak-summary.json", {
+    await testInfo.attach("pyrus-soak-summary.json", {
       body: JSON.stringify(soakSummary, null, 2),
       contentType: "application/json",
     });
@@ -62,24 +75,24 @@ test.afterEach(async ({ page }, testInfo) => {
   const memoryDiagnostics = await page
     .evaluate(() => {
       const diagnosticsWindow = window as Window & {
-        __RAYALGO_MEMORY_DIAGNOSTICS__?: () => unknown;
+        __PYRUS_MEMORY_DIAGNOSTICS__?: () => unknown;
       };
-      return typeof diagnosticsWindow.__RAYALGO_MEMORY_DIAGNOSTICS__ ===
+      return typeof diagnosticsWindow.__PYRUS_MEMORY_DIAGNOSTICS__ ===
         "function"
-        ? diagnosticsWindow.__RAYALGO_MEMORY_DIAGNOSTICS__()
+        ? diagnosticsWindow.__PYRUS_MEMORY_DIAGNOSTICS__()
         : null;
     })
     .catch((error) => ({
       error: error instanceof Error ? error.message : String(error),
     }));
 
-  await testInfo.attach("rayalgo-memory-diagnostics.json", {
+  await testInfo.attach("pyrus-memory-diagnostics.json", {
     body: JSON.stringify(memoryDiagnostics, null, 2),
     contentType: "application/json",
   });
 
   if (useLiveApi) {
-    await testInfo.attach("rayalgo-live-diagnostics.json", {
+    await testInfo.attach("pyrus-live-diagnostics.json", {
       body: JSON.stringify(liveDiagnostics, null, 2),
       contentType: "application/json",
     });
@@ -492,21 +505,6 @@ async function mockPlatformApi(page: Page) {
         dividends: [],
         updatedAt: nowIso,
       };
-    } else if (url.pathname === "/api/accounts/combined/trading-patterns") {
-      body = {
-        snapshot: { persisted: false },
-        context: {},
-        summary: {},
-        tickerStats: [],
-        sourceStats: [],
-        timeStats: {},
-        equityAnnotations: [],
-        tradeEvents: [],
-        roundTrips: [],
-        openLots: [],
-        anomalies: [],
-        fullPacketIncluded: false,
-      };
     } else if (url.pathname === "/api/accounts") {
       body = { accounts: [] };
     } else if (url.pathname === "/api/orders") {
@@ -603,11 +601,11 @@ async function collectMemorySample(page: Page, label: string) {
       page
         .evaluate(() => {
           const diagnosticsWindow = window as Window & {
-            __RAYALGO_MEMORY_DIAGNOSTICS__?: () => unknown;
+            __PYRUS_MEMORY_DIAGNOSTICS__?: () => unknown;
           };
-          return typeof diagnosticsWindow.__RAYALGO_MEMORY_DIAGNOSTICS__ ===
+          return typeof diagnosticsWindow.__PYRUS_MEMORY_DIAGNOSTICS__ ===
             "function"
-            ? diagnosticsWindow.__RAYALGO_MEMORY_DIAGNOSTICS__()
+            ? diagnosticsWindow.__PYRUS_MEMORY_DIAGNOSTICS__()
             : null;
         })
         .catch(() => null),
@@ -933,7 +931,7 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
-      "rayalgo:state:v1",
+      "pyrus:state:v1",
       JSON.stringify({
         screen: "market",
         sym: "SPY",

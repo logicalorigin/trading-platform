@@ -592,6 +592,7 @@ async function buildLaneMemberships(
   const flowUniverseSymbols = flowLaneSources.flowUniverseSymbols;
   const flowScanner = resolveIbkrLaneSymbols("flow-scanner", {
     "built-in": flowLaneSources.builtInSymbols,
+    watchlists: watchlistSymbols,
     "flow-universe": flowUniverseSymbols,
   });
   const subscriptions = safeRecord(bridge?.subscriptions);
@@ -635,6 +636,7 @@ async function buildLaneMemberships(
       label: laneLabels["flow-scanner"],
       availableSources: {
         "built-in": flowLaneSources.builtInSymbols,
+        watchlists: watchlistSymbols,
         "flow-universe": flowUniverseSymbols,
       },
       resolution: flowScanner,
@@ -734,7 +736,7 @@ function buildNodes(
   return [
     {
       id: "platform",
-      label: "RayAlgo Platform",
+      label: "PYRUS Platform",
       nodes: [
         {
           id: "api-governor",

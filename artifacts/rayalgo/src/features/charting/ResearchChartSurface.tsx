@@ -257,7 +257,7 @@ const unregisterChart = (chart: DisposableChart | null | undefined) => {
     chart.remove();
   } catch (error) {
     if (import.meta.env.DEV) {
-      console.warn("[rayalgo] research chart disposal failed", error);
+      console.warn("[pyrus] research chart disposal failed", error);
     }
   }
 };
@@ -510,7 +510,8 @@ export type ChartLegendMetadata = {
   selectedStudies?: string[];
 };
 
-const CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
+const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
+const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
 
 type DrawMode = "horizontal" | "vertical" | "box";
 
@@ -959,7 +960,7 @@ const normalizeDashboardStripText = (value: unknown): string =>
 const formatDashboardTitle = (value: string): string => {
   const normalized = value.replace(/\s+dashboard$/i, "").trim();
   if (/^rayalgo$/i.test(normalized)) {
-    return "RayAlgo";
+    return "PYRUS";
   }
   if (/^rayreplica$/i.test(normalized)) {
     return "RayReplica";
@@ -2165,6 +2166,11 @@ const buildChartScalePrefsStorageKey = (
 ): string | null =>
   uiStateKey ? `${CHART_SCALE_PREFS_STORAGE_PREFIX}${uiStateKey}` : null;
 
+const buildLegacyChartScalePrefsStorageKey = (
+  uiStateKey?: string | null,
+): string | null =>
+  uiStateKey ? `${LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX}${uiStateKey}` : null;
+
 const readStoredChartScalePrefs = (
   uiStateKey?: string | null,
 ): ChartScalePreferences => {
@@ -2178,7 +2184,9 @@ const readStoredChartScalePrefs = (
   }
 
   try {
-    const raw = window.localStorage.getItem(storageKey);
+    const raw =
+      window.localStorage.getItem(storageKey) ??
+      window.localStorage.getItem(buildLegacyChartScalePrefsStorageKey(uiStateKey) || "");
     if (!raw) {
       return {};
     }
@@ -2204,6 +2212,10 @@ const writeStoredChartScalePrefs = (
 
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(prefs));
+    const legacyStorageKey = buildLegacyChartScalePrefsStorageKey(uiStateKey);
+    if (legacyStorageKey) {
+      window.localStorage.removeItem(legacyStorageKey);
+    }
   } catch (_error) {}
 };
 
@@ -5928,6 +5940,36 @@ const ResearchChartSurfaceComponent = ({
     };
   }, [markUserViewportIntent]);
 
+  const publishCustomTimeScaleUserRange = useCallback(
+    (range: VisibleLogicalRange | null | undefined) => {
+      const visibleRange = normalizeVisibleLogicalRange(range);
+      if (!visibleRange) {
+        return null;
+      }
+
+      const signature = buildVisibleRangeSignature(visibleRange);
+      visibleLogicalRangeRef.current = visibleRange;
+      realtimeFollowRef.current = false;
+      autoHydrationViewportRef.current = false;
+      programmaticVisibleRangeSignatureRef.current = null;
+      lastProgrammaticViewportIntentAtRef.current = 0;
+      lastUserVisibleRangeRef.current = visibleRange;
+      lastPublishedVisibleRangeSignatureRef.current = signature;
+      markViewportUserTouched();
+      visibleRangeChangeRef.current?.(visibleRange);
+      publishViewportSnapshot(
+        buildViewportSnapshot({
+          visibleRange,
+          userTouched: true,
+          realtimeFollow: false,
+        }),
+      );
+      setOverlayRevision((value) => value + 1);
+      return visibleRange;
+    },
+    [buildViewportSnapshot, markViewportUserTouched, publishViewportSnapshot],
+  );
+
   // TradingView-style per-axis wheel zoom: scrolling over the price axis
   // zooms Y only (true zoom: visible price range changes), over the time
   // axis zooms X only (visible logical range changes). Scrolling over the
@@ -6027,7 +6069,9 @@ const ResearchChartSurfaceComponent = ({
           const newRange = Math.max(4, range * zoomFactor);
           const newFrom = cursorLogical - newRange * cursorFracFromLeft;
           const newTo = newFrom + newRange;
-          timeScale.setVisibleLogicalRange?.({ from: newFrom, to: newTo });
+          const nextRange = { from: newFrom, to: newTo };
+          timeScale.setVisibleLogicalRange?.(nextRange);
+          publishCustomTimeScaleUserRange(nextRange);
         }
       } catch (_e) {
         // swallow scale errors; chart may be mid-resize
@@ -6043,7 +6087,7 @@ const ResearchChartSurfaceComponent = ({
     };
     // Re-bind when the chart container appears/disappears so the listener
     // attaches to the live DOM element on first render after data loads.
-  }, [hasChartBars, applyMainPriceAutoScale]);
+  }, [hasChartBars, applyMainPriceAutoScale, publishCustomTimeScaleUserRange]);
 
   // TradingView-style per-axis click-drag-to-scale (desktop mouse only).
   // Mirrors handleAxisWheel above so a user gets the same Y-only / X-only
@@ -6060,8 +6104,8 @@ const ResearchChartSurfaceComponent = ({
   // Convention (matches TV):
   //   • Time axis drag right  → zoom IN  (smaller logical range)
   //   • Time axis drag left   → zoom OUT
-  //   • Price axis drag down  → zoom IN  (smaller price span)
-  //   • Price axis drag up    → zoom OUT
+  //   • Price axis drag down  → zoom OUT (larger price span)
+  //   • Price axis drag up    → zoom IN
   // Anchored on the price / logical-bar under the INITIAL click so the
   // grabbed point stays under the cursor the whole drag.
   useEffect(() => {
@@ -6178,7 +6222,7 @@ const ResearchChartSurfaceComponent = ({
       try {
         if (dragState.axis === "price") {
           const deltaY = event.clientY - dragState.startClientY;
-          const scaleFactor = Math.exp(-deltaY * 0.005);
+          const scaleFactor = Math.exp(deltaY * 0.005);
           const start = dragState.startRange;
           const span = start.to - start.from;
           if (span <= 0) return;
@@ -6207,10 +6251,9 @@ const ResearchChartSurfaceComponent = ({
           const newFrom =
             dragState.cursorAnchor - newRange * dragState.cursorFrac;
           const newTo = newFrom + newRange;
-          chart.timeScale?.()?.setVisibleLogicalRange?.({
-            from: newFrom,
-            to: newTo,
-          });
+          const nextRange = { from: newFrom, to: newTo };
+          chart.timeScale?.()?.setVisibleLogicalRange?.(nextRange);
+          publishCustomTimeScaleUserRange(nextRange);
         }
       } catch (_e) {
         // swallow scale errors; chart may be mid-resize
@@ -6244,7 +6287,7 @@ const ResearchChartSurfaceComponent = ({
       container.removeEventListener("pointerup", endDrag, true);
       container.removeEventListener("pointercancel", endDrag, true);
     };
-  }, [hasChartBars, applyMainPriceAutoScale]);
+  }, [hasChartBars, applyMainPriceAutoScale, publishCustomTimeScaleUserRange]);
 
   useEffect(() => {
     const container = containerRef.current;

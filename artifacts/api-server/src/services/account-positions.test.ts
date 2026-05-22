@@ -81,6 +81,118 @@ test("account position hydration derives mark, day P&L, and unrealized P&L from 
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
 
+test("account position quote display model derives bid ask spread from snapshots", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const quote = __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(
+    {
+      symbol: "SPY",
+      price: 501,
+      bid: 500.9,
+      ask: 501.1,
+      bidSize: 10,
+      askSize: 12,
+      change: 0,
+      changePercent: 0,
+      open: null,
+      high: null,
+      low: null,
+      prevClose: null,
+      volume: null,
+      openInterest: null,
+      impliedVolatility: null,
+      delta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+      providerContractId: null,
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date("2026-05-21T14:00:00.000Z"),
+      ageMs: null,
+      cacheAgeMs: 0,
+      latency: null,
+      transport: "tws",
+      updatedAt: new Date("2026-05-21T14:00:00.000Z"),
+    },
+    501,
+  );
+
+  assert.equal(quote?.bid, 500.9);
+  assert.equal(quote?.ask, 501.1);
+  assert.equal(Number(quote?.spread?.toFixed(2)), 0.2);
+  assert.equal(quote?.source, "bridge_quote");
+});
+
+test("account position internals derive opened date from Flex open-position raw fields", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const opened =
+    __accountPositionInternalsForTests.flexOpenPositionOpenedAt({
+      asOf: new Date("2026-05-21T21:00:00.000Z"),
+      raw: {
+        symbol: "SPY",
+        openDateTime: "20260520;14:31:05",
+      },
+    });
+
+  assert.equal(opened.openedAt?.toISOString(), "2026-05-20T14:31:05.000Z");
+  assert.equal(opened.openedAtSource, "flex_open_position");
+});
+
+test("account position internals fall back to Flex snapshot date when raw open date is absent", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const opened =
+    __accountPositionInternalsForTests.flexOpenPositionOpenedAt({
+      asOf: new Date("2026-05-21T21:00:00.000Z"),
+      raw: {
+        symbol: "SPY",
+      },
+    });
+
+  assert.equal(opened.openedAt?.toISOString(), "2026-05-21T21:00:00.000Z");
+  assert.equal(opened.openedAtSource, "flex_snapshot");
+});
+
+test("account position internals ignore old Flex open-position streaks", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const opened =
+    __accountPositionInternalsForTests.selectFlexOpenPositionCandidate([
+      {
+        accountId: "U1",
+        symbol: "SPY",
+        description: "",
+        contractId: null,
+        asOf: new Date("2026-04-01T21:00:00.000Z"),
+        openedAt: new Date("2026-04-01T21:00:00.000Z"),
+        openedAtSource: "flex_snapshot",
+        raw: null,
+      },
+      {
+        accountId: "U1",
+        symbol: "SPY",
+        description: "",
+        contractId: null,
+        asOf: new Date("2026-05-20T21:00:00.000Z"),
+        openedAt: new Date("2026-05-20T21:00:00.000Z"),
+        openedAtSource: "flex_snapshot",
+        raw: null,
+      },
+      {
+        accountId: "U1",
+        symbol: "SPY",
+        description: "",
+        contractId: null,
+        asOf: new Date("2026-05-21T21:00:00.000Z"),
+        openedAt: new Date("2026-05-21T21:00:00.000Z"),
+        openedAtSource: "flex_snapshot",
+        raw: null,
+      },
+    ]);
+
+  assert.equal(opened?.openedAt?.toISOString(), "2026-05-20T21:00:00.000Z");
+  assert.equal(opened?.openedAtSource, "flex_snapshot");
+});
+
 test("account position rows expose a canonical market-data symbol", async () => {
   const { __accountPositionInternalsForTests } = await import("./account");
 

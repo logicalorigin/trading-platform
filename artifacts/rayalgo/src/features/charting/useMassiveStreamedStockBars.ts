@@ -552,7 +552,7 @@ const isHistoricalBarStreamPayloadForUrl = (
 
   let params: URLSearchParams;
   try {
-    params = new URL(url, "http://rayalgo.local").searchParams;
+    params = new URL(url, "http://pyrus.local").searchParams;
   } catch {
     return true;
   }
@@ -1391,10 +1391,7 @@ export const usePrependableHistoricalBars = ({
         0,
         sharedState.olderHistoryNextBeforeMs ?? oldestMs - 1,
       );
-      const historyCursor =
-        sharedState.olderHistoryProviderPageLimitReached
-          ? sharedState.olderHistoryCursor
-          : null;
+      const historyCursor = sharedState.olderHistoryCursor || null;
       if (requestToMs <= 0 && !historyCursor) {
         updateActiveChartBarState(scopeKey, (current) => ({
           ...current,
@@ -1594,7 +1591,6 @@ export const usePrependableHistoricalBars = ({
       sharedState.hasExhaustedOlderHistory,
       sharedState.olderHistoryNextBeforeMs,
       sharedState.olderHistoryCursor,
-      sharedState.olderHistoryProviderPageLimitReached,
       scopeKey,
       pageSizeTimeframe,
       timeframe,

@@ -11,6 +11,7 @@ export type OptionChartBarsDataSource = typeof OptionChartBarsDataSource[keyof t
 
 export const OptionChartBarsDataSource = {
   'ibkr-history': 'ibkr-history',
+  'mixed-history': 'mixed-history',
   'polygon-option-aggregates': 'polygon-option-aggregates',
   none: 'none',
 } as const;

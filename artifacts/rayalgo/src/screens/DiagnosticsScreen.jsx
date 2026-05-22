@@ -58,7 +58,9 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 
-const DIAGNOSTIC_ALERT_PREF_EVENT = "rayalgo:diagnostic-alert-preferences-updated";
+const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
+const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
+  "rayalgo:diagnostic-alert-preferences-updated";
 
 const TABS = [
   "Overview",
@@ -116,7 +118,7 @@ const requestDesktopAlert = (notification, preferences) => {
     return;
   }
   if (Notification.permission === "granted") {
-    new Notification("RayAlgo diagnostics", {
+    new Notification("PYRUS diagnostics", {
       body: notification.message || notification.severity || "Diagnostic alert",
       tag: notification.key,
     });
@@ -661,7 +663,11 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       setAlertPreferences(readLocalAlertPreferences());
     };
     window.addEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
-    return () => window.removeEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+    window.addEventListener(LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+    return () => {
+      window.removeEventListener(DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+      window.removeEventListener(LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT, listener);
+    };
   }, []);
 
   const timeWindow = useMemo(() => {
@@ -1055,19 +1061,21 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(diagnosticsIsPhone ? "12px 12px" : "20px 28px"),
+        padding: sp(diagnosticsIsPhone ? "8px 10px 18px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
+        WebkitOverflowScrolling: diagnosticsIsPhone ? "touch" : undefined,
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
+          justifyContent: diagnosticsIsPhone ? "space-between" : "flex-end",
           gap: sp(8),
           flexWrap: "wrap",
           minWidth: 0,
+          marginBottom: sp(diagnosticsIsPhone ? 8 : 0),
         }}
       >
         <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
@@ -1099,7 +1107,18 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         </Button>
       </div>
 
-      <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginBottom: sp(14) }}>
+      <div
+        className="ra-hide-scrollbar"
+        style={{
+          display: "flex",
+          gap: sp(6),
+          flexWrap: diagnosticsIsPhone ? "nowrap" : "wrap",
+          overflowX: diagnosticsIsPhone ? "auto" : undefined,
+          marginBottom: sp(12),
+          paddingBottom: diagnosticsIsPhone ? sp(2) : undefined,
+          minWidth: 0,
+        }}
+      >
         {TABS.map((tab) => (
           <button
             key={tab}
@@ -1575,7 +1594,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         </div>
       )}
 
-      <DiagnosticThresholdSettingsPanel />
+      <DiagnosticThresholdSettingsPanel compact={diagnosticsIsPhone} />
 
       <div style={{ height: sp(16) }} />
     </div>

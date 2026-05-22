@@ -1,6 +1,12 @@
 export type SignalOptionsStrikeSlot = 0 | 1 | 2 | 3 | 4 | 5;
 export type SignalOptionsRight = "call" | "put";
 
+export type SignalOptionsProgressiveTrailStep = {
+  activationPct: number;
+  minLockedGainPct: number;
+  givebackPct: number;
+};
+
 export type SignalOptionsExecutionProfile = {
   version: "v1";
   mode: "shadow";
@@ -48,6 +54,8 @@ export type SignalOptionsExecutionProfile = {
     trailGivebackPct: number;
     tightenAtFiveXGivebackPct: number;
     tightenAtTenXGivebackPct: number;
+    progressiveTrailEnabled: boolean;
+    progressiveTrailSteps: SignalOptionsProgressiveTrailStep[];
     flipOnOppositeSignal: boolean;
     earlyExitBars: number;
     earlyExitLossPct: number;
@@ -62,6 +70,32 @@ export type SignalOptionsExecutionProfile = {
     weakLiquidityTrailGivebackPct: number;
     strongLiquidityTrailGivebackPct: number;
     highQualityOvernightMinGainPct: number;
+  };
+  riskHaltControls: {
+    dailyLossHaltEnabled: boolean;
+    openSymbolCapEnabled: boolean;
+    premiumBudgetEnabled: boolean;
+  };
+  entryHaltControls: {
+    mtfAlignmentEnabled: boolean;
+    inversePutBlocklistEnabled: boolean;
+    bearishRegimeEnabled: boolean;
+  };
+  liquidityHaltControls: {
+    bidAskRequiredEnabled: boolean;
+    freshQuoteRequiredEnabled: boolean;
+    spreadGateEnabled: boolean;
+    minBidGateEnabled: boolean;
+  };
+  positionHaltControls: {
+    sameDirectionPositionBlockEnabled: boolean;
+    oppositeSignalFlipBlockEnabled: boolean;
+    positionMarkFeedHaltEnabled: boolean;
+  };
+  infrastructureHaltControls: {
+    gatewayReadinessBlockEnabled: boolean;
+    resourcePressureScanBlockEnabled: boolean;
+    contractResolutionBackoffEnabled: boolean;
   };
 };
 
@@ -133,8 +167,10 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       trailActivationPct: 40,
       minLockedGainPct: 10,
       trailGivebackPct: 25,
-      tightenAtFiveXGivebackPct: 35,
-      tightenAtTenXGivebackPct: 25,
+      tightenAtFiveXGivebackPct: 30,
+      tightenAtTenXGivebackPct: 15,
+      progressiveTrailEnabled: false,
+      progressiveTrailSteps: [],
       flipOnOppositeSignal: true,
       earlyExitBars: 0,
       earlyExitLossPct: 0,
@@ -150,7 +186,41 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       strongLiquidityTrailGivebackPct: 25,
       highQualityOvernightMinGainPct: -100,
     },
+    riskHaltControls: {
+      dailyLossHaltEnabled: true,
+      openSymbolCapEnabled: true,
+      premiumBudgetEnabled: true,
+    },
+    entryHaltControls: {
+      mtfAlignmentEnabled: true,
+      inversePutBlocklistEnabled: true,
+      bearishRegimeEnabled: true,
+    },
+    liquidityHaltControls: {
+      bidAskRequiredEnabled: true,
+      freshQuoteRequiredEnabled: true,
+      spreadGateEnabled: true,
+      minBidGateEnabled: true,
+    },
+    positionHaltControls: {
+      sameDirectionPositionBlockEnabled: true,
+      oppositeSignalFlipBlockEnabled: true,
+      positionMarkFeedHaltEnabled: true,
+    },
+    infrastructureHaltControls: {
+      gatewayReadinessBlockEnabled: true,
+      resourcePressureScanBlockEnabled: true,
+      contractResolutionBackoffEnabled: true,
+    },
   };
+
+export const aggressiveSignalOptionsProgressiveTrailSteps = [
+  { activationPct: 20, minLockedGainPct: 0, givebackPct: 30 },
+  { activationPct: 30, minLockedGainPct: 15, givebackPct: 25 },
+  { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
+  { activationPct: 65, minLockedGainPct: 40, givebackPct: 20 },
+  { activationPct: 100, minLockedGainPct: 60, givebackPct: 15 },
+] as const;
 
 export const tunedSignalOptionsExecutionProfilePatch = {
   riskCaps: {
@@ -162,6 +232,10 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     trailActivationPct: 35,
     minLockedGainPct: 15,
     trailGivebackPct: 20,
+    tightenAtFiveXGivebackPct: 30,
+    tightenAtTenXGivebackPct: 15,
+    progressiveTrailEnabled: true,
+    progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
     overnightExitEnabled: true,
     overnightMinGainPct: 10,
     overnightRunnerGivebackPct: 15,
@@ -212,6 +286,32 @@ function chaseSteps(value: unknown, fallback: number[]) {
   return steps.length ? Array.from(new Set(steps)).sort((a, b) => a - b) : fallback;
 }
 
+function progressiveTrailSteps(
+  value: unknown,
+  fallback: SignalOptionsProgressiveTrailStep[],
+) {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  const steps = value
+    .map((step) => asRecord(step))
+    .map((step) => ({
+      activationPct: finiteNumber(step.activationPct, Number.NaN, 0, 10_000),
+      minLockedGainPct: finiteNumber(step.minLockedGainPct, Number.NaN, 0, 10_000),
+      givebackPct: finiteNumber(step.givebackPct, Number.NaN, 0, 100),
+    }))
+    .filter(
+      (step) =>
+        Number.isFinite(step.activationPct) &&
+        Number.isFinite(step.minLockedGainPct) &&
+        Number.isFinite(step.givebackPct),
+    )
+    .sort((left, right) => left.activationPct - right.activationPct);
+
+  return steps.length ? steps : fallback;
+}
+
 function symbolList(value: unknown, fallback: string[]) {
   if (!Array.isArray(value)) {
     return fallback;
@@ -247,6 +347,11 @@ export function resolveSignalOptionsExecutionProfile(
   const liquidityGate = asRecord(root.liquidityGate);
   const fillPolicy = asRecord(root.fillPolicy);
   const exitPolicy = asRecord(root.exitPolicy);
+  const riskHaltControls = asRecord(root.riskHaltControls);
+  const entryHaltControls = asRecord(root.entryHaltControls);
+  const liquidityHaltControls = asRecord(root.liquidityHaltControls);
+  const positionHaltControls = asRecord(root.positionHaltControls);
+  const infrastructureHaltControls = asRecord(root.infrastructureHaltControls);
   const minDte = finiteInteger(
     optionSelection.minDte ?? root.minDte,
     defaults.optionSelection.minDte,
@@ -418,6 +523,14 @@ export function resolveSignalOptionsExecutionProfile(
         0,
         100,
       ),
+      progressiveTrailEnabled: booleanValue(
+        exitPolicy.progressiveTrailEnabled ?? root.progressiveTrailEnabled,
+        defaults.exitPolicy.progressiveTrailEnabled,
+      ),
+      progressiveTrailSteps: progressiveTrailSteps(
+        exitPolicy.progressiveTrailSteps ?? root.progressiveTrailSteps,
+        defaults.exitPolicy.progressiveTrailSteps,
+      ),
       flipOnOppositeSignal: booleanValue(
         exitPolicy.flipOnOppositeSignal ?? root.flipOnOppositeSignal,
         defaults.exitPolicy.flipOnOppositeSignal,
@@ -501,6 +614,88 @@ export function resolveSignalOptionsExecutionProfile(
         defaults.exitPolicy.highQualityOvernightMinGainPct,
         -100,
         10_000,
+      ),
+    },
+    riskHaltControls: {
+      dailyLossHaltEnabled: booleanValue(
+        riskHaltControls.dailyLossHaltEnabled ?? root.dailyLossHaltEnabled,
+        defaults.riskHaltControls.dailyLossHaltEnabled,
+      ),
+      openSymbolCapEnabled: booleanValue(
+        riskHaltControls.openSymbolCapEnabled ?? root.openSymbolCapEnabled,
+        defaults.riskHaltControls.openSymbolCapEnabled,
+      ),
+      premiumBudgetEnabled: booleanValue(
+        riskHaltControls.premiumBudgetEnabled ?? root.premiumBudgetEnabled,
+        defaults.riskHaltControls.premiumBudgetEnabled,
+      ),
+    },
+    entryHaltControls: {
+      mtfAlignmentEnabled: booleanValue(
+        entryHaltControls.mtfAlignmentEnabled ?? root.mtfAlignmentEnabled,
+        defaults.entryHaltControls.mtfAlignmentEnabled,
+      ),
+      inversePutBlocklistEnabled: booleanValue(
+        entryHaltControls.inversePutBlocklistEnabled ??
+          root.inversePutBlocklistEnabled,
+        defaults.entryHaltControls.inversePutBlocklistEnabled,
+      ),
+      bearishRegimeEnabled: booleanValue(
+        entryHaltControls.bearishRegimeEnabled ?? root.bearishRegimeEnabled,
+        defaults.entryHaltControls.bearishRegimeEnabled,
+      ),
+    },
+    liquidityHaltControls: {
+      bidAskRequiredEnabled: booleanValue(
+        liquidityHaltControls.bidAskRequiredEnabled ?? root.bidAskRequiredEnabled,
+        defaults.liquidityHaltControls.bidAskRequiredEnabled,
+      ),
+      freshQuoteRequiredEnabled: booleanValue(
+        liquidityHaltControls.freshQuoteRequiredEnabled ??
+          root.freshQuoteRequiredEnabled,
+        defaults.liquidityHaltControls.freshQuoteRequiredEnabled,
+      ),
+      spreadGateEnabled: booleanValue(
+        liquidityHaltControls.spreadGateEnabled ?? root.spreadGateEnabled,
+        defaults.liquidityHaltControls.spreadGateEnabled,
+      ),
+      minBidGateEnabled: booleanValue(
+        liquidityHaltControls.minBidGateEnabled ?? root.minBidGateEnabled,
+        defaults.liquidityHaltControls.minBidGateEnabled,
+      ),
+    },
+    positionHaltControls: {
+      sameDirectionPositionBlockEnabled: booleanValue(
+        positionHaltControls.sameDirectionPositionBlockEnabled ??
+          root.sameDirectionPositionBlockEnabled,
+        defaults.positionHaltControls.sameDirectionPositionBlockEnabled,
+      ),
+      oppositeSignalFlipBlockEnabled: booleanValue(
+        positionHaltControls.oppositeSignalFlipBlockEnabled ??
+          root.oppositeSignalFlipBlockEnabled,
+        defaults.positionHaltControls.oppositeSignalFlipBlockEnabled,
+      ),
+      positionMarkFeedHaltEnabled: booleanValue(
+        positionHaltControls.positionMarkFeedHaltEnabled ??
+          root.positionMarkFeedHaltEnabled,
+        defaults.positionHaltControls.positionMarkFeedHaltEnabled,
+      ),
+    },
+    infrastructureHaltControls: {
+      gatewayReadinessBlockEnabled: booleanValue(
+        infrastructureHaltControls.gatewayReadinessBlockEnabled ??
+          root.gatewayReadinessBlockEnabled,
+        defaults.infrastructureHaltControls.gatewayReadinessBlockEnabled,
+      ),
+      resourcePressureScanBlockEnabled: booleanValue(
+        infrastructureHaltControls.resourcePressureScanBlockEnabled ??
+          root.resourcePressureScanBlockEnabled,
+        defaults.infrastructureHaltControls.resourcePressureScanBlockEnabled,
+      ),
+      contractResolutionBackoffEnabled: booleanValue(
+        infrastructureHaltControls.contractResolutionBackoffEnabled ??
+          root.contractResolutionBackoffEnabled,
+        defaults.infrastructureHaltControls.contractResolutionBackoffEnabled,
       ),
     },
   };

@@ -216,6 +216,12 @@ function toDate(value: unknown): Date {
   return value instanceof Date ? value : new Date(value as string);
 }
 
+function toNullableDate(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = toDate(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function hydrateOptionContract<
   T extends { expirationDate: unknown } | null | undefined,
 >(contract: T): T {
@@ -228,7 +234,17 @@ function hydrateAccount(raw: BrokerAccountSnapshot): BrokerAccountSnapshot {
 }
 
 function hydratePosition(raw: BrokerPositionSnapshot): BrokerPositionSnapshot {
-  return { ...raw, optionContract: hydrateOptionContract(raw.optionContract) };
+  return {
+    ...raw,
+    optionContract: hydrateOptionContract(raw.optionContract),
+    openedAt: toNullableDate(raw.openedAt),
+    quote: raw.quote
+      ? {
+          ...raw.quote,
+          updatedAt: toNullableDate(raw.quote.updatedAt),
+        }
+      : raw.quote,
+  };
 }
 
 function hydrateOrder(raw: BrokerOrderSnapshot): BrokerOrderSnapshot {

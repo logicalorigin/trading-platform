@@ -1,4 +1,11 @@
 export const IBKR_BRIDGE_SESSION_KEYS = {
+  activationId: "pyrus.ibkrBridgeActivationId",
+  launchUrl: "pyrus.ibkrBridgeLaunchUrl",
+  launchInFlightUntil: "pyrus.ibkrBridgeLaunchInFlightUntil",
+  managementToken: "pyrus.ibkrBridgeManagementToken",
+};
+
+export const LEGACY_IBKR_BRIDGE_SESSION_KEYS = {
   activationId: "rayalgo.ibkrBridgeActivationId",
   launchUrl: "rayalgo.ibkrBridgeLaunchUrl",
   launchInFlightUntil: "rayalgo.ibkrBridgeLaunchInFlightUntil",
@@ -14,6 +21,15 @@ export const openIbkrProtocolLauncher = () => {
 
 export const closeIbkrProtocolLauncher = (launcher) => {
   void launcher;
+};
+
+const getIbkrBridgeSessionStorageKeys = (key) => {
+  const entries = Object.keys(IBKR_BRIDGE_SESSION_KEYS).map((name) => [
+    IBKR_BRIDGE_SESSION_KEYS[name],
+    LEGACY_IBKR_BRIDGE_SESSION_KEYS[name],
+  ]);
+  const match = entries.find(([primary, legacy]) => key === primary || key === legacy);
+  return match || [key, null];
 };
 
 export const isMobileIbkrLaunchBrowser = () => {
@@ -137,15 +153,27 @@ export const readIbkrBridgeSessionValue = (key) => {
     return null;
   }
 
+  const [primaryKey, legacyKey] = getIbkrBridgeSessionStorageKeys(key);
+  const readFrom = (storage, storageKey) => {
+    if (!storage || !storageKey) return null;
+    return storage.getItem(storageKey) || null;
+  };
+
   try {
     return (
-      window.sessionStorage?.getItem(key) ||
-      window.localStorage?.getItem(key) ||
+      readFrom(window.sessionStorage, primaryKey) ||
+      readFrom(window.sessionStorage, legacyKey) ||
+      readFrom(window.localStorage, primaryKey) ||
+      readFrom(window.localStorage, legacyKey) ||
       null
     );
   } catch {
     try {
-      return window.localStorage?.getItem(key) || null;
+      return (
+        readFrom(window.localStorage, primaryKey) ||
+        readFrom(window.localStorage, legacyKey) ||
+        null
+      );
     } catch {
       return null;
     }
@@ -157,13 +185,16 @@ export const writeIbkrBridgeSessionValue = (key, value) => {
     return;
   }
 
+  const [primaryKey, legacyKey] = getIbkrBridgeSessionStorageKeys(key);
   try {
-    window.sessionStorage?.setItem(key, value);
+    window.sessionStorage?.setItem(primaryKey, value);
+    if (legacyKey) window.sessionStorage?.removeItem(legacyKey);
   } catch {
     // Session storage only keeps local bridge controls available in this tab.
   }
   try {
-    window.localStorage?.setItem(key, value);
+    window.localStorage?.setItem(primaryKey, value);
+    if (legacyKey) window.localStorage?.removeItem(legacyKey);
   } catch {
     // Local storage lets bridge controls survive a reload; ignore write failures.
   }
@@ -174,13 +205,16 @@ export const removeIbkrBridgeSessionValue = (key) => {
     return;
   }
 
+  const [primaryKey, legacyKey] = getIbkrBridgeSessionStorageKeys(key);
   try {
-    window.sessionStorage?.removeItem(key);
+    window.sessionStorage?.removeItem(primaryKey);
+    if (legacyKey) window.sessionStorage?.removeItem(legacyKey);
   } catch {
     // Session storage only keeps local bridge controls available in this tab.
   }
   try {
-    window.localStorage?.removeItem(key);
+    window.localStorage?.removeItem(primaryKey);
+    if (legacyKey) window.localStorage?.removeItem(legacyKey);
   } catch {
     // Ignore local storage cleanup failures.
   }
@@ -192,14 +226,20 @@ export const clearIbkrBridgeSessionValues = () => {
   }
 
   try {
-    Object.values(IBKR_BRIDGE_SESSION_KEYS).forEach((key) => {
+    [
+      ...Object.values(IBKR_BRIDGE_SESSION_KEYS),
+      ...Object.values(LEGACY_IBKR_BRIDGE_SESSION_KEYS),
+    ].forEach((key) => {
       window.sessionStorage?.removeItem(key);
     });
   } catch {
     // Ignore storage cleanup failures.
   }
   try {
-    Object.values(IBKR_BRIDGE_SESSION_KEYS).forEach((key) => {
+    [
+      ...Object.values(IBKR_BRIDGE_SESSION_KEYS),
+      ...Object.values(LEGACY_IBKR_BRIDGE_SESSION_KEYS),
+    ].forEach((key) => {
       window.localStorage?.removeItem(key);
     });
   } catch {

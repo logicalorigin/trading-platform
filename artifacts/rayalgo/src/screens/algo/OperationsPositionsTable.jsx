@@ -123,6 +123,7 @@ export const OperationsPositionsTable = ({
         isPhone={algoIsPhone}
         liveOptionQuotesEnabled={!accountQueryHasRows}
         streamLiveOptionQuotes={!accountQueryHasRows}
+        surfaceId="algo"
       />
     </div>
   );

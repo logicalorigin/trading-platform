@@ -5,10 +5,10 @@ import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-sans/600-italic.css";
 import "@fontsource/ibm-plex-sans/700.css";
-import { installRayalgoRuntimeDiagnostics } from "./app/runtimeDiagnostics";
+import { installPyrusRuntimeDiagnostics } from "./app/runtimeDiagnostics";
 import App from "./App";
 import "./index.css";
 
-installRayalgoRuntimeDiagnostics();
+installPyrusRuntimeDiagnostics();
 
 createRoot(document.getElementById("root")!).render(<App />);

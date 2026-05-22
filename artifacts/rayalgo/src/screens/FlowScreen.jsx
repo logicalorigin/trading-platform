@@ -46,7 +46,6 @@ import {
   providerSummaryHasTransientFlowState,
   providerSummaryHasVisibleFlowDegradation,
 } from "../features/platform/flowSourceState.js";
-import { useLiveMarketFlow } from "../features/platform/useLiveMarketFlow";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
 import { FlowDistributionScannerPanel } from "../features/flow/FlowDistributionScannerPanel.jsx";
 import {
@@ -92,7 +91,9 @@ import {
 } from "../lib/formatters";
 import {
   FONT_WEIGHTS,
+  LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
   MISSING_VALUE,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
   RADII,
   T,
   dim,
@@ -950,6 +951,12 @@ const buildFlowScannerDistributionResponse = ({
   };
 };
 
+const PREMIUM_BUCKET_BAR_CONFIG = [
+  { key: "small", label: "S" },
+  { key: "medium", label: "M" },
+  { key: "large", label: "L" },
+];
+
 const getPremiumNeutralPremium = (widget) => {
   if (isFiniteNumber(widget?.neutralPremium)) return widget.neutralPremium;
   return Object.values(widget?.buckets || {}).reduce(
@@ -1202,32 +1209,177 @@ const PremiumDistributionDonut = ({
   );
 };
 
+const clampPremiumRatio = (value, maxValue) => {
+  if (!isFiniteNumber(value) || !isFiniteNumber(maxValue) || maxValue <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, value / maxValue));
+};
+
+const NetIntensityMeter = ({ netKilo, maxAbsNetKilo }) => {
+  const width = clampPremiumRatio(Math.abs(netKilo), maxAbsNetKilo) * 50;
+  const positive = netKilo >= 0;
+  return (
+    <div
+      data-testid="flow-premium-net-intensity-meter"
+      aria-label={`Net premium intensity ${formatSignedPremium(netKilo * 1_000)}`}
+      style={{
+        position: "relative",
+        height: dim(2),
+        width: "100%",
+        background: `${T.borderLight}33`,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: positive ? "50%" : `${50 - width}%`,
+          width: `${width}%`,
+          background: positive ? T.green : T.red,
+        }}
+      />
+    </div>
+  );
+};
+
+const BucketDivergingBar = ({
+  label,
+  bucket,
+  buyKilo,
+  sellKilo,
+  maxKilo,
+  count = 0,
+}) => {
+  const buyWidth = clampPremiumRatio(buyKilo, maxKilo) * 50;
+  const sellWidth = clampPremiumRatio(sellKilo, maxKilo) * 50;
+  const countLabel = count > 0 ? ` · ${count}` : "";
+  return (
+    <div
+      data-testid="flow-premium-bucket-strip"
+      data-bucket={bucket}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "46px 14px minmax(0, 1fr) 46px",
+        alignItems: "center",
+        columnGap: sp(4),
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          color: T.red,
+          fontFamily: T.mono,
+          fontSize: fs(8),
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatPremiumCompactFromKiloUsd(sellKilo)}
+      </span>
+      <span
+        style={{
+          color: T.textMuted,
+          fontFamily: T.sans,
+          fontSize: fs(8),
+          fontWeight: FONT_WEIGHTS.regular,
+          textAlign: "center",
+        }}
+      >
+        {label}
+      </span>
+      <div
+        aria-hidden="true"
+        style={{
+          position: "relative",
+          height: dim(6),
+          minWidth: 0,
+          background: `${T.borderLight}24`,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: `${50 - sellWidth}%`,
+            width: `${sellWidth}%`,
+            background: T.red,
+            opacity: 0.9,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: "50%",
+            width: `${buyWidth}%`,
+            background: T.green,
+            opacity: 0.9,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: "50%",
+            width: 1,
+            background: T.textMuted,
+            opacity: 0.72,
+          }}
+        />
+      </div>
+      <span
+        style={{
+          color: T.green,
+          fontFamily: T.mono,
+          fontSize: fs(8),
+          textAlign: "left",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatPremiumCompactFromKiloUsd(buyKilo)}
+        <span style={{ color: T.textDim }}>{countLabel}</span>
+      </span>
+    </div>
+  );
+};
+
 const PremiumDistributionWidget = ({
   widget,
   loading = false,
   onSelectTicker,
   selected = false,
+  visibleBuckets = new Set(["small", "medium", "large"]),
+  maxAbsNetKilo = 0,
 }) => {
   if (loading || !widget) {
     return (
-      <Card
+      <div
         data-testid="flow-premium-distribution-widget"
         className="ra-panel-enter"
         style={{
-          padding: sp("6px"),
+          padding: sp("4px 6px"),
           display: "flex",
           flexDirection: "column",
-          gap: sp(2),
+          gap: sp(3),
           minWidth: 0,
-          minHeight: dim(72),
-          borderRadius: dim(RADII.md),
-          background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
           width: "100%",
+          borderBottom: `1px solid ${T.borderLight}55`,
         }}
       >
-        <FlowLoadingBlock width="86%" height={dim(54)} />
+        <FlowLoadingBlock width="74%" height={dim(10)} />
+        <FlowLoadingBlock width="100%" height={dim(2)} />
+        <FlowLoadingBlock width="96%" height={dim(6)} />
+        <FlowLoadingBlock width="90%" height={dim(6)} />
         <FlowLoadingBlock width="56%" height={dim(8)} />
-      </Card>
+      </div>
     );
   }
 
@@ -1237,66 +1389,177 @@ const PremiumDistributionWidget = ({
       : widget.netPremium < 0
         ? T.red
         : T.textDim;
+  const netKilo = premiumToKiloUsd(widget.netPremium);
   const rows = buildPremiumDistributionRows(widget);
   const neutralKiloUsd = premiumToKiloUsd(getPremiumNeutralPremium(widget));
+  const bucketRows = PREMIUM_BUCKET_BAR_CONFIG.filter(({ key }) =>
+    visibleBuckets.has(key),
+  ).map(({ key, label }) => {
+    const bucket = widget.buckets?.[key] || {};
+    return {
+      key,
+      label,
+      buyKilo: premiumToKiloUsd(getPremiumInflow(bucket)),
+      sellKilo: premiumToKiloUsd(getPremiumOutflow(bucket)),
+      count: Number.isFinite(Number(bucket.count)) ? Number(bucket.count) : 0,
+    };
+  });
+  const maxBucketKilo = Math.max(
+    1,
+    ...bucketRows.flatMap((row) => [row.buyKilo, row.sellKilo]),
+  );
+  const totalTrades =
+    Number.isFinite(Number(widget.tradeCount)) && Number(widget.tradeCount) > 0
+      ? Number(widget.tradeCount)
+      : Object.values(widget.buckets || {}).reduce(
+          (sum, bucket) => sum + (Number.isFinite(Number(bucket?.count)) ? Number(bucket.count) : 0),
+          0,
+        );
   const lowClassificationConfidence = hasLowPremiumClassificationConfidence(widget);
   const widgetHydrationWarning =
     lowClassificationConfidence && widget.hydrationWarning
       ? widget.hydrationWarning
       : null;
-  const accentBorder = selected ? `1px solid ${T.accent}` : `1px solid transparent`;
+  const handleKeyDown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    onSelectTicker?.(widget.symbol);
+  };
 
   return (
-    <Card
+    <div
       data-testid="flow-premium-distribution-widget"
       data-selected={selected ? "true" : "false"}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`Filter Flow tape to ${widget.symbol} premium distribution`}
       className="ra-panel-enter"
+      onClick={() => onSelectTicker?.(widget.symbol)}
+      onKeyDown={handleKeyDown}
       style={{
         ...motionVars({ accent: netColor }),
-        padding: sp("6px"),
+        padding: sp("4px 6px"),
         display: "flex",
         flexDirection: "column",
         gap: sp(1),
         minWidth: 0,
         width: "100%",
-        minHeight: dim(widgetHydrationWarning ? 80 : 68),
-        borderRadius: dim(RADII.md),
-        background: selected
-          ? `linear-gradient(180deg, ${T.bg3}, ${T.bg2})`
-          : `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
-        boxShadow: selected
-          ? `0 8px 22px ${T.accent}33`
-          : `0 8px 20px ${T.bg0}32`,
-        outline: accentBorder,
-        outlineOffset: selected ? "-1px" : 0,
+        minHeight: dim(widgetHydrationWarning ? 96 : 82),
+        border: "none",
+        borderBottom: `1px solid ${T.borderLight}55`,
+        background: selected ? `${T.accent}10` : "transparent",
+        boxShadow: selected ? `inset 3px 0 0 ${T.accent}` : "none",
+        cursor: "pointer",
       }}
     >
-      <button
-        type="button"
-        aria-label={`Filter Flow tape to ${widget.symbol} premium distribution`}
-        aria-pressed={selected}
-        onClick={() => onSelectTicker?.(widget.symbol)}
+      <div
         style={{
-          display: "grid",
-          placeItems: "center",
-          padding: 0,
-          border: "none",
-          background: "transparent",
-          color: "inherit",
-          cursor: "pointer",
+          display: "flex",
+          alignItems: "baseline",
+          gap: sp(4),
           minWidth: 0,
-          minHeight: dim(76),
-          textAlign: "left",
         }}
       >
-        <PremiumDistributionDonut
-          rows={rows}
-          neutralKiloUsd={neutralKiloUsd}
-          symbol={widget.symbol}
-          netPremium={widget.netPremium}
-          netColor={netColor}
-        />
-      </button>
+        <span
+          style={{
+            color: T.textDim,
+            fontFamily: T.mono,
+            fontSize: fs(7),
+            minWidth: dim(20),
+          }}
+        >
+          #{widget.rank || "—"}
+        </span>
+        <span
+          style={{
+            color: T.text,
+            fontFamily: T.display,
+            fontSize: fs(11),
+            fontWeight: FONT_WEIGHTS.regular,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {widget.symbol}
+        </span>
+        <span
+          style={{
+            color: netColor,
+            fontFamily: T.mono,
+            fontSize: fs(11),
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatSignedPremium(widget.netPremium)}
+        </span>
+        <span
+          style={{
+            color: T.textMuted,
+            fontFamily: T.sans,
+            fontSize: fs(7),
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          · {totalTrades} trd · {formatCoveragePercent(widget.classificationCoverage)}
+        </span>
+      </div>
+      <NetIntensityMeter
+        netKilo={netKilo}
+        maxAbsNetKilo={maxAbsNetKilo}
+      />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(64px, 76px) minmax(0, 1fr)",
+          alignItems: "center",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        <div
+          data-testid="flow-premium-distribution-donut-frame"
+          style={{
+            minWidth: 0,
+            height: dim(50),
+          }}
+        >
+          <PremiumDistributionDonut
+            rows={rows}
+            neutralKiloUsd={neutralKiloUsd}
+            symbol={widget.symbol}
+            netPremium={widget.netPremium}
+            netColor={netColor}
+          />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(1),
+            minWidth: 0,
+          }}
+        >
+          {bucketRows.map((row) => (
+            <BucketDivergingBar
+              key={row.key}
+              bucket={row.key}
+              label={row.label}
+              buyKilo={row.buyKilo}
+              sellKilo={row.sellKilo}
+              maxKilo={maxBucketKilo}
+              count={row.count}
+            />
+          ))}
+        </div>
+      </div>
       {widgetHydrationWarning ? (
         <div
           title={widgetHydrationWarning}
@@ -1314,7 +1577,7 @@ const PremiumDistributionWidget = ({
           {formatCoveragePercent(widget.classificationCoverage)} classified
         </div>
       ) : null}
-    </Card>
+    </div>
   );
 };
 
@@ -1405,12 +1668,21 @@ const FlowOverviewPanel = ({
         setRowsPerPage(Number(state.flowRowsPerPage));
       }
     };
-    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
-    return () =>
+    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, handleWorkspaceSettings);
+    window.addEventListener(
+      LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+      handleWorkspaceSettings,
+    );
+    return () => {
       window.removeEventListener(
-        "rayalgo:workspace-settings-updated",
+        PYRUS_WORKSPACE_SETTINGS_EVENT,
         handleWorkspaceSettings,
       );
+      window.removeEventListener(
+        LEGACY_RAYALGO_WORKSPACE_SETTINGS_EVENT,
+        handleWorkspaceSettings,
+      );
+    };
   }, []);
 
   useEffect(() => {
@@ -1584,17 +1856,7 @@ const FlowOverviewPanel = ({
     BROAD_MARKET_FLOW_STORE_KEY,
     { subscribe: isVisible && !livePaused },
   );
-  const screenFlowSnapshot = useLiveMarketFlow(watchlistSymbols, {
-    enabled: Boolean(isVisible && !livePaused && flowScannerEnabled),
-    scannerConfig: flowScannerControl.config,
-    blocking: false,
-    workloadLabel: "Flow screen",
-  });
-  const liveFlowSnapshot =
-    screenFlowSnapshot.hasLiveFlow ||
-    (!broadFlowSnapshot.hasLiveFlow && screenFlowSnapshot.flowStatus !== "loading")
-      ? screenFlowSnapshot
-      : broadFlowSnapshot;
+  const liveFlowSnapshot = broadFlowSnapshot;
   const flowScannerTone = flowScannerEnabled
     ? flowScannerOwnerActive
       ? T.green
@@ -1655,6 +1917,14 @@ const FlowOverviewPanel = ({
     coverage.selectedSymbols || totalCoverageSymbols;
   const scannedCoverageSymbols =
     coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
+  const flowScannerCoverageActive = Boolean(
+    flowScannerEnabled &&
+      (coverage.isFetching ||
+        coverage.isRotating ||
+        (Array.isArray(coverage.currentBatch) && coverage.currentBatch.length > 0) ||
+        scannedCoverageSymbols > 0 ||
+        totalCoverageSymbols > 0),
+  );
   const coverageModeLabel =
     flowScannerModeUsesMarketUniverse(coverage.mode)
       ? "market-wide"
@@ -1973,41 +2243,69 @@ const FlowOverviewPanel = ({
     }
   }, [isNarrowFlowLayout]);
 
-  const totalCallPrem = filtered
-    .filter((event) => event.cp === "C")
-    .reduce((sum, event) => sum + event.premium, 0);
-  const totalPutPrem = filtered
-    .filter((event) => event.cp === "P")
-    .reduce((sum, event) => sum + event.premium, 0);
+  const flowTapeSummary = useMemo(() => {
+    const summary = {
+      totalCallPrem: 0,
+      totalPutPrem: 0,
+      goldenCount: 0,
+      blockCount: 0,
+      sweepCount: 0,
+      zeroDteCount: 0,
+      zeroDtePrem: 0,
+      xlCallBuyPrem: 0,
+      xlCallSellPrem: 0,
+      xlPutBuyPrem: 0,
+      xlPutSellPrem: 0,
+    };
+
+    for (const event of filtered) {
+      if (event.cp === "C") {
+        summary.totalCallPrem += event.premium;
+      } else if (event.cp === "P") {
+        summary.totalPutPrem += event.premium;
+      }
+      if (event.golden) summary.goldenCount += 1;
+      if (event.type === "BLOCK") summary.blockCount += 1;
+      if (event.type === "SWEEP") summary.sweepCount += 1;
+      if (event.dte <= 1) {
+        summary.zeroDteCount += 1;
+        summary.zeroDtePrem += event.premium;
+      }
+      if (event.premium >= 250000) {
+        if (event.cp === "C" && event.side === "BUY") {
+          summary.xlCallBuyPrem += event.premium;
+        } else if (event.cp === "C" && event.side === "SELL") {
+          summary.xlCallSellPrem += event.premium;
+        } else if (event.cp === "P" && event.side === "BUY") {
+          summary.xlPutBuyPrem += event.premium;
+        } else if (event.cp === "P" && event.side === "SELL") {
+          summary.xlPutSellPrem += event.premium;
+        }
+      }
+    }
+
+    return summary;
+  }, [filtered]);
+  const {
+    totalCallPrem,
+    totalPutPrem,
+    goldenCount,
+    blockCount,
+    sweepCount,
+    zeroDteCount,
+    zeroDtePrem,
+    xlCallBuyPrem,
+    xlCallSellPrem,
+    xlPutBuyPrem,
+    xlPutSellPrem,
+  } = flowTapeSummary;
   const netPrem = totalCallPrem - totalPutPrem;
-  const goldenCount = filtered.filter((event) => event.golden).length;
-  const blockCount = filtered.filter((event) => event.type === "BLOCK").length;
-  const sweepCount = filtered.filter((event) => event.type === "SWEEP").length;
-  const zeroDteCount = filtered.filter((event) => event.dte <= 1).length;
-  const zeroDtePrem = filtered
-    .filter((event) => event.dte <= 1)
-    .reduce((sum, event) => sum + event.premium, 0);
   const cpRatio = totalCallPrem ? totalPutPrem / totalCallPrem : 0;
   const mostActive =
-    [...tickerFlow].sort(
-      (left, right) => right.calls + right.puts - (left.calls + left.puts),
-    )[0] || { sym: MISSING_VALUE, calls: 0, puts: 0 };
+    tickerFlow[0] || { sym: MISSING_VALUE, calls: 0, puts: 0 };
 
-  const xlTrades = filtered.filter((event) => event.premium >= 250000);
-  const xlCallPrem =
-    xlTrades
-      .filter((event) => event.cp === "C" && event.side === "BUY")
-      .reduce((sum, event) => sum + event.premium, 0) -
-    xlTrades
-      .filter((event) => event.cp === "C" && event.side === "SELL")
-      .reduce((sum, event) => sum + event.premium, 0);
-  const xlPutPrem =
-    xlTrades
-      .filter((event) => event.cp === "P" && event.side === "BUY")
-      .reduce((sum, event) => sum + event.premium, 0) -
-    xlTrades
-      .filter((event) => event.cp === "P" && event.side === "SELL")
-      .reduce((sum, event) => sum + event.premium, 0);
+  const xlCallPrem = xlCallBuyPrem - xlCallSellPrem;
+  const xlPutPrem = xlPutBuyPrem - xlPutSellPrem;
   const xlNet = xlCallPrem - xlPutPrem;
   const xlTotalAbs = Math.abs(xlCallPrem) + Math.abs(xlPutPrem) || 1;
   const compassScore = Math.round((xlNet / xlTotalAbs) * 100);
@@ -2040,6 +2338,18 @@ const FlowOverviewPanel = ({
   const flowClockAverage = Math.round(
     filtered.length / Math.max(1, flowClock.length),
   );
+  const flowClockMaxCount = useMemo(
+    () => Math.max(1, ...flowClock.map((bucket) => bucket.count)),
+    [flowClock],
+  );
+  const dteBucketMaxTotal = useMemo(
+    () =>
+      Math.max(
+        1,
+        ...dteBuckets.map((bucket) => bucket.calls + bucket.puts),
+      ),
+    [dteBuckets],
+  );
 
   const ibkrLoginRequired =
     Boolean(session?.configured?.ibkr) &&
@@ -2071,7 +2381,9 @@ const FlowOverviewPanel = ({
           ? "Degraded"
           : flowQuality?.label === "Stale"
             ? "Stale"
-            : "No Flow";
+            : flowScannerCoverageActive
+              ? "Scanning"
+              : "No Flow";
   const feedStateColor = livePaused
     ? T.amber
     : flowEventsFilteredOut
@@ -2082,6 +2394,8 @@ const FlowOverviewPanel = ({
         ? T.accent
         : flowQuality?.label === "Degraded"
           ? T.red
+          : flowScannerCoverageActive
+            ? T.accent
           : flowQuality?.color || T.textDim;
   const emptyFlowDetail =
     flowStatus === "loading"
@@ -2094,6 +2408,8 @@ const FlowOverviewPanel = ({
               ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
               : providerSummaryHasTransientFlowState(providerSummary)
                 ? "The scanner is rotating through the broad universe; the latest transient bridge response did not produce a completed flow snapshot."
+                : flowScannerCoverageActive
+                  ? "The scanner is active, but the latest hydrated batch did not contain prints that match the current scanner settings."
                 : "IBKR returned no active snapshot flow for the tracked symbols.";
 
   const activeTicker = normalizeTickerSymbol(
@@ -2111,22 +2427,30 @@ const FlowOverviewPanel = ({
       ),
     [activeTicker, filtered],
   );
-  const selectedCallPremium = selectedTickerEvents.reduce(
-    (sum, event) => sum + (event.cp === "C" ? event.premium : 0),
-    0,
-  );
-  const selectedPutPremium = selectedTickerEvents.reduce(
-    (sum, event) => sum + (event.cp === "P" ? event.premium : 0),
-    0,
-  );
+  const selectedTickerStats = useMemo(() => {
+    const stats = {
+      selectedCallPremium: 0,
+      selectedPutPremium: 0,
+      totalPremium: 0,
+      unusualCount: 0,
+      zeroDteCount: 0,
+      latestEvent: selectedTickerEvents[0] || null,
+    };
+    for (const event of selectedTickerEvents) {
+      if (event.cp === "C") stats.selectedCallPremium += event.premium;
+      if (event.cp === "P") stats.selectedPutPremium += event.premium;
+      stats.totalPremium += event.premium;
+      if (event.isUnusual) stats.unusualCount += 1;
+      if (event.dte <= 1) stats.zeroDteCount += 1;
+    }
+    return stats;
+  }, [selectedTickerEvents]);
+  const { selectedCallPremium, selectedPutPremium } = selectedTickerStats;
   const selectedTickerSummary = {
-    totalPremium: selectedTickerEvents.reduce(
-      (sum, event) => sum + event.premium,
-      0,
-    ),
-    unusualCount: selectedTickerEvents.filter((event) => event.isUnusual).length,
-    zeroDteCount: selectedTickerEvents.filter((event) => event.dte <= 1).length,
-    latestEvent: selectedTickerEvents[0] || null,
+    totalPremium: selectedTickerStats.totalPremium,
+    unusualCount: selectedTickerStats.unusualCount,
+    zeroDteCount: selectedTickerStats.zeroDteCount,
+    latestEvent: selectedTickerStats.latestEvent,
   };
 
   const executionScope = selectedTickerEvents.length
@@ -3409,6 +3733,7 @@ const FlowOverviewPanel = ({
         <button
           type="button"
           onClick={handleToggleLivePaused}
+          aria-label={livePaused ? "Resume" : "Pause"}
           style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
         >
           {livePaused ? <Play size={13} /> : null}
@@ -4043,12 +4368,13 @@ const FlowOverviewPanel = ({
 	        style={{
 	          flex: 1,
 	          overflowY: "auto",
-	          padding: sp(isMobileFlowLayout ? "7px 8px" : "16px 20px"),
+	          padding: sp(isMobileFlowLayout ? "6px 8px 18px" : "16px 20px"),
 	          display: "grid",
 	          gridAutoRows: "max-content",
 	          alignContent: "start",
 	          gap: sp(isMobileFlowLayout ? 5 : 10),
 	          minWidth: 0,
+            WebkitOverflowScrolling: isMobileFlowLayout ? "touch" : undefined,
 	        }}
       >
         <Card
@@ -4183,6 +4509,7 @@ const FlowOverviewPanel = ({
             <button
               type="button"
               onClick={handleToggleLivePaused}
+              aria-label={livePaused ? "Resume" : "Pause"}
               style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
             >
 	              {livePaused ? <Play size={14} /> : <Pause size={14} />}
@@ -4198,16 +4525,25 @@ const FlowOverviewPanel = ({
           coverageMode={premiumDistributionCoverageMode}
           onCoverageModeChange={setPremiumDistributionCoverageMode}
           timeframeOptions={FLOW_PREMIUM_TIMEFRAME_OPTIONS}
-          widgetCount={FLOW_PREMIUM_WIDGET_COUNT}
+          widgetCount={isMobileFlowLayout ? 3 : FLOW_PREMIUM_WIDGET_COUNT}
           selectedSymbol={flowTapeFilters.symbol}
           onWidgetSelect={(symbol) => {
             toggleFlowTapeFilterSymbol(symbol);
           }}
-          renderWidget={({ widget, loading, selected, onSelect }) => (
+          renderWidget={({
+            widget,
+            loading,
+            selected,
+            visibleBuckets,
+            maxAbsNetKilo,
+            onSelect,
+          }) => (
             <PremiumDistributionWidget
               widget={widget}
               loading={loading}
               selected={selected}
+              visibleBuckets={visibleBuckets}
+              maxAbsNetKilo={maxAbsNetKilo}
               onSelectTicker={() => onSelect?.()}
             />
           )}
@@ -4267,6 +4603,7 @@ const FlowOverviewPanel = ({
             {selectedEvt ? (
               <ContractDetailInline
                 evt={selectedEvt}
+                flowEvents={flowEvents}
                 onBack={() => setSelectedEvt(null)}
                 onJumpToTrade={(event) => {
                   setSelectedEvt(null);
@@ -5644,8 +5981,7 @@ const FlowOverviewPanel = ({
               }}
             >
               {flowClock.map((bucket, index) => {
-                const maxCount = Math.max(...flowClock.map((item) => item.count), 1);
-                const heightPct = (bucket.count / maxCount) * 100;
+                const heightPct = (bucket.count / flowClockMaxCount) * 100;
                 const color =
                   bucket.prem > 1500000
                     ? T.amber
@@ -5937,11 +6273,7 @@ const FlowOverviewPanel = ({
               {dteBuckets.map((bucket) => {
                 const total = bucket.calls + bucket.puts;
                 const callPct = total ? (bucket.calls / total) * 100 : 50;
-                const maxTotal = Math.max(
-                  1,
-                  ...dteBuckets.map((item) => item.calls + item.puts),
-                );
-                const barWidth = (total / maxTotal) * 100;
+                const barWidth = (total / dteBucketMaxTotal) * 100;
                 return (
                   <div key={bucket.bucket} style={{ marginBottom: 2 }}>
                     <div
