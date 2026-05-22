@@ -1,11 +1,12 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-22 05:47 UTC`
-- Current request: fix Vite React/Babel duplicate `preloadMarketChartRuntime` declaration in `MultiChartGrid.jsx`, then clean up the dirty worktree and commit.
+- Last updated: `2026-05-21 23:51 MT` (`2026-05-22 05:51 UTC`)
+- Current request: pause here for handoff after resolving the Vite/Babel duplicate `preloadMarketChartRuntime` declaration and cleaning/committing the recovered worktree.
 - Patch completed: aliased the imported `MarketChartCell` runtime preloader in `MultiChartGrid.jsx` so the exported wrapper no longer redeclares the same identifier. Updated stale `mini`/Market chart source guards, GEX color expectations, and `.env.example` entries surfaced by the recovered workstreams. Removed only the zero-byte quote-named accidental files under `artifacts/api-server/`.
+- Commit completed: recovered work was committed on `main` as `2668ace Integrate recovered Pyrus workstreams`; this handoff note is being committed separately so the next session starts with no dirty files. The branch was clean and `main...origin/main [ahead 1]` immediately before this handoff-only update.
 - Validation passed: focused chart/GEX tests; `pnpm --filter @workspace/pyrus run test:unit` (1045/1045); `pnpm --filter @workspace/api-server run test:unit` (669/669); script tests for signal-options exit sweep and shadow-options management review; `pnpm run audit:guards`; `pnpm run typecheck`; `pnpm --filter @workspace/pyrus run build`; `git diff --check`.
-- Next step: stage all recovered work, commit, then verify the branch is clean/ahead of `origin/main`.
-- Guardrail: user explicitly asked to clean up and commit the recovered dirty worktree; avoid deleting unknown generated reports or handoffs beyond inspected accidental zero-byte files.
+- Next step: push the committed branch or open the merge/PR path from `main`; if resuming locally, start with `git status --short --branch` and expect a clean tree ahead of `origin/main`.
+- Guardrail: Replit startup-sensitive files were touched in the recovered work; `pnpm run audit:guards` and `pnpm run typecheck` both reran `audit:replit-startup` successfully. Do not start a duplicate app supervisor from shell; use Replit's default Run Replit App for full bring-up.
 
 - Last updated: `2026-05-22 05:40 UTC`
 - Current request: prepare the corrected dropped-session recovery for handoff.
