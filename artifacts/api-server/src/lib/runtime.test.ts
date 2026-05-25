@@ -43,7 +43,7 @@ function withRuntimeEnv<T>(
   }
 
   const isolatedOverrideDir = mkdtempSync(
-    join(tmpdir(), "rayalgo-runtime-env-test-"),
+    join(tmpdir(), "pyrus-runtime-env-test-"),
   );
   const isolatedOverrideFile = join(isolatedOverrideDir, "runtime.json");
   process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = isolatedOverrideFile;
@@ -235,7 +235,7 @@ test("IBKR bridge runtime override configures IBKR without environment", () => {
 });
 
 test("IBKR bridge runtime override persists across API process restarts", () => {
-  const dir = mkdtempSync(join(tmpdir(), "rayalgo-runtime-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "pyrus-runtime-test-"));
   const overrideFile = join(dir, "ibkr-bridge-runtime.json");
 
   withRuntimeEnv(

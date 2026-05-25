@@ -261,6 +261,28 @@ test("option quote shared cache preserves prices when a partial zero quote is ne
   );
 });
 
+test("option quote shared cache accepts zero bid when the same quote has a usable ask", () => {
+  assert.ok(
+    __cacheBridgeOptionQuoteForTests(
+      optionQuote("1001", 1.23, "2026-04-28T14:30:00.000Z"),
+    ),
+  );
+
+  const zeroBidQuote = {
+    ...optionQuote("1001", 1.21, "2026-04-28T14:31:00.000Z"),
+    bid: 0,
+    ask: 1.24,
+    change: -0.02,
+    changePercent: -1.63,
+  };
+  const cached = __cacheBridgeOptionQuoteForTests(zeroBidQuote);
+
+  assert.equal(cached?.price, 1.21);
+  assert.equal(cached?.bid, 0);
+  assert.equal(cached?.ask, 1.24);
+  assert.equal(cached?.changePercent, -1.63);
+});
+
 test("option quote snapshots expose custom admission results for background callers", async () => {
   const bridgeRequests: string[][] = [];
   __setBridgeOptionQuoteClientForTests({
@@ -607,7 +629,7 @@ test("signal options automation quote snapshots are not blocked by option-chain 
   assert.equal(payload.debug?.rejectedCount, 0);
 });
 
-test("flow scanner option quote snapshots bypass quote governor backoff", async () => {
+test("flow scanner option quote snapshots honor quote governor backoff", async () => {
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"] = "1";
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"] = "1000";
 
@@ -650,10 +672,13 @@ test("flow scanner option quote snapshots bypass quote governor backoff", async 
     ttlMs: 1_000,
   });
 
-  assert.deepEqual(bridgeRequests, [["4001", "4002"]]);
-  assert.equal(payload.quotes.length, 2);
-  assert.equal(payload.debug?.errorMessage, null);
-  assert.equal(payload.debug?.returnedCount, 2);
+  assert.deepEqual(bridgeRequests, []);
+  assert.equal(payload.quotes.length, 0);
+  assert.equal(
+    payload.debug?.errorMessage,
+    "IBKR bridge quotes work is backed off.",
+  );
+  assert.equal(payload.debug?.returnedCount, 0);
   assert.equal(payload.debug?.acceptedCount, 2);
   assert.equal(payload.debug?.rejectedCount, 0);
 });

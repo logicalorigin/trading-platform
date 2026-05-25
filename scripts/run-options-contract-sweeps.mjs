@@ -76,11 +76,11 @@ function readSignalOptionsDeployment() {
     where enabled = true
       and provider_account_id = 'shadow'
       and (
-        name = 'RayReplica Signal Options Shadow Paper'
+        name = 'Pyrus Signals Options Shadow Paper'
         or config->'parameters'->>'executionMode' = 'signal_options'
       )
     order by
-      case when name = 'RayReplica Signal Options Shadow Paper' then 0 else 1 end,
+      case when name = 'Pyrus Signals Options Shadow Paper' then 0 else 1 end,
       updated_at desc
     limit 1;
   `;
@@ -111,7 +111,7 @@ function readSignalOptionsDeployment() {
 function studyBody({ name, symbols, parameters }) {
   return {
     name,
-    strategyId: "ray_replica_signals",
+    strategyId: "pyrus_signals",
     strategyVersion: "v1",
     directionMode: "long_only",
     watchlistId: null,
@@ -154,7 +154,7 @@ async function main() {
   const symbols = deployment.symbolUniverse;
 
   const presetStudy = await createStudyAndSweep({
-    name: `RayReplica Options Preset YTD 5m ${FROM_DATE}..${TO_DATE}`,
+    name: `Pyrus Signals Options Preset YTD 5m ${FROM_DATE}..${TO_DATE}`,
     symbols,
     parameters: {
       executionMode: "options",
@@ -176,7 +176,7 @@ async function main() {
   });
 
   const signalOptionsStudy = await createStudyAndSweep({
-    name: `RayReplica Signal Options DTE Strike Grid YTD 5m ${FROM_DATE}..${TO_DATE}`,
+    name: `Pyrus Signals Options DTE Strike Grid YTD 5m ${FROM_DATE}..${TO_DATE}`,
     symbols,
     parameters: {
       executionMode: "signal_options",

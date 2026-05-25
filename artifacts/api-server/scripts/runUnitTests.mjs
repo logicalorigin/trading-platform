@@ -7,6 +7,7 @@ const unitTestFiles = [
   "../../lib/backtest-core/src/engine.test.ts",
   "../../lib/backtest-core/src/signal-options.test.ts",
   "src/lib/runtime.test.ts",
+  "src/lib/request-logging.test.ts",
   "src/providers/ibkr/bridge-client.test.ts",
   "src/providers/polygon/market-data.test.ts",
   "src/routes/platform-activation-origin.test.ts",

@@ -2,7 +2,7 @@
   "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/early-grid-selected-2026-05-21-early-stop-symbols",
   "deployment": {
     "id": "7e2e4e6f-749f-4e65-a011-87d3559a23b0",
-    "name": "RayReplica Signal Options Shadow Paper",
+    "name": "Pyrus Signals Shadow Paper",
     "mode": "paper",
     "symbolUniverse": [
       "NVDA",

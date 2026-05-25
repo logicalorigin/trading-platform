@@ -1,10 +1,10 @@
 # Signal Options Exit Policy Combined Ranking
 
-- Deployment: RayReplica Signal Options Shadow Paper (7e2e4e6f-749f-4e65-a011-87d3559a23b0)
+- Deployment: Pyrus Signals Shadow Paper (7e2e4e6f-749f-4e65-a011-87d3559a23b0)
 - Window: 2026-04-01 through 2026-05-15
 - Universe: 90 deployment symbols
 - Signal timeframe: 5m
-- RayReplica patch: `{"timeHorizon":8}`
+- PyrusSignals patch: `{"timeHorizon":8}`
 - Risk caps: `{"maxOpenSymbols":10,"maxPremiumPerEntry":1500}`
 - Premium-bucket variants: excluded
 - All runs used `commit:false`

@@ -176,19 +176,27 @@ export function buildPositionQuoteFromSnapshot(
         };
   }
 
-  const bid = positiveNumberOrNull(quote.bid);
-  const ask = positiveNumberOrNull(quote.ask);
-  const last = positiveNumberOrNull(quote.price);
-  const mark =
-    bid !== null && ask !== null
+  const bid = finiteNumberOrNull(quote.bid);
+  const ask = finiteNumberOrNull(quote.ask);
+  const quoteRecord = quote as QuoteSnapshot & {
+    last?: unknown;
+    mark?: unknown;
+  };
+  const last =
+    positiveNumberOrNull(quoteRecord.last) ?? positiveNumberOrNull(quote.price);
+  const quoteMark = positiveNumberOrNull(quoteRecord.mark);
+  const mid =
+    bid !== null && ask !== null && bid > 0 && ask > 0
       ? (bid + ask) / 2
-      : last ?? positiveNumberOrNull(fallbackMark);
+      : null;
+  const mark =
+    mid ?? quoteMark ?? last ?? positiveNumberOrNull(fallbackMark);
   const spread = bid !== null && ask !== null ? ask - bid : null;
 
   return {
     bid,
     ask,
-    mid: bid !== null && ask !== null ? (bid + ask) / 2 : null,
+    mid,
     last,
     mark,
     spread,

@@ -1,0 +1,842 @@
+import { useState } from "react";
+import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, getCurrentTheme, sp, textSize } from "../../lib/uiTokens.jsx";
+
+const isLightTheme = () => getCurrentTheme() === "light";
+import { formatAppDateTime } from "../../lib/timeZone";
+import { AppTooltip } from "@/components/ui/tooltip";
+import { SegmentedControl, Skeleton } from "../../components/platform/primitives.jsx";
+
+export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
+
+export const formatMoney = (value, currency = "USD", compact = false) => {
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  const numeric = Number(value);
+  const symbol = currency === "USD" ? "$" : `${currency} `;
+  if (compact && Math.abs(numeric) >= 1e6) {
+    return `${symbol}${(numeric / 1e6).toFixed(2)}M`;
+  }
+  if (compact && Math.abs(numeric) >= 1e3) {
+    return `${symbol}${(numeric / 1e3).toFixed(1)}K`;
+  }
+  return `${symbol}${numeric.toLocaleString(undefined, {
+    maximumFractionDigits: Math.abs(numeric) >= 100 ? 0 : 2,
+  })}`;
+};
+
+export const ACCOUNT_VALUE_MASK = "****";
+
+export const maskAccountValue = (value, maskValues = false) =>
+  maskValues ? ACCOUNT_VALUE_MASK : value;
+
+export const formatAccountMoney = (
+  value,
+  currency = "USD",
+  compact = false,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatMoney(value, currency, compact));
+
+export const formatNumber = (value, digits = 2) => {
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  return Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+  });
+};
+
+export const formatAccountPrice = (value, digits = 2, maskValues = false) => {
+  if (maskValues) return ACCOUNT_VALUE_MASK;
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  return Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+};
+
+export const formatPercent = (value, digits = 2) => {
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  return `${Number(value).toFixed(digits)}%`;
+};
+
+export const formatSignedMoney = (value, currency = "USD", compact = false) => {
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  const numeric = Number(value);
+  const formatted = formatMoney(Math.abs(numeric), currency, compact);
+  return `${numeric >= 0 ? "+" : "-"}${formatted}`;
+};
+
+export const formatAccountSignedMoney = (
+  value,
+  currency = "USD",
+  compact = false,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatSignedMoney(value, currency, compact));
+
+export const formatAccountPercent = (
+  value,
+  digits = 2,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatPercent(value, digits));
+
+export const toneForValue = (value) => {
+  if (value == null || Number.isNaN(Number(value))) return "var(--ra-pnl-neutral)";
+  return Number(value) >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
+};
+
+export const cellSubTextStyle = (tone = T.textMuted) => ({
+  color: tone,
+  fontFamily: T.data,
+  fontSize: textSize("caption"),
+  fontVariantNumeric: "tabular-nums",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});
+
+export const metricTitle = (metric) => {
+  if (!metric) return "Provider field unavailable";
+  const parts = [
+    metric.source ? `Source: ${metric.source}` : null,
+    metric.field ? `Field: ${metric.field}` : null,
+    metric.updatedAt ? `Updated: ${formatAppDateTime(metric.updatedAt)}` : null,
+  ].filter(Boolean);
+  return parts.join("\n") || "Provider field unavailable";
+};
+
+export const panelStyle = {
+  get background() {
+    return T.bg1;
+  },
+  border: "none",
+  get borderRadius() {
+    return dim(RADII.md);
+  },
+  get boxShadow() {
+    return ELEVATION.sm;
+  },
+};
+
+export const sectionTitleStyle = {
+  get fontSize() {
+    return textSize("displaySmall");
+  },
+  get color() {
+    return T.text;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.label,
+  letterSpacing: 0,
+  lineHeight: 1.2,
+};
+
+export const sectionEyebrowStyle = {
+  get fontSize() {
+    return textSize("caption");
+  },
+  get color() {
+    return T.textMuted;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+};
+
+export const mutedLabelStyle = {
+  get fontSize() {
+    return textSize("caption");
+  },
+  get color() {
+    return T.textMuted;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: "0.02em",
+};
+
+const tokenTone = (tokenName) => {
+  const color = `var(${tokenName})`;
+  return {
+    color,
+    border: `color-mix(in srgb, ${color} 28%, transparent)`,
+    bg: isLightTheme()
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
+      : `color-mix(in srgb, ${color} 13%, transparent)`,
+  };
+};
+
+const colorTone = (color) => ({
+  color,
+  border: color.startsWith("var(")
+    ? `color-mix(in srgb, ${color} 28%, transparent)`
+    : `${color}44`,
+  bg: isLightTheme()
+    ? color.startsWith("var(")
+      ? `color-mix(in srgb, ${color} 10%, transparent)`
+      : `${color}14`
+    : color.startsWith("var(")
+      ? `color-mix(in srgb, ${color} 13%, transparent)`
+      : `${color}18`,
+});
+
+const toneValueMap = () => ({
+  default: { color: T.textDim, border: T.border, bg: T.bg2 },
+  accent: {
+    color: T.accent,
+    border: `${T.accent}44`,
+    bg: isLightTheme() ? `${T.accent}14` : T.accentDim,
+  },
+  green: {
+    color: T.green,
+    border: `${T.green}44`,
+    bg: isLightTheme() ? `${T.green}14` : T.greenBg,
+  },
+  red: {
+    color: T.red,
+    border: `${T.red}44`,
+    bg: isLightTheme() ? `${T.red}14` : T.redBg,
+  },
+  amber: {
+    color: T.amber,
+    border: `${T.amber}44`,
+    bg: isLightTheme() ? `${T.amber}14` : T.amberBg,
+  },
+  cyan: {
+    color: T.cyan,
+    border: `${T.cyan}44`,
+    bg: isLightTheme() ? `${T.cyan}14` : `${T.cyan}18`,
+  },
+  purple: {
+    color: T.purple,
+    border: `${T.purple}44`,
+    bg: isLightTheme() ? `${T.purple}14` : `${T.purple}18`,
+  },
+  pink: {
+    color: T.pink,
+    border: `${T.pink}44`,
+    bg: isLightTheme() ? `${T.pink}14` : `${T.pink}18`,
+  },
+  "pnl-positive": tokenTone("--ra-pnl-positive"),
+  "pnl-negative": tokenTone("--ra-pnl-negative"),
+  "side-buy": tokenTone("--ra-side-buy"),
+  "side-sell": tokenTone("--ra-side-sell"),
+  "position-long": tokenTone("--ra-position-long"),
+  "position-short": tokenTone("--ra-position-short"),
+  "status-filled": tokenTone("--ra-status-filled"),
+  "status-working": tokenTone("--ra-status-working"),
+  "status-rejected": tokenTone("--ra-status-rejected"),
+  "stream-healthy": tokenTone("--ra-stream-healthy"),
+  "stream-offline": tokenTone("--ra-stream-offline"),
+  "category-automation": tokenTone("--ra-category-automation"),
+  "category-replay": tokenTone("--ra-category-replay"),
+  "category-backtest": tokenTone("--ra-category-backtest"),
+  "category-mixed": tokenTone("--ra-category-mixed"),
+});
+
+export const denseButtonStyle = (active = false) => ({
+  height: dim(22),
+  padding: sp("0 10px"),
+  borderRadius: dim(RADII.pill),
+  border: "none",
+  background: active ? T.bg1 : "transparent",
+  color: active ? T.text : T.textDim,
+  boxShadow: active ? ELEVATION.sm : "none",
+  fontSize: textSize("control"),
+  fontFamily: T.sans,
+  fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
+  cursor: "pointer",
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  transition: "background 120ms ease, color 120ms ease",
+});
+
+export const primaryButtonStyle = {
+  get height() {
+    return dim(24);
+  },
+  get padding() {
+    return sp("0 12px");
+  },
+  borderRadius: dim(RADII.pill),
+  border: "none",
+  get background() {
+    return T.accent;
+  },
+  get color() {
+    return T.onAccent;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.label,
+  cursor: "pointer",
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+};
+
+export const secondaryButtonStyle = {
+  get height() {
+    return dim(24);
+  },
+  get padding() {
+    return sp("0 12px");
+  },
+  borderRadius: dim(RADII.pill),
+  border: "none",
+  get background() {
+    return T.bg2;
+  },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  cursor: "pointer",
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+};
+
+export const ghostButtonStyle = {
+  get height() {
+    return dim(24);
+  },
+  get padding() {
+    return sp("0 12px");
+  },
+  borderRadius: dim(RADII.pill),
+  border: "none",
+  background: "transparent",
+  get color() {
+    return T.textSec;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  cursor: "pointer",
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+};
+
+export const controlInputStyle = {
+  get height() {
+    return dim(24);
+  },
+  get padding() {
+    return sp("0 10px");
+  },
+  get borderRadius() {
+    return dim(RADII.sm);
+  },
+  border: "none",
+  get background() {
+    return T.bg2;
+  },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  outline: "none",
+};
+
+export const controlSelectStyle = {
+  get height() {
+    return dim(22);
+  },
+  get padding() {
+    return sp("0 7px");
+  },
+  get borderRadius() {
+    return dim(RADII.xs);
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  get background() {
+    return T.bg0;
+  },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return textSize("control");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  outline: "none",
+  cursor: "pointer",
+};
+
+export const tableHeaderStyle = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  get background() {
+    return T.bg1;
+  },
+  get color() {
+    return T.textSec;
+  },
+  get fontSize() {
+    return textSize("body");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: FONT_WEIGHTS.medium,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  get borderBottom() {
+    return `1px solid ${T.border}`;
+  },
+};
+
+export const tableCellStyle = {
+  get padding() {
+    return sp("3px 8px");
+  },
+  get borderBottom() {
+    return `1px solid ${T.borderLight}`;
+  },
+  get fontSize() {
+    return textSize("body");
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  get color() {
+    return T.textSec;
+  },
+  fontVariantNumeric: "tabular-nums",
+  whiteSpace: "nowrap",
+  verticalAlign: "top",
+};
+
+export const moveTableFocus = (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    return;
+  }
+
+  const row = event.currentTarget;
+  const next =
+    event.key === "ArrowDown" ? row.nextElementSibling : row.previousElementSibling;
+
+  if (next?.focus) {
+    event.preventDefault();
+    next.focus();
+  }
+};
+
+export const Pill = ({ children, tone = "default", title, style }) => {
+  const paletteMap = toneValueMap();
+  const palette =
+    paletteMap[tone] ||
+    (typeof tone === "string" &&
+    (tone.startsWith("var(") || tone.startsWith("#") || tone.startsWith("rgb"))
+      ? colorTone(tone)
+      : paletteMap.default);
+  return (
+    <AppTooltip content={title}><span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(4),
+        minHeight: dim(14),
+        padding: sp("0 5px"),
+        borderRadius: dim(RADII.pill),
+        border: "none",
+        background: palette.bg,
+        color: palette.color,
+        fontSize: textSize("label"),
+        fontFamily: T.sans,
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        ...style,
+      }}
+    >
+      {children}
+    </span></AppTooltip>
+  );
+};
+
+// ToggleGroup is a thin alias for SegmentedControl kept for backward
+// compatibility with existing call sites; the sliding indicator now
+// carries the active affordance.
+export const ToggleGroup = ({ options, value, onChange }) => (
+  <SegmentedControl options={options} value={value} onChange={onChange} />
+);
+
+export const StatTile = ({
+  label,
+  value,
+  subvalue,
+  tone = "default",
+  title,
+  align = "left",
+  compact = false,
+  flat = false,
+  className,
+  style,
+}) => {
+  const paletteMap = toneValueMap();
+  const palette = paletteMap[tone] || paletteMap.default;
+  return (
+    <AppTooltip content={title}><div
+      className={className || (flat ? undefined : "ra-panel-enter")}
+      style={{
+        minWidth: dim(flat ? 0 : compact ? 86 : 108),
+        padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "4px 6px" : "6px 8px"),
+        borderRadius: flat ? 0 : dim(RADII.sm),
+        border: "none",
+        background: "transparent",
+        textAlign: align,
+        ...style,
+      }}
+    >
+      <div style={mutedLabelStyle}>{label}</div>
+      <div
+        style={{
+          marginTop: sp(compact ? 1 : 4),
+          color: palette.color === T.textDim ? T.text : palette.color,
+          fontSize: textSize(compact ? "metric" : "bodyStrong"),
+          fontFamily: T.data,
+          fontWeight: FONT_WEIGHTS.regular,
+          lineHeight: 1.1,
+        }}
+      >
+        {value}
+      </div>
+      {subvalue ? (
+        <div
+          style={{
+            marginTop: sp(compact ? 1 : 3),
+            color: T.textDim,
+            fontSize: textSize(compact ? "label" : "caption"),
+            fontFamily: T.data,
+            lineHeight: 1.3,
+          }}
+        >
+          {subvalue}
+        </div>
+      ) : null}
+    </div></AppTooltip>
+  );
+};
+
+export const EmptyState = ({ title, body, action }) => (
+  <div
+    className="ra-panel-enter"
+    style={{
+      minHeight: dim(96),
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      gap: sp(8),
+      padding: sp("16px 18px"),
+      color: T.textMuted,
+      fontSize: textSize("body"),
+      fontFamily: T.sans,
+      border: `1px dashed ${T.border}`,
+      borderRadius: dim(RADII.md),
+      background: T.bg1,
+      textAlign: "center",
+    }}
+  >
+    <div
+      style={{
+        color: T.text,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: 0,
+      }}
+    >
+      {title}
+    </div>
+    <div style={{ lineHeight: 1.5, color: T.textMuted }}>{body}</div>
+    {action}
+  </div>
+);
+
+export const Panel = ({
+  title,
+  subtitle,
+  rightRail,
+  action,
+  children,
+  loading,
+  error,
+  onRetry,
+  minHeight = 0,
+  noPad = false,
+  compact = false,
+  className,
+}) => (
+  <section
+    tabIndex={0}
+    className={className || "ra-panel-enter"}
+    style={{
+      ...panelStyle,
+      minHeight: minHeight ? dim(minHeight) : undefined,
+      display: "flex",
+      flexDirection: "column",
+      alignSelf: "start",
+      overflow: "hidden",
+      outline: "none",
+    }}
+  >
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: sp(compact ? 4 : 8),
+        padding: sp(compact ? "4px 5px 3px" : "6px 10px 4px"),
+        background: T.bg1,
+        flexWrap: "wrap",
+      }}
+    >
+      {/* Hairline divider in place of a hard 1px border — the gradient
+          fades to transparent at the left/right edges so the divider
+          feels integrated with the surface rather than slicing across.
+          Absolute-positioned at the bottom so it doesn't reflow flex
+          children. */}
+      <span
+        aria-hidden="true"
+        className="ra-hairline-h"
+        style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
+      />
+      <div style={{ minWidth: 0, flex: compact ? "1 1 72px" : "1 1 180px" }}>
+        <div
+          style={{
+            ...sectionTitleStyle,
+            fontSize: textSize("bodyStrong"),
+          }}
+        >
+          {title}
+        </div>
+        {subtitle || rightRail ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(5),
+              marginTop: sp(1),
+              flexWrap: "wrap",
+            }}
+          >
+            {subtitle ? (
+              <div style={{ ...mutedLabelStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {subtitle}
+              </div>
+            ) : <span />}
+            {rightRail ? (
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: textSize("label"),
+                  fontFamily: T.data,
+                  fontWeight: FONT_WEIGHTS.regular,
+                  minWidth: 0,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flexShrink: 1,
+                }}
+              >
+                {rightRail}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {action}
+    </div>
+    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(compact ? 4 : 6) }}>
+      {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
+    </div>
+  </section>
+);
+
+export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
+  const interactive = typeof onToggle === "function";
+  const inner = (
+    <>
+      <div style={{ display: "flex", gap: sp(3), alignItems: "center", minWidth: 0 }}>
+        {interactive ? (
+          <span
+            aria-hidden
+            style={{
+              color: T.textDim,
+              fontFamily: T.data,
+              fontSize: textSize("label"),
+              width: 10,
+              display: "inline-block",
+              transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+              transition: "transform 120ms ease",
+            }}
+          >
+            ▾
+          </span>
+        ) : null}
+        <div style={{ ...mutedLabelStyle, fontSize: textSize("caption") }}>{title}</div>
+      </div>
+      {rightSlot ? (
+        <div
+          style={{
+            color: T.textDim,
+            fontFamily: T.data,
+            fontSize: textSize("label"),
+            fontWeight: FONT_WEIGHTS.regular,
+          }}
+        >
+          {rightSlot}
+        </div>
+      ) : null}
+    </>
+  );
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="ra-interactive"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(5),
+          border: "none",
+          borderBottom: `1px solid ${T.border}`,
+          background: "transparent",
+          color: "inherit",
+          textAlign: "left",
+          width: "100%",
+          padding: sp("0 0 2px 0"),
+          cursor: "pointer",
+        }}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: sp(5),
+        paddingBottom: sp(2),
+        borderBottom: `1px solid ${T.border}`,
+      }}
+    >
+      {inner}
+    </div>
+  );
+};
+
+const COLLAPSIBLE_STORAGE_PREFIX = "pyrus:account:";
+const LEGACY_COLLAPSIBLE_STORAGE_PREFIX = "pyrus:account:";
+
+const readStoredOpen = (storageKey) => {
+  if (typeof window === "undefined" || !storageKey) return null;
+  try {
+    const raw =
+      window.localStorage.getItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`) ??
+      window.localStorage.getItem(`${LEGACY_COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredOpen = (storageKey, map) => {
+  if (typeof window === "undefined" || !storageKey) return;
+  try {
+    window.localStorage.setItem(`${COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`, JSON.stringify(map));
+    window.localStorage.removeItem(`${LEGACY_COLLAPSIBLE_STORAGE_PREFIX}${storageKey}`);
+  } catch {
+    /* ignore */
+  }
+};
+
+export const useCollapsibleSections = (storageKey, defaults = {}) => {
+  const [overrides, setOverrides] = useState(() => readStoredOpen(storageKey) || {});
+  const isOpen = (key) => (key in overrides ? overrides[key] : defaults[key] ?? true);
+  const toggle = (key) => {
+    setOverrides((prev) => {
+      const next = { ...prev, [key]: !isOpen(key) };
+      writeStoredOpen(storageKey, next);
+      return next;
+    });
+  };
+  return { isOpen, toggle };
+};
+
+export const SkeletonRows = ({ rows = 4 }) => (
+  <div style={{ display: "grid", gap: sp(6) }}>
+    {Array.from({ length: rows }).map((_, index) => (
+      <Skeleton
+        key={index}
+        height={dim(index === 0 ? 34 : 24)}
+        radius={RADII.sm}
+      />
+    ))}
+  </div>
+);
+
+export const InlineError = ({ error, onRetry }) => (
+  <div
+    role="alert"
+    style={{
+      padding: sp(10),
+      color: T.red,
+      background: T.redBg,
+      border: `1px solid ${T.red}55`,
+      borderRadius: dim(RADII.sm),
+      fontSize: textSize("body"),
+      fontFamily: T.sans,
+      lineHeight: 1.5,
+    }}
+  >
+    <div>{error?.message || "Unable to load this account panel."}</div>
+    {typeof onRetry === "function" ? (
+      <button
+        type="button"
+        className="ra-interactive"
+        onClick={onRetry}
+        style={{ ...secondaryButtonStyle, marginTop: sp(10), color: T.red }}
+      >
+        Retry
+      </button>
+    ) : null}
+  </div>
+);

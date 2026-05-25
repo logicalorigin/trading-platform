@@ -20,7 +20,7 @@
       "path": "../../lib/account-math"
     },
     {
-      "path": "../../lib/rayreplica-core"
+      "path": "../../lib/pyrus-signals-core"
     }
   ]
 }

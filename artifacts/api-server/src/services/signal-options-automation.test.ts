@@ -6,7 +6,7 @@ import {
   resolveSignalOptionsExecutionProfile,
   tunedSignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
-import { resolveRayReplicaSignalSettings } from "@workspace/rayreplica-core";
+import { resolvePyrusSignalsSignalSettings } from "@workspace/pyrus-signals-core";
 import {
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
@@ -25,6 +25,7 @@ import {
   normalizeAlgoDeploymentProviderAccountId,
   SHADOW_PROVIDER_ACCOUNT_ID,
 } from "./algo-deployment-account";
+import { registerSignalOptionsWorkerSnapshotGetter } from "./signal-options-worker-state";
 
 const profile = defaultSignalOptionsExecutionProfile;
 
@@ -65,6 +66,22 @@ function pricedQuote(
     mark: Number(((bid + ask) / 2).toFixed(2)),
   };
 }
+
+test("default paper signal-options startup caps its signal monitor profile", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 8/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 1/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 120/);
+  assert.match(
+    source,
+    /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\)/,
+  );
+  assert.match(source, /await updateSignalMonitorProfile\(patch\)/);
+});
 
 test("selectSignalOptionsExpiration excludes 0DTE by default", () => {
   const selected = selectSignalOptionsExpiration(
@@ -676,7 +693,7 @@ test("historical backfill equity bar limit spans the full requested window plus 
   assert.ok(limit > 5_000);
 });
 
-test("RayReplica backfill settings patch overrides time horizon without dropping nested profile settings", () => {
+test("Pyrus Signals backfill settings patch overrides time horizon without dropping nested profile settings", () => {
   const baseSettings = {
     marketStructure: {
       timeHorizon: 10,
@@ -692,11 +709,11 @@ test("RayReplica backfill settings patch overrides time horizon without dropping
     },
   };
   const merged =
-    __signalOptionsAutomationInternalsForTests.mergeRayReplicaSettingsPatch(
+    __signalOptionsAutomationInternalsForTests.mergePyrusSignalsSettingsPatch(
       baseSettings,
       { timeHorizon: 4, chochAtrBuffer: 0.25 },
     );
-  const resolved = resolveRayReplicaSignalSettings(merged);
+  const resolved = resolvePyrusSignalsSignalSettings(merged);
 
   assert.equal(resolved.timeHorizon, 4);
   assert.equal(resolved.bosConfirmation, "close");
@@ -711,7 +728,7 @@ test("RayReplica backfill settings patch overrides time horizon without dropping
   );
 });
 
-test("signal-options backfill API forwards run-local RayReplica overrides", () => {
+test("signal-options backfill API forwards run-local Pyrus Signals overrides", () => {
   const routeSource = readFileSync(
     new URL("../routes/automation.ts", import.meta.url),
     "utf8",
@@ -723,17 +740,17 @@ test("signal-options backfill API forwards run-local RayReplica overrides", () =
 
   assert.match(
     routeSource,
-    /rayReplicaSettingsPatch:\s*body\.rayReplicaSettingsPatch/,
+    /pyrusSignalsSettingsPatch:\s*body\.pyrusSignalsSettingsPatch/,
   );
   assert.match(routeSource, /signalTimeframe:\s*body\.signalTimeframe/);
   assert.match(
     routeSource,
     /forceDeploymentUniverse:\s*body\.forceDeploymentUniverse/,
   );
-  assert.match(serviceSource, /profileSettings:\s*rayReplicaSettings/);
+  assert.match(serviceSource, /profileSettings:\s*pyrusSignalsSettings/);
   assert.doesNotMatch(
     serviceSource,
-    /update\(signalMonitorProfilesTable\)[\s\S]*rayReplicaSettings/,
+    /update\(signalMonitorProfilesTable\)[\s\S]*pyrusSignalsSettings/,
   );
 });
 
@@ -797,7 +814,7 @@ test("signal-options backtest uses its own historical event source and position 
     runId: "run-1",
     marketDate: "2026-05-12",
     deploymentId: "deployment-1",
-    deploymentName: "RayReplica Signal Options Shadow Paper",
+    deploymentName: "Pyrus Signals Options Shadow Paper",
   };
   const eventKey =
     __signalOptionsAutomationInternalsForTests.backfillEventKey(
@@ -831,7 +848,7 @@ test("signal-options replay stamps event dates while preserving entry-scoped pos
     runId: "run-1",
     marketDate: "2026-05-12",
     deploymentId: "deployment-1",
-    deploymentName: "RayReplica Signal Options Shadow Paper",
+    deploymentName: "Pyrus Signals Options Shadow Paper",
   };
   const payload =
     __signalOptionsAutomationInternalsForTests.historicalEventPayload({
@@ -2042,7 +2059,7 @@ test("signal-options risk halts block execution after contract planning", () => 
   );
 });
 
-test("signal-options candidates preserve RayReplica signal to shadow action mapping", () => {
+test("signal-options candidates preserve Pyrus Signals signal to shadow action mapping", () => {
   const signalAt = "2026-04-28T15:30:00.000Z";
   const state = {
     profileId: "11111111-1111-1111-1111-111111111111",
@@ -2067,7 +2084,7 @@ test("signal-options candidates preserve RayReplica signal to shadow action mapp
       signalKey: "profile:SPY:15m:sell:2026-04-28T15:30:00.000Z",
       signalMetadata: {
         eventId: "event-1",
-        source: "rayreplica",
+        source: "pyrus-signals",
         filterState: { mtf: "aligned" },
       },
     });
@@ -2077,7 +2094,7 @@ test("signal-options candidates preserve RayReplica signal to shadow action mapp
   assert.equal(candidate.action?.executionMode, "shadow");
   assert.equal(candidate.action?.destinationAccountId, "shadow");
   assert.equal(candidate.action?.brokerSubmission, false);
-  assert.equal(candidate.signal?.source, "rayreplica");
+  assert.equal(candidate.signal?.source, "pyrus-signals");
   assert.equal(candidate.signal?.barsSinceSignal, 1);
   assert.deepEqual(candidate.signal?.filterState, { mtf: "aligned" });
 });
@@ -2091,7 +2108,7 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   const baseSignal = {
     profileId: "11111111-1111-1111-1111-111111111111",
     signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
-    source: "rayreplica",
+    source: "pyrus-signals",
     eventId: null,
     symbol: "spy",
     timeframe: "15m",
@@ -2155,7 +2172,7 @@ test("scan events override matching live signal previews without losing mappings
       signal: {
         profileId: "11111111-1111-1111-1111-111111111111",
         signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
-        source: "rayreplica",
+        source: "pyrus-signals",
         eventId: null,
         symbol: "SPY",
         timeframe: "15m",
@@ -2403,7 +2420,7 @@ test("signal-options entry gate requires MTF alignment and blocks inverse puts",
       signalKey: `profile:${symbol}:15m:${direction}:2026-04-28T15:30:00.000Z`,
       signalMetadata: {
         eventId: "event-1",
-        source: "rayreplica",
+        source: "pyrus-signals",
         filterState,
       },
     });
@@ -3183,6 +3200,161 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
   assert.ok(
     attention.some((item) => item.id === "shadow-candidate-2"),
   );
+});
+
+test("cockpit scan stage exposes active scan age", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const scanStartedAt = new Date("2026-04-28T17:58:25.000Z");
+  const deployment = {
+    id: "deployment-active",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: new Date("2026-04-28T17:55:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+
+  __signalOptionsAutomationInternalsForTests.markSignalOptionsScanActive(
+    "deployment-active",
+    scanStartedAt,
+  );
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates: [],
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+
+    assert.equal(scanStage?.status, "running");
+    assert.equal(scanStage?.latestAt, scanStartedAt.toISOString());
+    assert.equal(scanStage?.scanStartedAt, scanStartedAt.toISOString());
+    assert.equal(scanStage?.scanAgeMs, 95_000);
+    assert.equal(scanStage?.detail, "scan running for 1m 35s");
+  } finally {
+    __signalOptionsAutomationInternalsForTests.clearSignalOptionsScanActive(
+      "deployment-active",
+    );
+  }
+});
+
+test("cockpit scan stage exposes resource-pressure pause state", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const pauseStartedAt = new Date("2026-04-28T17:52:00.000Z");
+  const deployment = {
+    id: "deployment-paused",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: new Date("2026-04-28T17:45:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: {
+      runCount: 0,
+      totalClosedCount: 0,
+      lastRunAt: null,
+      lastError: null,
+      lastClosedCount: 0,
+      lastSkippedCount: 0,
+      lastDueCount: 0,
+      lastOrphanCount: 0,
+    },
+    deployments: [
+      {
+        deploymentId: "deployment-paused",
+        lastCheckedAtMs: pauseStartedAt.getTime() - 60_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:45:00.000Z").toISOString(),
+        lastError: null,
+        lastSkippedAt: pauseStartedAt.toISOString(),
+        lastSkipReason: "resource_pressure",
+        skippedScanCount: 3,
+        pressurePaused: true,
+        pressurePauseStartedAt: pauseStartedAt.toISOString(),
+        pressurePauseAgeMs: 480_000,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 10_000,
+        scanCount: 1,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 2,
+        lastFreshSignalCount: 2,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:45:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:45:00.000Z",
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates: [],
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+
+    assert.equal(scanStage?.status, "attention");
+    assert.equal(scanStage?.pressurePaused, true);
+    assert.equal(scanStage?.pressurePauseStartedAt, pauseStartedAt.toISOString());
+    assert.equal(scanStage?.pressurePauseAgeMs, 480_000);
+    assert.equal(scanStage?.detail, "paused by resource pressure for 8m");
+  } finally {
+    registerSignalOptionsWorkerSnapshotGetter(() => ({
+      started: false,
+      tickRunning: false,
+      deploymentCount: 0,
+      activeDeploymentCount: 0,
+      maintenance: {
+        runCount: 0,
+        totalClosedCount: 0,
+        lastRunAt: null,
+        lastError: null,
+        lastClosedCount: 0,
+        lastSkippedCount: 0,
+        lastDueCount: 0,
+        lastOrphanCount: 0,
+      },
+      deployments: [],
+    }));
+  }
 });
 
 test("cockpit attention ignores blockers invalidated by a profile update", () => {

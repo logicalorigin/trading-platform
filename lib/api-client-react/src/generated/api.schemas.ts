@@ -3444,7 +3444,7 @@ export interface SignalMonitorProfile {
   /** @nullable */
   watchlistId: string | null;
   timeframe: SignalMonitorTimeframe;
-  rayReplicaSettings: JsonObject;
+  pyrusSignalsSettings: JsonObject;
   freshWindowBars: number;
   pollIntervalSeconds: number;
   maxSymbols: number;
@@ -3786,7 +3786,7 @@ export interface UpdateSignalMonitorProfileRequest {
   /** @nullable */
   watchlistId?: string | null;
   timeframe?: SignalMonitorTimeframe;
-  rayReplicaSettings?: JsonObject;
+  pyrusSignalsSettings?: JsonObject;
   /**
    * @minimum 1
    * @maximum 20
@@ -5547,7 +5547,7 @@ export type RunSignalOptionsShadowBackfillBody = {
   session?: string;
   commit?: boolean;
   profilePatch?: JsonObject;
-  rayReplicaSettingsPatch?: JsonObject;
+  pyrusSignalsSettingsPatch?: JsonObject;
   signalTimeframe?: SignalMonitorTimeframe;
   forceDeploymentUniverse?: boolean;
   replay?: boolean | JsonObject;

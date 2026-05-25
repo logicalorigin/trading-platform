@@ -1,6 +1,6 @@
 # Positions Table Redesign — TWS-Inspired
 
-**Goal:** Bring RayAlgo's positions tables closer to the look and feel of Interactive Brokers TWS — power-user density, tabular numerics, P&L-only color, optional columns via a picker, pinned aggregate summary — while preserving RayAlgo-specific value (algo context, source filtering, paper/live toggle).
+**Goal:** Bring Pyrus's positions tables closer to the look and feel of Interactive Brokers TWS — power-user density, tabular numerics, P&L-only color, optional columns via a picker, pinned aggregate summary — while preserving Pyrus-specific value (algo context, source filtering, paper/live toggle).
 
 **Choices locked in this session:**
 - Scope: **all three** surfaces (Account `PositionsPanel`, Algo `OperationsPositionsTable`, Trade `TradePositionsPanel`).
@@ -75,7 +75,7 @@ SUMMARY · 3 positions · Net Liq $24,621 · Day -$122 (-0.49%) · Unreal -$2,71
 | Column | When to show |
 |---|---|
 | **Opened** | Useful for tax-lot reasoning; off by default to save width |
-| **Source** | Manual / Automation / Watchlist BT badge (RayAlgo-specific) |
+| **Source** | Manual / Automation / Watchlist BT badge (Pyrus-specific) |
 | **Signal context** | Automation-only: signal score, tier, stop distance, premium at risk |
 | **Sparkline** | Intraday mini-chart in the symbol cell |
 | **Sector** | For equities |
@@ -107,7 +107,7 @@ Column picker UI: a `⚙` icon next to the filter pills opens a popover with che
 - **Numbers:** `font-variant-numeric: tabular-nums`, `font-feature-settings: "tnum"`. Apply at column level on every numeric column, not at row level.
 - **Symbol:** mono font for the symbol cell (`T.mono`), `fs(12)`, medium weight. Description shown in tooltip on hover.
 - **Cell text size:** `fs(11)` for numerics, `fs(12)` for symbol, `fs(10)` for the optional opened-at column.
-- **Lower-case header labels:** TWS uses small-caps headers in 10px. RayAlgo today already uppercases. Keep uppercase, but drop to `fs(9)` with `letter-spacing: 0.04em` and `T.textMuted`.
+- **Lower-case header labels:** TWS uses small-caps headers in 10px. Pyrus today already uppercases. Keep uppercase, but drop to `fs(9)` with `letter-spacing: 0.04em` and `T.textMuted`.
 
 ### Alignment
 - **Symbol:** left
@@ -184,7 +184,7 @@ Implementation note: today's `TradePositionsPanel` has only the ✕ close afford
 
 ### B. `OperationsPositionsTable` — Algo Live
 - Wrapper around the redesigned `PositionsPanel`; configures defaults appropriate to options-only context:
-  - Default-on columns expand to include: Δ, Θ, Bid, Ask, Spread %, Signal context (RayAlgo-specific value).
+  - Default-on columns expand to include: Δ, Θ, Bid, Ask, Spread %, Signal context (Pyrus-specific value).
   - Asset filter still locked to Options.
   - Source filter still locked to "automation."
   - Summary row labels swap: "Net Δ" and "Net Θ" become primary KPIs alongside Day / Unreal.
@@ -216,20 +216,20 @@ Phone width keeps a 2-line row layout (the single-line dense rule doesn't surviv
 
 | File | Change |
 |---|---|
-| `artifacts/rayalgo/src/screens/account/PositionsPanel.jsx` | Row + cell rebuild, column picker, summary row, hover actions, mobile fork rewrite |
-| `artifacts/rayalgo/src/screens/account/positionDisplayModel.js` | New formatters: separate `bid`, `ask`, `spreadPercent`, separate `dayChange$` / `dayChange%`, Greeks formatters, summary aggregator |
-| `artifacts/rayalgo/src/screens/account/accountPositionRows.js` | Surface Greeks fields onto row model (already present in `optionQuote`); add aggregate computer |
-| `artifacts/rayalgo/src/screens/account/accountUtils.jsx` | Tighten P&L tone helper to the documented palette (P&L-only color rule); add `tabularRight` cell helper |
-| `artifacts/rayalgo/src/screens/algo/OperationsPositionsTable.jsx` | Pass updated default-column set; opt in to Greeks columns by default |
-| `artifacts/rayalgo/src/features/trade/TradePositionsPanel.jsx` | Tabular nums, P&L-only color, split bid/ask + day/unreal columns, hover actions, drop accent backgrounds |
-| `artifacts/rayalgo/src/components/platform/primitives.jsx` (or a new `TableColumnPicker.jsx`) | New `<ColumnPickerPopover>` component; reusable across surfaces |
-| `artifacts/rayalgo/src/lib/uiTokens.jsx` | Add `T.borderDim` (lighter row divider), `T.mono`, `tabularNumStyle` helper if not present |
-| `artifacts/rayalgo/src/features/platform/userPreferences/` (or wherever prefs live) | Column-visibility preference store, keyed by surface |
+| `artifacts/pyrus/src/screens/account/PositionsPanel.jsx` | Row + cell rebuild, column picker, summary row, hover actions, mobile fork rewrite |
+| `artifacts/pyrus/src/screens/account/positionDisplayModel.js` | New formatters: separate `bid`, `ask`, `spreadPercent`, separate `dayChange$` / `dayChange%`, Greeks formatters, summary aggregator |
+| `artifacts/pyrus/src/screens/account/accountPositionRows.js` | Surface Greeks fields onto row model (already present in `optionQuote`); add aggregate computer |
+| `artifacts/pyrus/src/screens/account/accountUtils.jsx` | Tighten P&L tone helper to the documented palette (P&L-only color rule); add `tabularRight` cell helper |
+| `artifacts/pyrus/src/screens/algo/OperationsPositionsTable.jsx` | Pass updated default-column set; opt in to Greeks columns by default |
+| `artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx` | Tabular nums, P&L-only color, split bid/ask + day/unreal columns, hover actions, drop accent backgrounds |
+| `artifacts/pyrus/src/components/platform/primitives.jsx` (or a new `TableColumnPicker.jsx`) | New `<ColumnPickerPopover>` component; reusable across surfaces |
+| `artifacts/pyrus/src/lib/uiTokens.jsx` | Add `T.borderDim` (lighter row divider), `T.mono`, `tabularNumStyle` helper if not present |
+| `artifacts/pyrus/src/features/platform/userPreferences/` (or wherever prefs live) | Column-visibility preference store, keyed by surface |
 
 Tests:
-- `artifacts/rayalgo/src/screens/account/PositionsPanel.test.{js,jsx}` — update for new column contract, column picker, summary row.
-- `artifacts/rayalgo/src/features/trade/TradePositionsPanel.test.{js,jsx}` — update grid template + action surface.
-- New: `artifacts/rayalgo/src/components/platform/TableColumnPicker.test.jsx`.
+- `artifacts/pyrus/src/screens/account/PositionsPanel.test.{js,jsx}` — update for new column contract, column picker, summary row.
+- `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.{js,jsx}` — update grid template + action surface.
+- New: `artifacts/pyrus/src/components/platform/TableColumnPicker.test.jsx`.
 
 ---
 
@@ -265,8 +265,8 @@ Tests:
 
 - **Group-by-underlying for options.** You asked to keep the list flat. The pinned summary row + Wt % column carry the aggregate weight that grouping would otherwise provide.
 - **Right-click context menus.** Web context menus fight the browser's own. Hover actions cover the same use cases without the platform inconsistency.
-- **Multi-currency UI.** RayAlgo is USD-only today; designing for multi-currency would add columns nobody needs yet. The numeric formatters should not preclude it though.
-- **Removing the source / automation context features.** These are RayAlgo's value-add over TWS. They become opt-in columns, not removed.
+- **Multi-currency UI.** Pyrus is USD-only today; designing for multi-currency would add columns nobody needs yet. The numeric formatters should not preclude it though.
+- **Removing the source / automation context features.** These are Pyrus's value-add over TWS. They become opt-in columns, not removed.
 
 ---
 
@@ -279,14 +279,14 @@ Tests:
 2. Eyeball with realistic data: a mix of long equity, short equity, long options, short options, multi-leg spreads as separate legs.
 3. Toggle the column picker through every combination of Greeks / freshness / signal context to confirm width math holds and the sticky symbol column behaves on overflow.
 4. Test paper-mode vs. live-mode (the `mode: environment` query arg) to confirm both data sources render identically.
-5. Run unit tests: `pnpm --filter @rayalgo/rayalgo run test`.
+5. Run unit tests: `pnpm --filter @pyrus/pyrus run test`.
 6. If any Replit startup file is touched (`.replit`, `artifacts/*/.replit-artifact/artifact.toml`, dev scripts, `scripts/reap-dev-port.mjs`), per `CLAUDE.md` run `pnpm run audit:replit-startup`.
 
 ---
 
 ## Open questions worth your input before Phase 1
 
-- **Wt %** — current denominator is total portfolio value. TWS uses net liquidation, which differs when there's margin debit. Confirm RayAlgo should match TWS or stay with current logic.
-- **Day P&L baseline** — what does "day" mean for a position opened intra-day? TWS uses entry price as the day baseline for same-day positions. Confirm RayAlgo's current behavior and whether to change.
-- **Column-preference storage** — does RayAlgo already have a user-preference store on the API side, or should the column picker persist to `localStorage` only? Affects Phase 2 scope.
+- **Wt %** — current denominator is total portfolio value. TWS uses net liquidation, which differs when there's margin debit. Confirm Pyrus should match TWS or stay with current logic.
+- **Day P&L baseline** — what does "day" mean for a position opened intra-day? TWS uses entry price as the day baseline for same-day positions. Confirm Pyrus's current behavior and whether to change.
+- **Column-preference storage** — does Pyrus already have a user-preference store on the API side, or should the column picker persist to `localStorage` only? Affects Phase 2 scope.
 - **Actions plumbing** — does the Trade ticket already accept an `openWith(position)` entrypoint, or does opening a pre-filled ticket from `PositionsPanel` require a small new API? Confirms whether hover actions are a Phase 2 or Phase 3 task.

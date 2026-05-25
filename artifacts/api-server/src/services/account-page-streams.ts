@@ -22,8 +22,11 @@ type BenchmarkSymbol = "SPY" | "QQQ" | "DIA";
 
 export const ACCOUNT_PAGE_STREAM_INTERVAL_MS = 1_000;
 export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
-export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 1_500;
-export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 6_000;
+export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 0;
+export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 0;
+export const ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS = 2_000;
+export const ACCOUNT_PAGE_CACHE_JITTER_MS = 250;
+export const ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS = 5 * 60_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
@@ -153,7 +156,105 @@ const accountPageDerivedInflight = new Map<
   string,
   Promise<AccountPageDerivedPayload>
 >();
+const accountPageBenchmarkEquityCache = new Map<
+  string,
+  {
+    value: Awaited<ReturnType<typeof getAccountEquityHistory>>;
+    expiresAt: number;
+  }
+>();
 let accountPageSnapshotCacheVersion = 0;
+
+type AccountPageTimingKey =
+  | "criticalMs"
+  | "liveMs"
+  | "derivedMs"
+  | "firstCriticalWriteMs"
+  | "firstDerivedWriteMs";
+type AccountPageCacheKey =
+  | "criticalHit"
+  | "liveHit"
+  | "derivedHit"
+  | "benchmarkHit";
+
+const accountPageStreamDiagnostics: {
+  updatedAt: string | null;
+  timings: Record<AccountPageTimingKey, number | null>;
+  cache: Record<AccountPageCacheKey, boolean | null> & {
+    criticalHits: number;
+    criticalMisses: number;
+    liveHits: number;
+    liveMisses: number;
+    derivedHits: number;
+    derivedMisses: number;
+    benchmarkHits: number;
+    benchmarkMisses: number;
+  };
+} = {
+  updatedAt: null,
+  timings: {
+    criticalMs: null,
+    liveMs: null,
+    derivedMs: null,
+    firstCriticalWriteMs: null,
+    firstDerivedWriteMs: null,
+  },
+  cache: {
+    criticalHit: null,
+    liveHit: null,
+    derivedHit: null,
+    benchmarkHit: null,
+    criticalHits: 0,
+    criticalMisses: 0,
+    liveHits: 0,
+    liveMisses: 0,
+    derivedHits: 0,
+    derivedMisses: 0,
+    benchmarkHits: 0,
+    benchmarkMisses: 0,
+  },
+};
+
+function cacheTtlMs(baseMs: number): number {
+  return baseMs + Math.floor(Math.random() * (ACCOUNT_PAGE_CACHE_JITTER_MS + 1));
+}
+
+function recordAccountPageTiming(key: AccountPageTimingKey, startedAt: number): void {
+  accountPageStreamDiagnostics.timings[key] = Math.max(0, Date.now() - startedAt);
+  accountPageStreamDiagnostics.updatedAt = new Date().toISOString();
+}
+
+function recordAccountPageCache(key: AccountPageCacheKey, hit: boolean): void {
+  accountPageStreamDiagnostics.cache[key] = hit;
+  if (key === "criticalHit") {
+    accountPageStreamDiagnostics.cache[hit ? "criticalHits" : "criticalMisses"] += 1;
+  } else if (key === "liveHit") {
+    accountPageStreamDiagnostics.cache[hit ? "liveHits" : "liveMisses"] += 1;
+  } else if (key === "derivedHit") {
+    accountPageStreamDiagnostics.cache[hit ? "derivedHits" : "derivedMisses"] += 1;
+  } else {
+    accountPageStreamDiagnostics.cache[hit ? "benchmarkHits" : "benchmarkMisses"] += 1;
+  }
+  accountPageStreamDiagnostics.updatedAt = new Date().toISOString();
+}
+
+export function recordAccountPageStreamWrite(
+  kind: "critical" | "derived",
+  startedAt: number,
+): void {
+  recordAccountPageTiming(
+    kind === "critical" ? "firstCriticalWriteMs" : "firstDerivedWriteMs",
+    startedAt,
+  );
+}
+
+export function getAccountPageStreamDiagnostics() {
+  return {
+    updatedAt: accountPageStreamDiagnostics.updatedAt,
+    timings: { ...accountPageStreamDiagnostics.timings },
+    cache: { ...accountPageStreamDiagnostics.cache },
+  };
+}
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -197,6 +298,7 @@ export function clearAccountPageSnapshotCache() {
   accountPageCriticalCache.clear();
   accountPageLiveCache.clear();
   accountPageDerivedCache.clear();
+  accountPageBenchmarkEquityCache.clear();
   accountPageSnapshotInflight.clear();
   accountPageCriticalInflight.clear();
   accountPageLiveInflight.clear();
@@ -257,45 +359,54 @@ export async function fetchAccountPageLivePayload(
   const cached = accountPageLiveCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
+    recordAccountPageCache("liveHit", true);
+    recordAccountPageTiming("liveMs", now);
     return cached.value;
   }
+  recordAccountPageCache("liveHit", false);
   const inFlight = accountPageLiveInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
   const version = accountPageSnapshotCacheVersion;
+  const startedAt = Date.now();
   const request = (async () => {
-    const common = {
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-    };
-    const [critical, intradayEquity] = await Promise.all([
-      fetchAccountPageCriticalPayload(normalized),
-      getAccountEquityHistory({ ...common, range: "1D" }),
-    ]);
+    try {
+      const common = {
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+      };
+      const [critical, intradayEquity] = await Promise.all([
+        fetchAccountPageCriticalPayload(normalized),
+        getAccountEquityHistory({ ...common, range: "1D" }),
+      ]);
 
-    const value: AccountPageLivePayload = {
-      stream: "account-page-live",
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-      orderTab: normalized.orderTab,
-      assetClass: normalized.assetClass,
-      updatedAt: new Date().toISOString(),
-      summary: critical.summary,
-      intradayEquity,
-      allocation: critical.allocation,
-      positions: critical.positions,
-      orders: critical.orders,
-      risk: critical.risk,
-    };
-    if (version === accountPageSnapshotCacheVersion) {
-      accountPageLiveCache.set(cacheKey, {
-        value,
-        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
-      });
+      const value: AccountPageLivePayload = {
+        stream: "account-page-live",
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+        orderTab: normalized.orderTab,
+        assetClass: normalized.assetClass,
+        updatedAt: new Date().toISOString(),
+        summary: critical.summary,
+        intradayEquity,
+        allocation: critical.allocation,
+        positions: critical.positions,
+        orders: critical.orders,
+        risk: critical.risk,
+      };
+      if (version === accountPageSnapshotCacheVersion) {
+        accountPageLiveCache.set(cacheKey, {
+          value,
+          expiresAt:
+            Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
+        });
+      }
+      return value;
+    } finally {
+      recordAccountPageTiming("liveMs", startedAt);
     }
-    return value;
   })();
 
   accountPageLiveInflight.set(cacheKey, request);
@@ -321,56 +432,65 @@ export async function fetchAccountPageCriticalPayload(
   const cached = accountPageCriticalCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
+    recordAccountPageCache("criticalHit", true);
+    recordAccountPageTiming("criticalMs", now);
     return cached.value;
   }
+  recordAccountPageCache("criticalHit", false);
   const inFlight = accountPageCriticalInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
   const version = accountPageSnapshotCacheVersion;
+  const startedAt = Date.now();
   const request = (async () => {
-    const common = {
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-    };
-    const [
-      summary,
-      allocation,
-      positions,
-      orders,
-      risk,
-    ] = await Promise.all([
-      getAccountSummary(common),
-      getAccountAllocation(common),
-      getAccountPositions({
-        ...common,
-        assetClass: normalized.assetClass,
-      }),
-      getAccountOrders({ ...common, tab: normalized.orderTab }),
-      getAccountRisk(common),
-    ]);
+    try {
+      const common = {
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+      };
+      const [
+        summary,
+        allocation,
+        positions,
+        orders,
+        risk,
+      ] = await Promise.all([
+        getAccountSummary(common),
+        getAccountAllocation(common),
+        getAccountPositions({
+          ...common,
+          assetClass: normalized.assetClass,
+        }),
+        getAccountOrders({ ...common, tab: normalized.orderTab }),
+        getAccountRisk(common),
+      ]);
 
-    const value: AccountPageCriticalPayload = {
-      stream: "account-page-critical",
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-      orderTab: normalized.orderTab,
-      assetClass: normalized.assetClass,
-      updatedAt: new Date().toISOString(),
-      summary,
-      allocation,
-      positions,
-      orders,
-      risk,
-    };
-    if (version === accountPageSnapshotCacheVersion) {
-      accountPageCriticalCache.set(cacheKey, {
-        value,
-        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
-      });
+      const value: AccountPageCriticalPayload = {
+        stream: "account-page-critical",
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+        orderTab: normalized.orderTab,
+        assetClass: normalized.assetClass,
+        updatedAt: new Date().toISOString(),
+        summary,
+        allocation,
+        positions,
+        orders,
+        risk,
+      };
+      if (version === accountPageSnapshotCacheVersion) {
+        accountPageCriticalCache.set(cacheKey, {
+          value,
+          expiresAt:
+            Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
+        });
+      }
+      return value;
+    } finally {
+      recordAccountPageTiming("criticalMs", startedAt);
     }
-    return value;
   })();
 
   accountPageCriticalInflight.set(cacheKey, request);
@@ -383,6 +503,42 @@ export async function fetchAccountPageCriticalPayload(
   }
 }
 
+async function fetchAccountPageBenchmarkEquityHistory(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  range?: AccountRange;
+  benchmark: BenchmarkSymbol;
+  version: number;
+}): Promise<Awaited<ReturnType<typeof getAccountEquityHistory>>> {
+  const cacheKey = stableStringify({
+    accountId: input.accountId,
+    mode: input.mode,
+    range: input.range ?? null,
+    benchmark: input.benchmark,
+  });
+  const cached = accountPageBenchmarkEquityCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    recordAccountPageCache("benchmarkHit", true);
+    return cached.value;
+  }
+  recordAccountPageCache("benchmarkHit", false);
+
+  const value = await getAccountEquityHistory({
+    accountId: input.accountId,
+    mode: input.mode,
+    range: input.range,
+    benchmark: input.benchmark,
+  });
+  if (input.version === accountPageSnapshotCacheVersion) {
+    accountPageBenchmarkEquityCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS,
+    });
+  }
+  return value;
+}
+
 export async function fetchAccountPageDerivedPayload(
   input: AccountPageSnapshotInput,
 ): Promise<AccountPageDerivedPayload> {
@@ -391,92 +547,101 @@ export async function fetchAccountPageDerivedPayload(
   const cached = accountPageDerivedCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
+    recordAccountPageCache("derivedHit", true);
+    recordAccountPageTiming("derivedMs", now);
     return cached.value;
   }
+  recordAccountPageCache("derivedHit", false);
   const inFlight = accountPageDerivedInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
   const version = accountPageSnapshotCacheVersion;
+  const startedAt = Date.now();
   const request = (async () => {
-    const common = {
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-    };
-    const closedTradeInput = {
-      ...common,
-      from: normalized.from,
-      to: normalized.to,
-      symbol: normalized.symbol,
-      assetClass: normalized.tradeAssetClass,
-      pnlSign: normalized.pnlSign,
-      holdDuration: normalized.holdDuration,
-    };
-    const benchmarkSymbols: BenchmarkSymbol[] = ["SPY", "QQQ", "DIA"];
-    const [
-      equityHistory,
-      benchmarkRows,
-      performanceCalendarEquity,
-      performanceCalendarTrades,
-      closedTrades,
-      cashActivity,
-      flexHealth,
-    ] = await Promise.all([
-      getAccountEquityHistory({ ...common, range: normalized.range }),
-      Promise.all(
-        benchmarkSymbols.map((benchmark) =>
-          getAccountEquityHistory({
-            ...common,
-            range: normalized.range,
-            benchmark,
-          }),
-        ),
-      ),
-      getAccountEquityHistory({ ...common, range: "1Y" }),
-      getAccountClosedTrades({
+    try {
+      const common = {
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+      };
+      const closedTradeInput = {
         ...common,
-        from: normalized.performanceCalendarFrom,
-      }),
-      getAccountClosedTrades(closedTradeInput),
-      getAccountCashActivity(common),
-      isShadowAccountId(normalized.accountId) ? Promise.resolve(null) : getFlexHealth(),
-    ]);
-
-    const value: AccountPageDerivedPayload = {
-      stream: "account-page-derived",
-      accountId: normalized.accountId,
-      mode: normalized.mode,
-      range: normalized.range,
-      tradeFilters: {
-        from: isoOrNull(normalized.from),
-        to: isoOrNull(normalized.to),
+        from: normalized.from,
+        to: normalized.to,
         symbol: normalized.symbol,
         assetClass: normalized.tradeAssetClass,
         pnlSign: normalized.pnlSign,
         holdDuration: normalized.holdDuration,
-      },
-      performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
-      updatedAt: new Date().toISOString(),
-      equityHistory,
-      benchmarkEquityHistory: {
-        SPY: benchmarkRows[0]!,
-        QQQ: benchmarkRows[1]!,
-        DIA: benchmarkRows[2]!,
-      },
-      performanceCalendarEquity,
-      performanceCalendarTrades,
-      closedTrades,
-      cashActivity,
-      flexHealth,
-    };
-    if (version === accountPageSnapshotCacheVersion) {
-      accountPageDerivedCache.set(cacheKey, {
-        value,
-        expiresAt: Date.now() + ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS,
-      });
+      };
+      const benchmarkSymbols: BenchmarkSymbol[] = ["SPY", "QQQ", "DIA"];
+      const [
+        equityHistory,
+        benchmarkRows,
+        performanceCalendarEquity,
+        performanceCalendarTrades,
+        closedTrades,
+        cashActivity,
+        flexHealth,
+      ] = await Promise.all([
+        getAccountEquityHistory({ ...common, range: normalized.range }),
+        Promise.all(
+          benchmarkSymbols.map((benchmark) =>
+            fetchAccountPageBenchmarkEquityHistory({
+              ...common,
+              range: normalized.range,
+              benchmark,
+              version,
+            }),
+          ),
+        ),
+        getAccountEquityHistory({ ...common, range: "1Y" }),
+        getAccountClosedTrades({
+          ...common,
+          from: normalized.performanceCalendarFrom,
+        }),
+        getAccountClosedTrades(closedTradeInput),
+        getAccountCashActivity(common),
+        isShadowAccountId(normalized.accountId) ? Promise.resolve(null) : getFlexHealth(),
+      ]);
+
+      const value: AccountPageDerivedPayload = {
+        stream: "account-page-derived",
+        accountId: normalized.accountId,
+        mode: normalized.mode,
+        range: normalized.range,
+        tradeFilters: {
+          from: isoOrNull(normalized.from),
+          to: isoOrNull(normalized.to),
+          symbol: normalized.symbol,
+          assetClass: normalized.tradeAssetClass,
+          pnlSign: normalized.pnlSign,
+          holdDuration: normalized.holdDuration,
+        },
+        performanceCalendarFrom: isoOrNull(normalized.performanceCalendarFrom),
+        updatedAt: new Date().toISOString(),
+        equityHistory,
+        benchmarkEquityHistory: {
+          SPY: benchmarkRows[0]!,
+          QQQ: benchmarkRows[1]!,
+          DIA: benchmarkRows[2]!,
+        },
+        performanceCalendarEquity,
+        performanceCalendarTrades,
+        closedTrades,
+        cashActivity,
+        flexHealth,
+      };
+      if (version === accountPageSnapshotCacheVersion) {
+        accountPageDerivedCache.set(cacheKey, {
+          value,
+          expiresAt: Date.now() + ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS,
+        });
+      }
+      return value;
+    } finally {
+      recordAccountPageTiming("derivedMs", startedAt);
     }
-    return value;
   })();
 
   accountPageDerivedInflight.set(cacheKey, request);
@@ -537,7 +702,8 @@ export async function fetchAccountPageSnapshotPayload(
     if (version === accountPageSnapshotCacheVersion) {
       accountPageSnapshotCache.set(cacheKey, {
         value,
-        expiresAt: Date.now() + ACCOUNT_PAGE_STREAM_INTERVAL_MS,
+        expiresAt:
+          Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
       });
     }
     return value;

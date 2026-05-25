@@ -92,8 +92,7 @@ function readCgroup(pid) {
 const myCgroup = readCgroup(process.pid);
 const runningInsideReplitWorkflow =
   process.env.REPLIT_MODE === "workflow" ||
-  process.env.PYRUS_REPLIT_RUN === "1" ||
-  process.env.RAYALGO_REPLIT_RUN === "1";
+  process.env.PYRUS_REPLIT_RUN === "1";
 
 // Returns pids that share our cgroup (safe to reap) vs pids in a different
 // cgroup (usually a separate supervised service).
@@ -204,7 +203,7 @@ if (foreignCgroup.size > 0) {
     lines.push(`  ${describePid(pid)} cgroup=${cg}`);
   }
   console.error(
-    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup. Shell-launched dev commands must not kill the live Replit workflow; only commands already running inside a Replit workflow may reclaim a foreign execution scope on their pinned port.\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} Current REPLIT_MODE: ${process.env.REPLIT_MODE ?? "<unset>"}\n${logPrefix} Current PYRUS_REPLIT_RUN: ${process.env.PYRUS_REPLIT_RUN ?? "<unset>"}\n${logPrefix} Current RAYALGO_REPLIT_RUN: ${process.env.RAYALGO_REPLIT_RUN ?? "<unset>"}\n${logPrefix} If you meant to restart the live app, use the Replit workflow restart action. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
+    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup. Shell-launched dev commands must not kill the live Replit workflow; only commands already running inside a Replit workflow may reclaim a foreign execution scope on their pinned port.\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} Current REPLIT_MODE: ${process.env.REPLIT_MODE ?? "<unset>"}\n${logPrefix} Current PYRUS_REPLIT_RUN: ${process.env.PYRUS_REPLIT_RUN ?? "<unset>"}\n${logPrefix} If you meant to restart the live app, use the Replit workflow restart action. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
   );
   process.exit(1);
 }

@@ -1,7 +1,7 @@
 import {
   aggregateBars,
   buildCandidatesForMode,
-  buildRayReplicaSignalTape,
+  buildPyrusSignalsSignalTape,
   buildWalkForwardWindows,
   calculateBacktestMetrics,
   calculateBenchmarkMetrics,
@@ -1207,7 +1207,7 @@ async function runOptionsBacktest(
 
   const signalEvents = Object.entries(barsBySymbol)
     .flatMap(([symbol, bars]) =>
-      buildRayReplicaSignalTape(bars, study.parameters).events
+      buildPyrusSignalsSignalTape(bars, study.parameters).events
         .filter((event) => event.kind === "choch")
         .map((event) => ({
           ...event,
@@ -1482,7 +1482,7 @@ async function executeStudyRun(
 }> {
   if (
     resolveExecutionMode(study) !== "spot" &&
-    study.strategyId === "ray_replica_signals"
+    study.strategyId === "pyrus_signals"
   ) {
     const optionResult = await runOptionsBacktest(study, barsBySymbol);
     return {

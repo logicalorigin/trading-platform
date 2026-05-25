@@ -326,7 +326,7 @@ function isHighSignalPath(filePath) {
   const ignoredPrefixes = [
     ".vendor/",
     "test-results/",
-    "artifacts/rayalgo/test-results/",
+    "artifacts/pyrus/test-results/",
   ];
   const ignoredSuffixes = [
     ".png",

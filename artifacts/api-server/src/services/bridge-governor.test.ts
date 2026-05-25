@@ -17,6 +17,7 @@ test.afterEach(() => {
   delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_CONCURRENCY"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"];
+  delete process.env["IBKR_BRIDGE_GOVERNOR_ACCOUNT_CONCURRENCY"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ACCOUNT_BACKOFF_MS"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ACCOUNT_FAILURE_THRESHOLD"];
   delete process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_BACKOFF_MS"];
@@ -28,7 +29,7 @@ test("bridge governor keeps quote bootstrap work conservative by default", async
 
   assert.equal(config.concurrency, 1);
   assert.equal(config.failureThreshold, 1);
-  assert.equal(config.backoffMs, 15_000);
+  assert.equal(config.backoffMs, 30_000);
 
   await assert.rejects(
     runBridgeWork("quotes", async () => {
@@ -39,6 +40,22 @@ test("bridge governor keeps quote bootstrap work conservative by default", async
   );
 
   assert.equal(isBridgeWorkBackedOff("quotes"), true);
+});
+
+test("bridge governor allows limited parallel account reads by default", async () => {
+  const config = getBridgeGovernorConfigSnapshot().account;
+
+  assert.equal(config.concurrency, 2);
+  assert.equal(config.defaults.concurrency, 2);
+  assert.equal(config.backoffMs, 15_000);
+});
+
+test("bridge governor backoffs cover long bridge request budgets", () => {
+  const snapshot = getBridgeGovernorConfigSnapshot();
+
+  assert.equal(snapshot.quotes.backoffMs, 30_000);
+  assert.equal(snapshot.bars.backoffMs, 30_000);
+  assert.equal(snapshot.options.backoffMs, 45_000);
 });
 
 test("bridge governor caps concurrent work by category", async () => {

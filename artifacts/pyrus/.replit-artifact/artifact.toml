@@ -1,0 +1,41 @@
+kind = "web"
+previewPath = "/"
+title = "PYRUS Platform"
+version = "1.0.0"
+id = "artifacts/pyrus"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18747
+
+[services.development]
+run = "trap '' HUP; exec pnpm --filter @workspace/pyrus run dev:replit"
+
+[services.production]
+
+[services.production.build]
+args = ["pnpm", "run", "build:pyrus-app"]
+
+[services.production.build.env]
+NODE_ENV = "production"
+
+[services.production.run]
+args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+
+[services.production.run.env]
+PORT = "18747"
+NODE_ENV = "production"
+PYRUS_SERVE_WEB = "1"
+
+[services.production.health.startup]
+path = "/api/healthz"
+
+[services.env]
+PORT = "18747"
+BASE_PATH = "/"

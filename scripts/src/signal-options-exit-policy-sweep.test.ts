@@ -4,14 +4,14 @@ import {
   buildVariantBackfillInput,
   buildEarlyInvalidationGridVariants,
   buildProgressiveTrailVariants,
-  buildRayReplicaSettingsPatch,
+  buildPyrusSignalsSettingsPatch,
   buildVariants,
   selectReplayVariant,
   type SweepResult,
 } from "./signal-options-exit-policy-sweep";
 
-test("exit-policy sweep carries the tuned RayReplica h8 structure patch", () => {
-  assert.deepEqual(buildRayReplicaSettingsPatch({ timeHorizon: 8 }), {
+test("exit-policy sweep carries the tuned Pyrus Signals h8 structure patch", () => {
+  assert.deepEqual(buildPyrusSignalsSettingsPatch({ timeHorizon: 8 }), {
     timeHorizon: 8,
     bosConfirmation: "wicks",
     chochAtrBuffer: 0,
@@ -146,7 +146,7 @@ test("exit-policy replay builds a committed shadow-ledger backfill input", () =>
   const input = buildVariantBackfillInput({
     deployment: {
       id: "deployment-1",
-      name: "RayReplica Signal Options Shadow Paper",
+      name: "Pyrus Signals Options Shadow Paper",
       symbolUniverse: ["spy", "NvDa"],
     },
     variant,
@@ -172,13 +172,13 @@ test("exit-policy replay builds a committed shadow-ledger backfill input", () =>
       runId: "signal-options-exit-sweep-test-run-trail-ladder-aggressive",
       marketDate: "2026-05-04",
       deploymentId: "deployment-1",
-      deploymentName: "RayReplica Signal Options Shadow Paper",
+      deploymentName: "Pyrus Signals Options Shadow Paper",
     },
     replaceReplayRows: true,
     forceDeploymentUniverse: true,
     symbolUniverseOverride: ["SPY", "NVDA"],
     signalTimeframe: "5m",
-    rayReplicaSettingsPatch: {
+    pyrusSignalsSettingsPatch: {
       timeHorizon: 8,
       bosConfirmation: "wicks",
       chochAtrBuffer: 0,
@@ -194,7 +194,7 @@ test("exit-policy dry runs do not commit or replace replay rows", () => {
   const input = buildVariantBackfillInput({
     deployment: {
       id: "deployment-1",
-      name: "RayReplica Signal Options Shadow Paper",
+      name: "Pyrus Signals Options Shadow Paper",
       symbolUniverse: ["SPY"],
     },
     variant: {

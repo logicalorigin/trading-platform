@@ -1,7 +1,7 @@
 import {
   aggregateBars,
   buildCandidatesForMode,
-  buildRayReplicaSignalTape,
+  buildPyrusSignalsSignalTape,
   buildWalkForwardWindows,
   getBacktestOptionPreset,
   getStrategyCatalogItem,
@@ -1735,7 +1735,7 @@ function buildRunIndicatorPayload(
   chartBars: Array<{ time: number; ts: string }>,
   chartBarRanges: Array<{ startMs: number; endMs: number }>,
 ) {
-  if (run.strategyId !== "ray_replica_signals" || signalBars.length === 0) {
+  if (run.strategyId !== "pyrus_signals" || signalBars.length === 0) {
     return {
       indicatorEvents: [],
       indicatorZones: [],
@@ -1748,7 +1748,7 @@ function buildRunIndicatorPayload(
     };
   }
 
-  const tape = buildRayReplicaSignalTape(
+  const tape = buildPyrusSignalsSignalTape(
     signalBars,
     Object.fromEntries(
       Object.entries(strategyParameters).map(([key, value]) => [
@@ -1802,7 +1802,7 @@ function buildRunIndicatorPayload(
       conviction: null,
       meta: {
         symbol: selectedSymbol,
-        source: "ray_replica_signals",
+        source: "pyrus_signals",
       },
     };
   });

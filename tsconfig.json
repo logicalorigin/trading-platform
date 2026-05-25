@@ -22,7 +22,7 @@
       "path": "./lib/ibkr-contracts"
     },
     {
-      "path": "./lib/rayreplica-core"
+      "path": "./lib/pyrus-signals-core"
     }
   ]
 }

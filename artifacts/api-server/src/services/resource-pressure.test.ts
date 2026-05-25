@@ -16,25 +16,19 @@ test("resource pressure escalates from API RSS", () => {
   assert.equal(updateApiResourcePressure({ rssMb: 1_650 }).level, "critical");
 });
 
-test("resource pressure exposes caps for background work", () => {
-  assert.equal(
-    getApiResourcePressureSnapshot().caps.watchlistFillerMaxSymbols,
-    40,
-  );
-
+test("resource pressure caps speculative filler at high pressure", () => {
   updateApiResourcePressure({ rssMb: 1_250 });
 
   const snapshot = getApiResourcePressureSnapshot();
 
   assert.equal(snapshot.level, "high");
-  assert.equal(snapshot.caps.watchlistFillerMaxSymbols, 4);
-  assert.equal(snapshot.caps.optionsFlow.lineBudgetMax, 40);
-  assert.equal(snapshot.caps.optionsFlow.radarBatchSizeMax, 30);
   assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, true);
   assert.equal(snapshot.caps.signalOptions.maintenanceOnly, false);
+  assert.equal(snapshot.caps.watchlistFillerMaxSymbols, 0);
+  assert.equal("optionsFlow" in snapshot.caps, false);
 });
 
-test("slow route pressure throttles without critical scanner shutdown", () => {
+test("watch pressure does not cap watchlist filler slack", () => {
   updateApiResourcePressure({ dominantSlowRouteP95Ms: 12_000 });
 
   const snapshot = getApiResourcePressureSnapshot();
@@ -42,21 +36,19 @@ test("slow route pressure throttles without critical scanner shutdown", () => {
   assert.equal(snapshot.level, "watch");
   assert.equal(snapshot.drivers[0]?.kind, "api-latency");
   assert.equal(snapshot.drivers[0]?.level, "watch");
-  assert.equal(snapshot.caps.watchlistFillerMaxSymbols, 12);
-  assert.equal(snapshot.caps.optionsFlow.backgroundEnabled, true);
-  assert.equal(snapshot.caps.optionsFlow.lineBudgetMax, 40);
+  assert.equal(snapshot.caps.watchlistFillerMaxSymbols, null);
+  assert.equal("optionsFlow" in snapshot.caps, false);
   assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
   assert.equal(snapshot.caps.signalOptions.maintenanceOnly, false);
 });
 
-test("critical RSS pressure still disables broad background creators", () => {
+test("critical RSS pressure disables speculative filler", () => {
   updateApiResourcePressure({ rssMb: 1_650 });
 
   const snapshot = getApiResourcePressureSnapshot();
 
   assert.equal(snapshot.level, "critical");
   assert.equal(snapshot.caps.watchlistFillerMaxSymbols, 0);
-  assert.equal(snapshot.caps.optionsFlow.backgroundEnabled, false);
-  assert.equal(snapshot.caps.optionsFlow.lineBudgetMax, 0);
+  assert.equal("optionsFlow" in snapshot.caps, false);
   assert.equal(snapshot.caps.signalOptions.maintenanceOnly, true);
 });

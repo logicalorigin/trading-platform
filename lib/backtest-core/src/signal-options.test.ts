@@ -11,7 +11,7 @@ import {
 test("tuned signal-options preset captures the recovered h8 profile", () => {
   assert.deepEqual(tunedSignalOptionsStrategySettings, {
     signalTimeframe: "5m",
-    rayReplicaSettings: {
+    pyrusSignalsSettings: {
       timeHorizon: 8,
       bosConfirmation: "wicks",
       chochAtrBuffer: 0,

@@ -1,0 +1,2147 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+.pyrus-loader-lockup {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  line-height: 0;
+}
+
+.pyrus-loader-mark {
+  isolation: isolate;
+  line-height: 0;
+  position: relative;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--ra-color-accent) 34%, transparent));
+  transform-origin: 50% 50%;
+}
+
+.pyrus-mark {
+  background: #050814;
+  border-radius: 999px;
+  display: block;
+  flex-shrink: 0;
+  line-height: 0;
+  overflow: hidden;
+}
+
+.pyrus-mark-image {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+  width: 100%;
+}
+
+.pyrus-loader-mark .pyrus-mark {
+  position: relative;
+  z-index: 1;
+  animation: pyrus-loader-breathe 1800ms var(--ra-motion-ease, cubic-bezier(0.4, 0, 0.2, 1)) infinite;
+}
+
+.pyrus-wordmark {
+  display: block;
+  flex-shrink: 0;
+  line-height: 0;
+  overflow: hidden;
+}
+
+.pyrus-wordmark-image {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  width: 100%;
+}
+
+.pyrus-wordmark-image--light {
+  display: none;
+}
+
+:root[data-pyrus-theme="light"] .pyrus-wordmark-image--dark,
+[data-theme="light"] .pyrus-wordmark-image--dark {
+  display: none;
+}
+
+:root[data-pyrus-theme="light"] .pyrus-wordmark-image--light,
+[data-theme="light"] .pyrus-wordmark-image--light {
+  display: block;
+}
+
+.pyrus-loader-wordmark {
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--ra-color-accent) 22%, transparent));
+  opacity: 0.96;
+  transform-origin: 50% 50%;
+  animation: pyrus-loader-wordmark-hydrate 2600ms ease-in-out infinite alternate;
+}
+
+.pyrus-lockup-descriptor {
+  color: var(--ra-text-dim);
+  font-family: var(--ra-font-code);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+@keyframes pyrus-loader-breathe {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(0.985);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.025);
+  }
+}
+
+@keyframes pyrus-loader-wordmark-hydrate {
+  0% {
+    opacity: 0.78;
+    transform: translateY(1px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pyrus-loader-mark,
+  .pyrus-loader-mark .pyrus-mark,
+  .pyrus-loader-wordmark,
+  .pyrus-lockup-descriptor {
+    animation: none;
+    transform: none;
+  }
+
+  .pyrus-loader-mark,
+  .pyrus-loader-mark .pyrus-mark,
+  .pyrus-loader-wordmark,
+  .pyrus-lockup-descriptor {
+    opacity: 1;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark,
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark .pyrus-mark,
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-wordmark,
+html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
+  animation: none;
+  transform: none;
+}
+
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark,
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-mark .pyrus-mark,
+html[data-pyrus-reduced-motion="on"] .pyrus-loader-wordmark,
+html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
+  opacity: 1;
+}
+
+:root {
+  --ra-font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ra-font-display: var(--ra-font-sans);
+  --ra-font-data: var(--ra-font-sans);
+  --ra-font-code: var(--ra-font-data);
+  --ra-accent-500: #168BFF;
+  --ra-blue-500: #168BFF;
+  --ra-green-400: #5CE3A2;
+  --ra-green-500: #2ED889;
+  --ra-red-500: #FF3048;
+  --ra-amber-300: #F2D891;
+  --ra-amber-400: #EFCB6A;
+  --ra-amber-500: #E9B949;
+  --ra-amber-600: #C99623;
+  --ra-orange-500: #F28A3A;
+  --ra-cyan-500: #24C8DB;
+  --ra-pink-500: #FF5F9E;
+  --ra-purple-400: #C39CFF;
+  --ra-purple-500: #A14DFF;
+  --ra-grey-0: #050814;
+  --ra-grey-1: #090D18;
+  --ra-grey-2: #101624;
+  --ra-grey-3: #172033;
+  --ra-grey-4: #1F2B42;
+  --ra-grey-5: #1D2A3F;
+  --ra-grey-6: #2A3A54;
+  --ra-grey-7: #788AA0;
+  --ra-grey-8: #94A3BA;
+  --ra-grey-9: #B8C4D6;
+  --ra-surface-0: var(--ra-grey-0);
+  --ra-surface-1: var(--ra-grey-1);
+  --ra-surface-2: var(--ra-grey-2);
+  --ra-surface-3: var(--ra-grey-3);
+  --ra-surface-4: var(--ra-grey-4);
+  --ra-text-primary: #F4F8FF;
+  --ra-text-secondary: var(--ra-grey-9);
+  --ra-text-dim: var(--ra-grey-8);
+  --ra-text-muted: var(--ra-grey-7);
+  --ra-border-default: var(--ra-grey-5);
+  --ra-border-light: var(--ra-grey-6);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-pnl-positive: var(--ra-green-500);
+  --ra-pnl-negative: var(--ra-red-500);
+  --ra-pnl-neutral: var(--ra-text-dim);
+  --ra-side-buy: var(--ra-green-500);
+  --ra-side-sell: var(--ra-red-500);
+  --ra-position-long: var(--ra-green-500);
+  --ra-position-short: var(--ra-red-500);
+  --ra-status-filled: var(--ra-green-500);
+  --ra-status-working: var(--ra-amber-500);
+  --ra-status-rejected: var(--ra-red-500);
+  --ra-stream-healthy: var(--ra-green-500);
+  --ra-stream-quiet: var(--ra-green-400);
+  --ra-stream-stale: var(--ra-amber-500);
+  --ra-stream-delayed: var(--ra-amber-500);
+  --ra-stream-capacity-limited: var(--ra-amber-600);
+  --ra-stream-reconnecting: var(--ra-amber-400);
+  --ra-stream-checking: var(--ra-blue-500);
+  --ra-stream-login-required: var(--ra-amber-300);
+  --ra-stream-offline: var(--ra-red-500);
+  --ra-stream-market-closed: var(--ra-text-secondary);
+  --ra-stream-no-subscribers: var(--ra-text-secondary);
+  --ra-pressure-normal: var(--ra-green-500);
+  --ra-pressure-watch: var(--ra-amber-400);
+  --ra-pressure-high: var(--ra-orange-500);
+  --ra-pressure-critical: var(--ra-red-500);
+  --ra-toast-info: var(--ra-blue-500);
+  --ra-toast-success: var(--ra-green-500);
+  --ra-toast-warning: var(--ra-amber-500);
+  --ra-toast-critical: var(--ra-red-500);
+  --ra-category-automation: var(--ra-pink-500);
+  --ra-category-replay: var(--ra-cyan-500);
+  --ra-category-backtest: var(--ra-purple-500);
+  --ra-category-mixed: var(--ra-amber-500);
+  --ra-gex-zero-gamma: var(--ra-cyan-500);
+  --ra-gex-call-wall: var(--ra-purple-400);
+  --ra-gex-put-wall: var(--ra-purple-400);
+  --ra-color-pnl-positive: var(--ra-pnl-positive);
+  --ra-color-pnl-negative: var(--ra-pnl-negative);
+  --ra-color-buy: var(--ra-side-buy);
+  --ra-color-sell: var(--ra-side-sell);
+  --ra-color-status-warn: var(--ra-status-working);
+  --ra-color-status-info: var(--ra-stream-checking);
+  --ra-table-row-bg-hover: color-mix(in srgb, var(--ra-surface-3) 72%, transparent);
+  --ra-space-1: 2px;
+  --ra-space-2: 3px;
+  --ra-space-3: 4px;
+  --ra-space-4: 5px;
+  --ra-space-5: 6px;
+  --ra-space-6: 8px;
+  --ra-space-7: 10px;
+  --ra-space-8: 12px;
+  --ra-space-9: 16px;
+  --ra-space-10: 20px;
+  --ra-space-11: 24px;
+  --ra-space-12: 32px;
+  --ra-type-micro: 10px;
+  --ra-type-label: 10px;
+  --ra-type-control: 10px;
+  --ra-type-body: 10px;
+  --ra-type-body-strong: 11px;
+  --ra-type-screen-title: 17px;
+  --ra-motion-micro: 90ms;
+  --ra-motion-fast: 140ms;
+  --ra-motion-standard: 190ms;
+  --ra-motion-slow: 260ms;
+  --ra-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ra-motion-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ra-motion-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ra-motion-accent: #168BFF;
+  --ra-motion-up: #2ED889;
+  --ra-motion-down: #FF3048;
+  --ra-motion-warn: #E9B949;
+  --ra-tooltip-bg: #090D18;
+  --ra-tooltip-border: #2A3A54;
+  --ra-tooltip-text: #F4F8FF;
+  --ra-tooltip-muted: #B8C4D6;
+  --ra-tooltip-shadow: 0 10px 24px rgba(0, 0, 0, 0.36), 0 4px 8px rgba(0, 0, 0, 0.24);
+  --ra-skeleton-base: #111A2A;
+  --ra-skeleton-highlight: #1F2B42;
+  --ra-focus-ring: 0 0 0 2px rgba(22, 139, 255, 0.34);
+  --ra-card-top-highlight: rgba(255, 255, 255, 0.05);
+  --ra-card-inner-shadow: inset 0 1px 0 var(--ra-card-top-highlight);
+  --ra-selected-glow: inset 0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 32%, transparent);
+  --ra-glass-nav-bg: color-mix(in srgb, var(--ra-surface-1) 78%, transparent);
+
+  /* Tier 3 gradient tokens. Consumed via the G proxy in uiTokens.jsx
+     (G.surfaceTopHighlight, G.hairlineDividerH/V, G.accentSweep,
+     G.dataBarPositive/Negative, G.glassNav) so JSX can stay theme-aware
+     without resolving any values at render time. Every gradient resolves
+     through other CSS vars so accent / theme changes propagate for free. */
+  --ra-gradient-surface-top-highlight: linear-gradient(
+    180deg,
+    var(--ra-card-top-highlight) 0%,
+    transparent 60%
+  );
+  --ra-gradient-hairline-divider-h: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ra-border-default) 50%,
+    transparent 100%
+  );
+  --ra-gradient-hairline-divider-v: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--ra-border-default) 50%,
+    transparent 100%
+  );
+  --ra-gradient-accent-sweep: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ra-color-accent) 24%, transparent) 50%,
+    transparent 100%
+  );
+  --ra-gradient-data-bar-positive: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-color-pnl-positive) 95%, transparent) 0%,
+    color-mix(in srgb, var(--ra-color-pnl-positive) 55%, transparent) 100%
+  );
+  --ra-gradient-data-bar-negative: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent) 0%,
+    color-mix(in srgb, var(--ra-color-pnl-negative) 95%, transparent) 100%
+  );
+  --ra-gradient-glass-nav: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ra-surface-1) 92%, transparent) 0%,
+    color-mix(in srgb, var(--ra-surface-1) 86%, transparent) 100%
+  );
+
+  /* Layered elevation — dark theme. Three shadows per level:
+       1. ambient — large diffuse, blocks-style depth
+       2. key     — directional y-shifted, hard line of cast
+       3. inset top highlight — 1px lit-from-above edge so the surface
+          reads as actually elevated, not just floating in space
+     ELEVATION.hover composes on top via box-shadow's comma list. */
+  --ra-elevation-sm:
+    0 1px 2px rgba(0, 0, 0, 0.32),
+    0 2px 4px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ra-elevation-md:
+    0 2px 4px rgba(0, 0, 0, 0.28),
+    0 8px 16px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --ra-elevation-lg:
+    0 4px 8px rgba(0, 0, 0, 0.32),
+    0 16px 32px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ra-elevation-hover:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 16%, transparent),
+    0 4px 14px color-mix(in srgb, var(--ra-color-accent) 22%, transparent);
+}
+
+:root[data-pyrus-theme="light"],
+:root[data-pyrus-theme="light"] {
+  --ra-accent-500: #0B66D8;
+  --ra-blue-500: #0B66D8;
+  --ra-green-400: #119B73;
+  --ra-green-500: #07805F;
+  --ra-red-500: #D92840;
+  --ra-amber-300: #D79A39;
+  --ra-amber-400: #C88A1E;
+  --ra-amber-500: #B87507;
+  --ra-amber-600: #966005;
+  --ra-orange-500: #C96B1E;
+  --ra-cyan-500: #047C90;
+  --ra-pink-500: #C73374;
+  --ra-purple-400: #9A6CFF;
+  --ra-purple-500: #7A3FF0;
+  --ra-grey-0: #F7FAFF;
+  --ra-grey-1: #FFFFFF;
+  --ra-grey-2: #F2F6FC;
+  --ra-grey-3: #E8EEF8;
+  --ra-grey-4: #DDE6F3;
+  --ra-grey-5: #D9E2F0;
+  --ra-grey-6: #EDF2F8;
+  --ra-grey-7: #6F7E92;
+  --ra-grey-8: #66758C;
+  --ra-grey-9: #33435A;
+  --ra-surface-0: var(--ra-grey-0);
+  --ra-surface-1: var(--ra-grey-1);
+  --ra-surface-2: var(--ra-grey-2);
+  --ra-surface-3: var(--ra-grey-3);
+  --ra-surface-4: var(--ra-grey-4);
+  --ra-text-primary: #101827;
+  --ra-text-secondary: var(--ra-grey-9);
+  --ra-text-dim: var(--ra-grey-8);
+  --ra-text-muted: var(--ra-grey-7);
+  --ra-border-default: var(--ra-grey-5);
+  --ra-border-light: var(--ra-grey-6);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-color-pnl-positive: var(--ra-pnl-positive);
+  --ra-color-pnl-negative: var(--ra-pnl-negative);
+  --ra-color-buy: var(--ra-side-buy);
+  --ra-color-sell: var(--ra-side-sell);
+  --ra-color-status-warn: var(--ra-status-working);
+  --ra-color-status-info: var(--ra-stream-checking);
+  --ra-table-row-bg-hover: color-mix(in srgb, var(--ra-surface-3) 86%, transparent);
+  --ra-tooltip-bg: #FFFFFF;
+  --ra-tooltip-border: #D9E2F0;
+  --ra-tooltip-text: #101827;
+  --ra-tooltip-muted: #66758C;
+  --ra-tooltip-shadow: 0 10px 24px rgba(16, 24, 39, 0.10), 0 4px 8px rgba(16, 24, 39, 0.06);
+  --ra-skeleton-base: #E8EEF8;
+  --ra-skeleton-highlight: #F7FAFF;
+  --ra-focus-ring: 0 0 0 2px rgba(11, 102, 216, 0.30);
+  --ra-card-top-highlight: rgba(255, 255, 255, 0.72);
+  --ra-card-inner-shadow: inset 0 1px 0 var(--ra-card-top-highlight), inset 0 0 0 1px rgba(25, 23, 26, 0.02);
+  --ra-selected-glow: inset 0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 28%, transparent);
+  --ra-glass-nav-bg: color-mix(in srgb, var(--ra-surface-1) 82%, transparent);
+
+  /* Light theme elevations — softer rgba on the dark text color so the
+     shadows read as gentle depth rather than smudges. No inset top
+     highlight here: light surfaces don't need a lit-from-above hint
+     because they're already lighter than the page background. */
+  --ra-elevation-sm:
+    0 1px 2px rgba(16, 24, 39, 0.05),
+    0 2px 6px rgba(16, 24, 39, 0.05);
+  --ra-elevation-md:
+    0 4px 8px rgba(16, 24, 39, 0.06),
+    0 10px 20px rgba(16, 24, 39, 0.06);
+  --ra-elevation-lg:
+    0 10px 24px rgba(16, 24, 39, 0.10),
+    0 16px 32px rgba(16, 24, 39, 0.08);
+  --ra-elevation-hover:
+    0 0 0 1px color-mix(in srgb, var(--ra-color-accent) 18%, transparent),
+    0 4px 12px color-mix(in srgb, var(--ra-color-accent) 18%, transparent);
+}
+
+/* Accent presets — rotate the brand accent only (preset CSS vars override theme-specified accent).
+   PYRUS blue is the default. Each preset has dark and light variants. */
+:root[data-pyrus-accent-preset="pyrus"],
+:root[data-pyrus-accent-preset="pyrus"] {
+  --ra-accent-500: #168BFF;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #168BFF;
+  --ra-focus-ring: 0 0 0 2px rgba(22, 139, 255, 0.34);
+}
+:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="pyrus"][data-pyrus-theme="light"] {
+  --ra-accent-500: #0B66D8;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #0B66D8;
+  --ra-focus-ring: 0 0 0 2px rgba(11, 102, 216, 0.30);
+}
+:root[data-pyrus-accent-preset="coral"],
+:root[data-pyrus-accent-preset="coral"] {
+  --ra-accent-500: #E08F76;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #E08F76;
+  --ra-focus-ring: 0 0 0 2px rgba(224, 143, 118, 0.32);
+}
+:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="coral"][data-pyrus-theme="light"] {
+  --ra-accent-500: #D97757;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #D97757;
+  --ra-focus-ring: 0 0 0 2px rgba(217, 119, 87, 0.30);
+}
+:root[data-pyrus-accent-preset="amber"],
+:root[data-pyrus-accent-preset="amber"] {
+  --ra-accent-500: #D9A864;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #D9A864;
+  --ra-focus-ring: 0 0 0 2px rgba(217, 168, 100, 0.32);
+}
+:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="amber"][data-pyrus-theme="light"] {
+  --ra-accent-500: #C28526;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #C28526;
+  --ra-focus-ring: 0 0 0 2px rgba(194, 133, 38, 0.30);
+}
+
+:root[data-pyrus-accent-preset="green"],
+:root[data-pyrus-accent-preset="green"] {
+  --ra-accent-500: #4FB286;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #4FB286;
+  --ra-focus-ring: 0 0 0 2px rgba(79, 178, 134, 0.34);
+}
+:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="green"][data-pyrus-theme="light"] {
+  --ra-accent-500: #0F6E51;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #0F6E51;
+  --ra-focus-ring: 0 0 0 2px rgba(15, 110, 81, 0.30);
+}
+
+:root[data-pyrus-accent-preset="aurora"],
+:root[data-pyrus-accent-preset="aurora"] {
+  --ra-accent-500: #A189CF;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #A189CF;
+  --ra-focus-ring: 0 0 0 2px rgba(161, 137, 207, 0.34);
+}
+:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"],
+:root[data-pyrus-accent-preset="aurora"][data-pyrus-theme="light"] {
+  --ra-accent-500: #6B4E8E;
+  --ra-color-accent: var(--ra-accent-500);
+  --ra-border-focus: var(--ra-accent-500);
+  --ra-motion-accent: #6B4E8E;
+  --ra-focus-ring: 0 0 0 2px rgba(107, 78, 142, 0.30);
+}
+
+:root[data-pyrus-color-mode="protan"] {
+  --ra-pnl-positive: var(--ra-blue-500);
+  --ra-pnl-negative: var(--ra-amber-500);
+  --ra-side-buy: var(--ra-blue-500);
+  --ra-side-sell: var(--ra-amber-500);
+  --ra-position-long: var(--ra-blue-500);
+  --ra-position-short: var(--ra-amber-500);
+  --ra-color-pnl-positive: var(--ra-pnl-positive);
+  --ra-color-pnl-negative: var(--ra-pnl-negative);
+  --ra-color-buy: var(--ra-side-buy);
+  --ra-color-sell: var(--ra-side-sell);
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: #F7FAFF;
+  font-family: var(--ra-font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "kern" 1, "ss01" 1, "ss03" 1, "calt" 1, "dlig" 1, "cv11" 1;
+  overflow: hidden;
+}
+
+:root[data-pyrus-theme="dark"] body,
+:root[data-pyrus-theme="dark"] #root,
+:root[data-pyrus-theme="dark"] body,
+:root[data-pyrus-theme="dark"] #root {
+  background: #050814;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  font-variant-numeric: inherit;
+  font-feature-settings: inherit;
+}
+
+body * {
+  font-family: inherit;
+}
+
+svg,
+svg text,
+svg tspan {
+  font-family: inherit;
+}
+
+.recharts-text,
+.recharts-cartesian-axis-tick-value,
+.recharts-cartesian-axis-tick,
+.recharts-label,
+.recharts-legend-item-text,
+.recharts-tooltip-label,
+.recharts-tooltip-item,
+.recharts-default-tooltip {
+  font-family: var(--ra-font-sans);
+}
+
+button,
+input,
+select,
+textarea,
+option,
+optgroup {
+  max-width: 100%;
+  font: inherit;
+  font-family: inherit;
+}
+
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+.ra-shell[data-viewport="phone"] .ra-touch-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+table {
+  max-width: 100%;
+}
+
+.chart-widget-menu {
+  box-sizing: border-box;
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow: auto;
+  backdrop-filter: blur(18px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--chart-menu-border) transparent;
+}
+
+.chart-widget-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chart-widget-menu::-webkit-scrollbar-thumb {
+  background: var(--chart-menu-border);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.chart-widget-menu__label {
+  display: block;
+  padding: 6px 10px 5px;
+  color: var(--chart-menu-muted);
+  line-height: 1.2;
+}
+
+.chart-widget-menu__separator {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--chart-menu-border);
+  opacity: 0.72;
+}
+
+.chart-widget-menu__item {
+  position: relative;
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 0 10px 0 30px;
+  color: var(--chart-menu-text);
+  line-height: 1;
+  outline: none;
+  user-select: none;
+  transition:
+    background-color 90ms ease,
+    color 90ms ease;
+}
+
+.chart-widget-menu__item[data-highlighted] {
+  background: var(--chart-menu-hover);
+}
+
+.chart-widget-menu__item[data-state="checked"] {
+  color: var(--chart-menu-text);
+}
+
+.chart-widget-menu__item[data-state="checked"][data-highlighted] {
+  background: var(--chart-menu-active);
+}
+
+.chart-widget-menu__item[data-disabled] {
+  opacity: 0.45;
+}
+
+.chart-widget-menu__item > span:first-child {
+  position: absolute;
+  left: 10px;
+  display: flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--chart-menu-accent);
+}
+
+.chart-widget-menu__item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.chart-widget-menu__item > span:first-child svg {
+  fill: currentColor;
+}
+
+@keyframes raRowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes raPanelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Error-shake — short horizontal jitter for invalid form submits.
+   Four micro-steps (4px → -4px → 3px → 0) over ~280ms gives a
+   readable "no, that wasn't right" without being theatrical. Pair with
+   the .ra-error-shake class (apply via state when validation fails;
+   remove after one cycle if you want it to fire again on the next
+   submission). */
+@keyframes raErrorShake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(4px); }
+  40%  { transform: translateX(-4px); }
+  60%  { transform: translateX(3px); }
+  80%  { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+
+.ra-error-shake {
+  animation: raErrorShake 280ms var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-error-shake {
+    animation: none;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-error-shake,
+html[data-pyrus-reduced-motion="on"] .ra-error-shake {
+  animation: none;
+}
+
+/* Screen-switch entrance — short fade + 4px translateY rise. Reads as
+   "this screen just arrived" without being slow enough to delay user
+   interaction. Re-played from JS by toggling between equivalent
+   animation names, avoiding synchronous layout reads on screen switch. */
+@keyframes raScreenEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes raScreenEnterAlt {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ra-screen-enter {
+  animation: raScreenEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+.ra-screen-enter-alt {
+  animation-name: raScreenEnterAlt;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-screen-enter {
+    animation: none;
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-screen-enter,
+html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
+  animation: none;
+}
+
+@keyframes raPopoverEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes raValueFlashUp {
+  0% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+  22% {
+    background-color: rgba(16, 185, 129, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.32);
+  }
+  100% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes raValueFlashDown {
+  0% {
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+  }
+  22% {
+    background-color: rgba(239, 68, 68, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.32);
+  }
+  100% {
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes raStatusPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes raSignalHotGlow {
+  0%, 100% {
+    box-shadow: inset 3px 0 0 var(--ra-motion-accent);
+  }
+  45% {
+    box-shadow:
+      inset 3px 0 0 var(--ra-motion-accent),
+      0 0 12px -2px var(--ra-motion-accent);
+  }
+}
+
+@keyframes raSignalGlyphFresh {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+.ra-pulse-orb {
+  animation: raStatusPulse 2.4s ease-in-out infinite;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ra-pulse-orb {
+    animation: none;
+  }
+}
+[data-pyrus-reduced-motion="on"] .ra-pulse-orb,
+[data-pyrus-reduced-motion="on"] .ra-pulse-orb {
+  animation: none;
+}
+
+@keyframes raFocusRail {
+  from {
+    transform: scaleY(0.35);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes raScanSweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes raSkeletonShimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes raSparkDraw {
+  from {
+    stroke-dashoffset: var(--ra-spark-length, 420);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes raBarGrow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.ra-radial-gauge-track-tick {
+  opacity: var(--ra-radial-gauge-track-opacity, 0.54);
+}
+
+.ra-radial-gauge-active-tick {
+  opacity: var(--ra-radial-gauge-active-opacity, 1);
+}
+
+.ra-radial-gauge-active-tick--animate {
+  animation: raRadialGaugeTickIn 240ms var(--ra-motion-enter) both;
+  animation-delay: var(--ra-radial-gauge-delay, 0ms);
+}
+
+@keyframes raRadialGaugeTickIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: var(--ra-radial-gauge-active-opacity, 1);
+  }
+}
+
+.ra-panel-enter {
+  animation: raPanelEnter var(--ra-motion-standard) var(--ra-motion-enter) both;
+  will-change: opacity, transform;
+}
+
+.ra-account-overview-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(240px, 0.95fr)
+    minmax(320px, 1.25fr)
+    minmax(390px, 1.42fr);
+  gap: 5px;
+  align-items: start;
+}
+
+.ra-account-overview-cell {
+  min-width: 0;
+}
+
+.ra-account-overview-cell > section {
+  height: auto;
+}
+
+[data-account-transitioning] {
+  opacity: 1;
+  transition: opacity 180ms ease-out;
+}
+
+[data-account-transitioning="true"] {
+  opacity: 0.85;
+}
+
+.ra-account-pnl-calendar-panel {
+  min-width: 0;
+}
+
+.ra-account-pnl-calendar-panel > section {
+  height: auto;
+}
+
+.ra-account-detail-grid,
+.ra-account-support-grid {
+  display: grid;
+  gap: 5px;
+  align-items: start;
+}
+
+.ra-account-detail-grid {
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+}
+
+.ra-account-support-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.ra-surface-0 {
+  background: var(--ra-surface-0);
+}
+
+.ra-surface-1 {
+  background: var(--ra-surface-1);
+}
+
+.ra-surface-2 {
+  background: var(--ra-surface-2);
+}
+
+.ra-text-primary {
+  color: var(--ra-text-primary);
+}
+
+.ra-text-secondary {
+  color: var(--ra-text-secondary);
+}
+
+.ra-text-dim {
+  color: var(--ra-text-dim);
+}
+
+.ra-border-default {
+  border-color: var(--ra-border-default);
+}
+
+.ra-row-hover {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+/* Hairline dividers — softer than 1px solid borders. The G.hairline*
+   gradients fade to transparent at the edges so the divider feels
+   integrated with the surface rather than slicing across it.
+
+   Usage: drop .ra-hairline-h as a child element (e.g. an empty <hr/>
+   or <div>) where you'd normally put border-bottom: 1px solid; the
+   class paints its own 1px height with the gradient. For vertical
+   dividers between flex children use .ra-hairline-v.
+
+   Why a class instead of border-image: border-image has rough sub-pixel
+   behavior on Chromium / Firefox; an absolutely-sized div with a
+   gradient bg renders crisply at any DPR. */
+.ra-hairline-h {
+  display: block;
+  height: 1px;
+  width: 100%;
+  background: var(--ra-gradient-hairline-divider-h);
+  border: none;
+  margin: 0;
+}
+
+.ra-hairline-v {
+  display: block;
+  width: 1px;
+  height: 100%;
+  background: var(--ra-gradient-hairline-divider-v);
+  border: none;
+  margin: 0;
+}
+
+/* Hairline-as-decoration utility — drop on any element where you'd
+   normally put border-bottom: 1px solid. Uses ::after so the parent
+   keeps its existing border / padding / box-sizing intact; only the
+   hairline overlay is added. Parent's position becomes relative so the
+   ::after lands at the bottom edge.
+
+   .ra-hairline-bottom — gradient hairline along the bottom edge
+   .ra-hairline-top    — gradient hairline along the top edge */
+.ra-hairline-bottom {
+  position: relative;
+}
+
+.ra-hairline-bottom::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--ra-gradient-hairline-divider-h);
+  pointer-events: none;
+}
+
+.ra-hairline-top {
+  position: relative;
+}
+
+.ra-hairline-top::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--ra-gradient-hairline-divider-h);
+  pointer-events: none;
+}
+
+/* TextField wrapper — paints the focus ring around the whole row (label
+   slot, input, leading/trailing decoration) via :focus-within. The bare
+   <input> inside has outline: none + border: none and inherits the ring
+   from this wrapper. .ra-textfield--error swaps the ring to the pnl-
+   negative tone and shows a 1px tinted border even when not focused. */
+.ra-textfield {
+  transition:
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-textfield:focus-within {
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+.ra-textfield--error {
+  border-color: color-mix(in srgb, var(--ra-color-pnl-negative) 55%, transparent) !important;
+}
+
+.ra-textfield--error:focus-within {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ra-color-pnl-negative) 36%, transparent);
+  border-color: var(--ra-color-pnl-negative) !important;
+}
+
+/* SegmentedControl indicator — slides between option bounds. The
+   transform + width animate together so the indicator both moves and
+   grows/shrinks if the next option has a different width. */
+.ra-segmented-indicator {
+  transition:
+    transform var(--ra-motion-standard) var(--ra-motion-ease),
+    width var(--ra-motion-standard) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-segmented-indicator {
+    transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator,
+html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
+  transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-pressure-mini-cluster {
+  max-width: 240px;
+  transition: max-width var(--ra-motion-standard) var(--ra-motion-ease);
+}
+
+.ra-pressure-mini-label {
+  max-width: 80px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    max-width var(--ra-motion-standard) var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-pressure-mini-cluster,
+  .ra-pressure-mini-label {
+    transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+  }
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label,
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label {
+  transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-row-hover:hover {
+  background: var(--ra-table-row-bg-hover);
+}
+
+/* Native interactive elements get a default state transition so any
+   JS-mediated hover swap (e.g. inline style.background = …) eases in
+   rather than snapping. .ra-interactive already overrides this with a
+   richer transition list for opted-in surfaces. */
+button,
+a,
+select,
+input,
+textarea,
+summary,
+[role="button"] {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-row-hover,
+  button,
+  a,
+  select,
+  input,
+  textarea,
+  summary,
+  [role="button"] {
+    transition: none;
+  }
+}
+
+.ra-pnl-positive {
+  color: var(--ra-color-pnl-positive);
+}
+
+.ra-pnl-negative {
+  color: var(--ra-color-pnl-negative);
+}
+
+.ra-trade-tab-pct {
+  display: inline-flex;
+}
+
+@media (max-width: 767px) {
+  .ra-trade-tab-pct {
+    display: none;
+  }
+}
+
+.ra-deferred-render {
+  min-width: 0;
+}
+
+.ra-deferred-render__placeholder {
+  min-width: 0;
+  border: 1px solid var(--ra-border-default);
+  border-radius: 6px;
+  background: var(--ra-surface-2);
+}
+
+.ra-deferred-render__skeleton {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+}
+
+.ra-popover-enter {
+  animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+  transform-origin: top right;
+  will-change: opacity, transform;
+}
+
+.ra-row-enter {
+  animation: raRowEnter var(--ra-motion-standard) var(--ra-motion-enter) both;
+  will-change: opacity, transform;
+}
+
+.ra-value-flash-up {
+  animation: raValueFlashUp 620ms var(--ra-motion-enter) both;
+}
+
+.ra-value-flash-down {
+  animation: raValueFlashDown 620ms var(--ra-motion-enter) both;
+}
+
+.ra-status-pulse {
+  animation: raStatusPulse 1450ms var(--ra-motion-ease) infinite;
+  transform-origin: center;
+}
+
+.ra-signal-row-glow {
+  animation: raSignalHotGlow 620ms var(--ra-motion-enter) 1;
+}
+
+.ra-signal-glyph-fresh {
+  animation: raSignalGlyphFresh 220ms var(--ra-motion-enter) 1;
+  transform-origin: center;
+}
+
+.ra-signal-row-focus {
+  position: relative;
+}
+
+.ra-signal-row-focus:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  box-shadow:
+    inset 4px 0 0 var(--ra-color-cyan, currentColor),
+    0 0 0 1px var(--ra-color-cyan, currentColor);
+}
+
+.ra-signal-row-focus:focus-visible::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--ra-color-cyan, currentColor);
+  transform: translateY(-50%);
+}
+
+.ra-focus-rail {
+  position: relative;
+}
+
+.ra-focus-rail::before {
+  display: none;
+}
+
+.ra-scan-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.ra-scan-sweep::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ra-motion-accent) 18%, transparent),
+    transparent
+  );
+  transform: translateX(-120%);
+  animation: raScanSweep 1450ms var(--ra-motion-ease) infinite;
+}
+
+.ra-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.ra-skeleton::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.09),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: raSkeletonShimmer 1450ms var(--ra-motion-ease) infinite;
+}
+
+.ra-interactive {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-micro) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ra-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.ra-interactive:active {
+  transform: translateY(0);
+  transition-duration: 60ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-interactive,
+  .ra-interactive:hover,
+  .ra-interactive:active {
+    transform: none;
+  }
+}
+
+.ra-table-row {
+  outline: none;
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-table-row:hover,
+.ra-table-row:focus-visible {
+  background: color-mix(in srgb, var(--ra-motion-accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--ra-motion-accent);
+}
+
+/* Selected row state — sustained accent fill + a thicker left gutter +
+   a soft inset glow on hover. The row's --ra-motion-accent can be
+   overridden via motionVars({ accent }) so consumers tone-customize
+   (cyan for "inspect trade", red for "danger row", etc.) without
+   forking the class. */
+.ra-table-row--selected {
+  background: color-mix(in srgb, var(--ra-motion-accent) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--ra-motion-accent);
+}
+
+.ra-table-row--selected:hover,
+.ra-table-row--selected:focus-visible {
+  background: color-mix(in srgb, var(--ra-motion-accent) 20%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--ra-motion-accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ra-motion-accent) 26%, transparent);
+}
+
+/* Sticky table header — soft drop shadow so the header reads as
+   floating over the scrolling rows instead of looking like a row that
+   simply doesn't scroll. Pair with position: sticky; top: 0; on the
+   <thead> row via tableHeaderStyle. */
+.ra-table-header-sticky {
+  box-shadow: 0 1px 0 var(--ra-border-default),
+    0 6px 14px color-mix(in srgb, var(--ra-bg-0) 75%, transparent);
+}
+
+.ra-hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.ra-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.ra-account-analysis-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.ra-account-analysis-card-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .ra-account-analysis-card-grid,
+  .ra-account-analysis-card-grid--two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Global scrollbar refresh — slimmer, tone-aware, brightens on hover.
+   Firefox uses scrollbar-color (the only way to style its bar);
+   Chromium / WebKit uses the ::-webkit-scrollbar* pseudo-element family
+   so we can paint a hidden track and a thumb that color-mixes through
+   --ra-border-default (so it flexes with theme + accent preset). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ra-border-default) 70%, transparent)
+    transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ra-border-default) 70%, transparent);
+  border-radius: 8px;
+  /* 2px inset border carves out a thinner visible thumb without changing
+     the hover-target width — easier to grab while still looking slim. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ra-color-accent) 60%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Fade-mask edges for scrollable lists — feathers the top/bottom (or
+   left/right) 16px so content gracefully fades into the panel edge
+   instead of hard-clipping. Pair with overflow-y/x: auto. */
+.ra-scroll-fade-y {
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    black 16px,
+    black calc(100% - 16px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    black 16px,
+    black calc(100% - 16px),
+    transparent 100%
+  );
+}
+
+.ra-scroll-fade-x {
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    black 16px,
+    black calc(100% - 16px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    black 16px,
+    black calc(100% - 16px),
+    transparent 100%
+  );
+}
+
+@keyframes raSkeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.ra-skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--ra-skeleton-base) 0%,
+    var(--ra-skeleton-highlight) 50%,
+    var(--ra-skeleton-base) 100%
+  );
+  background-size: 200% 100%;
+  animation: raSkeletonShimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-skeleton-shimmer {
+    background: var(--ra-skeleton-base);
+    animation: none;
+  }
+}
+
+.ra-input-focus:focus,
+.ra-input-focus:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+/* All non-button form controls get the accent focus ring. The :not()
+   list excludes the click-target types whose native UI provides its
+   own affordance (checkbox/radio/file/etc.) so we don't paint a ring
+   that visually competes with their built-in focus state. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="color"]):not([type="range"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+  border-color: var(--ra-border-focus, var(--ra-color-accent));
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+}
+
+[tabindex]:focus-visible:not(button):not(input):not(select):not(textarea) {
+  outline: none;
+  box-shadow: var(--ra-focus-ring);
+}
+
+button[disabled],
+button:disabled,
+input[disabled],
+input:disabled,
+select[disabled],
+select:disabled,
+textarea[disabled],
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+button[disabled]:not([data-ra-keep-opacity]),
+button:disabled:not([data-ra-keep-opacity]) {
+  opacity: 0.5;
+}
+
+input[disabled]:not([data-ra-keep-opacity]),
+input:disabled:not([data-ra-keep-opacity]),
+select[disabled]:not([data-ra-keep-opacity]),
+select:disabled:not([data-ra-keep-opacity]),
+textarea[disabled]:not([data-ra-keep-opacity]),
+textarea:disabled:not([data-ra-keep-opacity]) {
+  opacity: 0.55;
+}
+
+
+.ra-sparkline polyline,
+.ra-sparkline path {
+  stroke-dasharray: var(--ra-spark-length, 420);
+  stroke-dashoffset: var(--ra-spark-length, 420);
+  animation: raSparkDraw var(--ra-motion-slow) var(--ra-motion-enter) both;
+}
+
+.ra-sparkline-tail {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: raSparklineTailPulse 2400ms ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.ra-card-luminous {
+  box-shadow: var(--ra-card-inner-shadow);
+}
+
+.ra-card-luminous-elevated {
+  box-shadow:
+    var(--ra-card-inner-shadow),
+    0 1px 2px rgba(25, 23, 26, 0.04),
+    0 1px 3px rgba(25, 23, 26, 0.06);
+}
+
+.ra-row-selected-glow {
+  box-shadow: var(--ra-selected-glow);
+}
+
+.ra-glass-surface {
+  background: var(--ra-glass-nav-bg);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+@keyframes raSparklineTailPulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.45);
+  }
+}
+
+.ra-bar-fill {
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: raBarGrow var(--ra-motion-slow) var(--ra-motion-enter) both;
+}
+
+.ra-bar-fill[data-direction="left"] {
+  transform-origin: right center;
+}
+
+.ra-resize-handle {
+  position: relative;
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-resize-handle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 44px;
+  content: "";
+  background: var(--ra-motion-accent);
+  border-radius: 999px;
+  opacity: 0;
+  transform: translate(-50%, -50%) scaleY(0.5);
+  transition:
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-resize-handle:hover::after,
+.ra-resize-handle:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) scaleY(1);
+}
+
+.ra-tooltip-content {
+  z-index: 1200;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border: 1px solid var(--ra-tooltip-border);
+  border-radius: 6px;
+  background: var(--ra-tooltip-bg);
+  box-shadow: var(--ra-tooltip-shadow);
+  color: var(--ra-tooltip-text);
+  font-family: var(--ra-font-sans);
+  font-size: var(--ra-type-paragraph-muted, var(--ra-type-body));
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+.ra-tooltip-arrow {
+  fill: var(--ra-tooltip-bg);
+  stroke: var(--ra-tooltip-border);
+}
+
+.ra-popover-content {
+  z-index: 1200;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--ra-tooltip-border);
+  border-radius: 8px;
+  background: var(--ra-tooltip-bg);
+  box-shadow: var(--ra-tooltip-shadow);
+  color: var(--ra-tooltip-text);
+  font-family: var(--ra-font-sans);
+  font-size: var(--ra-type-paragraph-muted, var(--ra-type-body));
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.ra-popover-arrow {
+  fill: var(--ra-tooltip-bg);
+  stroke: var(--ra-tooltip-border);
+}
+
+.ra-header-chip:last-child {
+  border-right: none !important;
+  padding-right: 0 !important;
+  margin-right: 0 !important;
+}
+
+.ra-header-kpi:last-child {
+  border-right: none !important;
+}
+
+.ra-tooltip-disabled-trigger {
+  display: inline-flex;
+  min-width: 0;
+}
+
+@media (max-width: 1420px) {
+  .ra-account-overview-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .ra-account-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .ra-account-overview-grid,
+  .ra-account-detail-grid,
+  .ra-account-support-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .ra-shell[data-layout="phone"] {
+    min-width: 0;
+    background: var(--ra-surface-0);
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-screen-stack"] {
+    min-height: 0;
+    background: var(--ra-surface-0);
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-compact-header"] {
+    box-shadow:
+      0 1px 0 var(--ra-border-default),
+      0 8px 24px color-mix(in srgb, var(--ra-surface-0) 70%, transparent) !important;
+  }
+
+  .ra-mobile-app-header,
+  .ra-mobile-bottom-nav {
+    backdrop-filter: blur(20px) saturate(165%);
+    -webkit-backdrop-filter: blur(20px) saturate(165%);
+  }
+
+  .ra-mobile-title-bar {
+    min-height: 32px;
+  }
+
+  .ra-mobile-kpi-rail {
+    scroll-padding-inline: 4px;
+  }
+
+  .ra-mobile-header-chip,
+  .ra-mobile-header-context,
+  .ra-mobile-icon-button,
+  .ra-mobile-broadcast-lane,
+  .ra-mobile-nav-item {
+    box-shadow: inset 0 1px 0 var(--ra-card-top-highlight);
+  }
+
+  .ra-mobile-broadcast-stack {
+    position: relative;
+    z-index: 4;
+  }
+
+  .ra-mobile-broadcast-lane [data-header-broadcast-track] {
+    gap: 5px !important;
+  }
+
+  .ra-mobile-bottom-nav {
+    position: relative;
+    z-index: 20;
+    box-shadow: 0 -10px 28px color-mix(in srgb, var(--ra-surface-0) 74%, transparent);
+  }
+
+  .ra-mobile-nav-item {
+    line-height: 1;
+  }
+
+  .ra-mobile-nav-item[aria-current="page"]::before {
+    display: block;
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    width: 18px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--ra-motion-accent);
+    content: "";
+    transform: translateX(-50%);
+  }
+
+  .ra-mobile-nav-item svg {
+    flex-shrink: 0;
+  }
+
+  .ra-mobile-nav-item span {
+    line-height: 1;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="mobile-top-chrome"],
+  .ra-shell[data-layout="phone"] [data-testid="mobile-kpi-rail"],
+  .ra-shell[data-layout="phone"] [data-testid="header-broadcast-scrollers"] {
+    max-width: 100%;
+  }
+
+  .ra-shell[data-layout="phone"] button,
+  [data-trade-layout="phone"] button,
+  [data-testid="algo-screen"][data-layout="phone"] button,
+  [data-testid="settings-screen"][data-layout="phone"] button,
+  [data-testid="diagnostics-screen"][data-layout="phone"] button,
+  [data-testid="backtest-workspace"][data-layout="phone"] button,
+  .photonics-research-root button {
+    min-height: 32px;
+  }
+
+  .ra-shell[data-layout="phone"] input,
+  .ra-shell[data-layout="phone"] select,
+  [data-testid="settings-screen"][data-layout="phone"] input,
+  [data-testid="settings-screen"][data-layout="phone"] select,
+  [data-testid="diagnostics-screen"][data-layout="phone"] input,
+  [data-testid="diagnostics-screen"][data-layout="phone"] select,
+  .photonics-research-root input,
+  .photonics-research-root select {
+    min-height: 32px;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-screen-nav"],
+  .ra-shell[data-layout="phone"] [data-testid="platform-header-controls"] {
+    width: 100%;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-top-zone"],
+  [data-trade-layout="phone"] [data-testid="trade-middle-zone"],
+  [data-trade-layout="phone"] [data-testid="trade-bottom-zone"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    height: auto !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-top-zone"] > *,
+  [data-trade-layout="phone"] [data-testid="trade-middle-zone"] > *,
+  [data-trade-layout="phone"] [data-testid="trade-bottom-zone"] > * {
+    min-width: 0 !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-equity-chart"],
+  [data-trade-layout="phone"] [data-testid="trade-contract-chart-panel"] {
+    min-height: clamp(260px, 36vh, 360px) !important;
+    max-height: clamp(260px, 36vh, 360px) !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-options-chain-panel"],
+  [data-trade-layout="phone"] [data-testid="trade-order-ticket"] {
+    min-height: 0 !important;
+  }
+
+  [data-trade-layout="phone"],
+  [data-testid="algo-screen"][data-layout="phone"],
+  [data-testid="settings-screen"][data-layout="phone"],
+  [data-testid="diagnostics-screen"][data-layout="phone"],
+  [data-testid="backtest-workspace"][data-layout="phone"],
+  [data-testid="account-screen"][data-layout="phone"],
+  [data-testid="gex-screen"][data-layout="phone"],
+  .photonics-research-root {
+    scroll-padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-order-ticket"] [style*="grid-template-columns"],
+  [data-testid="algo-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="settings-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="diagnostics-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="backtest-workspace"][data-layout="phone"] [style*="grid-template-columns"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [data-algo-pocket-grid="two"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  [data-testid="account-screen"] {
+    min-width: 0;
+    max-width: 100vw;
+    overflow-x: hidden !important;
+  }
+
+  [data-testid="account-screen"] > div {
+    padding: 8px 8px max(18px, env(safe-area-inset-bottom)) !important;
+  }
+
+  [data-testid="account-screen"] .ra-account-detail-grid,
+  [data-testid="account-screen"] .ra-account-support-grid,
+  [data-testid="account-screen"] [data-account-sidebar-grid] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  [data-testid="account-screen"] .ra-account-overview-grid {
+    grid-template-columns: minmax(0, 1.16fr) minmax(0, 0.84fr) !important;
+    gap: 4px !important;
+    align-items: start;
+  }
+
+  [data-testid="account-screen"] .ra-account-overview-returns,
+  [data-testid="account-screen"] .ra-account-overview-exposure {
+    grid-column: auto;
+    min-width: 0;
+  }
+
+  [data-testid="account-screen"] .ra-account-overview-equity {
+    grid-column: 1 / -1;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="settings-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="diagnostics-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="backtest-workspace"][data-layout="phone"] [style*="min-width"],
+  [data-testid="account-screen"] [style*="min-width"],
+  .photonics-research-root [style*="min-width"] {
+    min-width: 0 !important;
+  }
+
+  .photonics-research-root {
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  .photonics-research-root .photonics-research-header {
+    padding: 10px 10px 0 !important;
+  }
+
+  .photonics-research-root .photonics-research-title-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
+    align-items: start !important;
+    margin-bottom: 6px !important;
+  }
+
+  .photonics-research-root .photonics-research-title-row h1 {
+    font-size: 24px !important;
+    line-height: 1.05 !important;
+  }
+
+  .photonics-research-root .photonics-research-meta {
+    text-align: left !important;
+  }
+
+  .photonics-research-root .photonics-research-filter-row,
+  .photonics-research-root .photonics-research-view-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    padding-bottom: 2px !important;
+  }
+
+  .photonics-research-root > div {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .photonics-research-root [style*="display: flex"] {
+    min-width: 0;
+  }
+
+  .photonics-research-root [style*="grid-template-columns"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .photonics-research-root [style*="justify-content: space-between"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .photonics-research-root table {
+    min-width: 520px;
+  }
+
+  .photonics-research-root [style*="overflow-x: auto"],
+  .photonics-research-root [style*="overflow-x:auto"] {
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  [data-trade-layout="tablet"] [data-testid="trade-top-zone"],
+  [data-trade-layout="tablet"] [data-testid="trade-middle-zone"],
+  [data-trade-layout="tablet"] [data-testid="trade-bottom-zone"] {
+    height: auto !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="tablet"] [style*="minmax(420px"],
+  [data-testid="algo-screen"][data-layout="tablet"] [style*="minmax(360px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(420px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(360px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(320px"],
+  [data-testid="settings-screen"][data-layout="tablet"] [style*="minmax(320px"],
+  [data-testid="diagnostics-screen"][data-layout="tablet"] [style*="minmax(320px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-panel-enter,
+  .ra-popover-enter,
+  .ra-row-enter,
+  .ra-signal-row-glow,
+  .ra-signal-glyph-fresh,
+  .ra-value-flash-up,
+  .ra-value-flash-down,
+  .ra-status-pulse,
+  .ra-focus-rail::before,
+  .ra-scan-sweep::after,
+  .ra-skeleton::after,
+  .ra-sparkline polyline,
+  .ra-sparkline path,
+  .ra-sparkline-tail,
+  .ra-bar-fill,
+  .ra-radial-gauge-active-tick--animate {
+    animation: none !important;
+  }
+
+  .ra-sparkline-tail {
+    transform: none !important;
+    opacity: 1;
+  }
+
+  .ra-interactive {
+    transition-duration: 1ms !important;
+  }
+
+  .ra-interactive:hover {
+    transform: none;
+  }
+
+  .ra-sparkline polyline,
+  .ra-sparkline path {
+    stroke-dashoffset: 0 !important;
+  }
+
+  .ra-bar-fill {
+    transform: none !important;
+  }
+
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-panel-enter,
+html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
+html[data-pyrus-reduced-motion="on"] .ra-row-enter,
+html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
+html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
+html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
+html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
+html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
+html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
+html[data-pyrus-reduced-motion="on"] .ra-radial-gauge-active-tick--animate,
+html[data-pyrus-reduced-motion="on"] .ra-panel-enter,
+html[data-pyrus-reduced-motion="on"] .ra-popover-enter,
+html[data-pyrus-reduced-motion="on"] .ra-row-enter,
+html[data-pyrus-reduced-motion="on"] .ra-signal-row-glow,
+html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
+html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
+html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
+html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
+html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
+html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
+html[data-pyrus-reduced-motion="on"] .ra-radial-gauge-active-tick--animate {
+  animation: none !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail {
+  transform: none !important;
+  opacity: 1;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-interactive,
+html[data-pyrus-reduced-motion="on"] .ra-interactive {
+  transition-duration: 1ms !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
+html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill {
+  transform: none !important;
+}
+
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
+html[data-pyrus-reduced-motion="on"] .ra-sparkline path {
+  stroke-dashoffset: 0 !important;
+}

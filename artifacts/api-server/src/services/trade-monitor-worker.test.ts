@@ -22,7 +22,7 @@ function profile(
     enabled: true,
     watchlistId: "watchlist-1",
     timeframe: "1m",
-    rayReplicaSettings: {},
+    pyrusSignalsSettings: {},
     freshWindowBars: 3,
     pollIntervalSeconds: 15,
     maxSymbols: 50,

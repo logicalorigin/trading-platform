@@ -197,6 +197,8 @@ const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
   "degraded",
   "error",
   "line_budget",
+  "market-session-quiet",
+  "market_session_quiet",
   "queued",
   "refreshing",
   "saturated",

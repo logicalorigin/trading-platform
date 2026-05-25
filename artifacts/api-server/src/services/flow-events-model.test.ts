@@ -109,6 +109,19 @@ test("flow cache helpers preserve live data across transient empty sources", () 
     ),
     true,
   );
+
+  const quietEmpty = deferredFlowEventsResult({
+    underlying: "SPY",
+    filters: normalizeFlowEventsFilters({}),
+    limit: 5,
+    reason: "options_flow_scanner_market_session_quiet",
+  });
+
+  assert.equal(isCacheableFlowEventsResult(quietEmpty), false);
+  assert.equal(
+    shouldPreserveCachedFlowEvents(cached, quietEmpty, now.getTime()),
+    true,
+  );
 });
 
 test("flow cache helpers treat historical store timeouts as transient", () => {

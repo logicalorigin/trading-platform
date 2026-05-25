@@ -16,7 +16,7 @@ export interface SignalMonitorProfile {
   /** @nullable */
   watchlistId: string | null;
   timeframe: SignalMonitorTimeframe;
-  rayReplicaSettings: JsonObject;
+  pyrusSignalsSettings: JsonObject;
   freshWindowBars: number;
   pollIntervalSeconds: number;
   maxSymbols: number;

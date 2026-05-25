@@ -9,9 +9,9 @@ const { getIbkrBridgeBundleRedirectUrl, getIbkrBridgeRequestOrigin } =
 
 const ENV_NAMES = [
   "IBKR_BRIDGE_BUNDLE_URL",
-  "RAYALGO_IBKR_BRIDGE_BUNDLE_URL",
+  "PYRUS_IBKR_BRIDGE_BUNDLE_URL",
   "IBKR_BRIDGE_API_BASE_URL",
-  "RAYALGO_PUBLIC_API_BASE_URL",
+  "PYRUS_PUBLIC_API_BASE_URL",
   "PUBLIC_API_BASE_URL",
   "REPLIT_DEV_DOMAIN",
   "REPLIT_DOMAINS",
@@ -176,7 +176,7 @@ test("IBKR bridge bundle redirect uses configured external artifact URL", () => 
 
 test("IBKR bridge bundle redirect ignores invalid primary URLs", () => {
   process.env["IBKR_BRIDGE_BUNDLE_URL"] = "file:///tmp/bundle.tar.gz";
-  process.env["RAYALGO_IBKR_BRIDGE_BUNDLE_URL"] =
+  process.env["PYRUS_IBKR_BRIDGE_BUNDLE_URL"] =
     "https://cdn.example.com/ibgateway-bridge.tar.gz";
 
   assert.equal(

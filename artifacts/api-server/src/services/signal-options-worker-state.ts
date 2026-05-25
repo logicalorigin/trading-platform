@@ -19,6 +19,12 @@ export type SignalOptionsWorkerSnapshot = {
     failedUntilMs: number;
     lastSuccessAt: string | null;
     lastError: string | null;
+    lastSkippedAt?: string | null;
+    lastSkipReason?: string | null;
+    skippedScanCount?: number;
+    pressurePaused?: boolean;
+    pressurePauseStartedAt?: string | null;
+    pressurePauseAgeMs?: number | null;
     currentScanStartedAt: string | null;
     currentScanAgeMs: number | null;
     lastScanDurationMs: number | null;

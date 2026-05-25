@@ -30,6 +30,10 @@ export type FlowUniverseCoverage = {
   concurrency?: number;
   estimatedCycleMs?: number | null;
   currentBatch: string[];
+  radarCurrentBatch?: string[];
+  deepActiveSymbols?: string[];
+  deepLastBatch?: string[];
+  scannerPhase?: "radar" | "deep" | "idle" | "blocked";
   lastScanAt: Date | null;
   degradedReason: string | null;
   radarSelectedSymbols?: number;
@@ -308,16 +312,16 @@ export function rankFlowUniverseCandidates(input: {
     appendSymbol(candidate.symbol);
   }
 
-  for (const symbol of uniqueSymbols(input.fallbackSymbols ?? [])) {
-    if (selected.length >= targetSize) break;
-    appendSymbol(symbol);
-  }
-
   for (const candidate of sorted.filter(
     (candidate) => !hasFlowEvidence(candidate) && hasLiquidityEvidence(candidate),
   )) {
     if (selected.length >= targetSize) break;
     appendSymbol(candidate.symbol);
+  }
+
+  for (const symbol of uniqueSymbols(input.fallbackSymbols ?? [])) {
+    if (selected.length >= targetSize) break;
+    appendSymbol(symbol);
   }
 
   for (const candidate of sorted.filter(

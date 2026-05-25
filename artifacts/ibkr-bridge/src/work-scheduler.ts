@@ -47,6 +47,9 @@ type LaneState = {
   lastFailure: string | null;
   lastFailureAt: number | null;
   lastSuccessAt: number | null;
+  maxQueueAgeMs: number;
+  lastDurationMs: number | null;
+  recentDurationsMs: number[];
 };
 
 type QueuedWork = {
@@ -60,12 +63,13 @@ type QueuedWork = {
 
 export type BridgeSchedulerDiagnostics = Record<
   BridgeWorkLane,
-  LaneState & {
+  Omit<LaneState, "recentDurationsMs"> & {
     timeoutMs: number;
     queueCap: number;
     concurrency: number;
     backoffRemainingMs: number;
     queueAgeMs: number | null;
+    p95DurationMs: number | null;
     pressure: BridgePressureState;
   }
 >;
@@ -82,7 +86,7 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
     failureThreshold: 3,
   },
   account: {
-    concurrency: 1,
+    concurrency: 2,
     timeoutMs: 4_000,
     queueCap: 2,
     backoffMs: 10_000,
@@ -96,24 +100,24 @@ export const BRIDGE_SCHEDULER_DEFAULT_CONFIG: Record<
     failureThreshold: 3,
   },
   historical: {
-    concurrency: 1,
+    concurrency: 2,
     timeoutMs: 30_000,
     queueCap: 8,
-    backoffMs: 15_000,
+    backoffMs: 30_000,
     failureThreshold: 3,
   },
   "options-meta": {
     concurrency: 1,
     timeoutMs: 45_000,
     queueCap: 4,
-    backoffMs: 15_000,
+    backoffMs: 45_000,
     failureThreshold: 3,
   },
   "option-quotes": {
     concurrency: 1,
     timeoutMs: 30_000,
     queueCap: 6,
-    backoffMs: 10_000,
+    backoffMs: 30_000,
     failureThreshold: 3,
   },
 };
@@ -152,6 +156,9 @@ function emptyState(): LaneState {
     lastFailure: null,
     lastFailureAt: null,
     lastSuccessAt: null,
+    maxQueueAgeMs: 0,
+    lastDurationMs: null,
+    recentDurationsMs: [],
   };
 }
 
@@ -379,6 +386,28 @@ function normalizePriority(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function recordLaneDuration(lane: BridgeWorkLane, durationMs: number): void {
+  const current = state[lane];
+  const normalized = Math.max(0, Math.round(durationMs));
+  current.lastDurationMs = normalized;
+  current.recentDurationsMs.push(normalized);
+  if (current.recentDurationsMs.length > 100) {
+    current.recentDurationsMs.splice(0, current.recentDurationsMs.length - 100);
+  }
+}
+
+function percentile(values: number[], percentileValue: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentileValue / 100) * sorted.length) - 1),
+  );
+  return sorted[index] ?? null;
+}
+
 function sortLaneQueue(lane: BridgeWorkLane): void {
   queues[lane].sort(
     (left, right) => right.priority - left.priority || left.sequence - right.sequence,
@@ -444,11 +473,13 @@ async function acquireLane(
     );
   }
 
+  let queuedAt: number | null = null;
   await new Promise<void>((resolve, reject) => {
+    queuedAt = Date.now();
     const queuedWork: QueuedWork = {
       resolve,
       reject,
-      queuedAt: Date.now(),
+      queuedAt,
       timeout: null,
       priority,
       sequence: queueSequence,
@@ -472,6 +503,9 @@ async function acquireLane(
     queues[lane].push(queuedWork);
     sortLaneQueue(lane);
   });
+  if (queuedAt !== null) {
+    current.maxQueueAgeMs = Math.max(current.maxQueueAgeMs, Date.now() - queuedAt);
+  }
 
   if (isBackedOff(lane)) {
     current.rejected += 1;
@@ -517,6 +551,7 @@ export async function runBridgeLane<T>(
   const config = configFor(lane);
   const timeoutMs = Math.max(1, options.timeoutMs ?? config.timeoutMs);
   await acquireLane(lane, { timeoutMs, priority: options.priority });
+  const startedAt = Date.now();
   const controller = new AbortController();
   let settled = false;
   let didTimeout = false;
@@ -570,6 +605,7 @@ export async function runBridgeLane<T>(
     }
     throw error;
   } finally {
+    recordLaneDuration(lane, Date.now() - startedAt);
     clearTimeout(timeout);
     releaseLane(lane);
   }
@@ -595,6 +631,7 @@ export function getBridgeSchedulerDiagnostics(): BridgeSchedulerDiagnostics {
   return Object.fromEntries(
     (Object.keys(state) as BridgeWorkLane[]).map((lane) => {
       const current = state[lane];
+      const { recentDurationsMs, ...visibleState } = current;
       const config = configFor(lane);
       const backoffRemainingMs = Math.max(0, (current.backoffUntil ?? 0) - now);
       const queueAgeMs =
@@ -622,12 +659,13 @@ export function getBridgeSchedulerDiagnostics(): BridgeSchedulerDiagnostics {
       return [
         lane,
         {
-          ...current,
+          ...visibleState,
           timeoutMs: config.timeoutMs,
           queueCap: config.queueCap,
           concurrency: config.concurrency,
           backoffRemainingMs,
           queueAgeMs,
+          p95DurationMs: percentile(recentDurationsMs, 95),
           pressure,
         },
       ];

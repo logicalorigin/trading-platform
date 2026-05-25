@@ -14,7 +14,7 @@ type OverrideSection = "scheduler" | "limits";
 
 const overrideFile =
   process.env["IBKR_BRIDGE_LANE_OVERRIDE_FILE"]?.trim() ||
-  join(homedir(), ".rayalgo", "ibkr-bridge-lane-overrides.json");
+  join(homedir(), ".pyrus", "ibkr-bridge-lane-overrides.json");
 
 let loaded = false;
 let document: BridgeLaneOverrideDocument = { version: 1 };

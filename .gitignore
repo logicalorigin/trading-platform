@@ -61,6 +61,12 @@ attached_assets/
 output/
 artifacts/*.log
 
+# local runtime registries
+artifacts/api-server/data/ibkr-remote-desktops.json
+
+# accidental root shell arg artifacts
+/'expirationDate'
+
 # local release/download artifacts
 artifacts/ibgateway-bridge-windows-current.tar.gz
 

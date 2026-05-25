@@ -286,25 +286,25 @@ async function requestJson(
       headers: {
         cache:
           response.headers.get("x-pyrus-cache-status") ??
-          response.headers.get("x-rayalgo-cache-status"),
+          response.headers.get("x-pyrus-cache-status"),
         requestMs:
           response.headers.get("x-pyrus-request-ms") ??
-          response.headers.get("x-rayalgo-request-ms"),
+          response.headers.get("x-pyrus-request-ms"),
         upstreamMs:
           response.headers.get("x-pyrus-upstream-ms") ??
-          response.headers.get("x-rayalgo-upstream-ms"),
+          response.headers.get("x-pyrus-upstream-ms"),
         gapFilled:
           response.headers.get("x-pyrus-gap-filled") ??
-          response.headers.get("x-rayalgo-gap-filled"),
+          response.headers.get("x-pyrus-gap-filled"),
         degraded:
           response.headers.get("x-pyrus-degraded") ??
-          response.headers.get("x-rayalgo-degraded"),
+          response.headers.get("x-pyrus-degraded"),
         degradedReason:
           response.headers.get("x-pyrus-degraded-reason") ??
-          response.headers.get("x-rayalgo-degraded-reason"),
+          response.headers.get("x-pyrus-degraded-reason"),
         stale:
           response.headers.get("x-pyrus-cache-stale") ??
-          response.headers.get("x-rayalgo-cache-stale"),
+          response.headers.get("x-pyrus-cache-stale"),
       },
     };
 

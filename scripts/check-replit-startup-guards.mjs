@@ -41,10 +41,10 @@ check(
   ".replit must not define a root run command; use Replit's default Run Replit App entry.",
 );
 check(
-  /^\s*\[workflows\]\s*$(?:[\s\S]*?)^\s*runButton\s*=\s*"artifacts\/rayalgo: web"\s*$/m.test(
+  /^\s*\[workflows\]\s*$(?:[\s\S]*?)^\s*runButton\s*=\s*"artifacts\/pyrus: web"\s*$/m.test(
     replit,
   ),
-  ".replit must keep [workflows] runButton = \"artifacts/rayalgo: web\" so the primary Run button targets the single PYRUS app workflow.",
+  ".replit must keep [workflows] runButton = \"artifacts/pyrus: web\" so the primary Run button targets the single PYRUS app workflow.",
 );
 check(
   !/^\s*\[\[workflows\.workflow\]\]\s*$/m.test(replit),
@@ -84,99 +84,94 @@ const artifactTomls = findFiles(path.join(repoRoot, "artifacts"), "artifact.toml
   .sort();
 check(
   artifactTomls.length === 1 &&
-    artifactTomls[0] === "artifacts/rayalgo/.replit-artifact/artifact.toml",
+    artifactTomls[0] === "artifacts/pyrus/.replit-artifact/artifact.toml",
   `Only the PYRUS web artifact may define a Replit artifact; found ${artifactTomls.join(", ") || "none"}.`,
 );
 
-const rayalgoPackage = JSON.parse(read("artifacts/rayalgo/package.json"));
-const rayalgoDev = rayalgoPackage.scripts?.dev ?? "";
-const rayalgoDevReplit = rayalgoPackage.scripts?.["dev:replit"] ?? "";
-const rayalgoDevWeb = rayalgoPackage.scripts?.["dev:web"] ?? "";
+const pyrusPackage = JSON.parse(read("artifacts/pyrus/package.json"));
+const pyrusDev = pyrusPackage.scripts?.dev ?? "";
+const pyrusDevReplit = pyrusPackage.scripts?.["dev:replit"] ?? "";
+const pyrusDevWeb = pyrusPackage.scripts?.["dev:web"] ?? "";
 check(
-  rayalgoPackage.name === "@workspace/pyrus",
-  'artifacts/rayalgo/package.json must expose the runtime package as "@workspace/pyrus" while keeping the guarded artifact path stable.',
+  pyrusPackage.name === "@workspace/pyrus",
+  'artifacts/pyrus/package.json must expose the runtime package as "@workspace/pyrus" while keeping the guarded artifact path stable.',
 );
 check(
-  rayalgoDev.includes("node ./scripts/runDevApp.mjs"),
+  pyrusDev.includes("node ./scripts/runDevApp.mjs"),
   "PYRUS dev script must run the web-owned full app supervisor.",
 );
 check(
-  rayalgoDevReplit.includes("PYRUS_REPLIT_RUN=1") &&
-    rayalgoDevReplit.includes("RAYALGO_REPLIT_RUN=1") &&
-    rayalgoDevReplit.includes("node ./scripts/runDevApp.mjs"),
+  pyrusDevReplit.includes("PYRUS_REPLIT_RUN=1") &&
+    pyrusDevReplit.includes("node ./scripts/runDevApp.mjs"),
   "PYRUS dev:replit script must tag the Replit-owned full app supervisor startup.",
 );
 check(
-  rayalgoDevWeb.includes("vite --config vite.config.ts") &&
-    rayalgoDevWeb.includes("reap-dev-port.mjs"),
+  pyrusDevWeb.includes("vite --config vite.config.ts") &&
+    pyrusDevWeb.includes("reap-dev-port.mjs"),
   "PYRUS dev:web script must remain the Vite-only dev server with port reaping.",
 );
 
-const rayalgoArtifact = read("artifacts/rayalgo/.replit-artifact/artifact.toml");
+const pyrusArtifact = read("artifacts/pyrus/.replit-artifact/artifact.toml");
 check(
-  /^\s*kind\s*=\s*"web"\s*$/m.test(rayalgoArtifact),
+  /^\s*kind\s*=\s*"web"\s*$/m.test(pyrusArtifact),
   "PYRUS artifact must remain kind = \"web\" so Replit treats it as the platform web surface.",
 );
 check(
-  /^\s*previewPath\s*=\s*"\/"\s*$/m.test(rayalgoArtifact),
+  /^\s*previewPath\s*=\s*"\/"\s*$/m.test(pyrusArtifact),
   "PYRUS artifact must keep previewPath = \"/\" so the platform loads at the default app route.",
 );
 check(
-  /^\s*title\s*=\s*"PYRUS Platform"\s*$/m.test(rayalgoArtifact),
+  /^\s*title\s*=\s*"PYRUS Platform"\s*$/m.test(pyrusArtifact),
   "PYRUS artifact must keep title = \"PYRUS Platform\" so the workspace identifies the primary web artifact correctly.",
 );
 check(
-  /^\s*id\s*=\s*"artifacts\/rayalgo"\s*$/m.test(rayalgoArtifact),
-  "PYRUS artifact must keep id = \"artifacts/rayalgo\" so Replit loads it as the platform artifact.",
+  /^\s*id\s*=\s*"artifacts\/pyrus"\s*$/m.test(pyrusArtifact),
+  "PYRUS artifact must keep id = \"artifacts/pyrus\" so Replit loads it as the platform artifact.",
 );
 check(
-  /^\s*router\s*=\s*"path"\s*$/m.test(rayalgoArtifact),
+  /^\s*router\s*=\s*"path"\s*$/m.test(pyrusArtifact),
   "PYRUS artifact must keep router = \"path\" so it owns the root path without replacing API routing.",
 );
 check(
-  /^\s*run\s*=\s*"pnpm --filter @workspace\/pyrus run dev:replit"\s*$/m.test(
-    rayalgoArtifact,
+  /^\s*run\s*=\s*"trap '' HUP; exec pnpm --filter @workspace\/pyrus run dev:replit"\s*$/m.test(
+    pyrusArtifact,
   ),
-  "PYRUS artifact dev startup must run pnpm --filter @workspace/pyrus run dev:replit.",
+  "PYRUS artifact dev startup must ignore workflow SIGHUP before running pnpm --filter @workspace/pyrus run dev:replit.",
 );
 check(
   /^\s*args\s*=\s*\["pnpm",\s*"run",\s*"build:pyrus-app"\]\s*$/m.test(
-    rayalgoArtifact,
+    pyrusArtifact,
   ),
   "PYRUS production build must use build:pyrus-app so web, API, and bridge bundle are built together.",
 );
 check(
   /^\s*args\s*=\s*\["node",\s*"--enable-source-maps",\s*"artifacts\/api-server\/dist\/index\.mjs"\]\s*$/m.test(
-    rayalgoArtifact,
+    pyrusArtifact,
   ) &&
-    /^\s*PORT\s*=\s*"18747"\s*$/m.test(rayalgoArtifact) &&
-    /^\s*PYRUS_SERVE_WEB\s*=\s*"1"\s*$/m.test(rayalgoArtifact) &&
-    /^\s*RAYALGO_SERVE_WEB\s*=\s*"1"\s*$/m.test(rayalgoArtifact) &&
-    /^\s*path\s*=\s*"\/api\/healthz"\s*$/m.test(rayalgoArtifact),
+    /^\s*PORT\s*=\s*"18747"\s*$/m.test(pyrusArtifact) &&
+    /^\s*PYRUS_SERVE_WEB\s*=\s*"1"\s*$/m.test(pyrusArtifact) &&
+    /^\s*path\s*=\s*"\/api\/healthz"\s*$/m.test(pyrusArtifact),
   "PYRUS production run must start the API server as the single fullstack web service on port 18747.",
 );
 
 check(
   rootScripts["build:pyrus-app"] ===
-    "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle" &&
-    rootScripts["build:rayalgo-app"] === "pnpm run build:pyrus-app",
-  "package.json must keep build:pyrus-app building web, API, and the IBKR bridge bundle with a legacy build:rayalgo-app alias.",
+    "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle",
+  "package.json must keep build:pyrus-app building web, API, and the IBKR bridge bundle.",
 );
 
 const apiApp = read("artifacts/api-server/src/app.ts");
 check(
   apiApp.includes('process.env["PYRUS_SERVE_WEB"] === "1"') &&
-    apiApp.includes('process.env["RAYALGO_SERVE_WEB"] === "1"') &&
     apiApp.includes("express.static") &&
     apiApp.includes("index.html"),
-  "API app must serve the built PYRUS web app when PYRUS_SERVE_WEB=1, with the legacy RAYALGO_SERVE_WEB alias preserved.",
+  "API app must serve the built PYRUS web app when PYRUS_SERVE_WEB=1.",
 );
 
 const reaper = read("scripts/reap-dev-port.mjs");
 check(
   reaper.includes('process.env.REPLIT_MODE === "workflow"') &&
     reaper.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
-    reaper.includes('process.env.RAYALGO_REPLIT_RUN === "1"') &&
     reaper.includes("another Replit execution scope") &&
     reaper.includes("Shell-launched dev commands must not kill"),
   "reap-dev-port.mjs must allow Replit workflow/artifact restarts to replace previous Replit execution scopes while preserving shell safety.",
@@ -186,37 +181,53 @@ const replitDocs = read("replit.md");
 check(
   replitDocs.includes("pnpm --filter @workspace/pyrus run dev:replit") &&
     replitDocs.includes("PYRUS_REPLIT_RUN=1") &&
-    replitDocs.includes("RAYALGO_REPLIT_RUN=1") &&
+    replitDocs.includes("PYRUS_DEV_FORCE_RESTART=1") &&
+    replitDocs.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    replitDocs.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
     replitDocs.includes("REPLIT_MODE=workflow"),
-  "replit.md must document the dev:replit artifact runner and both Replit-owned restart markers.",
+  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, duplicate-start restart window, and duplicate-check-only smoke-test marker.",
 );
 const scriptsReadme = read("scripts/README.md");
 check(
   scriptsReadme.includes("REPLIT_MODE=workflow") &&
     scriptsReadme.includes("PYRUS_REPLIT_RUN=1") &&
-    scriptsReadme.includes("RAYALGO_REPLIT_RUN=1"),
-  "scripts/README.md must document both Replit-owned restart markers for reap-dev-port.mjs.",
+    scriptsReadme.includes("PYRUS_DEV_FORCE_RESTART=1") &&
+    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1"),
+  "scripts/README.md must document the Replit-owned restart marker, duplicate-start restart window, explicit force-restart marker, and duplicate-check-only smoke-test marker.",
 );
 
-const rayalgoRunner = read("artifacts/rayalgo/scripts/runDevApp.mjs");
+const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
 check(
-  rayalgoRunner.includes("apiPortOwnerStatus(apiRootPid)") &&
-    rayalgoRunner.includes("healthy response came from a previous API process"),
+  pyrusRunner.includes("apiPortOwnerStatus(apiRootPid)") &&
+    pyrusRunner.includes("healthy response came from a previous API process"),
   "runDevApp.mjs must keep API port ownership checks so a stale API health response cannot satisfy a new supervisor.",
 );
 check(
-  rayalgoRunner.includes("rayalgo-dev-supervisor-${apiPort}.lock") &&
-    rayalgoRunner.includes("acquireSupervisorLock") &&
-    rayalgoRunner.includes("requestSupervisorHandoff") &&
-    rayalgoRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
-    rayalgoRunner.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
-    rayalgoRunner.includes('process.env.RAYALGO_REPLIT_RUN === "1"') &&
-    rayalgoRunner.includes("launchedByCodexAgent") &&
-    rayalgoRunner.includes("refusing to start the full app supervisor from a Codex-owned shell") &&
-    rayalgoRunner.includes("controlled handoff") &&
-    rayalgoRunner.includes("overlapping workflow restart cascade") &&
-    rayalgoRunner.includes('process.once("exit", removeSupervisorLock)'),
-  "runDevApp.mjs must keep the supervisor single-flight lock and controlled Replit workflow handoff so duplicate launches cannot overlap API/web processes.",
+  pyrusRunner.includes("pyrus-dev-supervisor-${apiPort}.lock") &&
+    pyrusRunner.includes("acquireSupervisorLock") &&
+    pyrusRunner.includes("skipDuplicateReplitStart") &&
+    pyrusRunner.includes("PYRUS_DEV_FORCE_RESTART") &&
+    pyrusRunner.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    pyrusRunner.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY") &&
+    pyrusRunner.includes("shouldHandoffDuplicateReplitStart") &&
+    pyrusRunner.includes("intentional Run-button restart after") &&
+    pyrusRunner.includes("duplicate-check-only found no valid PYRUS dev supervisor lock") &&
+    pyrusRunner.includes("exiting without starting API/web processes") &&
+    pyrusRunner.includes("supervisor ${ownerPid} is already alive") &&
+    pyrusRunner.includes("duplicate Replit workflow start detected") &&
+    pyrusRunner.includes("exiting without restart") &&
+    pyrusRunner.includes("requestSupervisorHandoff") &&
+    pyrusRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
+    pyrusRunner.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
+    pyrusRunner.includes("launchedByCodexAgent") &&
+    pyrusRunner.includes("refusing to start the full app supervisor from a Codex-owned shell") &&
+    pyrusRunner.includes("controlled handoff") &&
+    pyrusRunner.includes("overlapping workflow restart cascade") &&
+    pyrusRunner.includes("ignoreWorkflowHangup") &&
+    pyrusRunner.includes('process.on("SIGHUP", ignoreWorkflowHangup)') &&
+    pyrusRunner.includes('process.once("exit", removeSupervisorLock)'),
+  "runDevApp.mjs must keep the supervisor single-flight lock, live duplicate Replit workflow no-op, SIGHUP resilience, and explicit forced recovery handoff so duplicate launches cannot overlap or unnecessarily restart API/web processes.",
 );
 
 check(
@@ -233,7 +244,7 @@ const configProtector = read("scripts/protect-replit-config.mjs");
 for (const relPath of [
   ".replit",
   "replit.nix",
-  "artifacts/rayalgo/.replit-artifact/artifact.toml",
+  "artifacts/pyrus/.replit-artifact/artifact.toml",
 ]) {
   check(
     configProtector.includes(`"${relPath}"`),

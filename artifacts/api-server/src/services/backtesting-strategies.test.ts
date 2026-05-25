@@ -29,11 +29,11 @@ test("backtest strategy metadata satisfies the public API contract", async () =>
   }
 });
 
-test("RayReplica strategy defaults to the selected 5m signal horizon", async () => {
+test("Pyrus Signals strategy defaults to the selected 5m signal horizon", async () => {
   const { listBacktestStrategies } = await import("./backtesting");
   const response = ListBacktestStrategiesResponse.parse(listBacktestStrategies());
   const strategy = response.strategies.find(
-    (candidate) => candidate.strategyId === "ray_replica_signals",
+    (candidate) => candidate.strategyId === "pyrus_signals",
   );
   const timeHorizon = strategy?.parameterDefinitions.find(
     (definition) => definition.key === "timeHorizon",

@@ -1998,6 +1998,66 @@ test("getOptionChartBarsWithDebug uses a provided provider contract id before lo
   assert.equal(result.bars[0].close, 2.15);
 });
 
+test("getOptionChartBarsWithDebug prefers Polygon for stale option history windows before resolving IBKR contracts", async () => {
+  const expirationDate = new Date("2026-12-18T00:00:00.000Z");
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  let ibkrCalls = 0;
+  let polygonTicker: string | null = null;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionChain: async () => {
+          ibkrCalls += 1;
+          throw new Error("stale option history should use Polygon first");
+        },
+        getHistoricalBars: async () => {
+          ibkrCalls += 1;
+          throw new Error("stale option history should not hit IBKR history");
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getOptionAggregateBars: async (input: { optionTicker: string }) => {
+          polygonTicker = input.optionTicker;
+          return [
+            {
+              timestamp: new Date("2026-04-27T20:00:00.000Z"),
+              open: 1.1,
+              high: 1.3,
+              low: 1,
+              close: 1.25,
+              volume: 42,
+            },
+          ];
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getOptionChartBarsWithDebug({
+    underlying: "SPY",
+    expirationDate,
+    strike: 970,
+    right: "call",
+    timeframe: "1m",
+    limit: 5,
+    from: new Date("2026-04-27T19:55:00.000Z"),
+    to: new Date("2026-04-27T20:00:00.000Z"),
+    outsideRth: false,
+  });
+
+  assert.equal(ibkrCalls, 0);
+  assert.equal(polygonTicker, "O:SPY261218C00970000");
+  assert.equal(result.providerContractId, null);
+  assert.equal(result.resolutionSource, "none");
+  assert.equal(result.dataSource, "polygon-option-aggregates");
+  assert.equal(result.debug.reason, "reference_option_history_preferred");
+  assert.equal(result.bars.length, 1);
+});
+
 test("getOptionChartBarsWithDebug still resolves a broker contract when only an option ticker is supplied", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
   let historicalProviderContractId: string | null | undefined;
@@ -2691,6 +2751,125 @@ test("getBarsWithDebug uses opaque history cursors for Polygon continuation", as
   assert.equal(cursorUrlSeen, polygonNextUrl);
   assert.equal(second.bars.some((bar) => bar.close === 521), true);
   assert.equal(second.historyPage.providerPageLimitReached, false);
+});
+
+test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills the requested count", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
+  const symbol = "TSTCUR3";
+  const polygonNextUrl =
+    `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=countfull&apiKey=secret`;
+  let cursorUrlSeen: string | null = null;
+  let windowFetches = 0;
+  let brokerCalls = 0;
+  const brokerBars = Array.from({ length: 5 }, (_item, index) => {
+    const timestamp = new Date(
+      Date.parse("2026-04-27T19:55:00.000Z") + index * 60_000,
+    );
+    return {
+      ...brokerBar(null, 610 + index),
+      timestamp,
+      dataUpdatedAt: timestamp,
+    };
+  });
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => {
+          brokerCalls += 1;
+          return brokerCalls === 1 ? [] : brokerBars;
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getBarsPage: async () => {
+          windowFetches += 1;
+          return {
+            bars: [
+              {
+                timestamp: new Date("2026-04-27T19:54:00.000Z"),
+                open: 609,
+                high: 610,
+                low: 608,
+                close: 609.5,
+                volume: 800,
+              },
+            ],
+            nextUrl: polygonNextUrl,
+            pageCount: 2,
+            pageLimitReached: true,
+            requestedFrom: new Date("2026-04-27T19:45:00.000Z"),
+            requestedTo: new Date("2026-04-27T19:54:59.999Z"),
+          };
+        },
+        getBarsProviderCursorPage: async (input: { providerNextUrl: string }) => {
+          cursorUrlSeen = input.providerNextUrl;
+          return {
+            bars: [
+              {
+                timestamp: new Date("2026-04-27T19:53:00.000Z"),
+                open: 608,
+                high: 609,
+                low: 607,
+                close: 608.5,
+                volume: 700,
+              },
+            ],
+            nextUrl: null,
+            pageCount: 1,
+            pageLimitReached: false,
+            requestedFrom: new Date("2026-04-27T19:53:00.000Z"),
+            requestedTo: new Date("2026-04-27T19:53:00.000Z"),
+          };
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const first = await getBarsWithDebug(
+    {
+      symbol,
+      timeframe: "1m",
+      limit: 5,
+      from: new Date("2026-04-27T19:45:00.000Z"),
+      to: new Date("2026-04-27T19:54:59.999Z"),
+      allowHistoricalSynthesis: true,
+      brokerRecentWindowMinutes: 10_000_000,
+    },
+    { priority: 10, family: "chart-backfill" },
+  );
+  const cursor = first.historyPage.historyCursor;
+  assert.ok(cursor);
+
+  const second = await getBarsWithDebug(
+    {
+      symbol,
+      timeframe: "1m",
+      limit: 5,
+      from: new Date("2026-04-27T19:45:00.000Z"),
+      to: new Date("2026-04-27T19:52:59.999Z"),
+      allowHistoricalSynthesis: true,
+      historyCursor: cursor,
+      preferCursor: true,
+      brokerRecentWindowMinutes: 10_000_000,
+    },
+    { priority: 10, family: "chart-backfill" },
+  );
+
+  const counters = __platformBarsCacheTestInternals.getBarsHydrationCounters();
+  assert.equal(windowFetches, 1);
+  assert.equal(brokerCalls >= 2, true);
+  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(second.historyPage.providerPageLimitReached, false);
+  assert.equal(counters.cursorContinuation >= 1, true);
+  assert.equal(counters.chartBackfillCursorFetch >= 1, true);
 });
 
 test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted", async () => {

@@ -68,8 +68,8 @@ const COEP_OPTIONS = new Set(["require-corp", "credentialless", "unsafe-none"]);
 
 function getBackendSettingsFile(): string {
   return (
-    process.env["RAYALGO_BACKEND_SETTINGS_FILE"] ||
-    join(tmpdir(), "rayalgo", "backend-settings.json")
+    process.env["PYRUS_BACKEND_SETTINGS_FILE"] ||
+    join(tmpdir(), "pyrus", "backend-settings.json")
   );
 }
 
@@ -118,13 +118,9 @@ function writeIsolationSettings(settings: IsolationSettings): void {
 }
 
 function envIsolationSettings(): IsolationSettings {
-  const mode =
-    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
-    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"];
-  const coop =
-    process.env["PYRUS_COOP_POLICY"] ?? process.env["RAYALGO_COOP_POLICY"];
-  const coep =
-    process.env["PYRUS_COEP_POLICY"] ?? process.env["RAYALGO_COEP_POLICY"];
+  const mode = process.env["PYRUS_CROSS_ORIGIN_ISOLATION"];
+  const coop = process.env["PYRUS_COOP_POLICY"];
+  const coep = process.env["PYRUS_COEP_POLICY"];
   return {
     mode: mode && ISOLATION_MODE_OPTIONS.has(mode) ? mode : DEFAULT_ISOLATION.mode,
     coop: coop && COOP_OPTIONS.has(coop) ? coop : DEFAULT_ISOLATION.coop,
@@ -161,10 +157,10 @@ function isolationSetting(
         : "PYRUS_COEP_POLICY";
   const legacyEnvName =
     key === "mode"
-      ? "RAYALGO_CROSS_ORIGIN_ISOLATION"
+      ? "PYRUS_CROSS_ORIGIN_ISOLATION"
       : key === "coop"
-        ? "RAYALGO_COOP_POLICY"
-        : "RAYALGO_COEP_POLICY";
+        ? "PYRUS_COOP_POLICY"
+        : "PYRUS_COEP_POLICY";
   return setting({
     key: `isolation.${key}`,
     group: "isolation",

@@ -8,7 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const protectedFiles = [
   ".replit",
   "replit.nix",
-  "artifacts/rayalgo/.replit-artifact/artifact.toml",
+  "artifacts/pyrus/.replit-artifact/artifact.toml",
 ];
 
 const action = process.argv[2] ?? "status";

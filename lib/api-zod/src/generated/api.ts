@@ -3870,7 +3870,7 @@ export const BenchmarkFlowScannerResponse = zod.record(zod.string(), zod.unknown
 
 
 /**
- * @summary Get the RayReplica monitor profile for an environment
+ * @summary Get the Pyrus Signals monitor profile for an environment
  */
 export const GetSignalMonitorProfileQueryParams = zod.object({
   "environment": zod.enum(['paper', 'live']).optional()
@@ -3882,7 +3882,7 @@ export const GetSignalMonitorProfileResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -3895,7 +3895,7 @@ export const GetSignalMonitorProfileResponse = zod.object({
 
 
 /**
- * @summary Update the RayReplica monitor profile for an environment
+ * @summary Update the Pyrus Signals monitor profile for an environment
  */
 export const updateSignalMonitorProfileBodyFreshWindowBarsMax = 20;
 
@@ -3913,7 +3913,7 @@ export const UpdateSignalMonitorProfileBody = zod.object({
   "enabled": zod.boolean().optional(),
   "watchlistId": zod.string().nullish(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']).optional(),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()).optional(),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()).optional(),
   "freshWindowBars": zod.number().min(1).max(updateSignalMonitorProfileBodyFreshWindowBarsMax).optional(),
   "pollIntervalSeconds": zod.number().min(updateSignalMonitorProfileBodyPollIntervalSecondsMin).max(updateSignalMonitorProfileBodyPollIntervalSecondsMax).optional(),
   "maxSymbols": zod.number().min(1).max(updateSignalMonitorProfileBodyMaxSymbolsMax).optional(),
@@ -3926,7 +3926,7 @@ export const UpdateSignalMonitorProfileResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -3939,7 +3939,7 @@ export const UpdateSignalMonitorProfileResponse = zod.object({
 
 
 /**
- * @summary Evaluate the RayReplica monitor profile
+ * @summary Evaluate the Pyrus Signals monitor profile
  */
 export const evaluateSignalMonitorBodyModeDefault = `incremental`;
 
@@ -3956,7 +3956,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -4001,7 +4001,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
 
 
 /**
- * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
  */
 export const EvaluateSignalMonitorMatrixBody = zod.object({
   "environment": zod.enum(['paper', 'live']).optional(),
@@ -4017,7 +4017,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -4065,7 +4065,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
 
 
 /**
- * @summary List current RayReplica signal states
+ * @summary List current Pyrus Signals signal states
  */
 export const GetSignalMonitorStateQueryParams = zod.object({
   "environment": zod.enum(['paper', 'live']).optional()
@@ -4078,7 +4078,7 @@ export const GetSignalMonitorStateResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -4123,7 +4123,7 @@ export const GetSignalMonitorStateResponse = zod.object({
 
 
 /**
- * @summary List RayReplica signal monitor events
+ * @summary List Pyrus Signals signal monitor events
  */
 export const listSignalMonitorEventsQueryLimitMax = 500;
 
@@ -4550,7 +4550,7 @@ export const UpdateAlgoDeploymentStrategySettingsResponse = zod.object({
   "enabled": zod.boolean(),
   "watchlistId": zod.string().nullable(),
   "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
-  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "pyrusSignalsSettings": zod.record(zod.string(), zod.unknown()),
   "freshWindowBars": zod.number(),
   "pollIntervalSeconds": zod.number(),
   "maxSymbols": zod.number(),
@@ -4804,7 +4804,7 @@ export const RunSignalOptionsShadowBackfillBody = zod.object({
   "session": zod.string().optional(),
   "commit": zod.boolean().optional(),
   "profilePatch": zod.record(zod.string(), zod.unknown()).optional(),
-  "rayReplicaSettingsPatch": zod.record(zod.string(), zod.unknown()).optional(),
+  "pyrusSignalsSettingsPatch": zod.record(zod.string(), zod.unknown()).optional(),
   "signalTimeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']).optional(),
   "forceDeploymentUniverse": zod.boolean().optional(),
   "replay": zod.union([zod.boolean(),zod.record(zod.string(), zod.unknown())]).optional(),

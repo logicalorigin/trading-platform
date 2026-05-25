@@ -64,7 +64,7 @@ export const backtestOptionPresets = [
     id: "signal_options_1_3d",
     label: "Signal Options 1-3D",
     description:
-      "Shared deployment profile for RayReplica spot signals translated into short-dated long-premium contracts.",
+      "Shared deployment profile for Pyrus Signals spot signals translated into short-dated long-premium contracts.",
     targetDte: 1,
     minDte: 1,
     maxDte: 3,

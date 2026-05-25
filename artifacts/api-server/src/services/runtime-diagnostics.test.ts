@@ -12,7 +12,7 @@ const previousRuntimeOverrideFile =
   process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
 process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
   tmpdir(),
-  `rayalgo-runtime-diagnostics-${process.pid}.json`,
+  `pyrus-runtime-diagnostics-${process.pid}.json`,
 );
 
 const runtimeModule = await import("../lib/runtime");
@@ -69,6 +69,7 @@ test.after(() => {
 test("runtime stream state is market-aware", () => {
   const open = new Date("2026-04-28T14:30:00.000Z");
   const closed = new Date("2026-04-28T21:30:00.000Z");
+  const holiday = new Date("2026-05-25T15:00:00.000Z");
   const base = {
     configured: true,
     healthFresh: true,
@@ -174,6 +175,22 @@ test("runtime stream state is market-aware", () => {
     }),
     "market_session_quiet",
   );
+  assert.equal(
+    __resolveIbkrRuntimeStreamStateForTests({
+      ...base,
+      streamFresh: false,
+      now: holiday,
+    }).streamStateReason,
+    "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: holiday,
+    }),
+    "market_session_quiet",
+  );
 });
 
 test("runtime diagnostics are read-only and only inspect bridge health", async () => {
@@ -245,6 +262,8 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
     typeof diagnostics.ibkr.streams.marketDataAdmission.budget.accountMonitorLineCap,
     "number",
   );
+  assert.equal(typeof diagnostics.api.accountPage.timings, "object");
+  assert.equal(typeof diagnostics.api.accountPage.cache, "object");
   assert.equal(diagnostics.storage.source, "external-postgres");
   assert.equal(diagnostics.storage.status, "ok");
   assert.equal(typeof diagnostics.providers.polygon.configured, "boolean");

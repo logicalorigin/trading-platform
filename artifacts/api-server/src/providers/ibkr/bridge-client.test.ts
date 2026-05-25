@@ -23,7 +23,7 @@ const listen = (server: http.Server): Promise<number> =>
 
 const useTempBridgeRuntimeOverride = (t: TestContext): void => {
   const previous = process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
-  const directory = mkdtempSync(join(tmpdir(), "rayalgo-bridge-client-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "pyrus-bridge-client-test-"));
   process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
     directory,
     "runtime.json",

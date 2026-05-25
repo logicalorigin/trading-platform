@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — use the **PYRUS web** workflow for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflow tasks; its `[workflows] runButton = "artifacts/rayalgo: web"` points the workflow service at the PYRUS web artifact. `[agent] stack = "PNPM_WORKSPACE"` lets Replit discover that artifact.
+- Replit Run button — use the **PYRUS web** workflow for full app bring-up. `.replit` intentionally has no root `run = [...]` line and no repo-defined workflow tasks; its `[workflows] runButton = "artifacts/pyrus: web"` points the workflow service at the PYRUS web artifact. `[agent] stack = "PNPM_WORKSPACE"` lets Replit discover that artifact.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -35,7 +35,7 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Artifacts
 
-- **pyrus** (`artifacts/rayalgo`, `/`) — PYRUS Platform. React + Vite trading terminal with the platform shell, runtime providers, charting, market, flow, trade, account, research, algo, backtest, diagnostics, and settings code split under `src/features`, `src/screens`, and `src/components/platform`. The guarded artifact path remains `artifacts/rayalgo` so Replit's pinned web artifact keeps the same identity. The retired `src/RayAlgoPlatform.jsx` monolith is no longer the app entry; `src/app/App.tsx` lazy-loads `src/features/platform/PlatformApp.jsx`. The `components/ui/` directory only retains `dropdown-menu.tsx` and `popover.tsx` (the only shadcn wrappers actually imported); the rest of the shadcn library plus its dependencies (radix-*, sonner, vaul, wouter, cmdk, framer-motion, react-hook-form, date-fns, etc.) were removed in the dependency cleanup pass.
+- **pyrus** (`artifacts/pyrus`, `/`) — PYRUS Platform. React + Vite trading terminal with the platform shell, runtime providers, charting, market, flow, trade, account, research, algo, backtest, diagnostics, and settings code split under `src/features`, `src/screens`, and `src/components/platform`. The guarded artifact path remains `artifacts/pyrus` so Replit's pinned web artifact keeps the same identity. The retired `src/PyrusPlatform.jsx` monolith is no longer the app entry; `src/app/App.tsx` lazy-loads `src/features/platform/PlatformApp.jsx`. The `components/ui/` directory only retains `dropdown-menu.tsx` and `popover.tsx` (the only shadcn wrappers actually imported); the rest of the shadcn library plus its dependencies (radix-*, sonner, vaul, wouter, cmdk, framer-motion, react-hook-form, date-fns, etc.) were removed in the dependency cleanup pass.
 - **api-server** (`artifacts/api-server`) — Express API serving research, trading, market data, and the new backtesting routes.
 - **backtest-worker** (`artifacts/backtest-worker`) — background job worker that claims queued backtest jobs, hydrates/caches datasets, runs studies and sweeps, and promotes persistent run artifacts into the database.
 - **ibkr-bridge** (`artifacts/ibkr-bridge`) — small HTTP service that runs beside the user's local Interactive Brokers Gateway/TWS socket. Built into `dist/index.mjs`; the Windows one-click helper exposes the bridge through Cloudflare, and the api-server's `IbkrBridgeClient` calls it for accounts, positions, bars, quotes, market depth, orders, and TWS contract search. All Date-typed fields are deserialized at the bridge-client boundary in `artifacts/api-server/src/providers/ibkr/bridge-client.ts` (HTTP JSON only carries strings).
@@ -44,7 +44,7 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 The tracked `.replit` intentionally has no root `run = [...]` line and no
 repo-defined `[[workflows.workflow]]` tasks. It does keep
-`[workflows] runButton = "artifacts/rayalgo: web"` so Replit's primary Run
+`[workflows] runButton = "artifacts/pyrus: web"` so Replit's primary Run
 button points at the PYRUS web workflow. Replit may still show its generated
 **Configure Your App** toolchain run option in some dropdowns; do not use that
 generated option for app startup.
@@ -52,8 +52,7 @@ generated option for app startup.
 Replit's `PNPM_WORKSPACE` artifact app model should start the app from the
 PYRUS artifact's `.replit-artifact/artifact.toml` `[services.development] run`
 command. That command runs `pnpm --filter @workspace/pyrus run dev:replit`,
-which tags the startup with `PYRUS_REPLIT_RUN=1` and the legacy
-`RAYALGO_REPLIT_RUN=1`; its supervisor starts both
+which tags the startup with `PYRUS_REPLIT_RUN=1`; its supervisor starts both
 dev servers:
 
 - API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
@@ -164,7 +163,7 @@ One-time setup on the Windows machine (requires a Cloudflare account with a zone
 2. **PYRUS IBKR bridge** — launched only by the one-click activation helper; listens on `http://localhost:3002`.
 3. **cloudflared** — launched by the activation helper for the bridge HTTP service.
 
-### One-click activation helper (`scripts/windows/rayalgo-ibkr-helper.ps1`)
+### One-click activation helper (`scripts/windows/pyrus-ibkr-helper.ps1`)
 
 Start activation from the PYRUS header after IB Gateway/TWS is logged in.
 
@@ -217,7 +216,7 @@ The PYRUS dev supervisor pins API dev logging to warn-level by starting the
 API child with `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`.
 
 To temporarily restore verbose per-request logging while debugging, drop
-that env override in `artifacts/rayalgo/scripts/runDevApp.mjs` and restart the
+that env override in `artifacts/pyrus/scripts/runDevApp.mjs` and restart the
 PYRUS web workflow. Production is unaffected: it runs raw JSON pino without
 `pino-pretty` and the PYRUS artifact production env does not set `LOG_LEVEL`.
 Bridge verbosity is controlled by the Windows activation helper environment,
@@ -232,15 +231,30 @@ to bind a fallback port the preview proxy never used. Three fixes prevent the
 recurrence:
 
 1. **Shared port reaper** in `scripts/reap-dev-port.mjs`, run by both
-   `artifacts/api-server/package.json` and `artifacts/rayalgo/package.json`
+   `artifacts/api-server/package.json` and `artifacts/pyrus/package.json`
    before their dev servers start. It scans `/proc/net/tcp[6]` for the requested
    `PORT` and reaps the owning PID directly; stale pid files are not trusted.
 2. **`strictPort: true`** on both `server` and `preview` blocks of
-   `artifacts/rayalgo/vite.config.ts` so vite exits with an error instead of
+   `artifacts/pyrus/vite.config.ts` so vite exits with an error instead of
    silently falling back to the next port.
-3. **Process-group supervision** in `artifacts/rayalgo/scripts/runDevApp.mjs`,
+3. **Process-group supervision** in `artifacts/pyrus/scripts/runDevApp.mjs`,
    plus `exec` in the child dev scripts, so SIGTERM from the PYRUS workflow
    stops both API and Vite.
+
+If a second Replit-owned artifact workflow starts while the existing PYRUS
+supervisor lock points at a live `runDevApp.mjs` process, `runDevApp.mjs`
+treats it as a duplicate Run event only during the short startup guard window.
+After `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new
+Replit-owned Run is treated as an intentional Run-button restart: the new
+workflow asks the live supervisor for a controlled handoff, waits for API/Vite
+to stop, and then becomes the single owner. The immediate duplicate no-op still
+prevents overlapping startup cascades when Replit emits more than one launch
+for the same click. `PYRUS_DEV_FORCE_RESTART=1` remains available for explicit
+recovery restarts, or for stale/missing lock owners where normal startup can
+safely become the single owner.
+Use `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate
+path; that mode only reads the supervisor lock and exits without starting
+API/Vite or running port reapers.
 
 If a service restart still fails with `EADDRINUSE`, run the shared reaper for
 the conflicting pinned port and restart the PYRUS web workflow:
@@ -252,8 +266,7 @@ PORT=18747 node scripts/reap-dev-port.mjs   # pyrus preview
 
 From a normal shell this command is intentionally conservative: it refuses to
 kill a listener owned by a different Replit cgroup. When Replit runs the same
-script inside an artifact workflow (`REPLIT_MODE=workflow`, `PYRUS_REPLIT_RUN=1`,
-or the legacy `RAYALGO_REPLIT_RUN=1`), it may reclaim the pinned port from an older
+script inside an artifact workflow (`REPLIT_MODE=workflow` or `PYRUS_REPLIT_RUN=1`), it may reclaim the pinned port from an older
 Replit execution scope so the Workflow tab's restart action can recover from
 stale app processes.
 
@@ -264,7 +277,7 @@ depending on the shell environment. If the reaper cannot identify the PID, check
 
 ### `ensurePreviewReachable` removed from PYRUS
 
-`artifacts/rayalgo/.replit-artifact/artifact.toml` no longer sets
+`artifacts/pyrus/.replit-artifact/artifact.toml` no longer sets
 `ensurePreviewReachable = "/"`. With that directive in place the Replit preview
 proxy was health-polling `/` and re-mounting the iframe whenever a probe
 hiccupped (bundling stalls during HMR, slow chunk transforms, etc.), which
@@ -310,7 +323,7 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
 
 Replit's managed Postgres should be the normal development DB. The app resolves
 DB config in this order: explicit `LOCAL_DATABASE_URL` only when
-`PYRUS_DATABASE_SOURCE=local` (or the legacy `RAYALGO_DATABASE_SOURCE=local`);
+`PYRUS_DATABASE_SOURCE=local`;
 Replit's Helium `PG*` environment when a stale
 workspace-local socket `DATABASE_URL` is also present; otherwise `DATABASE_URL`
 and then Replit's `PG*` environment (`PGHOST`, `PGDATABASE`, `PGUSER`,
@@ -327,7 +340,7 @@ The workspace-local Postgres scripts remain only as fallback/diagnostic tools:
 
 Repo rule: `.replit` intentionally has no repo-defined
 `[[workflows.workflow]]` tasks and no root `run = [...]` command. Keep
-`[workflows] runButton = "artifacts/rayalgo: web"` so the Replit primary Run
+`[workflows] runButton = "artifacts/pyrus: web"` so the Replit primary Run
 button targets the single PYRUS web workflow. Do not add a root workflow
 coordinator to hide or rename generated **Configure Your App**; that would take
 startup ownership away from the PYRUS artifact.
@@ -345,8 +358,7 @@ shell — the shell is in its own `shellexec-*.scope`, so the reaper sees the
 workflow as foreign and aborts before SIGTERM/SIGKILL.
 
 If the current process is itself a Replit workflow (`REPLIT_MODE=workflow`) or
-the PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`, with `RAYALGO_REPLIT_RUN=1`
-kept as an alias), the reaper treats that as
+the PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), the reaper treats that as
 an intentional workflow restart and may reclaim the pinned port from a different
 Replit execution scope. This matters because Replit does not always preserve
 `REPLIT_MODE` in the long-running child server process even though the restart

@@ -3,13 +3,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
-  DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS,
-  evaluateRayReplicaSignals,
-  RAY_REPLICA_SIGNAL_WARMUP_BARS,
-  resolveRayReplicaSignalSettings,
-  type RayReplicaBar,
-  type RayReplicaSignalEvent,
-} from "@workspace/rayreplica-core";
+  DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS,
+  evaluatePyrusSignalsSignals,
+  PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+  resolvePyrusSignalsSignalSettings,
+  type PyrusSignalsBar,
+  type PyrusSignalsSignalEvent,
+} from "@workspace/pyrus-signals-core";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   algoDeploymentsTable,
@@ -35,18 +35,17 @@ import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
 import type {
   BrokerBarSnapshot,
   BrokerPositionSnapshot,
+  OptionChainContract,
   PlaceOrderInput,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
-import {
-  PolygonMarketDataClient,
-  type OptionChainContract,
-} from "../providers/polygon/market-data";
 import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
 import { notifyShadowAccountChanged } from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
+import type { MarketDataIntent } from "./market-data-admission";
 import {
   assertIbkrGatewayTradingAvailable,
+  batchOptionChains,
   getBars,
   getQuoteSnapshots,
   listWatchlists,
@@ -118,8 +117,19 @@ const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
   SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS - 100,
 );
+const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 6_500;
+const SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS = Math.max(
+  500,
+  SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS - 250,
+);
+const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
+const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
+const SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT = "signal_options_shadow_entry";
+const SIGNAL_OPTIONS_SHADOW_EXIT_EVENT = "signal_options_shadow_exit";
+const SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT = 10_000;
+const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 5_000;
 
 const shadowAccountDbBackoff = createTransientPostgresBackoff({
   warningCooldownMs: 60_000,
@@ -188,6 +198,17 @@ type ShadowTotals = {
   netLiquidation: number;
   updatedAt: Date;
 };
+
+type ShadowAutomationMirrorRepairSummary = {
+  checkedCount: number;
+  missingCount: number;
+  repairedCount: number;
+  errorCount: number;
+};
+
+let shadowAutomationMirrorRepairInFlight: Promise<ShadowAutomationMirrorRepairSummary> | null =
+  null;
+let shadowAutomationMirrorRepairCheckedAt = 0;
 
 function buildFallbackShadowTotals(now = new Date()): ShadowTotals {
   return {
@@ -333,7 +354,7 @@ type WatchlistBacktestSkip = {
 type WatchlistBacktestSignalCandidate = {
   symbol: string;
   side: ShadowSide;
-  signal: RayReplicaSignalEvent;
+  signal: PyrusSignalsSignalEvent;
   signalAt: Date;
   signalPrice: number | null;
   signalClose: number | null;
@@ -347,7 +368,7 @@ type WatchlistBacktestSignalCandidate = {
 };
 
 type WatchlistBacktestPreparedBar = {
-  bar: RayReplicaBar;
+  bar: PyrusSignalsBar;
   at: Date;
   atMs: number;
 };
@@ -364,9 +385,25 @@ let shadowPositionMarkRefreshInFlight:
   | Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
   | null = null;
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
+const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
+const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
 const shadowReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 const shadowReadInFlight = new Map<string, Promise<unknown>>();
 let shadowReadCacheVersion = 0;
+const shadowOptionQuoteCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    quote: Partial<QuoteSnapshot> | Record<string, unknown>;
+  }
+>();
+const shadowOptionProviderIdCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    providerContractId: string;
+  }
+>();
 const shadowBenchmarkBarsCache = new Map<
   string,
   { expiresAt: number; bars: ShadowBenchmarkBars }
@@ -590,6 +627,143 @@ function isHistoricalSignalOptionsShadowOrder(order: Pick<ShadowOrderRow, "paylo
   );
 }
 
+function isSignalOptionsBackfillShadowOrder(
+  order: Pick<ShadowOrderRow, "payload"> | null | undefined,
+) {
+  const payload = readRecord(order?.payload) ?? {};
+  const backfill = readRecord(payload.backfill) ?? {};
+  const metadata = readRecord(payload.metadata) ?? {};
+  return (
+    readString(backfill.source) === SIGNAL_OPTIONS_BACKFILL_SOURCE ||
+    readString(metadata.runSource) === SIGNAL_OPTIONS_BACKFILL_SOURCE
+  );
+}
+
+function isHistoricalSignalOptionsShadowEvent(
+  event: Pick<ExecutionEvent, "payload"> | null | undefined,
+) {
+  return isHistoricalSignalOptionsShadowOrder({
+    payload: event?.payload ?? {},
+  } as Pick<ShadowOrderRow, "payload">);
+}
+
+function isSignalOptionsAutomationMirrorEvent(event: ExecutionEvent) {
+  return (
+    (event.eventType === SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT ||
+      event.eventType === SIGNAL_OPTIONS_SHADOW_EXIT_EVENT) &&
+    !isHistoricalSignalOptionsShadowEvent(event)
+  );
+}
+
+function shouldRepairSignalOptionsAutomationMirrors(
+  source: ShadowSourceScope | null,
+) {
+  return source == null || source === "automation";
+}
+
+async function repairSignalOptionsAutomationMirrorsForRead(
+  source: ShadowSourceScope | null,
+): Promise<ShadowAutomationMirrorRepairSummary> {
+  if (!shouldRepairSignalOptionsAutomationMirrors(source)) {
+    return {
+      checkedCount: 0,
+      missingCount: 0,
+      repairedCount: 0,
+      errorCount: 0,
+    };
+  }
+
+  const now = Date.now();
+  if (shadowAutomationMirrorRepairInFlight) {
+    return shadowAutomationMirrorRepairInFlight;
+  }
+  if (
+    !shadowAutomationMirrorRepairInFlight &&
+    now - shadowAutomationMirrorRepairCheckedAt < SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS
+  ) {
+    return {
+      checkedCount: 0,
+      missingCount: 0,
+      repairedCount: 0,
+      errorCount: 0,
+    };
+  }
+
+  shadowAutomationMirrorRepairInFlight = (async () => {
+    const candidates = await db
+      .select()
+      .from(executionEventsTable)
+      .where(
+        inArray(executionEventsTable.eventType, [
+          SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT,
+          SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+        ]),
+      )
+      .orderBy(desc(executionEventsTable.occurredAt))
+      .limit(SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT);
+    const events = candidates
+      .filter(isSignalOptionsAutomationMirrorEvent)
+      .sort(
+        (left, right) =>
+          left.occurredAt.getTime() - right.occurredAt.getTime(),
+      );
+    const eventIds = events.map((event) => event.id);
+    const mirrored = eventIds.length
+      ? await db
+          .select({ sourceEventId: shadowOrdersTable.sourceEventId })
+          .from(shadowOrdersTable)
+          .where(
+            and(
+              eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+              inArray(shadowOrdersTable.sourceEventId, eventIds),
+            ),
+          )
+      : [];
+    const mirroredEventIds = new Set(
+      mirrored
+        .map((row) => row.sourceEventId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const missing = events.filter((event) => !mirroredEventIds.has(event.id));
+    let repairedCount = 0;
+    let errorCount = 0;
+
+    for (const event of missing) {
+      try {
+        const repaired = await recordShadowAutomationEvent(event, {
+          source: "automation",
+        });
+        if (repaired) {
+          repairedCount += 1;
+        }
+      } catch (error) {
+        errorCount += 1;
+        logger.warn?.(
+          { err: error, eventId: event.id, eventType: event.eventType },
+          "Failed to repair signal-options Shadow account ledger mirror",
+        );
+      }
+    }
+
+    if (repairedCount > 0) {
+      invalidateShadowFreshStateCache();
+      notifyShadowAccountChanged();
+    }
+
+    return {
+      checkedCount: events.length,
+      missingCount: missing.length,
+      repairedCount,
+      errorCount,
+    };
+  })().finally(() => {
+    shadowAutomationMirrorRepairCheckedAt = Date.now();
+    shadowAutomationMirrorRepairInFlight = null;
+  });
+
+  return shadowAutomationMirrorRepairInFlight;
+}
+
 function shadowDateWindowUtc(value: string | Date): {
   date: string;
   start: Date;
@@ -674,6 +848,11 @@ function readString(value: unknown): string | null {
 function readNumber(value: unknown): number | null {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function readPositiveNumber(value: unknown): number | null {
+  const numeric = toNumber(value);
+  return numeric != null && numeric > 0 ? numeric : null;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -826,7 +1005,10 @@ function shadowOrderMatchesSource(order: ShadowOrderRow | undefined, source: str
   }
   const effectiveSource = shadowOrderEffectiveSource(order);
   if (source === "automation") {
-    return effectiveSource === "automation" && !isForwardTestShadowOrder(order);
+    return (
+      effectiveSource === "automation" &&
+      !isForwardTestShadowOrder(order)
+    );
   }
   return effectiveSource === source;
 }
@@ -1024,6 +1206,103 @@ function shadowPositionKeysForOrders(orders: Array<ShadowOrderRow | undefined>) 
   );
 }
 
+function shadowOrdersByPositionKey(orders: Array<ShadowOrderRow | undefined>) {
+  const byPositionKey = new Map<string, ShadowOrderRow>();
+  orders.forEach((order) => {
+    const key = shadowPositionKeyForOrder(order);
+    if (!key || !order) {
+      return;
+    }
+    const current = byPositionKey.get(key);
+    if (
+      !current ||
+      order.side === "buy" ||
+      isHistoricalSignalOptionsShadowOrder(order)
+    ) {
+      byPositionKey.set(key, order);
+    }
+  });
+  return byPositionKey;
+}
+
+function shadowQuoteHasBidAsk(
+  quote: Record<string, unknown> | null | undefined,
+) {
+  return toNumber(quote?.bid) != null && toNumber(quote?.ask) != null;
+}
+
+function shadowOrderOptionQuoteFallback(
+  order: ShadowOrderRow | undefined,
+  fallbackMark: number,
+): Record<string, unknown> | null {
+  if (!order) {
+    return null;
+  }
+  const payload = readRecord(order.payload) ?? {};
+  const candidate = readRecord(payload.candidate) ?? {};
+  const orderPlan = readRecord(payload.orderPlan) ?? {};
+  const candidateOrderPlan = readRecord(candidate.orderPlan) ?? {};
+  const quote = [
+    payload.quote,
+    candidate.quote,
+    payload.liquidity,
+    candidate.liquidity,
+    orderPlan.liquidity,
+    candidateOrderPlan.liquidity,
+  ]
+    .map((value) => readRecord(value))
+    .find((value) => shadowQuoteHasBidAsk(value));
+  if (!quote) {
+    return null;
+  }
+
+  const bid = toNumber(quote.bid);
+  const ask = toNumber(quote.ask);
+  if (bid == null || ask == null) {
+    return null;
+  }
+  const mid = toNumber(quote.mid) ?? (bid + ask) / 2;
+  const updatedAt =
+    readString(quote.updatedAt) ??
+    readString(quote.dataUpdatedAt) ??
+    readString(quote.quoteUpdatedAt) ??
+    order.filledAt?.toISOString?.() ??
+    order.placedAt.toISOString();
+  const freshness =
+    readString(quote.freshness) ??
+    readString(quote.quoteFreshness) ??
+    "automation_event";
+  return {
+    ...quote,
+    bid,
+    ask,
+    mid,
+    mark: fallbackMark,
+    price: fallbackMark,
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+    quoteUpdatedAt: updatedAt,
+    freshness,
+    quoteFreshness: freshness,
+    marketDataMode:
+      readString(quote.marketDataMode) ?? "shadow_ledger",
+  };
+}
+
+function isExpiredHistoricalShadowOptionPosition(
+  position: Pick<ShadowPositionRow, "optionContract">,
+  sourceOrder?: ShadowOrderRow | null,
+  now = new Date(),
+) {
+  const contract = asOptionContract(position.optionContract);
+  return Boolean(
+    contract &&
+      isPriorOptionExpiration(contract, now) &&
+      sourceOrder &&
+      isHistoricalSignalOptionsShadowOrder(sourceOrder),
+  );
+}
+
 function buildPositionSourceAttribution(
   position: ShadowPositionRow,
   orders: ShadowOrderRow[],
@@ -1165,7 +1444,18 @@ function asOptionContract(value: unknown): ShadowOptionContract | null {
   };
 }
 
-function optionPayload(value: ShadowOptionContract | null | undefined) {
+function optionPayload(
+  value: ShadowOptionContract | null | undefined,
+  providerContractIdOverride: string | null = null,
+) {
+  const providerContractId =
+    typeof providerContractIdOverride === "string" &&
+    providerContractIdOverride.trim()
+      ? providerContractIdOverride.trim()
+      : typeof value?.providerContractId === "string" &&
+          value.providerContractId.trim()
+        ? value.providerContractId.trim()
+        : null;
   return value
     ? {
         ticker: value.ticker,
@@ -1175,9 +1465,148 @@ function optionPayload(value: ShadowOptionContract | null | undefined) {
         right: value.right,
         multiplier: value.multiplier,
         sharesPerContract: value.sharesPerContract,
-        providerContractId: value.providerContractId ?? null,
+        providerContractId,
       }
     : null;
+}
+
+function shadowOptionQuoteIdentifier(
+  contract: ShadowOptionContract | null | undefined,
+): string | null {
+  const providerContractId =
+    typeof contract?.providerContractId === "string"
+      ? contract.providerContractId.trim()
+      : "";
+  if (providerContractId) {
+    return providerContractId;
+  }
+  const ticker = typeof contract?.ticker === "string" ? contract.ticker.trim() : "";
+  return ticker && isOpraOptionTicker(ticker) ? ticker : null;
+}
+
+function rememberShadowOptionQuote(
+  providerContractId: string | null | undefined,
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+) {
+  const key = providerContractId?.trim();
+  if (!key || !quote) {
+    return;
+  }
+  shadowOptionQuoteCache.set(key, {
+    quote,
+    expiresAt: Date.now() + SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+  });
+}
+
+function readCachedShadowOptionQuotes(
+  positions: ShadowPositionRow[],
+): Map<string, Partial<QuoteSnapshot> | Record<string, unknown>> {
+  const now = Date.now();
+  const quotes = new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
+  positions.forEach((position) => {
+    const providerContractId = shadowOptionQuoteIdentifier(
+      asOptionContract(position.optionContract),
+    );
+    if (!providerContractId) {
+      return;
+    }
+    const cached = shadowOptionQuoteCache.get(providerContractId);
+    if (!cached) {
+      return;
+    }
+    if (cached.expiresAt <= now) {
+      shadowOptionQuoteCache.delete(providerContractId);
+      return;
+    }
+    quotes.set(providerContractId, cached.quote);
+  });
+  return quotes;
+}
+
+function rememberShadowOptionProviderContractId(
+  optionTicker: string,
+  providerContractId: string,
+) {
+  if (!optionTicker || !providerContractId || isOpraOptionTicker(providerContractId)) {
+    return;
+  }
+  shadowOptionProviderIdCache.set(optionTicker, {
+    providerContractId,
+    expiresAt: Date.now() + SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS,
+  });
+}
+
+function readCachedShadowOptionProviderContractId(optionTicker: string) {
+  const cached = shadowOptionProviderIdCache.get(optionTicker);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    shadowOptionProviderIdCache.delete(optionTicker);
+    return null;
+  }
+  return cached.providerContractId;
+}
+
+function shadowOptionProviderContractIdForContract(
+  contract: ShadowOptionContract | null | undefined,
+): string | null {
+  const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+  if (!contract || !quoteIdentifier) {
+    return null;
+  }
+  if (!isOpraOptionTicker(quoteIdentifier)) {
+    return quoteIdentifier;
+  }
+  const cachedProviderContractId =
+    readCachedShadowOptionProviderContractId(quoteIdentifier);
+  if (cachedProviderContractId) {
+    return cachedProviderContractId;
+  }
+  const structuredProviderContractId =
+    structuredShadowOptionProviderContractId(contract);
+  if (structuredProviderContractId) {
+    rememberShadowOptionProviderContractId(
+      quoteIdentifier,
+      structuredProviderContractId,
+    );
+    return structuredProviderContractId;
+  }
+  return null;
+}
+
+function structuredShadowOptionProviderContractId(
+  contract: ShadowOptionContract,
+): string | null {
+  const underlying = normalizeSymbol(contract.underlying);
+  const expiration = optionDateKey(contract.expirationDate).replace(/-/g, "");
+  const strike = toNumber(contract.strike);
+  const right = contract.right === "call" ? "C" : contract.right === "put" ? "P" : null;
+  const multiplier =
+    toNumber(contract.sharesPerContract) ?? toNumber(contract.multiplier) ?? 100;
+  if (
+    !underlying ||
+    !/^\d{8}$/.test(expiration) ||
+    strike == null ||
+    !right ||
+    multiplier <= 0
+  ) {
+    return null;
+  }
+  const payload = {
+    v: 1,
+    u: underlying,
+    e: expiration,
+    s: strike,
+    r: right,
+    x: "SMART",
+    tc: underlying,
+    m: multiplier,
+  };
+  return `${STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX}${Buffer.from(
+    JSON.stringify(payload),
+    "utf8",
+  ).toString("base64url")}`;
 }
 
 function isExpiredOptionContractForShadowClose(
@@ -1185,6 +1614,13 @@ function isExpiredOptionContractForShadowClose(
   now = new Date(),
 ) {
   return optionDateKey(contract.expirationDate) <= optionDateKey(now);
+}
+
+function isPriorOptionExpiration(
+  contract: ShadowOptionContract,
+  now = new Date(),
+) {
+  return optionDateKey(contract.expirationDate) < optionDateKey(now);
 }
 
 export function computeShadowOrderFees(input: {
@@ -1262,30 +1698,39 @@ async function readOpenShadowPositions(): Promise<ShadowPositionRow[]> {
 
 async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
   const { fills, ordersById } = await readShadowFillsWithOrders();
-  const livePositionKeys = shadowPositionKeysForOrders(
-    fills
-      .filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)))
-      .map((fill) => ordersById.get(fill.orderId)),
-  );
+  const liveOrders = fills
+    .filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)))
+    .map((fill) => ordersById.get(fill.orderId));
+  const livePositionKeys = shadowPositionKeysForOrders(liveOrders);
+  const liveOrdersByPositionKey = shadowOrdersByPositionKey(liveOrders);
   return (await readOpenShadowPositions()).filter(
     (position) =>
-      isLiveShadowPosition(position) && livePositionKeys.has(position.positionKey),
+      isLiveShadowPosition(position) &&
+      livePositionKeys.has(position.positionKey) &&
+      !isExpiredHistoricalShadowOptionPosition(
+        position,
+        liveOrdersByPositionKey.get(position.positionKey),
+      ),
   );
 }
 
 async function readOpenDefaultShadowLedgerAnalyticsPositions(): Promise<ShadowPositionRow[]> {
   const { fills, ordersById } = await readShadowFillsWithOrders();
-  const positionKeys = shadowPositionKeysForOrders(
-    fills
-      .filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      )
-      .map((fill) => ordersById.get(fill.orderId)),
-  );
+  const selectedOrders = fills
+    .filter((fill) =>
+      isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+    )
+    .map((fill) => ordersById.get(fill.orderId));
+  const positionKeys = shadowPositionKeysForOrders(selectedOrders);
+  const ordersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
   return (await readOpenShadowPositions()).filter(
     (position) =>
       isDefaultShadowLedgerAnalyticsPosition(position) &&
-      positionKeys.has(position.positionKey),
+      positionKeys.has(position.positionKey) &&
+      !isExpiredHistoricalShadowOptionPosition(
+        position,
+        ordersByPositionKey.get(position.positionKey),
+      ),
   );
 }
 
@@ -1296,15 +1741,28 @@ async function readOpenShadowPositionsForSource(
     return readOpenDefaultShadowLedgerAnalyticsPositions();
   }
   const { fills, ordersById } = await readShadowFillsWithOrders();
-  const sourcePositionKeys = shadowPositionKeysForOrders(
-    fills
-      .filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-      .map((fill) => ordersById.get(fill.orderId)),
-  );
+  const sourceOrders = fills
+    .filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
+    .map((fill) => ordersById.get(fill.orderId));
+  const sourcePositionKeys = shadowPositionKeysForOrders(sourceOrders);
+  const sourceOrdersByPositionKey = shadowOrdersByPositionKey(sourceOrders);
   return (await readOpenShadowPositions()).filter(
     (position) =>
       sourcePositionKeys.has(position.positionKey) &&
-      positionMatchesShadowSource(position, source),
+      positionMatchesShadowSource(position, source) &&
+      !isExpiredHistoricalShadowOptionPosition(
+        position,
+        sourceOrdersByPositionKey.get(position.positionKey),
+      ),
+  );
+}
+
+async function readOpenShadowPositionsForSourceCached(
+  source: ShadowSourceScope | null,
+): Promise<ShadowPositionRow[]> {
+  return withShadowReadCache(
+    `open-positions:${shadowSourceCacheKey(source)}`,
+    () => readOpenShadowPositionsForSource(source),
   );
 }
 
@@ -1596,14 +2054,19 @@ async function computeShadowTotalsForSource(
     : fills.filter((fill) =>
         isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
       );
-  const selectedPositionKeys = shadowPositionKeysForOrders(
-    selectedFills.map((fill) => ordersById.get(fill.orderId)),
-  );
+  const selectedOrders = selectedFills.map((fill) => ordersById.get(fill.orderId));
+  const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
+  const selectedOrdersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
   const positions = (await readOpenShadowPositions()).filter((position) =>
     selectedPositionKeys.has(position.positionKey) &&
       (source
         ? positionMatchesShadowSource(position, source)
-        : isDefaultShadowLedgerAnalyticsPosition(position)),
+        : isDefaultShadowLedgerAnalyticsPosition(position)) &&
+      !isExpiredHistoricalShadowOptionPosition(
+        position,
+        selectedOrdersByPositionKey.get(position.positionKey),
+        options.now,
+      ),
   );
   const totals = buildShadowTotalsFromLedger({
     account,
@@ -1723,7 +2186,10 @@ async function resolveEquityMark(symbol: string): Promise<{
   asOf: Date;
 }> {
   const normalized = normalizeSymbol(symbol).toUpperCase();
-  const quotes = await getQuoteSnapshots({ symbols: normalized }).catch(() => ({
+  const quotes = await getQuoteSnapshots({
+    symbols: normalized,
+    allowPolygonFallback: false,
+  }).catch(() => ({
     quotes: [],
   }));
   const quoteList = Array.isArray(quotes.quotes)
@@ -1766,38 +2232,302 @@ async function resolveOptionMark(contract: ShadowOptionContract): Promise<{
   source: string;
   asOf: Date;
 }> {
-  if (!contract.providerContractId) {
+  const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+  if (!quoteIdentifier) {
     return { price: null, bid: null, ask: null, source: "missing_contract_id", asOf: new Date() };
+  }
+  if (isPriorOptionExpiration(contract)) {
+    return { price: null, bid: null, ask: null, source: "expired_contract", asOf: new Date() };
+  }
+  let providerContractId = quoteIdentifier;
+  if (isOpraOptionTicker(quoteIdentifier)) {
+    providerContractId =
+      readCachedShadowOptionProviderContractId(quoteIdentifier) ??
+      (
+        await resolveShadowIbkrOptionProviderIds([
+          {
+            underlying: normalizeSymbol(contract.underlying).toUpperCase(),
+            expirationDate: contract.expirationDate,
+            right: contract.right,
+            contracts: [contract],
+          },
+        ])
+      ).get(quoteIdentifier) ??
+      "";
+    if (!providerContractId) {
+      return { price: null, bid: null, ask: null, source: "missing_ibkr_contract_id", asOf: new Date() };
+    }
   }
   const payload = await fetchOptionQuoteSnapshotPayload({
     underlying: contract.underlying,
-    providerContractIds: [contract.providerContractId],
+    providerContractIds: [providerContractId],
   }).catch(() => null);
   const quote = payload?.quotes?.find(
-    (candidate) => candidate.providerContractId === contract.providerContractId,
+    (candidate) => candidate.providerContractId === providerContractId,
   );
   if (!quote) {
     return { price: null, bid: null, ask: null, source: "quote_unavailable", asOf: new Date() };
   }
-  const quoteRecord = quote as Record<string, unknown>;
-  const bid = toNumber(quoteRecord.bid);
-  const ask = toNumber(quoteRecord.ask);
-  const mid = bid != null && ask != null ? (bid + ask) / 2 : null;
+  rememberShadowOptionQuote(providerContractId, quote);
+  if (isOpraOptionTicker(quoteIdentifier)) {
+    rememberShadowOptionQuote(quoteIdentifier, quote);
+  }
+  return optionMarkFromQuoteRecord(quote as Record<string, unknown>, "option_quote");
+}
+
+function shadowOptionQuoteTimestamp(quoteRecord: Record<string, unknown>) {
+  const timestamp =
+    quoteRecord.updatedAt ??
+    quoteRecord.quoteUpdatedAt ??
+    quoteRecord.dataUpdatedAt ??
+    null;
+  if (timestamp instanceof Date && !Number.isNaN(timestamp.getTime())) {
+    return timestamp;
+  }
+  if (typeof timestamp === "string" && timestamp.trim()) {
+    const parsed = new Date(timestamp);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+  return new Date();
+}
+
+function nonOpraProviderContractId(value: unknown): string | null {
+  const providerContractId = typeof value === "string" ? value.trim() : "";
+  return providerContractId && !isOpraOptionTicker(providerContractId)
+    ? providerContractId
+    : null;
+}
+
+function shadowOptionQuoteProviderContractId(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+  fallback: string | null | undefined,
+): string | null {
+  const quoteRecord = quote as Record<string, unknown> | null | undefined;
+  return (
+    nonOpraProviderContractId(quoteRecord?.providerContractId) ??
+    nonOpraProviderContractId(fallback)
+  );
+}
+
+function optionMarkFromQuoteRecord(
+  quoteRecord: Record<string, unknown>,
+  source: string,
+) {
   return {
+    price: shadowQuoteMarkPrice(quoteRecord),
+    bid: toNumber(quoteRecord.bid),
+    ask: toNumber(quoteRecord.ask),
+    source,
+    asOf: shadowOptionQuoteTimestamp(quoteRecord),
+  };
+}
+
+function shadowQuoteSnapshotFromOptionRecord(input: {
+  symbol: string;
+  providerContractId: string | null;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown>;
+}): QuoteSnapshot {
+  const quoteRecord = input.quote as Record<string, unknown>;
+  const updatedAt = shadowOptionQuoteTimestamp(quoteRecord);
+  return {
+    symbol: input.symbol,
     price:
-      mid ??
-      toNumber(quoteRecord.mark) ??
-      toNumber(quoteRecord.last) ??
-      toNumber(quoteRecord.price),
+      readPositiveNumber(quoteRecord.last) ??
+      readPositiveNumber(quoteRecord.price) ??
+      readPositiveNumber(quoteRecord.mark) ??
+      0,
+    bid: toNumber(quoteRecord.bid),
+    ask: toNumber(quoteRecord.ask),
+    bidSize: toNumber(quoteRecord.bidSize),
+    askSize: toNumber(quoteRecord.askSize),
+    change: toNumber(quoteRecord.change),
+    changePercent: toNumber(quoteRecord.changePercent),
+    open: toNumber(quoteRecord.open),
+    high: toNumber(quoteRecord.high),
+    low: toNumber(quoteRecord.low),
+    prevClose: toNumber(quoteRecord.prevClose),
+    volume: toNumber(quoteRecord.volume),
+    openInterest: toNumber(quoteRecord.openInterest),
+    impliedVolatility: toNumber(quoteRecord.impliedVolatility),
+    delta: toNumber(quoteRecord.delta),
+    gamma: toNumber(quoteRecord.gamma),
+    theta: toNumber(quoteRecord.theta),
+    vega: toNumber(quoteRecord.vega),
+    providerContractId: input.providerContractId,
+    delayed: Boolean(quoteRecord.delayed),
+    freshness:
+      typeof quoteRecord.freshness === "string" ? quoteRecord.freshness : null,
+    marketDataMode:
+      typeof quoteRecord.marketDataMode === "string"
+        ? quoteRecord.marketDataMode
+        : null,
+    dataUpdatedAt: updatedAt,
+    ageMs: toNumber(quoteRecord.ageMs),
+    cacheAgeMs: toNumber(quoteRecord.cacheAgeMs),
+    latency: toNumber(quoteRecord.latency),
+    transport: typeof quoteRecord.transport === "string" ? quoteRecord.transport : null,
+    updatedAt,
+    mark: readPositiveNumber(quoteRecord.mark),
+    last: readPositiveNumber(quoteRecord.last),
+  } as QuoteSnapshot;
+}
+
+function shadowOptionQuotePayload(input: {
+  symbol: string;
+  providerContractId: string | null;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown>;
+  fallbackMark: number;
+  source: string;
+}) {
+  const quoteRecord = input.quote as Record<string, unknown>;
+  const snapshot = shadowQuoteSnapshotFromOptionRecord(input);
+  const displayQuote = buildPositionQuoteFromSnapshot(
+    snapshot,
+    input.fallbackMark,
+    "option_quote",
+  );
+  const updatedAt = shadowOptionQuoteTimestamp(quoteRecord);
+  const mark =
+    input.source === "automation_event_quote"
+      ? input.fallbackMark
+      : displayQuote?.mark ?? shadowQuoteMarkPrice(quoteRecord) ?? input.fallbackMark;
+  const spreadPercent =
+    displayQuote?.spread != null && mark > 0
+      ? (displayQuote.spread / mark) * 100
+      : displayQuote?.spreadPercent ?? null;
+  return {
+    providerContractId: input.providerContractId,
+    bid: displayQuote?.bid ?? toNumber(quoteRecord.bid),
+    ask: displayQuote?.ask ?? toNumber(quoteRecord.ask),
+    mid: displayQuote?.mid ?? null,
+    last: displayQuote?.last ?? toNumber(quoteRecord.last),
+    price:
+      readPositiveNumber(quoteRecord.price) ??
+      displayQuote?.last ??
+      mark ??
+      null,
+    mark,
+    spread: displayQuote?.spread ?? null,
+    spreadPercent,
+    bidSize: displayQuote?.bidSize ?? toNumber(quoteRecord.bidSize),
+    askSize: displayQuote?.askSize ?? toNumber(quoteRecord.askSize),
+    prevClose: toNumber(quoteRecord.prevClose),
+    change: toNumber(quoteRecord.change),
+    changePercent: toNumber(quoteRecord.changePercent),
+    dayChange: toNumber(quoteRecord.change),
+    dayChangePercent: toNumber(quoteRecord.changePercent),
+    impliedVolatility: toNumber(quoteRecord.impliedVolatility),
+    delta: toNumber(quoteRecord.delta),
+    gamma: toNumber(quoteRecord.gamma),
+    theta: toNumber(quoteRecord.theta),
+    vega: toNumber(quoteRecord.vega),
+    openInterest: toNumber(quoteRecord.openInterest),
+    volume: toNumber(quoteRecord.volume),
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+    quoteUpdatedAt: updatedAt,
+    freshness: displayQuote?.freshness ?? snapshot.freshness ?? null,
+    marketDataMode: displayQuote?.marketDataMode ?? snapshot.marketDataMode ?? null,
+    source: input.source,
+  };
+}
+
+async function getBoundedShadowUnderlyingQuoteSnapshots(
+  symbols: string,
+): Promise<Awaited<ReturnType<typeof getQuoteSnapshots>>> {
+  const fallback: Awaited<ReturnType<typeof getQuoteSnapshots>> = {
+    quotes: [],
+    transport: "client_portal",
+    delayed: false,
+    fallbackUsed: false,
+  };
+  return Promise.race([
+    getQuoteSnapshots({
+      symbols,
+      allowPolygonFallback: false,
+    }).catch(() => fallback),
+    sleep(SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS).then(() => fallback),
+  ]);
+}
+
+async function fetchShadowOptionUnderlyingMarkets(
+  positions: ShadowPositionRow[],
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  const symbols = Array.from(
+    new Set(
+      positions
+        .map((position) => asOptionContract(position.optionContract))
+        .map((contract) => normalizeSymbol(String(contract?.underlying ?? "")).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!symbols.length) {
+    return new Map();
+  }
+
+  const payload = await getBoundedShadowUnderlyingQuoteSnapshots(
+    symbols.join(","),
+  );
+
+  const quoteList = Array.isArray(payload.quotes)
+    ? (payload.quotes as Array<Partial<QuoteSnapshot> | Record<string, unknown>>)
+    : [];
+  return new Map(
+    quoteList
+      .map((quote) => {
+        const symbol = normalizeSymbol(
+          String((quote as Record<string, unknown>).symbol ?? ""),
+        ).toUpperCase();
+        return [symbol, quote] as const;
+      })
+      .filter((entry): entry is readonly [string, Partial<QuoteSnapshot> | Record<string, unknown>] =>
+        Boolean(entry[0]),
+      ),
+  );
+}
+
+function shadowUnderlyingMarketPayload(input: {
+  symbol: string;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+}) {
+  const symbol = normalizeSymbol(input.symbol).toUpperCase();
+  const quoteRecord = input.quote as Record<string, unknown> | null | undefined;
+  if (!symbol || !quoteRecord) {
+    return null;
+  }
+
+  const price =
+    readPositiveNumber(quoteRecord.price) ??
+    readPositiveNumber(quoteRecord.mark) ??
+    readPositiveNumber(quoteRecord.last);
+  const bid = readPositiveNumber(quoteRecord.bid);
+  const ask = readPositiveNumber(quoteRecord.ask);
+  if (price == null && bid == null && ask == null) {
+    return null;
+  }
+
+  const updatedAt = shadowOptionQuoteTimestamp(quoteRecord);
+  const previousClose =
+    readPositiveNumber(quoteRecord.previousClose) ??
+    readPositiveNumber(quoteRecord.prevClose);
+  return {
+    symbol,
+    price,
     bid,
     ask,
-    source: "option_quote",
-    asOf:
-      quoteRecord.updatedAt instanceof Date
-        ? quoteRecord.updatedAt
-        : quoteRecord.quoteUpdatedAt instanceof Date
-          ? quoteRecord.quoteUpdatedAt
-          : new Date(),
+    previousClose,
+    prevClose: previousClose,
+    change: toNumber(quoteRecord.change),
+    changePercent: toNumber(quoteRecord.changePercent),
+    dayChange: toNumber(quoteRecord.change),
+    dayChangePercent: toNumber(quoteRecord.changePercent),
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+    quoteUpdatedAt: updatedAt,
+    freshness: readString(quoteRecord.freshness),
+    marketDataMode: readString(quoteRecord.marketDataMode),
+    source: "underlying_quote",
   };
 }
 
@@ -2235,6 +2965,22 @@ async function resolveMaintenanceOptionExitPrice(input: {
   return { price: 0, source: "expiration_unpriced_zero" };
 }
 
+function resolveHistoricalBackfillExpirationExitPrice(input: {
+  position: Pick<ShadowPositionRow, "mark" | "averageCost">;
+}): { price: number; source: string } {
+  const rowMark = toNumber(input.position.mark);
+  if (rowMark != null && rowMark > 0) {
+    return { price: cents(rowMark), source: "historical_backfill_last_mark" };
+  }
+
+  const averageCost = toNumber(input.position.averageCost);
+  if (averageCost != null && averageCost > 0) {
+    return { price: cents(averageCost), source: "historical_backfill_average_cost" };
+  }
+
+  return { price: 0, source: "historical_backfill_unpriced_zero" };
+}
+
 export async function runShadowOptionMaintenance(input: {
   source?: "worker";
   now?: Date;
@@ -2276,7 +3022,8 @@ export async function runShadowOptionMaintenance(input: {
       summary.skippedCount += 1;
       continue;
     }
-    if (isHistoricalSignalOptionsShadowOrder(sourceOrder)) {
+    const isBackfillOrder = isSignalOptionsBackfillShadowOrder(sourceOrder);
+    if (isHistoricalSignalOptionsShadowOrder(sourceOrder) && !isBackfillOrder) {
       summary.skippedCount += 1;
       continue;
     }
@@ -2298,11 +3045,13 @@ export async function runShadowOptionMaintenance(input: {
         summary.skippedCount += 1;
         continue;
       }
-      const exit = await resolveMaintenanceOptionExitPrice({
-        position,
-        contract,
-        now,
-      });
+      const exit = isBackfillOrder
+        ? resolveHistoricalBackfillExpirationExitPrice({ position })
+        : await resolveMaintenanceOptionExitPrice({
+            position,
+            contract,
+            now,
+          });
       const source = shadowMaintenanceOrderSource(sourceOrder);
       const dateKey = marketDateParts(now).key;
       await placeShadowOrder({
@@ -2323,9 +3072,12 @@ export async function runShadowOptionMaintenance(input: {
         requestedFillPrice: exit.price > 0 ? exit.price : null,
         payload: {
           maintenance: true,
-          maintenanceReason: "option_expiration",
+          maintenanceReason: isBackfillOrder
+            ? "historical_backfill_option_expiration"
+            : "option_expiration",
           exitReason: "expiration",
           priceSource: exit.source,
+          backfill: isBackfillOrder ? { source: SIGNAL_OPTIONS_BACKFILL_SOURCE } : null,
           sourceOrderId: sourceOrder.id,
           sourceEventId: sourceOrder.sourceEventId,
           sourceEventMissing,
@@ -2531,14 +3283,32 @@ function orderRowToResponse(order: typeof shadowOrdersTable.$inferSelect | undef
 export async function refreshShadowPositionMarks() {
   await ensureShadowAccount();
   const positions = await readOpenShadowPositions();
+  const optionPositions = positions.filter(
+    (position) =>
+      position.assetClass === "option" &&
+      Boolean(asOptionContract(position.optionContract)),
+  );
+  const optionQuoteByProviderContractId = optionPositions.length
+    ? await fetchShadowOptionDayChangeQuotes(optionPositions).catch(() => new Map())
+    : new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
   let updatedCount = 0;
   const latestMarkAtBySnapshotSource = new Map<string, Date>();
 
   for (const position of positions) {
     const contract = asOptionContract(position.optionContract);
+    const providerContractId = shadowOptionQuoteIdentifier(contract);
+    const optionQuote =
+      providerContractId != null
+        ? optionQuoteByProviderContractId.get(providerContractId)
+        : null;
     const mark =
       position.assetClass === "option" && contract
-        ? await resolveOptionMark(contract)
+        ? optionQuote
+          ? optionMarkFromQuoteRecord(
+              optionQuote as Record<string, unknown>,
+              "option_quote",
+            )
+          : { price: null, bid: null, ask: null, source: "quote_unavailable", asOf: new Date() }
         : await resolveEquityMark(position.symbol);
     const price = mark.price;
     if (price == null || price <= 0) {
@@ -2659,15 +3429,16 @@ function shadowPositionDayChangeDayStart(
 function shadowQuoteMarkPrice(
   quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
 ): number | null {
-  const bid = toNumber((quote as Record<string, unknown> | undefined)?.bid);
-  const ask = toNumber((quote as Record<string, unknown> | undefined)?.ask);
-  if (bid != null && ask != null && bid > 0 && ask > 0) {
+  const record = quote as Record<string, unknown> | undefined;
+  const bid = readPositiveNumber(record?.bid);
+  const ask = readPositiveNumber(record?.ask);
+  if (bid != null && ask != null) {
     return (bid + ask) / 2;
   }
   return (
-    toNumber((quote as Record<string, unknown> | undefined)?.mark) ??
-    toNumber((quote as Record<string, unknown> | undefined)?.price) ??
-    toNumber((quote as Record<string, unknown> | undefined)?.last)
+    readPositiveNumber(record?.mark) ??
+    readPositiveNumber(record?.price) ??
+    readPositiveNumber(record?.last)
   );
 }
 
@@ -2717,55 +3488,114 @@ function buildShadowPositionDayChangeFromQuote(
   };
 }
 
-function isPolygonOptionProviderContractId(providerContractId: string): boolean {
-  return providerContractId.startsWith("O:");
+function isOpraOptionTicker(value: string): boolean {
+  return value.startsWith("O:");
 }
 
-function polygonOptionContractDayChangeQuote(
-  contract: OptionChainContract,
-): Record<string, unknown> {
-  return {
-    providerContractId: contract.contract.ticker,
-    bid: contract.bid,
-    ask: contract.ask,
-    mark: contract.mark,
-    price: contract.mark,
-    last: contract.last,
-    prevClose: contract.prevClose,
-    change: contract.change,
-    changePercent: contract.changePercent,
-    updatedAt: contract.updatedAt,
-  };
+function shadowOptionContractsMatch(
+  chainContract: OptionChainContract["contract"],
+  shadowContract: ShadowOptionContract,
+) {
+  return (
+    normalizeSymbol(chainContract.underlying).toUpperCase() ===
+      normalizeSymbol(shadowContract.underlying).toUpperCase() &&
+    optionDateKey(chainContract.expirationDate) ===
+      optionDateKey(shadowContract.expirationDate) &&
+    chainContract.right === shadowContract.right &&
+    chainContract.strike === shadowContract.strike
+  );
 }
 
-async function fetchShadowPolygonOptionDayChangeQuotes(
+type ShadowOptionProviderResolutionGroup = {
+  underlying: string;
+  expirationDate: Date;
+  right: ShadowOptionContract["right"];
+  contracts: ShadowOptionContract[];
+};
+
+async function resolveShadowIbkrOptionProviderIds(
+  groups: ShadowOptionProviderResolutionGroup[],
+): Promise<Map<string, string>> {
+  const resolvedByOptionTicker = new Map<string, string>();
+  await Promise.allSettled(
+    groups.map(async (group) => {
+      const result = await batchOptionChains({
+        underlying: group.underlying,
+        expirationDates: [group.expirationDate],
+        contractType: group.right,
+        strikeCoverage: "full",
+        quoteHydration: "metadata",
+        allowDelayedSnapshotHydration: false,
+        recordBridgeFailure: false,
+      }).catch(() => null);
+      const contracts =
+        result?.results.flatMap((entry) => entry.contracts) ?? [];
+      group.contracts.forEach((shadowContract) => {
+        const optionTicker = shadowOptionQuoteIdentifier(shadowContract);
+        if (!optionTicker || !isOpraOptionTicker(optionTicker)) {
+          return;
+        }
+        const matched = contracts.find((candidate) =>
+          shadowOptionContractsMatch(candidate.contract, shadowContract),
+        );
+        const providerContractId = matched?.contract.providerContractId?.trim();
+        if (!providerContractId || isOpraOptionTicker(providerContractId)) {
+          return;
+        }
+        rememberShadowOptionProviderContractId(optionTicker, providerContractId);
+        resolvedByOptionTicker.set(optionTicker, providerContractId);
+      });
+    }),
+  );
+  return resolvedByOptionTicker;
+}
+
+async function fetchShadowOptionDayChangeQuotes(
   positions: ShadowPositionRow[],
-): Promise<Map<string, Record<string, unknown>>> {
-  const config = getPolygonRuntimeConfig();
-  const quoteByProviderContractId = new Map<string, Record<string, unknown>>();
-  if (!config) {
-    return quoteByProviderContractId;
-  }
-
-  const requestsByGroup = new Map<
-    string,
-    {
-      underlying: string;
-      expirationDate: Date;
-      right: ShadowOptionContract["right"];
-      providerContractIds: Set<string>;
+  options: {
+    intent?: MarketDataIntent;
+    ownerPrefix?: string;
+    taskMaxWaitMs?: number;
+  } = {},
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  const idsByUnderlying = new Map<string, Set<string>>();
+  const aliasesByProviderContractId = new Map<string, Set<string>>();
+  const resolutionGroupsByKey = new Map<string, ShadowOptionProviderResolutionGroup>();
+  const addProviderContractId = (
+    underlying: string,
+    providerContractId: string,
+    alias?: string | null,
+  ) => {
+    if (!idsByUnderlying.has(underlying)) {
+      idsByUnderlying.set(underlying, new Set());
     }
-  >();
+    idsByUnderlying.get(underlying)!.add(providerContractId);
+    if (alias) {
+      const aliases =
+        aliasesByProviderContractId.get(providerContractId) ?? new Set<string>();
+      aliases.add(alias);
+      aliasesByProviderContractId.set(providerContractId, aliases);
+    }
+  };
   positions.forEach((position) => {
     const contract = asOptionContract(position.optionContract);
-    const providerContractId = contract?.providerContractId?.trim();
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
     const underlying = normalizeSymbol(contract?.underlying || position.symbol).toUpperCase();
     if (
       !contract ||
-      !providerContractId ||
+      !quoteIdentifier ||
       !underlying ||
-      !isPolygonOptionProviderContractId(providerContractId)
+      isPriorOptionExpiration(contract)
     ) {
+      return;
+    }
+    const providerContractId = shadowOptionProviderContractIdForContract(contract);
+    if (providerContractId) {
+      addProviderContractId(
+        underlying,
+        providerContractId,
+        isOpraOptionTicker(quoteIdentifier) ? quoteIdentifier : null,
+      );
       return;
     }
     const groupKey = [
@@ -2773,91 +3603,75 @@ async function fetchShadowPolygonOptionDayChangeQuotes(
       optionDateKey(contract.expirationDate),
       contract.right,
     ].join("|");
-    const current =
-      requestsByGroup.get(groupKey) ??
+    const group =
+      resolutionGroupsByKey.get(groupKey) ??
       {
         underlying,
         expirationDate: contract.expirationDate,
         right: contract.right,
-        providerContractIds: new Set<string>(),
+        contracts: [],
       };
-    current.providerContractIds.add(providerContractId);
-    requestsByGroup.set(groupKey, current);
-  });
-
-  const client = new PolygonMarketDataClient(config);
-  await Promise.all(
-    Array.from(requestsByGroup.values(), async (request) => {
-      const contracts = await client
-        .getOptionChain({
-          underlying: request.underlying,
-          expirationDate: request.expirationDate,
-          contractType: request.right,
-          maxPages: 10,
-        })
-        .catch((): OptionChainContract[] => []);
-      contracts.forEach((contract) => {
-        const providerContractId = contract.contract.ticker.trim();
-        if (request.providerContractIds.has(providerContractId)) {
-          quoteByProviderContractId.set(
-            providerContractId,
-            polygonOptionContractDayChangeQuote(contract),
-          );
-        }
-      });
-    }),
-  );
-  return quoteByProviderContractId;
-}
-
-async function fetchShadowOptionDayChangeQuotes(
-  positions: ShadowPositionRow[],
-): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
-  const idsByUnderlying = new Map<string, Set<string>>();
-  positions.forEach((position) => {
-    const contract = asOptionContract(position.optionContract);
-    const providerContractId = contract?.providerContractId?.trim();
-    const underlying = normalizeSymbol(contract?.underlying || position.symbol).toUpperCase();
-    if (
-      !providerContractId ||
-      !underlying ||
-      isPolygonOptionProviderContractId(providerContractId)
-    ) {
-      return;
-    }
-    if (!idsByUnderlying.has(underlying)) {
-      idsByUnderlying.set(underlying, new Set());
-    }
-    idsByUnderlying.get(underlying)!.add(providerContractId);
+    group.contracts.push(contract);
+    resolutionGroupsByKey.set(groupKey, group);
   });
 
   const quoteByProviderContractId = new Map<
     string,
     Partial<QuoteSnapshot> | Record<string, unknown>
   >();
-  const quoteTasks = [
-    async () => {
-      const polygonQuotes = await fetchShadowPolygonOptionDayChangeQuotes(positions);
-      polygonQuotes.forEach((quote, providerContractId) => {
-        quoteByProviderContractId.set(providerContractId, quote);
-      });
-    },
-    ...Array.from(idsByUnderlying, ([underlying, ids]) => async () => {
+  const resolvedProviderIds = await resolveShadowIbkrOptionProviderIds(
+    Array.from(resolutionGroupsByKey.values()),
+  );
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+    if (!contract || !quoteIdentifier || !isOpraOptionTicker(quoteIdentifier)) {
+      return;
+    }
+    const providerContractId = resolvedProviderIds.get(quoteIdentifier);
+    if (!providerContractId) {
+      return;
+    }
+    const underlying = normalizeSymbol(contract.underlying || position.symbol).toUpperCase();
+    if (!underlying) {
+      return;
+    }
+    addProviderContractId(underlying, providerContractId, quoteIdentifier);
+  });
+  const allProviderContractIds = Array.from(
+    new Set(
+      Array.from(idsByUnderlying.values()).flatMap((ids) => Array.from(ids)),
+    ),
+  );
+  const quoteUnderlying =
+    idsByUnderlying.size === 1 ? Array.from(idsByUnderlying.keys())[0] : null;
+  const quoteTasks: Array<() => Promise<void>> = [];
+  if (allProviderContractIds.length) {
+    quoteTasks.push(async () => {
       const payload = await fetchOptionQuoteSnapshotPayload({
-        underlying,
-        providerContractIds: Array.from(ids),
-        owner: `shadow-position-day-change:${underlying}`,
-        intent: "account-monitor-live",
+        underlying: quoteUnderlying ?? undefined,
+        providerContractIds: allProviderContractIds,
+        owner: `${options.ownerPrefix ?? "shadow-position-day-change"}:${quoteUnderlying ?? "mixed"}`,
+        intent: options.intent ?? "account-monitor-live",
         requiresGreeks: false,
       }).catch(() => null);
       (payload?.quotes || []).forEach((quote) => {
         const providerContractId = String(quote.providerContractId || "").trim();
         if (providerContractId) {
           quoteByProviderContractId.set(providerContractId, quote);
+          rememberShadowOptionQuote(providerContractId, quote);
+          (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+            (alias) => {
+              quoteByProviderContractId.set(alias, quote);
+              rememberShadowOptionQuote(alias, quote);
+            },
+          );
         }
       });
-    }),
-  ];
+    });
+  }
+  const taskMaxWaitMs =
+    options.taskMaxWaitMs ?? SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS;
   await Promise.allSettled(
     quoteTasks.map((task) => {
       const request = task().catch((error) => {
@@ -2868,7 +3682,7 @@ async function fetchShadowOptionDayChangeQuotes(
       });
       return Promise.race([
         request,
-        sleep(SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS).then(() => undefined),
+        sleep(taskMaxWaitMs).then(() => undefined),
       ]);
     }),
   );
@@ -2877,6 +3691,7 @@ async function fetchShadowOptionDayChangeQuotes(
 
 async function waitForShadowOptionDayChangeQuotes(
   request: Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>>,
+  maxWaitMs = SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS,
 ) {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -2886,7 +3701,7 @@ async function waitForShadowOptionDayChangeQuotes(
         (resolve) => {
           timeout = setTimeout(
             () => resolve(new Map()),
-            SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS,
+            maxWaitMs,
           );
           timeout.unref?.();
         },
@@ -2935,8 +3750,9 @@ function shadowPositionNeedsDayChangeQuote(input: {
   now: Date;
 }) {
   const { position, baselineMarksByPositionId, dayStartByPositionId, now } = input;
-  const providerContractId =
-    asOptionContract(position.optionContract)?.providerContractId?.trim();
+  const providerContractId = shadowOptionQuoteIdentifier(
+    asOptionContract(position.optionContract),
+  );
   if (!providerContractId) {
     return false;
   }
@@ -2976,6 +3792,9 @@ function shadowPositionNeedsDayChangeQuote(input: {
 async function readShadowPositionDayChanges(
   positions: ShadowPositionRow[],
   now = new Date(),
+  preloadedOptionQuoteByProviderContractId:
+    | Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>
+    | null = null,
 ): Promise<Map<string, ShadowPositionDayChange>> {
   const changes = new Map<string, ShadowPositionDayChange>();
   const dayStartByPositionId = new Map(
@@ -3006,25 +3825,44 @@ async function readShadowPositionDayChanges(
     groupShadowPositionMarksByPositionId(baselineMarks);
   let optionQuoteByProviderContractId:
     | Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>
-    | null = null;
+    | null = preloadedOptionQuoteByProviderContractId
+      ? new Map(preloadedOptionQuoteByProviderContractId)
+      : null;
+  let fetchedOptionQuotes = false;
   let quoteCandidatePositions: ShadowPositionRow[] | null = null;
   const getOptionQuoteByProviderContractId = async () => {
-    if (!optionQuoteByProviderContractId) {
-      quoteCandidatePositions ??= positions.filter((position) =>
-        shadowPositionNeedsDayChangeQuote({
-          position,
-          baselineMarksByPositionId,
-          dayStartByPositionId,
-          now,
-        }),
-      );
-      optionQuoteByProviderContractId = await waitForShadowOptionDayChangeQuotes(
-        fetchShadowOptionDayChangeQuotes(quoteCandidatePositions).catch(
+    quoteCandidatePositions ??= positions.filter((position) =>
+      shadowPositionNeedsDayChangeQuote({
+        position,
+        baselineMarksByPositionId,
+        dayStartByPositionId,
+        now,
+      }),
+    );
+    const missingQuotePositions = optionQuoteByProviderContractId
+      ? quoteCandidatePositions.filter((position) => {
+          const quoteIdentifier = shadowOptionQuoteIdentifier(
+            asOptionContract(position.optionContract),
+          );
+          return (
+            quoteIdentifier &&
+            !optionQuoteByProviderContractId?.has(quoteIdentifier)
+          );
+        })
+      : quoteCandidatePositions;
+    if (!fetchedOptionQuotes && missingQuotePositions.length > 0) {
+      const fetched = await waitForShadowOptionDayChangeQuotes(
+        fetchShadowOptionDayChangeQuotes(missingQuotePositions).catch(
           () => new Map(),
         ),
       );
+      optionQuoteByProviderContractId = new Map([
+        ...(optionQuoteByProviderContractId ?? new Map()),
+        ...fetched,
+      ]);
+      fetchedOptionQuotes = true;
     }
-    return optionQuoteByProviderContractId;
+    return optionQuoteByProviderContractId ?? new Map();
   };
 
   for (const position of positions) {
@@ -3059,7 +3897,7 @@ async function readShadowPositionDayChanges(
       currentMarketValue,
       baselineMarketValue,
     });
-    const providerContractId = contract?.providerContractId?.trim();
+    const providerContractId = shadowOptionQuoteIdentifier(contract);
     const currentMarkStale = currentAsOf.getTime() < dayStart.getTime();
     if (
       (baselineDayChange.dayChange == null || currentMarkStale) &&
@@ -3183,6 +4021,19 @@ function buildShadowAccountSummaryResponse(input: {
 
 export async function getShadowAccountSummary(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
+  try {
+    await repairSignalOptionsAutomationMirrorsForRead(source);
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildShadowAccountSummaryResponse({
+        totals: buildFallbackShadowTotals(),
+        dayPnl: 0,
+        degraded: true,
+      });
+    }
+    throw error;
+  }
   return withShadowReadCache(`summary:${shadowSourceCacheKey(source)}`, async () => {
   try {
     const totals = source
@@ -3191,10 +4042,14 @@ export async function getShadowAccountSummary(input: { source?: string | null } 
     const degraded = isShadowAccountDbBackoffActive();
     const positions = degraded
       ? []
-      : await readOpenShadowPositionsForSource(source);
+      : await readOpenShadowPositionsForSourceCached(source);
     const dayChanges = degraded
       ? new Map<string, ShadowPositionDayChange>()
-      : await readShadowPositionDayChanges(positions);
+      : await readShadowPositionDayChanges(
+          positions,
+          new Date(),
+          readCachedShadowOptionQuotes(positions),
+        );
     const dayPnl = Array.from(dayChanges.values()).reduce(
       (sum, value) => sum + (value.dayChange ?? 0),
       0,
@@ -3960,6 +4815,19 @@ function buildShadowAccountAllocationResponse(input: {
 
 export async function getShadowAccountAllocation(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
+  try {
+    await repairSignalOptionsAutomationMirrorsForRead(source);
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildShadowAccountAllocationResponse({
+        totals: buildFallbackShadowTotals(),
+        positions: [],
+        degraded: true,
+      });
+    }
+    throw error;
+  }
   return withShadowReadCache(`allocation:${shadowSourceCacheKey(source)}`, async () => {
   try {
     const totals = source
@@ -3968,7 +4836,7 @@ export async function getShadowAccountAllocation(input: { source?: string | null
     const degraded = isShadowAccountDbBackoffActive();
     const positions = degraded
       ? []
-      : await readOpenShadowPositionsForSource(source);
+      : await readOpenShadowPositionsForSourceCached(source);
     return buildShadowAccountAllocationResponse({ totals, positions, degraded });
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -4024,6 +4892,18 @@ export async function getShadowAccountPositions(input: {
 }) {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
+  try {
+    await repairSignalOptionsAutomationMirrorsForRead(source);
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildEmptyShadowAccountPositionsResponse({
+        totals: buildFallbackShadowTotals(),
+        degraded: true,
+      });
+    }
+    throw error;
+  }
   return withShadowReadCache(
     `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}`,
     async () => {
@@ -4038,7 +4918,7 @@ export async function getShadowAccountPositions(input: {
     .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowOrdersTable.placedAt))
     .limit(1000);
-  const positions = await readOpenShadowPositionsForSource(source);
+  const positions = await readOpenShadowPositionsForSourceCached(source);
   const filtered =
     assetClassFilter && assetClassFilter !== "all"
       ? positions.filter(
@@ -4046,18 +4926,127 @@ export async function getShadowAccountPositions(input: {
             normalizePositionAssetClass(assetClassLabel(position)) === assetClassFilter,
         )
       : positions;
-  const dayChanges = await readShadowPositionDayChanges(filtered);
+  const ordersByPositionKey = shadowOrdersByPositionKey(orders);
+  const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);
+  const hasOptionPositions = filtered.some(
+    (position) =>
+      position.assetClass === "option" &&
+      Boolean(asOptionContract(position.optionContract)),
+  );
+  const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions
+    ? await Promise.all([
+        waitForShadowOptionDayChangeQuotes(
+          fetchShadowOptionDayChangeQuotes(filtered, {
+            intent: "visible-live",
+            ownerPrefix: "shadow-position-visible",
+            taskMaxWaitMs: SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS,
+          }).catch(() => new Map()),
+          SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS,
+        ),
+        fetchShadowOptionUnderlyingMarkets(filtered),
+      ])
+    : [
+        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
+        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
+      ];
+  const optionQuoteByProviderContractId = new Map([
+    ...cachedOptionQuotes,
+    ...liveOptionQuotes,
+  ]);
+  const dayChanges = await readShadowPositionDayChanges(
+    filtered,
+    new Date(),
+    optionQuoteByProviderContractId,
+  );
   const rows = filtered.map((position) => {
     const quantity = toNumber(position.quantity) ?? 0;
     const averageCost = toNumber(position.averageCost) ?? 0;
-    const mark = toNumber(position.mark) ?? 0;
-    const unrealizedPnl = toNumber(position.unrealizedPnl) ?? 0;
-    const marketValue = toNumber(position.marketValue) ?? 0;
-    const dayChange = dayChanges.get(position.id) ?? {
+    const contract = asOptionContract(position.optionContract);
+    const underlyingSymbol = normalizeSymbol(
+      String(contract?.underlying ?? position.symbol),
+    ).toUpperCase();
+    const multiplier = marketMultiplier({
+      assetClass: position.assetClass as ShadowAssetClass,
+      optionContract: contract,
+    });
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+    const rawOptionQuote = quoteIdentifier
+      ? optionQuoteByProviderContractId.get(quoteIdentifier)
+      : null;
+    const fallbackProviderContractId =
+      contract && !isPriorOptionExpiration(contract)
+        ? shadowOptionProviderContractIdForContract(contract)
+        : null;
+    const responseProviderContractId =
+      shadowOptionQuoteProviderContractId(rawOptionQuote, quoteIdentifier) ??
+      fallbackProviderContractId;
+    const liveOptionQuote =
+      responseProviderContractId && rawOptionQuote ? rawOptionQuote : null;
+    const quoteMark = liveOptionQuote ? shadowQuoteMarkPrice(liveOptionQuote) : null;
+    const mark = quoteMark ?? toNumber(position.mark) ?? 0;
+    const sourceOrder = ordersByPositionKey.get(position.positionKey);
+    const automationEventOptionQuote =
+      responseProviderContractId &&
+      !shadowQuoteHasBidAsk(liveOptionQuote as Record<string, unknown> | null)
+        ? shadowOrderOptionQuoteFallback(sourceOrder, mark)
+        : null;
+    const displayOptionQuote =
+      automationEventOptionQuote ??
+      (responseProviderContractId ? liveOptionQuote : null);
+    const displayOptionQuoteSource =
+      automationEventOptionQuote
+        ? "automation_event_quote"
+        : displayOptionQuote
+          ? "option_quote"
+          : "shadow_ledger";
+    const marketValue =
+      quoteMark != null
+        ? quantity * mark * multiplier
+        : toNumber(position.marketValue) ?? 0;
+    const unrealizedPnl =
+      quoteMark != null
+        ? (mark - averageCost) * quantity * multiplier
+        : toNumber(position.unrealizedPnl) ?? 0;
+    const quoteDayChange = liveOptionQuote
+      ? buildShadowPositionDayChangeFromQuote({
+          quantity,
+          multiplier,
+          quote: liveOptionQuote,
+        })
+      : null;
+    const storedDayChange = dayChanges.get(position.id) ?? {
       dayChange: null,
       dayChangePercent: null,
     };
+    const dayChange =
+      storedDayChange.dayChange == null && quoteDayChange?.dayChange != null
+        ? quoteDayChange
+        : storedDayChange;
     const attribution = buildPositionSourceAttribution(position, orders);
+    const optionQuoteSnapshot =
+      displayOptionQuote && responseProviderContractId
+        ? shadowQuoteSnapshotFromOptionRecord({
+            symbol: position.symbol,
+            providerContractId: responseProviderContractId,
+            quote: displayOptionQuote,
+          })
+        : null;
+    const rawPositionQuote = buildPositionQuoteFromSnapshot(
+      optionQuoteSnapshot,
+      mark,
+      optionQuoteSnapshot ? "option_quote" : "shadow_ledger",
+    );
+    const positionQuote =
+      rawPositionQuote && displayOptionQuoteSource === "automation_event_quote"
+        ? {
+            ...rawPositionQuote,
+            mark,
+            spreadPercent:
+              rawPositionQuote.spread != null && mark > 0
+                ? (rawPositionQuote.spread / mark) * 100
+                : rawPositionQuote.spreadPercent,
+          }
+        : rawPositionQuote;
     return {
       id: position.id,
       accountId: SHADOW_ACCOUNT_ID,
@@ -4066,7 +5055,16 @@ export async function getShadowAccountPositions(input: {
       marketDataSymbol: shadowPositionMarketDataSymbol(position),
       description: positionDescription(position),
       assetClass: assetClassLabel(position),
-      optionContract: optionPayload(asOptionContract(position.optionContract)),
+      optionContract: optionPayload(
+        asOptionContract(position.optionContract),
+        responseProviderContractId,
+      ),
+      underlyingMarket: contract
+        ? shadowUnderlyingMarketPayload({
+            symbol: underlyingSymbol,
+            quote: underlyingMarkets.get(underlyingSymbol),
+          })
+        : null,
       sector: "Shadow Holdings",
       quantity,
       averageCost,
@@ -4095,7 +5093,17 @@ export async function getShadowAccountPositions(input: {
       source: "SHADOW_LEDGER",
       openedAt: position.openedAt ?? position.asOf,
       openedAtSource: "shadow_position",
-      quote: buildPositionQuoteFromSnapshot(null, mark, "shadow_ledger"),
+      quote: positionQuote,
+      optionQuote:
+        displayOptionQuote && responseProviderContractId
+          ? shadowOptionQuotePayload({
+              symbol: position.symbol,
+              providerContractId: responseProviderContractId,
+              quote: displayOptionQuote,
+              fallbackMark: mark,
+              source: displayOptionQuoteSource,
+            })
+          : null,
       ...attribution,
     };
   });
@@ -5323,6 +6331,24 @@ export async function getShadowAccountRisk(input: {
   closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
 } = {}) {
   const source = normalizeShadowSourceScope(input.source);
+  const hasInjectedInputs = Boolean(
+    input.totals || input.positionsResponse || input.closedTrades,
+  );
+  if (!hasInjectedInputs) {
+    return withShadowReadCache(`risk:${shadowSourceCacheKey(source)}`, () =>
+      buildShadowAccountRisk({ source }),
+    );
+  }
+  return buildShadowAccountRisk({ ...input, source });
+}
+
+async function buildShadowAccountRisk(input: {
+  source?: ShadowSourceScope | null;
+  totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
+  positionsResponse?: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
+}) {
+  const source = input.source ?? null;
   const totals =
     input.totals ??
     (source
@@ -5355,7 +6381,25 @@ export async function getShadowAccountRisk(input: {
   const notionalPositions = positionsResponse.positions.map((position) =>
     shadowPositionForNotionalRisk(position),
   );
-  const underlyingPrices = await hydrateShadowOptionUnderlyingPrices(notionalPositions);
+  const underlyingPrices =
+    shadowUnderlyingPricesFromPositionRows(positionsResponse.positions);
+  const missingUnderlyingPrice = notionalPositions.some((position) => {
+    const underlying = normalizeSymbol(
+      position.optionContract?.underlying ?? "",
+    ).toUpperCase();
+    return (
+      position.assetClass === "option" &&
+      Boolean(underlying) &&
+      !underlyingPrices.has(underlying)
+    );
+  });
+  if (missingUnderlyingPrice) {
+    for (const [symbol, price] of await hydrateShadowOptionUnderlyingPrices(
+      notionalPositions,
+    )) {
+      underlyingPrices.set(symbol, price);
+    }
+  }
   const notional = buildNotionalExposure(notionalPositions, {
     nav: totals.netLiquidation,
     underlyingPrices,
@@ -5479,6 +6523,32 @@ function shadowPositionForNotionalRisk(position: {
   };
 }
 
+function shadowUnderlyingPricesFromPositionRows(
+  positions: Array<{
+    symbol?: unknown;
+    underlyingMarket?: unknown;
+    optionContract?: unknown;
+  }>,
+): Map<string, number> {
+  const prices = new Map<string, number>();
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    if (!contract) {
+      return;
+    }
+    const market = readRecord(position.underlyingMarket) ?? {};
+    const symbol = normalizeSymbol(
+      String(market.symbol ?? contract.underlying ?? position.symbol ?? ""),
+    ).toUpperCase();
+    const price =
+      readPositiveNumber(market.price) ?? readPositiveNumber(market.mark);
+    if (symbol && price != null) {
+      prices.set(symbol, price);
+    }
+  });
+  return prices;
+}
+
 async function hydrateShadowOptionUnderlyingPrices(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, number>> {
@@ -5495,9 +6565,9 @@ async function hydrateShadowOptionUnderlyingPrices(
     return new Map();
   }
 
-  const payload = await getQuoteSnapshots({ symbols: symbols.join(",") }).catch(() => ({
-    quotes: [],
-  }));
+  const payload = await getBoundedShadowUnderlyingQuoteSnapshots(
+    symbols.join(","),
+  );
   return new Map(
     (payload.quotes || [])
       .map((quote) => [normalizeSymbol(quote.symbol), toNumber(quote.price)] as const)
@@ -6026,15 +7096,15 @@ function normalizeWatchlistBacktestEntryGateOverlay(
   const adxMin =
     Number.isFinite(adxMinInput) && adxMinInput !== null
       ? clampNumber(adxMinInput, 0, 100)
-      : DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.adxMin;
+      : DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.adxMin;
   const rawVolatilityScoreMin =
     readNumber(record.volatilityScoreMin) ??
     readNumber(record.volScoreMin) ??
-    DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.volScoreMin;
+    DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.volScoreMin;
   const rawVolatilityScoreMax =
     readNumber(record.volatilityScoreMax) ??
     readNumber(record.volScoreMax) ??
-    DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.volScoreMax;
+    DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.volScoreMax;
   const volatilityScoreMin = clampNumber(
     Math.min(rawVolatilityScoreMin, rawVolatilityScoreMax),
     0,
@@ -6195,8 +7265,8 @@ function watchlistBacktestBarLimit(input: {
   return Math.min(
     WATCHLIST_BACKTEST_MAX_BAR_LIMIT,
     Math.max(
-      RAY_REPLICA_SIGNAL_WARMUP_BARS,
-      requestedWindowBars + RAY_REPLICA_SIGNAL_WARMUP_BARS,
+      PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+      requestedWindowBars + PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
     ),
   );
 }
@@ -6210,7 +7280,7 @@ function watchlistBacktestHydrationStart(input: {
       0,
       input.window.start.getTime() -
         WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe] *
-          RAY_REPLICA_SIGNAL_WARMUP_BARS,
+          PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
     ),
   );
 }
@@ -6298,13 +7368,13 @@ async function getHydratedWatchlistBacktestBars(input: {
   return { bars: [] as BrokerBarSnapshot[], error: lastError };
 }
 
-function barsToBacktestRayReplicaBars(
+function barsToBacktestPyrusSignalsBars(
   inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
   timeframe: ShadowWatchlistBacktestTimeframe,
   evaluatedAt: Date,
 ) {
   return inputBars
-    .map((bar): RayReplicaBar | null => {
+    .map((bar): PyrusSignalsBar | null => {
       const timestamp = dateOrNull(bar.timestamp);
       if (
         !timestamp ||
@@ -6331,7 +7401,7 @@ function barsToBacktestRayReplicaBars(
         v: Number.isFinite(volume) ? volume : 0,
       };
     })
-    .filter((bar): bar is RayReplicaBar => Boolean(bar))
+    .filter((bar): bar is PyrusSignalsBar => Boolean(bar))
     .sort((left, right) => left.time - right.time);
 }
 
@@ -6411,13 +7481,13 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function signalDirection(signal: RayReplicaSignalEvent): ShadowSide {
+function signalDirection(signal: PyrusSignalsSignalEvent): ShadowSide {
   return signal.eventType === "buy_signal" ? "buy" : "sell";
 }
 
 function fillForSignal(input: {
-  signal: RayReplicaSignalEvent;
-  bars: RayReplicaBar[];
+  signal: PyrusSignalsSignalEvent;
+  bars: PyrusSignalsBar[];
   windowEnd: Date;
 }) {
   const nextBar = input.bars[input.signal.barIndex + 1] ?? null;
@@ -6445,7 +7515,7 @@ function averageWatchlistBacktestValues(values: number[]) {
 }
 
 function watchlistBacktestPercentChange(input: {
-  bars: RayReplicaBar[];
+  bars: PyrusSignalsBar[];
   index: number;
   lookback: number;
   directionSign: number;
@@ -6459,9 +7529,9 @@ function watchlistBacktestPercentChange(input: {
 }
 
 function scoreWatchlistBacktestSignal(input: {
-  signal: RayReplicaSignalEvent;
-  bars: RayReplicaBar[];
-  evaluation: ReturnType<typeof evaluateRayReplicaSignals>;
+  signal: PyrusSignalsSignalEvent;
+  bars: PyrusSignalsBar[];
+  evaluation: ReturnType<typeof evaluatePyrusSignalsSignals>;
 }) {
   const index = input.signal.barIndex;
   const current = input.bars[index];
@@ -6585,7 +7655,7 @@ function roundedWatchlistBacktestDetail(value: number) {
 
 function evaluateWatchlistBacktestEntryGate(input: {
   candidate: WatchlistBacktestSignalCandidate;
-  bars: RayReplicaBar[];
+  bars: PyrusSignalsBar[];
   emaFast: number[];
   emaSlow: number[];
   overlay: WatchlistBacktestEntryGateOverlay;
@@ -6739,14 +7809,14 @@ async function collectWatchlistBacktestSignals(input: {
   timeframe: ShadowWatchlistBacktestTimeframe;
   window: ReturnType<typeof resolveWatchlistBacktestWindow>;
 }) {
-  const settings = resolveRayReplicaSignalSettings({});
+  const settings = resolvePyrusSignalsSignalSettings({});
   const skipped: WatchlistBacktestSkip[] = [];
   const barLimit = watchlistBacktestBarLimit(input);
   const hydrationStart = watchlistBacktestHydrationStart({
     timeframe: input.timeframe,
     window: input.window,
   });
-  const barsBySymbol = new Map<string, RayReplicaBar[]>();
+  const barsBySymbol = new Map<string, PyrusSignalsBar[]>();
   const candidates = await mapWithConcurrency(input.universe, 4, async (item) => {
     const barsResult = await getHydratedWatchlistBacktestBars({
       symbol: item.symbol,
@@ -6767,7 +7837,7 @@ async function collectWatchlistBacktestSignals(input: {
       });
     }
 
-    const chartBars = barsToBacktestRayReplicaBars(
+    const chartBars = barsToBacktestPyrusSignalsBars(
       barsResult.bars,
       input.timeframe,
       input.window.end,
@@ -6783,7 +7853,7 @@ async function collectWatchlistBacktestSignals(input: {
       return [];
     }
 
-    const evaluation = evaluateRayReplicaSignals({
+    const evaluation = evaluatePyrusSignalsSignals({
       chartBars,
       settings,
       includeProvisionalSignals: false,
@@ -6864,11 +7934,11 @@ function quantityForCash(input: {
 }
 
 const watchlistBacktestRegularBarsCache = new WeakMap<
-  RayReplicaBar[],
+  PyrusSignalsBar[],
   WatchlistBacktestPreparedBar[]
 >();
 
-function watchlistBacktestRegularBars(bars: RayReplicaBar[]) {
+function watchlistBacktestRegularBars(bars: PyrusSignalsBar[]) {
   const cached = watchlistBacktestRegularBarsCache.get(bars);
   if (cached) {
     return cached;
@@ -6891,7 +7961,7 @@ export function buildWatchlistBacktestFills(input: {
   runId: string;
   candidates: WatchlistBacktestSignalCandidate[];
   regimeCandidates?: WatchlistBacktestSignalCandidate[];
-  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  barsBySymbol?: Map<string, PyrusSignalsBar[]>;
   riskOverlay?: WatchlistBacktestRiskOverlay | null;
   sizingOverlay?: WatchlistBacktestSizingOverlay | null;
   selectionOverlay?: WatchlistBacktestSelectionOverlay | null;
@@ -8176,9 +9246,16 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   isDefaultShadowLedgerAnalyticsOrder,
   isLiveShadowPosition,
   isDefaultShadowLedgerAnalyticsPosition,
+  isExpiredHistoricalShadowOptionPosition,
   readOpenShadowPositionsForSource,
   shouldCloseOptionForShadowMaintenance,
   isHistoricalSignalOptionsShadowOrder,
+  isSignalOptionsBackfillShadowOrder,
+  isHistoricalSignalOptionsShadowEvent,
+  isSignalOptionsAutomationMirrorEvent,
+  shouldRepairSignalOptionsAutomationMirrors,
+  repairSignalOptionsAutomationMirrorsForRead,
+  resolveHistoricalBackfillExpirationExitPrice,
   shadowPositionKeyForOrder,
   shadowPositionKeysForOrders,
   shadowMarkSnapshotSourceForPosition,
@@ -8199,7 +9276,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   buildShadowPositionDayChange,
   shadowPositionDayChangeDayStart,
   buildShadowPositionDayChangeFromQuote,
-  polygonOptionContractDayChangeQuote,
+  shadowQuoteMarkPrice,
+  shadowOptionQuoteIdentifier,
+  isPriorOptionExpiration,
   buildShadowTradeDiagnosticsFromRows,
   summarizeWatchlistBacktestClosedTrades,
   summarizeWatchlistBacktestBuyHoldBenchmark,
@@ -8248,7 +9327,7 @@ function watchlistBacktestMaxDrawdownPercent(
 
 function watchlistBacktestLastMarkAtOrBefore(input: {
   symbol: string;
-  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  barsBySymbol?: Map<string, PyrusSignalsBar[]>;
   windowEnd?: Date | null;
 }) {
   const bars = watchlistBacktestRegularBars(
@@ -8269,7 +9348,7 @@ function watchlistBacktestLastMarkAtOrBefore(input: {
 
 function watchlistBacktestFirstMarkAtOrAfter(input: {
   symbol: string;
-  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  barsBySymbol?: Map<string, PyrusSignalsBar[]>;
   windowStart?: Date | null;
 }) {
   const bars = watchlistBacktestRegularBars(
@@ -8320,7 +9399,7 @@ function summarizeWatchlistBacktestClosedTrades(
 
 function summarizeWatchlistBacktestBuyHoldBenchmark(input: {
   fills: WatchlistBacktestFill[];
-  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  barsBySymbol?: Map<string, PyrusSignalsBar[]>;
   windowStart?: Date | null;
   windowEnd?: Date | null;
   benchmarkCapital: number;
@@ -8384,7 +9463,7 @@ function summarizeWatchlistBacktestSimulation(input: {
   startingTotals: ShadowTotals;
   finalTotals?: ShadowTotals | null;
   commonSkippedCount: number;
-  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  barsBySymbol?: Map<string, PyrusSignalsBar[]>;
   windowStart?: Date | null;
   windowEnd?: Date | null;
   targetOutperformanceMultiple?: number;

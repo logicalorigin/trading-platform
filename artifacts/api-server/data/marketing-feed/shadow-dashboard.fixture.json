@@ -1,0 +1,381 @@
+{
+  "status": {
+    "mode": "paper",
+    "source": "shadow-ledger",
+    "label": "Shadow / paper trading",
+    "asOf": "2026-05-22T20:55:00.000Z",
+    "generatedAt": "2026-05-22T20:55:02.000Z",
+    "lastAccountUpdateAt": "2026-05-22T20:55:00.000Z",
+    "lastAlgoUpdateAt": "2026-05-22T20:54:41.000Z",
+    "degraded": false,
+    "stale": false,
+    "reason": null,
+    "warnings": []
+  },
+  "account": {
+    "summary": {
+      "currency": "USD",
+      "netLiquidation": 46842.73,
+      "cash": 29814.52,
+      "buyingPower": 29814.52,
+      "dayPnl": 214.38,
+      "dayPnlPercent": 0.46,
+      "totalPnl": 6842.73,
+      "totalPnlPercent": 17.11
+    },
+    "equityHistory": [
+      { "t": "2026-04-13T20:00:00.000Z", "nav": 40000 },
+      { "t": "2026-04-14T20:00:00.000Z", "nav": 40242.18 },
+      { "t": "2026-04-15T20:00:00.000Z", "nav": 40136.07 },
+      { "t": "2026-04-16T20:00:00.000Z", "nav": 40584.33 },
+      { "t": "2026-04-17T20:00:00.000Z", "nav": 40812.92 },
+      { "t": "2026-04-20T20:00:00.000Z", "nav": 41028.41 },
+      { "t": "2026-04-21T20:00:00.000Z", "nav": 40944.6 },
+      { "t": "2026-04-22T20:00:00.000Z", "nav": 41372.15 },
+      { "t": "2026-04-23T20:00:00.000Z", "nav": 41724.9 },
+      { "t": "2026-04-24T20:00:00.000Z", "nav": 41641.22 },
+      { "t": "2026-04-27T20:00:00.000Z", "nav": 42180.74 },
+      { "t": "2026-04-28T20:00:00.000Z", "nav": 42418.03 },
+      { "t": "2026-04-29T20:00:00.000Z", "nav": 42366.89 },
+      { "t": "2026-04-30T20:00:00.000Z", "nav": 42892.57 },
+      { "t": "2026-05-01T20:00:00.000Z", "nav": 43184.12 },
+      { "t": "2026-05-04T20:00:00.000Z", "nav": 43510.44 },
+      { "t": "2026-05-05T20:00:00.000Z", "nav": 43388.21 },
+      { "t": "2026-05-06T20:00:00.000Z", "nav": 43892.06 },
+      { "t": "2026-05-07T20:00:00.000Z", "nav": 44163.88 },
+      { "t": "2026-05-08T20:00:00.000Z", "nav": 44329.35 },
+      { "t": "2026-05-11T20:00:00.000Z", "nav": 44716.77 },
+      { "t": "2026-05-12T20:00:00.000Z", "nav": 45058.49 },
+      { "t": "2026-05-13T20:00:00.000Z", "nav": 44970.14 },
+      { "t": "2026-05-14T20:00:00.000Z", "nav": 45488.71 },
+      { "t": "2026-05-15T20:00:00.000Z", "nav": 45816.22 },
+      { "t": "2026-05-18T20:00:00.000Z", "nav": 46140.93 },
+      { "t": "2026-05-19T20:00:00.000Z", "nav": 45962.51 },
+      { "t": "2026-05-20T20:00:00.000Z", "nav": 46335.86 },
+      { "t": "2026-05-21T20:00:00.000Z", "nav": 46628.35 },
+      { "t": "2026-05-22T20:55:00.000Z", "nav": 46842.73 }
+    ],
+    "positions": [
+      {
+        "id": "shadow-position-nvda-call",
+        "accountId": "shadow",
+        "accounts": ["shadow"],
+        "symbol": "NVDA",
+        "description": "NVDA Jun 2026 125 Call",
+        "assetClass": "Option",
+        "sector": "Technology",
+        "quantity": 2,
+        "averageCost": 4.35,
+        "mark": 5.12,
+        "dayChange": 84,
+        "dayChangePercent": 8.92,
+        "unrealizedPnl": 154,
+        "unrealizedPnlPercent": 17.7,
+        "marketValue": 1024,
+        "weightPercent": 2.19,
+        "betaWeightedDelta": 132,
+        "source": "SHADOW_LEDGER",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "shadow-position-msft-call",
+        "accountId": "shadow",
+        "accounts": ["shadow"],
+        "symbol": "MSFT",
+        "description": "MSFT Jun 2026 430 Call",
+        "assetClass": "Option",
+        "sector": "Technology",
+        "quantity": 1,
+        "averageCost": 6.1,
+        "mark": 6.72,
+        "dayChange": 39,
+        "dayChangePercent": 6.16,
+        "unrealizedPnl": 62,
+        "unrealizedPnlPercent": 10.16,
+        "marketValue": 672,
+        "weightPercent": 1.43,
+        "betaWeightedDelta": 58,
+        "source": "SHADOW_LEDGER",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "shadow-position-spy-put",
+        "accountId": "shadow",
+        "accounts": ["shadow"],
+        "symbol": "SPY",
+        "description": "SPY Jun 2026 545 Put",
+        "assetClass": "Option",
+        "sector": "Broad Market ETF",
+        "quantity": 1,
+        "averageCost": 3.8,
+        "mark": 3.25,
+        "dayChange": -22,
+        "dayChangePercent": -6.35,
+        "unrealizedPnl": -55,
+        "unrealizedPnlPercent": -14.47,
+        "marketValue": 325,
+        "weightPercent": 0.69,
+        "betaWeightedDelta": -41,
+        "source": "SHADOW_LEDGER",
+        "strategyLabel": "Signal Options"
+      }
+    ],
+    "closedTrades": [
+      {
+        "id": "trade-20260522-amd",
+        "source": "SHADOW_LEDGER",
+        "accountId": "shadow",
+        "symbol": "AMD",
+        "side": "long",
+        "assetClass": "Option",
+        "quantity": 2,
+        "openDate": "2026-05-22T14:42:00.000Z",
+        "closeDate": "2026-05-22T18:16:00.000Z",
+        "avgOpen": 2.12,
+        "avgClose": 2.74,
+        "realizedPnl": 124,
+        "realizedPnlPercent": 29.25,
+        "holdDurationMinutes": 214,
+        "commissions": 2.69,
+        "currency": "USD",
+        "sourceType": "automation",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "trade-20260521-meta",
+        "source": "SHADOW_LEDGER",
+        "accountId": "shadow",
+        "symbol": "META",
+        "side": "long",
+        "assetClass": "Option",
+        "quantity": 1,
+        "openDate": "2026-05-21T15:03:00.000Z",
+        "closeDate": "2026-05-21T19:44:00.000Z",
+        "avgOpen": 5.8,
+        "avgClose": 7.05,
+        "realizedPnl": 125,
+        "realizedPnlPercent": 21.55,
+        "holdDurationMinutes": 281,
+        "commissions": 1.35,
+        "currency": "USD",
+        "sourceType": "automation",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "trade-20260520-tsla",
+        "source": "SHADOW_LEDGER",
+        "accountId": "shadow",
+        "symbol": "TSLA",
+        "side": "long",
+        "assetClass": "Option",
+        "quantity": 1,
+        "openDate": "2026-05-20T14:55:00.000Z",
+        "closeDate": "2026-05-20T16:07:00.000Z",
+        "avgOpen": 4.4,
+        "avgClose": 3.86,
+        "realizedPnl": -54,
+        "realizedPnlPercent": -12.27,
+        "holdDurationMinutes": 72,
+        "commissions": 1.35,
+        "currency": "USD",
+        "sourceType": "automation",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "trade-20260519-avgo",
+        "source": "SHADOW_LEDGER",
+        "accountId": "shadow",
+        "symbol": "AVGO",
+        "side": "long",
+        "assetClass": "Option",
+        "quantity": 1,
+        "openDate": "2026-05-19T15:28:00.000Z",
+        "closeDate": "2026-05-19T19:52:00.000Z",
+        "avgOpen": 8.15,
+        "avgClose": 10.4,
+        "realizedPnl": 225,
+        "realizedPnlPercent": 27.61,
+        "holdDurationMinutes": 264,
+        "commissions": 1.35,
+        "currency": "USD",
+        "sourceType": "automation",
+        "strategyLabel": "Signal Options"
+      },
+      {
+        "id": "trade-20260518-qqq",
+        "source": "SHADOW_LEDGER",
+        "accountId": "shadow",
+        "symbol": "QQQ",
+        "side": "long",
+        "assetClass": "Option",
+        "quantity": 3,
+        "openDate": "2026-05-18T14:37:00.000Z",
+        "closeDate": "2026-05-18T18:10:00.000Z",
+        "avgOpen": 1.42,
+        "avgClose": 1.9,
+        "realizedPnl": 144,
+        "realizedPnlPercent": 33.8,
+        "holdDurationMinutes": 213,
+        "commissions": 4.04,
+        "currency": "USD",
+        "sourceType": "automation",
+        "strategyLabel": "Signal Options"
+      }
+    ],
+    "orders": {
+      "working": [],
+      "history": [
+        {
+          "id": "shadow-order-20260522-amd-exit",
+          "accountId": "shadow",
+          "symbol": "AMD",
+          "side": "sell",
+          "type": "market",
+          "assetClass": "Option",
+          "quantity": 2,
+          "filledQuantity": 2,
+          "limitPrice": null,
+          "stopPrice": null,
+          "timeInForce": "day",
+          "status": "filled",
+          "placedAt": "2026-05-22T18:16:00.000Z",
+          "filledAt": "2026-05-22T18:16:00.000Z",
+          "updatedAt": "2026-05-22T18:16:00.000Z",
+          "averageFillPrice": 2.74,
+          "commission": 1.35,
+          "source": "SHADOW_LEDGER",
+          "sourceType": "automation",
+          "strategyLabel": "Signal Options"
+        }
+      ]
+    },
+    "risk": {
+      "accountId": "shadow",
+      "currency": "USD",
+      "degraded": false,
+      "reason": null,
+      "concentration": {
+        "topPositions": [
+          { "symbol": "NVDA", "marketValue": 1024, "weightPercent": 2.19 },
+          { "symbol": "MSFT", "marketValue": 672, "weightPercent": 1.43 },
+          { "symbol": "SPY", "marketValue": 325, "weightPercent": 0.69 }
+        ]
+      },
+      "winnersLosers": {},
+      "margin": { "leverageRatio": 0.04, "marginUsed": 0, "marginAvailable": 29814.52 },
+      "greeks": { "delta": null, "gamma": null, "theta": null, "vega": null },
+      "expiryConcentration": {},
+      "updatedAt": "2026-05-22T20:55:00.000Z"
+    },
+    "allocation": {
+      "accountId": "shadow",
+      "currency": "USD",
+      "buckets": [
+        { "label": "Options", "value": 2021, "weightPercent": 4.31 },
+        { "label": "Cash", "value": 29814.52, "weightPercent": 63.65 }
+      ],
+      "updatedAt": "2026-05-22T20:55:00.000Z"
+    },
+    "tradeStats": {
+      "count": 412,
+      "winners": 276,
+      "losers": 136,
+      "winRate": 66.99,
+      "realizedPnl": 6218.73,
+      "commissions": 742.18
+    }
+  },
+  "algo": {
+    "deployment": {
+      "id": "fixture-signal-options-paper",
+      "name": "Signal Options Paper",
+      "enabled": true,
+      "mode": "paper",
+      "lastEvaluatedAt": "2026-05-22T20:54:41.000Z",
+      "lastSignalAt": "2026-05-22T20:49:11.000Z"
+    },
+    "readiness": {
+      "ready": true,
+      "reason": null,
+      "message": "Shadow signal-options deployment is scanning live market data."
+    },
+    "kpis": {
+      "todayPnl": 214.38,
+      "dailyRealizedPnl": 124,
+      "openUnrealizedPnl": 161,
+      "maxDailyLoss": -1200,
+      "dailyLossRemaining": 1414.38,
+      "openPremium": 1852,
+      "openSymbols": 3,
+      "maxOpenSymbols": 8,
+      "candidates": 14,
+      "blockedCandidates": 2,
+      "shadowFilledCandidates": 4,
+      "openPositions": 3
+    },
+    "pipelineStages": [
+      { "id": "scan", "label": "Scan", "count": 48, "status": "active" },
+      { "id": "candidate", "label": "Candidates", "count": 14, "status": "active" },
+      { "id": "submitted", "label": "Submitted", "count": 4, "status": "complete" },
+      { "id": "blocked", "label": "Blocked", "count": 2, "status": "attention" }
+    ],
+    "attentionItems": [
+      {
+        "id": "max-premium-soft-cap",
+        "severity": "warning",
+        "title": "Premium budget near soft cap",
+        "detail": "Open premium is at 74% of configured cap."
+      }
+    ],
+    "signals": [
+      { "symbol": "NVDA", "timeframe": "5m", "direction": "bullish", "fresh": true },
+      { "symbol": "MSFT", "timeframe": "5m", "direction": "bullish", "fresh": true },
+      { "symbol": "SPY", "timeframe": "5m", "direction": "bearish", "fresh": true }
+    ],
+    "candidates": [
+      { "symbol": "NVDA", "actionStatus": "shadow_filled", "score": 0.87 },
+      { "symbol": "AMZN", "actionStatus": "blocked", "score": 0.75 },
+      { "symbol": "QQQ", "actionStatus": "candidate", "score": 0.69 }
+    ],
+    "activePositions": [
+      { "symbol": "NVDA", "quantity": 2, "unrealizedPnl": 154 },
+      { "symbol": "MSFT", "quantity": 1, "unrealizedPnl": 62 },
+      { "symbol": "SPY", "quantity": 1, "unrealizedPnl": -55 }
+    ],
+    "events": [
+      {
+        "id": "event-1",
+        "deploymentId": "fixture-signal-options-paper",
+        "symbol": "AMD",
+        "eventType": "signal_options_shadow_exit",
+        "summary": "Closed AMD call position at target.",
+        "payload": { "stage": "closed", "realizedPnl": 124 },
+        "occurredAt": "2026-05-22T18:16:00.000Z",
+        "createdAt": "2026-05-22T18:16:00.000Z",
+        "updatedAt": "2026-05-22T18:16:00.000Z"
+      },
+      {
+        "id": "event-2",
+        "deploymentId": "fixture-signal-options-paper",
+        "symbol": "NVDA",
+        "eventType": "signal_options_shadow_entry",
+        "summary": "Opened NVDA call candidate from fresh bullish signal.",
+        "payload": { "stage": "filled", "quantity": 2, "premiumAtRisk": 870 },
+        "occurredAt": "2026-05-22T15:04:00.000Z",
+        "createdAt": "2026-05-22T15:04:00.000Z",
+        "updatedAt": "2026-05-22T15:04:00.000Z"
+      },
+      {
+        "id": "event-3",
+        "deploymentId": "fixture-signal-options-paper",
+        "symbol": "AMZN",
+        "eventType": "signal_options_candidate_skipped",
+        "summary": "Skipped AMZN candidate because premium budget was near cap.",
+        "payload": { "stage": "blocked", "reason": "premium_budget" },
+        "occurredAt": "2026-05-22T14:58:00.000Z",
+        "createdAt": "2026-05-22T14:58:00.000Z",
+        "updatedAt": "2026-05-22T14:58:00.000Z"
+      }
+    ]
+  }
+}

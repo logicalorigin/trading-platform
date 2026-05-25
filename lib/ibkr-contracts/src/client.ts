@@ -179,6 +179,8 @@ export type PlaceOrderInput = {
 export type QuoteSnapshot = {
   symbol: string;
   price: number;
+  last?: number | null;
+  mark?: number | null;
   bid: number;
   ask: number;
   bidSize: number;

@@ -13,7 +13,7 @@ const previousRuntimeOverrideFile =
   process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
 process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
   tmpdir(),
-  `rayalgo-order-gateway-readiness-${process.pid}.json`,
+  `pyrus-order-gateway-readiness-${process.pid}.json`,
 );
 
 const runtimeModule = await import("../lib/runtime");

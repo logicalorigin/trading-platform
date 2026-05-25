@@ -1002,7 +1002,10 @@ async function fetchEquityQuoteSnapshotsForPositions(
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
 
   if (symbols.length) {
-    const payload = await getQuoteSnapshots({ symbols: symbols.join(",") }).catch(() => ({
+    const payload = await getQuoteSnapshots({
+      symbols: symbols.join(","),
+      allowPolygonFallback: false,
+    }).catch(() => ({
       quotes: [],
     }));
     quotesBySymbol = new Map(
@@ -1036,7 +1039,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
         fetchOptionQuoteSnapshotPayload({
           underlying,
           providerContractIds: Array.from(new Set(providerContractIds)),
-          intent: "account-monitor-live",
+          intent: "visible-live",
           fallbackProvider: "cache",
           requiresGreeks: false,
         })
@@ -1383,7 +1386,10 @@ async function hydrateOptionUnderlyingPrices(
     return new Map();
   }
 
-  const payload = await getQuoteSnapshots({ symbols: symbols.join(",") }).catch(() => ({
+  const payload = await getQuoteSnapshots({
+    symbols: symbols.join(","),
+    allowPolygonFallback: false,
+  }).catch(() => ({
     quotes: [],
   }));
   return new Map(

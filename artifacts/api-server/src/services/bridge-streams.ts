@@ -289,7 +289,7 @@ function refreshAccountMonitorLeases(input: {
     intent: "account-monitor-live",
     requests,
     ttlMs: ACCOUNT_MONITOR_LEASE_TTL_MS,
-    fallbackProvider: "polygon",
+    fallbackProvider: "cache",
   });
   prewarmAccountMonitorQuotes(key, requests);
 }

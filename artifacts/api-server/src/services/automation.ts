@@ -33,7 +33,7 @@ type ListExecutionEventsInput = {
 };
 
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
-const RAY_REPLICA_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
+const PYRUS_SIGNALS_BOS_CONFIRMATIONS = ["close", "wicks"] as const;
 const RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE = "signal_equity_shadow";
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -118,17 +118,17 @@ function readOptionalBosConfirmation(value: unknown): string | undefined {
     return undefined;
   }
   const confirmation = String(value || "").trim();
-  if (!RAY_REPLICA_BOS_CONFIRMATIONS.includes(confirmation as never)) {
+  if (!PYRUS_SIGNALS_BOS_CONFIRMATIONS.includes(confirmation as never)) {
     throw new HttpError(400, "Unsupported BOS confirmation.", {
       code: "algo_strategy_bos_confirmation_invalid",
-      detail: `Use one of ${RAY_REPLICA_BOS_CONFIRMATIONS.join(", ")}.`,
+      detail: `Use one of ${PYRUS_SIGNALS_BOS_CONFIRMATIONS.join(", ")}.`,
       expose: true,
     });
   }
   return confirmation;
 }
 
-function readOptionalRayReplicaNumber(
+function readOptionalPyrusSignalsNumber(
   value: unknown,
   field: string,
 ): number | undefined {
@@ -137,8 +137,8 @@ function readOptionalRayReplicaNumber(
   }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 20) {
-    throw new HttpError(400, "Invalid RayReplica setting.", {
-      code: "algo_strategy_ray_replica_setting_invalid",
+    throw new HttpError(400, "Invalid Pyrus Signals setting.", {
+      code: "algo_strategy_pyrus_signals_setting_invalid",
       detail: `${field} must be a number from 0 through 20.`,
       expose: true,
     });
@@ -333,21 +333,21 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   const timeHorizon = readTimeHorizon(input.timeHorizon);
   const signalTimeframe = readSignalTimeframe(input.signalTimeframe);
   const bosConfirmation = readOptionalBosConfirmation(input.bosConfirmation);
-  const chochAtrBuffer = readOptionalRayReplicaNumber(
+  const chochAtrBuffer = readOptionalPyrusSignalsNumber(
     input.chochAtrBuffer,
     "chochAtrBuffer",
   );
-  const chochBodyExpansionAtr = readOptionalRayReplicaNumber(
+  const chochBodyExpansionAtr = readOptionalPyrusSignalsNumber(
     input.chochBodyExpansionAtr,
     "chochBodyExpansionAtr",
   );
-  const chochVolumeGate = readOptionalRayReplicaNumber(
+  const chochVolumeGate = readOptionalPyrusSignalsNumber(
     input.chochVolumeGate,
     "chochVolumeGate",
   );
   const config = asRecord(existing.config);
   const parameters = asRecord(config.parameters);
-  const rayReplicaSettingsPatch = {
+  const pyrusSignalsSettingsPatch = {
     timeHorizon,
     ...(bosConfirmation !== undefined ? { bosConfirmation } : {}),
     ...(chochAtrBuffer !== undefined ? { chochAtrBuffer } : {}),
@@ -359,15 +359,15 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     parameters: {
       ...parameters,
       signalTimeframe,
-      ...rayReplicaSettingsPatch,
+      ...pyrusSignalsSettingsPatch,
     },
   };
   const profile = await getSignalMonitorProfile({
     environment: existing.mode,
   });
-  const nextRayReplicaSettings = {
-    ...asRecord(profile.rayReplicaSettings),
-    ...rayReplicaSettingsPatch,
+  const nextPyrusSignalsSettings = {
+    ...asRecord(profile.pyrusSignalsSettings),
+    ...pyrusSignalsSettingsPatch,
   };
 
   const [updated] = await db
@@ -383,7 +383,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
   const signalMonitorProfile = await updateSignalMonitorProfile({
     environment: existing.mode,
     timeframe: signalTimeframe,
-    rayReplicaSettings: nextRayReplicaSettings,
+    pyrusSignalsSettings: nextPyrusSignalsSettings,
   });
   const deployment = updated ?? existing;
 
@@ -395,7 +395,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     payload: {
       timeHorizon,
       signalTimeframe,
-      rayReplicaSettings: rayReplicaSettingsPatch,
+      pyrusSignalsSettings: pyrusSignalsSettingsPatch,
       previousParameters: parameters,
       signalMonitorProfileId: signalMonitorProfile.id,
     },

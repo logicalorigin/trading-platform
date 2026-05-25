@@ -49,7 +49,7 @@ type BundledPineSeed = CreatePineScriptInput & {
 
 type StorageMode = "db" | "fallback";
 
-const RAY_REPLICA_PINE_SCRIPT_KEY = "rayalgo-replica-smc-pro-v3";
+const PYRUS_SIGNALS_PINE_SCRIPT_KEY = "pyrus-signals-smc-pro-v3";
 const pineScriptsDbBackoff = createTransientPostgresBackoff();
 
 function resolveApiServerDataRoot(): string {
@@ -67,10 +67,10 @@ const PINE_SCRIPT_FALLBACK_PATH = path.resolve(
   API_SERVER_DATA_ROOT,
   "pine-scripts.json",
 );
-const RAY_REPLICA_PINE_SOURCE_PATH = path.resolve(
+const PYRUS_SIGNALS_PINE_SOURCE_PATH = path.resolve(
   API_SERVER_DATA_ROOT,
   "pine-seeds",
-  "rayalgo-replica-smc-pro-v3.pine",
+  "pyrus-signals-smc-pro-v3.pine",
 );
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,26 +287,26 @@ async function listScriptsFromStorage(): Promise<PineScript[]> {
 
 async function loadBundledPineSeeds(): Promise<BundledPineSeed[]> {
   try {
-    const rayReplicaSource = await readFile(
-      RAY_REPLICA_PINE_SOURCE_PATH,
+    const pyrusSignalsSource = await readFile(
+      PYRUS_SIGNALS_PINE_SOURCE_PATH,
       "utf8",
     );
 
     return [
       {
-        scriptKey: RAY_REPLICA_PINE_SCRIPT_KEY,
-        name: "PYRUS Replica (SMC Pro v3)",
+        scriptKey: PYRUS_SIGNALS_PINE_SCRIPT_KEY,
+        name: "Pyrus Signals (SMC Pro v3)",
         description:
-          "Shared price-pane Pine script seed for the RayReplica-style market-structure overlay.",
-        sourceCode: rayReplicaSource,
+          "Shared price-pane Pine script seed for the Pyrus Signals market-structure overlay.",
+        sourceCode: pyrusSignalsSource,
         status: "ready",
         defaultPaneType: "price",
         chartAccessEnabled: true,
         notes:
           "Bundled from the first shared Pine handoff. The JS runtime adapter renders basis bands, regime windows, key levels, structure markers, order blocks, and candle colors.",
         tags: [
-          "rayalgo",
-          "replica",
+          "pyrus",
+          "signals",
           "smc",
           "structure",
           "order-blocks",
@@ -314,7 +314,7 @@ async function loadBundledPineSeeds(): Promise<BundledPineSeed[]> {
         ],
         metadata: {
           seed: true,
-          runtimeAdapterKey: RAY_REPLICA_PINE_SCRIPT_KEY,
+          runtimeAdapterKey: PYRUS_SIGNALS_PINE_SCRIPT_KEY,
         },
       },
     ];

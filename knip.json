@@ -28,7 +28,7 @@
       "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
-    "artifacts/rayalgo": {
+    "artifacts/pyrus": {
       "entry": [
         "src/main.tsx",
         "src/main.jsx",
@@ -69,7 +69,7 @@
       "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
-    "lib/rayreplica-core": {
+    "lib/pyrus-signals-core": {
       "entry": ["src/index.ts"],
       "project": "src/**/*.ts"
     },

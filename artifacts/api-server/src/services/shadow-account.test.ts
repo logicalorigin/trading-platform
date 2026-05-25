@@ -306,14 +306,17 @@ test("shadow option maintenance waits until expiration close", () => {
   assert.equal(helper(contract, new Date("2026-05-16T14:00:00.000Z")), true);
 });
 
-test("shadow option maintenance skips historical signal-options rows", () => {
+test("shadow option maintenance classifies signal-options backfill and replay rows", () => {
   const helper =
     __shadowWatchlistBacktestInternalsForTests.isHistoricalSignalOptionsShadowOrder;
+  const backfillHelper =
+    __shadowWatchlistBacktestInternalsForTests.isSignalOptionsBackfillShadowOrder;
 
-  assert.equal(
-    helper({ payload: { backfill: { source: "signal_options_backfill" } } } as never),
-    true,
-  );
+  const backfillOrder = {
+    payload: { backfill: { source: "signal_options_backfill" } },
+  } as never;
+  assert.equal(helper(backfillOrder), true);
+  assert.equal(backfillHelper(backfillOrder), true);
   assert.equal(
     helper({
       payload: {
@@ -323,7 +326,84 @@ test("shadow option maintenance skips historical signal-options rows", () => {
     } as never),
     true,
   );
+  assert.equal(
+    backfillHelper({
+      payload: {
+        backfill: { source: "signal_options_replay" },
+        metadata: { sourceType: "signal_options_replay" },
+      },
+    } as never),
+    false,
+  );
   assert.equal(helper({ payload: { metadata: { runSource: "worker" } } } as never), false);
+});
+
+test("shadow option maintenance prices expired historical backfill closes from persisted marks", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.resolveHistoricalBackfillExpirationExitPrice;
+
+  assert.deepEqual(
+    helper({ position: { mark: "5.20", averageCost: "3.60" } } as never),
+    { price: 5.2, source: "historical_backfill_last_mark" },
+  );
+  assert.deepEqual(
+    helper({ position: { mark: null, averageCost: "3.60" } } as never),
+    { price: 3.6, source: "historical_backfill_average_cost" },
+  );
+  assert.deepEqual(
+    helper({ position: { mark: null, averageCost: null } } as never),
+    { price: 0, source: "historical_backfill_unpriced_zero" },
+  );
+});
+
+test("shadow option maintenance closes expired backfill rows instead of skipping them", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const body = source.match(
+    /export async function runShadowOptionMaintenance\([\s\S]*?\nasync function upsertPositionForFill/,
+  )?.[0];
+
+  assert.ok(body);
+  assert.match(body, /isSignalOptionsBackfillShadowOrder\(sourceOrder\)/);
+  assert.match(body, /resolveHistoricalBackfillExpirationExitPrice/);
+  assert.doesNotMatch(
+    body,
+    /if\s*\(\s*isHistoricalSignalOptionsShadowOrder\(sourceOrder\)\s*\)\s*\{\s*summary\.skippedCount/,
+  );
+});
+
+test("expired historical signal-options positions are not current positions", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests
+      .isExpiredHistoricalShadowOptionPosition;
+  const position = {
+    optionContract: {
+      ticker: "O:AAPL260504C00270000",
+      underlying: "AAPL",
+      expirationDate: new Date("2026-05-04T00:00:00.000Z"),
+      strike: 270,
+      right: "call",
+      multiplier: 100,
+      sharesPerContract: 100,
+      providerContractId: null,
+    },
+  } as never;
+  const historicalOrder = {
+    payload: { backfill: { source: "signal_options_backfill" } },
+  } as never;
+  const liveOrder = { payload: { metadata: { runSource: "worker" } } } as never;
+
+  assert.equal(
+    helper(position, historicalOrder, new Date("2026-05-22T14:00:00.000Z")),
+    true,
+  );
+  assert.equal(
+    helper(position, liveOrder, new Date("2026-05-22T14:00:00.000Z")),
+    false,
+  );
+  assert.equal(
+    helper(position, historicalOrder, new Date("2026-05-04T14:00:00.000Z")),
+    false,
+  );
 });
 
 test("buildShadowPositionDayChange uses daily baseline instead of total unrealized pnl", () => {
@@ -389,23 +469,11 @@ test("buildShadowPositionDayChangeFromQuote uses option previous close when no b
   assert.equal(changed.dayChangePercent, 25);
 });
 
-test("polygon option day quotes use session previous close for day change", () => {
-  const quoteHelper =
-    __shadowWatchlistBacktestInternalsForTests.polygonOptionContractDayChangeQuote;
+test("option quote day changes use session previous close", () => {
   const changeHelper =
     __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChangeFromQuote;
 
-  const quote = quoteHelper({
-    contract: {
-      ticker: "O:NVDA260522C00220000",
-      underlying: "NVDA",
-      expirationDate: new Date("2026-05-22T00:00:00.000Z"),
-      strike: 220,
-      right: "call",
-      multiplier: 100,
-      sharesPerContract: 100,
-      providerContractId: null,
-    },
+  const quote = {
     bid: 0,
     ask: 0,
     last: 7.16,
@@ -421,7 +489,7 @@ test("polygon option day quotes use session previous close for day change", () =
     openInterest: 0,
     volume: 0,
     updatedAt: new Date("2026-05-19T19:59:58.321Z"),
-  });
+  };
   const changed = changeHelper({
     quantity: 1,
     multiplier: 100,
@@ -430,6 +498,87 @@ test("polygon option day quotes use session previous close for day change", () =
 
   assert.equal(Number(changed.dayChange?.toFixed(6)), -119);
   assert.equal(Number(changed.dayChangePercent?.toFixed(6)), -14.251497);
+});
+
+test("shadow option quote identifier falls back to stored option ticker", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.shadowOptionQuoteIdentifier;
+
+  assert.equal(
+    helper({
+      ticker: "O:GOOGL260526P00390000",
+      providerContractId: null,
+    } as any),
+    "O:GOOGL260526P00390000",
+  );
+  assert.equal(
+    helper({
+      ticker: "O:GOOGL260526P00390000",
+      providerContractId: "  123456789  ",
+    } as any),
+    "123456789",
+  );
+  assert.equal(
+    helper({
+      ticker: "GOOGL 2026-05-26 390P",
+      providerContractId: null,
+    } as any),
+    null,
+  );
+  assert.equal(helper(null as any), null);
+});
+
+test("shadow option quote hydration skips prior expirations only", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.isPriorOptionExpiration;
+  const baseContract = {
+    ticker: "O:SPY260522C00500000",
+    underlying: "SPY",
+    strike: 500,
+    right: "call",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: null,
+  };
+
+  assert.equal(
+    helper(
+      {
+        ...baseContract,
+        expirationDate: new Date("2026-05-21T00:00:00.000Z"),
+      } as any,
+      new Date("2026-05-22T14:00:00.000Z"),
+    ),
+    true,
+  );
+  assert.equal(
+    helper(
+      {
+        ...baseContract,
+        expirationDate: new Date("2026-05-22T00:00:00.000Z"),
+      } as any,
+      new Date("2026-05-22T14:00:00.000Z"),
+    ),
+    false,
+  );
+});
+
+test("shadow option mark refresh resolves stored option tickers to IBKR ids", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const markBody = source.match(
+    /async function resolveOptionMark\([\s\S]*?\nasync function resolveFillPrice/,
+  )?.[0];
+  const refreshBody = source.match(
+    /export async function refreshShadowPositionMarks\(\) \{[\s\S]*?\nasync function ensureFreshShadowState/,
+  )?.[0];
+
+  assert.ok(markBody);
+  assert.match(markBody, /shadowOptionQuoteIdentifier\(contract\)/);
+  assert.match(markBody, /resolveShadowIbkrOptionProviderIds/);
+  assert.doesNotMatch(markBody, /fetchShadowPolygonOptionQuote\(contract\)/);
+  assert.ok(refreshBody);
+  assert.match(refreshBody, /fetchShadowOptionDayChangeQuotes\(optionPositions\)/);
+  assert.doesNotMatch(refreshBody, /await resolveOptionMark\(contract\)/);
 });
 
 test("shadow position day changes fall back to option quotes for stale marks", () => {
@@ -521,8 +670,56 @@ test("source-scoped shadow positions require matching source keys and source pre
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
   assert.match(source, /async function readOpenShadowPositionsForSource/);
+  assert.match(source, /async function readOpenShadowPositionsForSourceCached/);
+  assert.match(source, /`open-positions:\$\{shadowSourceCacheKey\(source\)\}`/);
   assert.match(source, /sourcePositionKeys\.has\(position\.positionKey\)/);
   assert.match(source, /positionMatchesShadowSource\(position, source\)/);
+});
+
+test("shadow account reads repair live signal-options mirrors before projecting positions", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const positionsBody = source.match(
+    /export async function getShadowAccountPositions\([\s\S]*?\nexport async function getShadowAccountPositionsAtDate/,
+  )?.[0];
+
+  assert.match(source, /async function repairSignalOptionsAutomationMirrorsForRead/);
+  assert.match(source, /SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT/);
+  assert.match(source, /SIGNAL_OPTIONS_SHADOW_EXIT_EVENT/);
+  assert.match(source, /recordShadowAutomationEvent\(event,\s*\{\s*source: "automation",\s*\}\)/);
+  assert.match(source, /await repairSignalOptionsAutomationMirrorsForRead\(source\);/);
+  assert.ok(positionsBody);
+  assert.ok(
+    positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);") <
+      positionsBody.indexOf("return withShadowReadCache("),
+  );
+});
+
+test("shadow signal-options mirror repair skips historical backfill events", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const liveEntry = {
+    eventType: "signal_options_shadow_entry",
+    payload: { metadata: { runSource: "worker" } },
+  };
+  const backfillEntry = {
+    eventType: "signal_options_shadow_entry",
+    payload: { backfill: { source: "signal_options_backfill" } },
+  };
+  const mark = {
+    eventType: "signal_options_shadow_mark",
+    payload: { metadata: { runSource: "worker" } },
+  };
+
+  assert.equal(internals.isSignalOptionsAutomationMirrorEvent(liveEntry as any), true);
+  assert.equal(internals.isSignalOptionsAutomationMirrorEvent(backfillEntry as any), false);
+  assert.equal(internals.isSignalOptionsAutomationMirrorEvent(mark as any), false);
+});
+
+test("shadow option quote marks ignore zero-only IBKR snapshots", () => {
+  const helper = __shadowWatchlistBacktestInternalsForTests.shadowQuoteMarkPrice;
+
+  assert.equal(helper({ bid: 0, ask: 0, mark: 0, price: 0, last: null }), null);
+  assert.equal(Number(helper({ bid: 1.2, ask: 1.4, mark: 0 })?.toFixed(2)), 1.3);
+  assert.equal(helper({ bid: 0, ask: 2.5, price: 2.45 }), 2.45);
 });
 
 test("shadow positions expose market-data symbols from contract or ledger key", () => {
@@ -1354,7 +1551,7 @@ test("buildWatchlistBacktestFills can rebalance into higher-ranked cash-only sig
   assert.match(result.fills[1]?.fillSource ?? "", /^selection_rebalance:RANK1/);
 });
 
-test("buildWatchlistBacktestFills can stop out open longs before a RayReplica sell", () => {
+test("buildWatchlistBacktestFills can stop out open longs before a Pyrus Signals sell", () => {
   const result = buildWatchlistBacktestFills({
     runId: "run-stop-1",
     marketDate: "2026-05-01",
@@ -1969,6 +2166,13 @@ test("shadow live source filters reject simulation and forward-test rows", () =>
   assert.equal(
     internals.isLiveShadowOrder({
       source: "automation",
+      payload: { backfill: { source: "signal_options_backfill" } },
+    } as any),
+    true,
+  );
+  assert.equal(
+    internals.isLiveShadowOrder({
+      source: "automation",
       payload: {
         replay: { source: "signal_options_replay" },
         metadata: {
@@ -2059,6 +2263,13 @@ test("default shadow analytics ledger includes signal-options replay rows", () =
     true,
   );
   assert.equal(
+    internals.isDefaultShadowLedgerAnalyticsOrder({
+      source: "automation",
+      payload: { backfill: { source: "signal_options_backfill" } },
+    } as any),
+    true,
+  );
+  assert.equal(
     internals.isDefaultShadowLedgerAnalyticsOrder({ source: "watchlist_backtest" } as any),
     false,
   );
@@ -2145,14 +2356,110 @@ test("shadow default day-change quotes are requested only for rows needing fallb
 
   assert.ok(dayChangeBody);
   assert.match(dayChangeBody, /quoteCandidatePositions/);
+  assert.match(dayChangeBody, /missingQuotePositions/);
   assert.match(dayChangeBody, /shadowPositionNeedsDayChangeQuote/);
   assert.match(
     dayChangeBody,
-    /fetchShadowOptionDayChangeQuotes\(quoteCandidatePositions\)/,
+    /fetchShadowOptionDayChangeQuotes\(missingQuotePositions\)/,
   );
   assert.ok(fetchQuotesBody);
+  assert.match(fetchQuotesBody, /shadowOptionQuoteIdentifier\(contract\)/);
+  assert.match(fetchQuotesBody, /isPriorOptionExpiration\(contract\)/);
+  assert.match(fetchQuotesBody, /shadowOptionProviderContractIdForContract\(contract\)/);
+  assert.match(fetchQuotesBody, /resolveShadowIbkrOptionProviderIds/);
+  assert.match(fetchQuotesBody, /fetchOptionQuoteSnapshotPayload/);
+  assert.doesNotMatch(fetchQuotesBody, /PolygonMarketDataClient/);
+  assert.doesNotMatch(fetchQuotesBody, /polygon_option_quote/);
   assert.match(fetchQuotesBody, /Promise\.allSettled/);
   assert.match(fetchQuotesBody, /SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS/);
+});
+
+test("shadow positions include hydrated option quote payloads", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const positionsBody = source.match(
+    /export async function getShadowAccountPositions\([\s\S]*?\nexport async function getShadowAccountPositionsAtDate/,
+  )?.[0];
+
+  assert.ok(positionsBody);
+  assert.match(positionsBody, /optionQuoteByProviderContractId/);
+  assert.match(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered,\s*\{/);
+  assert.match(positionsBody, /intent: "visible-live"/);
+  assert.match(positionsBody, /ownerPrefix: "shadow-position-visible"/);
+  assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
+  assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
+  assert.match(positionsBody, /waitForShadowOptionDayChangeQuotes/);
+  assert.match(positionsBody, /Promise\.all/);
+  assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
+  assert.match(source, /getBoundedShadowUnderlyingQuoteSnapshots/);
+  assert.match(source, /SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS/);
+  assert.match(positionsBody, /ordersByPositionKey/);
+  assert.match(positionsBody, /shadowOptionQuoteProviderContractId/);
+  assert.match(positionsBody, /fallbackProviderContractId/);
+  assert.match(positionsBody, /shadowOptionProviderContractIdForContract\(contract\)/);
+  assert.match(positionsBody, /responseProviderContractId/);
+  assert.match(positionsBody, /shadowOrderOptionQuoteFallback/);
+  assert.match(positionsBody, /automationEventOptionQuote/);
+  assert.match(positionsBody, /automation_event_quote/);
+  assert.match(positionsBody, /shadowQuoteSnapshotFromOptionRecord/);
+  assert.match(positionsBody, /shadowOptionQuotePayload/);
+  assert.match(positionsBody, /underlyingMarket/);
+  assert.match(positionsBody, /shadowUnderlyingMarketPayload/);
+  assert.match(positionsBody, /optionPayload\(\s*asOptionContract\(position\.optionContract\),\s*responseProviderContractId,/);
+  assert.doesNotMatch(positionsBody, /polygon_option_quote/);
+});
+
+test("shadow automation event quotes preserve bid ask without repricing marks", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const fallbackBody = source.match(
+    /function shadowOrderOptionQuoteFallback\([\s\S]*?\nfunction isExpiredHistoricalShadowOptionPosition/,
+  )?.[0];
+  const payloadBody = source.match(
+    /function shadowOptionQuotePayload\([\s\S]*?\nasync function resolveFillPrice/,
+  )?.[0];
+
+  assert.ok(fallbackBody);
+  assert.match(fallbackBody, /payload\.quote/);
+  assert.match(fallbackBody, /candidate\.quote/);
+  assert.match(fallbackBody, /orderPlan\.liquidity/);
+  assert.match(fallbackBody, /shadowQuoteHasBidAsk/);
+  assert.match(fallbackBody, /mark: fallbackMark/);
+  assert.match(fallbackBody, /price: fallbackMark/);
+  assert.ok(payloadBody);
+  assert.match(payloadBody, /input\.source === "automation_event_quote"/);
+  assert.match(payloadBody, /input\.fallbackMark/);
+});
+
+test("shadow risk reuses projected underlying markets before quote fallback", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const riskBody = source.match(
+    /async function buildShadowAccountRisk\([\s\S]*?\nfunction shadowPositionForNotionalRisk/,
+  )?.[0];
+
+  assert.ok(riskBody);
+  assert.match(riskBody, /shadowUnderlyingPricesFromPositionRows\(positionsResponse\.positions\)/);
+  assert.match(riskBody, /missingUnderlyingPrice/);
+  assert.match(riskBody, /hydrateShadowOptionUnderlyingPrices/);
+  assert.match(source, /withShadowReadCache\(`risk:\$\{shadowSourceCacheKey\(source\)\}`/);
+});
+
+test("shadow equity quote hydration opts out of Polygon fallback", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const equityMarkBody = source.match(
+    /async function resolveEquityMark\([\s\S]*?\nasync function resolveOptionMark/,
+  )?.[0];
+  const underlyingBody = source.match(
+    /async function hydrateShadowOptionUnderlyingPrices\([\s\S]*?\nfunction buildShadowExpiryConcentration/,
+  )?.[0];
+  const boundedUnderlyingBody = source.match(
+    /async function getBoundedShadowUnderlyingQuoteSnapshots\([\s\S]*?\nasync function fetchShadowOptionUnderlyingMarkets/,
+  )?.[0];
+
+  assert.ok(equityMarkBody);
+  assert.ok(underlyingBody);
+  assert.ok(boundedUnderlyingBody);
+  assert.match(equityMarkBody, /allowPolygonFallback: false/);
+  assert.match(boundedUnderlyingBody, /allowPolygonFallback: false/);
+  assert.match(underlyingBody, /getBoundedShadowUnderlyingQuoteSnapshots/);
 });
 
 test("shadow equity history drops snapshots that do not reconcile to live fills", () => {

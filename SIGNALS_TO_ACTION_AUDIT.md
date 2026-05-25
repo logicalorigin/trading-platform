@@ -1,7 +1,7 @@
 # Signals to Action — Visual Audit
 
 **Surface:** Algo Live page, "Signals to Action" table
-**Code:** `artifacts/rayalgo/src/screens/algo/OperationsSignalTable.jsx`, `OperationsSignalRow.jsx`, `OperationsSignalDrill.jsx`
+**Code:** `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`, `OperationsSignalRow.jsx`, `OperationsSignalDrill.jsx`
 **Lenses applied:** density & scannability · decision affordance · color & tone system · mobile
 **Method:** static code audit (no live screenshot captured this pass)
 
@@ -218,15 +218,15 @@ This consolidates everything we want above the table and resolves the wrap-jitte
 
 ## Files most likely to change
 
-- `artifacts/rayalgo/src/screens/algo/OperationsSignalRow.jsx` — column tracks, `DataCell` swap, `DecisionCell` rebuild, phone fork rewrite, header chevron.
-- `artifacts/rayalgo/src/screens/algo/OperationsSignalTable.jsx` — header strip layout, search input, filter dropdown, status line.
-- `artifacts/rayalgo/src/screens/algo/algoHelpers.js` — `signalSinceDisplay`, `actionPlanDisplay`, quote/Greeks formatters (main/detail flip).
-- `artifacts/rayalgo/src/components/platform/signal-language.{jsx,js}` — palette documentation, verdict pill variant.
-- `artifacts/rayalgo/src/screens/algo/OperationsSignalRow.test.js` — snapshot/contract updates.
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx` — column tracks, `DataCell` swap, `DecisionCell` rebuild, phone fork rewrite, header chevron.
+- `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx` — header strip layout, search input, filter dropdown, status line.
+- `artifacts/pyrus/src/screens/algo/algoHelpers.js` — `signalSinceDisplay`, `actionPlanDisplay`, quote/Greeks formatters (main/detail flip).
+- `artifacts/pyrus/src/components/platform/signal-language.{jsx,js}` — palette documentation, verdict pill variant.
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js` — snapshot/contract updates.
 
 ## Verification path for any fix
 
 1. Run the app and screenshot the Algo Live page at desktop (≥1440px), tablet (~1024px), phone (≤414px) — before and after.
 2. Eyeball at default and at the system's largest text-scale setting.
-3. `pnpm --filter @rayalgo/rayalgo run test` (or workspace equivalent) — update `OperationsSignalRow.test.js` as needed.
+3. `pnpm --filter @pyrus/pyrus run test` (or workspace equivalent) — update `OperationsSignalRow.test.js` as needed.
 4. Per `CLAUDE.md`: if any Replit startup file is touched in the process, run `pnpm run audit:replit-startup`.

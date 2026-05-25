@@ -1,7 +1,7 @@
 # Utility Scripts
 
 These scripts are developer/operator utilities. Replit app startup remains owned
-by `artifacts/rayalgo/.replit-artifact/artifact.toml`; do not use this
+by `artifacts/pyrus/.replit-artifact/artifact.toml`; do not use this
 directory to define separate Replit app runners.
 
 ## Backtesting Utilities
@@ -10,12 +10,12 @@ directory to define separate Replit app runners.
   currently enabled shadow signal-options deployment. It requires database access
   via `DATABASE_URL`, and talks to the API using `BACKTEST_API_BASE_URL` or
   `API_BASE_URL`.
-- `rayreplica:signal-options-sweep` runs the RayReplica signal-options
+- `pyrus-signals:signal-options-sweep` runs the Pyrus Signals signal-options
   `timeHorizon`/structure sensitivity sweep through the existing shadow backfill
   path, holds the signal-options worker advisory lock, writes JSON/CSV/Markdown
   reports, and can replay the top eligible variant into the shadow ledger.
 - `signal-options:exit-policy-sweep` runs the exit-policy variant sweep for the
-  enabled RayReplica signal-options shadow deployment. By default it is a dry
+  enabled Pyrus Signals signal-options shadow deployment. By default it is a dry
   run only and writes JSON/CSV/Markdown reports under
   `scripts/reports/signal-options-exit-policy-sweeps/`.
   - Dry run:
@@ -77,6 +77,16 @@ directory to define separate Replit app runners.
   diagnosis. They are not part of normal Replit app bring-up.
 - `reap-dev-port.mjs` clears same-cgroup dev processes before package dev
   scripts start. When run by Replit itself (`REPLIT_MODE=workflow`) or by the
-  PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`, with `RAYALGO_REPLIT_RUN=1` as
-  a legacy alias), it can replace older Replit
+  PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), it can replace older Replit
   execution scopes on the same pinned port.
+- `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
+  duplicate Replit-owned Run event exits without restart only during the
+  startup guard window while the supervisor lock points at a live
+  `artifacts/pyrus/scripts/runDevApp.mjs` process. After
+  `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new Replit-owned
+  Run is treated as an intentional Run-button restart and uses a controlled
+  handoff so API/web do not overlap. Use `PYRUS_DEV_FORCE_RESTART=1` only for
+  an intentional Replit-owned recovery restart. Shell smoke tests for the
+  duplicate path must include
+  `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1`; that mode reads the supervisor lock and
+  exits without starting API/web processes.

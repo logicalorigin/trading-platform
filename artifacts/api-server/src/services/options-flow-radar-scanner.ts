@@ -136,6 +136,14 @@ function uniqueSymbols(
   return [...new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean))];
 }
 
+function orderedSymbolsKey(symbols: readonly string[]): string {
+  return symbols.join(",");
+}
+
+function symbolMembershipKey(symbols: readonly string[]): string {
+  return [...symbols].sort().join(",");
+}
+
 function readRuntimeNumber(
   value: number | (() => number) | undefined,
   fallback: number,
@@ -228,7 +236,9 @@ export function createOptionsFlowRadarScanner(
   let timer: NodeJS.Timeout | null = null;
   let stopRotation: (() => void) | null = null;
   let rotationOffset = 0;
-  let currentSymbolsKey = "";
+  let currentSymbolsMembershipKey = "";
+  let cycleSymbols: string[] = [];
+  let pendingCycleSymbols: string[] | null = null;
   let scannedSymbols = new Set<string>();
   let currentBatch: string[] = [];
   let promotedSymbols: string[] = [];
@@ -241,20 +251,58 @@ export function createOptionsFlowRadarScanner(
   let lastPromoteCount = DEFAULT_PROMOTE_COUNT;
   let degradedReason: string | null = null;
 
-  function resetCycleIfSymbolsChanged(symbols: readonly string[]): void {
-    const key = uniqueSymbols(symbols, normalizeSymbol).join(",");
-    if (key === currentSymbolsKey) {
+  function syncCycleSymbols(symbols: readonly string[]): void {
+    const key = symbolMembershipKey(symbols);
+    if (key === currentSymbolsMembershipKey) {
+      if (!cycleSymbols.length) {
+        cycleSymbols = [...symbols];
+        return;
+      }
+      if (orderedSymbolsKey(symbols) !== orderedSymbolsKey(cycleSymbols)) {
+        pendingCycleSymbols = [...symbols];
+      }
       return;
     }
-    currentSymbolsKey = key;
-    rotationOffset = 0;
-    scannedSymbols = new Set();
+
+    const nextSymbols = [...symbols];
+    const nextMembership = new Set(nextSymbols);
+    const preservedScans = new Set(
+      [...scannedSymbols].filter((symbol) => nextMembership.has(symbol)),
+    );
+    currentSymbolsMembershipKey = key;
+    cycleSymbols = nextSymbols;
+    pendingCycleSymbols = null;
+    scannedSymbols =
+      preservedScans.size >= nextSymbols.length ? new Set() : preservedScans;
+    const firstUnscannedIndex = nextSymbols.findIndex(
+      (symbol) => !scannedSymbols.has(symbol),
+    );
+    rotationOffset = firstUnscannedIndex >= 0 ? firstUnscannedIndex : 0;
     currentBatch = [];
     promotedSymbols = [];
     lastScanAt = null;
-    cycleStartedAtMs = null;
+    cycleStartedAtMs = scannedSymbols.size ? cycleStartedAtMs ?? now() : null;
     lastFullCycleMs = null;
     degradedReason = null;
+  }
+
+  function closeCycleIfComplete(): void {
+    if (!cycleSymbols.length || scannedSymbols.size < cycleSymbols.length) {
+      return;
+    }
+    if (cycleStartedAtMs !== null) {
+      lastFullCycleMs = Math.max(0, now() - cycleStartedAtMs);
+    }
+    scannedSymbols = new Set();
+    rotationOffset = 0;
+    if (
+      pendingCycleSymbols?.length &&
+      symbolMembershipKey(pendingCycleSymbols) === currentSymbolsMembershipKey
+    ) {
+      cycleSymbols = [...pendingCycleSymbols];
+    }
+    pendingCycleSymbols = null;
+    cycleStartedAtMs = now();
   }
 
   function buildNextBatch(
@@ -262,30 +310,28 @@ export function createOptionsFlowRadarScanner(
     batchSizeInput: number,
   ): string[] {
     const symbols = uniqueSymbols(symbolsInput, normalizeSymbol);
-    resetCycleIfSymbolsChanged(symbols);
     selectedSymbolCount = symbols.length;
     if (!symbols.length) {
       rotationOffset = 0;
+      cycleSymbols = [];
+      pendingCycleSymbols = null;
+      currentSymbolsMembershipKey = "";
       return [];
     }
+    syncCycleSymbols(symbols);
+    closeCycleIfComplete();
 
-    const size = Math.max(1, Math.min(batchSizeInput, symbols.length));
-    const start = rotationOffset % symbols.length;
-    if (start === 0 && scannedSymbols.size >= symbols.length) {
-      if (cycleStartedAtMs !== null) {
-        lastFullCycleMs = Math.max(0, now() - cycleStartedAtMs);
-      }
-      scannedSymbols = new Set();
-      cycleStartedAtMs = now();
-    } else if (cycleStartedAtMs === null) {
+    const size = Math.max(1, Math.min(batchSizeInput, cycleSymbols.length));
+    const start = rotationOffset % cycleSymbols.length;
+    if (cycleStartedAtMs === null) {
       cycleStartedAtMs = now();
     }
 
     const batch: string[] = [];
     for (let index = 0; index < size; index += 1) {
-      batch.push(symbols[(start + index) % symbols.length]);
+      batch.push(cycleSymbols[(start + index) % cycleSymbols.length]);
     }
-    rotationOffset = (start + size) % symbols.length;
+    rotationOffset = (start + size) % cycleSymbols.length;
     return batch;
   }
 
@@ -385,7 +431,11 @@ export function createOptionsFlowRadarScanner(
 
       await options.onObservations?.(settledObservations);
       if (promotedSymbols.length) {
-        await options.onPromotions?.(promotedSymbols, settledObservations);
+        void Promise.resolve(
+          options.onPromotions?.(promotedSymbols, settledObservations),
+        ).catch((promotionError) => {
+          options.onError?.(promotionError, { phase: "radar-promotion" });
+        });
       }
 
       return {
@@ -396,6 +446,10 @@ export function createOptionsFlowRadarScanner(
       };
     } catch (error) {
       const message = getErrorMessage(error);
+      batch.forEach((symbol) => {
+        scannedSymbols.add(symbol);
+      });
+      lastScanAt = new Date(now());
       degradedReason = message;
       options.onError?.(error, { phase: "radar-fetch" });
       return {
@@ -469,7 +523,9 @@ export function createOptionsFlowRadarScanner(
   function reset(): void {
     stop();
     rotationOffset = 0;
-    currentSymbolsKey = "";
+    currentSymbolsMembershipKey = "";
+    cycleSymbols = [];
+    pendingCycleSymbols = null;
     scannedSymbols = new Set();
     currentBatch = [];
     promotedSymbols = [];

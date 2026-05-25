@@ -18,16 +18,16 @@ type ExecutableStrategy = StrategyCatalogItem & {
   evaluate(context: StrategySignalContext): BacktestSignal;
 };
 
-const rayReplicaSignalCache = new WeakMap<
+const pyrusSignalsSignalCache = new WeakMap<
   BacktestBar[],
-  Map<string, RayReplicaSignalTape>
+  Map<string, PyrusSignalsSignalTape>
 >();
 
-export type RayReplicaStructureKind = "bos" | "choch";
+export type PyrusSignalsStructureKind = "bos" | "choch";
 
-export type RayReplicaStructureEvent = {
+export type PyrusSignalsStructureEvent = {
   id: string;
-  kind: RayReplicaStructureKind;
+  kind: PyrusSignalsStructureKind;
   direction: "long" | "short";
   label: "BOS" | "CHOCH";
   barIndex: number;
@@ -36,7 +36,7 @@ export type RayReplicaStructureEvent = {
   sourcePrice: number | null;
 };
 
-export type RayReplicaRegimeWindow = {
+export type PyrusSignalsRegimeWindow = {
   id: string;
   direction: "long" | "short";
   tone: "bullish" | "bearish";
@@ -46,10 +46,10 @@ export type RayReplicaRegimeWindow = {
   endAt: Date;
 };
 
-export type RayReplicaSignalTape = {
+export type PyrusSignalsSignalTape = {
   signals: BacktestSignal[];
-  events: RayReplicaStructureEvent[];
-  regimeWindows: RayReplicaRegimeWindow[];
+  events: PyrusSignalsStructureEvent[];
+  regimeWindows: PyrusSignalsRegimeWindow[];
 };
 
 function movingAverage(
@@ -147,8 +147,8 @@ function resolvePivotLow(
   return pivotValue;
 }
 
-function closeRayReplicaRegimeWindow(
-  regimeWindows: RayReplicaRegimeWindow[],
+function closePyrusSignalsRegimeWindow(
+  regimeWindows: PyrusSignalsRegimeWindow[],
   bars: BacktestBar[],
   direction: "long" | "short",
   startBarIndex: number,
@@ -161,7 +161,7 @@ function closeRayReplicaRegimeWindow(
   }
 
   regimeWindows.push({
-    id: `ray-replica-regime-${direction}-${startBar.startsAt.toISOString()}`,
+    id: `pyrus-signals-regime-${direction}-${startBar.startsAt.toISOString()}`,
     direction,
     tone: direction === "long" ? "bullish" : "bearish",
     startBarIndex,
@@ -171,20 +171,20 @@ function closeRayReplicaRegimeWindow(
   });
 }
 
-export function buildRayReplicaSignalTape(
+export function buildPyrusSignalsSignalTape(
   bars: BacktestBar[],
   parameters: StrategyParameters,
-): RayReplicaSignalTape {
+): PyrusSignalsSignalTape {
   const timeHorizon = integerParameterWithDefault(parameters, "timeHorizon", 10);
   const cacheKey = JSON.stringify({ timeHorizon });
-  const cachedTape = rayReplicaSignalCache.get(bars)?.get(cacheKey);
+  const cachedTape = pyrusSignalsSignalCache.get(bars)?.get(cacheKey);
   if (cachedTape) {
     return cachedTape;
   }
 
   const signals = new Array<BacktestSignal>(bars.length).fill("hold");
-  const events: RayReplicaStructureEvent[] = [];
-  const regimeWindows: RayReplicaRegimeWindow[] = [];
+  const events: PyrusSignalsStructureEvent[] = [];
+  const regimeWindows: PyrusSignalsRegimeWindow[] = [];
   let marketStructureDirection = 0;
   let breakableHigh = Number.NaN;
   let breakableHighBarIndex: number | null = null;
@@ -212,11 +212,11 @@ export function buildRayReplicaSignalTape(
     const close = bars[index]?.close ?? Number.NaN;
 
     if (Number.isFinite(breakableHigh) && close > breakableHigh) {
-      const kind: RayReplicaStructureKind =
+      const kind: PyrusSignalsStructureKind =
         marketStructureDirection === 1 ? "bos" : "choch";
       const label = kind === "choch" ? "CHOCH" : "BOS";
       events.push({
-        id: `ray-replica-long-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
+        id: `pyrus-signals-long-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
         kind,
         direction: "long",
         label,
@@ -233,7 +233,7 @@ export function buildRayReplicaSignalTape(
           activeRegimeStartIndex != null &&
           activeRegimeStartIndex <= index - 1
         ) {
-          closeRayReplicaRegimeWindow(
+          closePyrusSignalsRegimeWindow(
             regimeWindows,
             bars,
             activeRegimeDirection,
@@ -251,11 +251,11 @@ export function buildRayReplicaSignalTape(
     }
 
     if (Number.isFinite(breakableLow) && close < breakableLow) {
-      const kind: RayReplicaStructureKind =
+      const kind: PyrusSignalsStructureKind =
         marketStructureDirection === -1 ? "bos" : "choch";
       const label = kind === "choch" ? "CHOCH" : "BOS";
       events.push({
-        id: `ray-replica-short-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
+        id: `pyrus-signals-short-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
         kind,
         direction: "short",
         label,
@@ -272,7 +272,7 @@ export function buildRayReplicaSignalTape(
           activeRegimeStartIndex != null &&
           activeRegimeStartIndex <= index - 1
         ) {
-          closeRayReplicaRegimeWindow(
+          closePyrusSignalsRegimeWindow(
             regimeWindows,
             bars,
             activeRegimeDirection,
@@ -295,7 +295,7 @@ export function buildRayReplicaSignalTape(
     activeRegimeStartIndex != null &&
     activeRegimeStartIndex <= bars.length - 1
   ) {
-    closeRayReplicaRegimeWindow(
+    closePyrusSignalsRegimeWindow(
       regimeWindows,
       bars,
       activeRegimeDirection,
@@ -304,15 +304,15 @@ export function buildRayReplicaSignalTape(
     );
   }
 
-  const tape: RayReplicaSignalTape = {
+  const tape: PyrusSignalsSignalTape = {
     signals,
     events,
     regimeWindows,
   };
   const cacheBucket =
-    rayReplicaSignalCache.get(bars) ?? new Map<string, RayReplicaSignalTape>();
+    pyrusSignalsSignalCache.get(bars) ?? new Map<string, PyrusSignalsSignalTape>();
   cacheBucket.set(cacheKey, tape);
-  rayReplicaSignalCache.set(bars, cacheBucket);
+  pyrusSignalsSignalCache.set(bars, cacheBucket);
   return tape;
 }
 
@@ -341,7 +341,7 @@ const trendParameterDefinitions: StrategyParameterDefinition[] = [
   },
 ];
 
-const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
+const pyrusSignalsParameterDefinitions: StrategyParameterDefinition[] = [
   {
     key: "executionMode",
     label: "Execution Mode",
@@ -521,23 +521,23 @@ const strategies: ExecutableStrategy[] = [
     },
   },
   {
-    strategyId: "ray_replica_signals",
+    strategyId: "pyrus_signals",
     version: "v1",
-    label: "RayReplica Signals",
+    label: "Pyrus Signals",
     description:
-      "Long-only RayReplica signal port that enters on bullish CHOCH and exits on bearish CHOCH.",
+      "Long-only Pyrus Signals signal port that enters on bullish CHOCH and exits on bearish CHOCH.",
     status: "runnable",
     directionMode: "long_only",
     supportedTimeframes: sharedTimeframes,
     compatibilityNotes: [
-      "Uses the current JS RayReplica market-structure port, not a full Pine executor.",
+      "Uses the current JS Pyrus Signals market-structure port, not a full Pine executor.",
       "BUY/SELL events map to bullish and bearish CHOCH transitions.",
       "Spot mode remains the baseline path; options mode is long-premium only and uses preset contract selection.",
       "Signal-options mode shares deployment risk/liquidity defaults with the automation shadow scanner.",
       "BOS, TP/SL, filters, and short-side shares execution remain chart-only for now.",
     ],
     unsupportedFeatures: [],
-    parameterDefinitions: rayReplicaParameterDefinitions,
+    parameterDefinitions: pyrusSignalsParameterDefinitions,
     defaultParameters: {
       executionMode: "spot",
       contractPresetId: defaultBacktestOptionPresetId,
@@ -564,7 +564,7 @@ const strategies: ExecutableStrategy[] = [
         defaultSignalOptionsExecutionProfile.liquidityGate.maxSpreadPctOfMid,
     },
     evaluate({ bars, index, parameters }) {
-      const signals = buildRayReplicaSignalTape(bars, parameters).signals;
+      const signals = buildPyrusSignalsSignalTape(bars, parameters).signals;
       return signals[index] ?? "hold";
     },
   },

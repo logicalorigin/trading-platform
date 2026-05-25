@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
+import { resolveApiRequestLogLevel } from "./lib/request-logging";
 import { recordApiRequest } from "./services/request-metrics";
 
 const app: Express = express();
@@ -30,17 +31,9 @@ function isZodError(error: unknown): error is ZodErrorLike {
 
 function applyIsolationHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
   const mode =
-    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
-    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] ??
-    "report-only";
-  const coop =
-    process.env["PYRUS_COOP_POLICY"] ??
-    process.env["RAYALGO_COOP_POLICY"] ??
-    "same-origin";
-  const coep =
-    process.env["PYRUS_COEP_POLICY"] ??
-    process.env["RAYALGO_COEP_POLICY"] ??
-    "require-corp";
+    process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ?? "report-only";
+  const coop = process.env["PYRUS_COOP_POLICY"] ?? "same-origin";
+  const coep = process.env["PYRUS_COEP_POLICY"] ?? "require-corp";
   res.setHeader("Reporting-Endpoints", 'pyrus="/api/diagnostics/browser-reports"');
   if (mode === "off") {
     next();
@@ -58,27 +51,6 @@ function applyIsolationHeaders(_req: express.Request, res: express.Response, nex
     res.setHeader("Cross-Origin-Embedder-Policy-Report-Only", `${coep}; report-to="pyrus"`);
   }
   next();
-}
-
-function isLongLivedStreamRequest(req: express.Request): boolean {
-  return Boolean(
-    req.url?.startsWith("/api/streams/") ||
-      req.url?.startsWith("/api/diagnostics/stream"),
-  );
-}
-
-function isExpectedStreamClose(
-  req: express.Request,
-  res: express.Response,
-  err: Error | undefined,
-): boolean {
-  if (!isLongLivedStreamRequest(req) || res.statusCode >= 500) {
-    return false;
-  }
-  if (!err) {
-    return true;
-  }
-  return /abort|close|premature/i.test(err.message);
 }
 
 app.use((req, _res, next) => {
@@ -102,14 +74,13 @@ app.use(
   pinoHttp({
     logger,
     customLogLevel(req, res, err) {
-      if (isExpectedStreamClose(req, res, err)) return "silent";
-      if (err || res.statusCode >= 500) return "error";
-      if (res.statusCode >= 400) return "warn";
       const start = (req as { _startTime?: number })._startTime;
-      const responseTime = start ? Date.now() - start : 0;
-      if (responseTime >= 1000) return "warn";
-      if (req.url?.startsWith("/healthz")) return "silent";
-      return "info";
+      return resolveApiRequestLogLevel({
+        url: req.url,
+        statusCode: res.statusCode,
+        responseTimeMs: start ? Date.now() - start : 0,
+        err,
+      });
     },
     serializers: {
       req(req) {
@@ -133,13 +104,10 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
-if (
-  process.env["PYRUS_SERVE_WEB"] === "1" ||
-  process.env["RAYALGO_SERVE_WEB"] === "1"
-) {
+if (process.env["PYRUS_SERVE_WEB"] === "1") {
   const webPublicDir = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../rayalgo/dist/public",
+    "../../pyrus/dist/public",
   );
   const indexHtml = path.join(webPublicDir, "index.html");
 

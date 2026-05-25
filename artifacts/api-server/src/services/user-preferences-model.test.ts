@@ -23,6 +23,7 @@ describe("user preferences model", () => {
     assert.equal(preferences.time.showSeconds, true);
     assert.equal(preferences.chart.priceScaleMode, "log");
     assert.equal(preferences.chart.futureExpansionBars, 12);
+    assert.equal(preferences.chart.showFlowEvents, true);
     assert.equal(preferences.appearance.theme, DEFAULT_USER_PREFERENCES.appearance.theme);
   });
 
@@ -67,6 +68,20 @@ describe("user preferences model", () => {
           { strict: true },
         ),
       /Invalid user preference/,
+    );
+  });
+
+  it("normalizes and preserves chart flow event display preferences", () => {
+    assert.equal(DEFAULT_USER_PREFERENCES.chart.showFlowEvents, true);
+    assert.equal(
+      normalizeUserPreferences({ chart: { showFlowEvents: false } }).chart
+        .showFlowEvents,
+      false,
+    );
+    assert.equal(
+      normalizeUserPreferences({ chart: { showFlowEvents: "bad" } }).chart
+        .showFlowEvents,
+      true,
     );
   });
 });

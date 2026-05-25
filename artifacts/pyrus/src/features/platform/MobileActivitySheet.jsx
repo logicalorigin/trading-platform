@@ -1,0 +1,42 @@
+import { Drawer } from "../../components/platform/Drawer.jsx";
+import { T, sp } from "../../lib/uiTokens.jsx";
+import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
+
+export const MobileActivitySheet = ({
+  open,
+  onClose,
+  environment = "paper",
+  dataEnabled = open,
+  onOpenAlgo,
+  onOpenTradeSymbol,
+}) => (
+  <Drawer
+    open={open}
+    onClose={onClose}
+    side="right"
+    title="Algo Monitor"
+    testId="mobile-activity-sheet"
+    width={380}
+    fullBleed
+  >
+    <div
+      style={{
+        minHeight: "100%",
+        boxSizing: "border-box",
+        padding: sp("8px 8px max(12px, env(safe-area-inset-bottom))"),
+        background: T.bg0,
+      }}
+    >
+      <PlatformAlgoMonitorSidebar
+        isVisible={open}
+        dataEnabled={Boolean(open && dataEnabled)}
+        environment={environment}
+        onOpenAlgo={onOpenAlgo}
+        onOpenTradeSymbol={onOpenTradeSymbol}
+        compactLayout
+      />
+    </div>
+  </Drawer>
+);
+
+export default MobileActivitySheet;

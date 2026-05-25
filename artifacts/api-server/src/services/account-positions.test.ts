@@ -1,8 +1,56 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
+
+test("account position quote hydration opts out of Polygon fallback", () => {
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const equityBody = source.match(
+    /async function fetchEquityQuoteSnapshotsForPositions\([\s\S]*?\nasync function fetchOptionQuoteSnapshotsForPositions/,
+  )?.[0];
+  const optionBody = source.match(
+    /async function fetchOptionQuoteSnapshotsForPositions\([\s\S]*?\nasync function hydratePositionMarkets/,
+  )?.[0];
+  const underlyingBody = source.match(
+    /async function hydrateOptionUnderlyingPrices\([\s\S]*?\nasync function getCachedOptionChainContracts/,
+  )?.[0];
+
+  assert.ok(equityBody);
+  assert.ok(optionBody);
+  assert.ok(underlyingBody);
+  assert.match(equityBody, /allowPolygonFallback: false/);
+  assert.match(optionBody, /intent: "visible-live"/);
+  assert.match(underlyingBody, /allowPolygonFallback: false/);
+});
+
+test("live quote and flow defaults require explicit Polygon opt-in", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const quoteSnapshotsBody = source.match(
+    /export async function getQuoteSnapshots\([\s\S]*?\nexport async function getNews/,
+  )?.[0];
+  const prewarmBody = source.match(
+    /function scheduleIbkrWatchlistPrewarm\([\s\S]*?\nfunction scheduleIbkrWatchlistPrewarmFromDb/,
+  )?.[0];
+  const flowUniverseBody = source.match(
+    /const flowUniverseManager = createFlowUniverseManager\([\s\S]*?\nconst optionsFlowRadarObservationCache/,
+  )?.[0];
+  const liveFlowBody = source.match(
+    /async function listFlowEventsUncached\([\s\S]*?\ntype FlowScannerBenchmarkLineUsage/,
+  )?.[0];
+
+  assert.ok(quoteSnapshotsBody);
+  assert.match(quoteSnapshotsBody, /input\.allowPolygonFallback === true/);
+  assert.ok(prewarmBody);
+  assert.doesNotMatch(prewarmBody, /fallbackProvider: "polygon"/);
+  assert.match(prewarmBody, /fallbackProvider: "cache"/);
+  assert.ok(flowUniverseBody);
+  assert.match(flowUniverseBody, /fetchBridgeQuoteSnapshots/);
+  assert.doesNotMatch(flowUniverseBody, /getPolygonClient\(\)\.getQuoteSnapshots/);
+  assert.ok(liveFlowBody);
+  assert.match(liveFlowBody, /input\.allowPolygonFallback === true/);
+});
 
 test("account position internals remove closed broker rows", async () => {
   const { __accountPositionInternalsForTests } = await import("./account");
@@ -122,6 +170,74 @@ test("account position quote display model derives bid ask spread from snapshots
   assert.equal(quote?.ask, 501.1);
   assert.equal(Number(quote?.spread?.toFixed(2)), 0.2);
   assert.equal(quote?.source, "bridge_quote");
+});
+
+test("account position quote display model preserves option last and mark fields", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const quote = __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(
+    {
+      symbol: "O:SPY260522C00500000",
+      price: 1.11,
+      last: 1.09,
+      mark: 1.14,
+      bid: null,
+      ask: null,
+      dataUpdatedAt: new Date("2026-05-22T14:00:00.000Z"),
+      updatedAt: new Date("2026-05-22T14:00:01.000Z"),
+    } as any,
+    1,
+    "option_quote",
+  );
+
+  assert.equal(quote?.last, 1.09);
+  assert.equal(quote?.mark, 1.14);
+  assert.equal(quote?.source, "option_quote");
+});
+
+test("account position quote display model preserves zero bid ask from IBKR options", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const quote = __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(
+    {
+      symbol: "O:SPY260522C00500000",
+      price: 2.45,
+      last: null,
+      mark: 2.45,
+      bid: 0,
+      ask: 2.5,
+      bidSize: 0,
+      askSize: 20,
+      change: 0.15,
+      changePercent: 6.52,
+      open: null,
+      high: null,
+      low: null,
+      prevClose: 2.3,
+      volume: null,
+      openInterest: null,
+      impliedVolatility: null,
+      delta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+      providerContractId: "12345",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date("2026-05-22T14:00:00.000Z"),
+      ageMs: null,
+      cacheAgeMs: 0,
+      latency: null,
+      transport: "tws",
+      updatedAt: new Date("2026-05-22T14:00:01.000Z"),
+    } as any,
+    2.4,
+    "option_quote",
+  );
+
+  assert.equal(quote?.bid, 0);
+  assert.equal(quote?.ask, 2.5);
+  assert.equal(quote?.mark, 2.45);
+  assert.equal(quote?.spread, 2.5);
 });
 
 test("account position internals derive opened date from Flex open-position raw fields", async () => {

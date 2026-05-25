@@ -18,10 +18,10 @@
     "shadow:management-review": "tsx ./src/shadow-options-management-review.ts",
     "signal-options:apply-tuned-profile": "tsx ./src/apply-signal-options-tuned-profile.ts",
     "signal-options:exit-policy-sweep": "tsx ./src/signal-options-exit-policy-sweep.ts",
-    "rayreplica:signal-options-sweep": "tsx ./src/rayreplica-signal-options-sweep.ts",
+    "pyrus-signals:signal-options-sweep": "tsx ./src/pyrus-signals-options-sweep.ts",
     "test:signal-options-exit-policy-sweep": "node --import tsx --test ./src/signal-options-exit-policy-sweep.test.ts",
     "test:shadow-options-management-review": "node --import tsx --test ./src/shadow-options-management-review.test.ts",
-    "test:rayreplica-signal-options-sweep": "node --import tsx --test ./src/rayreplica-signal-options-sweep.test.ts",
+    "test:pyrus-signals-options-sweep": "node --import tsx --test ./src/pyrus-signals-options-sweep.test.ts",
     "test:universe-catalog": "node --import tsx --test ./src/universe-catalog-live.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

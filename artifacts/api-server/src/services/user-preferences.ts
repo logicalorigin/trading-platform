@@ -28,8 +28,8 @@ const readRecord = (value: unknown): Record<string, unknown> =>
     : {};
 
 const fallbackFile = () =>
-  process.env["RAYALGO_USER_PREFERENCES_FILE"] ||
-  join(tmpdir(), "rayalgo", "user-preferences.json");
+  process.env["PYRUS_USER_PREFERENCES_FILE"] ||
+  join(tmpdir(), "pyrus", "user-preferences.json");
 
 const readFallback = (): PreferenceSnapshot => {
   try {

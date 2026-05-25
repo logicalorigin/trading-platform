@@ -72,8 +72,8 @@ type LanePolicyPatch = Partial<
 
 function getLanePolicyFile(): string {
   return (
-    process.env["RAYALGO_IBKR_LANE_POLICY_FILE"]?.trim() ||
-    join(tmpdir(), "rayalgo", "ibkr-lane-policy.json")
+    process.env["PYRUS_IBKR_LANE_POLICY_FILE"]?.trim() ||
+    join(tmpdir(), "pyrus", "ibkr-lane-policy.json")
   );
 }
 
@@ -128,11 +128,12 @@ const DEFAULT_LANE_POLICY: IbkrLanePolicy = {
       sources: {
         ...DEFAULT_SOURCES,
         watchlists: true,
+        "flow-universe": true,
         system: true,
       },
       manualSymbols: [],
       excludedSymbols: [],
-      maxSymbols: 90,
+      maxSymbols: 200,
       priority: DEFAULT_PRIORITY,
     },
     "option-live-quotes": {
@@ -315,6 +316,33 @@ function isLegacyFlowScannerDefault(rawLane: Record<string, unknown>): boolean {
   );
 }
 
+function isLegacyEquityLiveQuotesDefault(
+  rawLane: Record<string, unknown>,
+): boolean {
+  const rawSources = safeRecord(rawLane.sources);
+  const normalizedSources = Object.fromEntries(
+    SOURCE_IDS.map((sourceId) => [
+      sourceId,
+      typeof rawSources[sourceId] === "boolean"
+        ? rawSources[sourceId]
+        : DEFAULT_SOURCES[sourceId],
+    ]),
+  ) as Record<IbkrLaneSourceId, boolean>;
+
+  return (
+    (typeof rawLane.enabled !== "boolean" || rawLane.enabled === true) &&
+    normalizedSources["built-in"] === false &&
+    normalizedSources["flow-universe"] === false &&
+    normalizedSources.watchlists === true &&
+    normalizedSources.manual === true &&
+    normalizedSources.system === true &&
+    normalizeSymbolList(rawLane.manualSymbols).length === 0 &&
+    normalizeSymbolList(rawLane.excludedSymbols).length === 0 &&
+    normalizeMaxSymbols("equity-live-quotes", rawLane.maxSymbols) === 90 &&
+    samePriority(normalizePriority(rawLane.priority), DEFAULT_PRIORITY)
+  );
+}
+
 function normalizePersistedPolicy(value: unknown): {
   policy: IbkrLanePolicy;
   migrated: boolean;
@@ -354,6 +382,12 @@ function normalizePersistedPolicy(value: unknown): {
   const rawFlowScannerLane = safeRecord(rawLanes["flow-scanner"]);
   if (isLegacyFlowScannerDefault(rawFlowScannerLane)) {
     lanes["flow-scanner"] = clonePolicy(DEFAULT_LANE_POLICY).lanes["flow-scanner"];
+    migrated = true;
+  }
+  const rawEquityLiveQuotesLane = safeRecord(rawLanes["equity-live-quotes"]);
+  if (isLegacyEquityLiveQuotesDefault(rawEquityLiveQuotesLane)) {
+    lanes["equity-live-quotes"] =
+      clonePolicy(DEFAULT_LANE_POLICY).lanes["equity-live-quotes"];
     migrated = true;
   }
 

@@ -9,7 +9,7 @@ const localPostgresRunDir = join(repoRoot, ".local/postgres/run");
 const localDatabaseUrl = `postgres:///dev?host=${localPostgresRunDir}&user=runner`;
 process.env["DATABASE_URL"] = defaultDatabaseUrl;
 delete process.env["LOCAL_DATABASE_URL"];
-delete process.env["RAYALGO_DATABASE_SOURCE"];
+delete process.env["PYRUS_DATABASE_SOURCE"];
 process.env["DB_CONNECTION_TIMEOUT_MS"] = "50";
 process.env["DB_QUERY_TIMEOUT_MS"] = "50";
 process.env["DB_STATEMENT_TIMEOUT_MS"] = "50";
@@ -42,7 +42,7 @@ const {
 test.afterEach(() => {
   process.env["DATABASE_URL"] = defaultDatabaseUrl;
   delete process.env["LOCAL_DATABASE_URL"];
-  delete process.env["RAYALGO_DATABASE_SOURCE"];
+  delete process.env["PYRUS_DATABASE_SOURCE"];
   clearPgEnv();
   __resetStorageHealthForTests();
 });
@@ -131,7 +131,7 @@ test("storage health prefers Replit PG env over stale local DATABASE_URL", async
 test("storage health honors the workspace-local database source override", async () => {
   process.env["DATABASE_URL"] = defaultDatabaseUrl;
   process.env["LOCAL_DATABASE_URL"] = localDatabaseUrl;
-  process.env["RAYALGO_DATABASE_SOURCE"] = "local";
+  process.env["PYRUS_DATABASE_SOURCE"] = "local";
   setHeliumPgEnv();
   __setStorageHealthProbeForTests(async () => {});
 

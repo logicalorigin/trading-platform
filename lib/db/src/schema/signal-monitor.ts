@@ -24,7 +24,7 @@ export const signalMonitorProfilesTable = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     watchlistId: uuid("watchlist_id").references(() => watchlistsTable.id),
     timeframe: varchar("timeframe", { length: 16 }).notNull().default("15m"),
-    rayReplicaSettings: jsonb("ray_replica_settings")
+    pyrusSignalsSettings: jsonb("pyrus_signals_settings")
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),

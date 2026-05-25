@@ -10,9 +10,9 @@ test("resolveApiBaseUrl honors the backtest-specific API override first", () => 
   assert.equal(
     resolveApiBaseUrl({
       API_BASE_URL: "http://127.0.0.1:9999/api",
-      BACKTEST_API_BASE_URL: "https://rayalgo.example/api",
+      BACKTEST_API_BASE_URL: "https://pyrus.example/api",
     }),
-    "https://rayalgo.example/api",
+    "https://pyrus.example/api",
   );
 });
 

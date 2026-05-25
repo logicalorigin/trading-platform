@@ -35,7 +35,7 @@ function withAggregateRuntimeEnv<T>(
   }
 
   const isolatedOverrideDir = mkdtempSync(
-    join(tmpdir(), "rayalgo-stock-aggregate-test-"),
+    join(tmpdir(), "pyrus-stock-aggregate-test-"),
   );
   const isolatedOverrideFile = join(isolatedOverrideDir, "runtime.json");
 

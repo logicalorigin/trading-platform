@@ -106,7 +106,7 @@ export function resolveDatabaseRuntimeConfig(
   const localDatabaseUrl = env["LOCAL_DATABASE_URL"] || null;
   const postgresEnvDatabaseUrl = buildPostgresEnvDatabaseUrl(env);
   const override = normalizeDatabaseSourceOverride(
-    env["PYRUS_DATABASE_SOURCE"] ?? env["RAYALGO_DATABASE_SOURCE"],
+    env["PYRUS_DATABASE_SOURCE"] ?? env["PYRUS_DATABASE_SOURCE"],
   );
   const useLocalOverride = override === "local" && Boolean(localDatabaseUrl);
   const databaseUrlSource = classifyDatabaseRuntimeSourceFromUrl(databaseUrl);

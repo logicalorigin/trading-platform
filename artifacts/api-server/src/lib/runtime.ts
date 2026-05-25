@@ -125,7 +125,7 @@ const IGNORED_IBKR_BRIDGE_URL_ENV_NAMES = [
 ];
 const IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES = [
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
-  "RAYALGO_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
 ];
 let ibkrBridgeRuntimeOverride: IbkrBridgeRuntimeOverrideSnapshot | null = null;
 let ibkrBridgeRuntimeOverrideLoaded = false;
@@ -153,7 +153,7 @@ function getOptionalEnv(names: string[]): string | null {
 function getIbkrBridgeRuntimeOverrideFile(): string {
   return (
     getOptionalEnv(IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES) ??
-    join(tmpdir(), "rayalgo", "ibkr-bridge-runtime-override.json")
+    join(tmpdir(), "pyrus", "ibkr-bridge-runtime-override.json")
   );
 }
 

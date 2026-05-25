@@ -14,7 +14,7 @@ import { updateSignalOptionsExecutionProfile } from "../../artifacts/api-server/
 
 type DeploymentRow = typeof algoDeploymentsTable.$inferSelect;
 
-const TARGET_DEPLOYMENT_NAME = "RayReplica Signal Options Shadow Paper";
+const TARGET_DEPLOYMENT_NAME = "Pyrus Signals Options Shadow Paper";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -108,7 +108,7 @@ async function main() {
   const commit = shouldCommit();
   const target = {
     signalTimeframe: tunedSignalOptionsStrategySettings.signalTimeframe,
-    ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
+    ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
     profilePatch: tunedSignalOptionsExecutionProfilePatch,
   };
 
@@ -131,7 +131,7 @@ async function main() {
   await updateAlgoDeploymentStrategySettings({
     deploymentId: deployment.id,
     signalTimeframe: tunedSignalOptionsStrategySettings.signalTimeframe,
-    ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
+    ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
   });
   await updateSignalOptionsExecutionProfile({
     deploymentId: deployment.id,

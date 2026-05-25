@@ -1,0 +1,1857 @@
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  getGetAccountAllocationQueryOptions,
+  getGetAccountOrdersQueryOptions,
+  getGetAccountEquityHistoryQueryOptions,
+  getGetAccountPositionsQueryOptions,
+  getGetAccountRiskQueryOptions,
+  getGetAccountSummaryQueryOptions,
+  useCancelAccountOrder,
+  useGetAccountAllocation,
+  useGetAccountCashActivity,
+  useGetAccountClosedTrades,
+  useGetAccountEquityHistory,
+  useGetAccountOrders,
+  useGetAccountPositions,
+  useGetAccountPositionsAtDate,
+  useGetAccountRisk,
+  useGetAccountSummary,
+  useGetFlexHealth,
+  useTestFlexToken,
+} from "@workspace/api-client-react";
+import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
+import {
+  useAccountPageSnapshotStream,
+  useBrokerStreamFreshnessSnapshot,
+} from "../features/platform/live-streams";
+import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
+import { markRouteDataTiming } from "../features/platform/performanceMetrics";
+import { setAccountSectionTransitionSnapshot } from "../features/platform/accountSectionTransitionStore.js";
+import { useToast } from "../features/platform/platformContexts.jsx";
+import DeferredRender from "../components/platform/DeferredRender";
+import { platformJsonRequest } from "../features/platform/platformJsonRequest";
+import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
+import {
+  FONT_WEIGHTS,
+  PYRUS_WORKSPACE_SETTINGS_EVENT,
+  PYRUS_STORAGE_KEY,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../lib/uiTokens.jsx";
+import { formatAppDateTime } from "../lib/timeZone";
+import AccountHeroBlock from "./account/AccountHeroBlock";
+import AccountReturnsPanel from "./account/AccountReturnsPanel";
+import {
+  PositionOptionQuoteStreams,
+  buildPositionOptionQuoteGroups,
+} from "./account/PositionOptionQuoteStreams.jsx";
+import { buildAccountReturnsModel } from "./account/accountReturnsModel";
+import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
+import {
+  ACCOUNT_RANGES,
+  Panel,
+  Pill,
+  formatAccountMoney,
+  formatAccountPercent,
+  formatNumber,
+  normalizeAccountRange,
+} from "./account/accountUtils";
+import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
+import {
+  buildAccountAnalysisQueryParams,
+  defaultTradingAnalysisFilters,
+  filterAccountAnalysisTrades,
+  tradingAnalysisFilterReducer,
+} from "./account/tradingAnalysisModel";
+import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
+import {
+  buildPerformanceCalendarParams,
+  performanceCalendarQueriesEnabled as resolvePerformanceCalendarQueriesEnabled,
+  resolveReturnsCalendarData,
+} from "./account/accountCalendarData";
+import { useAccountSection } from "../features/platform/useAccountSection.js";
+
+const LazyTodaySnapshotPanel = lazy(() => import("./account/TodaySnapshotPanel"));
+const LazyPortfolioExposurePanel = lazy(() =>
+  import("./account/PortfolioExposurePanel"),
+);
+const LazyEquityCurvePanel = lazy(() => import("./account/EquityCurvePanel"));
+const LazyPositionsPanel = lazy(() => import("./account/PositionsPanel"));
+const LazyPositionsAtDateInspector = lazy(() =>
+  import("./account/PositionsPanel").then((module) => ({
+    default: module.PositionsAtDateInspector,
+  })),
+);
+const LazyTradingAnalysisWorkbench = lazy(() =>
+  import("./account/TradingAnalysisWorkbench"),
+);
+const LazyOrdersPanel = lazy(() =>
+  import("./account/TradesOrdersPanel").then((module) => ({
+    default: module.OrdersPanel,
+  })),
+);
+const LazyCashFundingPanel = lazy(() => import("./account/CashFundingPanel"));
+const LazySetupHealthPanel = lazy(() => import("./account/SetupHealthPanel"));
+
+const AccountPanelSuspenseFallback = ({ minHeight = 160 }) => (
+  <div
+    aria-hidden="true"
+    className="ra-deferred-render__placeholder"
+    style={{ minHeight: dim(minHeight) }}
+  >
+    <span className="ra-deferred-render__skeleton ra-skeleton-shimmer" />
+  </div>
+);
+
+const DeferredPanelSuspense = ({ children, minHeight = 160 }) => (
+  <Suspense fallback={<AccountPanelSuspenseFallback minHeight={minHeight} />}>
+    {children}
+  </Suspense>
+);
+
+const ACCOUNT_LIVE_STALE_MS = 5_000;
+const ACCOUNT_DERIVED_STALE_MS = 120_000;
+const ACCOUNT_HISTORY_STALE_MS = 120_000;
+
+const retainPreviousData = (previousData) => previousData;
+const retainPreviousRangeData = (range) => (previousData) =>
+  previousData?.range === range ? previousData : undefined;
+const retainPreviousDateData = (date) => (previousData) =>
+  previousData?.date === date ? previousData : undefined;
+
+const QUERY_OPTIONS = {
+  query: {
+    staleTime: ACCOUNT_LIVE_STALE_MS,
+    refetchInterval: ACCOUNT_LIVE_STALE_MS,
+    retry: false,
+  },
+};
+const ACCOUNT_DERIVED_QUERY_OPTIONS = {
+  query: {
+    staleTime: ACCOUNT_DERIVED_STALE_MS,
+    retry: false,
+  },
+};
+const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
+  query: {
+    staleTime: 90_000,
+    retry: false,
+  },
+};
+const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
+const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000;
+const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
+const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 35_000;
+
+const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
+  SPY: true,
+  QQQ: false,
+  DJIA: false,
+};
+
+const SHADOW_ACCOUNT_ID = "shadow";
+const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
+  if (shadowMode) {
+    return "paper";
+  }
+  return environment === "paper" ? "paper" : "live";
+};
+
+const readAccountWorkspaceDefault = (key, fallback) => {
+  try {
+    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed[key] ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeAccountWorkspaceDefault = (key, value) => {
+  try {
+    const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    window.localStorage.setItem(
+      PYRUS_STORAGE_KEY,
+      JSON.stringify({ ...parsed, [key]: value }),
+    );
+  } catch {}
+};
+
+const summarizeLineOwnerClassesForTiming = (ownerClasses) => {
+  const summaries = ownerClasses?.summaries || {};
+  return Object.fromEntries(
+    [
+      "account-monitor",
+      "visible",
+      "watchlist-prewarm",
+      "watchlist-filler",
+      "flow-scanner",
+      "convenience",
+    ].map((key) => [
+      key,
+      Number(summaries[key]?.activeLineCount || 0),
+    ]),
+  );
+};
+
+const ShadowWatchlistBacktestPanel = ({
+  mutation,
+  currency,
+  maskValues = false,
+}) => {
+  const run = mutation.data;
+  const summary = run?.summary || {};
+  const sizing = run?.sizing || {};
+  const running = mutation.isPending;
+  const error = mutation.error;
+  const pnl = Number(summary.realizedPnl || 0);
+  const runLabel =
+    run?.marketDateFrom && run?.marketDateTo && run.marketDateFrom !== run.marketDateTo
+      ? `${run.marketDateFrom} -> ${run.marketDateTo}`
+      : run?.marketDate || "One-off ledger run";
+  const runButtonStyle = {
+    minHeight: dim(32),
+    padding: sp("6px 14px"),
+    border: `1px solid ${running ? T.textMuted : T.pink}`,
+    borderRadius: dim(RADII.sm),
+    background: running ? T.bg1 : `${T.pink}22`,
+    color: running ? T.textMuted : T.pink,
+    fontSize: fs(10),
+    fontFamily: T.sans,
+    fontWeight: FONT_WEIGHTS.medium,
+    letterSpacing: "0.04em",
+    cursor: running ? "wait" : "pointer",
+    textTransform: "uppercase",
+  };
+  return (
+    <Panel
+      title="Watchlist Backtest"
+      rightRail={runLabel}
+      minHeight={150}
+      error={error}
+      action={
+        <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-today"
+            style={runButtonStyle}
+          >
+            {running ? "Running" : "Today"}
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "past_week" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-week"
+            style={runButtonStyle}
+          >
+            Week
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "last_month" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-month"
+            style={runButtonStyle}
+          >
+            Month
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "ytd" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-ytd"
+            style={runButtonStyle}
+          >
+            YTD
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "5m", range: "ytd", sweep: true })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-ytd-5m-sweep"
+            style={{
+              ...runButtonStyle,
+              borderColor: running ? T.textMuted : T.cyan,
+              background: running ? T.bg2 : `${T.cyan}22`,
+              color: running ? T.textMuted : T.cyan,
+            }}
+          >
+            5m Sweep
+          </button>
+        </div>
+      }
+    >
+      <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
+          <Pill tone="pink">Watchlist Backtest</Pill>
+          <Pill tone="green">Spot Equity</Pill>
+          <Pill tone="cyan">{run?.timeframe || "15m"} Pyrus Signals</Pill>
+          {run?.sweep ? <Pill tone="purple">Regime Sweep</Pill> : null}
+          <Pill tone="purple">Ledger Synthetic</Pill>
+        </div>
+        <div style={{ color: T.textSec, fontSize: textSize("caption"), lineHeight: 1.35 }}>
+          Runs all saved watchlists from the New York regular-session open through
+          the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
+          activity, isolated from prior backtest rows, and sized around current Shadow exposure.
+        </div>
+        {run ? (
+          <>
+            <div
+              className="ra-hide-scrollbar"
+              style={{
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                background: T.bg0,
+                borderRadius: dim(RADII.xs),
+                minWidth: 0,
+              }}
+            >
+              {[
+                ["Signals", summary.signals, T.cyan],
+                ["Orders", summary.ordersCreated, T.text],
+                ["Open", summary.openSyntheticPositions, T.purple],
+                ["Skipped", summary.skippedSignals, T.amber],
+              ].map(([label, value, color], index) => (
+                <div
+                  key={label}
+                  style={{
+                    flex: "1 1 auto",
+                    minWidth: dim(64),
+                    padding: sp("4px 9px"),
+                    borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                  }}
+                >
+                  <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                    {label.toUpperCase()}
+                  </div>
+                  <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
+                    {formatNumber(value || 0, 0)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div
+              className="ra-hide-scrollbar"
+              style={{
+                display: "flex",
+                flexWrap: "nowrap",
+                overflowX: "auto",
+                gap: sp(8),
+                color: T.textSec,
+                fontSize: textSize("caption"),
+                fontFamily: T.sans,
+                minWidth: 0,
+              }}
+            >
+              <span style={{ flexShrink: 0 }}>
+                P&L{" "}
+                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                  {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
+                </span>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                Fees {formatAccountMoney(summary.fees, currency, true, maskValues)}
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                Win {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                Exp{" "}
+                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                  {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
+                </span>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Closed {formatNumber(summary.closedTrades || 0, 0)}</span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                NAV{" "}
+                <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                  {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
+                </span>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>
+                Max DD{" "}
+                <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                  {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
+                </span>
+              </span>
+              <span style={{ flexShrink: 0 }}>·</span>
+              <span style={{ flexShrink: 0 }}>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</span>
+            </div>
+            {run.sweep ? (
+              <div
+                style={{
+                  border: "none",
+                  borderRadius: dim(RADII.xs),
+                  background: T.bg0,
+                  padding: sp(6),
+                  display: "grid",
+                  gap: sp(4),
+                }}
+              >
+                <div style={{ color: T.text, fontSize: textSize("caption"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
+                  Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
+                </div>
+                {(run.sweep.variants || []).slice(0, 3).map((variant) => (
+                  <div
+                    key={variant.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
+                      gap: sp(4),
+                      color: variant.rank === 1 ? T.green : T.textSec,
+                      fontSize: textSize("body"),
+                      fontFamily: T.sans,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      #{variant.rank} {variant.id}
+                    </span>
+                    <span>{formatAccountMoney(variant.summary?.endingNetLiquidation, currency, true, maskValues)}</span>
+                    <span>DD {formatAccountPercent(variant.summary?.maxDrawdownPercent, 1, maskValues)}</span>
+                    <span>Win {formatAccountPercent(variant.summary?.winRatePercent, 0, maskValues)}</span>
+                    <span>{formatNumber(variant.summary?.ordersCreated || 0, 0)} fills</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div style={{ color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
+              {formatAppDateTime(run.window?.start)}
+              {" -> "}
+              {formatAppDateTime(run.window?.end)}
+              {" · "}
+              {formatNumber(run.universe?.symbolCount || 0, 0)} symbols across{" "}
+              {formatNumber(run.universe?.watchlistCount || 0, 0)} watchlists
+            </div>
+          </>
+        ) : (
+          <div style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+            No run has been executed in this browser session.
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+};
+
+const AccountScreenInner = ({
+  session,
+  accounts = [],
+  selectedAccountId,
+  onSelectTradingAccount,
+  environment,
+  brokerConfigured,
+  brokerAuthenticated,
+  gatewayTradingReady = false,
+  gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  isVisible = false,
+  onJumpToTrade,
+  onReadinessChange,
+}) => {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { preferences: userPreferences } = useUserPreferences();
+  const maskAccountValues = Boolean(
+    userPreferences.appearance.maskBalances ||
+      userPreferences.privacy.hideAccountValues,
+  );
+  const [accountViewId, setAccountViewId] = useState("combined");
+  const [range, setRange] = useState(() =>
+    normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")),
+  );
+  const [assetFilter, setAssetFilter] = useState(() =>
+    readAccountWorkspaceDefault("accountAssetFilter", "all"),
+  );
+  const [orderTab, setOrderTab] = useState(() =>
+    readAccountWorkspaceDefault("accountOrderTab", "working"),
+  );
+  const [tradeFilters, dispatchTradeFilters] = useReducer(
+    tradingAnalysisFilterReducer,
+    undefined,
+    defaultTradingAnalysisFilters,
+  );
+  const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
+  const [hoveredEquityDate, setHoveredEquityDate] = useState(null);
+  const [pinnedEquityDate, setPinnedEquityDate] = useState(null);
+  const [activatedAccountPanels, setActivatedAccountPanels] = useState({});
+  const [visibleEquityBenchmarks, setVisibleEquityBenchmarks] = useState(
+    DEFAULT_EQUITY_BENCHMARK_VISIBILITY,
+  );
+  const [accountLayoutRef, accountLayoutSize] = useElementSize();
+  const accountElementFlags = responsiveFlags(accountLayoutSize.width);
+  const viewport = useViewport();
+  const accountIsPhone = viewport.flags.isPhone || accountElementFlags.isPhone;
+  const accountIsNarrow = viewport.flags.isNarrow || accountElementFlags.isNarrow;
+  const [accountSection, setAccountSection] = useAccountSection();
+  const [settledAccountSection, setSettledAccountSection] = useState(accountSection);
+
+  useEffect(() => {
+    writeAccountWorkspaceDefault("accountRange", range);
+  }, [range]);
+
+  useEffect(() => {
+    writeAccountWorkspaceDefault("accountAssetFilter", assetFilter);
+  }, [assetFilter]);
+
+  useEffect(() => {
+    writeAccountWorkspaceDefault("accountOrderTab", orderTab);
+  }, [orderTab]);
+
+  useEffect(() => {
+    if (accountSection === "shadow" && orderTab === "working") {
+      setOrderTab("history");
+    }
+  }, [accountSection, orderTab]);
+
+  useEffect(() => {
+    const listener = () => {
+      setRange(normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")));
+      setAssetFilter(readAccountWorkspaceDefault("accountAssetFilter", "all"));
+      setOrderTab(readAccountWorkspaceDefault("accountOrderTab", "working"));
+    };
+    window.addEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+    return () => {
+      window.removeEventListener(PYRUS_WORKSPACE_SETTINGS_EVENT, listener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accounts.length && accountViewId !== "combined") {
+      setAccountViewId("combined");
+    }
+  }, [accountViewId, accounts]);
+  const markAccountPanelActivated = useCallback((panelId) => {
+    setActivatedAccountPanels((current) =>
+      current[panelId] ? current : { ...current, [panelId]: true },
+    );
+  }, []);
+
+  const activeAccountId = accountViewId || selectedAccountId || "combined";
+  const shadowMode = accountSection === "shadow";
+  const effectiveOrderTab =
+    shadowMode && orderTab === "working" ? "history" : orderTab;
+  const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
+  const inactiveAccountSection = shadowMode ? "real" : "shadow";
+  const accountQueriesEnabled = Boolean(
+    isVisible &&
+      accountRequestId &&
+      (shadowMode || brokerConfigured || brokerAuthenticated || accounts.length),
+  );
+  const modeParams = useMemo(
+    () => ({
+      mode: resolveAccountMode({ shadowMode, environment }),
+    }),
+    [environment, shadowMode],
+  );
+  const shadowSourceLabel = shadowMode ? "Shadow Ledger" : "Flex";
+  const accountDataParams = useMemo(
+    () => ({ ...modeParams }),
+    [modeParams],
+  );
+  const equityHistoryQuerySettings = useMemo(
+    () => ({
+      staleTime: ACCOUNT_HISTORY_STALE_MS,
+      retry: false,
+    }),
+    [],
+  );
+  const closedTradeParams = useMemo(
+    () =>
+      buildAccountAnalysisQueryParams({
+        modeParams: accountDataParams,
+        filters: tradeFilters,
+        range,
+      }),
+    [accountDataParams, range, tradeFilters],
+  );
+  const performanceCalendarParams = useMemo(
+    () => buildPerformanceCalendarParams(accountDataParams),
+    [accountDataParams],
+  );
+  const getAccountSectionRequest = useCallback(
+    (section) => {
+      const nextShadowMode = section === "shadow";
+      const nextAccountId = nextShadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
+      if (!nextAccountId) {
+        return null;
+      }
+      return {
+        accountId: nextAccountId,
+        mode: resolveAccountMode({
+          shadowMode: nextShadowMode,
+          environment,
+        }),
+        orderTab: nextShadowMode && orderTab === "working" ? "history" : orderTab,
+        assetClass: assetFilter === "all" ? undefined : assetFilter,
+      };
+    },
+    [activeAccountId, assetFilter, environment, orderTab],
+  );
+  const inactiveAccountPageRequest = useMemo(
+    () => getAccountSectionRequest(inactiveAccountSection),
+    [getAccountSectionRequest, inactiveAccountSection],
+  );
+  const prefetchAccountSectionLiveQueries = useCallback(
+    (section) => {
+      const target = getAccountSectionRequest(section);
+      if (!target) {
+        return;
+      }
+
+      const mode = { mode: target.mode };
+      const positionsParams = {
+        ...mode,
+        assetClass: target.assetClass,
+      };
+      const queryOptions = [
+        getGetAccountSummaryQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountAllocationQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountRiskQueryOptions(
+          target.accountId,
+          mode,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountPositionsQueryOptions(
+          target.accountId,
+          positionsParams,
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountOrdersQueryOptions(
+          target.accountId,
+          {
+            ...mode,
+            tab: target.orderTab,
+          },
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+        getGetAccountEquityHistoryQueryOptions(
+          target.accountId,
+          {
+            ...mode,
+            range: "1D",
+          },
+          ACCOUNT_SWITCH_PREFETCH_OPTIONS,
+        ),
+      ];
+
+      queryOptions.forEach((options) => {
+        queryClient.prefetchQuery(options);
+      });
+    },
+    [getAccountSectionRequest, queryClient],
+  );
+  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
+  const accountPageStreamEnabled = Boolean(
+    isVisible && accountQueriesEnabled,
+  );
+  const accountPageStreamFreshness = useAccountPageSnapshotStream({
+    accountId: accountRequestId,
+    mode: modeParams.mode,
+    range,
+    orderTab: effectiveOrderTab,
+    assetClass: assetFilter === "all" ? undefined : assetFilter,
+    tradeFilters: {
+      from: closedTradeParams.from,
+      to: closedTradeParams.to,
+      symbol: closedTradeParams.symbol,
+      assetClass: closedTradeParams.assetClass,
+      pnlSign: closedTradeParams.pnlSign,
+      holdDuration: closedTradeParams.holdDuration,
+    },
+    performanceCalendarFrom: performanceCalendarParams.from,
+    enabled: accountPageStreamEnabled,
+  });
+  useAccountPageSnapshotStream({
+    accountId: inactiveAccountPageRequest?.accountId,
+    mode: inactiveAccountPageRequest?.mode || modeParams.mode,
+    range,
+    orderTab: inactiveAccountPageRequest?.orderTab,
+    assetClass: inactiveAccountPageRequest?.assetClass,
+    tradeFilters: {
+      from: closedTradeParams.from,
+      to: closedTradeParams.to,
+      symbol: closedTradeParams.symbol,
+      assetClass: closedTradeParams.assetClass,
+      pnlSign: closedTradeParams.pnlSign,
+      holdDuration: closedTradeParams.holdDuration,
+    },
+    performanceCalendarFrom: performanceCalendarParams.from,
+    enabled: Boolean(accountPageStreamEnabled && inactiveAccountPageRequest),
+  });
+  const accountSectionPending = Boolean(
+    isVisible && accountSection !== settledAccountSection,
+  );
+  const [accountCriticalFallbackReady, setAccountCriticalFallbackReady] = useState(false);
+  const [accountLiveFallbackReady, setAccountLiveFallbackReady] = useState(false);
+  const [accountDerivedFallbackReady, setAccountDerivedFallbackReady] = useState(false);
+  const accountTimingStagesRef = useRef(new Set());
+  useEffect(() => {
+    if (!isVisible) {
+      accountTimingStagesRef.current = new Set();
+    }
+  }, [isVisible]);
+  useEffect(() => {
+    if (
+      !accountPageStreamEnabled ||
+      accountSectionPending ||
+      accountPageStreamFreshness.accountCriticalFresh
+    ) {
+      setAccountCriticalFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountCriticalFallbackReady(true);
+    }, ACCOUNT_CRITICAL_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    accountPageStreamEnabled,
+    accountPageStreamFreshness.accountCriticalFresh,
+    accountSectionPending,
+  ]);
+  useEffect(() => {
+    if (
+      !accountPageStreamEnabled ||
+      accountSectionPending ||
+      accountPageStreamFreshness.accountLiveFresh
+    ) {
+      setAccountLiveFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountLiveFallbackReady(true);
+    }, ACCOUNT_LIVE_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    accountPageStreamEnabled,
+    accountPageStreamFreshness.accountLiveFresh,
+    accountSectionPending,
+  ]);
+  useEffect(() => {
+    if (
+      !accountPageStreamEnabled ||
+      accountSectionPending ||
+      accountPageStreamFreshness.accountDerivedFresh
+    ) {
+      setAccountDerivedFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setAccountDerivedFallbackReady(true);
+    }, ACCOUNT_DERIVED_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    accountPageStreamEnabled,
+    accountPageStreamFreshness.accountDerivedFresh,
+    accountSectionPending,
+  ]);
+  const accountCriticalReady = Boolean(
+    !accountPageStreamEnabled ||
+      accountPageStreamFreshness.accountCriticalFresh ||
+      accountCriticalFallbackReady,
+  );
+  const accountDerivedReady = Boolean(
+    !accountPageStreamEnabled ||
+      accountPageStreamFreshness.accountDerivedFresh ||
+      accountDerivedFallbackReady,
+  );
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible && accountCriticalReady),
+      derivedReady: Boolean(isVisible && accountDerivedReady),
+      backgroundAllowed: Boolean(isVisible && accountDerivedReady),
+    });
+  }, [
+    accountCriticalReady,
+    accountDerivedReady,
+    isVisible,
+    onReadinessChange,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !accountQueriesEnabled) {
+      return undefined;
+    }
+    prefetchAccountSectionLiveQueries(inactiveAccountSection);
+    return undefined;
+  }, [
+    accountQueriesEnabled,
+    inactiveAccountSection,
+    isVisible,
+    prefetchAccountSectionLiveQueries,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !accountQueriesEnabled) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      prefetchAccountSectionLiveQueries(inactiveAccountSection);
+    }, ACCOUNT_SWITCH_KEEP_WARM_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    accountQueriesEnabled,
+    inactiveAccountSection,
+    isVisible,
+    prefetchAccountSectionLiveQueries,
+  ]);
+  const accountRuntimeControl = useRuntimeControlSnapshot({
+    enabled: Boolean(
+      accountPageStreamEnabled &&
+        !shadowMode &&
+        accountCriticalReady,
+    ),
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: true,
+    lineUsageStreamEnabled: true,
+    lineUsagePollInterval: 2_000,
+  });
+  const accountWarmupPending = Boolean(
+    accountRuntimeControl.lineUsage?.warmup?.accountPendingLineCount > 0,
+  );
+  const markAccountTiming = useCallback((stage, detail) => {
+    if (accountTimingStagesRef.current.has(stage)) {
+      return;
+    }
+    accountTimingStagesRef.current.add(stage);
+    markRouteDataTiming("account", stage, detail);
+  }, []);
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+    markAccountTiming("route-module-loaded");
+  }, [isVisible, markAccountTiming]);
+  const accountTimingDetail = useMemo(() => {
+    const lineUsage = accountRuntimeControl.lineUsage || {};
+    return {
+      bridgeActiveLineCount: lineUsage.bridge?.activeLineCount ?? null,
+      bridgeLineBudget: lineUsage.bridge?.lineBudget ?? null,
+      ownerClasses: summarizeLineOwnerClassesForTiming(lineUsage.ownerClasses),
+    };
+  }, [
+    accountRuntimeControl.lineUsage,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !accountCriticalReady) {
+      return;
+    }
+    markAccountTiming("critical-data-ready", {
+      ...accountTimingDetail,
+      source: accountPageStreamFreshness.accountCriticalFresh
+        ? "stream"
+        : "rest-fallback",
+    });
+  }, [
+    accountCriticalReady,
+    accountPageStreamFreshness.accountCriticalFresh,
+    accountTimingDetail,
+    isVisible,
+    markAccountTiming,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !accountDerivedReady) {
+      return;
+    }
+    markAccountTiming("derived-data-ready", {
+      ...accountTimingDetail,
+      source: accountPageStreamFreshness.accountDerivedFresh
+        ? "stream"
+        : "rest-fallback",
+    });
+  }, [
+    accountDerivedReady,
+    accountPageStreamFreshness.accountDerivedFresh,
+    accountTimingDetail,
+    isVisible,
+    markAccountTiming,
+  ]);
+  const refreshPolicy = useMemo(
+    () =>
+      buildAccountRefreshPolicy({
+        isVisible,
+        accountPageStreamFresh: accountPageStreamFreshness.accountCriticalFresh,
+        accountWarmupPending,
+        accountStreamFresh: brokerStreamFreshness.accountFresh,
+        orderStreamFresh: brokerStreamFreshness.orderFresh,
+        shadowMode,
+      }),
+    [
+      accountWarmupPending,
+      accountPageStreamFreshness.accountCriticalFresh,
+      brokerStreamFreshness.accountFresh,
+      brokerStreamFreshness.orderFresh,
+      isVisible,
+      shadowMode,
+    ],
+  );
+  const liveRefreshInterval = refreshPolicy.primary;
+  const secondaryRefreshInterval = refreshPolicy.secondary;
+  const tradesRefreshInterval = refreshPolicy.trades;
+  const chartRefreshInterval = refreshPolicy.chart;
+  const healthRefreshInterval = refreshPolicy.health;
+  const criticalAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled && accountCriticalReady,
+  );
+  const liveAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountLiveFallbackReady && !accountPageStreamFreshness.accountLiveFresh)),
+  );
+  const derivedAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountDerivedFallbackReady && !accountPageStreamFreshness.accountDerivedFresh)),
+  );
+  const equityHistoryQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
+  const secondaryAccountQueriesEnabled = Boolean(derivedAccountQueriesEnabled);
+  const benchmarkQueriesEnabled = Boolean(equityHistoryQueriesEnabled);
+  const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
+    secondaryAccountQueriesEnabled,
+  );
+  const todayPanelQueriesEnabled = Boolean(
+    liveAccountQueriesEnabled && activatedAccountPanels.today,
+  );
+  const tradingAnalysisQueriesEnabled = Boolean(
+    secondaryAccountQueriesEnabled && activatedAccountPanels.tradingAnalysis,
+  );
+  const ordersPanelQueriesEnabled = Boolean(
+    criticalAccountQueriesEnabled &&
+      (activatedAccountPanels.orders || activatedAccountPanels.tradingAnalysis),
+  );
+  const supportPanelQueriesEnabled = Boolean(
+    secondaryAccountQueriesEnabled && activatedAccountPanels.support,
+  );
+  useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
+    kind: "poll",
+    label: "Account live",
+    detail: refreshPolicy.streamBacked
+      ? "1s stream"
+      : shadowMode
+        ? "30s fallback"
+        : "15s fallback",
+    priority: 4,
+  });
+  useRuntimeWorkloadFlag("account:equity", Boolean(chartRefreshInterval), {
+    kind: "poll",
+    label: "Account equity",
+    detail: refreshPolicy.streamBacked ? "1s stream" : "60s",
+    priority: 6,
+  });
+
+  const healthQuery = useGetFlexHealth({
+    query: {
+      staleTime: 15_000,
+      refetchInterval: healthRefreshInterval,
+      enabled: Boolean(!shadowMode && supportPanelQueriesEnabled),
+      retry: false,
+    },
+  });
+  const summaryQuery = useGetAccountSummary(accountRequestId, accountDataParams, {
+    query: {
+      ...QUERY_OPTIONS.query,
+      refetchInterval: liveRefreshInterval,
+      enabled: criticalAccountQueriesEnabled,
+      placeholderData: retainPreviousData,
+    },
+  });
+  const equityQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range,
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: equityHistoryQueriesEnabled,
+        placeholderData: retainPreviousRangeData(range),
+      },
+    },
+  );
+  const intradayPnlQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range: "1D",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: liveRefreshInterval,
+        enabled: todayPanelQueriesEnabled,
+        placeholderData: retainPreviousRangeData("1D"),
+      },
+    },
+  );
+  const spyBenchmarkQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range,
+      benchmark: "SPY",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.SPY),
+        placeholderData: retainPreviousRangeData(range),
+      },
+    },
+  );
+  const qqqBenchmarkQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range,
+      benchmark: "QQQ",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.QQQ),
+        placeholderData: retainPreviousRangeData(range),
+      },
+    },
+  );
+  const djiaBenchmarkQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range,
+      benchmark: "DIA",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: Boolean(benchmarkQueriesEnabled && visibleEquityBenchmarks.DJIA),
+        placeholderData: retainPreviousRangeData(range),
+      },
+    },
+  );
+  const allocationQuery = useGetAccountAllocation(accountRequestId, modeParams, {
+    query: {
+      ...QUERY_OPTIONS.query,
+      refetchInterval: secondaryRefreshInterval,
+      enabled: criticalAccountQueriesEnabled,
+      placeholderData: retainPreviousData,
+    },
+  });
+  const positionsQuery = useGetAccountPositions(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      assetClass: assetFilter === "all" ? undefined : assetFilter,
+    },
+    {
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: liveRefreshInterval,
+        enabled: criticalAccountQueriesEnabled,
+        placeholderData: retainPreviousData,
+      },
+    },
+  );
+  const activeEquityInspectionDate = pinnedEquityDate || hoveredEquityDate;
+  const positionsAtDateQuery = useGetAccountPositionsAtDate(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      date: activeEquityInspectionDate || "1970-01-01",
+      assetClass: assetFilter === "all" ? undefined : assetFilter,
+    },
+    {
+      query: {
+        staleTime: ACCOUNT_HISTORY_STALE_MS,
+        retry: false,
+        enabled: Boolean(
+          secondaryAccountQueriesEnabled && activeEquityInspectionDate,
+        ),
+        placeholderData: retainPreviousDateData(activeEquityInspectionDate),
+      },
+    },
+  );
+  const performanceCalendarEquityQuery = useGetAccountEquityHistory(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      range: "1Y",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: performanceCalendarQueriesEnabled,
+        placeholderData: retainPreviousRangeData("1Y"),
+      },
+    },
+  );
+  useEffect(() => {
+    const selectedPoints = equityQuery.data?.points || [];
+    const fallbackPoints = performanceCalendarEquityQuery.data?.points || [];
+    if (
+      shadowMode &&
+      (range === "1D" || range === "1W") &&
+      equityQuery.data?.range === range &&
+      selectedPoints.length === 0 &&
+      performanceCalendarEquityQuery.data?.range === "1Y" &&
+      fallbackPoints.length > 0
+    ) {
+      setRange("1Y");
+    }
+  }, [
+    equityQuery.data,
+    performanceCalendarEquityQuery.data,
+    range,
+    shadowMode,
+  ]);
+  const performanceCalendarTradesQuery = useGetAccountClosedTrades(
+    accountRequestId,
+    performanceCalendarParams,
+    {
+      query: {
+        ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+        refetchInterval: chartRefreshInterval,
+        enabled: performanceCalendarQueriesEnabled,
+        placeholderData: retainPreviousData,
+      },
+    },
+  );
+  const tradesQuery = useGetAccountClosedTrades(accountRequestId, closedTradeParams, {
+    query: {
+      ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+      refetchInterval: tradesRefreshInterval,
+      enabled: tradingAnalysisQueriesEnabled,
+      placeholderData: retainPreviousData,
+    },
+  });
+  const ordersQuery = useGetAccountOrders(
+    accountRequestId,
+    {
+      ...accountDataParams,
+      tab: effectiveOrderTab,
+    },
+    {
+      query: {
+        ...QUERY_OPTIONS.query,
+        refetchInterval: liveRefreshInterval,
+        enabled: ordersPanelQueriesEnabled,
+        placeholderData: retainPreviousData,
+      },
+    },
+  );
+  const riskQuery = useGetAccountRisk(accountRequestId, modeParams, {
+    query: {
+      ...QUERY_OPTIONS.query,
+      refetchInterval: secondaryRefreshInterval,
+      enabled: criticalAccountQueriesEnabled,
+      placeholderData: retainPreviousData,
+    },
+  });
+  const sectionSwitching = Boolean(
+    accountSectionPending && summaryQuery.isPlaceholderData,
+  );
+  useEffect(() => {
+    if (!isVisible) {
+      setSettledAccountSection(accountSection);
+      return;
+    }
+    if (summaryQuery.data && !summaryQuery.isPlaceholderData) {
+      setSettledAccountSection(accountSection);
+    }
+  }, [
+    accountSection,
+    isVisible,
+    summaryQuery.data,
+    summaryQuery.isPlaceholderData,
+  ]);
+  useEffect(() => {
+    setAccountSectionTransitionSnapshot({
+      transitioning: sectionSwitching,
+      targetSection: sectionSwitching ? accountSection : null,
+    });
+  }, [accountSection, sectionSwitching]);
+  useEffect(
+    () => () => {
+      setAccountSectionTransitionSnapshot({
+        transitioning: false,
+        targetSection: null,
+      });
+    },
+    [],
+  );
+  const cashQuery = useGetAccountCashActivity(accountRequestId, accountDataParams, {
+    query: {
+      ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
+      refetchInterval: secondaryRefreshInterval,
+      enabled: secondaryAccountQueriesEnabled,
+      placeholderData: retainPreviousData,
+    },
+  });
+  const shadowWatchlistBacktestMutation = useMutation({
+    mutationFn: (payload = { timeframe: "15m" }) =>
+      platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
+        method: "POST",
+        body: payload,
+        timeoutMs: payload?.sweep ? 600_000 : 120_000,
+      }),
+    onSuccess: (payload, variables) => {
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          String(query.queryKey[0] || "").includes("/api/accounts/shadow"),
+      });
+      toast.push({
+        kind: "success",
+        title: "Shadow backtest complete",
+        body: `${variables?.range || "today"} ${variables?.timeframe || "15m"} ledger run updated.`,
+      });
+    },
+    onError: (error) => {
+      toast.push({
+        kind: "error",
+        title: "Shadow backtest failed",
+        body: error?.message || "The Shadow watchlist backtest could not finish.",
+      });
+    },
+  });
+  const cancelOrderMutation = useCancelAccountOrder({
+    mutation: {
+      onSuccess: (_response, variables) => {
+        queryClient.invalidateQueries({
+          queryKey: [`/api/accounts/${accountRequestId}/orders`],
+        });
+        queryClient.invalidateQueries({
+          queryKey: [`/api/accounts/${accountRequestId}/positions`],
+        });
+        toast.push({
+          kind: "success",
+          title: "Order cancel submitted",
+          body: variables?.orderId || "The account order cancel was accepted.",
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Order cancel failed",
+          body: error?.message || "The broker did not accept the account order cancel.",
+        });
+      },
+    },
+  });
+
+  useEffect(() => {
+    const clearInspection = () => {
+      setHoveredEquityDate(null);
+      setPinnedEquityDate(null);
+    };
+    const useAnimationFrame = typeof window.requestAnimationFrame === "function";
+    const frameId =
+      useAnimationFrame
+        ? window.requestAnimationFrame(clearInspection)
+        : window.setTimeout(clearInspection, 0);
+    return () => {
+      if (useAnimationFrame && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(frameId);
+      } else {
+        window.clearTimeout(frameId);
+      }
+    };
+  }, [accountRequestId, range]);
+  const testFlexMutation = useTestFlexToken({
+    mutation: {
+      onSuccess: () => {
+        healthQuery.refetch();
+        summaryQuery.refetch();
+        equityQuery.refetch();
+        if (visibleEquityBenchmarks.SPY) {
+          spyBenchmarkQuery.refetch();
+        }
+        if (visibleEquityBenchmarks.QQQ) {
+          qqqBenchmarkQuery.refetch();
+        }
+        if (visibleEquityBenchmarks.DJIA) {
+          djiaBenchmarkQuery.refetch();
+        }
+        allocationQuery.refetch();
+        tradesQuery.refetch();
+        riskQuery.refetch();
+        cashQuery.refetch();
+        toast.push({
+          kind: "success",
+          title: "Flex token verified",
+          body: "Account data refresh has been requested.",
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Flex token failed",
+          body: error?.message || "The Flex token check did not complete.",
+        });
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (
+      !isVisible ||
+      !accountRequestId ||
+      shadowMode ||
+      !accountPageStreamFreshness.accountDerivedFresh
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const runPrefetch = () => {
+      if (cancelled) {
+        return;
+      }
+      ACCOUNT_RANGES.forEach((prefetchRange) => {
+        queryClient.prefetchQuery(
+          getGetAccountEquityHistoryQueryOptions(
+            accountRequestId,
+            {
+              ...accountDataParams,
+              range: prefetchRange,
+            },
+            {
+              query: equityHistoryQuerySettings,
+            },
+          ),
+        );
+        [
+          ["SPY", "SPY"],
+          ["QQQ", "QQQ"],
+          ["DJIA", "DIA"],
+        ].forEach(([key, benchmark]) => {
+          if (!visibleEquityBenchmarks[key]) {
+            return;
+          }
+          queryClient.prefetchQuery(
+            getGetAccountEquityHistoryQueryOptions(
+              accountRequestId,
+              {
+                ...accountDataParams,
+                range: prefetchRange,
+                benchmark,
+              },
+              {
+                query: equityHistoryQuerySettings,
+              },
+            ),
+          );
+        });
+      });
+    };
+    const idleId =
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(runPrefetch, { timeout: 4_000 })
+        : window.setTimeout(runPrefetch, 1_500);
+    return () => {
+      cancelled = true;
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [
+    accountRequestId,
+    accountPageStreamFreshness.accountDerivedFresh,
+    equityHistoryQuerySettings,
+    isVisible,
+    accountDataParams,
+    queryClient,
+    shadowMode,
+    visibleEquityBenchmarks,
+  ]);
+
+  const currency =
+    summaryQuery.data?.currency ||
+    equityQuery.data?.currency ||
+    cashQuery.data?.currency ||
+    accounts[0]?.currency ||
+    "USD";
+  const displaySummaryData = summaryQuery.data;
+  const openAccountPositions = useMemo(
+    () => getOpenPositionRows(positionsQuery.data?.positions || []),
+    [positionsQuery.data],
+  );
+  const accountOptionQuoteGroups = useMemo(
+    () => buildPositionOptionQuoteGroups(openAccountPositions),
+    [openAccountPositions],
+  );
+  const accountLiveOptionQuotesEnabled = Boolean(
+    accountQueriesEnabled && accountCriticalReady,
+  );
+  const accountAnalysisTrades = useMemo(
+    () =>
+      filterAccountAnalysisTrades({
+        trades: tradesQuery.data?.trades || [],
+        filters: tradeFilters,
+        range,
+      }),
+    [range, tradeFilters, tradesQuery.data],
+  );
+  const accountTradingAnalysis = useMemo(
+    () =>
+      buildAccountTradingAnalysisModel({
+        trades: accountAnalysisTrades,
+        orders: ordersQuery.data?.orders || [],
+        positions: openAccountPositions,
+        selectedTradeId: selectedAccountTradeId,
+      }),
+    [
+      accountAnalysisTrades,
+      openAccountPositions,
+      ordersQuery.data,
+      selectedAccountTradeId,
+    ],
+  );
+  const shadowAutomationAudit = useMemo(() => {
+    const orders = ordersQuery.data?.orders || [];
+    return {
+      automationPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "automation",
+      ).length,
+      backtestPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "watchlist_backtest",
+      ).length,
+      mixedPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "mixed",
+      ).length,
+      automationOrders: orders.filter((order) => order.sourceType === "automation").length,
+      backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
+      manualOrders: orders.filter((order) => order.sourceType === "manual").length,
+    };
+  }, [openAccountPositions, ordersQuery.data]);
+  const { tradesData: returnsCalendarTradesData, equityPoints: returnsCalendarEquityPoints } =
+    useMemo(
+      () =>
+        resolveReturnsCalendarData({
+          performanceCalendarTradesData: performanceCalendarTradesQuery.data,
+          performanceCalendarEquityData: performanceCalendarEquityQuery.data,
+        }),
+      [performanceCalendarEquityQuery.data, performanceCalendarTradesQuery.data],
+    );
+  const returnsModel = useMemo(
+    () =>
+      buildAccountReturnsModel({
+        summary: displaySummaryData,
+        equityHistory: equityQuery.data,
+        benchmarkHistories: {
+          SPY: spyBenchmarkQuery.data,
+          QQQ: qqqBenchmarkQuery.data,
+          DJIA: djiaBenchmarkQuery.data,
+        },
+        positionsResponse: positionsQuery.data,
+        tradesResponse: tradesQuery.data,
+        cashResponse: cashQuery.data,
+        range,
+      }),
+    [
+      cashQuery.data,
+      djiaBenchmarkQuery.data,
+      equityQuery.data,
+      positionsQuery.data,
+      qqqBenchmarkQuery.data,
+      range,
+      spyBenchmarkQuery.data,
+      displaySummaryData,
+      tradesQuery.data,
+    ],
+  );
+
+  const handleCancelOrder = async (order) => {
+    if (!gatewayTradingReady) {
+      window.alert(gatewayTradingMessage);
+      return;
+    }
+
+    if (!window.confirm(`Cancel ${order.symbol} ${order.side} order ${order.id}?`)) {
+      return;
+    }
+    try {
+      await cancelOrderMutation.mutateAsync({
+        accountId: order.accountId,
+        orderId: order.id,
+        data: { confirm: true },
+      });
+    } catch {}
+  };
+  useEffect(() => {
+    prefetchAccountSectionLiveQueries(accountSection);
+  }, [accountSection, prefetchAccountSectionLiveQueries]);
+
+  return (
+    <div
+      ref={accountLayoutRef}
+      data-testid="account-screen"
+      data-layout={accountIsPhone ? "phone" : accountIsNarrow ? "tablet" : "desktop"}
+      className="ra-panel-enter"
+      style={{
+        flex: 1,
+        width: "100%",
+        maxWidth: "100%",
+        overflowX: "hidden",
+        overflowY: "auto",
+        background: T.bg0,
+        minWidth: 0,
+        WebkitOverflowScrolling: accountIsPhone ? "touch" : undefined,
+      }}
+    >
+      <div
+        data-account-transitioning={String(sectionSwitching)}
+        style={{
+          width: "100%",
+          padding: sp(accountIsPhone ? "8px 8px 18px" : "16px 24px"),
+          display: "grid",
+          gap: sp(accountIsPhone ? 8 : 12),
+        }}
+      >
+        <PositionOptionQuoteStreams
+          groups={accountOptionQuoteGroups}
+          enabled={accountLiveOptionQuotesEnabled}
+        />
+
+        <AccountHeroBlock
+          summary={displaySummaryData}
+          returnsModel={returnsModel}
+          range={range}
+          currency={currency}
+          maskValues={maskAccountValues}
+          shadowMode={shadowMode}
+          isPhone={accountIsPhone}
+        />
+
+        <div
+          className="ra-panel-enter ra-account-overview-grid"
+        >
+          <div className="ra-account-overview-cell ra-account-overview-returns">
+            <AccountReturnsPanel
+              currency={currency}
+              maskValues={maskAccountValues}
+              tradesData={returnsCalendarTradesData}
+              equityPoints={returnsCalendarEquityPoints}
+              isPhone={accountIsPhone}
+            />
+          </div>
+          <div className="ra-account-overview-cell ra-account-overview-exposure">
+            <DeferredPanelSuspense minHeight={accountIsPhone ? 174 : 246}>
+              <LazyPortfolioExposurePanel
+                allocationQuery={allocationQuery}
+                riskQuery={riskQuery}
+                positionsResponse={positionsQuery.data}
+                currency={currency}
+                subtitle={
+                  shadowMode
+                    ? `${shadowSourceLabel} holdings, risk, and concentration`
+                    : undefined
+                }
+                rightRail={shadowMode ? shadowSourceLabel : undefined}
+                maskValues={maskAccountValues}
+                isPhone={accountIsPhone}
+              />
+            </DeferredPanelSuspense>
+          </div>
+          <div
+            className="ra-account-overview-cell ra-account-overview-equity"
+            style={{ display: "grid", gap: sp(5) }}
+          >
+            <DeferredPanelSuspense minHeight={accountIsPhone ? 280 : 314}>
+              <LazyEquityCurvePanel
+                query={equityQuery}
+                benchmarkQueries={{
+                  SPY: spyBenchmarkQuery,
+                  QQQ: qqqBenchmarkQuery,
+                  DJIA: djiaBenchmarkQuery,
+                }}
+                visibleBenchmarks={visibleEquityBenchmarks}
+                onVisibleBenchmarksChange={setVisibleEquityBenchmarks}
+                range={range}
+                onRangeChange={setRange}
+                currency={currency}
+                accentColor={shadowMode ? T.pink : T.green}
+                rightRail={shadowMode ? shadowSourceLabel : undefined}
+                sourceLabel={shadowSourceLabel}
+                maskValues={maskAccountValues}
+                currentNetLiquidation={
+                  displaySummaryData?.metrics?.netLiquidation?.value
+                }
+                activeInspectionDate={activeEquityInspectionDate}
+                pinnedInspectionDate={pinnedEquityDate}
+                onHoverInspectionDate={setHoveredEquityDate}
+                onPinInspectionDate={setPinnedEquityDate}
+                dataScopeKey={`${accountRequestId}:${accountDataParams.mode || ""}:${accountSection}`}
+                compact
+              />
+              <LazyPositionsAtDateInspector
+                query={positionsAtDateQuery}
+                activeDate={activeEquityInspectionDate}
+                pinnedDate={pinnedEquityDate}
+                currentPositionsCount={openAccountPositions.length}
+                currency={currency}
+                maskValues={maskAccountValues}
+                onClearPin={() => setPinnedEquityDate(null)}
+                onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+              />
+            </DeferredPanelSuspense>
+          </div>
+        </div>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 340 : 300}
+          onActivate={() => markAccountPanelActivated("today")}
+          testId="account-deferred-today"
+        >
+          <DeferredPanelSuspense minHeight={accountIsPhone ? 340 : 300}>
+            <LazyTodaySnapshotPanel
+              positionsQuery={positionsQuery}
+              intradayQuery={intradayPnlQuery}
+              currency={currency}
+              maskValues={maskAccountValues}
+              liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+              streamLiveOptionQuotes={false}
+              emptyHeatmapBody={
+                shadowMode
+                  ? "Treemap renders once Shadow ledger positions are opened or marked."
+                  : undefined
+              }
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 430 : 300}
+          testId="account-deferred-positions"
+        >
+          <DeferredPanelSuspense minHeight={accountIsPhone ? 430 : 300}>
+            <LazyPositionsPanel
+              query={positionsQuery}
+              currency={currency}
+              assetFilter={assetFilter}
+              onAssetFilterChange={setAssetFilter}
+              sourceFilter="all"
+              onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+              rightRail={shadowMode ? "Shadow positions + marks" : undefined}
+              emptyBody={
+                shadowMode
+                  ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+              liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+              streamLiveOptionQuotes={false}
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 760 : 540}
+          onActivate={() => markAccountPanelActivated("tradingAnalysis")}
+          testId="account-deferred-trading-analysis"
+        >
+          <DeferredPanelSuspense minHeight={accountIsPhone ? 760 : 540}>
+            <LazyTradingAnalysisWorkbench
+              query={tradesQuery}
+              trades={tradesQuery.data?.trades || []}
+              allTrades={tradesQuery.data?.trades || []}
+              analysis={accountTradingAnalysis}
+              filters={tradeFilters}
+              dispatchFilters={dispatchTradeFilters}
+              range={range}
+              onRangeChange={setRange}
+              currency={currency}
+              maskValues={maskAccountValues}
+              selectedTradeId={selectedAccountTradeId}
+              onTradeSelect={setSelectedAccountTradeId}
+              onJumpToChart={onJumpToTrade}
+              isPhone={accountIsPhone}
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 360 : 240}
+          onActivate={() => markAccountPanelActivated("orders")}
+          testId="account-deferred-orders"
+        >
+          <DeferredPanelSuspense minHeight={accountIsPhone ? 360 : 240}>
+            <LazyOrdersPanel
+              query={ordersQuery}
+              tab={effectiveOrderTab}
+              onTabChange={setOrderTab}
+              currency={currency}
+              onCancelOrder={handleCancelOrder}
+              cancelPending={cancelOrderMutation.isPending}
+              cancelDisabled={!gatewayTradingReady}
+              cancelDisabledReason={gatewayTradingMessage}
+              sourceFilter="all"
+              emptyBody={
+                shadowMode
+                  ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+              isPhone={accountIsPhone}
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 390 : 190}
+          onActivate={() => markAccountPanelActivated("support")}
+          testId="account-deferred-support"
+        >
+          <div
+            className="ra-panel-enter ra-account-support-grid"
+          >
+            <DeferredPanelSuspense minHeight={168}>
+              <LazyCashFundingPanel
+                query={cashQuery}
+                currency={currency}
+                maskValues={maskAccountValues}
+              />
+            </DeferredPanelSuspense>
+            {shadowMode ? (
+              <ShadowWatchlistBacktestPanel
+                mutation={shadowWatchlistBacktestMutation}
+                currency={currency}
+                maskValues={maskAccountValues}
+              />
+            ) : null}
+            {shadowMode ? (
+              <Panel title="Shadow Account" rightRail="Internal paper" minHeight={130}>
+              <div style={{ display: "grid", gap: sp(5) }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
+                  <Pill tone="pink">Shadow</Pill>
+                  <Pill tone="green">Cash only</Pill>
+                  <Pill tone="cyan">IBKR Pro Fixed fees</Pill>
+                </div>
+                <div
+                  style={{
+                    color: T.textSec,
+                    fontSize: textSize("caption"),
+                    lineHeight: 1.35,
+                  }}
+                >
+                  Starting balance is tracked at $40,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
+                </div>
+                <div
+                  className="ra-hide-scrollbar"
+                  style={{
+                    display: "flex",
+                    flexWrap: "nowrap",
+                    overflowX: "auto",
+                    background: T.bg0,
+                    borderRadius: dim(RADII.xs),
+                    marginTop: sp(2),
+                    minWidth: 0,
+                  }}
+                >
+                  {[
+                    ["Auto Pos", shadowAutomationAudit.automationPositions, T.pink],
+                    ["Backtest Pos", shadowAutomationAudit.backtestPositions, T.purple],
+                    ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
+                    ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
+                  ].map(([label, value, color], index) => (
+                    <div
+                      key={label}
+                      style={{
+                        flex: "1 1 auto",
+                        minWidth: dim(80),
+                        padding: sp("4px 9px"),
+                        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                      }}
+                    >
+                      <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                        {label.toUpperCase()}
+                      </div>
+                      <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
+                        {value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+          ) : (
+            <DeferredPanelSuspense minHeight={130}>
+              <LazySetupHealthPanel
+                session={session}
+                healthQuery={healthQuery}
+                testMutation={testFlexMutation}
+                brokerConfigured={brokerConfigured}
+                brokerAuthenticated={brokerAuthenticated}
+              />
+            </DeferredPanelSuspense>
+          )}
+        </div>
+        </DeferredRender>
+
+      </div>
+    </div>
+  );
+};
+
+export const AccountScreen = (props) => {
+  const { isVisible = false, onReadinessChange } = props;
+
+  useEffect(() => {
+    if (!isVisible) {
+      onReadinessChange?.({
+        criticalReady: false,
+        derivedReady: false,
+        backgroundAllowed: false,
+      });
+    }
+    return undefined;
+  }, [isVisible, onReadinessChange]);
+
+  return <AccountScreenInner {...props} />;
+};
+
+export default AccountScreen;

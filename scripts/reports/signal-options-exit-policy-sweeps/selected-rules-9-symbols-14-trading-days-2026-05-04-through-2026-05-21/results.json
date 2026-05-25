@@ -2,7 +2,7 @@
   "reportDir": "/home/runner/workspace/scripts/reports/signal-options-exit-policy-sweeps/selected-rules-9-symbols-14-trading-days-2026-05-04-through-2026-05-21",
   "deployment": {
     "id": "7e2e4e6f-749f-4e65-a011-87d3559a23b0",
-    "name": "RayReplica Signal Options Shadow Paper",
+    "name": "Pyrus Signals Shadow Paper",
     "mode": "paper",
     "symbolUniverse": [
       "NVDA",

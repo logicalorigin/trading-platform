@@ -5,6 +5,7 @@ import {
   __resetBridgeQuoteStreamForTests,
   __resolveCurrentBridgeQuoteStreamSignalAtForTests,
   __setBridgeQuoteClientForTests,
+  __setBridgeQuoteRuntimeConfiguredForTests,
   __setBridgeQuoteStreamNowForTests,
   fetchBridgeQuoteSnapshots,
   getBridgeQuoteStreamDiagnostics,
@@ -188,6 +189,26 @@ test("fetchBridgeQuoteSnapshots hydrates missing symbols through the shared brid
   );
 });
 
+test("fetchBridgeQuoteSnapshots skips bridge client when runtime is not configured", async () => {
+  let snapshotCalls = 0;
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      snapshotCalls += 1;
+      return [quote("SPY", 502, "2026-04-28T14:30:00.000Z")];
+    },
+    streamQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setBridgeQuoteRuntimeConfiguredForTests(false);
+
+  const payload = await fetchBridgeQuoteSnapshots(["SPY"]);
+
+  assert.deepEqual(payload.quotes, []);
+  assert.equal(snapshotCalls, 0);
+  assert.equal(getBridgeGovernorSnapshot().quotes.failureCount, 0);
+});
+
 test("fetchBridgeQuoteSnapshots keeps cached rejected symbols in the payload", async () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "1",
@@ -328,6 +349,30 @@ test("bridge quote stream does not hot-loop reconnects during quiet market", asy
 
   assert.equal(attempts, 1);
   assert.equal(diagnostics.lastError, "IBKR bridge quote stream ended.");
+  assert.equal(diagnostics.reconnectScheduled, false);
+  assert.equal(diagnostics.pressure, "normal");
+});
+
+test("bridge quote stream treats full-day market holidays as quiet", async () => {
+  let attempts = 0;
+  __setBridgeQuoteStreamNowForTests(new Date("2026-05-25T15:30:00.000Z"));
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      return [];
+    },
+    streamQuoteSnapshots(_symbols, _onSnapshot, onError) {
+      attempts += 1;
+      setTimeout(() => onError?.(new Error("IBKR bridge quote stream ended.")), 0);
+      return () => {};
+    },
+  });
+
+  const unsubscribe = subscribeBridgeQuoteSnapshots(["NVDA"], () => {});
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const diagnostics = getBridgeQuoteStreamDiagnostics();
+  unsubscribe();
+
+  assert.equal(attempts, 1);
   assert.equal(diagnostics.reconnectScheduled, false);
   assert.equal(diagnostics.pressure, "normal");
 });

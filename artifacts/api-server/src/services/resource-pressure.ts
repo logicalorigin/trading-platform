@@ -9,20 +9,11 @@ export type ApiResourcePressureDriver = {
 };
 
 export type ApiResourcePressureCaps = {
-  watchlistFillerMaxSymbols: number;
-  optionsFlow: {
-    backgroundEnabled: boolean;
-    radarBatchSizeMax: number;
-    radarDeepCandidateMax: number;
-    radarFallbackDeepCandidateMax: number;
-    lineBudgetMax: number;
-    scannerBatchSizeMax: number;
-    intervalMsMin: number;
-  };
   signalOptions: {
     maintenanceOnly: boolean;
     skipDeploymentScans: boolean;
   };
+  watchlistFillerMaxSymbols: number | null;
 };
 
 export type ApiResourcePressureSnapshot = {
@@ -36,7 +27,6 @@ export type ApiResourcePressureSnapshot = {
     dominantSlowRouteP95Ms: number | null;
     clientLevel: ApiResourcePressureLevel | null;
     cacheLevel: ApiResourcePressureLevel | null;
-    optionsBackgroundBlockedReason: string | null;
     automationActiveLongScanCount: number | null;
   };
 };
@@ -56,7 +46,6 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   dominantSlowRouteP95Ms: null,
   clientLevel: null,
   cacheLevel: null,
-  optionsBackgroundBlockedReason: null,
   automationActiveLongScanCount: null,
 };
 
@@ -125,71 +114,35 @@ export function getApiResourcePressureCaps(
   switch (level) {
     case "critical":
       return {
-        watchlistFillerMaxSymbols: 0,
-        optionsFlow: {
-          backgroundEnabled: false,
-          radarBatchSizeMax: 0,
-          radarDeepCandidateMax: 0,
-          radarFallbackDeepCandidateMax: 0,
-          lineBudgetMax: 0,
-          scannerBatchSizeMax: 0,
-          intervalMsMin: 120_000,
-        },
         signalOptions: {
           maintenanceOnly: true,
           skipDeploymentScans: true,
         },
+        watchlistFillerMaxSymbols: 0,
       };
     case "high":
       return {
-        watchlistFillerMaxSymbols: 4,
-        optionsFlow: {
-          backgroundEnabled: true,
-          radarBatchSizeMax: 30,
-          radarDeepCandidateMax: 1,
-          radarFallbackDeepCandidateMax: 1,
-          lineBudgetMax: 40,
-          scannerBatchSizeMax: 8,
-          intervalMsMin: 30_000,
-        },
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: true,
         },
+        watchlistFillerMaxSymbols: 0,
       };
     case "watch":
       return {
-        watchlistFillerMaxSymbols: 12,
-        optionsFlow: {
-          backgroundEnabled: true,
-          radarBatchSizeMax: 15,
-          radarDeepCandidateMax: 2,
-          radarFallbackDeepCandidateMax: 2,
-          lineBudgetMax: 40,
-          scannerBatchSizeMax: 20,
-          intervalMsMin: 30_000,
-        },
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
         },
+        watchlistFillerMaxSymbols: null,
       };
     default:
       return {
-        watchlistFillerMaxSymbols: 40,
-        optionsFlow: {
-          backgroundEnabled: true,
-          radarBatchSizeMax: Number.MAX_SAFE_INTEGER,
-          radarDeepCandidateMax: Number.MAX_SAFE_INTEGER,
-          radarFallbackDeepCandidateMax: Number.MAX_SAFE_INTEGER,
-          lineBudgetMax: Number.MAX_SAFE_INTEGER,
-          scannerBatchSizeMax: Number.MAX_SAFE_INTEGER,
-          intervalMsMin: 0,
-        },
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
         },
+        watchlistFillerMaxSymbols: null,
       };
   }
 }
@@ -211,13 +164,6 @@ function buildSnapshot(
   );
   const clientLevel = inputs.clientLevel ?? "normal";
   const cacheLevel = inputs.cacheLevel ?? "normal";
-  const optionsReason = inputs.optionsBackgroundBlockedReason;
-  const optionsLevel =
-    optionsReason === "options-lane-backoff"
-      ? "high"
-      : optionsReason === "options-lane-queued"
-        ? "watch"
-        : "normal";
   const automationCount = inputs.automationActiveLongScanCount ?? 0;
   const automationLevel = automationCount > 0 ? "high" : "normal";
   const level = maxLevel(
@@ -225,7 +171,6 @@ function buildSnapshot(
     slowRouteLevel,
     clientLevel,
     cacheLevel,
-    optionsLevel,
     automationLevel,
   );
 
@@ -256,13 +201,6 @@ function buildSnapshot(
       label: "Cache pressure",
       level: cacheLevel,
       detail: cacheLevel === "normal" ? null : cacheLevel,
-      score: null,
-    }),
-    driver({
-      kind: "options-lane",
-      label: "Options lane",
-      level: optionsLevel,
-      detail: optionsReason,
       score: null,
     }),
     driver({

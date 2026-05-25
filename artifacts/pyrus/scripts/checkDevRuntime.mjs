@@ -1,0 +1,879 @@
+#!/usr/bin/env node
+
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+} from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptPath = fileURLToPath(import.meta.url);
+const packageRoot = path.resolve(path.dirname(scriptPath), "..");
+const repoRoot = path.resolve(packageRoot, "../..");
+const apiPackageRoot = path.join(repoRoot, "artifacts/api-server");
+const strict = process.argv.includes("--strict");
+const jsonOnly = process.argv.includes("--json");
+const canonicalFrontendPort = String(
+  process.env.PYRUS_FRONTEND_PORT ||
+    process.env.PORT ||
+    "18747",
+);
+const canonicalApiPort = String(process.env.PYRUS_API_PORT || "8080");
+const canonicalBasePath = process.env.BASE_PATH || "/";
+const commandEnv = { ...process.env };
+delete commandEnv.LD_LIBRARY_PATH;
+delete commandEnv.NIX_LD;
+delete commandEnv.NIX_LD_LIBRARY_PATH;
+delete commandEnv.REPLIT_LD_AUDIT;
+delete commandEnv.REPLIT_LD_LIBRARY_PATH;
+
+const isTruthyEnv = (value) =>
+  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+const browserPrepRequested =
+  isTruthyEnv(process.env.PYRUS_DOCTOR_PREPARE_BROWSER);
+
+const readTextCommand = (command, args) => {
+  try {
+    return execFileSync(command, args, {
+      cwd: repoRoot,
+      env: commandEnv,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return "";
+  }
+};
+
+const runTextCommand = (command, args, options = {}) => {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    env: options.env || commandEnv,
+    encoding: "utf8",
+    timeout: options.timeout || 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error?.message || null,
+  };
+};
+
+const runKillableTextCommand = (command, args, options = {}) => {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    env: options.env || commandEnv,
+    encoding: "utf8",
+    timeout: options.timeout || 5_000,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  let killedProcessGroup = false;
+  if (timedOut && result.pid) {
+    for (const signal of ["SIGTERM", "SIGKILL"]) {
+      try {
+        process.kill(-result.pid, signal);
+        killedProcessGroup = true;
+      } catch {}
+    }
+  }
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error?.message || null,
+    timedOut,
+    killedProcessGroup,
+  };
+};
+
+const probeHttpJson = (url) => {
+  const result = runTextCommand("curl", ["-fsS", url], { timeout: 3_000 });
+  let json = null;
+  try {
+    json = result.stdout ? JSON.parse(result.stdout) : null;
+  } catch {}
+  return {
+    url,
+    ok: result.status === 0,
+    status: result.status,
+    signal: result.signal,
+    body: result.stdout.trim(),
+    json,
+    error: result.error || result.stderr.trim() || null,
+  };
+};
+
+const readProcLink = (pid, name) => {
+  try {
+    return readlinkSync(`/proc/${pid}/${name}`);
+  } catch {
+    return null;
+  }
+};
+
+const readProcEnv = (pid) => {
+  try {
+    return Object.fromEntries(
+      readFileSync(`/proc/${pid}/environ`, "utf8")
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => {
+          const separator = entry.indexOf("=");
+          return separator === -1
+            ? [entry, ""]
+            : [entry.slice(0, separator), entry.slice(separator + 1)];
+        }),
+    );
+  } catch {
+    return {};
+  }
+};
+
+let clockTicksPerSecond = null;
+
+const readClockTicksPerSecond = () => {
+  if (clockTicksPerSecond !== null) {
+    return clockTicksPerSecond;
+  }
+  const output = readTextCommand("getconf", ["CLK_TCK"]).trim();
+  const parsed = Number(output);
+  clockTicksPerSecond = Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+  return clockTicksPerSecond;
+};
+
+const readProcessStartTimeMs = (pid) => {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    const startTicks = Number(fields[19]);
+    const uptimeSeconds = Number(
+      readFileSync("/proc/uptime", "utf8").trim().split(/\s+/)[0],
+    );
+    if (!Number.isFinite(startTicks) || !Number.isFinite(uptimeSeconds)) {
+      return null;
+    }
+    return Date.now() - uptimeSeconds * 1000 + (startTicks / readClockTicksPerSecond()) * 1000;
+  } catch {
+    return null;
+  }
+};
+
+const parseProcessList = () => {
+  const output = readTextCommand("ps", ["-eo", "pid,ppid,etime,cmd"]);
+  return output
+    .split("\n")
+    .slice(1)
+    .map((line) => {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+      if (!match) return null;
+      const [, pid, ppid, etime, cmd] = match;
+      return {
+        pid: Number(pid),
+        ppid: Number(ppid),
+        etime,
+        cmd,
+      };
+    })
+    .filter(Boolean);
+};
+
+const readBrowserPrepScanProcesses = () =>
+  parseProcessList()
+    .filter(
+      (processInfo) =>
+        /(^|\s)find\s/.test(processInfo.cmd) &&
+        /libgbm\.so/.test(processInfo.cmd),
+    )
+    .map((processInfo) => ({
+      pid: processInfo.pid,
+      ppid: processInfo.ppid,
+      etime: processInfo.etime,
+      cmd: processInfo.cmd,
+    }));
+
+const describePathStatus = (targetPath) => {
+  if (!existsSync(targetPath)) {
+    return { exists: false, path: path.relative(repoRoot, targetPath) };
+  }
+  const stat = statSync(targetPath);
+  return {
+    exists: true,
+    path: path.relative(repoRoot, targetPath),
+    mtime: stat.mtime.toISOString(),
+    bytes: stat.size,
+  };
+};
+
+const parseReplitPorts = () => {
+  const replitPath = path.join(repoRoot, ".replit");
+  if (!existsSync(replitPath)) {
+    return [];
+  }
+  const ports = [];
+  let current = null;
+  for (const line of readFileSync(replitPath, "utf8").split("\n")) {
+    if (/^\s*\[\[ports\]\]\s*$/.test(line)) {
+      if (current) ports.push(current);
+      current = {};
+      continue;
+    }
+    if (!current) continue;
+    const localMatch = line.match(/^\s*localPort\s*=\s*(\d+)/);
+    if (localMatch) {
+      current.localPort = Number(localMatch[1]);
+      continue;
+    }
+    const externalMatch = line.match(/^\s*externalPort\s*=\s*(\d+)/);
+    if (externalMatch) {
+      current.externalPort = Number(externalMatch[1]);
+    }
+  }
+  if (current) ports.push(current);
+  return ports
+    .filter((port) => Number.isFinite(port.localPort))
+    .sort((left, right) => left.localPort - right.localPort);
+};
+
+const readCmdline = (pid) => {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8")
+      .split("\0")
+      .filter(Boolean)
+      .join(" ");
+  } catch {
+    return "";
+  }
+};
+
+const decodeIpv4Address = (hexAddress) =>
+  hexAddress
+    .match(/../g)
+    ?.reverse()
+    .map((part) => String(Number.parseInt(part, 16)))
+    .join(".") || hexAddress;
+
+const readTcpListenerRows = (filePath, protocol) => {
+  if (!existsSync(filePath)) {
+    return [];
+  }
+  return readFileSync(filePath, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => {
+      const parts = line.trim().split(/\s+/);
+      if (parts[3] !== "0A") {
+        return null;
+      }
+      const [rawAddress, rawPort] = parts[1].split(":");
+      return {
+        protocol,
+        address:
+          protocol === "tcp4" ? decodeIpv4Address(rawAddress) : rawAddress,
+        port: Number.parseInt(rawPort, 16),
+        inode: parts[9],
+      };
+    })
+    .filter(Boolean);
+};
+
+const mapSocketInodesToProcesses = () => {
+  const processesByInode = new Map();
+  for (const pid of readdirSync("/proc").filter((entry) => /^\d+$/.test(entry))) {
+    let fds = [];
+    try {
+      fds = readdirSync(`/proc/${pid}/fd`);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      let link = "";
+      try {
+        link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      const match = link.match(/^socket:\[(\d+)\]$/);
+      if (!match) {
+        continue;
+      }
+      if (!processesByInode.has(match[1])) {
+        processesByInode.set(match[1], []);
+      }
+      processesByInode.get(match[1]).push({
+        pid: Number(pid),
+        cmd: readCmdline(pid),
+      });
+    }
+  }
+  return processesByInode;
+};
+
+const readListeningPorts = () => {
+  const processesByInode = mapSocketInodesToProcesses();
+  return [
+    ...readTcpListenerRows("/proc/net/tcp", "tcp4"),
+    ...readTcpListenerRows("/proc/net/tcp6", "tcp6"),
+  ]
+    .map((listener) => ({
+      ...listener,
+      processes: processesByInode.get(listener.inode) || [],
+    }))
+    .sort((left, right) => left.port - right.port);
+};
+
+const readChartSurfaceFingerprint = () => {
+  const sourcePath = path.join(
+    packageRoot,
+    "src/features/charting/ResearchChartSurface.tsx",
+  );
+  try {
+    const source = readFileSync(sourcePath, "utf8");
+    const match = source.match(
+      /RESEARCH_CHART_SURFACE_MODULE_VERSION\s*=\s*[\r\n\s]*["']([^"']+)["']/,
+    );
+    return {
+      sourcePath: path.relative(repoRoot, sourcePath),
+      version: match?.[1] || null,
+    };
+  } catch {
+    return {
+      sourcePath: path.relative(repoRoot, sourcePath),
+      version: null,
+    };
+  }
+};
+
+const sanitizeDatabaseOutput = (text = "") =>
+  text.replace(
+    /(postgres(?:ql)?:\/\/)[^@\s]+@/gi,
+    (_match, prefix) => `${prefix}***@`,
+  );
+
+const classifyDatabaseSource = (url) => {
+  const host = url.hostname || url.searchParams.get("host") || "";
+  if (!url.hostname || host.includes(".local/postgres")) {
+    return "workspace-local-postgres";
+  }
+  if (url.hostname === "helium") {
+    return "replit-internal-dev-db";
+  }
+  return "external-postgres";
+};
+
+const resolveDatabaseUrl = () => {
+  const raw = process.env.DATABASE_URL || null;
+  const sourceEnv = raw ? "DATABASE_URL" : null;
+  if (!raw || !sourceEnv) {
+    return {
+      configured: false,
+      raw: null,
+      source: null,
+      sourceEnv: null,
+      overrideActive: false,
+      protocol: null,
+      host: null,
+      port: null,
+      database: null,
+      user: null,
+      sslMode: null,
+    };
+  }
+
+  try {
+    const url = new URL(raw);
+    const user = url.username || url.searchParams.get("user") || null;
+    return {
+      configured: true,
+      raw,
+      source: classifyDatabaseSource(url),
+      sourceEnv,
+      overrideActive: false,
+      protocol: url.protocol.replace(/:$/, ""),
+      host: url.hostname || url.searchParams.get("host") || null,
+      port:
+        url.port ||
+        url.searchParams.get("port") ||
+        (url.hostname ? "5432" : null),
+      database: url.pathname.replace(/^\//, "") || null,
+      user: user ? `${user.slice(0, 2)}***` : null,
+      sslMode:
+        url.searchParams.get("sslmode") ||
+        url.searchParams.get("ssl") ||
+        process.env.PGSSLMODE ||
+        null,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      raw,
+      source: null,
+      sourceEnv,
+      overrideActive: false,
+      protocol: null,
+      host: null,
+      port: null,
+      database: null,
+      user: null,
+      sslMode: null,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const readDatabaseReachability = () => {
+  const database = resolveDatabaseUrl();
+  if (!database.raw || database.parseError) {
+    return {
+      ...database,
+      reachable: false,
+      probe: null,
+    };
+  }
+
+  const probe = runTextCommand("pg_isready", [
+    "-d",
+    database.raw,
+    "-t",
+    "3",
+  ]);
+  return {
+    ...database,
+    reachable: probe.status === 0,
+    probe: {
+      command: `pg_isready -d ${database.sourceEnv || "DATABASE_URL"} -t 3`,
+      status: probe.status,
+      signal: probe.signal,
+      output: sanitizeDatabaseOutput(`${probe.stdout}${probe.stderr}`).trim(),
+      error: probe.error,
+    },
+  };
+};
+
+const readReplitPlaywrightStatus = () => {
+  const prepareScript = path.join(
+    packageRoot,
+    "scripts/preparePlaywrightChromium.mjs",
+  );
+  const command = "pnpm --filter @workspace/pyrus run test:e2e:replit";
+  const directLaunchRisk = Boolean(
+    process.env.LD_LIBRARY_PATH ||
+      process.env.REPLIT_LD_LIBRARY_PATH ||
+      process.env.NIX_LD ||
+      process.env.NIX_LD_LIBRARY_PATH,
+  );
+  if (!browserPrepRequested) {
+    return {
+      command,
+      prepared: false,
+      skipped: true,
+      executable: null,
+      error: null,
+      directLaunchRisk,
+      optInEnv: "PYRUS_DOCTOR_PREPARE_BROWSER=1",
+    };
+  }
+  if (!existsSync(prepareScript)) {
+    return {
+      command,
+      prepared: false,
+      skipped: false,
+      executable: null,
+      error: "preparePlaywrightChromium.mjs was not found",
+      directLaunchRisk,
+    };
+  }
+
+  const result = runKillableTextCommand(process.execPath, [prepareScript], {
+    cwd: packageRoot,
+    env: commandEnv,
+    timeout: 20_000,
+  });
+  const output = `${result.stdout}${result.stderr}`.trim();
+  return {
+    command,
+    prepared: result.status === 0,
+    skipped: false,
+    executable: result.status === 0 ? result.stdout.trim() || null : null,
+    error: result.status === 0 ? null : output || result.error,
+    directLaunchRisk,
+    timedOut: result.timedOut,
+    killedProcessGroup: result.killedProcessGroup,
+  };
+};
+
+const isDistOlderThanRuntimeSources = (distStatus) => {
+  if (!distStatus.exists) {
+    return false;
+  }
+  const distMtime = statSync(path.join(repoRoot, distStatus.path)).mtimeMs;
+  const sourcePaths = [
+    path.join(packageRoot, "package.json"),
+    path.join(packageRoot, "vite.config.ts"),
+    path.join(packageRoot, "src/main.tsx"),
+    path.join(packageRoot, "src/features/charting/ResearchChartSurface.tsx"),
+    path.join(packageRoot, "src/features/trade/TradeEquityPanel.jsx"),
+  ];
+  return sourcePaths.some((sourcePath) => {
+    try {
+      return statSync(sourcePath).mtimeMs > distMtime;
+    } catch {
+      return false;
+    }
+  });
+};
+
+const processes = parseProcessList();
+const isViteServerCommand = (command) =>
+  /(?:^|[\/\s])vite(?:\.js)?(?:\s|$)/.test(command) ||
+  command.includes("/vite/bin/vite.js");
+
+const viteServers = processes
+  .filter((processInfo) => {
+    const command = processInfo.cmd;
+    return (
+      isViteServerCommand(command) &&
+      /vite\.config\.ts/.test(command) &&
+      !command.includes("checkDevRuntime.mjs")
+    );
+  })
+  .map((processInfo) => {
+    const cwd = readProcLink(processInfo.pid, "cwd");
+    const env = readProcEnv(processInfo.pid);
+    return {
+      ...processInfo,
+      cwd,
+      cwdRelative: cwd ? path.relative(repoRoot, cwd) || "." : null,
+      kind: processInfo.cmd.includes("preview") ? "preview" : "dev",
+      port: env.PORT || null,
+      basePath: env.BASE_PATH || null,
+      proxyApiTarget: env.VITE_PROXY_API_TARGET || "http://127.0.0.1:8080",
+      nodeEnv: env.NODE_ENV || null,
+      loaderEnv: {
+        hasLdLibraryPath: Boolean(env.LD_LIBRARY_PATH),
+        hasReplitLdLibraryPath: Boolean(env.REPLIT_LD_LIBRARY_PATH),
+        hasNixLd: Boolean(env.NIX_LD || env.NIX_LD_LIBRARY_PATH),
+      },
+    };
+  });
+
+const pyrusViteServers = viteServers.filter(
+  (server) => server.cwd && path.resolve(server.cwd) === packageRoot,
+);
+
+const warnings = [];
+const failures = [];
+
+if (pyrusViteServers.length !== 1) {
+  const message = `expected exactly one PYRUS Vite server, found ${pyrusViteServers.length}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+for (const server of pyrusViteServers) {
+  if (!server.port) {
+    const message = `Vite server ${server.pid} is missing PORT`;
+    warnings.push(message);
+    if (strict) failures.push(message);
+  }
+  if (!server.basePath) {
+    const message = `Vite server ${server.pid} is missing BASE_PATH`;
+    warnings.push(message);
+    if (strict) failures.push(message);
+  }
+  if (server.kind !== "dev") {
+    warnings.push(`Vite server ${server.pid} is running ${server.kind}, not dev`);
+  }
+  if (server.port && String(server.port) !== canonicalFrontendPort) {
+    const message = `Vite server ${server.pid} is on PORT=${server.port}; canonical PYRUS frontend port is ${canonicalFrontendPort}`;
+    warnings.push(message);
+    if (strict) failures.push(message);
+  }
+  if (server.basePath && server.basePath !== canonicalBasePath) {
+    const message = `Vite server ${server.pid} has BASE_PATH=${server.basePath}; canonical base path is ${canonicalBasePath}`;
+    warnings.push(message);
+    if (strict) failures.push(message);
+  }
+  if (
+    server.loaderEnv.hasLdLibraryPath ||
+    server.loaderEnv.hasReplitLdLibraryPath ||
+    server.loaderEnv.hasNixLd
+  ) {
+    warnings.push(
+      `Vite server ${server.pid} inherited Replit/Nix loader env; restart with the sanitized package script`,
+    );
+  }
+}
+
+const projectPorts = parseReplitPorts();
+const listeningPorts = readListeningPorts();
+const listeningProjectPorts = projectPorts
+  .map((port) => ({
+    ...port,
+    listeners: listeningPorts.filter((listener) => listener.port === port.localPort),
+  }))
+  .filter((port) => port.listeners.length > 0);
+const apiListeners = listeningPorts.filter(
+  (listener) => String(listener.port) === canonicalApiPort,
+);
+const apiListenerProcesses = apiListeners
+  .flatMap((listener) => listener.processes)
+  .map((processInfo) => {
+    const cwd = readProcLink(processInfo.pid, "cwd");
+    const startedAtMs = readProcessStartTimeMs(processInfo.pid);
+    return {
+      ...processInfo,
+      cwd,
+      cwdRelative: cwd ? path.relative(repoRoot, cwd) || "." : null,
+      startedAt: startedAtMs ? new Date(startedAtMs).toISOString() : null,
+      startedAtMs,
+    };
+  });
+const apiServerProcesses = apiListenerProcesses.filter(
+  (processInfo) =>
+    processInfo.cwdRelative === "artifacts/api-server" ||
+    processInfo.cmd.includes("artifacts/api-server/dist/index.mjs") ||
+    processInfo.cmd.includes("artifacts/api-server/node_modules") ||
+    (processInfo.cmd.includes("./dist/index.mjs") &&
+      processInfo.cwdRelative === "artifacts/api-server"),
+);
+const apiHealth =
+  apiServerProcesses.length > 0
+    ? probeHttpJson(`http://127.0.0.1:${canonicalApiPort}/api/healthz`)
+    : {
+        url: `http://127.0.0.1:${canonicalApiPort}/api/healthz`,
+        ok: false,
+        status: null,
+        signal: null,
+        body: "",
+        json: null,
+        error: "api server is not listening",
+    };
+
+const apiDistIndex = describePathStatus(path.join(apiPackageRoot, "dist/index.mjs"));
+const apiDistMtimeMs = apiDistIndex.exists
+  ? statSync(path.join(repoRoot, apiDistIndex.path)).mtimeMs
+  : null;
+const staleApiProcesses =
+  apiDistMtimeMs === null
+    ? []
+    : apiServerProcesses.filter(
+        (processInfo) =>
+          Number.isFinite(processInfo.startedAtMs) &&
+          apiDistMtimeMs > processInfo.startedAtMs + 1_000,
+      );
+const nonCanonicalFrontendListeners = listeningProjectPorts.filter(
+  (port) =>
+    String(port.localPort) !== canonicalFrontendPort &&
+    port.localPort !== 8080 &&
+    port.listeners.some((listener) =>
+      listener.processes.some((processInfo) =>
+        /vite|webpack|next|react-scripts|preview/i.test(processInfo.cmd),
+      ),
+    ),
+);
+
+for (const port of nonCanonicalFrontendListeners) {
+  const message = `non-canonical frontend listener on local port ${port.localPort} (external ${port.externalPort ?? "n/a"})`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+if (pyrusViteServers.length > 0 && apiServerProcesses.length !== 1) {
+  const message = `expected exactly one PYRUS API server on ${canonicalApiPort}, found ${apiServerProcesses.length}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+if (apiServerProcesses.length > 0 && !apiHealth.ok) {
+  const message = `PYRUS API health probe failed at ${apiHealth.url}${apiHealth.error ? `: ${apiHealth.error}` : ""}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+} else if (
+  apiHealth.ok &&
+  apiHealth.json &&
+  apiHealth.json.status !== "ok"
+) {
+  const message = `PYRUS API health probe returned unexpected status ${JSON.stringify(apiHealth.json)}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+for (const processInfo of staleApiProcesses) {
+  const message = `PYRUS API server PID ${processInfo.pid} started at ${processInfo.startedAt || "unknown"} before current API bundle ${apiDistIndex.path} was rebuilt at ${apiDistIndex.mtime}; restart the Replit Run App before validating API behavior`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+const distIndex = describePathStatus(path.join(packageRoot, "dist/public/index.html"));
+if (distIndex.exists) {
+  warnings.push(
+    `built dist is present at ${distIndex.path}; verify previews use Vite dev when debugging HMR`,
+  );
+}
+const distStaleAgainstSources = isDistOlderThanRuntimeSources(distIndex);
+if (distStaleAgainstSources) {
+  warnings.push(
+    `built dist at ${distIndex.path} is older than current runtime/chart sources`,
+  );
+}
+
+const chartSurfaceFingerprint = readChartSurfaceFingerprint();
+if (!chartSurfaceFingerprint.version) {
+  const message = "ResearchChartSurface runtime fingerprint was not found";
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+const databaseReachability = readDatabaseReachability();
+if (!databaseReachability.configured) {
+  warnings.push(
+    "DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
+  );
+} else if (databaseReachability.parseError) {
+  warnings.push(
+    `${databaseReachability.sourceEnv || "database URL"} could not be parsed: ${databaseReachability.parseError}`,
+  );
+} else if (!databaseReachability.reachable) {
+  warnings.push(
+    `Postgres is unreachable at ${databaseReachability.host}:${databaseReachability.port || "socket"}/${databaseReachability.database}; DB-backed persistence and signal workers should degrade while IBKR transport can remain connected`,
+  );
+}
+
+const orphanedBrowserPrepScans = readBrowserPrepScanProcesses();
+for (const processInfo of orphanedBrowserPrepScans) {
+  warnings.push(
+    `Stale browser library scan PID ${processInfo.pid} is still running (${processInfo.etime}): ${processInfo.cmd}`,
+  );
+}
+
+const browserVerification = readReplitPlaywrightStatus();
+if (!browserVerification.skipped && !browserVerification.prepared) {
+  warnings.push(
+    `Replit Playwright Chromium could not be prepared; use ${browserVerification.command} after installing Chromium and checking Nix browser libraries`,
+  );
+}
+
+const snapshot = {
+  checkedAt: new Date().toISOString(),
+  packageRoot: path.relative(repoRoot, packageRoot),
+  canonicalFrontendPort,
+  canonicalApiPort,
+  canonicalBasePath,
+  canonicalLocalUrl: `http://127.0.0.1:${canonicalFrontendPort}${canonicalBasePath}`,
+  gitSha:
+    readTextCommand("git", ["rev-parse", "--short=12", "HEAD"]).trim() ||
+    "unknown",
+  gitBranch:
+    readTextCommand("git", ["branch", "--show-current"]).trim() || "unknown",
+  gitDirty: readTextCommand("git", ["status", "--short"]).trim().length > 0,
+  viteServers,
+  pyrusViteServers,
+  projectPorts,
+  listeningProjectPorts,
+  apiServerProcesses,
+  apiHealth,
+  apiDistIndex,
+  staleApiProcesses,
+  nonCanonicalFrontendListeners,
+  distIndex,
+  distStaleAgainstSources,
+  viteCache: describePathStatus(path.join(packageRoot, "node_modules/.vite")),
+  chartSurfaceFingerprint,
+  databaseReachability,
+  orphanedBrowserPrepScans,
+  browserVerification,
+  warnings,
+  failures,
+};
+
+if (jsonOnly) {
+  console.log(JSON.stringify(snapshot, null, 2));
+} else {
+  console.log(`PYRUS runtime check (${snapshot.checkedAt})`);
+  console.log(`repo: ${snapshot.gitBranch}@${snapshot.gitSha}${snapshot.gitDirty ? " dirty" : ""}`);
+  console.log(`canonical local url: ${snapshot.canonicalLocalUrl}`);
+  console.log(
+    `api server: ${apiServerProcesses.length ? "listening" : "missing"} ${apiHealth.url}`,
+  );
+  if (apiHealth.error && !apiHealth.ok) {
+    console.log(`api probe: ${apiHealth.error}`);
+  }
+  console.log(
+    `chart surface: ${chartSurfaceFingerprint.version || "missing"} (${chartSurfaceFingerprint.sourcePath})`,
+  );
+  if (databaseReachability.configured) {
+    console.log(
+      `postgres: ${databaseReachability.reachable ? "reachable" : "unreachable"} source=${databaseReachability.source || "unknown"} env=${databaseReachability.sourceEnv || "unknown"} ${databaseReachability.host || "unknown"}:${databaseReachability.port || "socket"}/${databaseReachability.database || "unknown"} ssl=${databaseReachability.sslMode || "none"}`,
+    );
+    if (databaseReachability.probe?.output) {
+      console.log(`postgres probe: ${databaseReachability.probe.output}`);
+    }
+  } else {
+    console.log("postgres: DATABASE_URL not set");
+  }
+  console.log(
+    `browser verification: ${
+      browserVerification.skipped
+        ? `skipped (${browserVerification.optInEnv})`
+        : browserVerification.prepared
+          ? "patched chromium ready"
+          : "patched chromium unavailable"
+    }; command=${browserVerification.command}`,
+  );
+  if (orphanedBrowserPrepScans.length) {
+    console.log("stale browser prep scans:");
+    for (const processInfo of orphanedBrowserPrepScans) {
+      console.log(`- pid ${processInfo.pid} ppid=${processInfo.ppid} ${processInfo.etime} ${processInfo.cmd}`);
+    }
+  }
+  console.log(`pyrus vite servers: ${pyrusViteServers.length}`);
+  for (const server of pyrusViteServers) {
+    console.log(
+      `- pid ${server.pid} ${server.kind} cwd=${server.cwdRelative} PORT=${server.port || ""} BASE_PATH=${server.basePath || ""} proxy=${server.proxyApiTarget}`,
+    );
+  }
+  console.log(`pyrus api servers: ${apiServerProcesses.length}`);
+  for (const server of apiServerProcesses) {
+    console.log(
+      `- pid ${server.pid} cwd=${server.cwdRelative} ${server.cmd}`,
+    );
+  }
+  if (viteServers.length !== pyrusViteServers.length) {
+    console.log(`other vite servers: ${viteServers.length - pyrusViteServers.length}`);
+  }
+  if (listeningProjectPorts.length) {
+    console.log("listening project ports:");
+    for (const port of listeningProjectPorts) {
+      const processesText = port.listeners
+        .flatMap((listener) =>
+          listener.processes.map((processInfo) => processInfo.cmd || processInfo.pid),
+        )
+        .filter(Boolean)
+        .join(" | ");
+      console.log(
+        `- local ${port.localPort} -> external ${port.externalPort ?? "n/a"} ${processesText}`,
+      );
+    }
+  }
+  if (warnings.length) {
+    console.log("warnings:");
+    for (const warning of warnings) {
+      console.log(`- ${warning}`);
+    }
+  }
+}
+
+if (failures.length) {
+  process.exitCode = 1;
+}

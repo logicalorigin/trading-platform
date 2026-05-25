@@ -67,7 +67,7 @@ function profileSignature(profile: SignalMonitorProfileRow): string {
     enabled: profile.enabled,
     watchlistId: profile.watchlistId ?? null,
     timeframe: profile.timeframe,
-    rayReplicaSettings: profile.rayReplicaSettings ?? {},
+    pyrusSignalsSettings: profile.pyrusSignalsSettings ?? {},
     freshWindowBars: profile.freshWindowBars,
     pollIntervalSeconds: profile.pollIntervalSeconds,
     maxSymbols: profile.maxSymbols,

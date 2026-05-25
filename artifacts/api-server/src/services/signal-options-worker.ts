@@ -53,6 +53,11 @@ type DeploymentRuntime = {
   failedUntilMs: number;
   lastSuccessAt: string | null;
   lastError: string | null;
+  lastSkippedAtMs: number | null;
+  lastSkipReason: string | null;
+  skippedScanCount: number;
+  pressurePaused: boolean;
+  pressurePauseStartedAtMs: number | null;
   currentScanStartedAtMs: number | null;
   lastScanDurationMs: number | null;
   scanCount: number;
@@ -209,6 +214,46 @@ function resolvePollIntervalSeconds(deployment: AlgoDeployment): number {
   return positiveInteger(worker.pollIntervalSeconds, 60, 15, 3600);
 }
 
+function createDeploymentRuntime(signature: string): DeploymentRuntime {
+  return {
+    signature,
+    lastCheckedAtMs: 0,
+    failedUntilMs: 0,
+    lastSuccessAt: null,
+    lastError: null,
+    lastSkippedAtMs: null,
+    lastSkipReason: null,
+    skippedScanCount: 0,
+    pressurePaused: false,
+    pressurePauseStartedAtMs: null,
+    currentScanStartedAtMs: null,
+    lastScanDurationMs: null,
+    scanCount: 0,
+    totalFailureCount: 0,
+    failureCount: 0,
+    lastFailureAt: null,
+    lastSignalCount: 0,
+    lastFreshSignalCount: 0,
+    lastStaleSignalCount: 0,
+    lastUnavailableSignalCount: 0,
+    lastLatestSignalBarAt: null,
+    lastOldestSignalBarAt: null,
+    lastCandidateCount: 0,
+    lastBlockedCandidateCount: 0,
+  };
+}
+
+function markDeploymentSkippedForResourcePressure(
+  runtime: DeploymentRuntime,
+  skippedAtMs: number,
+) {
+  runtime.lastSkippedAtMs = skippedAtMs;
+  runtime.lastSkipReason = "resource_pressure";
+  runtime.skippedScanCount += 1;
+  runtime.pressurePaused = true;
+  runtime.pressurePauseStartedAtMs ??= skippedAtMs;
+}
+
 function shouldSkipDeploymentForResourcePressure(input: {
   deployment: AlgoDeployment;
   pressure: ApiResourcePressureSnapshot;
@@ -325,6 +370,9 @@ async function runDeployment(input: {
   } finally {
     const scanEndedAtMs = dependencies.now().getTime();
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
+    runtime.lastCheckedAtMs = scanEndedAtMs;
+    runtime.pressurePaused = false;
+    runtime.pressurePauseStartedAtMs = null;
     runtime.currentScanStartedAtMs = null;
     activeDeploymentIds.delete(deployment.id);
   }
@@ -417,46 +465,12 @@ export function createSignalOptionsWorker(
         pressure.caps.signalOptions.skipDeploymentScans;
 
       for (const deployment of deployments) {
-        if (shouldSkipDeploymentForResourcePressure({ deployment, pressure })) {
-          dependencies.logger.debug?.(
-            { deploymentId: deployment.id, pressureLevel: pressure.level },
-            "Signal-options worker skipped deployment scan under resource pressure",
-          );
-          continue;
-        }
-        if (pressureBlocksScans) {
-          dependencies.logger.debug?.(
-            { deploymentId: deployment.id, pressureLevel: pressure.level },
-            "Signal-options worker resource-pressure scan block overridden",
-          );
-        }
-
         const signature = deploymentSignature(deployment);
         let runtime = deploymentRuntime.get(deployment.id);
         const signatureChanged = runtime?.signature !== signature;
 
         if (!runtime || signatureChanged) {
-          runtime = {
-            signature,
-            lastCheckedAtMs: 0,
-            failedUntilMs: 0,
-            lastSuccessAt: null,
-            lastError: null,
-            currentScanStartedAtMs: null,
-            lastScanDurationMs: null,
-            scanCount: 0,
-            totalFailureCount: 0,
-            failureCount: 0,
-            lastFailureAt: null,
-            lastSignalCount: 0,
-            lastFreshSignalCount: 0,
-            lastStaleSignalCount: 0,
-            lastUnavailableSignalCount: 0,
-            lastLatestSignalBarAt: null,
-            lastOldestSignalBarAt: null,
-            lastCandidateCount: 0,
-            lastBlockedCandidateCount: 0,
-          };
+          runtime = createDeploymentRuntime(signature);
           deploymentRuntime.set(deployment.id, runtime);
         }
 
@@ -471,6 +485,21 @@ export function createSignalOptionsWorker(
           nowMs - runtime.lastCheckedAtMs < pollIntervalMs
         ) {
           continue;
+        }
+
+        if (shouldSkipDeploymentForResourcePressure({ deployment, pressure })) {
+          markDeploymentSkippedForResourcePressure(runtime, nowMs);
+          dependencies.logger.debug?.(
+            { deploymentId: deployment.id, pressureLevel: pressure.level },
+            "Signal-options worker skipped deployment scan under resource pressure",
+          );
+          continue;
+        }
+        if (pressureBlocksScans) {
+          dependencies.logger.debug?.(
+            { deploymentId: deployment.id, pressureLevel: pressure.level },
+            "Signal-options worker resource-pressure scan block overridden",
+          );
         }
 
         runtime.lastCheckedAtMs = nowMs;
@@ -544,6 +573,21 @@ export function createSignalOptionsWorker(
           failedUntilMs: runtime.failedUntilMs,
           lastSuccessAt: runtime.lastSuccessAt,
           lastError: runtime.lastError,
+          lastSkippedAt:
+            runtime.lastSkippedAtMs === null
+              ? null
+              : new Date(runtime.lastSkippedAtMs).toISOString(),
+          lastSkipReason: runtime.lastSkipReason,
+          skippedScanCount: runtime.skippedScanCount,
+          pressurePaused: runtime.pressurePaused,
+          pressurePauseStartedAt:
+            runtime.pressurePauseStartedAtMs === null
+              ? null
+              : new Date(runtime.pressurePauseStartedAtMs).toISOString(),
+          pressurePauseAgeMs:
+            runtime.pressurePauseStartedAtMs === null
+              ? null
+              : Math.max(0, snapshotNowMs - runtime.pressurePauseStartedAtMs),
           currentScanStartedAt:
             runtime.currentScanStartedAtMs === null
               ? null

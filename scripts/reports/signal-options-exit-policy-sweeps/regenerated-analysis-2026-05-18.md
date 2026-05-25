@@ -1,11 +1,11 @@
-# RayReplica Signal Options Backtest Analysis
+# PyrusSignals Signal Options Backtest Analysis
 
 - Regenerated analysis at: 2026-05-18T14:01:31Z
-- Deployment: RayReplica Signal Options Shadow Paper (`7e2e4e6f-749f-4e65-a011-87d3559a23b0`)
+- Deployment: Pyrus Signals Shadow Paper (`7e2e4e6f-749f-4e65-a011-87d3559a23b0`)
 - Universe: 90 symbols
 - Window: 2026-04-01 through 2026-05-15 / latest completed trading day, depending on source artifact
 - Signal timeframe: 5m
-- Primary RayReplica structure patch: `{"timeHorizon":8,"bosConfirmation":"wicks","chochAtrBuffer":0,"chochBodyExpansionAtr":0,"chochVolumeGate":0}`
+- Primary PyrusSignals structure patch: `{"timeHorizon":8,"bosConfirmation":"wicks","chochAtrBuffer":0,"chochBodyExpansionAtr":0,"chochVolumeGate":0}`
 - Exit-policy risk caps: `{"maxOpenSymbols":10,"maxPremiumPerEntry":1500}`
 - Fresh all-variant rerun status: attempted 2026-05-18, stopped after roughly 25 minutes because the first variant did not complete and the process was waiting on an async handle. No new result files were written.
 
@@ -37,7 +37,7 @@ This result is not simply the highest PnL. It also has the best risk-adjusted sc
 
 ## Structure Sweep
 
-Source: `scripts/reports/rayreplica-signal-options-sweeps/2026-05-17T20-26-25-981Z/results.json`
+Source: `scripts/reports/pyrus-signals-options-sweeps/2026-05-17T20-26-25-981Z/results.json`
 
 | Rank | Variant | PnL | Score | Trades | PF | Max DD | Open |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -51,7 +51,7 @@ Read: the selected structure variant is defensible. `h8 + wick BOS + no ATR/body
 
 ## Focused Horizon Compare
 
-Source: `scripts/reports/rayreplica-signal-options-sweeps/focused-clean-h8-10-12-15-2026-05-18T01-02-30-355Z/results.json`
+Source: `scripts/reports/pyrus-signals-options-sweeps/focused-clean-h8-10-12-15-2026-05-18T01-02-30-355Z/results.json`
 
 | Rank | Variant | PnL | Score | Trades | PF | Max DD | Open |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -94,7 +94,7 @@ Read: the combined winner is balanced. Most exits are still controlled by runner
 
 Promote this as the next shadow-paper candidate:
 
-- RayReplica structure: `timeHorizon: 8`, `bosConfirmation: "wicks"`, `chochAtrBuffer: 0`, `chochBodyExpansionAtr: 0`, `chochVolumeGate: 0`
+- PyrusSignals structure: `timeHorizon: 8`, `bosConfirmation: "wicks"`, `chochAtrBuffer: 0`, `chochBodyExpansionAtr: 0`, `chochVolumeGate: 0`
 - Risk caps: max `10` open symbols, max premium per entry `$1500`
 - Exit policy: `hardStopPct: -30`, trail `35/15/20`, overnight min gain `10`, overnight runner giveback `15`, early invalidation after `6` bars at `-20%`
 

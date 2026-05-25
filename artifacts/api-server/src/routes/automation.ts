@@ -182,7 +182,7 @@ router.post("/algo/deployments/:deploymentId/signal-options/backfill", async (re
       session: body.session,
       commit: body.commit,
       profilePatch: body.profilePatch,
-      rayReplicaSettingsPatch: body.rayReplicaSettingsPatch,
+      pyrusSignalsSettingsPatch: body.pyrusSignalsSettingsPatch,
       signalTimeframe: body.signalTimeframe,
       forceDeploymentUniverse: body.forceDeploymentUniverse,
       replay,

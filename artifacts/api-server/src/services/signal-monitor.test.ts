@@ -24,7 +24,7 @@ function profile(patch: Partial<SignalMonitorProfileRow> = {}): SignalMonitorPro
     enabled: true,
     watchlistId: "watchlist-1",
     timeframe: "15m",
-    rayReplicaSettings: {},
+    pyrusSignalsSettings: {},
     freshWindowBars: 3,
     pollIntervalSeconds: 15,
     maxSymbols: 50,
@@ -144,14 +144,30 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   const loadBlock = source.match(
     /export async function loadSignalMonitorCompletedBars[\s\S]*?export async function evaluateSignalMonitorSymbolFromCompletedBars/,
   )?.[0];
+  const fullEvaluationBlock = source.match(
+    /export async function evaluateSignalMonitorSymbol[\s\S]*?export function evaluateSignalMonitorMatrixStateFromCompletedBars/,
+  )?.[0];
+  const matrixItemBlock = source.match(
+    /async function evaluateSignalMonitorMatrixItem[\s\S]*?function withSignalMonitorMatrixMetadata/,
+  )?.[0];
 
   assert.match(source, /getBarsWithDebug/);
+  assert.match(source, /const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;/);
   assert.match(source, /const SIGNAL_MONITOR_BARS_PRIORITY = 4;/);
+  assert.match(source, /const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 6;/);
   assert.match(source, /const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";/);
-  assert.match(loadBlock ?? "", /priority:\s*SIGNAL_MONITOR_BARS_PRIORITY/);
+  assert.match(
+    loadBlock ?? "",
+    /mode === "live-edge"\s*\?\s*SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY\s*:\s*SIGNAL_MONITOR_BARS_PRIORITY/,
+  );
+  assert.match(loadBlock ?? "", /priority,\s*\n\s*family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
   assert.match(loadBlock ?? "", /family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
   assert.match(loadBlock ?? "", /readSignalMonitorCompletedBarsCache/);
   assert.match(loadBlock ?? "", /signalMonitorCompletedBarsInFlight/);
+  assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
+  assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
+  assert.match(matrixItemBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
+  assert.match(matrixItemBlock ?? "", /retryStale:\s*false/);
 });
 
 test("signal monitor matrix caps server work under API resource pressure", () => {
@@ -162,19 +178,63 @@ test("signal monitor matrix caps server work under API resource pressure", () =>
 
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
-    { pressure: "normal", maxSymbols: 250, concurrency: 10 },
+    { pressure: "normal", maxSymbols: 8, concurrency: 2 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
-    { pressure: "watch", maxSymbols: 96, concurrency: 2 },
+    { pressure: "watch", maxSymbols: 6, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
-    { pressure: "high", maxSymbols: 32, concurrency: 1 },
+    { pressure: "high", maxSymbols: 4, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
-    { pressure: "critical", maxSymbols: 8, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 2, concurrency: 1 },
+  );
+});
+
+test("signal monitor profile evaluations cap broad scans under API pressure", () => {
+  const configured = profile({
+    maxSymbols: 250,
+    evaluationConcurrency: 10,
+  });
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
+      configured,
+      "normal",
+    ),
+    {
+      pressure: "normal",
+      capped: true,
+      profile: {
+        ...configured,
+        maxSymbols: 32,
+        evaluationConcurrency: 2,
+      },
+    },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
+      configured,
+      "watch",
+    ).profile.maxSymbols,
+    16,
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
+      configured,
+      "high",
+    ).profile.maxSymbols,
+    8,
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
+      configured,
+      "critical",
+    ).profile.maxSymbols,
+    0,
   );
 });
 
@@ -201,7 +261,7 @@ test("signal monitor all-watchlists scope evaluates the combined universe", () =
       profile: profile({
         watchlistId: "core",
         maxSymbols: 10,
-        rayReplicaSettings: {
+        pyrusSignalsSettings: {
           __signalMonitorUniverseScope: "all_watchlists",
         },
       }),
@@ -234,7 +294,7 @@ test("signal monitor selected-watchlist scope stays on the configured watchlist"
       profile: profile({
         watchlistId: "core",
         maxSymbols: 10,
-        rayReplicaSettings: {
+        pyrusSignalsSettings: {
           __signalMonitorUniverseScope: "selected_watchlist",
         },
       }),
@@ -304,7 +364,7 @@ test("signal monitor marks built-in fallback universes as non-authoritative", ()
     __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
       profile: profile({
         maxSymbols: 10,
-        rayReplicaSettings: {
+        pyrusSignalsSettings: {
           __signalMonitorUniverseScope: "all_watchlists",
         },
       }),

@@ -10,10 +10,10 @@ import {
   updateIbkrLanePolicy,
 } from "./ibkr-lane-policy";
 
-const policyFile = join(tmpdir(), `rayalgo-lane-policy-${process.pid}.json`);
+const policyFile = join(tmpdir(), `pyrus-lane-policy-${process.pid}.json`);
 
 test.beforeEach(() => {
-  process.env["RAYALGO_IBKR_LANE_POLICY_FILE"] = policyFile;
+  process.env["PYRUS_IBKR_LANE_POLICY_FILE"] = policyFile;
   if (existsSync(policyFile)) {
     rmSync(policyFile, { force: true });
   }
@@ -21,7 +21,7 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
-  delete process.env["RAYALGO_IBKR_LANE_POLICY_FILE"];
+  delete process.env["PYRUS_IBKR_LANE_POLICY_FILE"];
   if (existsSync(policyFile)) {
     rmSync(policyFile, { force: true });
   }
@@ -80,6 +80,24 @@ test("default flow scanner policy includes watchlists ahead of the broader unive
   assert.equal(resolution.sourceCounts.watchlists, 1);
 });
 
+test("default equity live quote policy includes flow universe up to live-line target", () => {
+  const flowUniverseSymbols = Array.from(
+    { length: 250 },
+    (_, index) => `ZZ${String(index).padStart(3, "0")}`,
+  );
+  const resolution = resolveIbkrLaneSymbols("equity-live-quotes", {
+    "flow-universe": flowUniverseSymbols,
+    watchlists: ["AAPL"],
+  });
+
+  assert.equal(resolution.maxSymbols, 200);
+  assert.equal(resolution.admittedSymbols[0], "AAPL");
+  assert.equal(resolution.admittedSymbols.length, 200);
+  assert.equal(resolution.sourceCounts["flow-universe"], 250);
+  assert.equal(resolution.droppedSymbols.length, 51);
+  assert.equal(resolution.droppedSymbols[0]?.reason, "capacity");
+});
+
 test("persisted legacy flow scanner defaults are migrated to the current defaults", () => {
   writeFileSync(
     policyFile,
@@ -125,6 +143,96 @@ test("persisted legacy flow scanner defaults are migrated to the current default
   const persisted = JSON.parse(readFileSync(policyFile, "utf8"));
   assert.equal(persisted.lanes["flow-scanner"].sources.watchlists, true);
   assert.equal(persisted.lanes["flow-scanner"].maxSymbols, 600);
+});
+
+test("persisted legacy equity live quote defaults are migrated to the shared line target", () => {
+  writeFileSync(
+    policyFile,
+    JSON.stringify({
+      version: 1,
+      updatedAt: null,
+      lanes: {
+        "equity-live-quotes": {
+          enabled: true,
+          sources: {
+            "built-in": false,
+            watchlists: true,
+            "flow-universe": false,
+            manual: true,
+            system: true,
+          },
+          manualSymbols: [],
+          excludedSymbols: [],
+          maxSymbols: 90,
+          priority: [
+            "system",
+            "manual",
+            "watchlists",
+            "flow-universe",
+            "built-in",
+          ],
+        },
+      },
+    }),
+  );
+
+  const snapshot = getIbkrLanePolicySnapshot();
+  assert.equal(
+    snapshot.policy.lanes["equity-live-quotes"].sources["flow-universe"],
+    true,
+  );
+  assert.equal(snapshot.policy.lanes["equity-live-quotes"].maxSymbols, 200);
+
+  const persisted = JSON.parse(readFileSync(policyFile, "utf8"));
+  assert.equal(
+    persisted.lanes["equity-live-quotes"].sources["flow-universe"],
+    true,
+  );
+  assert.equal(persisted.lanes["equity-live-quotes"].maxSymbols, 200);
+});
+
+test("persisted recent equity live quote defaults keep flow universe prewarm", () => {
+  writeFileSync(
+    policyFile,
+    JSON.stringify({
+      version: 1,
+      updatedAt: null,
+      lanes: {
+        "equity-live-quotes": {
+          enabled: true,
+          sources: {
+            "built-in": false,
+            watchlists: true,
+            "flow-universe": true,
+            manual: true,
+            system: true,
+          },
+          manualSymbols: [],
+          excludedSymbols: [],
+          maxSymbols: 200,
+          priority: [
+            "system",
+            "manual",
+            "watchlists",
+            "flow-universe",
+            "built-in",
+          ],
+        },
+      },
+    }),
+  );
+
+  const snapshot = getIbkrLanePolicySnapshot();
+  assert.equal(
+    snapshot.policy.lanes["equity-live-quotes"].sources["flow-universe"],
+    true,
+  );
+
+  const persisted = JSON.parse(readFileSync(policyFile, "utf8"));
+  assert.equal(
+    persisted.lanes["equity-live-quotes"].sources["flow-universe"],
+    true,
+  );
 });
 
 test("disabled lane reports all desired symbols as dropped", () => {

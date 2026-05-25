@@ -63,6 +63,7 @@ export type OptionsFlowScannerDiagnostics = {
   lastFailedSymbols: string[];
   lastSkippedReason: string | null;
   lastTransport: OptionsFlowScannerTransport | null;
+  scanTimeoutMs: number | null;
 };
 
 export type OptionsFlowScannerOptions<TEvent> = {
@@ -71,11 +72,13 @@ export type OptionsFlowScannerOptions<TEvent> = {
     limit: number;
     unusualThreshold?: number;
     lineBudget?: number;
+    signal?: AbortSignal;
   }) => Promise<OptionsFlowScannerFetchResult<TEvent>>;
   getTransport: () => Promise<OptionsFlowScannerTransportStatus | null>;
   normalizeSymbol?: (symbol: string) => string;
   now?: () => number;
   maxConcurrency?: number;
+  scanTimeoutMs?: number | (() => number | null | undefined);
   snapshotTtlMs?: number;
   snapshotStaleTtlMs?: number;
   preferredTransport?: OptionsFlowScannerTransport | null;
@@ -137,6 +140,12 @@ function normalizeLineBudget(value: number | undefined): number | null {
     : null;
 }
 
+function normalizeTimeoutMs(value: number | null | undefined): number | null {
+  return Number.isFinite(value) && (value ?? 0) > 0
+    ? Math.max(1, Math.floor(value as number))
+    : null;
+}
+
 function mergeLineBudget(
   left: number | undefined,
   right: number | undefined,
@@ -168,6 +177,8 @@ const TRANSIENT_EMPTY_REASON_PATTERNS = [
   "degraded",
   "error",
   "line_budget",
+  "market-session-quiet",
+  "market_session_quiet",
   "queued",
   "refreshing",
   "saturated",
@@ -341,6 +352,46 @@ export function createOptionsFlowScanner<TEvent>(
     return result;
   }
 
+  function getScanTimeoutMs(): number | null {
+    const configured = options.scanTimeoutMs;
+    return normalizeTimeoutMs(
+      typeof configured === "function" ? configured() : configured,
+    );
+  }
+
+  function withScanTimeout<T>(
+    task: (signal: AbortSignal | undefined) => Promise<T>,
+    symbol: string,
+  ): Promise<T> {
+    const timeoutMs = getScanTimeoutMs();
+    if (timeoutMs === null) {
+      return task(undefined);
+    }
+
+    const controller = new AbortController();
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const error = new Error(
+          `Options flow scanner timed out scanning ${symbol} after ${timeoutMs}ms.`,
+        );
+        controller.abort(error);
+        reject(error);
+      }, timeoutMs);
+      timeout.unref?.();
+
+      task(controller.signal).then(
+        (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      );
+    });
+  }
+
   async function getTransport(): Promise<OptionsFlowScannerTransportStatus | null> {
     try {
       return await options.getTransport();
@@ -358,12 +409,17 @@ export function createOptionsFlowScanner<TEvent>(
     const scanStartedAt = now();
     activeSymbols.add(symbol);
     try {
-      const result = await options.fetchSymbol({
+      const result = await withScanTimeout(
+        (signal) =>
+          options.fetchSymbol({
+            symbol,
+            limit: request.limit,
+            unusualThreshold: normalizeThreshold(request.unusualThreshold),
+            lineBudget: normalizeLineBudget(request.lineBudget) ?? undefined,
+            signal,
+          }),
         symbol,
-        limit: request.limit,
-        unusualThreshold: normalizeThreshold(request.unusualThreshold),
-        lineBudget: normalizeLineBudget(request.lineBudget) ?? undefined,
-      });
+      );
       const settledAt = now();
       storeSnapshot(symbol, request, result, transport, scanStartedAt, settledAt);
       await options.onResult?.({ symbol, result, failed: false });
@@ -771,6 +827,7 @@ export function createOptionsFlowScanner<TEvent>(
       lastFailedSymbols: [...lastRunResult.failedSymbols],
       lastSkippedReason: scannerActive ? null : lastRunResult.skippedReason,
       lastTransport: lastRunResult.transport,
+      scanTimeoutMs: getScanTimeoutMs(),
     };
   }
 

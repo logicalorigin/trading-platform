@@ -27,7 +27,7 @@ tags:
   - name: flow
     description: Options flow and unusual activity feeds
   - name: signal-monitor
-    description: RayReplica watchlist signal monitoring
+    description: Pyrus Signals watchlist signal monitoring
   - name: research
     description: Server-side fundamentals, filings, transcripts, and catalyst data
   - name: automation
@@ -2882,7 +2882,7 @@ paths:
     get:
       operationId: getSignalMonitorProfile
       tags: [signal-monitor]
-      summary: Get the RayReplica monitor profile for an environment
+      summary: Get the Pyrus Signals monitor profile for an environment
       parameters:
         - name: environment
           in: query
@@ -2899,7 +2899,7 @@ paths:
     put:
       operationId: updateSignalMonitorProfile
       tags: [signal-monitor]
-      summary: Update the RayReplica monitor profile for an environment
+      summary: Update the Pyrus Signals monitor profile for an environment
       requestBody:
         required: true
         content:
@@ -2918,7 +2918,7 @@ paths:
     post:
       operationId: evaluateSignalMonitor
       tags: [signal-monitor]
-      summary: Evaluate the RayReplica monitor profile
+      summary: Evaluate the Pyrus Signals monitor profile
       requestBody:
         required: false
         content:
@@ -2937,7 +2937,7 @@ paths:
     post:
       operationId: evaluateSignalMonitorMatrix
       tags: [signal-monitor]
-      summary: Evaluate RayReplica signal states for watchlist row timeframes
+      summary: Evaluate Pyrus Signals signal states for watchlist row timeframes
       requestBody:
         required: false
         content:
@@ -2956,7 +2956,7 @@ paths:
     get:
       operationId: getSignalMonitorState
       tags: [signal-monitor]
-      summary: List current RayReplica signal states
+      summary: List current Pyrus Signals signal states
       parameters:
         - name: environment
           in: query
@@ -2975,7 +2975,7 @@ paths:
     get:
       operationId: listSignalMonitorEvents
       tags: [signal-monitor]
-      summary: List RayReplica signal monitor events
+      summary: List Pyrus Signals signal monitor events
       parameters:
         - name: environment
           in: query
@@ -3402,7 +3402,7 @@ paths:
                   type: boolean
                 profilePatch:
                   $ref: "#/components/schemas/JsonObject"
-                rayReplicaSettingsPatch:
+                pyrusSignalsSettingsPatch:
                   $ref: "#/components/schemas/JsonObject"
                 signalTimeframe:
                   $ref: "#/components/schemas/SignalMonitorTimeframe"
@@ -10047,7 +10047,7 @@ components:
           type: [string, "null"]
         timeframe:
           $ref: "#/components/schemas/SignalMonitorTimeframe"
-        rayReplicaSettings:
+        pyrusSignalsSettings:
           $ref: "#/components/schemas/JsonObject"
         freshWindowBars:
           type: integer
@@ -10074,7 +10074,7 @@ components:
         - enabled
         - watchlistId
         - timeframe
-        - rayReplicaSettings
+        - pyrusSignalsSettings
         - freshWindowBars
         - pollIntervalSeconds
         - maxSymbols
@@ -10095,7 +10095,7 @@ components:
           type: [string, "null"]
         timeframe:
           $ref: "#/components/schemas/SignalMonitorTimeframe"
-        rayReplicaSettings:
+        pyrusSignalsSettings:
           $ref: "#/components/schemas/JsonObject"
         freshWindowBars:
           type: integer

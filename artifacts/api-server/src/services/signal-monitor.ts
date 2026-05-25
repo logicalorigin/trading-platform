@@ -9,12 +9,12 @@ import {
   type SignalMonitorSymbolState as DbSignalMonitorSymbolState,
 } from "@workspace/db";
 import {
-  evaluateRayReplicaSignals,
-  RAY_REPLICA_SIGNAL_WARMUP_BARS,
-  resolveRayReplicaSignalSettings,
-  type RayReplicaBar,
-  type RayReplicaSignalEvent,
-} from "@workspace/rayreplica-core";
+  evaluatePyrusSignalsSignals,
+  PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+  resolvePyrusSignalsSignalSettings,
+  type PyrusSignalsBar,
+  type PyrusSignalsSignalEvent,
+} from "@workspace/pyrus-signals-core";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
@@ -85,7 +85,9 @@ const SIGNAL_MONITOR_COMPLETED_BARS_STALE_TTL_MS = 2 * 60_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_MAX_ENTRIES = 512;
 const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
+const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
 const SIGNAL_MONITOR_BARS_PRIORITY = 4;
+const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 6;
 const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
@@ -94,10 +96,19 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 250, concurrency: 10 },
-  watch: { maxSymbols: 96, concurrency: 2 },
-  high: { maxSymbols: 32, concurrency: 1 },
-  critical: { maxSymbols: 8, concurrency: 1 },
+  normal: { maxSymbols: 8, concurrency: 2 },
+  watch: { maxSymbols: 6, concurrency: 1 },
+  high: { maxSymbols: 4, concurrency: 1 },
+  critical: { maxSymbols: 2, concurrency: 1 },
+};
+const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
+  ApiResourcePressureLevel,
+  { maxSymbols: number; concurrency: number }
+> = {
+  normal: { maxSymbols: 32, concurrency: 2 },
+  watch: { maxSymbols: 16, concurrency: 1 },
+  high: { maxSymbols: 8, concurrency: 1 },
+  critical: { maxSymbols: 0, concurrency: 1 },
 };
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();
@@ -208,13 +219,49 @@ function cappedSignalMatrixSettings(
   return {
     pressure: resourcePressureLevel,
     maxSymbols: Math.min(
-      positiveInteger(profile.maxSymbols, 50, 1, 250),
+      positiveInteger(profile.maxSymbols, 8, 1, 250),
       caps.maxSymbols,
     ),
     concurrency: Math.min(
-      positiveInteger(profile.evaluationConcurrency, 3, 1, 10),
+      positiveInteger(profile.evaluationConcurrency, 1, 1, 10),
       caps.concurrency,
     ),
+  };
+}
+
+function cappedSignalMonitorEvaluationProfile(
+  profile: DbSignalMonitorProfile,
+  pressureLevel?: ApiResourcePressureLevel,
+) {
+  const resourcePressureLevel =
+    pressureLevel ??
+    updateApiResourcePressure({
+      rssMb: mbFromBytes(process.memoryUsage().rss),
+    }).level;
+  const caps = SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS[resourcePressureLevel];
+  const configuredMaxSymbols = positiveInteger(profile.maxSymbols, 50, 1, 250);
+  const configuredConcurrency = positiveInteger(
+    profile.evaluationConcurrency,
+    3,
+    1,
+    10,
+  );
+  const maxSymbols = Math.min(configuredMaxSymbols, caps.maxSymbols);
+  const evaluationConcurrency = Math.min(
+    configuredConcurrency,
+    caps.concurrency,
+  );
+
+  return {
+    pressure: resourcePressureLevel,
+    capped:
+      maxSymbols < configuredMaxSymbols ||
+      evaluationConcurrency < configuredConcurrency,
+    profile: {
+      ...profile,
+      maxSymbols,
+      evaluationConcurrency,
+    },
   };
 }
 
@@ -257,7 +304,7 @@ function profileToResponse(profile: DbSignalMonitorProfile) {
     enabled: profile.enabled,
     watchlistId: profile.watchlistId ?? null,
     timeframe: resolveSignalMonitorTimeframe(profile.timeframe),
-    rayReplicaSettings: asRecord(profile.rayReplicaSettings),
+    pyrusSignalsSettings: asRecord(profile.pyrusSignalsSettings),
     freshWindowBars: profile.freshWindowBars,
     pollIntervalSeconds: profile.pollIntervalSeconds,
     maxSymbols: profile.maxSymbols,
@@ -496,7 +543,7 @@ export function buildSignalMonitorDbUnavailableProfile(
     enabled: false,
     watchlistId: null,
     timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
-    rayReplicaSettings: {},
+    pyrusSignalsSettings: {},
     freshWindowBars: 3,
     pollIntervalSeconds: 60,
     maxSymbols: 50,
@@ -518,7 +565,7 @@ function buildSignalMonitorRuntimeFallbackProfile(
     enabled: true,
     watchlistId: null,
     timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
-    rayReplicaSettings: {},
+    pyrusSignalsSettings: {},
     freshWindowBars: 3,
     pollIntervalSeconds: 60,
     maxSymbols: 50,
@@ -546,7 +593,7 @@ async function updateRuntimeSignalMonitorProfile(input: {
   enabled?: boolean;
   watchlistId?: string | null;
   timeframe?: string;
-  rayReplicaSettings?: Record<string, unknown>;
+  pyrusSignalsSettings?: Record<string, unknown>;
   freshWindowBars?: number;
   pollIntervalSeconds?: number;
   maxSymbols?: number;
@@ -576,8 +623,8 @@ async function updateRuntimeSignalMonitorProfile(input: {
   if (input.timeframe !== undefined) {
     updated.timeframe = parseSignalTimeframe(input.timeframe);
   }
-  if (input.rayReplicaSettings !== undefined) {
-    updated.rayReplicaSettings = asRecord(input.rayReplicaSettings);
+  if (input.pyrusSignalsSettings !== undefined) {
+    updated.pyrusSignalsSettings = asRecord(input.pyrusSignalsSettings);
   }
   if (input.freshWindowBars !== undefined) {
     updated.freshWindowBars = positiveInteger(input.freshWindowBars, 3, 1, 20);
@@ -761,12 +808,12 @@ function resolveSymbolUniverse(
 }
 
 function resolveSignalMonitorUniverseFromWatchlists(input: {
-  profile: Pick<DbSignalMonitorProfile, "watchlistId" | "maxSymbols" | "rayReplicaSettings">;
+  profile: Pick<DbSignalMonitorProfile, "watchlistId" | "maxSymbols" | "pyrusSignalsSettings">;
   watchlists: WatchlistRecord[];
   ensureWatchlist?: boolean;
   expansionUniverse?: SignalMonitorExpansionUniverse | null;
 }): ResolvedSignalMonitorUniverse {
-  const settings = asRecord(input.profile.rayReplicaSettings);
+  const settings = asRecord(input.profile.pyrusSignalsSettings);
   const universeScope = resolveSignalMonitorUniverseScope(settings);
   const fallbackWatchlists = input.watchlists.some((watchlist) =>
     String(watchlist.id || "").startsWith("built-in-"),
@@ -870,7 +917,7 @@ export async function resolveSignalMonitorProfileUniverse(
       ? profile
       : await ensureProfileWatchlist(profile);
   const { watchlists } = await listWatchlists();
-  const settings = asRecord(hydratedProfile.rayReplicaSettings);
+  const settings = asRecord(hydratedProfile.pyrusSignalsSettings);
   const universeScope = resolveSignalMonitorUniverseScope(settings);
   const expansionUniverse =
     universeScope === "all_watchlists_plus_universe"
@@ -1059,9 +1106,9 @@ export function aggregateCompletedMinuteBars(
     });
 }
 
-function barsToRayReplicaBars(inputBars: Awaited<ReturnType<typeof getBars>>["bars"]) {
+function barsToPyrusSignalsBars(inputBars: Awaited<ReturnType<typeof getBars>>["bars"]) {
   return inputBars
-    .map((bar): RayReplicaBar | null => {
+    .map((bar): PyrusSignalsBar | null => {
       const timestamp = dateOrNull(bar.timestamp);
       if (!timestamp) {
         return null;
@@ -1085,7 +1132,7 @@ function barsToRayReplicaBars(inputBars: Awaited<ReturnType<typeof getBars>>["ba
         v: Number.isFinite(volume) ? volume : 0,
       };
     })
-    .filter((bar): bar is RayReplicaBar => Boolean(bar))
+    .filter((bar): bar is PyrusSignalsBar => Boolean(bar))
     .sort((left, right) => left.time - right.time);
 }
 
@@ -1101,7 +1148,7 @@ function isLatestBarStale(input: {
   return input.evaluatedAt.getTime() - input.latestBarAt.getTime() > staleWindowMs;
 }
 
-function directionFromSignal(signal: RayReplicaSignalEvent): SignalMonitorDirection {
+function directionFromSignal(signal: PyrusSignalsSignalEvent): SignalMonitorDirection {
   return signal.eventType === "buy_signal" ? "buy" : "sell";
 }
 
@@ -1109,7 +1156,7 @@ async function insertSignalEvent(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
   timeframe: SignalMonitorTimeframe;
-  signal: RayReplicaSignalEvent;
+  signal: PyrusSignalsSignalEvent;
   latestBarAt: Date;
 }) {
   const direction = directionFromSignal(input.signal);
@@ -1133,7 +1180,7 @@ async function insertSignalEvent(input: {
       signalAt: new Date(input.signal.time * 1000),
       signalPrice: numericStringOrNull(input.signal.price),
       close: numericStringOrNull(input.signal.close),
-      source: "rayreplica",
+      source: "pyrus-signals",
       payload: {
         signalId: input.signal.id,
         barIndex: input.signal.barIndex,
@@ -1148,7 +1195,7 @@ async function insertSignalEventBestEffort(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
   timeframe: SignalMonitorTimeframe;
-  signal: RayReplicaSignalEvent;
+  signal: PyrusSignalsSignalEvent;
   latestBarAt: Date;
 }) {
   try {
@@ -1316,14 +1363,15 @@ export async function loadSignalMonitorCompletedBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
   limit?: number;
+  retryStale?: boolean;
 }): Promise<SignalMonitorCompletedBarsSnapshot> {
   const providerTimeframe: SignalMonitorTimeframe =
     input.timeframe === "2m" ? "1m" : input.timeframe;
   const providerLimit =
     input.timeframe === "2m"
-      ? (input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS) * 2 + 4
-      : input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS;
-  const completedLimit = input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS;
+      ? (input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS) * 2 + 4
+      : input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
+  const completedLimit = input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
   const queryTo = signalMonitorCompletedBarsQueryTo({
     timeframe: providerTimeframe,
     evaluatedAt: input.evaluatedAt,
@@ -1346,8 +1394,12 @@ export async function loadSignalMonitorCompletedBars(input: {
     return cloneCompletedBarsSnapshot(await inFlight);
   }
   signalMonitorCompletedBarsCounters.miss += 1;
-  const fetchBars = (mode: "primary" | "full-retry" | "live-edge") =>
-    getBarsWithDebug(
+  const fetchBars = (mode: "primary" | "full-retry" | "live-edge") => {
+    const priority =
+      mode === "live-edge"
+        ? SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY
+        : SIGNAL_MONITOR_BARS_PRIORITY;
+    return getBarsWithDebug(
       {
         symbol: input.symbol,
         timeframe: providerTimeframe,
@@ -1369,10 +1421,11 @@ export async function loadSignalMonitorCompletedBars(input: {
           : SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES,
       },
       {
-        priority: SIGNAL_MONITOR_BARS_PRIORITY,
+        priority,
         family: SIGNAL_MONITOR_BARS_FAMILY,
       },
     );
+  };
   const shouldRetry = (barAt: Date | null) =>
     !barAt ||
     isLatestBarStale({
@@ -1417,12 +1470,12 @@ export async function loadSignalMonitorCompletedBars(input: {
     completedBars = await fetchCompletedBars("primary");
     let latestBar = completedBars.at(-1);
     let latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
-    if (shouldRetry(latestBarAt)) {
+    if (input.retryStale !== false && shouldRetry(latestBarAt)) {
       acceptNewerBars(await fetchCompletedBars("full-retry"), false);
       latestBar = completedBars.at(-1);
       latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
     }
-    if (shouldRetry(latestBarAt)) {
+    if (input.retryStale !== false && shouldRetry(latestBarAt)) {
       acceptNewerBars(await fetchCompletedBars("live-edge"), true);
       latestBar = completedBars.at(-1);
     }
@@ -1450,7 +1503,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
   completedBars: SignalMonitorBarSnapshot[];
 }) {
   try {
-    const chartBars = barsToRayReplicaBars(input.completedBars);
+    const chartBars = barsToPyrusSignalsBars(input.completedBars);
     const latestBar = chartBars.at(-1);
 
     if (!latestBar) {
@@ -1470,10 +1523,10 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       });
     }
 
-    const settings = resolveRayReplicaSignalSettings(
-      asRecord(input.profile.rayReplicaSettings),
+    const settings = resolvePyrusSignalsSignalSettings(
+      asRecord(input.profile.pyrusSignalsSettings),
     );
-    const evaluation = evaluateRayReplicaSignals({
+    const evaluation = evaluatePyrusSignalsSignals({
       chartBars,
       settings,
       includeProvisionalSignals: false,
@@ -1607,7 +1660,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     lastEvaluatedAt: input.evaluatedAt,
     lastError: null as string | null,
   };
-  const chartBars = barsToRayReplicaBars(input.completedBars);
+  const chartBars = barsToPyrusSignalsBars(input.completedBars);
   const latestBar = chartBars.at(-1);
 
   if (!latestBar) {
@@ -1624,10 +1677,10 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     };
   }
 
-  const settings = resolveRayReplicaSignalSettings(
-    asRecord(input.profile.rayReplicaSettings),
+  const settings = resolvePyrusSignalsSignalSettings(
+    asRecord(input.profile.pyrusSignalsSettings),
   );
-  const evaluation = evaluateRayReplicaSignals({
+  const evaluation = evaluatePyrusSignalsSignals({
     chartBars,
     settings,
     includeProvisionalSignals: false,
@@ -1743,8 +1796,11 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
 }) {
   const evaluatedAt = input.evaluatedAt ?? new Date();
   const mode = input.mode ?? "incremental";
-  const timeframe = resolveSignalMonitorTimeframe(input.profile.timeframe);
-  const universe = await resolveSignalMonitorProfileUniverse(input.profile, {
+  const evaluationSettings = cappedSignalMonitorEvaluationProfile(input.profile);
+  const timeframe = resolveSignalMonitorTimeframe(
+    evaluationSettings.profile.timeframe,
+  );
+  const universe = await resolveSignalMonitorProfileUniverse(evaluationSettings.profile, {
     ensureWatchlist: input.ensureWatchlist,
   });
   const requestedSymbols = input.symbols
@@ -1755,6 +1811,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     : universe.symbols;
   const shouldDeactivateMissing =
     input.deactivateMissing !== false &&
+    !evaluationSettings.capped &&
     !universe.fallbackWatchlists &&
     !universe.fallbackUsed &&
     !requestedSymbols;
@@ -1846,6 +1903,8 @@ async function evaluateSignalMonitorMatrixItem(input: {
       symbol: input.symbol,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
+      limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+      retryStale: false,
     });
     return evaluateSignalMonitorMatrixStateFromCompletedBars({
       ...input,
@@ -2033,7 +2092,7 @@ function recordRuntimeSignalEvents(input: {
       signalPrice: state.currentSignalPrice,
       close: null,
       emittedAt: input.evaluatedAt,
-      source: "rayreplica-runtime",
+      source: "pyrus-signals-runtime",
       payload: {
         latestBarAt: state.latestBarAt?.toISOString() ?? null,
         barsSinceSignal: state.barsSinceSignal,
@@ -2093,31 +2152,40 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
   }
 
   const mode = input.mode ?? "incremental";
+  const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
+  const evaluationProfile = evaluationSettings.profile;
   const cacheKey = [
     "runtime-signal",
     input.environment,
     "profile",
     mode,
-    profile.id,
-    profile.watchlistId ?? "default",
-    profile.timeframe,
-    profile.maxSymbols,
-    profile.evaluationConcurrency,
-    profile.freshWindowBars,
-    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+    evaluationProfile.id,
+    evaluationProfile.watchlistId ?? "default",
+    evaluationProfile.timeframe,
+    evaluationSettings.pressure,
+    evaluationProfile.maxSymbols,
+    evaluationProfile.evaluationConcurrency,
+    evaluationProfile.freshWindowBars,
+    JSON.stringify(asRecord(evaluationProfile.pyrusSignalsSettings)),
   ].join(":");
 
   return withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
     const evaluatedAt = new Date();
-    const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
-    const universe = await resolveRuntimeSignalMonitorProfileUniverse(profile);
+    const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
+    const universe =
+      await resolveRuntimeSignalMonitorProfileUniverse(evaluationProfile);
     const states = await evaluateRuntimeSymbolsInBatches({
-      profile,
+      profile: evaluationProfile,
       symbols: universe.symbols,
       timeframe,
       evaluatedAt,
     });
-    recordRuntimeSignalEvents({ profile, states, evaluatedAt, mode });
+    recordRuntimeSignalEvents({
+      profile: evaluationProfile,
+      states,
+      evaluatedAt,
+      mode,
+    });
 
     const updatedProfile: DbSignalMonitorProfile = {
       ...profile,
@@ -2176,7 +2244,7 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     matrixSettings.concurrency,
     matrixSettings.pressure,
     profile.freshWindowBars,
-    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+    JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
   ].join(":");
 
   const response = await withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
@@ -2278,7 +2346,7 @@ export async function evaluateSignalMonitorMatrix(input: {
     concurrency,
     matrixSettings.pressure,
     profile.freshWindowBars,
-    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+    JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
   ].join(":");
 
   const response = await withSignalMonitorMatrixEvaluationCache(cacheKey, async () => {
@@ -2349,7 +2417,7 @@ export async function updateSignalMonitorProfile(input: {
   enabled?: boolean;
   watchlistId?: string | null;
   timeframe?: string;
-  rayReplicaSettings?: Record<string, unknown>;
+  pyrusSignalsSettings?: Record<string, unknown>;
   freshWindowBars?: number;
   pollIntervalSeconds?: number;
   maxSymbols?: number;
@@ -2386,8 +2454,8 @@ export async function updateSignalMonitorProfile(input: {
     if (input.timeframe !== undefined) {
       patch.timeframe = parseSignalTimeframe(input.timeframe);
     }
-    if (input.rayReplicaSettings !== undefined) {
-      patch.rayReplicaSettings = asRecord(input.rayReplicaSettings);
+    if (input.pyrusSignalsSettings !== undefined) {
+      patch.pyrusSignalsSettings = asRecord(input.pyrusSignalsSettings);
     }
     if (input.freshWindowBars !== undefined) {
       patch.freshWindowBars = positiveInteger(input.freshWindowBars, 3, 1, 20);
@@ -2444,6 +2512,7 @@ export async function updateSignalMonitorProfile(input: {
 
 export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorUniverseFromWatchlists,
+  cappedSignalMonitorEvaluationProfile,
   cappedSignalMatrixSettings,
   buildSignalMonitorCompletedBarsCacheKey,
   clearSignalMonitorMatrixEvaluationCache,

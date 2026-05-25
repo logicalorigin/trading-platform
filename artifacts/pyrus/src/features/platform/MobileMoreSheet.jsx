@@ -1,0 +1,318 @@
+import {
+  Activity,
+  ChartCandlestick,
+  FlaskConical,
+  Gauge,
+  List,
+  RadioTower,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Tv,
+} from "lucide-react";
+import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
+import { SCREENS } from "./screenRegistry.jsx";
+
+const SECONDARY_SCREEN_IDS = new Set([
+  "gex",
+  "research",
+  "algo",
+  "backtest",
+  "diagnostics",
+  "settings",
+]);
+
+const SCREEN_ICON_COMPONENTS = {
+  gex: Activity,
+  research: Search,
+  algo: RadioTower,
+  backtest: ChartCandlestick,
+  diagnostics: Gauge,
+  settings: Settings,
+};
+
+const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
+  <button
+    type="button"
+    data-testid={testId}
+    onClick={onClick}
+    style={{
+      minHeight: dim(42),
+      display: "grid",
+      gridTemplateColumns: `${dim(22)}px minmax(0, 1fr)`,
+      alignItems: "center",
+      gap: sp(7),
+      padding: sp("6px 7px"),
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
+      color: T.text,
+      textAlign: "left",
+      cursor: "pointer",
+      fontFamily: T.sans,
+      transition: "background 0.12s ease, border-color 0.12s ease",
+    }}
+    onMouseEnter={(event) => {
+      event.currentTarget.style.background = T.accentHoverBg;
+      event.currentTarget.style.borderColor = `${T.accent}33`;
+    }}
+    onMouseLeave={(event) => {
+      event.currentTarget.style.background = T.bg1;
+      event.currentTarget.style.borderColor = T.borderLight;
+    }}
+  >
+    <Icon size={16} strokeWidth={2.1} style={{ color: T.accent }} />
+    <span style={{ minWidth: 0 }}>
+      <span
+        style={{
+          display: "block",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.1,
+        }}
+      >
+        {label}
+      </span>
+      {detail ? (
+        <span
+          style={{
+            display: "block",
+            marginTop: sp(2),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            color: T.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            lineHeight: 1.1,
+          }}
+        >
+          {detail}
+        </span>
+      ) : null}
+    </span>
+  </button>
+);
+
+const StatusChip = ({ label, value, tone = T.textSec }) => (
+  <div
+    style={{
+      minWidth: 0,
+      padding: sp("5px 7px"),
+      border: `1px solid ${T.borderLight}`,
+      borderRadius: dim(RADII.xs),
+      background: T.bg1,
+      fontFamily: T.sans,
+    }}
+  >
+    <div
+      style={{
+        color: T.textMuted,
+        fontSize: textSize("caption"),
+        lineHeight: 1.05,
+        fontWeight: FONT_WEIGHTS.medium,
+        letterSpacing: 0,
+      }}
+    >
+      {label}
+    </div>
+    <div
+      style={{
+        marginTop: sp(2),
+        color: tone,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1.1,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value || MISSING_VALUE}
+    </div>
+  </div>
+);
+
+export const MobileMoreSheet = ({
+  open,
+  onClose,
+  activeScreen,
+  setScreen,
+  onOpenWatchlist,
+  onOpenActivity,
+  onOpenBloomberg,
+  activeWatchlist,
+  selectedSymbol,
+  session,
+  memoryPressureSignal,
+}) => {
+  const secondaryScreens = SCREENS.filter((screen) =>
+    SECONDARY_SCREEN_IDS.has(screen.id),
+  );
+  const historicalProvider =
+    session?.marketDataProviders?.historical || MISSING_VALUE;
+  const researchProvider =
+    session?.marketDataProviders?.research || MISSING_VALUE;
+
+  const handleScreenSelect = (screenId) => {
+    setScreen?.(screenId);
+    onClose?.();
+  };
+
+  const handleAction = (action) => {
+    onClose?.();
+    action?.();
+  };
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="More"
+      testId="mobile-more-sheet"
+      maxHeight="84dvh"
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: sp(10),
+          padding: sp("10px 10px max(14px, env(safe-area-inset-bottom))"),
+          background: T.bg0,
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: sp(6),
+          }}
+        >
+          {secondaryScreens.map((screen) => {
+            const Icon = SCREEN_ICON_COMPONENTS[screen.id] || SlidersHorizontal;
+            const active = activeScreen === screen.id;
+            return (
+              <button
+                key={screen.id}
+                type="button"
+                data-testid={`mobile-more-screen-${screen.id}`}
+                aria-current={active ? "page" : undefined}
+                onClick={() => handleScreenSelect(screen.id)}
+                style={{
+                  minHeight: dim(42),
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(7),
+                  padding: sp("0 7px"),
+                  border: `1px solid ${active ? `${T.accent}40` : T.borderLight}`,
+                  borderRadius: dim(RADII.xs),
+                  background: active ? T.accentHoverBg : T.bg1,
+                  color: active ? T.accent : T.textSec,
+                  cursor: "pointer",
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  textAlign: "left",
+                }}
+              >
+                <Icon size={15} strokeWidth={2.1} />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {screen.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: sp(5),
+          }}
+        >
+          <StatusChip
+            label="WL"
+            value={(activeWatchlist?.name || "Core").toUpperCase()}
+          />
+          <StatusChip label="SYM" value={selectedSymbol} tone={T.text} />
+          <StatusChip
+            label="IBKR"
+            value={session?.configured?.ibkr ? "READY" : "OFF"}
+            tone={session?.configured?.ibkr ? T.green : T.red}
+          />
+          <StatusChip
+            label="HIST"
+            value={String(historicalProvider).toUpperCase()}
+            tone={session?.configured?.ibkr ? T.green : T.textDim}
+          />
+          <StatusChip
+            label="RSCH"
+            value={String(researchProvider).toUpperCase()}
+            tone={session?.configured?.research ? T.green : T.textDim}
+          />
+          <StatusChip label="APP" value="v0.1.0" />
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: sp(6),
+          }}
+        >
+          <ActionButton
+            Icon={List}
+            label="Watchlist"
+            detail={activeWatchlist?.name || "Open symbols"}
+            onClick={() => handleAction(onOpenWatchlist)}
+            testId="mobile-more-watchlist"
+          />
+          <ActionButton
+            Icon={RadioTower}
+            label="Algo Monitor"
+            detail="Deployments, P&L, positions"
+            onClick={() => handleAction(onOpenActivity)}
+            testId="mobile-more-activity"
+          />
+          <ActionButton
+            Icon={Tv}
+            label="Bloomberg Live"
+            detail="Open floating video"
+            onClick={() => handleAction(onOpenBloomberg)}
+            testId="mobile-more-bloomberg"
+          />
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            minWidth: 0,
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(8),
+            paddingTop: sp(2),
+          }}
+        >
+          <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+          <FlaskConical
+            size={14}
+            strokeWidth={2}
+            style={{ color: T.textMuted, flexShrink: 0 }}
+          />
+        </div>
+      </div>
+    </BottomSheet>
+  );
+};
+
+export default MobileMoreSheet;

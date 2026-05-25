@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ConnectionState,
+  IBApiNextTickType as NextTickType,
   IBApiTickType as TickType,
   MarketDataType,
   SecType,
@@ -49,6 +50,32 @@ test("market subscription lane has enough budget for watchlist prewarm batches",
 
   assert.equal(snapshot.timeoutMs, 30_000);
   assert.equal(snapshot.defaults.timeoutMs, 30_000);
+});
+
+test("account and historical bridge lanes allow limited parallel reads", () => {
+  const snapshot = getBridgeSchedulerConfigSnapshot();
+
+  assert.equal(snapshot.account.concurrency, 2);
+  assert.equal(snapshot.account.defaults.concurrency, 2);
+  assert.equal(snapshot.historical.concurrency, 2);
+  assert.equal(snapshot.historical.defaults.concurrency, 2);
+  assert.equal(snapshot.historical.backoffMs, 30_000);
+  assert.equal(snapshot["options-meta"].backoffMs, 45_000);
+  assert.equal(snapshot["option-quotes"].backoffMs, 30_000);
+});
+
+test("bridge scheduler diagnostics include queue and work duration metrics", async () => {
+  __resetBridgeSchedulerForTests();
+
+  await runBridgeLane("historical", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    return "ok";
+  });
+
+  const diagnostics = getBridgeSchedulerDiagnostics().historical;
+  assert.equal(typeof diagnostics.maxQueueAgeMs, "number");
+  assert.equal(typeof diagnostics.lastDurationMs, "number");
+  assert.equal(typeof diagnostics.p95DurationMs, "number");
 });
 
 test("quote prewarm groups merge instead of replacing each other", async () => {
@@ -1423,6 +1450,45 @@ test("toQuoteSnapshot skips zero last prices when bid/ask ticks are usable", () 
   assert.equal(quote.bid, 501.9);
   assert.equal(quote.ask, 502.1);
   assert.equal(quote.updatedAt.toISOString(), "2026-05-21T14:30:04.000Z");
+});
+
+test("toQuoteSnapshot preserves zero option bids when the ask is usable", () => {
+  const askUpdatedAt = Date.parse("2026-05-21T14:30:04.000Z");
+  const ticks = new Map<number, { value: number; ingressTm: number }>([
+    [TickType.BID, { value: 0, ingressTm: askUpdatedAt }],
+    [TickType.ASK, { value: 2.45, ingressTm: askUpdatedAt }],
+  ]);
+
+  const quote = toQuoteSnapshot(
+    "SPY 20260515 C 500",
+    "12345",
+    ticks as never,
+    MarketDataType.REALTIME,
+  );
+
+  assert.equal(quote.price, 2.45);
+  assert.equal(quote.bid, 0);
+  assert.equal(quote.ask, 2.45);
+});
+
+test("toQuoteSnapshot uses IB Gateway model option price when top-of-book is absent", () => {
+  const modelUpdatedAt = Date.parse("2026-05-21T14:30:04.000Z");
+  const ticks = new Map<number, { value: number; ingressTm: number }>([
+    [NextTickType.MODEL_OPTION_PRICE, { value: 1.37, ingressTm: modelUpdatedAt }],
+    [TickType.CLOSE, { value: 1.22, ingressTm: modelUpdatedAt }],
+  ]);
+
+  const quote = toQuoteSnapshot(
+    "SPY 20260515 C 500",
+    "12345",
+    ticks as never,
+    MarketDataType.REALTIME,
+  );
+
+  assert.equal(quote.price, 1.37);
+  assert.equal(quote.mark, 1.37);
+  assert.equal(Number(quote.change.toFixed(2)), 0.15);
+  assert.equal(Number(quote.changePercent.toFixed(6)), 12.295082);
 });
 
 test("option activity snapshot timeout scales with batch size", () => {

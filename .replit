@@ -10,7 +10,7 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "artifacts/rayalgo: web"
+runButton = "artifacts/pyrus: web"
 
 [agent]
 stack = "PNPM_WORKSPACE"

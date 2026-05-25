@@ -1442,9 +1442,19 @@ export function resolveOptionQuoteMarketDataType(
 // non-live market data subscriptions.
 function getOptionComputationValue(
   ticks: MarketDataTicks,
-  variant: "iv" | "delta" | "gamma" | "vega" | "theta",
+  variant: "price" | "iv" | "delta" | "gamma" | "vega" | "theta",
 ): number | null {
   const map = {
+    price: [
+      NextTickType.MODEL_OPTION_PRICE,
+      NextTickType.DELAYED_MODEL_OPTION_PRICE,
+      NextTickType.LAST_OPTION_PRICE,
+      NextTickType.DELAYED_LAST_OPTION_PRICE,
+      NextTickType.BID_OPTION_PRICE,
+      NextTickType.DELAYED_BID_OPTION_PRICE,
+      NextTickType.ASK_OPTION_PRICE,
+      NextTickType.DELAYED_ASK_OPTION_PRICE,
+    ],
     iv: [
       NextTickType.MODEL_OPTION_IV,
       NextTickType.DELAYED_MODEL_OPTION_IV,
@@ -1730,16 +1740,37 @@ export function toQuoteSnapshot(
   const priceTick =
     getPositiveTick(ticks, TickType.LAST, TickType.DELAYED_LAST) ??
     getPositiveTick(ticks, TickType.BID, TickType.DELAYED_BID) ??
-    getPositiveTick(ticks, TickType.ASK, TickType.DELAYED_ASK);
+    getPositiveTick(ticks, TickType.ASK, TickType.DELAYED_ASK) ??
+    getPositiveTick(
+      ticks,
+      NextTickType.MODEL_OPTION_PRICE,
+      NextTickType.DELAYED_MODEL_OPTION_PRICE,
+      NextTickType.LAST_OPTION_PRICE,
+      NextTickType.DELAYED_LAST_OPTION_PRICE,
+      NextTickType.BID_OPTION_PRICE,
+      NextTickType.DELAYED_BID_OPTION_PRICE,
+      NextTickType.ASK_OPTION_PRICE,
+      NextTickType.DELAYED_ASK_OPTION_PRICE,
+      TickType.MARK_PRICE,
+      TickType.CREDITMAN_MARK_PRICE,
+      TickType.CREDITMAN_SLOW_MARK_PRICE,
+    );
+  const optionModelPrice = getOptionComputationValue(ticks, "price");
+  const markPrice = getPositiveTickValue(
+    ticks,
+    TickType.MARK_PRICE,
+    TickType.CREDITMAN_MARK_PRICE,
+    TickType.CREDITMAN_SLOW_MARK_PRICE,
+  );
   const price = priceTick?.value ?? 0;
   const bid =
     firstDefined(
-      getPositiveTickValue(ticks, TickType.BID, TickType.DELAYED_BID),
+      getTickValue(ticks, TickType.BID, TickType.DELAYED_BID),
       price,
     ) ?? 0;
   const ask =
     firstDefined(
-      getPositiveTickValue(ticks, TickType.ASK, TickType.DELAYED_ASK),
+      getTickValue(ticks, TickType.ASK, TickType.DELAYED_ASK),
       bid,
     ) ?? bid;
   const bidSize =
@@ -1815,6 +1846,7 @@ export function toQuoteSnapshot(
     gamma,
     theta,
     vega,
+    mark: markPrice ?? optionModelPrice ?? null,
     updatedAt,
     providerContractId,
     transport: "tws",

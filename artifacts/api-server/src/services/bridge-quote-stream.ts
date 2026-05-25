@@ -1,6 +1,7 @@
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import { isHttpError } from "../lib/errors";
+import { getIbkrBridgeRuntimeConfig } from "../lib/runtime";
 import {
   IbkrBridgeClient,
   type MutableQuoteStream,
@@ -13,6 +14,7 @@ import {
   releaseMarketDataLeases,
 } from "./market-data-admission";
 import { runBridgeWork } from "./bridge-governor";
+import { isLikelyUsEquitySession } from "./platform-runtime-status";
 
 type QuoteWithSource = QuoteSnapshot & {
   source: "ibkr";
@@ -124,11 +126,13 @@ const SNAPSHOT_BOOTSTRAP_TIMEOUT_MS = Math.max(
     10,
   ) || 2_500,
 );
+const UNCONFIGURED_STREAM_RETRY_MS = 1_000;
 
 function isBridgeWorkBackoffError(error: unknown): boolean {
   return isHttpError(error) && error.code === "ibkr_bridge_work_backoff";
 }
 
+let bridgeRuntimeConfiguredForTests: boolean | null = null;
 let nextSubscriberId = 1;
 let streamSignature = "";
 let streamUnsubscribe: (() => void) | null = null;
@@ -171,6 +175,10 @@ function normalizeSymbols(symbols: string[]): string[] {
   return Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   ).sort();
+}
+
+function isBridgeRuntimeConfigured(): boolean {
+  return bridgeRuntimeConfiguredForTests ?? Boolean(getIbkrBridgeRuntimeConfig());
 }
 
 function getDesiredSymbols(): string[] {
@@ -312,26 +320,6 @@ function resolveCurrentStreamSignalAt(
     return startedAt;
   }
   return previousSignalAt;
-}
-
-function isLikelyUsEquitySession(now = nowProvider()): boolean {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
-  if (weekday === "Sat" || weekday === "Sun") {
-    return false;
-  }
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
-  const minute = Number(
-    parts.find((part) => part.type === "minute")?.value ?? "0",
-  );
-  const minutes = hour * 60 + minute;
-  return minutes >= 9 * 60 + 25 && minutes <= 16 * 60 + 5;
 }
 
 function recordQuoteEvent(receivedAt: Date): void {
@@ -721,6 +709,24 @@ function refreshBridgeQuoteStream() {
     return;
   }
 
+  if (!isBridgeRuntimeConfigured()) {
+    stopStream();
+    const now = nowProvider();
+    lastSignalAt = now;
+    lastError = null;
+    lastErrorAt = null;
+    lastStreamStatus = {
+      state: "closed",
+      reason: "ibkr_bridge_not_configured",
+      message: "Interactive Brokers bridge is not configured.",
+      requestedCount: symbols.length,
+      admittedCount: 0,
+      rejectedCount: symbols.length,
+    };
+    scheduleRefreshBridgeQuoteStream(UNCONFIGURED_STREAM_RETRY_MS);
+    return;
+  }
+
   if (streamMutableControl && streamUnsubscribe) {
     stopPendingStream();
     mutableUpdateCount += 1;
@@ -873,6 +879,11 @@ export async function fetchBridgeQuoteSnapshots(
   const normalizedSymbols = normalizeSymbols(symbols);
   if (!normalizedSymbols.length) {
     return { quotes: [] };
+  }
+  if (!isBridgeRuntimeConfigured()) {
+    return {
+      quotes: getCurrentBridgeQuoteSnapshots(normalizedSymbols),
+    };
   }
   const owner = `bridge-quote-snapshot:${nextSnapshotOwnerId++}`;
   const admission = admitMarketDataLeases({
@@ -1090,6 +1101,13 @@ export function __setBridgeQuoteClientForTests(
   client: BridgeQuoteClient | null,
 ): void {
   bridgeClient = client ?? new IbkrBridgeClient();
+  bridgeRuntimeConfiguredForTests = client ? true : null;
+}
+
+export function __setBridgeQuoteRuntimeConfiguredForTests(
+  configured: boolean | null,
+): void {
+  bridgeRuntimeConfiguredForTests = configured;
 }
 
 export function __setBridgeQuoteStreamNowForTests(now: Date | null): void {
@@ -1143,5 +1161,6 @@ export function __resetBridgeQuoteStreamForTests(): void {
   lastStallAt = null;
   lastStallReason = null;
   lastStreamStatus = null;
+  bridgeRuntimeConfiguredForTests = null;
   nowProvider = () => new Date();
 }

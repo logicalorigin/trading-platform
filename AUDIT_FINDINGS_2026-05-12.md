@@ -1,7 +1,7 @@
 # Monorepo Audit Findings — 2026-05-12
 
 **Audit type**: discovery-only. No code edits made; only this report.
-**Scope**: whole monorepo (`/home/runner/workspace`): `artifacts/{api-server, ibkr-bridge, backtest-worker, rayalgo}`, all `lib/*` packages, `scripts/`, root configs, tracked & untracked artifacts.
+**Scope**: whole monorepo (`/home/runner/workspace`): `artifacts/{api-server, ibkr-bridge, backtest-worker, pyrus}`, all `lib/*` packages, `scripts/`, root configs, tracked & untracked artifacts.
 **Plan**: `/home/runner/.claude/plans/sleepy-finding-creek.md` (19-category methodology).
 **Run by**: Claude Opus 4.7 1M, single session.
 
@@ -16,7 +16,7 @@ The remaining findings cluster around three themes: **API contract drift on the 
 ### Top 5 high/med findings (with action pointers)
 
 1. **`HIGH` — 25 Express routes implemented in `artifacts/api-server/src/routes/*.ts` are not declared in `lib/api-spec/openapi.yaml`** (Cat 4 / Cat 17). Spec consumers using generated clients will miss these endpoints. Notable groups: 9 `/settings/*` endpoints, 8 `/ibkr/bridge/*` and `/ibkr/activation/*`, 4 `/diagnostics/*` POST telemetry. **Action**: extend openapi.yaml or remove unused routes.
-2. **`HIGH` — No environment variable documentation surface** (Cat 18). 40 unique `process.env.*` / `import.meta.env.*` references; no `.env.example`; `replit.md` only mentions 2 by name (`RAYALGO_DATABASE_SOURCE`, `LOCAL_DATABASE_URL`). **Action**: add `.env.example` at repo root.
+2. **`HIGH` — No environment variable documentation surface** (Cat 18). 40 unique `process.env.*` / `import.meta.env.*` references; no `.env.example`; `replit.md` only mentions 2 by name (`PYRUS_DATABASE_SOURCE`, `LOCAL_DATABASE_URL`). **Action**: add `.env.example` at repo root.
 3. **`MED` — `pnpm-workspace.yaml` declares `lib/integrations/*` but the directory does not exist** (Cat 10). Orphan glob; pnpm install will warn. **Action**: remove the glob or create the directory.
 4. **`MED` — `artifacts/api-server/src/services/shadow-equity-forward-worker.ts` has no production caller** (Cat 1 / Cat 2). `startShadowEquityForwardWorker` is exported but only referenced from its own test file. `knip` does not flag it (likely missed via indirect import path). **Action**: confirm whether dormant WIP, gated feature, or removed.
 5. **`MED` — 21 orphan test files** where the obvious sibling implementation file is missing (Cat 7). Most under `artifacts/api-server/src/services/`. Likely testing logic exported from differently-named modules (e.g., `account-risk.test.ts` exercises `account-risk-model.ts`) but **some are real orphans for code that was renamed/deleted**. **Action**: walk each test, confirm what it covers, delete if dead.
@@ -31,7 +31,7 @@ These categories had zero findings — confirming the cleanup pass was thorough.
 - **Cat 5** Committed build artifacts (`dist/`, `output/`, `tmp/`, `.log`, `.tar.gz`, `.zip`, `.bak`): 0 tracked. (25 untracked `.log` files in `artifacts/` exist but are local-only — see Cat 5 below for a hygiene note.)
 - **Cat 17** Screen-registry drift: 10 screens registered, 10 files on disk, perfect alignment.
 - **Cat 7 partial** Skipped/only tests: 3 hits, all legitimate env-gated e2e skips with inline comments.
-- **Cat 12** Cross-package boundary violations: 0 `@workspace/<pkg>/src/` deep imports; the 4 relative-3-deep imports identified are all intra-rayalgo navigation, not workspace crossings.
+- **Cat 12** Cross-package boundary violations: 0 `@workspace/<pkg>/src/` deep imports; the 4 relative-3-deep imports identified are all intra-pyrus navigation, not workspace crossings.
 - **Cat 11** Legacy-named files in tracked source: 0 (`*.old.*`, `*-legacy*`, etc.); 1 hit was in `.local/skills/artifacts/bootstrap-legacy.js` which lives under gitignored `.local/`.
 
 ---
@@ -92,11 +92,11 @@ Any finding inside these areas is tagged `wip-protected: yes` and excluded from 
 
 **Cleared as intentional (not findings)**:
 - `marketFlowStore.js` vs `tradeFlowStore.js` — both use the same store boilerplate but serve scope-distinct purposes (broad market vs trade-active). Confirmed in `APP_SURFACE_OWNERSHIP_REVIEW.md` as deferred-but-intentional sibling structure. **wip-protected: yes**.
-- `useIbkrAccountSnapshotStream` / `useShadowAccountSnapshotStream` / `useAccountPageSnapshotStream` (all in `artifacts/rayalgo/src/features/platform/live-streams.ts`) — three SSE hooks for three deliberate modes (IBKR live, shadow, derived/performance). Tracked as separate stream freshness state.
+- `useIbkrAccountSnapshotStream` / `useShadowAccountSnapshotStream` / `useAccountPageSnapshotStream` (all in `artifacts/pyrus/src/features/platform/live-streams.ts`) — three SSE hooks for three deliberate modes (IBKR live, shadow, derived/performance). Tracked as separate stream freshness state.
 - `useBrokerStreamFreshnessSnapshot` vs `useShadowAccountStreamFreshnessSnapshot` — intentional independent state machines.
 - `shadow-account.ts` + `shadow-account-events.ts` + `shadow-account-streams.ts` — clean layering (events → core → polling bridge), not duplicates.
 - `account-summary-model.ts`, `account-position-model.ts`, `account-risk-model.ts` (api-server) vs generated Zod types — model files are builders/transformers, not schemas. Clean separation.
-- `artifacts/rayalgo/src/lib/uiTokens.jsx` (JS object) vs `artifacts/rayalgo/src/index.css` (CSS vars) — overlapping color spaces, drift risk exists. **Already in flight**: the Account-Screen Performance Pilot plan (sleepy-finding-creek.md prior version) addressed this directly. Not raised as a new finding here.
+- `artifacts/pyrus/src/lib/uiTokens.jsx` (JS object) vs `artifacts/pyrus/src/index.css` (CSS vars) — overlapping color spaces, drift risk exists. **Already in flight**: the Account-Screen Performance Pilot plan (sleepy-finding-creek.md prior version) addressed this directly. Not raised as a new finding here.
 
 ---
 
@@ -155,7 +155,7 @@ No hand-written TS interfaces in `artifacts/api-server/src/services/` were found
 
 **Findings**:
 - **Tracked artifacts (0)**: zero committed log/archive/build files. Root `.gitignore` correctly covers `dist`, `tmp`, `*.tsbuildinfo`, `npm-debug.log`, `yarn-error.log`, `testem.log`, `.cache/`, `.local/`, `.vendor/`, `attached_assets/`.
-- **Untracked but unindexed (informational)**: 25 `.log` files in `artifacts/` (rayalgo memory-soak / IBKR stream watch / browser-console-watch, dated 2026-04-27 to 2026-05-11). All untracked, all match the gitignore-policy spirit but are **not explicitly covered** by `.gitignore` — `artifacts/*.log` is not a globbed entry. **Risk**: `git add -A` could pick these up.
+- **Untracked but unindexed (informational)**: 25 `.log` files in `artifacts/` (pyrus memory-soak / IBKR stream watch / browser-console-watch, dated 2026-04-27 to 2026-05-11). All untracked, all match the gitignore-policy spirit but are **not explicitly covered** by `.gitignore` — `artifacts/*.log` is not a globbed entry. **Risk**: `git add -A` could pick these up.
 - **Untracked binary**: `artifacts/ibgateway-bridge-windows-current.tar.gz` (1.5 MB). Referenced by `scripts/package-ibkr-bridge-bundle.mjs:11` as the canonical artifact path; produced by the packaging script. Correct as-is.
 
 | Item | Severity | WIP | Suggested action |
@@ -171,8 +171,8 @@ No hand-written TS interfaces in `artifacts/api-server/src/services/` were found
 
 | Doc | Broken path | Reality |
 |---|---|---|
-| `REPO_CLEANUP_INVENTORY.md` | `artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts` | File does not exist on disk. Either renamed during cleanup or never landed. |
-| `REPO_CLEANUP_INVENTORY.md` | `scripts/runUnitTests.mjs` | No `runUnitTests.mjs` at workspace `scripts/`; actual files live at `artifacts/api-server/scripts/runUnitTests.mjs` and `artifacts/rayalgo/scripts/runUnitTests.mjs`. |
+| `REPO_CLEANUP_INVENTORY.md` | `artifacts/pyrus/src/features/charting/ResearchChartDashboardStrip.ts` | File does not exist on disk. Either renamed during cleanup or never landed. |
+| `REPO_CLEANUP_INVENTORY.md` | `scripts/runUnitTests.mjs` | No `runUnitTests.mjs` at workspace `scripts/`; actual files live at `artifacts/api-server/scripts/runUnitTests.mjs` and `artifacts/pyrus/scripts/runUnitTests.mjs`. |
 
 | Severity | WIP | Suggested action |
 |---|---|---|
@@ -205,19 +205,19 @@ artifacts/api-server/src/services/order-gateway-readiness.test.ts
 artifacts/api-server/src/services/order-read-resilience.test.ts
 artifacts/api-server/src/services/runtime-diagnostics.test.ts
 artifacts/api-server/src/providers/ibkr/client-history-period.test.ts
-artifacts/rayalgo/src/features/charting/chartHydrationWiring.test.js       ← wip-protected
-artifacts/rayalgo/src/features/gex/gexDataWiring.test.js
-artifacts/rayalgo/src/features/gex/gexNarrative.test.js
-artifacts/rayalgo/src/features/gex/intradaySnapshots.test.js
-artifacts/rayalgo/src/features/market/marketChartWiring.test.js
-artifacts/rayalgo/src/features/platform/gexScreenWiring.test.js
-artifacts/rayalgo/src/features/platform/platformRootSource.test.js
-artifacts/rayalgo/src/screens/account/accountPositionRows.test.js
+artifacts/pyrus/src/features/charting/chartHydrationWiring.test.js       ← wip-protected
+artifacts/pyrus/src/features/gex/gexDataWiring.test.js
+artifacts/pyrus/src/features/gex/gexNarrative.test.js
+artifacts/pyrus/src/features/gex/intradaySnapshots.test.js
+artifacts/pyrus/src/features/market/marketChartWiring.test.js
+artifacts/pyrus/src/features/platform/gexScreenWiring.test.js
+artifacts/pyrus/src/features/platform/platformRootSource.test.js
+artifacts/pyrus/src/screens/account/accountPositionRows.test.js
 ```
 
 **Caveat**: this is a heuristic. Many are likely testing functionality re-exported from an `index.ts` or from a model file with a different name. Manual walk: open each test, identify what it actually imports, then decide if the imports point at live code. The `*-wip-protected*` markers are findings inside the protected WIP boundaries.
 
-**Skipped tests (Cat 7 secondary)**: 3 `test.skip` calls, all in `artifacts/rayalgo/e2e/`, all env-var gated with inline justification. **Not findings.**
+**Skipped tests (Cat 7 secondary)**: 3 `test.skip` calls, all in `artifacts/pyrus/e2e/`, all env-var gated with inline justification. **Not findings.**
 
 **`xit`/`xdescribe`**: 0 (earlier grep matched `process.exit(` etc. — over-broad pattern. No actual skipped tests using these prefixes.)
 
@@ -228,7 +228,7 @@ artifacts/rayalgo/src/screens/account/accountPositionRows.test.js
 
 **Findings**:
 
-`tsconfig.json` drift: minimal. Only `artifacts/rayalgo/tsconfig.json` overrides `jsx: "preserve"` and `moduleResolution: "bundler"` — required for Vite/React 19 setup. Others delegate to `tsconfig.base.json`. **Not a drift finding.**
+`tsconfig.json` drift: minimal. Only `artifacts/pyrus/tsconfig.json` overrides `jsx: "preserve"` and `moduleResolution: "bundler"` — required for Vite/React 19 setup. Others delegate to `tsconfig.base.json`. **Not a drift finding.**
 
 Off-catalog dep versions (`MED` severity, opportunistic):
 
@@ -280,7 +280,7 @@ All other globs (`artifacts/*`, `lib/*`, `scripts`) resolve to existing dirs wit
 **Method**: `git grep` for relative-3-deep imports and `@workspace/<pkg>/src/` deep imports.
 
 **Findings**:
-- Relative-3-deep imports: 4 hits, all intra-rayalgo (`features/...` → `src/lib/...`). Not cross-workspace; just deep within one workspace.
+- Relative-3-deep imports: 4 hits, all intra-pyrus (`features/...` → `src/lib/...`). Not cross-workspace; just deep within one workspace.
 - Workspace-package deep imports (`@workspace/foo/src/bar`): 0.
 
 **Not findings.**
@@ -315,8 +315,8 @@ Legitimate inline note about a future Replit artifact-controller behavior; not s
 | File | Hits | Category |
 |---|---|---|
 | `artifacts/api-server/src/services/option-chain-batch.test.ts` | 56 | test fixture casts (wip-protected) |
-| `artifacts/rayalgo/src/features/platform/live-streams.test.ts` | 46 | test fixture casts |
-| `artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx` | 38 | **production hotspot** |
+| `artifacts/pyrus/src/features/platform/live-streams.test.ts` | 46 | test fixture casts |
+| `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` | 38 | **production hotspot** |
 | `artifacts/api-server/src/services/options-flow-scanner.test.ts` | 31 | test fixture casts |
 | `artifacts/ibkr-bridge/src/tws-provider.test.ts` | 22 | test fixture casts |
 | `artifacts/api-server/src/services/platform.ts` | 8 | **production code** |
@@ -335,7 +335,7 @@ Legitimate inline note about a future Replit artifact-controller behavior; not s
 
 **Findings**: 0 hits. **Sentinel-clean.**
 
-(Earlier 63 hits from a broader grep matched domain names like `legacyBridgeActivations` — these are runtime-state tracking the "legacy admission" pattern, not deprecation markers. Specifically: `artifacts/api-server/src/services/ibkr-bridge-runtime.ts` and `artifacts/rayalgo/src/features/platform/runtimeControlModel.js` use `legacy*` to label a domain concept, not deprecated code.)
+(Earlier 63 hits from a broader grep matched domain names like `legacyBridgeActivations` — these are runtime-state tracking the "legacy admission" pattern, not deprecation markers. Specifically: `artifacts/api-server/src/services/ibkr-bridge-runtime.ts` and `artifacts/pyrus/src/features/platform/runtimeControlModel.js` use `legacy*` to label a domain concept, not deprecated code.)
 
 ---
 
@@ -343,7 +343,7 @@ Legitimate inline note about a future Replit artifact-controller behavior; not s
 **Method**: enumerate `SCREENS` array in `screenRegistry.jsx` vs. `screens/*.{jsx,tsx}` files; route handlers vs. openapi.yaml paths (covered in Cat 4).
 
 **Frontend screen registry (clean)**:
-- 10 screens declared in `artifacts/rayalgo/src/features/platform/screenRegistry.jsx`: market, flow, gex, trade, account, research, algo, backtest, diagnostics, settings.
+- 10 screens declared in `artifacts/pyrus/src/features/platform/screenRegistry.jsx`: market, flow, gex, trade, account, research, algo, backtest, diagnostics, settings.
 - 10 screen files on disk: AccountScreen.jsx, AlgoScreen.jsx, BacktestScreen.jsx, DiagnosticsScreen.jsx, FlowScreen.jsx, GexScreen.jsx, MarketScreen.jsx, ResearchScreen.jsx, SettingsScreen.jsx, TradeScreen.jsx.
 - Perfect 1:1 alignment.
 
@@ -370,19 +370,19 @@ process.env.DATABASE_URL                  process.env.PGSSLMODE
 process.env.LD_LIBRARY_PATH               process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
 process.env.PLAYWRIGHT_PORT               process.env.PLAYWRIGHT_WORKERS
 process.env.POLYGON_API_KEY               process.env.POLYGON_KEY
-process.env.PORT                          process.env.RAYALGO_API_PORT
-process.env.RAYALGO_COEP_POLICY           process.env.RAYALGO_COOP_POLICY
-process.env.RAYALGO_CROSS_ORIGIN_ISOLATION process.env.RAYALGO_DATABASE_SOURCE
-process.env.RAYALGO_FRONTEND_PORT         process.env.RAYALGO_LIVE_MARKET_FLOW
-process.env.RAYALGO_LIVE_MARKET_FLOW_SYMBOLS process.env.RAYALGO_MEMORY_SOAK
-process.env.RAYALGO_MEMORY_SOAK_LIVE_API  process.env.RAYALGO_MEMORY_SOAK_MINUTES
-process.env.RAYALGO_MEMORY_SOAK_SAMPLE_EVERY process.env.REPL_ID
+process.env.PORT                          process.env.PYRUS_API_PORT
+process.env.PYRUS_COEP_POLICY           process.env.PYRUS_COOP_POLICY
+process.env.PYRUS_CROSS_ORIGIN_ISOLATION process.env.PYRUS_DATABASE_SOURCE
+process.env.PYRUS_FRONTEND_PORT         process.env.PYRUS_LIVE_MARKET_FLOW
+process.env.PYRUS_LIVE_MARKET_FLOW_SYMBOLS process.env.PYRUS_MEMORY_SOAK
+process.env.PYRUS_MEMORY_SOAK_LIVE_API  process.env.PYRUS_MEMORY_SOAK_MINUTES
+process.env.PYRUS_MEMORY_SOAK_SAMPLE_EVERY process.env.REPL_ID
 process.env.REPLIT_LD_LIBRARY_PATH        process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE
 process.env.VITE_PROXY_API_TARGET
 ```
 
 - **No `.env.example` file** at workspace root or in any artifact.
-- **`replit.md` documents only 2 env vars by name** (`RAYALGO_DATABASE_SOURCE`, `LOCAL_DATABASE_URL`) — both in the context of explaining `[userenv.development]` policy.
+- **`replit.md` documents only 2 env vars by name** (`PYRUS_DATABASE_SOURCE`, `LOCAL_DATABASE_URL`) — both in the context of explaining `[userenv.development]` policy.
 - **Potential duplicate**: `POLYGON_API_KEY` AND `POLYGON_KEY` both referenced. Likely one is canonical and the other is a legacy alias. Worth confirming.
 
 | Severity | WIP | Suggested action |
@@ -406,7 +406,7 @@ process.env.VITE_PROXY_API_TARGET
 ## WIP-protected items (informational; not flagged for action)
 
 Per `REPO_CLEANUP_INVENTORY.md`:
-- **Polygon premium-distribution flow**: `artifacts/api-server/src/providers/polygon/`, `artifacts/api-server/src/services/flow-premium-distribution.{ts,test.ts}`, related rayalgo flow surfaces. Findings within this boundary are tagged but not actioned: `sampleFlowPremiumDistribution.mjs` (Cat 1), `flow-premium-distribution.test.ts` orphan test (Cat 7), `option-chain-batch.test.ts` orphan test (Cat 7).
+- **Polygon premium-distribution flow**: `artifacts/api-server/src/providers/polygon/`, `artifacts/api-server/src/services/flow-premium-distribution.{ts,test.ts}`, related pyrus flow surfaces. Findings within this boundary are tagged but not actioned: `sampleFlowPremiumDistribution.mjs` (Cat 1), `flow-premium-distribution.test.ts` orphan test (Cat 7), `option-chain-batch.test.ts` orphan test (Cat 7).
 - **Option-intent work**: `artifacts/api-server/src/services/option-order-intent.ts` and related.
 - **Chart/flow recovery code**: `chartHydrationWiring.test.js` orphan test (Cat 7), `gexDataWiring.test.js` orphan test (Cat 7), `gexNarrative.test.js`, `gexScreenWiring.test.js`, `intradaySnapshots.test.js`, `marketChartWiring.test.js` — collectively wip-protected. Action deferred.
 
@@ -437,7 +437,7 @@ Categories that were partially completed or warrant a follow-up pass:
 3. **Cat 15 type-escape hotspots**: review `ResearchChartSurface.tsx` (38 hits) and `platform.ts` (8 hits) to tighten production type safety.
 4. **Cat 2 shadow-equity-forward worker**: confirm with the owner whether it is dormant WIP or abandoned. If abandoned, delete worker + test + dependent `shadow-equity-forward-test.ts`.
 5. **Performance/architecture audit** (deferred per scope) — covered separately by the prior performance-pilot plan.
-6. **Bundle audit**: `pnpm --filter @workspace/rayalgo bundle:audit` was not run in this pass (deferred due to scope). Recommend running before the next release.
+6. **Bundle audit**: `pnpm --filter @workspace/pyrus bundle:audit` was not run in this pass (deferred due to scope). Recommend running before the next release.
 
 ---
 

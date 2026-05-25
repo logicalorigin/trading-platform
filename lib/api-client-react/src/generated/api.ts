@@ -8483,7 +8483,7 @@ export const useBenchmarkFlowScanner = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Get the RayReplica monitor profile for an environment
+ * @summary Get the Pyrus Signals monitor profile for an environment
  */
 export const getGetSignalMonitorProfileUrl = (params?: GetSignalMonitorProfileParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -8545,7 +8545,7 @@ export type GetSignalMonitorProfileQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get the RayReplica monitor profile for an environment
+ * @summary Get the Pyrus Signals monitor profile for an environment
  */
 
 export function useGetSignalMonitorProfile<TData = Awaited<ReturnType<typeof getSignalMonitorProfile>>, TError = ErrorType<unknown>>(
@@ -8565,7 +8565,7 @@ export function useGetSignalMonitorProfile<TData = Awaited<ReturnType<typeof get
 
 
 /**
- * @summary Update the RayReplica monitor profile for an environment
+ * @summary Update the Pyrus Signals monitor profile for an environment
  */
 export const getUpdateSignalMonitorProfileUrl = () => {
 
@@ -8622,7 +8622,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdateSignalMonitorProfileMutationError = ErrorType<unknown>
 
     /**
- * @summary Update the RayReplica monitor profile for an environment
+ * @summary Update the Pyrus Signals monitor profile for an environment
  */
 export const useUpdateSignalMonitorProfile = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSignalMonitorProfile>>, TError,{data: BodyType<UpdateSignalMonitorProfileRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -8636,7 +8636,7 @@ export const useUpdateSignalMonitorProfile = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Evaluate the RayReplica monitor profile
+ * @summary Evaluate the Pyrus Signals monitor profile
  */
 export const getEvaluateSignalMonitorUrl = () => {
 
@@ -8693,7 +8693,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type EvaluateSignalMonitorMutationError = ErrorType<unknown>
 
     /**
- * @summary Evaluate the RayReplica monitor profile
+ * @summary Evaluate the Pyrus Signals monitor profile
  */
 export const useEvaluateSignalMonitor = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitor>>, TError,{data: BodyType<EvaluateSignalMonitorRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -8707,7 +8707,7 @@ export const useEvaluateSignalMonitor = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
  */
 export const getEvaluateSignalMonitorMatrixUrl = () => {
 
@@ -8764,7 +8764,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type EvaluateSignalMonitorMatrixMutationError = ErrorType<unknown>
 
     /**
- * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ * @summary Evaluate Pyrus Signals signal states for watchlist row timeframes
  */
 export const useEvaluateSignalMonitorMatrix = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -8778,7 +8778,7 @@ export const useEvaluateSignalMonitorMatrix = <TError = ErrorType<unknown>,
     }
 
 /**
- * @summary List current RayReplica signal states
+ * @summary List current Pyrus Signals signal states
  */
 export const getGetSignalMonitorStateUrl = (params?: GetSignalMonitorStateParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -8840,7 +8840,7 @@ export type GetSignalMonitorStateQueryError = ErrorType<unknown>
 
 
 /**
- * @summary List current RayReplica signal states
+ * @summary List current Pyrus Signals signal states
  */
 
 export function useGetSignalMonitorState<TData = Awaited<ReturnType<typeof getSignalMonitorState>>, TError = ErrorType<unknown>>(
@@ -8860,7 +8860,7 @@ export function useGetSignalMonitorState<TData = Awaited<ReturnType<typeof getSi
 
 
 /**
- * @summary List RayReplica signal monitor events
+ * @summary List Pyrus Signals signal monitor events
  */
 export const getListSignalMonitorEventsUrl = (params?: ListSignalMonitorEventsParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -8922,7 +8922,7 @@ export type ListSignalMonitorEventsQueryError = ErrorType<unknown>
 
 
 /**
- * @summary List RayReplica signal monitor events
+ * @summary List Pyrus Signals signal monitor events
  */
 
 export function useListSignalMonitorEvents<TData = Awaited<ReturnType<typeof listSignalMonitorEvents>>, TError = ErrorType<unknown>>(

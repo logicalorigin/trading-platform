@@ -15,7 +15,7 @@ export interface UpdateSignalMonitorProfileRequest {
   /** @nullable */
   watchlistId?: string | null;
   timeframe?: SignalMonitorTimeframe;
-  rayReplicaSettings?: JsonObject;
+  pyrusSignalsSettings?: JsonObject;
   /**
    * @minimum 1
    * @maximum 20

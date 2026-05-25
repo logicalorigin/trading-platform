@@ -14,7 +14,7 @@ export type RunSignalOptionsShadowBackfillBody = {
   session?: string;
   commit?: boolean;
   profilePatch?: JsonObject;
-  rayReplicaSettingsPatch?: JsonObject;
+  pyrusSignalsSettingsPatch?: JsonObject;
   signalTimeframe?: SignalMonitorTimeframe;
   forceDeploymentUniverse?: boolean;
   replay?: boolean | JsonObject;

@@ -4,6 +4,7 @@ export const USER_PREFERENCES_PROFILE_KEY = "default";
 export const USER_PREFERENCES_VERSION = 1;
 
 type JsonRecord = Record<string, unknown>;
+const RETIRED_DASHBOARD_SETTING_KEY = ["ray", "AlgoDashboard"].join("");
 
 export type UserPreferences = {
   appearance: {
@@ -13,6 +14,7 @@ export type UserPreferences = {
     reducedMotion: "system" | "on" | "off";
     showTooltips: boolean;
     maskBalances: boolean;
+    headerKpiSymbols: string[];
   };
   time: {
     appTimeZoneMode: "app" | "local" | "exchange" | "utc" | "fixed";
@@ -27,6 +29,7 @@ export type UserPreferences = {
     statusLineDetail: "full" | "compact" | "minimal";
     showOhlc: boolean;
     showVolume: boolean;
+    showFlowEvents: boolean;
     showIndicatorValues: boolean;
     showTimeScale: boolean;
     showGrid: boolean;
@@ -36,7 +39,7 @@ export type UserPreferences = {
     keepTimeZoom: boolean;
     extendedHours: boolean;
     sessionBreaks: boolean;
-    rayAlgoDashboard: "auto" | "full" | "compact" | "hidden";
+    pyrusSignalsDashboard: "auto" | "full" | "compact" | "hidden";
   };
   workspace: {
     defaultScreen: string;
@@ -75,6 +78,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     reducedMotion: "system",
     showTooltips: true,
     maskBalances: false,
+    headerKpiSymbols: [],
   },
   time: {
     appTimeZoneMode: "app",
@@ -89,6 +93,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     statusLineDetail: "full",
     showOhlc: true,
     showVolume: true,
+    showFlowEvents: true,
     showIndicatorValues: true,
     showTimeScale: true,
     showGrid: true,
@@ -98,7 +103,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     keepTimeZoom: true,
     extendedHours: true,
     sessionBreaks: false,
-    rayAlgoDashboard: "auto",
+    pyrusSignalsDashboard: "auto",
   },
   workspace: {
     defaultScreen: "market",
@@ -214,6 +219,54 @@ const recordValue = (value: unknown): JsonRecord =>
     ? (value as JsonRecord)
     : {};
 
+const SYMBOL_PATTERN = /^[A-Z0-9.\-:]{1,12}$/;
+
+const symbolArrayValue = (
+  value: unknown,
+  key: string,
+  strict: boolean,
+  max = 10,
+): string[] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    if (strict) {
+      throw new HttpError(400, "Invalid user preference.", {
+        code: "invalid_user_preference",
+        detail: `${key} must be an array of symbols.`,
+      });
+    }
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      if (strict) {
+        throw new HttpError(400, "Invalid user preference.", {
+          code: "invalid_user_preference",
+          detail: `${key} entries must be strings.`,
+        });
+      }
+      continue;
+    }
+    const normalized = item.trim().toUpperCase();
+    if (!normalized || !SYMBOL_PATTERN.test(normalized)) {
+      if (strict) {
+        throw new HttpError(400, "Invalid user preference.", {
+          code: "invalid_user_preference",
+          detail: `${key} entry "${item}" is not a valid symbol.`,
+        });
+      }
+      continue;
+    }
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= max) break;
+  }
+  return out;
+};
+
 const validateTimeZone = (
   value: unknown,
   fallback: string,
@@ -326,6 +379,11 @@ export function normalizeUserPreferences(
         "appearance.maskBalances",
         strict,
       ),
+      headerKpiSymbols: symbolArrayValue(
+        appearance.headerKpiSymbols,
+        "appearance.headerKpiSymbols",
+        strict,
+      ),
     },
     time: {
       appTimeZoneMode: enumValue(
@@ -395,6 +453,12 @@ export function normalizeUserPreferences(
         "chart.showVolume",
         strict,
       ),
+      showFlowEvents: booleanValue(
+        chart.showFlowEvents,
+        DEFAULT_USER_PREFERENCES.chart.showFlowEvents,
+        "chart.showFlowEvents",
+        strict,
+      ),
       showIndicatorValues: booleanValue(
         chart.showIndicatorValues,
         DEFAULT_USER_PREFERENCES.chart.showIndicatorValues,
@@ -453,11 +517,11 @@ export function normalizeUserPreferences(
         "chart.sessionBreaks",
         strict,
       ),
-      rayAlgoDashboard: enumValue(
-        chart.rayAlgoDashboard,
+      pyrusSignalsDashboard: enumValue(
+        chart.pyrusSignalsDashboard ?? chart[RETIRED_DASHBOARD_SETTING_KEY],
         ["auto", "full", "compact", "hidden"],
-        DEFAULT_USER_PREFERENCES.chart.rayAlgoDashboard,
-        "chart.rayAlgoDashboard",
+        DEFAULT_USER_PREFERENCES.chart.pyrusSignalsDashboard,
+        "chart.pyrusSignalsDashboard",
         strict,
       ),
     },

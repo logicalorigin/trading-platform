@@ -101,7 +101,7 @@ export type SignalOptionsExecutionProfile = {
 
 export const tunedSignalOptionsStrategySettings = {
   signalTimeframe: "5m",
-  rayReplicaSettings: {
+  pyrusSignalsSettings: {
     timeHorizon: 8,
     bosConfirmation: "wicks",
     chochAtrBuffer: 0,

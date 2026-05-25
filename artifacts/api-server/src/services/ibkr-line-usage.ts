@@ -18,6 +18,7 @@ import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
   getIbkrWatchlistPrewarmDiagnostics,
   getOptionsFlowScannerDiagnostics,
+  reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics,
 } from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
@@ -544,8 +545,21 @@ function buildLineAllocation(input: {
   const admission = input.admission;
   const pressure = admission.pressure;
   const lineAllocation = admission.lineAllocation;
+  const scannerLineUtilization = (
+    admission as ReturnType<typeof getMarketDataAdmissionDiagnostics> & {
+      optionsFlowScanner?: ReturnType<typeof getOptionsFlowScannerDiagnostics>;
+    }
+  ).optionsFlowScanner?.lineUtilization;
   const targetFillLines = readNumber(admission.budget.targetFillLines);
   const activeLineCount = readNumber(admission.activeLineCount);
+  const scannerSchedulableLineCap = readNumber(
+    scannerLineUtilization?.schedulablePoolCap,
+  );
+  const scannerActiveLineCount = readNumber(pressure.scannerActiveLineCount);
+  const scannerSchedulableRemainingLineCount =
+    scannerSchedulableLineCap === null || scannerActiveLineCount === null
+      ? null
+      : Math.max(0, scannerSchedulableLineCap - scannerActiveLineCount);
   const remainingToTargetLineCount =
     targetFillLines === null || activeLineCount === null
       ? null
@@ -580,9 +594,11 @@ function buildLineAllocation(input: {
       lineAllocation.elasticRemainingLineCount,
     ),
     visibleLineCount: readNumber(pressure.visibleLineCount),
-    scannerActiveLineCount: readNumber(pressure.scannerActiveLineCount),
+    scannerActiveLineCount,
     scannerEffectiveLineCap: readNumber(pressure.scannerEffectiveLineCap),
+    scannerSchedulableLineCap,
     scannerRemainingLineCount: readNumber(pressure.scannerRemainingLineCount),
+    scannerSchedulableRemainingLineCount,
     scannerConstrainedByActiveDemand: Boolean(
       pressure.scannerConstrainedByActiveDemand,
     ),
@@ -630,10 +646,10 @@ function buildLineUtilizationAudit(input: {
   const scannerUnusedPoolLineCount = readNumber(
     scannerUtilization.unusedPoolLines,
   );
-  const watchlistFillerCap = Math.min(
-    input.watchlistPrewarm.fillerConfiguredMaxSymbolCount,
-    input.watchlistPrewarm.fillerPressureMaxSymbolCount,
-  );
+  const watchlistFillerCap = input.watchlistPrewarm.fillerConfiguredMaxSymbolCount;
+  const watchlistFillerHasPendingCandidates =
+    input.watchlistPrewarm.fillerEnabled &&
+    input.watchlistPrewarm.fillerCandidateSymbolCount > 0;
   const topLimitingReason =
     idleToTargetLineCount === 0
       ? "target-filled"
@@ -645,10 +661,12 @@ function buildLineUtilizationAudit(input: {
             ? `scanner-${admission.optionsFlowScanner.backgroundBlockedReason}`
             : (scannerUnusedPoolLineCount ?? 0) > 0
               ? "scanner-concurrency-cap"
-              : input.watchlistPrewarm.fillerCandidateSymbolCount > 0 &&
+              : watchlistFillerHasPendingCandidates &&
                   input.watchlistPrewarm.fillerActiveSymbolCount >=
                     watchlistFillerCap
                 ? "watchlist-filler-cap"
+                : watchlistFillerHasPendingCandidates
+                  ? "watchlist-filler-pending"
                 : input.watchlistPrewarm.laneDroppedSymbolCount > 0
                   ? "watchlist-lane-cap"
                   : input.driftReconciliation.status !== "matched"
@@ -737,6 +755,9 @@ export async function getIbkrLineUsageSnapshot() {
   const bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
   if (bridgeLineBudget !== null) {
     setMarketDataAdmissionBridgeLineBudget(bridgeLineBudget, bridge.fetchedAt);
+  }
+  if (bridge.value) {
+    reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(bridge.value);
   }
   const admission = {
     ...getMarketDataAdmissionDiagnostics(),

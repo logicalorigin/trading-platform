@@ -149,6 +149,50 @@ test("flow universe backfills short ranked candidates from fallback symbols", ()
   assert.deepEqual(selected, ["SPY", "NVDA", "AAPL", "MSFT", "META"]);
 });
 
+test("flow universe ranks liquid candidates before broad fallback fill", () => {
+  const selected = rankFlowUniverseCandidates({
+    targetSize: 4,
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    now: new Date("2026-05-01T14:30:00.000Z"),
+    fallbackSymbols: ["AACG", "AADR", "AAEQ", "AAL"],
+    candidates: [
+      {
+        symbol: "ACHR",
+        market: "stocks",
+        price: 8,
+        volume: 120_000_000,
+        dollarVolume: 960_000_000,
+        liquidityRank: 2,
+        flowScore: 0,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+      {
+        symbol: "GEV",
+        market: "stocks",
+        price: 500,
+        volume: 4_000_000,
+        dollarVolume: 2_000_000_000,
+        liquidityRank: 1,
+        flowScore: 0,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+    ],
+  });
+
+  assert.deepEqual(selected, ["GEV", "ACHR", "AACG", "AADR"]);
+});
+
 test("flow universe prefers fallback liquidity pool over unrated catalog filler", () => {
   const selected = rankFlowUniverseCandidates({
     targetSize: 4,

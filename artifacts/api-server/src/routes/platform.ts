@@ -109,6 +109,7 @@ import {
   ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
   ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
   fetchAccountPageCriticalPayload,
+  recordAccountPageStreamWrite,
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
 import {
@@ -205,8 +206,7 @@ const isHistoryBarTimeframe = (
   HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
 
 function readFetchPriority(req: Request): number | undefined {
-  const raw =
-    req.get("x-pyrus-fetch-priority") ?? req.get("x-rayalgo-fetch-priority");
+  const raw = req.get("x-pyrus-fetch-priority");
   if (!raw) {
     return undefined;
   }
@@ -215,8 +215,7 @@ function readFetchPriority(req: Request): number | undefined {
 }
 
 function readRequestFamily(req: Request): string | undefined {
-  const raw =
-    req.get("x-pyrus-request-family") ?? req.get("x-rayalgo-request-family");
+  const raw = req.get("x-pyrus-request-family");
   if (!raw?.trim()) {
     return undefined;
   }
@@ -239,10 +238,10 @@ function normalizeStreamSymbols(rawSymbols: unknown): string[] {
 }
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const IBKR_BRIDGE_HELPER_SCRIPT_PATHS = [
-  resolve(ROUTE_DIR, "../../../../scripts/windows/rayalgo-ibkr-helper.ps1"),
-  resolve(ROUTE_DIR, "../../../scripts/windows/rayalgo-ibkr-helper.ps1"),
-  resolve(process.cwd(), "../../scripts/windows/rayalgo-ibkr-helper.ps1"),
-  resolve(process.cwd(), "scripts/windows/rayalgo-ibkr-helper.ps1"),
+  resolve(ROUTE_DIR, "../../../../scripts/windows/pyrus-ibkr-helper.ps1"),
+  resolve(ROUTE_DIR, "../../../scripts/windows/pyrus-ibkr-helper.ps1"),
+  resolve(process.cwd(), "../../scripts/windows/pyrus-ibkr-helper.ps1"),
+  resolve(process.cwd(), "scripts/windows/pyrus-ibkr-helper.ps1"),
 ];
 const IBKR_BRIDGE_BUNDLE_PATHS = [
   resolve(ROUTE_DIR, "../../../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
@@ -252,11 +251,11 @@ const IBKR_BRIDGE_BUNDLE_PATHS = [
 ];
 const IBKR_BRIDGE_BUNDLE_URL_ENV_NAMES = [
   "IBKR_BRIDGE_BUNDLE_URL",
-  "RAYALGO_IBKR_BRIDGE_BUNDLE_URL",
+  "PYRUS_IBKR_BRIDGE_BUNDLE_URL",
 ];
 const IBKR_BRIDGE_PUBLIC_BASE_URL_ENV_NAMES = [
   "IBKR_BRIDGE_API_BASE_URL",
-  "RAYALGO_PUBLIC_API_BASE_URL",
+  "PYRUS_PUBLIC_API_BASE_URL",
   "PUBLIC_API_BASE_URL",
 ];
 const REPLIT_PUBLIC_HOST_ENV_NAMES = [
@@ -719,7 +718,6 @@ function setRequestDebugHeaders(
 
   const setDebugHeader = (suffix: string, value: string) => {
     res.setHeader(`X-Pyrus-${suffix}`, value);
-    res.setHeader(`X-RayAlgo-${suffix}`, value);
   };
 
   setDebugHeader("Cache-Status", debug.cacheStatus);
@@ -2436,8 +2434,10 @@ router.get("/streams/accounts/page", async (req, res) => {
   };
 
   await startSse(req, res, "account-page", async ({ writeEvent }) => {
+    const streamStartedAt = Date.now();
     const initialCriticalPayload = await fetchAccountPageCriticalPayload(input);
     await writeEvent("critical", initialCriticalPayload);
+    recordAccountPageStreamWrite("critical", streamStartedAt);
     await writeEvent("ready", {
       accountId,
       mode,
@@ -2450,7 +2450,10 @@ router.get("/streams/accounts/page", async (req, res) => {
         writeEvent("live", payload);
       },
       (payload) => {
-        writeEvent("derived", payload);
+        const writeStartedAt = Date.now();
+        void writeEvent("derived", payload).then(() => {
+          recordAccountPageStreamWrite("derived", writeStartedAt);
+        });
       },
       {
         initialCriticalPayload,

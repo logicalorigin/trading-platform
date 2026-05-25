@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
@@ -30,6 +31,10 @@ const {
   __setStorageHealthProbeForTests,
 } = storageHealthModule;
 const { registerSignalOptionsWorkerSnapshotGetter } = signalOptionsWorkerStateModule;
+const diagnosticsSource = readFileSync(
+  new URL("./diagnostics.ts", import.meta.url),
+  "utf8",
+);
 
 function emptyWorkerMaintenanceSnapshot() {
   return {
@@ -519,6 +524,128 @@ test("diagnostics separate long-running scans from stopped stale scans", async (
   assert.equal(automation?.metrics.inactiveStaleScanCount, 0);
   assert.equal(longScanEvent?.severity, "warning");
   assert.equal(stoppedScanEvent, undefined);
+});
+
+test("diagnostics reports resource-pressure paused scans without stale critical paging", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 600_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 600_000).toISOString(),
+        lastError: null,
+        lastSkippedAt: new Date(nowMs - 10_000).toISOString(),
+        lastSkipReason: "resource_pressure",
+        skippedScanCount: 8,
+        pressurePaused: true,
+        pressurePauseStartedAt: new Date(nowMs - 480_000).toISOString(),
+        pressurePauseAgeMs: 480_000,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 12_000,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 600_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 600_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+  const pressurePausedEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_pressure_paused",
+  );
+  const staleEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_stale",
+  );
+  const latestAgeThreshold = collected.events.find(
+    (event) => event.code === "automation.latest_scan_age_ms",
+  );
+
+  assert.equal(automation?.status, "degraded");
+  assert.equal(automation?.severity, "warning");
+  assert.equal(automation?.metrics.pressurePausedDeploymentCount, 1);
+  assert.equal(pressurePausedEvent?.severity, "warning");
+  assert.equal(staleEvent, undefined);
+  assert.equal(latestAgeThreshold, undefined);
+});
+
+test("diagnostics do not treat prior resource-pressure skips as active pauses", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 600_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 600_000).toISOString(),
+        lastError: null,
+        lastSkippedAt: new Date(nowMs - 600_000).toISOString(),
+        lastSkipReason: "resource_pressure",
+        skippedScanCount: 2,
+        pressurePaused: false,
+        pressurePauseStartedAt: null,
+        pressurePauseAgeMs: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 12_000,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 600_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 600_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+
+  assert.equal(automation?.metrics.pressurePausedDeploymentCount, 0);
+  assert.equal(automation?.metrics.pressurePausedMaxAgeMs, null);
+});
+
+test("diagnostics distinguish expiring-today options from due expiration maintenance", () => {
+  assert.match(diagnosticsSource, /function isMarketCloseOrLater/);
+  assert.match(diagnosticsSource, /expirationMaintenanceDueCount/);
+  assert.match(diagnosticsSource, /expiringTodayOpenShadowOptionCount/);
+  assert.match(diagnosticsSource, /shadow_option_expiring_today/);
+  assert.match(
+    diagnosticsSource,
+    /expiration === todayMarketDate[\s\S]*?if \(marketCloseReached\)[\s\S]*?counts\.due \+= 1/,
+  );
 });
 
 test("diagnostics classify configured Postgres outages as storage events only", async () => {

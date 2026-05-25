@@ -346,6 +346,10 @@ function positiveNumber(value: unknown): number | null {
     : null;
 }
 
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function midpoint(bid: unknown, ask: unknown): number | null {
   const numericBid = positiveNumber(bid);
   const numericAsk = positiveNumber(ask);
@@ -359,22 +363,35 @@ function mergeQuoteForCache(
   current: QuoteSnapshot | undefined,
   providerContractId: string,
 ): QuoteSnapshot {
+  const quoteRecord = quote as QuoteSnapshot & { mark?: unknown; last?: unknown };
   const incomingBid = positiveNumber(quote.bid);
   const incomingAsk = positiveNumber(quote.ask);
   const currentBid = positiveNumber(current?.bid);
   const currentAsk = positiveNumber(current?.ask);
   const incomingHasUsablePrice =
     positiveNumber(quote.price) !== null ||
+    positiveNumber(quoteRecord.mark) !== null ||
+    positiveNumber(quoteRecord.last) !== null ||
     incomingBid !== null ||
     incomingAsk !== null;
+  const incomingFiniteBid = finiteNumber(quote.bid);
+  const incomingFiniteAsk = finiteNumber(quote.ask);
   return {
     ...current,
     ...quote,
     providerContractId,
-    bid: incomingBid ?? currentBid ?? quote.bid,
-    ask: incomingAsk ?? currentAsk ?? quote.ask,
+    bid:
+      incomingHasUsablePrice && incomingFiniteBid !== null
+        ? incomingFiniteBid
+        : currentBid ?? quote.bid,
+    ask:
+      incomingHasUsablePrice && incomingFiniteAsk !== null
+        ? incomingFiniteAsk
+        : currentAsk ?? quote.ask,
     price:
       positiveNumber(quote.price) ??
+      positiveNumber(quoteRecord.mark) ??
+      positiveNumber(quoteRecord.last) ??
       midpoint(incomingBid, incomingAsk) ??
       positiveNumber(current?.price) ??
       midpoint(currentBid, currentAsk) ??
@@ -683,9 +700,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     isSignalOptionsLiveQuoteIntent;
   const bridgeWorkCategory: BridgeWorkCategory =
     isLiveQuoteSnapshotIntent ? "quotes" : "options";
-  const bypassBridgeBackoff = isLiveQuoteSnapshotIntent;
-  const bridgeWorkOptions = bypassBridgeBackoff
-    ? { bypassBackoff: true, recordFailure: false }
+  const bridgeWorkOptions = isLiveQuoteSnapshotIntent
+    ? { recordFailure: false }
     : undefined;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "polygon";
@@ -758,7 +774,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       ),
   );
 
-  if (!bypassBridgeBackoff && isBridgeWorkBackedOff(bridgeWorkCategory)) {
+  if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
     releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
     return {
       ...cachedQuotes,

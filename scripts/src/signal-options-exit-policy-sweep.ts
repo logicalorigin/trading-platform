@@ -149,7 +149,7 @@ function readSweepConfig(): SweepConfig {
     ),
     timeHorizon: readBoundedIntegerEnv(
       "SIGNAL_OPTIONS_EXIT_SWEEP_HORIZON",
-      tunedSignalOptionsStrategySettings.rayReplicaSettings.timeHorizon,
+      tunedSignalOptionsStrategySettings.pyrusSignalsSettings.timeHorizon,
       2,
       50,
     ),
@@ -462,9 +462,9 @@ export function buildProgressiveTrailVariants(): ExitPolicyVariant[] {
   ];
 }
 
-export function buildRayReplicaSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
+export function buildPyrusSignalsSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
   return {
-    ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
+    ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
     timeHorizon: config.timeHorizon,
   };
 }
@@ -624,11 +624,11 @@ async function readSignalOptionsDeployment(): Promise<DeploymentRow> {
       where enabled = true
         and provider_account_id = 'shadow'
         and (
-          name = 'RayReplica Signal Options Shadow Paper'
+          name = 'Pyrus Signals Options Shadow Paper'
           or config->'parameters'->>'executionMode' = 'signal_options'
         )
       order by
-        case when name = 'RayReplica Signal Options Shadow Paper' then 0 else 1 end,
+        case when name = 'Pyrus Signals Options Shadow Paper' then 0 else 1 end,
         updated_at desc
       limit 1
     `,
@@ -808,7 +808,7 @@ export function buildVariantBackfillInput(input: {
       String(symbol).toUpperCase(),
     ),
     signalTimeframe: input.config.signalTimeframe,
-    rayReplicaSettingsPatch: buildRayReplicaSettingsPatch(input.config),
+    pyrusSignalsSettingsPatch: buildPyrusSignalsSettingsPatch(input.config),
     profilePatch: input.variant.profilePatch,
     progress: true,
   };
@@ -916,7 +916,7 @@ async function writeReports(input: {
     `- Symbols: ${input.deployment.symbolUniverse.length}`,
     `- Window: ${input.config.start} through ${input.config.end ?? "latest completed trading day"}`,
     `- Signal timeframe: ${input.config.signalTimeframe}`,
-    `- RayReplica patch: \`${JSON.stringify(buildRayReplicaSettingsPatch(input.config))}\``,
+    `- Pyrus Signals patch: \`${JSON.stringify(buildPyrusSignalsSettingsPatch(input.config))}\``,
     `- Risk caps: \`${JSON.stringify(RISK_CAP_PATCH.riskCaps)}\``,
     `- Premium-bucket variants: excluded`,
     `- Dry variants: ${input.results.length}`,
@@ -1048,7 +1048,7 @@ async function main() {
         },
         config,
         variants: variants.length,
-        rayReplicaSettingsPatch: buildRayReplicaSettingsPatch(config),
+        pyrusSignalsSettingsPatch: buildPyrusSignalsSettingsPatch(config),
         riskCaps: RISK_CAP_PATCH.riskCaps,
       }),
     );

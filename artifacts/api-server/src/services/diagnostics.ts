@@ -543,6 +543,26 @@ function marketDateKey(value = new Date()) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+function marketClockMinutes(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  const hour = Number(part("hour"));
+  const minute = Number(part("minute"));
+  return Number.isFinite(hour) && Number.isFinite(minute)
+    ? hour * 60 + minute
+    : null;
+}
+
+function isMarketCloseOrLater(value = new Date()) {
+  const minutes = marketClockMinutes(value);
+  return minutes !== null && minutes >= 16 * 60;
+}
+
 function percentile(values: number[], percentileValue: number): number | null {
   if (!values.length) {
     return null;
@@ -1756,13 +1776,32 @@ async function buildAutomationMetrics(): Promise<{
         ),
     [],
   );
-  const todayMarketDate = marketDateKey();
-  const expiringOpenShadowOptionCount = openShadowOptionRows.filter((position) => {
-    const expiration = optionExpirationKey(
-      asJsonRecord(position.optionContract)["expirationDate"],
-    );
-    return expiration !== null && expiration <= todayMarketDate;
-  }).length;
+  const nowDate = new Date(nowMs);
+  const todayMarketDate = marketDateKey(nowDate);
+  const marketCloseReached = isMarketCloseOrLater(nowDate);
+  const optionExpirationCounts = openShadowOptionRows.reduce(
+    (counts, position) => {
+      const expiration = optionExpirationKey(
+        asJsonRecord(position.optionContract)["expirationDate"],
+      );
+      if (expiration === null) {
+        return counts;
+      }
+      if (expiration < todayMarketDate) {
+        counts.prior += 1;
+        counts.due += 1;
+      } else if (expiration === todayMarketDate) {
+        counts.today += 1;
+        if (marketCloseReached) {
+          counts.due += 1;
+        }
+      }
+      return counts;
+    },
+    { prior: 0, today: 0, due: 0 },
+  );
+  const expiringOpenShadowOptionCount =
+    optionExpirationCounts.prior + optionExpirationCounts.today;
   const deployments = Array.isArray(worker.deployments)
     ? worker.deployments
     : [];
@@ -1800,6 +1839,29 @@ async function buildAutomationMetrics(): Promise<{
   ).length;
   const activeMaxScanAgeMs =
     activeScanAges.length > 0 ? Math.max(...activeScanAges) : null;
+  const pressurePausedDeployments = deployments.filter((deployment) => {
+    const record = asJsonRecord(deployment);
+    return record["pressurePaused"] === true;
+  });
+  const pressurePauseAges = pressurePausedDeployments
+    .map((deployment) => numeric(asJsonRecord(deployment)["pressurePauseAgeMs"]))
+    .filter((value): value is number => value !== null);
+  const pressurePausedMaxAgeMs =
+    pressurePauseAges.length > 0 ? Math.max(...pressurePauseAges) : null;
+  const skippedScanCount = deployments.reduce(
+    (sum, deployment) =>
+      sum + (numeric(asJsonRecord(deployment)["skippedScanCount"]) ?? 0),
+    0,
+  );
+  const latestSkippedAt =
+    deployments
+      .map((deployment) => timestampMs(asJsonRecord(deployment)["lastSkippedAt"]))
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => right - left)[0] ?? null;
+  const lastSkipReason =
+    deployments
+      .map((deployment) => textValue(asJsonRecord(deployment)["lastSkipReason"]))
+      .find(Boolean) ?? null;
   const lastScanDurationMs =
     deployments
       .map((deployment) =>
@@ -1926,6 +1988,10 @@ async function buildAutomationMetrics(): Promise<{
       openShadowOptionCount: openShadowOptionRows.length,
       orphanOpenOptionCount,
       expiringOpenShadowOptionCount,
+      expiringTodayOpenShadowOptionCount: optionExpirationCounts.today,
+      priorExpirationOpenShadowOptionCount: optionExpirationCounts.prior,
+      expirationMaintenanceDueCount: optionExpirationCounts.due,
+      expirationMaintenanceMarketCloseReached: marketCloseReached,
       maintenanceRunCount: numeric(maintenance["runCount"]) ?? 0,
       maintenanceClosedCount: numeric(maintenance["lastClosedCount"]) ?? 0,
       maintenanceTotalClosedCount: numeric(maintenance["totalClosedCount"]) ?? 0,
@@ -1939,6 +2005,12 @@ async function buildAutomationMetrics(): Promise<{
       inactiveStaleScanCount,
       activeLongScanCount,
       activeMaxScanAgeMs,
+      pressurePausedDeploymentCount: pressurePausedDeployments.length,
+      pressurePausedMaxAgeMs,
+      skippedScanCount,
+      lastSkippedAt:
+        latestSkippedAt === null ? null : new Date(latestSkippedAt).toISOString(),
+      lastSkipReason,
       lastScanDurationMs,
       gatewayBlockedCount,
       gateway_blocked_count: gatewayBlockedCount,
@@ -1977,6 +2049,11 @@ async function buildAutomationMetrics(): Promise<{
       legacyEquityForwardEnabledCount,
       openShadowOptionCount: openShadowOptionRows.length,
       expiringOpenShadowOptionCount,
+      expiringTodayOpenShadowOptionCount: optionExpirationCounts.today,
+      priorExpirationOpenShadowOptionCount: optionExpirationCounts.prior,
+      expirationMaintenanceDueCount: optionExpirationCounts.due,
+      expirationMaintenanceMarketCloseReached: marketCloseReached,
+      pressurePausedDeploymentCount: pressurePausedDeployments.length,
       recentEventCount: automationEvents.length,
       recentEvents: automationEvents.slice(0, 20).map((event) => ({
         eventType: event.eventType,
@@ -1994,6 +2071,9 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const orphanOpenOptionCount = numeric(metrics["orphanOpenOptionCount"]) ?? 0;
   const expiringOpenShadowOptionCount =
     numeric(metrics["expiringOpenShadowOptionCount"]) ?? 0;
+  const expirationMaintenanceDueCount =
+    numeric(metrics["expirationMaintenanceDueCount"]) ??
+    expiringOpenShadowOptionCount;
   const legacyEquityForwardEnabledCount =
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
@@ -2004,6 +2084,8 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const inactiveStaleScanCount =
     numeric(metrics["inactiveStaleScanCount"]) ?? staleScanCount;
   const activeLongScanCount = numeric(metrics["activeLongScanCount"]) ?? 0;
+  const pressurePausedDeploymentCount =
+    numeric(metrics["pressurePausedDeploymentCount"]) ?? 0;
   const signalCount = numeric(metrics["signalCount"]) ?? 0;
   const staleSignalCount = numeric(metrics["staleSignalCount"]) ?? 0;
   const unavailableSignalCount = numeric(metrics["unavailableSignalCount"]) ?? 0;
@@ -2013,7 +2095,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
 
   if (
     orphanOpenOptionCount > 0 ||
-    (signalOptionsDeploymentCount === 0 && expiringOpenShadowOptionCount > 0)
+    (signalOptionsDeploymentCount === 0 && expirationMaintenanceDueCount > 0)
   ) {
     return "critical";
   }
@@ -2021,7 +2103,8 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (
     gatewayBlockedCount >= 3 ||
     failureCount >= 3 ||
-    (enabledDeployments > 0 &&
+    (pressurePausedDeploymentCount === 0 &&
+      enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
       latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS) ||
     (enabledDeployments > 0 &&
@@ -2038,6 +2121,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       activeLongScanCount > 0 ||
       latestScanAgeMs === null ||
       latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS ||
+      pressurePausedDeploymentCount > 0 ||
       (signalCount > 0 &&
         degradedSignalInputCount > 0 &&
         (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)) ||
@@ -2132,7 +2216,6 @@ function buildIsolationMetrics(): JsonRecord {
   });
   const mode =
     process.env["PYRUS_CROSS_ORIGIN_ISOLATION"] ??
-    process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] ??
     "report-only";
   const reportCount = reports.reduce((total, event) => total + event.eventCount, 0);
   const rawReportCount = rawReports.reduce(
@@ -2144,11 +2227,9 @@ function buildIsolationMetrics(): JsonRecord {
     crossOriginIsolated: isolation["crossOriginIsolated"] === true,
     coopMode:
       process.env["PYRUS_COOP_POLICY"] ??
-      process.env["RAYALGO_COOP_POLICY"] ??
       "same-origin",
     coepMode:
       process.env["PYRUS_COEP_POLICY"] ??
-      process.env["RAYALGO_COEP_POLICY"] ??
       "require-corp",
     reportOnly: !String(mode).startsWith("enforce"),
     reportCount5m: reportCount,
@@ -2253,12 +2334,6 @@ function buildResourcePressureMetrics(
     ...(clientLevel ? [clientLevel] : []),
     cacheLevel,
   ]);
-  const ibkr = asJsonRecord(runtime["ibkr"]);
-  const streams = asJsonRecord(ibkr["streams"]);
-  const marketDataAdmission = asJsonRecord(streams["marketDataAdmission"]);
-  const optionsFlowScanner = asJsonRecord(
-    marketDataAdmission["optionsFlowScanner"],
-  );
   const resourcePressure = updateApiResourcePressure({
     rssMb: numeric(api["rssMb"]),
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
@@ -2267,9 +2342,6 @@ function buildResourcePressureMetrics(
       ? normalizeApiResourcePressureLevel(clientLevel)
       : null,
     cacheLevel: normalizeApiResourcePressureLevel(cacheLevel),
-    optionsBackgroundBlockedReason: textValue(
-      optionsFlowScanner["backgroundBlockedReason"],
-    ),
     automationActiveLongScanCount: numeric(
       automationMetrics["activeLongScanCount"],
     ),
@@ -3407,11 +3479,32 @@ export async function collectDiagnosticSnapshot(
     0;
   const activeLongScanCount =
     numeric(automation.metrics["activeLongScanCount"]) ?? 0;
+  const pressurePausedDeploymentCount =
+    numeric(automation.metrics["pressurePausedDeploymentCount"]) ?? 0;
+
+  if (enabledAutomationDeployments > 0 && pressurePausedDeploymentCount > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "resource-pressure",
+      code: "signal_options_scan_pressure_paused",
+      severity: "warning",
+      message: "Signal-options scans are paused by API resource pressure.",
+      dimensions: withBridgeRootCause({
+        pressurePausedDeploymentCount,
+        pressurePausedMaxAgeMs: automation.metrics["pressurePausedMaxAgeMs"],
+        skippedScanCount: automation.metrics["skippedScanCount"],
+        lastSkippedAt: automation.metrics["lastSkippedAt"],
+        lastSkipReason: automation.metrics["lastSkipReason"],
+        latestScanAgeMs: automation.metrics["latestScanAgeMs"],
+      }),
+      raw: automation.raw,
+    });
+  }
 
   if (
     enabledAutomationDeployments > 0 &&
-    (inactiveStaleScanCount > 0 ||
-      automation.metrics["workerRunning"] !== true)
+    (automation.metrics["workerRunning"] !== true ||
+      (inactiveStaleScanCount > 0 && pressurePausedDeploymentCount === 0))
   ) {
     activeEvents.push({
       subsystem: "automation",
@@ -3428,6 +3521,7 @@ export async function collectDiagnosticSnapshot(
         workerRunning: automation.metrics["workerRunning"],
         tickRunning: automation.metrics["tickRunning"],
         activeDeploymentCount: automation.metrics["activeDeploymentCount"],
+        pressurePausedDeploymentCount,
       }),
       raw: automation.raw,
     });
@@ -3485,19 +3579,46 @@ export async function collectDiagnosticSnapshot(
     });
   }
 
-  if ((numeric(automation.metrics["expiringOpenShadowOptionCount"]) ?? 0) > 0) {
+  const expirationMaintenanceDueCount =
+    numeric(automation.metrics["expirationMaintenanceDueCount"]) ?? 0;
+  const expiringTodayOpenShadowOptionCount =
+    numeric(automation.metrics["expiringTodayOpenShadowOptionCount"]) ?? 0;
+
+  if (expirationMaintenanceDueCount > 0) {
     activeEvents.push({
       subsystem: "automation",
       category: "ledger-maintenance",
       code: "shadow_option_expiry_pending",
       severity: automationSeverity === "critical" ? "critical" : "warning",
-      message: "Open shadow option positions are at or past expiration.",
+      message: "Open shadow option positions are due for expiration maintenance.",
       dimensions: {
+        expirationMaintenanceDueCount,
         expiringOpenShadowOptionCount:
           automation.metrics["expiringOpenShadowOptionCount"],
+        expiringTodayOpenShadowOptionCount,
+        priorExpirationOpenShadowOptionCount:
+          automation.metrics["priorExpirationOpenShadowOptionCount"],
+        marketCloseReached:
+          automation.metrics["expirationMaintenanceMarketCloseReached"],
         maintenanceLastRunAt: automation.metrics["maintenanceLastRunAt"],
         maintenanceClosedCount: automation.metrics["maintenanceClosedCount"],
         maintenanceLastError: automation.metrics["maintenanceLastError"],
+      },
+      raw: automation.raw,
+    });
+  } else if (expiringTodayOpenShadowOptionCount > 0) {
+    activeEvents.push({
+      subsystem: "automation",
+      category: "ledger-maintenance",
+      code: "shadow_option_expiring_today",
+      severity: "warning",
+      message:
+        "Open shadow option positions expire today and are not due for maintenance until market close.",
+      dimensions: {
+        expiringTodayOpenShadowOptionCount,
+        marketCloseReached:
+          automation.metrics["expirationMaintenanceMarketCloseReached"],
+        maintenanceLastRunAt: automation.metrics["maintenanceLastRunAt"],
       },
       raw: automation.raw,
     });
@@ -3566,13 +3687,15 @@ export async function collectDiagnosticSnapshot(
   memorySnapshots.push(...snapshots);
   trimMemorySnapshots();
   await Promise.all(snapshots.map((snapshot) => persistSnapshot(snapshot)));
-  const suppressedThresholdMetricKeys = staleTunnelRootCauseIncidentKey
-    ? new Set([
-        "automation.latest_scan_age_ms",
-        "automation.gateway_blocked_count",
-        "automation.failure_count",
-      ])
-    : new Set<string>();
+  const suppressedThresholdMetricKeys = new Set<string>();
+  if (staleTunnelRootCauseIncidentKey) {
+    suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
+    suppressedThresholdMetricKeys.add("automation.gateway_blocked_count");
+    suppressedThresholdMetricKeys.add("automation.failure_count");
+  }
+  if ((numeric(automation.metrics["pressurePausedDeploymentCount"]) ?? 0) > 0) {
+    suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
+  }
   const activeThresholdKeys = await evaluateThresholds(
     snapshots,
     suppressedThresholdMetricKeys,

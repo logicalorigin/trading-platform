@@ -123,8 +123,8 @@ type UpdatePayload = {
 };
 
 const overrideFile =
-  process.env["RAYALGO_IBKR_LANE_OVERRIDE_FILE"]?.trim() ||
-  join(tmpdir(), "rayalgo", "ibkr-lane-overrides.json");
+  process.env["PYRUS_IBKR_LANE_OVERRIDE_FILE"]?.trim() ||
+  join(tmpdir(), "pyrus", "ibkr-lane-overrides.json");
 
 const governorCategories = [
   "health",
@@ -212,7 +212,7 @@ const optionsFlowBounds: Partial<
   radarFallbackDeepCandidateCount: { min: 0, max: 24 },
   radarDeepLineBudget: { min: 1, max: 150 },
   scannerBatchSize: { min: 1, max: 100 },
-  scannerConcurrency: { min: 1, max: 24 },
+  scannerConcurrency: { min: 1, max: 1 },
   scannerLimit: { min: 1, max: 500 },
   scannerLineBudget: { min: 1, max: 150 },
   expirationScanCount: { min: 0, max: 20 },

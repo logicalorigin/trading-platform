@@ -148,6 +148,42 @@ test("signal-options worker keeps maintenance but skips scans under critical pre
 
     assert.equal(maintenanceCalls, 1);
     assert.equal(scanCalls, 0);
+    const runtime = worker.getRuntimeSnapshot().deployments[0];
+    assert.equal(worker.getRuntimeSnapshot().deploymentCount, 1);
+    assert.equal(runtime?.pressurePaused, true);
+    assert.equal(runtime?.lastSkipReason, "resource_pressure");
+    assert.equal(runtime?.skippedScanCount, 1);
+    assert.ok(runtime?.lastSkippedAt);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("signal-options worker scans immediately once resource pressure clears", async () => {
+  let scanCalls = 0;
+  updateApiResourcePressure({ rssMb: 1_650 });
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  try {
+    await worker.runOnce();
+    assert.equal(scanCalls, 0);
+
+    __resetApiResourcePressureForTests();
+    await worker.runOnce();
+
+    assert.equal(scanCalls, 1);
+    const runtime = worker.getRuntimeSnapshot().deployments[0];
+    assert.equal(runtime?.pressurePaused, false);
+    assert.equal(runtime?.pressurePauseStartedAt, null);
+    assert.equal(runtime?.lastSkipReason, "resource_pressure");
   } finally {
     __resetApiResourcePressureForTests();
   }
@@ -255,6 +291,37 @@ test("signal-options worker interval-gates scans and rescans after config change
   await worker.runOnce();
 
   assert.equal(scanCalls, 3);
+});
+
+test("signal-options worker anchors poll interval to scan completion", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+      now = new Date(now.getTime() + 70_000);
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  assert.equal(scanCalls, 1);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.lastCheckedAtMs,
+    Date.parse("2026-04-28T14:01:10.000Z"),
+  );
+
+  now = new Date("2026-04-28T14:01:20.000Z");
+  await worker.runOnce();
+  assert.equal(scanCalls, 1);
+
+  now = new Date("2026-04-28T14:02:11.000Z");
+  await worker.runOnce();
+  assert.equal(scanCalls, 2);
 });
 
 test("signal-options worker records signal freshness from successful scans", async () => {

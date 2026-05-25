@@ -47,7 +47,7 @@ afterEach(() => {
   setEnv(originalEnv);
 });
 
-test("uses a 200-line IBKR budget and reserves watchlist plus flow lines by default", () => {
+test("uses a 200-line IBKR budget with watchlist plus flow line pools by default", () => {
   setEnv({});
 
   const budget = getMarketDataAdmissionBudget();
@@ -55,15 +55,18 @@ test("uses a 200-line IBKR budget and reserves watchlist plus flow lines by defa
   assert.equal(budget.reserveLines, 0);
   assert.equal(budget.usableLines, 200);
   assert.equal(budget.targetFillLines, 200);
-  assert.equal(budget.automationLineCap, 0);
-  assert.equal(budget.accountMonitorLineCap, 0);
+  assert.equal(budget.automationExecutionLineCap, 30);
+  assert.equal(budget.executionLineCap, 30);
+  assert.equal(budget.automationLineCap, 30);
+  assert.equal(budget.accountMonitorLineCap, 30);
+  assert.equal(budget.visibleLineCap, 20);
   assert.equal(budget.watchlistLineCap, 80);
   assert.equal(budget.flowScannerLineCap, 80);
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 12,
-    "account-monitor": 0,
-    visible: 0,
-    automation: 0,
+    execution: 30,
+    "account-monitor": 30,
+    visible: 20,
+    automation: 30,
     watchlist: 80,
     "flow-scanner": 80,
     convenience: 0,
@@ -82,10 +85,10 @@ test("uses the bridge-reported line budget when it is lower than the app cap", (
   assert.equal(budget.usableLines, 190);
   assert.equal(budget.targetFillLines, 190);
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 12,
-    "account-monitor": 0,
-    visible: 0,
-    automation: 0,
+    execution: 30,
+    "account-monitor": 30,
+    visible: 20,
+    automation: 30,
     watchlist: 80,
     "flow-scanner": 80,
     convenience: 0,
@@ -166,14 +169,46 @@ test("derives scanner headroom from runtime scanner line budget and concurrency"
 
   const budget = getMarketDataAdmissionBudget();
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 12,
-    "account-monitor": 0,
-    visible: 0,
-    automation: 0,
+    execution: 30,
+    "account-monitor": 30,
+    visible: 20,
+    automation: 30,
     watchlist: 80,
     "flow-scanner": 80,
     convenience: 0,
   });
+});
+
+test("runtime scanner cap shrink demotes excess flow scanner leases", () => {
+  setEnv({});
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 40,
+    flowScannerConcurrency: 2,
+  });
+
+  const scanner = admitMarketDataLeases({
+    owner: "flow-scanner:rotation",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 80 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `FLOW${index}`,
+      underlying: "SPY",
+    })),
+  });
+  assert.equal(scanner.admitted.length, 80);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: 20,
+    flowScannerConcurrency: 2,
+  });
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.budget.flowScannerLineCap, 40);
+  assert.equal(diagnostics.poolUsage["flow-scanner"].effectiveMaxLines, 40);
+  assert.equal(diagnostics.flowScannerLineCount, 40);
+  assert.equal(diagnostics.activeLineCount, 40);
+  assert.equal(getMarketDataLeasesSnapshot().length, 40);
 });
 
 test("keeps explicit admission env caps ahead of runtime scanner defaults", () => {
@@ -187,10 +222,10 @@ test("keeps explicit admission env caps ahead of runtime scanner defaults", () =
 
   const budget = getMarketDataAdmissionBudget();
   assert.equal(budget.flowScannerLineCap, 20);
-  assert.equal(budget.poolLineCaps.visible, 0);
+  assert.equal(budget.poolLineCaps.visible, 20);
 });
 
-test("account monitor live lines expand dynamically under account demand", () => {
+test("account monitor live lines respect their reserved cap", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "100",
     IBKR_MARKET_DATA_RESERVE_LINES: "10",
@@ -206,14 +241,14 @@ test("account monitor live lines expand dynamically under account demand", () =>
     })),
   });
 
-  assert.equal(result.admitted.length, 4);
-  assert.equal(result.rejected.length, 0);
+  assert.equal(result.admitted.length, 3);
+  assert.equal(result.rejected.length, 1);
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.accountMonitorLineCount, 4);
-  assert.equal(diagnostics.accountMonitor.dynamic, true);
-  assert.equal(diagnostics.accountMonitor.coveredLineCount, 4);
+  assert.equal(diagnostics.accountMonitorLineCount, 3);
+  assert.equal(diagnostics.accountMonitor.dynamic, false);
+  assert.equal(diagnostics.accountMonitor.coveredLineCount, 3);
   assert.equal(diagnostics.accountMonitor.neededLineCount, 4);
-  assert.equal(diagnostics.accountMonitor.deferredLineCount, 0);
+  assert.equal(diagnostics.accountMonitor.deferredLineCount, 1);
 });
 
 test("counts option greeks as option plus shared underlying line", () => {
@@ -250,7 +285,7 @@ test("counts option greeks as option plus shared underlying line", () => {
   assert.equal(diagnostics.activeOptionLineCount, 2);
 });
 
-test("automation live lines are dynamic below execution and account priority", () => {
+test("automation live lines share the Algo & Execution bundle cap", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "100",
     IBKR_MARKET_DATA_RESERVE_LINES: "10",
@@ -271,9 +306,87 @@ test("automation live lines are dynamic below execution and account priority", (
     })),
   });
 
-  assert.equal(result.admitted.length, 19);
-  assert.equal(result.rejected.length, 0);
-  assert.equal(getMarketDataAdmissionDiagnostics().automationLineCount, 19);
+  assert.equal(result.admitted.length, 18);
+  assert.equal(result.rejected.length, 1);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.automationLineCount, 18);
+  assert.equal(diagnostics.automationExecutionLineCount, 18);
+  assert.equal(diagnostics.automationExecutionRemainingLineCount, 0);
+});
+
+test("execution can reclaim automation lines inside the Algo & Execution bundle", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "4",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "4",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "automation-scan",
+    intent: "automation-live",
+    requests: ["AUTO1", "AUTO2", "AUTO3", "AUTO4"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  const execution = admitMarketDataLeases({
+    owner: "order-ticket",
+    intent: "execution-live",
+    requests: ["EXEC1", "EXEC2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  assert.equal(execution.admitted.length, 2);
+  assert.equal(execution.demoted.length, 2);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.executionLineCount, 2);
+  assert.equal(diagnostics.automationLineCount, 2);
+  assert.equal(diagnostics.automationExecutionLineCount, 4);
+});
+
+test("automation cannot reclaim execution lines inside the Algo & Execution bundle", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "4",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "4",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "order-ticket",
+    intent: "execution-live",
+    requests: ["EXEC1", "EXEC2", "EXEC3", "EXEC4"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  const automation = admitMarketDataLeases({
+    owner: "automation-scan",
+    intent: "automation-live",
+    requests: [{ assetClass: "equity", symbol: "AUTO1" }],
+  });
+
+  assert.equal(automation.admitted.length, 0);
+  assert.equal(automation.demoted.length, 0);
+  assert.equal(automation.rejected.length, 1);
+  assert.equal(automation.rejected[0].reason, "automation-cap");
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.executionLineCount, 4);
+  assert.equal(diagnostics.automationLineCount, 0);
+  assert.equal(diagnostics.automationExecutionLineCount, 4);
 });
 
 test("enforces the flow scanner live-line cap", () => {
@@ -403,7 +516,7 @@ test("flow scanner does not reclaim visible lines when active demand leaves no s
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
     IBKR_MARKET_DATA_EXECUTION_LINES: "0",
     IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
-    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "2",
     IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "2",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
@@ -432,21 +545,21 @@ test("flow scanner does not reclaim visible lines when active demand leaves no s
 
   assert.equal(scanner.admitted.length, 0);
   assert.equal(scanner.rejected.length, 1);
-  assert.equal(scanner.rejected[0].reason, "pool-cap");
+  assert.equal(scanner.rejected[0].reason, "budget");
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.intentUsage["visible-live"], 2);
   assert.equal(diagnostics.flowScannerLineCount, 0);
 });
 
-test("signal option quote leases are classified and can reclaim background scanner lines", () => {
+test("signal option quote leases stay in the Algo & Execution bundle and do not reclaim scanner lines", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "5",
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
-    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "3",
     IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
     IBKR_MARKET_DATA_VISIBLE_LINES: "0",
-    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "3",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "5",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
   });
@@ -472,31 +585,32 @@ test("signal option quote leases are classified and can reclaim background scann
     fallbackProvider: "cache",
   });
 
-  assert.equal(signal.admitted.length, 3);
-  assert.equal(signal.demoted.length, 3);
+  assert.equal(signal.admitted.length, 0);
+  assert.equal(signal.rejected.length, 3);
+  assert.equal(signal.demoted.length, 0);
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.flowScannerLineCount, 2);
+  assert.equal(diagnostics.flowScannerLineCount, 5);
   assert.equal(diagnostics.accountMonitorLineCount, 0);
-  assert.equal(diagnostics.automationLineCount, 3);
-  assert.equal(diagnostics.signalOptions.activeLineCount, 3);
+  assert.equal(diagnostics.automationLineCount, 0);
+  assert.equal(diagnostics.signalOptions.activeLineCount, 0);
   assert.equal(
     diagnostics.ownerClasses.summaries["signal-options"].recentCacheFallbackCount,
     3,
   );
   assert.equal(
     diagnostics.ownerClasses.summaries["flow-scanner"].activeLineCount,
-    2,
+    5,
   );
 });
 
-test("visible requests can reclaim signal option maintenance lines", () => {
+test("visible requests do not reclaim signal option maintenance lines", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "2",
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
     IBKR_MARKET_DATA_EXECUTION_LINES: "0",
     IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
-    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
-    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "1",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "2",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
   });
@@ -517,12 +631,13 @@ test("visible requests can reclaim signal option maintenance lines", () => {
     requests: [{ assetClass: "equity", symbol: "VIS1" }],
   });
 
-  assert.equal(visible.admitted.length, 1);
-  assert.equal(visible.demoted.length, 1);
+  assert.equal(visible.admitted.length, 0);
+  assert.equal(visible.demoted.length, 0);
+  assert.equal(visible.rejected.length, 1);
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.intentUsage["visible-live"], 1);
-  assert.equal(diagnostics.signalOptions.activeLineCount, 1);
+  assert.equal(diagnostics.intentUsage["visible-live"], 0);
+  assert.equal(diagnostics.signalOptions.activeLineCount, 2);
   assert.equal(diagnostics.accountMonitorLineCount, 0);
 });
 
@@ -532,7 +647,7 @@ test("explicit owner release cleans stale websocket leases", () => {
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
     IBKR_MARKET_DATA_EXECUTION_LINES: "0",
     IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
-    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "1",
     IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "1",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
@@ -584,7 +699,7 @@ test("retired shadow equity forward owners are surfaced as allocation warnings",
   assert.equal(diagnostics.ownerClasses.warnings[0]?.code, "retired-owner-active");
 });
 
-test("shrinks scanner headroom when active visible demand borrows idle lines", () => {
+test("keeps scanner headroom fixed when visible demand reaches its own cap", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "20",
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
@@ -606,9 +721,11 @@ test("shrinks scanner headroom when active visible demand borrows idle lines", (
   });
 
   const beforeScanner = getMarketDataAdmissionDiagnostics();
-  assert.equal(beforeScanner.pressure.state, "constrained");
+  assert.equal(beforeScanner.visibleLineCount, 10);
+  assert.equal(beforeScanner.pressure.state, "normal");
   assert.equal(beforeScanner.pressure.scannerStaticLineCap, 10);
-  assert.equal(beforeScanner.pressure.scannerEffectiveLineCap, 5);
+  assert.equal(beforeScanner.pressure.scannerEffectiveLineCap, 10);
+  assert.equal(beforeScanner.flowScannerRemainingLineCount, 10);
 
   const result = admitMarketDataLeases({
     owner: "flow-scanner",
@@ -620,12 +737,12 @@ test("shrinks scanner headroom when active visible demand borrows idle lines", (
     })),
   });
 
-  assert.equal(result.admitted.length, 5);
-  assert.equal(result.rejected.length, 5);
-  assert.equal(result.rejected[0].reason, "pool-cap");
+  assert.equal(result.admitted.length, 10);
+  assert.equal(result.rejected.length, 0);
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.poolUsage["flow-scanner"].maxLines, 10);
-  assert.equal(diagnostics.poolUsage["flow-scanner"].effectiveMaxLines, 5);
+  assert.equal(diagnostics.poolUsage["flow-scanner"].effectiveMaxLines, 10);
+  assert.equal(diagnostics.flowScannerRemainingLineCount, 0);
   assert.equal(diagnostics.pressure.state, "protected");
 });
 
@@ -736,7 +853,7 @@ test("reports convenience leases as elastic slack instead of a hard cap violatio
   assert.equal(diagnostics.poolUsage.convenience.remainingLineCount, 14);
 });
 
-test("active visible requests reclaim lines from scanner leases under pressure", () => {
+test("active visible requests do not reclaim lines from scanner leases under pressure", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "5",
     IBKR_MARKET_DATA_RESERVE_LINES: "0",
@@ -767,11 +884,12 @@ test("active visible requests reclaim lines from scanner leases under pressure",
     })),
   });
 
-  assert.equal(result.admitted.length, 3);
-  assert.equal(result.demoted.length, 3);
+  assert.equal(result.admitted.length, 0);
+  assert.equal(result.demoted.length, 0);
+  assert.equal(result.rejected.length, 3);
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.intentUsage["visible-live"], 3);
-  assert.equal(diagnostics.intentUsage["flow-scanner-live"], 2);
+  assert.equal(diagnostics.intentUsage["visible-live"], 0);
+  assert.equal(diagnostics.intentUsage["flow-scanner-live"], 5);
 });
 
 test("higher-priority execution requests demote lower-priority convenience leases", () => {
@@ -908,6 +1026,6 @@ test("rejects same-priority requests when the live-line budget is full", () => {
 
   assert.equal(result.admitted.length, 0);
   assert.equal(result.rejected.length, 1);
-  assert.equal(result.rejected[0].reason, "budget");
+  assert.equal(result.rejected[0].reason, "pool-cap");
   assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 2);
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { afterEach } from "node:test";
+import test, { after, afterEach, beforeEach } from "node:test";
 import { GetGexDashboardResponse } from "@workspace/api-zod";
 import {
   __expireGexDashboardCacheForTests,
@@ -9,10 +9,43 @@ import {
   getGexDashboardData,
 } from "./gex";
 
+const GEX_MARKET_DATA_ENV_KEYS = [
+  "POLYGON_API_KEY",
+  "POLYGON_KEY",
+  "POLYGON_BASE_URL",
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_API_BASE_URL",
+] as const;
+const originalGexMarketDataEnv = Object.fromEntries(
+  GEX_MARKET_DATA_ENV_KEYS.map((key) => [key, process.env[key]]),
+);
+
+function clearGexMarketDataEnv(): void {
+  GEX_MARKET_DATA_ENV_KEYS.forEach((key) => {
+    delete process.env[key];
+  });
+}
+
+beforeEach(() => {
+  clearGexMarketDataEnv();
+});
+
 afterEach(() => {
   __setGexDashboardLoadTimeoutMsForTests(null);
   __setGexPlatformDataClientFactoryForTests(null);
   __setGexMarketDataClientFactoryForTests(null);
+  clearGexMarketDataEnv();
+});
+
+after(() => {
+  GEX_MARKET_DATA_ENV_KEYS.forEach((key) => {
+    if (originalGexMarketDataEnv[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = originalGexMarketDataEnv[key];
+    }
+  });
 });
 
 function basicQuote(overrides: Record<string, unknown> = {}) {
@@ -96,6 +129,48 @@ function option({
   };
 }
 
+function referenceOption({
+  right,
+  strike,
+  gamma,
+  openInterest,
+  multiplier = 100,
+}: {
+  right: "call" | "put";
+  strike: number;
+  gamma: number | null;
+  openInterest: number | null;
+  multiplier?: number;
+}) {
+  return {
+    contract: {
+      ticker: `O:SPY260515${right === "call" ? "C" : "P"}${String(strike * 1000).padStart(8, "0")}`,
+      underlying: "SPY",
+      expirationDate: new Date("2026-05-15T00:00:00Z"),
+      strike,
+      right,
+      multiplier,
+      sharesPerContract: multiplier,
+      providerContractId: null,
+    },
+    bid: 1,
+    ask: 1.05,
+    last: 1.02,
+    mark: 1.025,
+    prevClose: 1,
+    change: 0.02,
+    changePercent: 2,
+    impliedVolatility: 0.2,
+    delta: right === "call" ? 0.5 : -0.5,
+    gamma,
+    theta: null,
+    vega: null,
+    openInterest,
+    volume: 100,
+    updatedAt: new Date("2026-05-08T15:30:00Z"),
+  };
+}
+
 function configureIbkrGex(input: {
   quote?: ReturnType<typeof basicQuote> | null;
   contracts: ReturnType<typeof option>[];
@@ -158,6 +233,47 @@ function configureIbkrGex(input: {
   };
 }
 
+function configureReferenceGex(input: {
+  contracts: ReturnType<typeof referenceOption>[];
+  provider?: "massive" | "polygon";
+}) {
+  if (input.provider === "polygon") {
+    process.env["POLYGON_API_KEY"] = "test";
+    process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  } else {
+    process.env["MASSIVE_API_KEY"] = "test";
+    process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  }
+
+  let optionChainRequests = 0;
+  __setGexMarketDataClientFactoryForTests(() => ({
+    getUniverseTickerByTicker: async () => null,
+    getTickerMarketCap: async () => null,
+    getBarsPage: async () => ({
+      bars: [
+        {
+          timestamp: new Date("2026-05-08T00:00:00Z"),
+          open: 99,
+          high: 101,
+          low: 98,
+          close: 100,
+          volume: 1_000,
+        },
+      ],
+    }),
+    getOptionChain: async () => {
+      optionChainRequests += 1;
+      return input.contracts;
+    },
+  }) as any);
+
+  return {
+    get optionChainRequests() {
+      return optionChainRequests;
+    },
+  };
+}
+
 test("GEX dashboard data is sourced from IBKR quotes, expirations, and full option-chain batches", async () => {
   let batchRequest: any = null;
   configureIbkrGex({
@@ -193,6 +309,70 @@ test("GEX dashboard data is sourced from IBKR quotes, expirations, and full opti
   const parsed = GetGexDashboardResponse.parse(data);
   assert.equal(parsed.source.provider, "ibkr");
   assert.equal((parsed.options[0] as any).providerContractId, "ibkr-call-100");
+});
+
+test("GEX prefers Massive option-chain snapshots before spending IBKR snapshot lines", async () => {
+  const ibkr = configureIbkrGex({
+    contracts: [
+      option({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),
+    ],
+  });
+  const reference = configureReferenceGex({
+    provider: "massive",
+    contracts: [
+      referenceOption({
+        right: "call",
+        strike: 100,
+        gamma: 0.02,
+        openInterest: 10,
+      }),
+      referenceOption({
+        right: "put",
+        strike: 95,
+        gamma: 0.01,
+        openInterest: 10,
+      }),
+    ],
+  });
+
+  const data = await getGexDashboardData({ underlying: "SPY" });
+
+  assert.equal(reference.optionChainRequests, 1);
+  assert.equal(ibkr.chainRequests, 0);
+  assert.equal(data.source.provider, "massive");
+  assert.equal(data.source.status, "ok");
+  assert.equal(data.options.length, 2);
+  assert.equal(data.options[0].providerContractId, null);
+  assert.equal(data.options[0].quoteFreshness, "delayed");
+  assert.equal(data.options[0].marketDataMode, "delayed");
+  assert.equal(GetGexDashboardResponse.parse(data).source.provider, "massive");
+});
+
+test("GEX falls back to IBKR snapshots when reference option snapshots are unusable", async () => {
+  const ibkr = configureIbkrGex({
+    contracts: [
+      option({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),
+    ],
+  });
+  const reference = configureReferenceGex({
+    provider: "polygon",
+    contracts: [
+      referenceOption({
+        right: "call",
+        strike: 100,
+        gamma: null,
+        openInterest: 10,
+      }),
+    ],
+  });
+
+  const data = await getGexDashboardData({ underlying: "SPY" });
+
+  assert.equal(reference.optionChainRequests, 1);
+  assert.equal(ibkr.chainRequests, 1);
+  assert.equal(data.source.provider, "ibkr");
+  assert.equal(data.options.length, 1);
+  assert.equal(data.options[0].providerContractId, "ibkr-call-100");
 });
 
 test("GEX skips contracts without required gamma or open interest and marks source partial", async () => {

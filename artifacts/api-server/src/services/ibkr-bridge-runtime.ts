@@ -1,6 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HttpError } from "../lib/errors";
 import {
@@ -14,12 +13,14 @@ const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
 const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
-const BRIDGE_HELPER_VERSION = "2026-05-20.remote-desktop-agent-v19";
+const BRIDGE_HELPER_VERSION = "2026-05-24.remote-desktop-agent-v23";
+const PYRUS_IBKR_PROTOCOL_SCHEME = "pyrus-ibkr";
 const LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const REMOTE_DESKTOPS_FILE_ENV_NAMES = [
   "IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
-  "RAYALGO_IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
+  "PYRUS_IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
 ];
+type IbkrProtocolScheme = typeof PYRUS_IBKR_PROTOCOL_SCHEME;
 
 type LauncherResult = {
   activationId: string;
@@ -193,6 +194,20 @@ function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function selectIbkrProtocolSchemeForDesktop(
+  _desktop: IbkrRemoteDesktop,
+): IbkrProtocolScheme {
+  return PYRUS_IBKR_PROTOCOL_SCHEME;
+}
+
+function rewriteIbkrProtocolScheme(
+  rawUrl: string,
+  scheme: IbkrProtocolScheme,
+): string {
+  const url = new URL(rawUrl);
+  return `${scheme}://${url.host}${url.pathname}${url.search}${url.hash}`;
+}
+
 function normalizeBaseUrl(rawBaseUrl: string): string {
   let url: URL;
   try {
@@ -264,7 +279,18 @@ function getIbkrRemoteDesktopsFile(): string {
     }
   }
 
-  return join(tmpdir(), "rayalgo", "ibkr-remote-desktops.json");
+  const repoRoot = process.env["REPL_HOME"]?.trim();
+  if (repoRoot) {
+    return join(
+      repoRoot,
+      "artifacts",
+      "api-server",
+      "data",
+      "ibkr-remote-desktops.json",
+    );
+  }
+
+  return join(process.cwd(), "data", "ibkr-remote-desktops.json");
 }
 
 function loadIbkrRemoteDesktops(): void {
@@ -887,6 +913,7 @@ function buildProtocolLaunchUrl(input: {
   callbackSecret: string;
   helperUrl: string;
   managementToken: string;
+  scheme?: IbkrProtocolScheme;
 }): string {
   const params = new URLSearchParams({
     activationId: input.activationId,
@@ -919,7 +946,7 @@ function buildProtocolLaunchUrl(input: {
     params.set("branch", branch);
   }
 
-  return `rayalgo-ibkr://launch?${params.toString()}`;
+  return `${input.scheme ?? PYRUS_IBKR_PROTOCOL_SCHEME}://launch?${params.toString()}`;
 }
 
 function buildProtocolShutdownUrl(input: {
@@ -927,6 +954,7 @@ function buildProtocolShutdownUrl(input: {
   completionToken: string;
   helperUrl: string;
   jobId: string;
+  scheme?: IbkrProtocolScheme;
 }): string {
   const params = new URLSearchParams({
     apiBaseUrl: input.apiBaseUrl,
@@ -937,7 +965,7 @@ function buildProtocolShutdownUrl(input: {
     shutdown: "1",
   });
 
-  return `rayalgo-ibkr://launch?${params.toString()}`;
+  return `${input.scheme ?? PYRUS_IBKR_PROTOCOL_SCHEME}://launch?${params.toString()}`;
 }
 
 function readProtocolUrlParam(rawUrl: string | null, name: string): string | null {
@@ -955,6 +983,7 @@ function readProtocolUrlParam(rawUrl: string | null, name: string): string | nul
 function createIbkrBridgeLauncher(input: {
   apiBaseUrl: string;
   bundleUrl?: string | null;
+  scheme?: IbkrProtocolScheme;
 }): LauncherResult {
   const apiBaseUrl = normalizeBaseUrl(input.apiBaseUrl);
   const helperUrl = `${apiBaseUrl}/api/ibkr/bridge/helper.ps1`;
@@ -984,6 +1013,7 @@ function createIbkrBridgeLauncher(input: {
       callbackSecret: legacyActivation.callbackSecret,
       helperUrl,
       managementToken,
+      scheme: input.scheme,
     }),
     autoLoginMode: "ib-gateway-live",
     autoLoginSupported: true,
@@ -1004,6 +1034,7 @@ function createIbkrBridgeLauncher(input: {
       callbackSecret: legacyActivation.callbackSecret,
       helperUrl,
       managementToken,
+      scheme: input.scheme,
     }),
     managementToken,
   };
@@ -1150,12 +1181,14 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
     }
   | {
       action: "launch";
-      activationId: string;
+      activationId: string | null;
+      completionToken?: string | null;
       expiresAt: string;
       helperVersion: string;
       jobId: string;
       launchUrl: string;
-    ready: true;
+      ready: true;
+      shutdown?: boolean;
     }
   | {
       action: "shutdown";
@@ -1189,15 +1222,21 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
         ibkrRemoteLaunchJobs.delete(job.jobId);
         continue;
       }
+      const launchUrl = rewriteIbkrProtocolScheme(
+        job.launchUrl,
+        selectIbkrProtocolSchemeForDesktop(desktop),
+      );
 
       return {
-        action: "shutdown",
-        completionToken: readProtocolUrlParam(job.launchUrl, "completionToken"),
+        action: "launch",
+        activationId: null,
+        completionToken: readProtocolUrlParam(launchUrl, "completionToken"),
         expiresAt: new Date(job.expiresAt).toISOString(),
         helperVersion: BRIDGE_HELPER_VERSION,
         jobId: job.jobId,
-        launchUrl: job.launchUrl,
+        launchUrl,
         ready: true,
+        shutdown: true,
       };
     }
 
@@ -1206,13 +1245,18 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
       continue;
     }
 
+    const launchUrl = rewriteIbkrProtocolScheme(
+      job.launchUrl,
+      selectIbkrProtocolSchemeForDesktop(desktop),
+    );
+
     return {
       action: "launch",
       activationId: job.activationId,
       expiresAt: new Date(job.expiresAt).toISOString(),
       helperVersion: BRIDGE_HELPER_VERSION,
       jobId: job.jobId,
-      launchUrl: job.launchUrl,
+      launchUrl,
       ready: true,
     };
   }
@@ -1239,6 +1283,7 @@ export function createIbkrRemoteBridgeLaunch(input: {
   const launcher = createIbkrBridgeLauncher({
     apiBaseUrl: input.apiBaseUrl,
     bundleUrl: input.bundleUrl,
+    scheme: selectIbkrProtocolSchemeForDesktop(desktop),
   });
   const now = Date.now();
   for (const [jobId, job] of ibkrRemoteLaunchJobs) {
@@ -1332,6 +1377,7 @@ export function createIbkrRemoteBridgeShutdown(input: {
     completionToken,
     helperUrl,
     jobId,
+    scheme: selectIbkrProtocolSchemeForDesktop(desktop),
   });
   const job: IbkrRemoteLaunchJob = {
     action: "shutdown",

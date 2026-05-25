@@ -5,12 +5,12 @@ import {
   type SignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
 import {
-  evaluateRayReplicaSignals,
-  RAY_REPLICA_SIGNAL_WARMUP_BARS,
-  resolveRayReplicaSignalSettings,
-  type RayReplicaBar,
-  type RayReplicaSignalEvent,
-} from "@workspace/rayreplica-core";
+  evaluatePyrusSignalsSignals,
+  PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
+  resolvePyrusSignalsSignalSettings,
+  type PyrusSignalsBar,
+  type PyrusSignalsSignalEvent,
+} from "@workspace/pyrus-signals-core";
 import {
   algoDeploymentsTable,
   algoStrategiesTable,
@@ -37,6 +37,7 @@ import {
   getSignalMonitorTimeframeMs,
   resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
+  updateSignalMonitorProfile,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
 import {
@@ -57,6 +58,7 @@ import {
   isSignalOptionsShadowConfig,
   normalizeAlgoDeploymentProviderAccountId,
 } from "./algo-deployment-account";
+import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
@@ -77,6 +79,7 @@ export const SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT =
   "signal_options_manual_deviation";
 
 const activeScanDeploymentIds = new Set<string>();
+const activeScanStartedAtByDeploymentId = new Map<string, Date>();
 
 type SignalOptionsRunMetadata = {
   runId: string;
@@ -95,6 +98,9 @@ const activeSignalOptionsRunMetadata = new Map<
   SignalOptionsRunMetadata
 >();
 
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 8;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 1;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 120;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
@@ -171,7 +177,7 @@ type SignalOptionsSignalSnapshot = {
 };
 
 type SignalOptionsActionMapping = {
-  indicator: "rayreplica";
+  indicator: "pyrus-signals";
   signalDirection: SignalDirection;
   optionRight: OptionRight;
   optionAction: "buy_call" | "buy_put";
@@ -976,7 +982,7 @@ function buildSignalOptionsSignalSnapshot(input: {
     signalKey: input.signalKey ?? null,
     source:
       compactString(input.source) ??
-      (isUuidLike(input.state.profileId) ? "rayreplica" : "rayreplica-runtime"),
+      (isUuidLike(input.state.profileId) ? "pyrus-signals" : "pyrus-signals-runtime"),
     eventId: compactString(input.eventId),
     symbol: normalizeSymbol(input.state.symbol).toUpperCase(),
     timeframe: input.state.timeframe,
@@ -996,7 +1002,7 @@ function buildSignalOptionsActionMapping(
 ): SignalOptionsActionMapping {
   const optionRight = optionRightForSignal(direction);
   return {
-    indicator: "rayreplica",
+    indicator: "pyrus-signals",
     signalDirection: direction,
     optionRight,
     optionAction: optionRight === "put" ? "buy_put" : "buy_call",
@@ -3280,6 +3286,73 @@ function stageStatus(input: {
   return input.fallback ?? "waiting";
 }
 
+function formatSignalOptionsScanAge(ageMs: number | null): string | null {
+  if (ageMs == null || !Number.isFinite(ageMs)) {
+    return null;
+  }
+  const seconds = Math.max(0, Math.round(ageMs / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds > 0
+    ? `${minutes}m ${remainingSeconds}s`
+    : `${minutes}m`;
+}
+
+function markSignalOptionsScanActive(deploymentId: string, startedAt = new Date()) {
+  activeScanDeploymentIds.add(deploymentId);
+  activeScanStartedAtByDeploymentId.set(deploymentId, startedAt);
+}
+
+function clearSignalOptionsScanActive(deploymentId: string) {
+  activeScanDeploymentIds.delete(deploymentId);
+  activeScanStartedAtByDeploymentId.delete(deploymentId);
+}
+
+function signalOptionsActiveScanState(deploymentId: string, now = new Date()) {
+  const startedAt = activeScanStartedAtByDeploymentId.get(deploymentId) ?? null;
+  const running = activeScanDeploymentIds.has(deploymentId);
+  const ageMs =
+    running && startedAt
+      ? Math.max(0, now.getTime() - startedAt.getTime())
+      : null;
+  return {
+    running,
+    startedAt,
+    ageMs,
+  };
+}
+
+function signalOptionsPressurePauseState(deploymentId: string, now = new Date()) {
+  const deployment = getSignalOptionsWorkerSnapshot().deployments.find(
+    (entry) => entry.deploymentId === deploymentId,
+  );
+  const record = asRecord(deployment);
+  const paused =
+    record.pressurePaused === true &&
+    String(record.lastSkipReason ?? "") === "resource_pressure";
+  const startedAtMs = paused
+    ? Date.parse(
+        String(record.pressurePauseStartedAt ?? record.lastSkippedAt ?? ""),
+      )
+    : Number.NaN;
+  const startedAt = Number.isFinite(startedAtMs)
+    ? new Date(startedAtMs)
+    : null;
+  const ageMs =
+    paused && startedAt
+      ? Math.max(0, now.getTime() - startedAt.getTime())
+      : null;
+  return {
+    paused,
+    startedAt,
+    ageMs,
+    reason: paused ? "resource_pressure" : null,
+  };
+}
+
 function positionStopDistancePercent(position: SignalOptionsPosition) {
   const mark = finiteNumber(position.lastMarkPrice) ?? position.entryPrice;
   const stop = finiteNumber(position.stopPrice);
@@ -3410,6 +3483,7 @@ function buildCockpitPipeline(input: {
   activePositions: SignalOptionsPosition[];
   risk: Record<string, unknown>;
   events: ExecutionEvent[];
+  now?: Date;
 }) {
   const selectedContracts = input.candidates.filter(
     (candidate) => Object.keys(asRecord(candidate.selectedContract)).length > 0,
@@ -3453,24 +3527,47 @@ function buildCockpitPipeline(input: {
   );
   const nearStopCount = input.activePositions.filter(isPositionNearStop).length;
   const dailyHaltActive = input.risk.dailyHaltActive === true;
-  const scanRunning = activeScanDeploymentIds.has(input.deployment.id);
+  const scanState = signalOptionsActiveScanState(input.deployment.id, input.now);
+  const scanRunningAge = formatSignalOptionsScanAge(scanState.ageMs);
+  const pressurePauseState = signalOptionsPressurePauseState(
+    input.deployment.id,
+    input.now,
+  );
+  const pressurePauseAge = formatSignalOptionsScanAge(pressurePauseState.ageMs);
 
   return [
     {
       id: "scan_universe",
-      label: "Scan Universe",
-      status: stageStatus({
-        blocked: !input.readiness.ready,
-        running: scanRunning,
-        count: input.deployment.lastEvaluatedAt ? 1 : 0,
-      }),
+      label: "Signal Symbols",
+      status: pressurePauseState.paused
+        ? "attention"
+        : stageStatus({
+            blocked: !input.readiness.ready,
+            running: scanState.running,
+            count: input.deployment.lastEvaluatedAt ? 1 : 0,
+          }),
       count: input.deployment.symbolUniverse.length,
       latestAt:
+        scanState.startedAt?.toISOString() ??
+        pressurePauseState.startedAt?.toISOString() ??
         input.deployment.lastEvaluatedAt?.toISOString() ??
         latestGatewayBlocked?.occurredAt.toISOString() ??
         null,
-      detail: scanRunning
-        ? "scan running"
+      scanStartedAt: scanState.startedAt?.toISOString() ?? null,
+      scanAgeMs: scanState.ageMs,
+      pressurePaused: pressurePauseState.paused,
+      pressurePauseStartedAt:
+        pressurePauseState.startedAt?.toISOString() ?? null,
+      pressurePauseAgeMs: pressurePauseState.ageMs,
+      pauseReason: pressurePauseState.reason,
+      detail: pressurePauseState.paused
+        ? pressurePauseAge
+          ? `paused by resource pressure for ${pressurePauseAge}`
+          : "paused by resource pressure"
+        : scanState.running
+        ? scanRunningAge
+          ? `scan running for ${scanRunningAge}`
+          : "scan running"
         : input.readiness.ready
           ? `${input.deployment.symbolUniverse.length} symbols ready`
           : input.readiness.message,
@@ -3483,7 +3580,7 @@ function buildCockpitPipeline(input: {
       latestAt: latestIso(input.candidates.map((candidate) => candidate.signalAt)),
       detail: input.candidates.length
         ? `${input.candidates.length} recent signal candidates`
-        : "awaiting fresh RayReplica signal",
+        : "awaiting fresh Pyrus Signals signal",
     },
     {
       id: "action_mapped",
@@ -5340,6 +5437,8 @@ async function processEntryCandidate(input: {
 
   const expirations = await getOptionExpirationsWithDebug({
     underlying: input.candidate.symbol,
+    recordBridgeFailure: false,
+    bypassBridgeBackoff: true,
   });
   const selectedExpiration = selectSignalOptionsExpiration(
     expirations.expirations,
@@ -5375,6 +5474,8 @@ async function processEntryCandidate(input: {
     strikesAroundMoney,
     strikeCoverage: "standard",
     quoteHydration: "snapshot",
+    recordBridgeFailure: false,
+    bypassBridgeBackoff: true,
   });
   let contractSelection = selectSignalOptionsContractPlanFromChain({
     contracts: chain.contracts as SignalOptionsOptionQuote[],
@@ -5406,6 +5507,8 @@ async function processEntryCandidate(input: {
       contractType: input.candidate.optionRight,
       strikeCoverage: "full",
       quoteHydration: "snapshot",
+      recordBridgeFailure: false,
+      bypassBridgeBackoff: true,
     });
     const fullSelection = selectSignalOptionsContractPlanFromChain({
       contracts: fullChain.contracts as SignalOptionsOptionQuote[],
@@ -5843,7 +5946,7 @@ type SignalOptionsBackfillUniverse = {
   truncated: boolean;
 };
 
-const RAY_REPLICA_SETTINGS_PATCH_GROUPS: Readonly<
+const PYRUS_SIGNALS_SETTINGS_PATCH_GROUPS: Readonly<
   Record<string, readonly string[]>
 > = {
   marketStructure: [
@@ -5887,7 +5990,7 @@ const RAY_REPLICA_SETTINGS_PATCH_GROUPS: Readonly<
   risk: ["signalOffsetAtr"],
 };
 
-function mergeRayReplicaSettingsPatch(
+function mergePyrusSignalsSettingsPatch(
   current: Record<string, unknown>,
   patchInput: unknown,
 ): Record<string, unknown> {
@@ -5897,7 +6000,7 @@ function mergeRayReplicaSettingsPatch(
     ...patch,
   };
 
-  for (const [group, keys] of Object.entries(RAY_REPLICA_SETTINGS_PATCH_GROUPS)) {
+  for (const [group, keys] of Object.entries(PYRUS_SIGNALS_SETTINGS_PATCH_GROUPS)) {
     const currentGroup = asRecord(current[group]);
     const patchGroup = asRecord(patch[group]);
     const nextGroup: Record<string, unknown> = {
@@ -5921,7 +6024,7 @@ function mergeRayReplicaSettingsPatch(
 
 type HistoricalBackfillSignal = {
   symbol: string;
-  signal: RayReplicaSignalEvent;
+  signal: PyrusSignalsSignalEvent;
   signalAt: Date;
   direction: SignalDirection;
   signalPrice: number | null;
@@ -5945,6 +6048,11 @@ type HistoricalBackfillOpenPosition = SignalOptionsPosition & {
 };
 
 const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
+const DEFAULT_SIGNAL_OPTIONS_STRATEGY_NAME = "Pyrus Signals Options Shadow";
+const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
+  "Pyrus Signals Options Shadow Paper";
+const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
+  "Pyrus Signals Shadow Paper";
 const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
 const SIGNAL_OPTIONS_BACKFILL_VERSION = 1;
 const SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME = "1m";
@@ -5955,7 +6063,7 @@ const HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS = 60_000;
 const HISTORICAL_OPTION_ENTRY_BAR_MAX_DELAY_MS = 60_000;
 const BACKFILL_EQUITY_BAR_MIN_LIMIT = Math.max(
   1_500,
-  RAY_REPLICA_SIGNAL_WARMUP_BARS + 500,
+  PYRUS_SIGNALS_SIGNAL_WARMUP_BARS + 500,
 );
 const BACKFILL_EQUITY_BAR_LIMIT_CUSHION = 500;
 const REGULAR_MARKET_SESSION_MINUTES = 6.5 * 60;
@@ -6214,11 +6322,11 @@ function isWithinBackfillWindow(value: Date, window: SignalOptionsBackfillWindow
   return window.session === "all" || isRegularMarketSession(value);
 }
 
-function brokerBarsToRayReplicaBars(
+function brokerBarsToPyrusSignalsBars(
   bars: BrokerBarSnapshot[],
-): RayReplicaBar[] {
+): PyrusSignalsBar[] {
   return bars
-    .map((bar): RayReplicaBar | null => {
+    .map((bar): PyrusSignalsBar | null => {
       const timestamp = dateOrNull(bar.timestamp);
       if (!timestamp) {
         return null;
@@ -6241,15 +6349,15 @@ function brokerBarsToRayReplicaBars(
         v: volume,
       };
     })
-    .filter((bar): bar is RayReplicaBar => Boolean(bar))
+    .filter((bar): bar is PyrusSignalsBar => Boolean(bar))
     .sort((left, right) => left.time - right.time);
 }
 
-function signalDirection(signal: RayReplicaSignalEvent): SignalDirection {
+function signalDirection(signal: PyrusSignalsSignalEvent): SignalDirection {
   return signal.eventType === "sell_signal" ? "sell" : "buy";
 }
 
-function signalPrice(signal: RayReplicaSignalEvent): number | null {
+function signalPrice(signal: PyrusSignalsSignalEvent): number | null {
   return finiteNumber(signal.price) ?? finiteNumber(signal.close);
 }
 
@@ -7394,7 +7502,7 @@ function buildBackfillSignalSnapshot(input: {
   profileId: string;
   symbol: string;
   timeframe: SignalMonitorTimeframe;
-  signal: RayReplicaSignalEvent;
+  signal: PyrusSignalsSignalEvent;
 }): SignalMonitorState {
   const signalAt = new Date(input.signal.time * 1000);
   return {
@@ -7471,7 +7579,7 @@ async function loadHistoricalBackfillSignalsUncached(input: {
 }) {
   const signals: HistoricalBackfillSignal[] = [];
   const errors: SignalOptionsBackfillSummary["errors"] = [];
-  const settings = resolveRayReplicaSignalSettings(input.profileSettings);
+  const settings = resolvePyrusSignalsSignalSettings(input.profileSettings);
   const equityBarLimit = historicalBackfillEquityBarLimit({
     timeframe: input.timeframe,
     window: input.window,
@@ -7493,8 +7601,8 @@ async function loadHistoricalBackfillSignalsUncached(input: {
         source: "trades",
         allowHistoricalSynthesis: true,
       });
-      const chartBars = brokerBarsToRayReplicaBars(bars.bars);
-      const evaluation = evaluateRayReplicaSignals({
+      const chartBars = brokerBarsToPyrusSignalsBars(bars.bars);
+      const evaluation = evaluatePyrusSignalsSignals({
         chartBars,
         settings,
         includeProvisionalSignals: false,
@@ -7642,18 +7750,18 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     [strategy] = await db
       .insert(algoStrategiesTable)
       .values({
-        name: "RayReplica Signal Options Shadow",
+        name: DEFAULT_SIGNAL_OPTIONS_STRATEGY_NAME,
         mode: "paper",
         enabled: false,
         symbolUniverse: symbols,
         config: {
           source: "default_signal_options_seed",
-          strategyId: "ray_replica_signals",
+          strategyId: "pyrus_signals",
           strategyVersion: "v1",
           parameters: {
             executionMode: "signal_options",
             signalTimeframe: tunedSignalOptionsStrategySettings.signalTimeframe,
-            ...tunedSignalOptionsStrategySettings.rayReplicaSettings,
+            ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
           },
           signalOptions: tunedSignalOptionsExecutionProfile,
         },
@@ -7670,7 +7778,8 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     existingDeployments.find(
       (row) =>
         row.strategyId === strategy.id ||
-        row.name === "RayReplica Signal Options Shadow Paper",
+        row.name === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+        row.name === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
     ) ?? null;
 
   if (!deployment) {
@@ -7678,7 +7787,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
       .insert(algoDeploymentsTable)
       .values({
         strategyId: strategy.id,
-        name: "RayReplica Signal Options Shadow Paper",
+        name: DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
         mode: "paper",
         enabled,
         providerAccountId: "shadow",
@@ -7745,6 +7854,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
   }
 
   deployment = await normalizeSignalOptionsDeploymentAccount(deployment);
+  await normalizeDefaultSignalOptionsPaperSignalMonitorProfile();
 
   return {
     strategy: {
@@ -7761,6 +7871,43 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
   };
 }
 
+async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
+  const profile = await getSignalMonitorProfileRow({
+    environment: "paper",
+    ensureWatchlist: true,
+  });
+  const patch: {
+    environment: "paper";
+    maxSymbols?: number;
+    evaluationConcurrency?: number;
+    pollIntervalSeconds?: number;
+  } = { environment: "paper" };
+
+  if (profile.maxSymbols > DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS) {
+    patch.maxSymbols = DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS;
+  }
+  if (
+    profile.evaluationConcurrency >
+    DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY
+  ) {
+    patch.evaluationConcurrency =
+      DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY;
+  }
+  if (profile.pollIntervalSeconds < DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS) {
+    patch.pollIntervalSeconds = DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS;
+  }
+
+  if (
+    patch.maxSymbols === undefined &&
+    patch.evaluationConcurrency === undefined &&
+    patch.pollIntervalSeconds === undefined
+  ) {
+    return;
+  }
+
+  await updateSignalMonitorProfile(patch);
+}
+
 export async function runSignalOptionsShadowBackfill(input: {
   deploymentId: string;
   start?: unknown;
@@ -7768,7 +7915,7 @@ export async function runSignalOptionsShadowBackfill(input: {
   session?: unknown;
   commit?: boolean;
   profilePatch?: unknown;
-  rayReplicaSettingsPatch?: unknown;
+  pyrusSignalsSettingsPatch?: unknown;
   signalTimeframe?: unknown;
   forceDeploymentUniverse?: boolean;
   symbolUniverseOverride?: string[];
@@ -7785,7 +7932,7 @@ export async function runSignalOptionsShadowBackfill(input: {
     });
   }
 
-  activeScanDeploymentIds.add(input.deploymentId);
+  markSignalOptionsScanActive(input.deploymentId);
   try {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const window = resolveSignalOptionsBackfillWindow(input);
@@ -7839,13 +7986,13 @@ export async function runSignalOptionsShadowBackfill(input: {
     });
     const signalUniverse =
       await resolveSignalMonitorProfileUniverse(signalProfile);
-    const rayReplicaProfileSettings = asRecord(signalProfile.rayReplicaSettings);
-    const rayReplicaSettings = mergeRayReplicaSettingsPatch(
-      rayReplicaProfileSettings,
-      input.rayReplicaSettingsPatch,
+    const pyrusSignalsProfileSettings = asRecord(signalProfile.pyrusSignalsSettings);
+    const pyrusSignalsSettings = mergePyrusSignalsSettingsPatch(
+      pyrusSignalsProfileSettings,
+      input.pyrusSignalsSettingsPatch,
     );
-    const resolvedRayReplicaSettings =
-      resolveRayReplicaSignalSettings(rayReplicaSettings);
+    const resolvedPyrusSignalsSettings =
+      resolvePyrusSignalsSignalSettings(pyrusSignalsSettings);
     const backfillUniverse = buildSignalOptionsBackfillUniverse({
       deploymentSymbols: input.symbolUniverseOverride?.length
         ? input.symbolUniverseOverride
@@ -7902,7 +8049,7 @@ export async function runSignalOptionsShadowBackfill(input: {
     const realizedByDay = new Map<string, number>();
     const { signals, errors } = await loadHistoricalBackfillSignals({
       profileId: signalProfile.id,
-      profileSettings: rayReplicaSettings,
+      profileSettings: pyrusSignalsSettings,
       symbols: backfillUniverse.symbols,
       timeframe,
       window,
@@ -7956,7 +8103,7 @@ export async function runSignalOptionsShadowBackfill(input: {
         signalAt,
         signalKey,
         signalMetadata: {
-          source: "rayreplica-backfill",
+          source: "pyrus-signals-backfill",
           filterState: asRecord(historicalSignal.signal.filterState),
         },
       });
@@ -8275,8 +8422,8 @@ export async function runSignalOptionsShadowBackfill(input: {
         to: window.to.toISOString(),
       },
       timeframe,
-      rayReplicaSettings: resolvedRayReplicaSettings,
-      rayReplicaSettingsPatch: asRecord(input.rayReplicaSettingsPatch),
+      pyrusSignalsSettings: resolvedPyrusSignalsSettings,
+      pyrusSignalsSettingsPatch: asRecord(input.pyrusSignalsSettingsPatch),
       commit,
       summary,
       openPositions:
@@ -8297,7 +8444,7 @@ export async function runSignalOptionsShadowBackfill(input: {
       state: finalState,
     };
   } finally {
-    activeScanDeploymentIds.delete(input.deploymentId);
+    clearSignalOptionsScanActive(input.deploymentId);
     activeSignalOptionsRunMetadata.delete(input.deploymentId);
   }
 }
@@ -8315,11 +8462,11 @@ export async function runSignalOptionsShadowScan(input: {
       expose: true,
     });
   }
-  activeScanDeploymentIds.add(input.deploymentId);
+  markSignalOptionsScanActive(input.deploymentId);
   try {
     return await runSignalOptionsShadowScanUnlocked(input);
   } finally {
-    activeScanDeploymentIds.delete(input.deploymentId);
+    clearSignalOptionsScanActive(input.deploymentId);
     activeSignalOptionsRunMetadata.delete(input.deploymentId);
   }
 }
@@ -8651,6 +8798,8 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildCockpitAttention,
   buildCockpitDiagnostics,
   buildCockpitPipeline,
+  clearSignalOptionsScanActive,
+  signalOptionsPressurePauseState,
   buildWorkerScanSummary,
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,
@@ -8659,6 +8808,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   latestSignalDate,
   findSignalOptionsQuoteForContract,
   mergeSignalOptionsCandidate,
+  markSignalOptionsScanActive,
   deriveCandidateActionStatus,
   deriveActivePositions,
   isSignalOptionsReplayEvent,
@@ -8690,7 +8840,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildHistoricalPolygonOptionTicker,
   buildHistoricalOrderPlan,
   buildSignalOptionsBackfillUniverse,
-  mergeRayReplicaSettingsPatch,
+  mergePyrusSignalsSettingsPatch,
   backfillEventKey,
   historicalEventPayload,
   replayPositionKey,

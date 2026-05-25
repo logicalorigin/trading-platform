@@ -37,15 +37,15 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(signalOptionsServiceSource, /notifyAlgoCockpitChanged/);
   assert.match(
     serviceSource,
-    /parameters:\s*\{[\s\S]*signalTimeframe,[\s\S]*\.\.\.rayReplicaSettingsPatch,/,
+    /parameters:\s*\{[\s\S]*signalTimeframe,[\s\S]*\.\.\.pyrusSignalsSettingsPatch,/,
   );
   assert.match(routeSource, /bosConfirmation:\s*body\.bosConfirmation/);
   assert.match(routeSource, /chochAtrBuffer:\s*body\.chochAtrBuffer/);
   assert.match(serviceSource, /readOptionalBosConfirmation\(input\.bosConfirmation\)/);
   assert.match(serviceSource, /chochBodyExpansionAtr/);
   assert.match(serviceSource, /chochVolumeGate/);
-  assert.match(serviceSource, /rayReplicaSettingsPatch\s*=\s*\{[\s\S]*timeHorizon,[\s\S]*bosConfirmation/);
-  assert.match(serviceSource, /updateSignalMonitorProfile\(\{[\s\S]*timeframe:\s*signalTimeframe,[\s\S]*rayReplicaSettings:\s*nextRayReplicaSettings,/);
+  assert.match(serviceSource, /pyrusSignalsSettingsPatch\s*=\s*\{[\s\S]*timeHorizon,[\s\S]*bosConfirmation/);
+  assert.match(serviceSource, /updateSignalMonitorProfile\(\{[\s\S]*timeframe:\s*signalTimeframe,[\s\S]*pyrusSignalsSettings:\s*nextPyrusSignalsSettings,/);
   assert.doesNotMatch(
     serviceSource,
     /signalOptions:\s*resolveSignalOptionsExecutionProfile/,
