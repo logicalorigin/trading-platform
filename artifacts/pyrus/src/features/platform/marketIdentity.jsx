@@ -12,6 +12,19 @@ import {
 import { FONT_WEIGHTS, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const CSS_COLOR = {
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  border: "var(--ra-border-default)",
+  text: "var(--ra-text-primary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  onAccent: "var(--ra-on-accent)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const EXCHANGE_COUNTRY_BY_KEY = {
   AMEX: "US",
@@ -415,10 +428,10 @@ export function MarketIdentityMark({
         placeItems: "center",
         position: "relative",
         overflow: "hidden",
-        background: logoReady ? T.bg0 : identity.fallbackColor,
-        color: T.onAccent,
+        background: logoReady ? CSS_COLOR.bg0 : identity.fallbackColor,
+        color: CSS_COLOR.onAccent,
         border: "none",
-        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${T.text} 12%, transparent)`,
+        boxShadow: `inset 0 0 0 1px ${cssColorMix(CSS_COLOR.text, 12)}`,
         fontFamily: T.sans,
         fontSize: fs(size <= 14 ? 6 : size <= 20 ? 8 : 9),
         fontWeight: FONT_WEIGHTS.regular,
@@ -440,7 +453,7 @@ export function MarketIdentityMark({
               ? 0
               : dim(Math.max(1, Math.round(size * 0.1))),
             background: "transparent",
-            filter: `drop-shadow(0 1px 1px color-mix(in srgb, ${T.bg0} 35%, transparent))`,
+            filter: `drop-shadow(0 1px 1px ${cssColorMix(CSS_COLOR.bg0, 35)})`,
           }}
         />
       ) : showMarketIcon && size >= 22 ? (
@@ -459,9 +472,9 @@ export function MarketIdentityMark({
             height: dim(Math.max(8, Math.round(size * 0.36))),
             display: "grid",
             placeItems: "center",
-            background: T.bg1,
-            borderLeft: `1px solid ${T.border}`,
-            borderTop: `1px solid ${T.border}`,
+            background: CSS_COLOR.bg1,
+            borderLeft: `1px solid ${CSS_COLOR.border}`,
+            borderTop: `1px solid ${CSS_COLOR.border}`,
             fontSize: fs(7),
             lineHeight: 1,
           }}
@@ -512,8 +525,8 @@ export function MarketIdentityChips({
           key={chip.key}
           style={{
             border: "none",
-            color: T.textMuted,
-            background: compact ? "transparent" : T.bg2,
+            color: CSS_COLOR.textMuted,
+            background: compact ? "transparent" : CSS_COLOR.bg2,
             fontSize: fs(compact ? 7 : 8),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
@@ -560,7 +573,7 @@ export function MarketIdentityInline({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.regular,
         }}
@@ -574,7 +587,7 @@ export function MarketIdentityInline({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
           }}
         >

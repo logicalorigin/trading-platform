@@ -1,7 +1,7 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 22:21 UTC`
-- Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with signal-language/shared platform status helpers.
+- Last updated: `2026-05-25 22:27 UTC`
+- Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with the next scoped identity/helper pass.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
   - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
@@ -19,28 +19,20 @@
   - Those scoped files no longer have `T.<color>` reads; typography-only `T.sans`/`T.mono` reads remain where needed.
   - Production `T.<color>` debt measured at 104 files / 5032 reads after this slice, and the migration guard baseline has been lowered to that count.
   - Shared-helper slice is committed and pushed in `9be2e81` (`Convert signal status helpers to CSS color vars`).
-  - `marketIdentity.jsx` still has shared UI color debt, but is intentionally deferred as a separate identity/asset pass.
+  - `marketIdentity.jsx` identity/asset helper conversion is implemented. Its scoped `T.<color>` reads are removed while preserving typography tokens.
+  - Production `T.<color>` debt measured at 103 files / 5021 reads after this slice, and the migration guard baseline has been lowered to that count.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
-  - `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
-  - `artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx`
-  - `artifacts/pyrus/src/components/platform/signal-language/StrategyTag.jsx`
-  - `artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx`
-  - `artifacts/pyrus/src/components/platform/signal-language/tones.js`
-  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.jsx`
-  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
-  - `artifacts/pyrus/src/features/platform/useLiveMarketFlow.js`
+  - `artifacts/pyrus/src/features/platform/marketIdentity.jsx`
   - `artifacts/pyrus/src/lib/uiTokens.test.js`
-  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
 - Validation state:
   - `git diff --check -- ...` passed for the edited slice.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js src/features/market/marketChartWiring.test.js src/lib/uiTokens.test.js` passed 138/138 before final formatting cleanup.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/IbkrConnectionStatus.test.js src/lib/uiTokens.test.js` passed 69/69 after final formatting cleanup.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketIdentity.test.js src/lib/uiTokens.test.js` passed 29/29.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
 - Next step:
-  - Continue Phase 1 with the next scoped CSS-variable cleanup pass; `marketIdentity.jsx` remains the next shared-ish identity/asset candidate, while chart canvas colors should stay a later special phase.
+  - Commit and push the `marketIdentity.jsx` CSS-variable slice.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
