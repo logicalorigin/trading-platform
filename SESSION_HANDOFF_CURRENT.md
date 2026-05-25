@@ -1,27 +1,32 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 21:17 UTC`
-- Current request: proceed with Phase 0 of the PYRUS theme color CSS-variable cleanup, without starting broad JSX conversion yet.
+- Last updated: `2026-05-25 21:57 UTC`
+- Current request: proceed with Phase 1 of the PYRUS theme color CSS-variable cleanup.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
   - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
   - Because the repo has no ESLint config, `CSS_VARS_MIGRATION_PLAN.md` now specifies a source guard instead of a planned ESLint guard.
   - `uiTokens.test.js` now verifies the Phase 0 CSS variables in both theme roots and pins the current production `T.<color>` debt as an upper bound so it cannot expand during routine work.
   - Phase 0 setup is committed in the latest commit.
-  - Current production `T.<color>` debt is 130 files / 5309 occurrences in `artifacts/pyrus/src` excluding research data and tests. Top clusters: `features/research/PhotonicsObservatory.jsx` 449, `screens/FlowScreen.jsx` 381, `features/trade/TradeOrderTicket.jsx` 193, `screens/GexScreen.jsx` 145, `screens/SettingsScreen.jsx` 136, `screens/DiagnosticsScreen.jsx` 109, `features/platform/PlatformWatchlist.jsx` 103, `HeaderBroadcastScrollerStack.jsx` 101.
+  - Phase 1 shared-primitives edit is complete and committed in the latest commit. Scope stayed on `primitives.jsx`, `Drawer.jsx`, and `BottomSheet.jsx`.
+  - `primitives.jsx` now uses local CSS variable strings for shared color defaults and `color-mix()` for former hex-alpha surfaces; radial gauge default gradients preserve interpolation through CSS `color-mix()` when stops are CSS variables.
+  - `Drawer.jsx` and `BottomSheet.jsx` overlay/surface/chrome colors now read CSS variables directly while keeping `T.sans` typography.
+  - Production `T.<color>` debt is reduced from 130 files / 5309 reads to 127 files / 5205 reads, and the migration guard baseline now pins the lower count.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
-  - `CSS_VARS_MIGRATION_PLAN.md`
-  - `artifacts/pyrus/src/index.css`
+  - `artifacts/pyrus/src/components/platform/BottomSheet.jsx`
+  - `artifacts/pyrus/src/components/platform/Drawer.jsx`
+  - `artifacts/pyrus/src/components/platform/primitives.jsx`
+  - `artifacts/pyrus/src/components/platform/primitives.test.js`
   - `artifacts/pyrus/src/lib/uiTokens.test.js`
 - Validation state:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/lib/uiTokens.test.js` passed 24/24.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/platform/primitives.test.js src/lib/uiTokens.test.js` passed 43/43.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
-  - `git diff --check -- CSS_VARS_MIGRATION_PLAN.md SESSION_HANDOFF_CURRENT.md artifacts/pyrus/src/index.css artifacts/pyrus/src/lib/uiTokens.test.js` passed.
+  - `git diff --check -- SESSION_HANDOFF_CURRENT.md artifacts/pyrus/src/components/platform/BottomSheet.jsx artifacts/pyrus/src/components/platform/Drawer.jsx artifacts/pyrus/src/components/platform/primitives.jsx artifacts/pyrus/src/components/platform/primitives.test.js artifacts/pyrus/src/lib/uiTokens.test.js` passed.
 - Next step:
-  - Start Phase 1 with high-leverage shared primitives before page-specific JSX color replacements; keep charting color conversion as a later special phase.
+  - Push Phase 1. Next migration target should be the shared UI action/dialog/status controls before page-specific screen files.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.

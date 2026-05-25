@@ -124,7 +124,7 @@ test("shared panel primitives use compact Account container title scale", () => 
   );
 
   assert.match(surfacePanel, /className=\{className \|\| "ra-panel-enter"\}/);
-  assert.match(surfacePanel, /background: T\.bg1/);
+  assert.match(surfacePanel, /background: CSS_COLOR\.bg1/);
   assert.match(surfacePanel, /boxShadow: ELEVATION\.sm/);
   assert.match(surfacePanel, /className="ra-hairline-h"/);
   assert.match(
@@ -331,8 +331,9 @@ test("RadialStrokeGauge clamps low values and keeps tick animation reduced-motio
   assert.match(gaugeSlice, /innerRadiusRatio = 0\.68/);
   assert.match(gaugeSlice, /outerRadiusRatio = 0\.95/);
   assert.match(gaugeSlice, /title/);
-  assert.match(gaugeSlice, /valueColor = T\.text/);
-  assert.match(gaugeSlice, /labelColor = T\.textMuted/);
+  assert.match(gaugeSlice, /valueColor = CSS_COLOR\.text/);
+  assert.match(gaugeSlice, /labelColor = CSS_COLOR\.textMuted/);
+  assert.match(source, /color-mix\(in srgb, \$\{endColor\}/);
   assert.match(gaugeSlice, /gaugeColorAt\(resolvedColorStops, tick\.offset\)/);
   assert.match(gaugeSlice, /pathLength="1"/);
   assert.match(gaugeSlice, /ra-radial-gauge-active-tick--animate/);
@@ -535,7 +536,7 @@ test("DataUnavailableState supports semantic variants + icon + action slots", ()
   // — non-neutral variants get the gradient, neutral stays solid bg1.
   assert.match(
     body,
-    /variant === "neutral"[\s\S]*?T\.bg1[\s\S]*?linear-gradient/,
+    /variant === "neutral"[\s\S]*?CSS_COLOR\.bg1[\s\S]*?linear-gradient/,
   );
 
   // icon + action slots are conditionally rendered (no slot = no chrome).

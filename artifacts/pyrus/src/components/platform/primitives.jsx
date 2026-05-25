@@ -3,6 +3,26 @@ import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/
 import { motionVars } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
 
+const CSS_COLOR = Object.freeze({
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  green: "var(--ra-green-500)",
+  red: "var(--ra-red-500)",
+  amber: "var(--ra-amber-500)",
+  blue: "var(--ra-blue-500)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 /**
  * Normalize a sparkline data array into a list of finite numeric closes.
  * Accepts raw numbers, { close }, { c }, or { v } shapes — matches what
@@ -70,7 +90,7 @@ export const MicroSparkline = ({
   const inferredPositive = values[values.length - 1] >= values[0];
   const resolvedPositive =
     typeof positive === "boolean" ? positive : inferredPositive;
-  const lineColor = color || (resolvedPositive ? T.green : T.red);
+  const lineColor = color || (resolvedPositive ? CSS_COLOR.green : CSS_COLOR.red);
   const toY = (value) => {
     if (range === 0) {
       return height / 2;
@@ -149,7 +169,7 @@ export const MicroSparkline = ({
         y1={baselineY}
         x2={width - xPad}
         y2={baselineY}
-        stroke={T.textMuted}
+        stroke={CSS_COLOR.textMuted}
         strokeWidth="0.75"
         strokeOpacity="0.28"
         vectorEffect="non-scaling-stroke"
@@ -175,7 +195,7 @@ export const MicroSparkline = ({
             r={extremeDotRadius}
             fill={lineColor}
             fillOpacity="0.88"
-            stroke={T.bg1}
+            stroke={CSS_COLOR.bg1}
             strokeWidth="0.45"
             vectorEffect="non-scaling-stroke"
           />
@@ -187,7 +207,7 @@ export const MicroSparkline = ({
         cy={tailPoint.y}
         r={tailDotRadius}
         fill={lineColor}
-        stroke={T.bg1}
+        stroke={CSS_COLOR.bg1}
         strokeWidth="0.65"
         vectorEffect="non-scaling-stroke"
         filter={`url(#${glowId})`}
@@ -239,7 +259,7 @@ export const RowSparkValue = ({
     {value != null ? (
       <span
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontSize: textSize("paragraph"),
           fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
@@ -251,7 +271,7 @@ export const RowSparkValue = ({
     {delta != null ? (
       <span
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontSize: textSize("body"),
           fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
@@ -290,10 +310,25 @@ const normalizeHexColor = (color) => {
   return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : null;
 };
 
+const normalizeGaugeColor = (color) => {
+  const raw = String(color || "").trim();
+  if (!raw) return null;
+  return normalizeHexColor(raw) || raw;
+};
+
 const lerpGaugeColor = (start, end, progress) => {
-  const startHex = normalizeHexColor(start);
-  const endHex = normalizeHexColor(end);
-  if (!startHex || !endHex) return endHex || startHex || String(end || start);
+  const startColor = normalizeGaugeColor(start);
+  const endColor = normalizeGaugeColor(end);
+  if (!startColor || !endColor) return endColor || startColor || String(end || start);
+  if (startColor === endColor) return startColor;
+
+  const startHex = normalizeHexColor(startColor);
+  const endHex = normalizeHexColor(endColor);
+  if (!startHex || !endHex) {
+    const mixPercent = roundGaugeMetric(Math.max(0, Math.min(1, progress)) * 100);
+    return `color-mix(in srgb, ${endColor} ${mixPercent}%, ${startColor})`;
+  }
+
   const startChannels = startHex
     .slice(1)
     .match(/.{2}/g)
@@ -313,15 +348,15 @@ const normalizeGaugeColorStops = (colorStops, fallbackTone) => {
   const normalized = stops
     .map((stop) => ({
       offset: Math.max(0, Math.min(1, finiteGaugeNumber(stop?.offset) ?? 0)),
-      color: normalizeHexColor(stop?.color) || fallbackTone,
+      color: normalizeGaugeColor(stop?.color) || fallbackTone,
     }))
     .sort((a, b) => a.offset - b.offset);
   return normalized.length
     ? normalized
     : [
-        { offset: 0, color: T.blue },
-        { offset: 0.5, color: T.green },
-        { offset: 1, color: T.amber },
+        { offset: 0, color: CSS_COLOR.blue },
+        { offset: 0.5, color: CSS_COLOR.green },
+        { offset: 1, color: CSS_COLOR.amber },
       ];
 };
 
@@ -371,8 +406,8 @@ export const RadialStrokeGauge = ({
   sweepAngle,
   innerRadiusRatio = 0.68,
   outerRadiusRatio = 0.95,
-  tone = T.accent,
-  trackColor = T.borderLight,
+  tone = CSS_COLOR.accent,
+  trackColor = CSS_COLOR.borderLight,
   gradient = true,
   colorStops,
   glow = true,
@@ -383,8 +418,8 @@ export const RadialStrokeGauge = ({
   title,
   label,
   valueLabel,
-  valueColor = T.text,
-  labelColor = T.textMuted,
+  valueColor = CSS_COLOR.text,
+  labelColor = CSS_COLOR.textMuted,
   levelLabel,
   levelColor,
   ariaLabel,
@@ -643,11 +678,11 @@ export const RadialStrokeGauge = ({
  *   "ghost"   → transparent bg + no border + tone text — quietest variant,
  *               useful when the badge sits inside an already-tinted cell
  *
- * solidAlpha controls the bg alpha for the "solid" variant so different
+ * solidPercent controls the bg alpha for the "solid" variant so different
  * primitives can pick their own visual weight (Pill active is denser than
  * Badge default).
  */
-const resolveBadgeVariantSurface = ({ variant, color, solidAlpha = "14" }) => {
+const resolveBadgeVariantSurface = ({ variant, color, solidPercent = 8 }) => {
   if (variant === "outline") {
     return {
       background: "transparent",
@@ -663,7 +698,7 @@ const resolveBadgeVariantSurface = ({ variant, color, solidAlpha = "14" }) => {
     };
   }
   return {
-    background: `${color}${solidAlpha}`,
+    background: cssColorMix(color, solidPercent),
     border: "none",
     color,
   };
@@ -677,10 +712,10 @@ export const Pill = ({
   variant = "solid",
   ...buttonProps
 }) => {
-  const accent = color || T.accent;
+  const accent = color || CSS_COLOR.accent;
   const surface = active
-    ? resolveBadgeVariantSurface({ variant, color: accent, solidAlpha: "1f" })
-    : { background: "transparent", border: "none", color: T.textSec };
+    ? resolveBadgeVariantSurface({ variant, color: accent, solidPercent: 12 })
+    : { background: "transparent", border: "none", color: CSS_COLOR.textSec };
   return (
     <button
       {...buttonProps}
@@ -703,7 +738,7 @@ export const Pill = ({
   );
 };
 
-export const Badge = ({ children, color = T.textDim, variant = "solid" }) => (
+export const Badge = ({ children, color = CSS_COLOR.textDim, variant = "solid" }) => (
   <span
     style={{
       display: "inline-block",
@@ -714,7 +749,7 @@ export const Badge = ({ children, color = T.textDim, variant = "solid" }) => (
       fontFamily: T.sans,
       letterSpacing: "0.04em",
       textTransform: "uppercase",
-      ...resolveBadgeVariantSurface({ variant, color, solidAlpha: "14" }),
+      ...resolveBadgeVariantSurface({ variant, color, solidPercent: 8 }),
     }}
   >
     {children}
@@ -728,7 +763,7 @@ export const Badge = ({ children, color = T.textDim, variant = "solid" }) => (
  */
 export const StatusPill = ({
   children,
-  color = T.textMuted,
+  color = CSS_COLOR.textMuted,
   dot = true,
   variant = "solid",
 }) => (
@@ -744,7 +779,7 @@ export const StatusPill = ({
       fontFamily: T.sans,
       letterSpacing: 0,
       whiteSpace: "nowrap",
-      ...resolveBadgeVariantSurface({ variant, color, solidAlpha: "12" }),
+      ...resolveBadgeVariantSurface({ variant, color, solidPercent: 7 }),
     }}
   >
     {dot ? (
@@ -766,7 +801,7 @@ export const StatusPill = ({
 export const MetricChip = ({
   label,
   value,
-  tone = T.textSec,
+  tone = CSS_COLOR.textSec,
   title,
   dot = false,
   style = {},
@@ -779,8 +814,8 @@ export const MetricChip = ({
         gap: sp(4),
         minWidth: 0,
         padding: sp("3px 5px"),
-        border: `1px solid ${tone}36`,
-        background: `${tone}10`,
+        border: `1px solid ${cssColorMix(tone, 21)}`,
+        background: cssColorMix(tone, 6),
         color: tone,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -806,7 +841,7 @@ export const MetricChip = ({
       {label ? (
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
             textTransform: "uppercase",
@@ -831,7 +866,7 @@ export const MetricChip = ({
   </AppMetricTooltip>
 );
 
-export const SeverityRail = ({ tone = T.textDim, style = {} }) => (
+export const SeverityRail = ({ tone = CSS_COLOR.textDim, style = {} }) => (
   <span
     aria-hidden="true"
     style={{
@@ -845,7 +880,7 @@ export const SeverityRail = ({ tone = T.textDim, style = {} }) => (
   />
 );
 
-export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
+export const LoadingSpinner = ({ size = 18, color = CSS_COLOR.accent }) => (
   <span
     data-testid="loading-spinner"
     role="status"
@@ -854,7 +889,7 @@ export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
       width: dim(size),
       height: dim(size),
       borderRadius: dim(RADII.pill),
-      border: `2px solid ${T.border}`,
+      border: `2px solid ${CSS_COLOR.border}`,
       borderTopColor: color,
       animation: "premiumFlowSpin 820ms linear infinite",
       flexShrink: 0,
@@ -880,10 +915,10 @@ const AppMetricTooltip = ({ content, children }) => {
  * reads at a glance without needing an icon.
  */
 const DATA_STATE_VARIANT_TONES = {
-  neutral: null, // falls back to T.text — no accent wash
-  info: () => T.accent,
-  error: () => T.red,
-  warning: () => T.amber,
+  neutral: null, // falls back to CSS_COLOR.text — no accent wash
+  info: () => CSS_COLOR.accent,
+  error: () => CSS_COLOR.red,
+  warning: () => CSS_COLOR.amber,
 };
 
 export const DataUnavailableState = ({
@@ -902,11 +937,11 @@ export const DataUnavailableState = ({
   const resolvedTone = tone || variantTone;
   const accentBg =
     variant === "neutral"
-      ? T.bg1
-      : `linear-gradient(180deg, ${variantTone}0e 0%, ${T.bg1} 60%)`;
+      ? CSS_COLOR.bg1
+      : `linear-gradient(180deg, ${cssColorMix(variantTone, 5)} 0%, ${CSS_COLOR.bg1} 60%)`;
   const accentBorder =
-    variant === "neutral" ? T.border : `${variantTone}55`;
-  const titleColor = resolvedTone || T.text;
+    variant === "neutral" ? CSS_COLOR.border : cssColorMix(variantTone, 33);
+  const titleColor = resolvedTone || CSS_COLOR.text;
   return (
     <div
       role={variant === "error" ? "alert" : undefined}
@@ -923,7 +958,7 @@ export const DataUnavailableState = ({
         background: accentBg,
         border: `1px dashed ${accentBorder}`,
         borderRadius: dim(RADII.md),
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
       }}
     >
@@ -933,7 +968,7 @@ export const DataUnavailableState = ({
             style={{
               display: "flex",
               justifyContent: "center",
-              color: resolvedTone || T.textMuted,
+              color: resolvedTone || CSS_COLOR.textMuted,
               marginBottom: sp(2),
             }}
             aria-hidden="true"
@@ -949,7 +984,7 @@ export const DataUnavailableState = ({
               marginBottom: sp(4),
             }}
           >
-            <LoadingSpinner color={resolvedTone || T.accent} />
+            <LoadingSpinner color={resolvedTone || CSS_COLOR.accent} />
           </div>
         ) : null}
         <div
@@ -966,7 +1001,7 @@ export const DataUnavailableState = ({
           style={{
             fontSize: textSize("body"),
             lineHeight: 1.5,
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
           }}
         >
@@ -1055,7 +1090,7 @@ export const Icon = ({
  * initial measurement lands, avoiding a 0→target flash.
  *
  * The buttons themselves stay transparent — the indicator carries the
- * "active" affordance. The text color shifts (T.text vs T.textDim) so the
+ * "active" affordance. The text color shifts (CSS_COLOR.text vs CSS_COLOR.textDim) so the
  * label still reads as active without the button needing its own fill.
  *
  * Honor prefers-reduced-motion / data-pyrus-reduced-motion via the
@@ -1110,7 +1145,7 @@ export const SegmentedControl = ({
         gap: sp(2),
         padding: sp(2),
         borderRadius: dim(RADII.pill),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
       }}
     >
       <span
@@ -1124,7 +1159,7 @@ export const SegmentedControl = ({
           width: indicator.width,
           transform: `translateX(${indicator.left}px)`,
           borderRadius: dim(RADII.pill),
-          background: T.bg3,
+          background: CSS_COLOR.bg3,
           boxShadow: ELEVATION.sm,
           opacity: indicator.ready ? 1 : 0,
           pointerEvents: "none",
@@ -1162,7 +1197,7 @@ export const SegmentedControl = ({
               borderRadius: dim(RADII.pill),
               border: "none",
               background: "transparent",
-              color: active ? T.text : T.textDim,
+              color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
               fontSize: textSize("control"),
               fontFamily: T.sans,
               fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
@@ -1233,7 +1268,7 @@ export const TextField = ({
         <span
           style={{
             fontSize: textSize("label"),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             letterSpacing: "0.04em",
             textTransform: "uppercase",
             fontWeight: FONT_WEIGHTS.medium,
@@ -1241,7 +1276,7 @@ export const TextField = ({
         >
           {label}
           {required ? (
-            <span aria-hidden="true" style={{ color: T.red, marginLeft: sp(2) }}>
+            <span aria-hidden="true" style={{ color: CSS_COLOR.red, marginLeft: sp(2) }}>
               *
             </span>
           ) : null}
@@ -1258,9 +1293,9 @@ export const TextField = ({
           height: dim(heightPx),
           padding: sp("0 10px"),
           borderRadius: dim(RADII.sm),
-          background: T.bg2,
+          background: CSS_COLOR.bg2,
           border: `1px solid transparent`,
-          color: disabled ? T.textMuted : T.text,
+          color: disabled ? CSS_COLOR.textMuted : CSS_COLOR.text,
           opacity: disabled ? 0.6 : 1,
           minWidth: 0,
         }}
@@ -1270,7 +1305,7 @@ export const TextField = ({
             aria-hidden="true"
             style={{
               display: "inline-flex",
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               flexShrink: 0,
             }}
           >
@@ -1305,7 +1340,7 @@ export const TextField = ({
           <span
             style={{
               display: "inline-flex",
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               flexShrink: 0,
             }}
           >
@@ -1318,7 +1353,7 @@ export const TextField = ({
           role={hasError ? "alert" : undefined}
           style={{
             fontSize: textSize("caption"),
-            color: hasError ? T.red : T.textMuted,
+            color: hasError ? CSS_COLOR.red : CSS_COLOR.textMuted,
             letterSpacing: "0.01em",
             lineHeight: 1.4,
           }}
@@ -1393,8 +1428,8 @@ export const Card = ({
       {...props}
       className={composedClassName}
       style={{
-        background: T.bg1,
-        border: `1px solid ${dataZone ? T.borderLight : T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${dataZone ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
         borderRadius: dim(dataZone ? RADII.sm : RADII.md),
         padding: noPad ? 0 : sp("6px 8px"),
         overflow: "hidden",
@@ -1425,7 +1460,7 @@ export const SurfacePanel = ({
     {...props}
     className={className || "ra-panel-enter"}
     style={{
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       border: "none",
       borderRadius: dim(RADII.md),
       boxShadow: ELEVATION.sm,
@@ -1454,7 +1489,7 @@ export const SurfacePanel = ({
       <div style={{ minWidth: 0, flex: compact ? "1 1 72px" : "1 1 180px" }}>
         <div
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize("bodyStrong"),
             fontWeight: FONT_WEIGHTS.label,
@@ -1478,7 +1513,7 @@ export const SurfacePanel = ({
               <div
                 style={{
                   minWidth: 0,
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                   overflow: "hidden",
@@ -1493,7 +1528,7 @@ export const SurfacePanel = ({
                 style={{
                   minWidth: 0,
                   maxWidth: "100%",
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.data,
                   fontSize: textSize("label"),
                   overflow: "hidden",
@@ -1552,7 +1587,7 @@ export const ThresholdHistogram = ({
             y={y}
             width={Math.max(1, bucketWidth - 1)}
             height={barHeight}
-            fill={isBeforeThreshold ? T.green : T.amber}
+            fill={isBeforeThreshold ? CSS_COLOR.green : CSS_COLOR.amber}
             opacity={count > 0 ? 0.7 : 0.2}
           />
         );
@@ -1563,7 +1598,7 @@ export const ThresholdHistogram = ({
           x2={thresholdPosition * width}
           y1={0}
           y2={height}
-          stroke={T.text}
+          stroke={CSS_COLOR.text}
           strokeWidth="1"
           strokeDasharray="2,2"
         />
@@ -1591,7 +1626,7 @@ export const ScoreBar = ({
     return (
       <span
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.mono,
           fontSize: textSize("caption"),
         }}
@@ -1605,7 +1640,19 @@ export const ScoreBar = ({
   const range = max - min || 1;
   const zeroPos = ((0 - min) / range) * width;
   const valuePos = ((clamped - min) / range) * width;
-  const tone = numeric > 0.1 ? T.green : numeric < -0.1 ? T.red : T.textMuted;
+  const tone =
+    numeric > 0.1
+      ? CSS_COLOR.green
+      : numeric < -0.1
+        ? CSS_COLOR.red
+        : CSS_COLOR.textMuted;
+  const heatGradient = [
+    `${cssColorMix(CSS_COLOR.red, 20)} 0%`,
+    `${cssColorMix(CSS_COLOR.red, 7)} 35%`,
+    `${CSS_COLOR.bg2} 50%`,
+    `${cssColorMix(CSS_COLOR.green, 7)} 65%`,
+    `${cssColorMix(CSS_COLOR.green, 20)} 100%`,
+  ].join(", ");
   return (
     <span
       style={{
@@ -1613,9 +1660,9 @@ export const ScoreBar = ({
         display: "inline-block",
         width,
         height,
-        background: `linear-gradient(to right, ${T.red}33 0%, ${T.red}11 35%, ${T.bg2} 50%, ${T.green}11 65%, ${T.green}33 100%)`,
+        background: `linear-gradient(to right, ${heatGradient})`,
         borderRadius: dim(RADII.xs),
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         verticalAlign: "middle",
       }}
     >
@@ -1626,7 +1673,7 @@ export const ScoreBar = ({
           bottom: 0,
           left: zeroPos,
           width: 1,
-          background: T.border,
+          background: CSS_COLOR.border,
         }}
       />
       <span
@@ -1648,12 +1695,12 @@ export const ScoreBar = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.mono,
             fontSize: textSize("caption"),
             lineHeight: 1,
             pointerEvents: "none",
-            textShadow: `0 0 2px ${T.bg1}, 0 0 2px ${T.bg1}`,
+            textShadow: `0 0 2px ${CSS_COLOR.bg1}, 0 0 2px ${CSS_COLOR.bg1}`,
           }}
         >
           {numeric.toFixed(1)}
@@ -1701,8 +1748,8 @@ export const InlineFilterBar = ({
         gap: sp(8),
         flexWrap: "wrap",
         padding: sp("6px 10px"),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         minWidth: 0,
       }}
@@ -1714,10 +1761,10 @@ export const InlineFilterBar = ({
           onChange={(event) => onTextChange(event.target.value)}
           placeholder={textPlaceholder}
           style={{
-            background: T.bg2,
+            background: CSS_COLOR.bg2,
             border: "none",
             borderRadius: dim(RADII.xs),
-            color: T.text,
+            color: CSS_COLOR.text,
             padding: sp("3px 8px"),
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -1746,9 +1793,9 @@ export const InlineFilterBar = ({
               style={{
                 padding: sp("2px 8px"),
                 borderRadius: dim(RADII.pill),
-                border: `1px solid ${isSelected ? T.accent : T.border}`,
-                background: isSelected ? `${T.accent}1c` : "transparent",
-                color: isSelected ? T.text : T.textDim,
+                border: `1px solid ${isSelected ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                background: isSelected ? cssColorMix(CSS_COLOR.accent, 11) : "transparent",
+                color: isSelected ? CSS_COLOR.text : CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 cursor: "pointer",
@@ -1756,7 +1803,7 @@ export const InlineFilterBar = ({
             >
               {chip.label}
               {chip.count != null ? (
-                <span style={{ color: T.textMuted, marginLeft: sp(3) }}>
+                <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(3) }}>
                   {chip.count}
                 </span>
               ) : null}
@@ -1785,8 +1832,8 @@ export const TableExpandableRow = ({
   onToggle,
   rowHeight = 22,
   expandedHeight = 200,
-  borderTone = T.border,
-  selectionAccent = T.accent,
+  borderTone = CSS_COLOR.border,
+  selectionAccent = CSS_COLOR.accent,
   row,
   rowClassName,
   rowStyle,
@@ -1818,7 +1865,7 @@ export const TableExpandableRow = ({
         alignItems: "center",
         cursor: "pointer",
         borderLeft: expanded ? `3px solid ${selectionAccent}` : "3px solid transparent",
-        background: expanded ? `${selectionAccent}10` : "transparent",
+        background: expanded ? cssColorMix(selectionAccent, 6) : "transparent",
         paddingLeft: expanded ? 0 : 3,
         minWidth: 0,
         transition: "background 120ms ease, border-color 120ms ease",
@@ -1833,7 +1880,7 @@ export const TableExpandableRow = ({
         maxHeight: expanded ? expandedHeight : 0,
         transition: "max-height 180ms ease",
         borderTop: expanded ? `1px solid ${borderTone}` : "none",
-        background: `${selectionAccent}06`,
+        background: cssColorMix(selectionAccent, 2),
       }}
     >
       {expanded ? expandedContent : null}
@@ -1855,7 +1902,7 @@ export const CardTitle = ({ children, right }) => (
         fontSize: textSize("bodyStrong"),
         fontWeight: FONT_WEIGHTS.label,
         fontFamily: T.sans,
-        color: T.text,
+        color: CSS_COLOR.text,
         letterSpacing: 0,
       }}
     >

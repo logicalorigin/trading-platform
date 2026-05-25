@@ -61,7 +61,7 @@ export const Drawer = ({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: `color-mix(in srgb, ${T.bg0} 72%, transparent)`,
+          background: "color-mix(in srgb, var(--ra-surface-0) 72%, transparent)",
           cursor: "pointer",
         }}
       />
@@ -81,8 +81,8 @@ export const Drawer = ({
           display: "flex",
           flexDirection: "column",
           minWidth: 0,
-          background: T.bg0,
-          color: T.text,
+          background: "var(--ra-surface-0)",
+          color: "var(--ra-text-primary)",
           borderRight: "none",
           borderLeft: "none",
           boxShadow: ELEVATION.lg,
@@ -99,7 +99,7 @@ export const Drawer = ({
             gap: sp(8),
             padding: sp("0 16px"),
             borderBottom: "none",
-            background: T.bg0,
+            background: "var(--ra-surface-0)",
           }}
         >
           <span
@@ -108,7 +108,7 @@ export const Drawer = ({
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              color: T.text,
+              color: "var(--ra-text-primary)",
               fontFamily: T.sans,
               fontSize: fs(15),
               fontWeight: FONT_WEIGHTS.label,
@@ -128,10 +128,10 @@ export const Drawer = ({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${T.border}`,
+              border: "1px solid var(--ra-border-default)",
               borderRadius: dim(RADII.pill),
-              background: T.bg1,
-              color: T.textSec,
+              background: "var(--ra-surface-1)",
+              color: "var(--ra-text-secondary)",
               cursor: "pointer",
               flexShrink: 0,
             }}

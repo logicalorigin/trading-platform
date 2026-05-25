@@ -57,7 +57,7 @@ export const BottomSheet = ({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: `color-mix(in srgb, ${T.bg0} 72%, transparent)`,
+          background: "color-mix(in srgb, var(--ra-surface-0) 72%, transparent)",
           cursor: "pointer",
         }}
       />
@@ -74,8 +74,8 @@ export const BottomSheet = ({
           minHeight: dim(120),
           display: "flex",
           flexDirection: "column",
-          background: T.bg0,
-          color: T.text,
+          background: "var(--ra-surface-0)",
+          color: "var(--ra-text-primary)",
           borderTop: "none",
           borderTopLeftRadius: dim(RADII.lg),
           borderTopRightRadius: dim(RADII.lg),
@@ -92,7 +92,7 @@ export const BottomSheet = ({
             gap: sp(8),
             padding: sp("10px 16px 12px"),
             borderBottom: "none",
-            background: T.bg0,
+            background: "var(--ra-surface-0)",
             borderTopLeftRadius: dim(RADII.lg),
             borderTopRightRadius: dim(RADII.lg),
           }}
@@ -103,7 +103,7 @@ export const BottomSheet = ({
               width: dim(38),
               height: dim(4),
               borderRadius: dim(RADII.pill),
-              background: T.textMuted,
+              background: "var(--ra-text-muted)",
               opacity: 0.4,
             }}
           />
@@ -122,7 +122,7 @@ export const BottomSheet = ({
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                color: T.text,
+                color: "var(--ra-text-primary)",
                 fontFamily: T.sans,
                 fontSize: fs(15),
                 fontWeight: FONT_WEIGHTS.label,
@@ -142,10 +142,10 @@ export const BottomSheet = ({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                border: `1px solid ${T.border}`,
+                border: "1px solid var(--ra-border-default)",
                 borderRadius: dim(RADII.pill),
-                background: T.bg1,
-                color: T.textSec,
+                background: "var(--ra-surface-1)",
+                color: "var(--ra-text-secondary)",
                 cursor: "pointer",
                 flexShrink: 0,
               }}
