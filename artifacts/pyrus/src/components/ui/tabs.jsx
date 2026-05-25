@@ -1,6 +1,16 @@
 import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
+const CSS_COLOR = {
+  bg0: "var(--ra-surface-0)",
+  textSec: "var(--ra-text-secondary)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const HIDE_SCROLLBAR_STYLE = {
   scrollbarWidth: "none",
   msOverflowStyle: "none",
@@ -23,7 +33,7 @@ export const TabBar = ({
         display: "flex",
         gap: sp(3),
         overflowX: "auto",
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
         padding: sp("2px 0"),
         position: sticky ? "sticky" : undefined,
         top: sticky ? 0 : undefined,
@@ -34,7 +44,7 @@ export const TabBar = ({
     >
       {tabs.map((tab) => {
         const active = tab.id === value;
-        const accent = tab.color || T.accent;
+        const accent = tab.color || CSS_COLOR.accent;
         return (
           <button
             key={tab.id}
@@ -53,8 +63,8 @@ export const TabBar = ({
               letterSpacing: 0,
               border: "none",
               borderRadius: dim(RADII.pill),
-              background: active ? `${accent}14` : "transparent",
-              color: active ? accent : T.textSec,
+              background: active ? cssColorMix(accent, 8) : "transparent",
+              color: active ? accent : CSS_COLOR.textSec,
               cursor: "pointer",
               whiteSpace: "nowrap",
               flexShrink: 0,
@@ -72,8 +82,8 @@ export const TabBar = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.medium,
-                  background: active ? `${accent}28` : `${T.textMuted}18`,
-                  color: active ? accent : T.textSec,
+                  background: active ? cssColorMix(accent, 16) : cssColorMix(CSS_COLOR.textMuted, 10),
+                  color: active ? accent : CSS_COLOR.textSec,
                   borderRadius: dim(RADII.pill),
                   minWidth: dim(18),
                   textAlign: "center",

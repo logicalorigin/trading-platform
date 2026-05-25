@@ -1,5 +1,14 @@
 import * as RadixSlider from "@radix-ui/react-slider";
-import { RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
+import { RADII, dim } from "../../lib/uiTokens.jsx";
+
+const CSS_COLOR = {
+  bg0: "var(--ra-surface-0)",
+  bg2: "var(--ra-surface-2)",
+  accent: "var(--ra-color-accent)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const LOG_POSITION_RESOLUTION = 1000;
 
@@ -81,7 +90,7 @@ export const Slider = ({
           position: "relative",
           flexGrow: 1,
           height: dim(4),
-          background: T.bg2,
+          background: CSS_COLOR.bg2,
           borderRadius: dim(RADII.pill),
           overflow: "hidden",
         }}
@@ -90,7 +99,7 @@ export const Slider = ({
           style={{
             position: "absolute",
             height: "100%",
-            background: T.accent,
+            background: CSS_COLOR.accent,
             borderRadius: dim(RADII.pill),
           }}
         />
@@ -101,18 +110,18 @@ export const Slider = ({
           width: dim(14),
           height: dim(14),
           borderRadius: "50%",
-          background: T.bg0,
-          border: `1.5px solid ${T.accent}`,
-          boxShadow: `0 0 0 0 ${T.accent}00`,
+          background: CSS_COLOR.bg0,
+          border: `1.5px solid ${CSS_COLOR.accent}`,
+          boxShadow: `0 0 0 0 ${cssColorMix(CSS_COLOR.accent, 0)}`,
           outline: "none",
           transition: "box-shadow 120ms ease, transform 120ms ease",
           cursor: disabled ? "not-allowed" : "grab",
         }}
         onFocus={(event) => {
-          event.currentTarget.style.boxShadow = `0 0 0 4px ${T.accent}33`;
+          event.currentTarget.style.boxShadow = `0 0 0 4px ${cssColorMix(CSS_COLOR.accent, 20)}`;
         }}
         onBlur={(event) => {
-          event.currentTarget.style.boxShadow = `0 0 0 0 ${T.accent}00`;
+          event.currentTarget.style.boxShadow = `0 0 0 0 ${cssColorMix(CSS_COLOR.accent, 0)}`;
         }}
       />
     </RadixSlider.Root>

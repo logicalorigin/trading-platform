@@ -1,6 +1,19 @@
 import React, { forwardRef } from "react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  bg1: "var(--ra-surface-1)",
+  border: "var(--ra-border-default)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  accent: "var(--ra-color-accent)",
+  red: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const SIZES = {
   xs: { padding: "3px 9px", font: "caption", icon: 11, gap: 4 },
   sm: { padding: "5px 12px", font: "caption", icon: 12, gap: 5 },
@@ -9,40 +22,40 @@ const SIZES = {
 };
 
 const resolveVariant = (variant, color) => {
-  const accent = color || T.accent;
+  const accent = color || CSS_COLOR.accent;
   switch (variant) {
     case "primary":
       return {
         background: accent,
-        color: T.onAccent,
-        hoverBackground: `${accent}E6`,
+        color: CSS_COLOR.onAccent,
+        hoverBackground: cssColorMix(accent, 90),
         border: "none",
         boxShadow: ELEVATION.sm,
       };
     case "danger":
       return {
-        background: T.red,
-        color: T.onAccent,
-        hoverBackground: `${T.red}E6`,
+        background: CSS_COLOR.red,
+        color: CSS_COLOR.onAccent,
+        hoverBackground: cssColorMix(CSS_COLOR.red, 90),
         border: "none",
         boxShadow: ELEVATION.sm,
       };
     case "ghost":
       return {
         background: "transparent",
-        color: T.textSec,
-        hoverBackground: `${T.accent}10`,
-        hoverColor: T.text,
+        color: CSS_COLOR.textSec,
+        hoverBackground: cssColorMix(CSS_COLOR.accent, 6),
+        hoverColor: CSS_COLOR.text,
         border: "none",
         boxShadow: ELEVATION.none,
       };
     case "secondary":
     default:
       return {
-        background: T.bg1,
-        color: T.text,
-        hoverBackground: `${T.accent}08`,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.text,
+        hoverBackground: cssColorMix(CSS_COLOR.accent, 3),
+        border: `1px solid ${CSS_COLOR.border}`,
         boxShadow: ELEVATION.none,
       };
   }
@@ -57,7 +70,7 @@ const SpinnerIcon = ({ size = 14, color = "currentColor" }) => (
       width: dim(size),
       height: dim(size),
       borderRadius: dim(RADII.pill),
-      border: `2px solid ${color}40`,
+      border: `2px solid ${cssColorMix(color, 25)}`,
       borderTopColor: color,
       animation: "pyrusBtnSpin 720ms linear infinite",
       flexShrink: 0,

@@ -6,11 +6,22 @@ import { cn } from "@/lib/utils"
 // @ts-expect-error JSX module imported into TypeScript context
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
 
+const CSS_COLOR = {
+  bg1: "var(--ra-surface-1)",
+  border: "var(--ra-border-default)",
+  text: "var(--ra-text-primary)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+}
+
+const cssColorMix = (color: string, percent: number) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`
+
 const contentSurfaceStyle: React.CSSProperties = {
   zIndex: 1000,
   pointerEvents: "auto",
-  background: T.bg1,
-  color: T.text,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.text,
   border: "none",
   borderRadius: dim(RADII.md),
   boxShadow: ELEVATION.md,
@@ -20,12 +31,12 @@ const contentSurfaceStyle: React.CSSProperties = {
 }
 
 const itemBaseStyle: React.CSSProperties = {
-  color: T.text,
+  color: CSS_COLOR.text,
   borderRadius: dim(RADII.sm),
 }
 
 const labelStyle: React.CSSProperties = {
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   letterSpacing: "0.04em",
@@ -35,7 +46,7 @@ const labelStyle: React.CSSProperties = {
 }
 
 const separatorStyle: React.CSSProperties = {
-  background: T.border,
+  background: CSS_COLOR.border,
   height: 1,
   margin: `${sp(4)}px ${sp(2)}px`,
 }
@@ -71,8 +82,8 @@ const DropdownMenuSubTrigger = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
-      ["--ra-dropdown-hover-fg" as any]: T.text,
+      ["--ra-dropdown-hover" as any]: cssColorMix(CSS_COLOR.accent, 6),
+      ["--ra-dropdown-hover-fg" as any]: CSS_COLOR.text,
       ...style,
     }}
     {...props}
@@ -137,8 +148,8 @@ const DropdownMenuItem = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
-      ["--ra-dropdown-hover-fg" as any]: T.text,
+      ["--ra-dropdown-hover" as any]: cssColorMix(CSS_COLOR.accent, 6),
+      ["--ra-dropdown-hover-fg" as any]: CSS_COLOR.text,
       ...style,
     }}
     {...props}
@@ -160,15 +171,15 @@ const DropdownMenuCheckboxItem = React.forwardRef<
     checked={checked}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
-      ["--ra-dropdown-hover-fg" as any]: T.text,
+      ["--ra-dropdown-hover" as any]: cssColorMix(CSS_COLOR.accent, 6),
+      ["--ra-dropdown-hover-fg" as any]: CSS_COLOR.text,
       ...style,
     }}
     {...props}
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" style={{ color: T.accent }} />
+        <Check className="h-4 w-4" style={{ color: CSS_COLOR.accent }} />
       </DropdownMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -190,15 +201,15 @@ const DropdownMenuRadioItem = React.forwardRef<
     )}
     style={{
       ...itemBaseStyle,
-      ["--ra-dropdown-hover" as any]: `${T.accent}10`,
-      ["--ra-dropdown-hover-fg" as any]: T.text,
+      ["--ra-dropdown-hover" as any]: cssColorMix(CSS_COLOR.accent, 6),
+      ["--ra-dropdown-hover-fg" as any]: CSS_COLOR.text,
       ...style,
     }}
     {...props}
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
-        <Circle className="h-2 w-2 fill-current" style={{ color: T.accent }} />
+        <Circle className="h-2 w-2 fill-current" style={{ color: CSS_COLOR.accent }} />
       </DropdownMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -243,7 +254,7 @@ const DropdownMenuShortcut = ({
     <span
       className={cn("ml-auto tracking-widest", className)}
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         ...style,

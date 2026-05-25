@@ -92,8 +92,8 @@ const CSS_COLOR_TOKEN_PATTERN =
   /\bT\.(bg0|bg1|bg2|bg3|bg4|border|borderLight|borderFocus|text|textSec|textDim|textMuted|accent|accentDim|accentHoverBg|accentActiveBg|blue|purple|cyan|pink|green|greenDim|greenBg|red|redDim|redBg|amber|amberDim|amberBg|pulseLive|pulseAlert|pulseLoss|onAccent)\b/g;
 
 const CSS_COLOR_TOKEN_MIGRATION_BASELINE = {
-  fileCount: 127,
-  occurrenceCount: 5205,
+  fileCount: 111,
+  occurrenceCount: 5090,
 };
 
 const PHASE_ZERO_CSS_COLOR_VARS = {

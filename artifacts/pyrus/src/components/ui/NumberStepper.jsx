@@ -1,6 +1,12 @@
 import { useId } from "react";
 import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  bg1: "var(--ra-surface-1)",
+  border: "var(--ra-border-default)",
+  text: "var(--ra-text-primary)",
+};
+
 const clamp = (value, min, max) => {
   let next = value;
   if (Number.isFinite(min)) next = Math.max(next, min);
@@ -17,9 +23,9 @@ const buttonStyle = (disabled) => ({
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  background: T.bg1,
-  color: T.text,
-  border: `1px solid ${T.border}`,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.text,
+  border: `1px solid ${CSS_COLOR.border}`,
   borderRadius: dim(RADII.xs),
   fontFamily: T.sans,
   fontSize: textSize("body"),
@@ -94,10 +100,10 @@ export const NumberStepper = ({
           minWidth: 0,
           height: dim(HEIGHT),
           padding: sp("0 8px"),
-          border: `1px solid ${T.border}`,
-          background: T.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
+          background: CSS_COLOR.bg1,
           borderRadius: dim(RADII.xs),
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.data,
           fontSize: textSize("body"),
           outline: "none",

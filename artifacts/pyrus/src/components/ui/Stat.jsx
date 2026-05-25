@@ -1,5 +1,11 @@
 import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  text: "var(--ra-text-primary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+};
+
 const SIZES = {
   sm: { label: "caption", value: "paragraphMuted", pad: "2px 0", gap: 2 },
   md: { label: "caption", value: "paragraph", pad: "3px 0", gap: 3 },
@@ -30,7 +36,7 @@ export const Stat = ({
   style,
 }) => {
   const dims = SIZES[size] || SIZES.md;
-  const valueColor = tone || T.text;
+  const valueColor = tone || CSS_COLOR.text;
   const justify =
     align === "right"
       ? "flex-end"
@@ -53,7 +59,7 @@ export const Stat = ({
       {label ? (
         <div
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize(dims.label),
             letterSpacing: "0.04em",
@@ -89,7 +95,7 @@ export const Stat = ({
       {detail ? (
         <div
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             lineHeight: 1.3,

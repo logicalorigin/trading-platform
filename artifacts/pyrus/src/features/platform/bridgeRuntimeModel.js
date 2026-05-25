@@ -1,5 +1,12 @@
-import { T } from "../../lib/uiTokens";
 import { getIbkrStreamStateMeta } from "./IbkrConnectionStatus";
+
+const CSS_COLOR = {
+  textDim: "var(--ra-text-dim)",
+  accent: "var(--ra-color-accent)",
+  green: "var(--ra-green-500)",
+  amber: "var(--ra-amber-500)",
+  red: "var(--ra-red-500)",
+};
 
 const STREAM_LIFECYCLE_ONLY_STATES = new Set(["checking", "reconnecting"]);
 const GATEWAY_DISCONNECT_REASONS = new Set([
@@ -34,10 +41,10 @@ const isStreamLifecycleOnlyState = (bridge, streamMeta) =>
 
 export const bridgeRuntimeTone = (session) => {
   // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
-  if (!session?.configured?.ibkr) return { label: "offline", color: T.red };
+  if (!session?.configured?.ibkr) return { label: "offline", color: CSS_COLOR.red };
   const bridge = session?.ibkrBridge;
   if (bridge?.competing) {
-    return { label: "competing", color: T.red };
+    return { label: "competing", color: CSS_COLOR.red };
   }
   const streamMeta = getIbkrStreamStateMeta(
     bridge?.streamState,
@@ -56,30 +63,30 @@ export const bridgeRuntimeTone = (session) => {
     }
     return {
       label: bridge?.lastError || bridge?.lastRecoveryError ? "error" : "offline",
-      color: T.red,
+      color: CSS_COLOR.red,
     };
   }
   if (bridge?.brokerServerConnected === false) {
-    return { label: "server disconnected", color: T.amber, pulse: true };
+    return { label: "server disconnected", color: CSS_COLOR.amber, pulse: true };
   }
   if (
     bridge?.healthFresh === false &&
     (bridge?.connected || bridge?.authenticated || bridge?.bridgeReachable)
   ) {
-    return { label: "stale", color: T.amber };
+    return { label: "stale", color: CSS_COLOR.amber };
   }
   if (bridge?.connected && !bridge?.authenticated) {
-    return { label: "login required", color: T.amber };
+    return { label: "login required", color: CSS_COLOR.amber };
   }
   if (bridge?.authenticated && bridge?.accountsLoaded === false) {
-    return { label: "checking", color: T.accent };
+    return { label: "checking", color: CSS_COLOR.accent };
   }
   if (
     bridge?.authenticated &&
     (bridge?.configuredLiveMarketDataMode === false ||
       bridge?.liveMarketDataAvailable === false)
   ) {
-    return { label: "delayed", color: T.amber };
+    return { label: "delayed", color: CSS_COLOR.amber };
   }
   if (
     streamMeta?.status === "no-subscribers" &&
@@ -89,10 +96,10 @@ export const bridgeRuntimeTone = (session) => {
     bridge?.socketConnected === true &&
     bridge?.accountsLoaded !== false
   ) {
-    return { label: "live", color: T.green };
+    return { label: "live", color: CSS_COLOR.green };
   }
   if (isStreamLifecycleOnlyState(bridge, streamMeta)) {
-    return { label: "live", color: T.green };
+    return { label: "live", color: CSS_COLOR.green };
   }
   if (streamMeta) {
     return {
@@ -102,14 +109,14 @@ export const bridgeRuntimeTone = (session) => {
     };
   }
   if (bridge?.strictReady === true) {
-    return { label: "live", color: T.green };
+    return { label: "live", color: CSS_COLOR.green };
   }
   if (bridge?.authenticated && bridge?.streamFresh === false) {
-    return { label: "stale", color: T.amber, pulse: true };
+    return { label: "stale", color: CSS_COLOR.amber, pulse: true };
   }
-  if (bridge?.authenticated) return { label: "waiting", color: T.accent };
-  if (bridge?.lastError) return { label: "error", color: T.red };
-  return { label: "configured", color: T.textDim };
+  if (bridge?.authenticated) return { label: "waiting", color: CSS_COLOR.accent };
+  if (bridge?.lastError) return { label: "error", color: CSS_COLOR.red };
+  return { label: "configured", color: CSS_COLOR.textDim };
 };
 
 const bridgeTransportLabel = () => "IB Gateway";

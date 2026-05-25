@@ -5,11 +5,16 @@ import { cn } from "@/lib/utils"
 // @ts-expect-error JSX module imported into TypeScript context
 import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
 
+const CSS_COLOR = {
+  bg1: "var(--ra-surface-1)",
+  text: "var(--ra-text-primary)",
+}
+
 const popoverSurfaceStyle: React.CSSProperties = {
   zIndex: 1000,
   pointerEvents: "auto",
-  background: T.bg1,
-  color: T.text,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.text,
   border: "none",
   borderRadius: dim(RADII.md),
   boxShadow: ELEVATION.md,

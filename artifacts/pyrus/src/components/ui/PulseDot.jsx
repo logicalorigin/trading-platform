@@ -1,5 +1,15 @@
 import React from "react";
-import { RADII, T, dim } from "../../lib/uiTokens.jsx";
+import { RADII, dim } from "../../lib/uiTokens.jsx";
+
+const CSS_COLOR = {
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  textMuted: "var(--ra-text-muted)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const PULSE_CSS = `
 @keyframes pyrusPulse {
@@ -15,17 +25,17 @@ const PULSE_CSS = `
 `;
 
 const TONE_TO_COLOR = {
-  live: () => T.pulseLive,
-  alert: () => T.pulseAlert,
-  loss: () => T.pulseLoss,
-  muted: () => T.textMuted,
+  live: CSS_COLOR.pulseLive,
+  alert: CSS_COLOR.pulseAlert,
+  loss: CSS_COLOR.pulseLoss,
+  muted: CSS_COLOR.textMuted,
 };
 
 export const PulseDot = ({ active = true, tone, color, size = 6, label }) => {
   const resolvedColor =
     color ||
-    (tone && TONE_TO_COLOR[tone] ? TONE_TO_COLOR[tone]() : null) ||
-    (active ? T.pulseLive : T.textMuted);
+    (tone && TONE_TO_COLOR[tone] ? TONE_TO_COLOR[tone] : null) ||
+    (active ? CSS_COLOR.pulseLive : CSS_COLOR.textMuted);
   return (
     <>
       <style>{PULSE_CSS}</style>
@@ -35,7 +45,7 @@ export const PulseDot = ({ active = true, tone, color, size = 6, label }) => {
         aria-label={label}
         className={active ? "ra-pulse" : undefined}
         style={{
-          ["--ra-pulse-color"]: `${resolvedColor}40`,
+          ["--ra-pulse-color"]: cssColorMix(resolvedColor, 25),
           display: "inline-block",
           width: dim(size),
           height: dim(size),

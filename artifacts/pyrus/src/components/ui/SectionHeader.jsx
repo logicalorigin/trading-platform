@@ -1,5 +1,10 @@
 import { T, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  text: "var(--ra-text-primary)",
+  textDim: "var(--ra-text-dim)",
+};
+
 /**
  * SectionHeader — the canonical in-card section title.
  * For top-of-card titles use CardTitle; for sub-section titles inside a card use this.
@@ -38,7 +43,7 @@ export const SectionHeader = ({
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize(titleSize),
             fontWeight: titleWeight,
@@ -55,7 +60,7 @@ export const SectionHeader = ({
           <div
             style={{
               marginTop: sp(2),
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               lineHeight: 1.35,

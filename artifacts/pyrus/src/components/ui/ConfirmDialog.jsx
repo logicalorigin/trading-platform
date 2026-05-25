@@ -2,6 +2,20 @@ import React, { Fragment, useEffect } from "react";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { Button } from "./Button.jsx";
 
+const CSS_COLOR = {
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  borderLight: "var(--ra-border-light)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  red: "var(--ra-red-500)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 export const ConfirmDialog = ({
   open,
   title,
@@ -19,7 +33,7 @@ export const ConfirmDialog = ({
   dialogTestId = "confirm-dialog",
   errorTestId = "confirm-dialog-error",
 }) => {
-  const resolvedTone = confirmTone || (destructive ? T.red : T.accent);
+  const resolvedTone = confirmTone || (destructive ? CSS_COLOR.red : CSS_COLOR.accent);
 
   useEffect(() => {
     if (!open) {
@@ -55,7 +69,7 @@ export const ConfirmDialog = ({
         alignItems: "center",
         justifyContent: "center",
         padding: sp(16),
-        background: `color-mix(in srgb, ${T.bg0} 72%, transparent)`,
+        background: cssColorMix(CSS_COLOR.bg0, 72),
         backdropFilter: "blur(8px)",
       }}
     >
@@ -66,8 +80,8 @@ export const ConfirmDialog = ({
         aria-labelledby={`${dialogTestId}-title`}
         style={{
           width: "min(100%, 520px)",
-          background: T.bg1,
-          border: `1px solid ${resolvedTone}55`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${cssColorMix(resolvedTone, 33)}`,
           borderRadius: dim(RADII.md),
           boxShadow: ELEVATION.lg,
           padding: sp("20px 22px"),
@@ -94,7 +108,7 @@ export const ConfirmDialog = ({
             style={{
               fontSize: fs(20),
               fontWeight: FONT_WEIGHTS.label,
-              color: T.text,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
               letterSpacing: 0,
               lineHeight: 1.2,
@@ -106,7 +120,7 @@ export const ConfirmDialog = ({
             <span
               style={{
                 fontSize: fs(13),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 lineHeight: 1.5,
               }}
@@ -122,8 +136,8 @@ export const ConfirmDialog = ({
               gridTemplateColumns: "minmax(0, 1fr) auto",
               gap: sp(8),
               padding: sp("12px 14px"),
-              background: T.bg0,
-              border: `1px solid ${T.borderLight}`,
+              background: CSS_COLOR.bg0,
+              border: `1px solid ${CSS_COLOR.borderLight}`,
               borderRadius: dim(RADII.sm),
               fontFamily: T.sans,
             }}
@@ -133,7 +147,7 @@ export const ConfirmDialog = ({
                 <span
                   style={{
                     fontSize: textSize("caption"),
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     letterSpacing: "0.04em",
                     fontWeight: FONT_WEIGHTS.medium,
                     textTransform: "uppercase",
@@ -144,7 +158,7 @@ export const ConfirmDialog = ({
                 <span
                   style={{
                     fontSize: fs(11),
-                    color: line.valueColor || T.text,
+                    color: line.valueColor || CSS_COLOR.text,
                     fontVariantNumeric: "tabular-nums",
                     fontWeight: FONT_WEIGHTS.medium,
                     textAlign: "right",
@@ -161,10 +175,10 @@ export const ConfirmDialog = ({
             data-testid={errorTestId}
             role="alert"
             style={{
-              background: `${T.red}12`,
-              border: `1px solid ${T.red}45`,
+              background: cssColorMix(CSS_COLOR.red, 7),
+              border: `1px solid ${cssColorMix(CSS_COLOR.red, 27)}`,
               borderRadius: dim(RADII.sm),
-              color: T.red,
+              color: CSS_COLOR.red,
               fontSize: fs(12),
               fontFamily: T.sans,
               lineHeight: 1.5,
@@ -178,7 +192,7 @@ export const ConfirmDialog = ({
           <div
             style={{
               fontSize: fs(12),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               lineHeight: 1.5,
             }}

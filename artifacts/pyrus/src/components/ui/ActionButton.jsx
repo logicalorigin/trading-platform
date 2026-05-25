@@ -3,6 +3,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { Button } from "./Button.jsx";
 
+const CSS_COLOR = {
+  textSec: "var(--ra-text-secondary)",
+  textMuted: "var(--ra-text-muted)",
+  red: "var(--ra-red-500)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const toTimestamp = (value) => {
   if (!value) return null;
   const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
@@ -67,8 +76,8 @@ export const ActionButton = ({
             alignItems: "center",
             padding: sp("1px 5px"),
             borderRadius: dim(RADII.pill),
-            background: `${T.textMuted}18`,
-            color: T.textSec,
+            background: cssColorMix(CSS_COLOR.textMuted, 10),
+            color: CSS_COLOR.textSec,
             fontSize: fs(9),
             fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
@@ -89,8 +98,8 @@ export const ActionButton = ({
             gap: sp(3),
             padding: sp("1px 5px"),
             borderRadius: dim(RADII.pill),
-            background: `${T.red}12`,
-            color: T.red,
+            background: cssColorMix(CSS_COLOR.red, 7),
+            color: CSS_COLOR.red,
             fontSize: fs(9),
             fontWeight: FONT_WEIGHTS.medium,
             lineHeight: 1.2,
@@ -115,8 +124,8 @@ export const ActionButton = ({
       style={{
         ...(errorActive
           ? {
-              border: `1px solid ${T.red}55`,
-              color: T.red,
+              border: `1px solid ${cssColorMix(CSS_COLOR.red, 33)}`,
+              color: CSS_COLOR.red,
             }
           : null),
         ...style,
@@ -132,8 +141,8 @@ export const ActionButton = ({
           event.currentTarget.style.color = style.color;
         }
         if (errorActive) {
-          event.currentTarget.style.border = `1px solid ${T.red}55`;
-          event.currentTarget.style.color = T.red;
+          event.currentTarget.style.border = `1px solid ${cssColorMix(CSS_COLOR.red, 33)}`;
+          event.currentTarget.style.color = CSS_COLOR.red;
         }
         onMouseLeave?.(event);
       }}

@@ -1,6 +1,10 @@
 import { Button } from "../ui/Button.jsx";
 import { T, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  textDim: "var(--ra-text-dim)",
+};
+
 const normalizePageSize = (pageSize) => {
   const numeric = Math.floor(Number(pageSize));
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 25;
@@ -62,7 +66,7 @@ export const PaginationFooter = ({
         alignItems: "center",
         justifyContent: "center",
         gap: sp(5),
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         minWidth: 0,

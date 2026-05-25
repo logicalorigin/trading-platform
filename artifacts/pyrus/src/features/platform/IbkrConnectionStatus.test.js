@@ -22,6 +22,12 @@ import { T } from "../../lib/uiTokens.jsx";
 import { streamStateTokenVar } from "./streamSemantics";
 import { TooltipProvider } from "../../components/ui/tooltip";
 
+const CSS_COLOR = {
+  accent: "var(--ra-color-accent)",
+  green: "var(--ra-green-500)",
+  amber: "var(--ra-amber-500)",
+};
+
 const findPopoverDetailRow = (model, label) =>
   model.detailGroups
     .flatMap((group) => group.rows)
@@ -317,7 +323,7 @@ test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
         accountsLoaded: false,
       },
     }).color,
-    T.accent,
+    CSS_COLOR.accent,
   );
   assert.equal(
     bridgeRuntimeTone({
@@ -327,7 +333,7 @@ test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
         authenticated: true,
       },
     }).color,
-    T.accent,
+    CSS_COLOR.accent,
   );
   assert.equal(
     bridgeRuntimeTone({
@@ -337,7 +343,7 @@ test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
         authenticated: false,
       },
     }).color,
-    T.amber,
+    CSS_COLOR.amber,
   );
 });
 
@@ -376,7 +382,7 @@ test("bridgeRuntimeTone treats quote standby as connected once Gateway proof is 
   });
 
   assert.equal(tone.label, "live");
-  assert.equal(tone.color, T.green);
+  assert.equal(tone.color, CSS_COLOR.green);
 });
 
 test("bridgeRuntimeTone keeps Gateway live when only the quote stream is cycling", () => {
@@ -400,7 +406,7 @@ test("bridgeRuntimeTone keeps Gateway live when only the quote stream is cycling
   });
 
   assert.equal(tone.label, "live");
-  assert.equal(tone.color, T.green);
+  assert.equal(tone.color, CSS_COLOR.green);
 });
 
 test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {

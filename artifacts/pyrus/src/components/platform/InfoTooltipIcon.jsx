@@ -2,6 +2,12 @@ import { Info } from "lucide-react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
+const CSS_COLOR = {
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+};
+
 const formatTooltipBody = (entry) => {
   if (!entry) return null;
   if (typeof entry === "string") return entry;
@@ -10,7 +16,7 @@ const formatTooltipBody = (entry) => {
       {entry.label ? (
         <div
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.display,
             fontWeight: FONT_WEIGHTS.emphasis,
             fontSize: textSize("bodyStrong"),
@@ -20,12 +26,12 @@ const formatTooltipBody = (entry) => {
         </div>
       ) : null}
       {entry.definition ? (
-        <div style={{ color: T.textSec, fontSize: textSize("caption"), lineHeight: 1.4 }}>
+        <div style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), lineHeight: 1.4 }}>
           {entry.definition}
         </div>
       ) : null}
       {entry.interpretation ? (
-        <div style={{ color: T.textDim, fontSize: textSize("caption"), lineHeight: 1.4 }}>
+        <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), lineHeight: 1.4 }}>
           {entry.interpretation}
         </div>
       ) : null}
@@ -55,7 +61,7 @@ export const InfoTooltipIcon = ({
           margin: 0,
           border: 0,
           background: "transparent",
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           cursor: "help",
           lineHeight: 0,
         }}

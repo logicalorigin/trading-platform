@@ -4,35 +4,43 @@ import { formatRelativeTimeShort } from "../../lib/formatters";
 import { StatusPill } from "../platform/primitives.jsx";
 import { PulseDot } from "./PulseDot.jsx";
 
+const CSS_COLOR = {
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  green: "var(--ra-green-500)",
+  amber: "var(--ra-amber-500)",
+  red: "var(--ra-red-500)",
+};
+
 const STATUS_META = {
   disconnected: {
     label: "Disconnected",
-    color: () => T.textMuted,
+    color: CSS_COLOR.textMuted,
     active: false,
   },
   connecting: {
     label: "Connecting",
-    color: () => T.accent,
+    color: CSS_COLOR.accent,
     active: true,
   },
   connected: {
     label: "Connected",
-    color: () => T.green,
+    color: CSS_COLOR.green,
     active: true,
   },
   degraded: {
     label: "Degraded",
-    color: () => T.amber,
+    color: CSS_COLOR.amber,
     active: true,
   },
   reconnecting: {
     label: "Reconnecting",
-    color: () => T.accent,
+    color: CSS_COLOR.accent,
     active: true,
   },
   error: {
     label: "Error",
-    color: () => T.red,
+    color: CSS_COLOR.red,
     active: true,
   },
 };
@@ -55,7 +63,7 @@ export const ConnectionStatusPill = ({
   label,
 }) => {
   const meta = STATUS_META[status] || STATUS_META.disconnected;
-  const color = meta.color();
+  const color = meta.color;
   const updatedLabel = formatUpdatedLabel(lastSyncAt);
   const compact = size === "sm";
 
@@ -91,7 +99,7 @@ export const ConnectionStatusPill = ({
         <span
           data-testid="connection-status-pill-updated"
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: fs(compact ? 9 : 10),
             fontWeight: FONT_WEIGHTS.regular,

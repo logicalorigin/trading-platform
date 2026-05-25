@@ -1,7 +1,7 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 21:57 UTC`
-- Current request: proceed with Phase 1 of the PYRUS theme color CSS-variable cleanup.
+- Last updated: `2026-05-25 22:09 UTC`
+- Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with shared UI action/dialog/status controls.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
   - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
@@ -12,21 +12,37 @@
   - `primitives.jsx` now uses local CSS variable strings for shared color defaults and `color-mix()` for former hex-alpha surfaces; radial gauge default gradients preserve interpolation through CSS `color-mix()` when stops are CSS variables.
   - `Drawer.jsx` and `BottomSheet.jsx` overlay/surface/chrome colors now read CSS variables directly while keeping `T.sans` typography.
   - Production `T.<color>` debt is reduced from 130 files / 5309 reads to 127 files / 5205 reads, and the migration guard baseline now pins the lower count.
+  - Shared-control edit is complete and committed locally. Scope stayed on shared UI/platform controls and `bridgeRuntimeModel`, avoiding page-specific screen files.
+  - Converted shared action/dialog/status/control colors to direct CSS variable strings and `color-mix()` while preserving typography tokens.
+  - Production `T.<color>` debt is reduced again from 127 files / 5205 reads to 111 files / 5090 reads, and the migration guard baseline now pins the lower count.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
-  - `artifacts/pyrus/src/components/platform/BottomSheet.jsx`
-  - `artifacts/pyrus/src/components/platform/Drawer.jsx`
-  - `artifacts/pyrus/src/components/platform/primitives.jsx`
-  - `artifacts/pyrus/src/components/platform/primitives.test.js`
+  - `artifacts/pyrus/src/components/platform/InfoTooltipIcon.jsx`
+  - `artifacts/pyrus/src/components/platform/TablePagination.jsx`
+  - `artifacts/pyrus/src/components/ui/ActionButton.jsx`
+  - `artifacts/pyrus/src/components/ui/Button.jsx`
+  - `artifacts/pyrus/src/components/ui/ConfirmDialog.jsx`
+  - `artifacts/pyrus/src/components/ui/ConnectionStatusPill.jsx`
+  - `artifacts/pyrus/src/components/ui/NumberStepper.jsx`
+  - `artifacts/pyrus/src/components/ui/PulseDot.jsx`
+  - `artifacts/pyrus/src/components/ui/RangeSlider.jsx`
+  - `artifacts/pyrus/src/components/ui/SectionHeader.jsx`
+  - `artifacts/pyrus/src/components/ui/Slider.jsx`
+  - `artifacts/pyrus/src/components/ui/Stat.jsx`
+  - `artifacts/pyrus/src/components/ui/dropdown-menu.tsx`
+  - `artifacts/pyrus/src/components/ui/popover.tsx`
+  - `artifacts/pyrus/src/components/ui/tabs.jsx`
+  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
+  - `artifacts/pyrus/src/features/platform/bridgeRuntimeModel.js`
   - `artifacts/pyrus/src/lib/uiTokens.test.js`
 - Validation state:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/platform/primitives.test.js src/lib/uiTokens.test.js` passed 43/43.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/ui/actionPrimitives.test.js src/components/platform/TablePagination.test.js src/features/platform/IbkrConnectionStatus.test.js src/lib/uiTokens.test.js` passed 70/70.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
-  - `git diff --check -- SESSION_HANDOFF_CURRENT.md artifacts/pyrus/src/components/platform/BottomSheet.jsx artifacts/pyrus/src/components/platform/Drawer.jsx artifacts/pyrus/src/components/platform/primitives.jsx artifacts/pyrus/src/components/platform/primitives.test.js artifacts/pyrus/src/lib/uiTokens.test.js` passed.
+  - `git diff --check -- ...` passed for the changed files.
 - Next step:
-  - Next migration target should be the shared UI action/dialog/status controls before page-specific screen files.
+  - Push the shared-control commit. Next migration target should be signal-language/shared platform status helpers before page-specific screen files.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
