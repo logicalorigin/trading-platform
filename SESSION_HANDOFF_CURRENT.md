@@ -12,7 +12,7 @@
   - `primitives.jsx` now uses local CSS variable strings for shared color defaults and `color-mix()` for former hex-alpha surfaces; radial gauge default gradients preserve interpolation through CSS `color-mix()` when stops are CSS variables.
   - `Drawer.jsx` and `BottomSheet.jsx` overlay/surface/chrome colors now read CSS variables directly while keeping `T.sans` typography.
   - Production `T.<color>` debt is reduced from 130 files / 5309 reads to 127 files / 5205 reads, and the migration guard baseline now pins the lower count.
-  - Shared-control edit is complete and committed locally. Scope stayed on shared UI/platform controls and `bridgeRuntimeModel`, avoiding page-specific screen files.
+  - Shared-control edit is complete and pushed. Scope stayed on shared UI/platform controls and `bridgeRuntimeModel`, avoiding page-specific screen files.
   - Converted shared action/dialog/status/control colors to direct CSS variable strings and `color-mix()` while preserving typography tokens.
   - Production `T.<color>` debt is reduced again from 127 files / 5205 reads to 111 files / 5090 reads, and the migration guard baseline now pins the lower count.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
@@ -42,7 +42,7 @@
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
   - `git diff --check -- ...` passed for the changed files.
 - Next step:
-  - Push the shared-control commit. Next migration target should be signal-language/shared platform status helpers before page-specific screen files.
+  - Next migration target should be signal-language/shared platform status helpers before page-specific screen files.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
