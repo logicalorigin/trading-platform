@@ -18,7 +18,6 @@ import {
 } from "./IbkrConnectionStatus.jsx";
 import { bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel.js";
-import { T } from "../../lib/uiTokens.jsx";
 import { streamStateTokenVar } from "./streamSemantics";
 import { TooltipProvider } from "../../components/ui/tooltip";
 
@@ -26,6 +25,7 @@ const CSS_COLOR = {
   accent: "var(--ra-color-accent)",
   green: "var(--ra-green-500)",
   amber: "var(--ra-amber-500)",
+  red: "var(--ra-red-500)",
 };
 
 const findPopoverDetailRow = (model, label) =>
@@ -218,7 +218,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       configuredLiveMarketDataMode: true,
       strictReady: true,
     }).color,
-    T.green,
+    CSS_COLOR.green,
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -229,7 +229,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       accountsLoaded: false,
       strictReady: false,
     }).color,
-    T.accent,
+    CSS_COLOR.accent,
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -237,7 +237,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       reachable: true,
       authenticated: false,
     }).color,
-    T.amber,
+    CSS_COLOR.amber,
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -249,7 +249,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       configuredLiveMarketDataMode: false,
       accountsLoaded: true,
     }).color,
-    T.amber,
+    CSS_COLOR.amber,
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -301,7 +301,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       authenticated: false,
       lastError: "socket closed",
     }).color,
-    T.red,
+    CSS_COLOR.red,
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -309,7 +309,7 @@ test("getIbkrConnectionTone maps status colors", () => {
       reachable: false,
       authenticated: false,
     }).color,
-    T.red,
+    CSS_COLOR.red,
   );
 });
 
@@ -546,7 +546,7 @@ test("IbkrPingWavelength renders connected wire as an animated green sine wave",
         strictReady: true,
         lastPingMs: 80,
       },
-      tone: { color: T.green, wave: "fast" },
+      tone: { color: CSS_COLOR.green, wave: "fast" },
     }),
   );
 

@@ -11,6 +11,17 @@ import {
 } from "../../../lib/uiTokens.jsx";
 import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
 
+const CSS_COLOR = {
+  blue: "var(--ra-blue-500)",
+  red: "var(--ra-red-500)",
+  borderLight: "var(--ra-border-light)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const isSignalDirection = (value) => value === "buy" || value === "sell";
 
 const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
@@ -46,7 +57,11 @@ export const SignalDots = ({
       const direction = String(state?.currentSignalDirection || "").toLowerCase();
       const hasDirection = isSignalDirection(direction);
       const color =
-        direction === "buy" ? T.blue : direction === "sell" ? T.red : T.textMuted;
+        direction === "buy"
+          ? CSS_COLOR.blue
+          : direction === "sell"
+            ? CSS_COLOR.red
+            : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
       const status = state?.status || "unknown";
       const label = hasDirection
@@ -61,16 +76,18 @@ export const SignalDots = ({
         height: showLabels ? dim(14) : dim(8),
         borderRadius: showLabels ? dim(RADII.pill) : "50%",
         border: showLabels
-          ? `1px solid ${hasDirection ? `${color}80` : T.borderLight}`
-          : `1px solid ${hasDirection ? color : `${T.textDim}95`}`,
+          ? `1px solid ${
+              hasDirection ? cssColorMix(color, 50) : CSS_COLOR.borderLight
+            }`
+          : `1px solid ${hasDirection ? color : cssColorMix(CSS_COLOR.textDim, 58)}`,
         background: hasDirection
           ? showLabels
-            ? `${color}18`
+            ? cssColorMix(color, 10)
             : color
           : showLabels
             ? "transparent"
-            : `${T.textDim}18`,
-        color: hasDirection ? color : T.textMuted,
+            : cssColorMix(CSS_COLOR.textDim, 10),
+        color: hasDirection ? color : CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: fs(7),
         fontWeight: FONT_WEIGHTS.medium,
@@ -79,7 +96,7 @@ export const SignalDots = ({
         opacity: hasDirection ? (fresh ? 1 : 0.76) : 0.88,
         boxShadow:
           hasDirection && fresh && !showLabels
-            ? `0 0 0 2px ${color}20`
+            ? `0 0 0 2px ${cssColorMix(color, 13)}`
             : "none",
         cursor: hasDirection && onSelect ? "pointer" : "default",
         padding: showLabels ? sp("0 3px") : 0,

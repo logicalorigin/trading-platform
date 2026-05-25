@@ -1,10 +1,17 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Ban, CheckCircle2, Clock } from "lucide-react";
-import { MISSING_VALUE, RADII, T, dim } from "../../../lib/uiTokens.jsx";
+import { MISSING_VALUE, RADII, dim } from "../../../lib/uiTokens.jsx";
 import { SCORE_TRY } from "./thresholds.js";
 import { verdictTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
+const isReadyStatusMeta = (statusMeta) =>
+  statusMeta?.tone === getTone("buy") ||
+  /ready|filled|available/i.test(String(statusMeta?.label || ""));
 
 export const resolveSignalVerdict = ({
   signal,
@@ -30,7 +37,7 @@ export const resolveSignalVerdict = ({
     signal?.fresh === true &&
     Number.isFinite(score) &&
     score >= SCORE_TRY &&
-    statusMeta?.tone === T.green
+    isReadyStatusMeta(statusMeta)
   ) {
     return {
       bucket: "try",
@@ -89,8 +96,8 @@ export const VerdictGlyph = ({
           width: dim(22),
           height: dim(22),
           borderRadius: dim(RADII.pill),
-          border: `1px solid ${verdict.tone}55`,
-          background: `${verdict.tone}1A`,
+          border: `1px solid ${cssColorMix(verdict.tone, 33)}`,
+          background: cssColorMix(verdict.tone, 10),
           color: verdict.tone,
           flex: "0 0 auto",
         }}

@@ -4,6 +4,17 @@ import { formatEnumLabel } from "../../../lib/formatters";
 import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
 import { strategyTooltip } from "./tooltips.js";
 
+const CSS_COLOR = {
+  textSec: "var(--ra-text-secondary)",
+  amber: "var(--ra-amber-500)",
+  blue: "var(--ra-blue-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -17,11 +28,11 @@ const firstText = (...values) => {
 
 const strategyTone = (value) => {
   const text = String(value || "").toLowerCase();
-  if (/mean|reversion|mr/.test(text)) return T.cyan;
-  if (/break|bos|choch/.test(text)) return T.pink;
-  if (/momentum|trend|mo/.test(text)) return T.amber;
-  if (/automation|signal/.test(text)) return T.blue;
-  return T.textSec;
+  if (/mean|reversion|mr/.test(text)) return CSS_COLOR.cyan;
+  if (/break|bos|choch/.test(text)) return CSS_COLOR.pink;
+  if (/momentum|trend|mo/.test(text)) return CSS_COLOR.amber;
+  if (/automation|signal/.test(text)) return CSS_COLOR.blue;
+  return CSS_COLOR.textSec;
 };
 
 const labelToken = (label) => {
@@ -64,8 +75,8 @@ export const StrategyTag = ({ candidate, signal }) => {
           minWidth: dim(18),
           padding: sp("0 4px"),
           borderRadius: dim(RADII.sm),
-          border: `1px solid ${tone}44`,
-          background: `${tone}18`,
+          border: `1px solid ${cssColorMix(tone, 27)}`,
+          background: cssColorMix(tone, 10),
           color: tone,
           fontFamily: T.mono,
           fontSize: textSize("caption"),

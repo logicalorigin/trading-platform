@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { T } from "../../lib/uiTokens.jsx";
 import {
   resolveSpreadWidthFraction,
   spreadGaugeTone,
@@ -17,6 +16,12 @@ import {
 
 const readSource = (relativeUrl) =>
   readFileSync(new URL(relativeUrl, import.meta.url), "utf8");
+
+const CSS_COLOR = {
+  green: "var(--ra-green-500)",
+  amber: "var(--ra-amber-500)",
+  red: "var(--ra-red-500)",
+};
 
 test("signal table sorting honors column key and direction", () => {
   const rows = [
@@ -342,7 +347,7 @@ test("verdict buckets follow the fresh score seven actionability rule", () => {
       signal: { fresh: true },
       signalRecord: { score: 7 },
       blocker: "—",
-      statusMeta: { tone: T.green, label: "Ready" },
+      statusMeta: { tone: CSS_COLOR.green, label: "Ready" },
     }).bucket,
     "try",
   );
@@ -351,7 +356,7 @@ test("verdict buckets follow the fresh score seven actionability rule", () => {
       signal: { fresh: true },
       signalRecord: { score: 6.9 },
       blocker: "—",
-      statusMeta: { tone: T.green, label: "Ready" },
+      statusMeta: { tone: CSS_COLOR.green, label: "Ready" },
     }).bucket,
     "wait",
   );
@@ -360,7 +365,7 @@ test("verdict buckets follow the fresh score seven actionability rule", () => {
       signal: { fresh: true },
       signalRecord: { score: 8.2 },
       blocker: "Missing bid/ask quote",
-      statusMeta: { tone: T.red, label: "Blocked" },
+      statusMeta: { tone: CSS_COLOR.red, label: "Blocked" },
     }).bucket,
     "pass",
   );
@@ -371,7 +376,7 @@ test("spread gauge classifies tight medium and wide option spreads", () => {
     Math.abs(resolveSpreadWidthFraction({ bid: 0.99, ask: 1.01, mid: 1 }) - 0.02) <
       0.000001,
   );
-  assert.equal(spreadGaugeTone(0.009), T.green);
-  assert.equal(spreadGaugeTone(0.02), T.amber);
-  assert.equal(spreadGaugeTone(0.031), T.red);
+  assert.equal(spreadGaugeTone(0.009), CSS_COLOR.green);
+  assert.equal(spreadGaugeTone(0.02), CSS_COLOR.amber);
+  assert.equal(spreadGaugeTone(0.031), CSS_COLOR.red);
 });

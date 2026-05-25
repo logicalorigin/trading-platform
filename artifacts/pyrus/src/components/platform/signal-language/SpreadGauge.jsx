@@ -1,8 +1,15 @@
 import { AppTooltip } from "@/components/ui/tooltip";
-import { RADII, T, dim } from "../../../lib/uiTokens.jsx";
+import { RADII, dim } from "../../../lib/uiTokens.jsx";
 import { SPREAD_TIGHT_PCT, SPREAD_WIDE_PCT } from "./thresholds.js";
 import { spreadTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
+
+const CSS_COLOR = {
+  borderLight: "var(--ra-border-light)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const finiteNumber = (value) => {
   const numeric = Number(value);
@@ -77,7 +84,7 @@ export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 })
             y1={height / 2}
             x2={width - 2}
             y2={height / 2}
-            stroke={T.borderLight}
+            stroke={CSS_COLOR.borderLight}
             strokeWidth={height}
             strokeLinecap="round"
           />
@@ -86,7 +93,7 @@ export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 })
             y1={height / 2}
             x2={width - 2}
             y2={height / 2}
-            stroke={`${tone}44`}
+            stroke={cssColorMix(tone, 27)}
             strokeWidth={height}
             strokeLinecap="round"
           />

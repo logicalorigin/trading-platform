@@ -1,14 +1,12 @@
-import { T } from "../../../lib/uiTokens.jsx";
-
 const DEFAULT_TONES = {
-  buy: T.green,
-  sell: T.red,
-  hot: T.green,
-  cold: T.cyan,
-  warn: T.amber,
-  stale: T.amber,
-  info: T.cyan,
-  dim: T.textDim,
+  buy: "var(--ra-green-500)",
+  sell: "var(--ra-red-500)",
+  hot: "var(--ra-green-500)",
+  cold: "var(--ra-cyan-500)",
+  warn: "var(--ra-amber-500)",
+  stale: "var(--ra-amber-500)",
+  info: "var(--ra-cyan-500)",
+  dim: "var(--ra-text-dim)",
 };
 
 const PALETTES = {

@@ -1,7 +1,7 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 22:09 UTC`
-- Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with shared UI action/dialog/status controls.
+- Last updated: `2026-05-25 22:20 UTC`
+- Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with signal-language/shared platform status helpers.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
   - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
@@ -15,34 +15,31 @@
   - Shared-control edit is complete and pushed. Scope stayed on shared UI/platform controls and `bridgeRuntimeModel`, avoiding page-specific screen files.
   - Converted shared action/dialog/status/control colors to direct CSS variable strings and `color-mix()` while preserving typography tokens.
   - Production `T.<color>` debt is reduced again from 127 files / 5205 reads to 111 files / 5090 reads, and the migration guard baseline now pins the lower count.
+  - Shared-helper slice is implemented against `components/platform/signal-language`, `useLiveMarketFlow`, and `IbkrConnectionStatus`.
+  - Those scoped files no longer have `T.<color>` reads; typography-only `T.sans`/`T.mono` reads remain where needed.
+  - Production `T.<color>` debt measured at 104 files / 5032 reads after this slice, and the migration guard baseline has been lowered to that count.
+  - `marketIdentity.jsx` still has shared UI color debt, but is intentionally deferred as a separate identity/asset pass.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
-  - `artifacts/pyrus/src/components/platform/InfoTooltipIcon.jsx`
-  - `artifacts/pyrus/src/components/platform/TablePagination.jsx`
-  - `artifacts/pyrus/src/components/ui/ActionButton.jsx`
-  - `artifacts/pyrus/src/components/ui/Button.jsx`
-  - `artifacts/pyrus/src/components/ui/ConfirmDialog.jsx`
-  - `artifacts/pyrus/src/components/ui/ConnectionStatusPill.jsx`
-  - `artifacts/pyrus/src/components/ui/NumberStepper.jsx`
-  - `artifacts/pyrus/src/components/ui/PulseDot.jsx`
-  - `artifacts/pyrus/src/components/ui/RangeSlider.jsx`
-  - `artifacts/pyrus/src/components/ui/SectionHeader.jsx`
-  - `artifacts/pyrus/src/components/ui/Slider.jsx`
-  - `artifacts/pyrus/src/components/ui/Stat.jsx`
-  - `artifacts/pyrus/src/components/ui/dropdown-menu.tsx`
-  - `artifacts/pyrus/src/components/ui/popover.tsx`
-  - `artifacts/pyrus/src/components/ui/tabs.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/StrategyTag.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/tones.js`
+  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.jsx`
   - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
-  - `artifacts/pyrus/src/features/platform/bridgeRuntimeModel.js`
+  - `artifacts/pyrus/src/features/platform/useLiveMarketFlow.js`
   - `artifacts/pyrus/src/lib/uiTokens.test.js`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
 - Validation state:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/ui/actionPrimitives.test.js src/components/platform/TablePagination.test.js src/features/platform/IbkrConnectionStatus.test.js src/lib/uiTokens.test.js` passed 70/70.
+  - `git diff --check -- ...` passed for the edited slice.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js src/features/market/marketChartWiring.test.js src/lib/uiTokens.test.js` passed 138/138 before final formatting cleanup.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/IbkrConnectionStatus.test.js src/lib/uiTokens.test.js` passed 69/69 after final formatting cleanup.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
-  - `git diff --check -- ...` passed for the changed files.
 - Next step:
-  - Next migration target should be signal-language/shared platform status helpers before page-specific screen files.
+  - Commit and push the shared-helper CSS-variable slice.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.

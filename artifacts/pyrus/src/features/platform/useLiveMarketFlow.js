@@ -5,7 +5,6 @@ import {
   listAggregateFlowEvents as listAggregateFlowEventsRequest,
   listFlowEvents as listFlowEventsRequest,
 } from "@workspace/api-client-react";
-import { T } from "../../lib/uiTokens";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
@@ -62,6 +61,14 @@ const EMPTY_FLOW_ANALYTICS = Object.freeze({
     puts: 0,
   }),
 });
+
+const CSS_COLOR = {
+  accent: "var(--ra-color-accent)",
+  amber: "var(--ra-amber-500)",
+  cyan: "var(--ra-cyan-500)",
+  red: "var(--ra-red-500)",
+  textMuted: "var(--ra-text-muted)",
+};
 
 const normalizeFlowUniverseSymbols = (symbols = []) => [
   ...new Set(
@@ -674,25 +681,25 @@ export const useLiveMarketFlow = (
     }
 
     let label = "No IBKR flow";
-    let color = T.textMuted;
+    let color = CSS_COLOR.textMuted;
     if (scanState.isPending || (scanState.isFetching && scanState.cycle === 0)) {
       label = "Loading flow";
-      color = T.accent;
+      color = CSS_COLOR.accent;
     } else if (providerSet.has("ibkr") && providerSet.has("polygon")) {
       label = "Mixed sources";
-      color = T.amber;
+      color = CSS_COLOR.amber;
     } else if (providerSet.has("ibkr")) {
       label = "IBKR snapshot live";
-      color = T.accent;
+      color = CSS_COLOR.accent;
     } else if (providerSet.has("polygon")) {
       label = "Polygon trade fallback";
-      color = T.cyan;
+      color = CSS_COLOR.cyan;
     } else if (failures.length || erroredSource) {
       label = "Flow source error";
-      color = T.red;
+      color = CSS_COLOR.red;
     } else if (fallbackUsed) {
       label = "Fallback empty";
-      color = T.textMuted;
+      color = CSS_COLOR.textMuted;
     }
 
     const lastScannedAt = normalizeScannedAtMap(coverageSource?.lastScannedAt);

@@ -17,8 +17,23 @@ import {
 } from "./streamSemantics";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-
 const EMPTY_ACCOUNTS = [];
+
+const CSS_COLOR = {
+  bg1: "var(--ra-surface-1)",
+  border: "var(--ra-border-default)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  textSec: "var(--ra-text-secondary)",
+  accent: "var(--ra-color-accent)",
+  green: "var(--ra-green-500)",
+  amber: "var(--ra-amber-500)",
+  red: "var(--ra-red-500)",
+  redBg: "var(--ra-red-bg)",
+};
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 export const formatIbkrPingMs = (value) => {
   if (!Number.isFinite(value)) {
@@ -503,7 +518,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (!connection?.configured) {
     return {
       label: "offline",
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       Icon: CircleOff,
       wave: "flat",
     };
@@ -514,7 +529,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (connection.competing) {
     return {
       label: "compete",
-      color: T.red,
+      color: CSS_COLOR.red,
       Icon: CircleAlert,
       wave: "slow",
     };
@@ -527,7 +542,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (isStreamLifecycleOnlyState(proof, streamMeta)) {
     return {
       label: "online",
-      color: T.green,
+      color: CSS_COLOR.green,
       Icon: CircleCheck,
       wave: "fast",
     };
@@ -555,7 +570,7 @@ export const getIbkrConnectionTone = (connection) => {
   ) {
     return {
       label: "stale",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       Icon: CircleAlert,
       wave: "flat",
     };
@@ -564,7 +579,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (connection.lastError && !connection.reachable) {
     return {
       label: "error",
-      color: T.red,
+      color: CSS_COLOR.red,
       Icon: CircleAlert,
       wave: "slow",
     };
@@ -573,7 +588,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (connection.reachable === false) {
     return {
       label: "offline",
-      color: T.red,
+      color: CSS_COLOR.red,
       Icon: CircleOff,
       wave: "flat",
     };
@@ -588,7 +603,7 @@ export const getIbkrConnectionTone = (connection) => {
     if (proof.accountsLoaded === false) {
       return {
         label: "checking",
-        color: T.accent,
+        color: CSS_COLOR.accent,
         Icon: Activity,
         wave: "flat",
       };
@@ -597,7 +612,7 @@ export const getIbkrConnectionTone = (connection) => {
     if (delayed) {
       return {
         label: "delayed",
-        color: T.amber,
+        color: CSS_COLOR.amber,
         Icon: Activity,
         wave: "flat",
       };
@@ -613,7 +628,7 @@ export const getIbkrConnectionTone = (connection) => {
     ) {
       return {
         label: "online",
-        color: T.green,
+        color: CSS_COLOR.green,
         Icon: CircleCheck,
         wave: "fast",
       };
@@ -623,7 +638,7 @@ export const getIbkrConnectionTone = (connection) => {
       if (isStreamLifecycleOnlyState(proof, streamMeta)) {
         return {
           label: "online",
-          color: T.green,
+          color: CSS_COLOR.green,
           Icon: CircleCheck,
           wave: "fast",
         };
@@ -646,7 +661,11 @@ export const getIbkrConnectionTone = (connection) => {
           : streamStale
             ? "stale"
             : "checking",
-      color: ready ? T.green : streamStale ? T.amber : T.accent,
+      color: ready
+        ? CSS_COLOR.green
+        : streamStale
+          ? CSS_COLOR.amber
+          : CSS_COLOR.accent,
       Icon: ready ? CircleCheck : Activity,
       wave: ready ? "fast" : "flat",
     };
@@ -655,7 +674,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (connection.reachable) {
     return {
       label: "login",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       Icon: PlugZap,
       wave: "medium",
     };
@@ -664,7 +683,7 @@ export const getIbkrConnectionTone = (connection) => {
   if (connection.lastError) {
     return {
       label: "error",
-      color: T.red,
+      color: CSS_COLOR.red,
       Icon: CircleAlert,
       wave: "slow",
     };
@@ -672,7 +691,7 @@ export const getIbkrConnectionTone = (connection) => {
 
   return {
     label: "ready",
-    color: T.textDim,
+    color: CSS_COLOR.textDim,
     Icon: RadioTower,
     wave: "flat",
   };
@@ -755,7 +774,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "misconfigured",
       label: "Misconfigured",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       detail: "Bridge URL or Gateway transport is not configured",
     };
   }
@@ -764,7 +783,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "competing",
       label: "Competing",
-      color: T.red,
+      color: CSS_COLOR.red,
       detail: "Another client is competing for the configured session",
     };
   }
@@ -777,7 +796,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "stale",
       label: "Stale",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       detail: "Gateway health is pending; waiting for the next successful check",
     };
   }
@@ -789,7 +808,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "offline",
       label: "Offline",
-      color: T.red,
+      color: CSS_COLOR.red,
       detail: "Gateway bridge is not reachable",
     };
   }
@@ -802,7 +821,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: streamMeta?.status || "reconnecting",
       label: streamMeta?.healthLabel || "Reconnect Needed",
-      color: streamMeta?.color || T.amber,
+      color: streamMeta?.color || CSS_COLOR.amber,
       detail:
         proof.strictReason === "gateway_socket_disconnected" ||
         proof.streamStateReason === "gateway_socket_disconnected"
@@ -819,7 +838,7 @@ export const resolveIbkrGatewayHealth = ({
     return {
       status: "reconnecting",
       label: streamMeta?.healthLabel || "Server Disconnected",
-      color: streamMeta?.color || T.amber,
+      color: streamMeta?.color || CSS_COLOR.amber,
       detail:
         streamMeta?.detail ||
         "Gateway API socket is open, but Gateway is disconnected from IBKR servers",
@@ -1008,7 +1027,11 @@ export const getIbkrGatewayBadges = ({
   ) {
     pushStreamBadge(status.status);
   } else if (status.status === "competing") {
-    badges.push({ label: "COMPETE", color: T.red, background: T.redBg });
+    badges.push({
+      label: "COMPETE",
+      color: CSS_COLOR.red,
+      background: CSS_COLOR.redBg,
+    });
   }
 
   const gapCount =
@@ -1134,7 +1157,9 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
   const duration = resolveWaveDuration(connection, tone);
   const prefersReducedMotion = usePrefersReducedMotion();
   const active = Boolean(duration) && !prefersReducedMotion;
-  const color = active ? streamStateTokenVar("healthy") : tone.color || T.textMuted;
+  const color = active
+    ? streamStateTokenVar("healthy")
+    : tone.color || CSS_COLOR.textMuted;
   const staticPoints = active ? SINE_WAVE_PHASES[0] : buildSineWavePoints(0);
 
   return (
@@ -1235,8 +1260,8 @@ export const IbkrConnectionLane = ({
         padding: sp("8px 14px"),
         minHeight: dim(40),
         minWidth: compact ? dim(140) : dim(200),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         whiteSpace: "nowrap",
       }}
@@ -1249,7 +1274,7 @@ export const IbkrConnectionLane = ({
           width: dim(28),
           height: dim(28),
           borderRadius: dim(RADII.pill),
-          background: `${tone.color}14`,
+          background: cssColorMix(tone.color, 8),
           flexShrink: 0,
         }}
       >
@@ -1266,7 +1291,7 @@ export const IbkrConnectionLane = ({
       >
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
@@ -1295,7 +1320,7 @@ export const IbkrConnectionLane = ({
       {!compact ? (
         <span
           style={{
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontSize: textSize("body"),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.medium,
