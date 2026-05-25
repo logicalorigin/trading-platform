@@ -1,13 +1,13 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 22:20 UTC`
+- Last updated: `2026-05-25 22:21 UTC`
 - Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with signal-language/shared platform status helpers.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
   - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
   - Because the repo has no ESLint config, `CSS_VARS_MIGRATION_PLAN.md` now specifies a source guard instead of a planned ESLint guard.
   - `uiTokens.test.js` now verifies the Phase 0 CSS variables in both theme roots and pins the current production `T.<color>` debt as an upper bound so it cannot expand during routine work.
-  - Phase 0 setup is committed in the latest commit.
+  - Phase 0 setup is committed and pushed.
   - Phase 1 shared-primitives edit is complete and pushed. Scope stayed on `primitives.jsx`, `Drawer.jsx`, and `BottomSheet.jsx`.
   - `primitives.jsx` now uses local CSS variable strings for shared color defaults and `color-mix()` for former hex-alpha surfaces; radial gauge default gradients preserve interpolation through CSS `color-mix()` when stops are CSS variables.
   - `Drawer.jsx` and `BottomSheet.jsx` overlay/surface/chrome colors now read CSS variables directly while keeping `T.sans` typography.
@@ -18,6 +18,7 @@
   - Shared-helper slice is implemented against `components/platform/signal-language`, `useLiveMarketFlow`, and `IbkrConnectionStatus`.
   - Those scoped files no longer have `T.<color>` reads; typography-only `T.sans`/`T.mono` reads remain where needed.
   - Production `T.<color>` debt measured at 104 files / 5032 reads after this slice, and the migration guard baseline has been lowered to that count.
+  - Shared-helper slice is committed and pushed in `9be2e81` (`Convert signal status helpers to CSS color vars`).
   - `marketIdentity.jsx` still has shared UI color debt, but is intentionally deferred as a separate identity/asset pass.
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
@@ -39,7 +40,7 @@
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
 - Next step:
-  - Commit and push the shared-helper CSS-variable slice.
+  - Continue Phase 1 with the next scoped CSS-variable cleanup pass; `marketIdentity.jsx` remains the next shared-ish identity/asset candidate, while chart canvas colors should stay a later special phase.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
