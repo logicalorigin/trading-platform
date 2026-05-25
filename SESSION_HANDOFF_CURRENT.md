@@ -8,7 +8,7 @@
   - Because the repo has no ESLint config, `CSS_VARS_MIGRATION_PLAN.md` now specifies a source guard instead of a planned ESLint guard.
   - `uiTokens.test.js` now verifies the Phase 0 CSS variables in both theme roots and pins the current production `T.<color>` debt as an upper bound so it cannot expand during routine work.
   - Phase 0 setup is committed in the latest commit.
-  - Phase 1 shared-primitives edit is complete and committed in the latest commit. Scope stayed on `primitives.jsx`, `Drawer.jsx`, and `BottomSheet.jsx`.
+  - Phase 1 shared-primitives edit is complete and pushed. Scope stayed on `primitives.jsx`, `Drawer.jsx`, and `BottomSheet.jsx`.
   - `primitives.jsx` now uses local CSS variable strings for shared color defaults and `color-mix()` for former hex-alpha surfaces; radial gauge default gradients preserve interpolation through CSS `color-mix()` when stops are CSS variables.
   - `Drawer.jsx` and `BottomSheet.jsx` overlay/surface/chrome colors now read CSS variables directly while keeping `T.sans` typography.
   - Production `T.<color>` debt is reduced from 130 files / 5309 reads to 127 files / 5205 reads, and the migration guard baseline now pins the lower count.
@@ -26,7 +26,7 @@
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
   - `git diff --check -- SESSION_HANDOFF_CURRENT.md artifacts/pyrus/src/components/platform/BottomSheet.jsx artifacts/pyrus/src/components/platform/Drawer.jsx artifacts/pyrus/src/components/platform/primitives.jsx artifacts/pyrus/src/components/platform/primitives.test.js artifacts/pyrus/src/lib/uiTokens.test.js` passed.
 - Next step:
-  - Push Phase 1. Next migration target should be the shared UI action/dialog/status controls before page-specific screen files.
+  - Next migration target should be the shared UI action/dialog/status controls before page-specific screen files.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
