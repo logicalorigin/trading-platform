@@ -139,6 +139,16 @@ test("marketing dashboard snapshot requires primary or next bearer token", async
     });
     assert.equal(bad.status, 401);
 
+    const streamMissing = await fetch(
+      `${baseUrl}/marketing/shadow-dashboard/stream`,
+    );
+    assert.equal(streamMissing.status, 401);
+
+    const streamBad = await fetch(`${baseUrl}/marketing/shadow-dashboard/stream`, {
+      headers: { authorization: "Bearer wrong-token" },
+    });
+    assert.equal(streamBad.status, 401);
+
     const primary = await fetch(
       `${baseUrl}/marketing/shadow-dashboard/snapshot?equityRange=YTD&eventLimit=25`,
       { headers: { authorization: "Bearer primary-token" } },

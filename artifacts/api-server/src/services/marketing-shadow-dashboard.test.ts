@@ -82,14 +82,31 @@ test("marketing shadow dashboard composes exact shadow account and algo fields",
     getPositions: async () =>
       ({
         accountId: "shadow",
-        positions: [{ id: "pos-1", symbol: "NVDA", marketValue: 1024 }],
+        positions: [
+          {
+            id: "pos-1",
+            accountId: "shadow",
+            symbol: "NVDA",
+            marketValue: 1024,
+            providerAccountId: "DU1234567",
+            debug: { quote: true },
+          },
+        ],
         updatedAt: new Date("2026-05-22T20:55:00.000Z"),
       }) as never,
     getClosedTrades: async () =>
       ({
         accountId: "shadow",
         trades: [
-          { id: "t1", symbol: "AMD", realizedPnl: 124, commissions: 1.35 },
+          {
+            id: "t1",
+            accountId: "shadow",
+            symbol: "AMD",
+            realizedPnl: 124,
+            commissions: 1.35,
+            metadata: { entry: { debug: true } },
+            providerAccountId: "DU1234567",
+          },
           { id: "t2", symbol: "TSLA", realizedPnl: -54, commissions: 1.35 },
         ],
         summary: {
@@ -106,7 +123,17 @@ test("marketing shadow dashboard composes exact shadow account and algo fields",
         tab: input?.tab,
         orders:
           input?.tab === "history"
-            ? [{ id: "order-1", symbol: "AMD", status: "filled" }]
+            ? [
+                {
+                  id: "order-1",
+                  accountId: "shadow",
+                  symbol: "AMD",
+                  status: "filled",
+                  sourceEventId: "event-1",
+                  providerAccountId: "DU1234567",
+                  debug: { payload: true },
+                },
+              ]
             : [],
         updatedAt: new Date("2026-05-22T20:54:00.000Z"),
       }) as never,
@@ -190,6 +217,25 @@ test("marketing shadow dashboard composes exact shadow account and algo fields",
   assert.equal(payload.status.stale, false);
   assert.equal(payload.account.summary.currency, "USD");
   assert.equal(payload.account.summary.netLiquidation, 46842.73);
+  assert.deepEqual(payload.account.positions[0], {
+    id: "pos-1",
+    accountId: "shadow",
+    symbol: "NVDA",
+    marketValue: 1024,
+  });
+  assert.deepEqual(payload.account.closedTrades[0], {
+    id: "t1",
+    accountId: "shadow",
+    symbol: "AMD",
+    realizedPnl: 124,
+    commissions: 1.35,
+  });
+  assert.deepEqual(payload.account.orders.history[0], {
+    id: "order-1",
+    accountId: "shadow",
+    symbol: "AMD",
+    status: "filled",
+  });
   assert.deepEqual(payload.account.equityHistory, [
     { t: "2026-05-21T20:00:00.000Z", nav: 46628.35 },
     { t: "2026-05-22T20:55:00.000Z", nav: 46842.73 },

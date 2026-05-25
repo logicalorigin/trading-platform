@@ -29,6 +29,9 @@ export function isExpectedStreamCloseForLogging(input: {
   if (!isLongLivedStreamUrl(input.url) || input.statusCode >= 500) {
     return false;
   }
+  if (input.statusCode >= 400 && !input.err) {
+    return false;
+  }
   if (!input.err) {
     return true;
   }

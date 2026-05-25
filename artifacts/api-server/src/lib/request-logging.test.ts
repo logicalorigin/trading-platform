@@ -102,6 +102,22 @@ test("API request logging silences expected stream closes except 5xx failures", 
   );
   assert.equal(
     resolveApiRequestLogLevel({
+      url: "/api/streams/accounts/page",
+      statusCode: 401,
+      responseTimeMs: 40,
+    }),
+    "warn",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/api/marketing/shadow-dashboard/stream",
+      statusCode: 404,
+      responseTimeMs: 40,
+    }),
+    "warn",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
       url: "/api/streams/broker",
       statusCode: 500,
       responseTimeMs: 40_000,

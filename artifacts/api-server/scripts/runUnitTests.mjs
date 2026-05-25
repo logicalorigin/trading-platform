@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const unitTestFiles = [
   "../../lib/account-math/src/index.test.ts",
@@ -48,7 +51,6 @@ const unitTestFiles = [
   "src/services/option-chain-batch.test.ts",
   "src/services/signal-options-automation.test.ts",
   "src/services/shadow-account.test.ts",
-  "src/services/shadow-equity-forward-worker.test.ts",
   "src/services/flow-universe.test.ts",
   "src/services/options-flow-scanner.test.ts",
   "src/services/ibkr-lane-policy.test.ts",
@@ -64,10 +66,24 @@ const childEnv = { ...process.env };
 delete childEnv.REPLIT_LD_LIBRARY_PATH;
 delete childEnv.LD_LIBRARY_PATH;
 
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const missingUnitTestFiles = unitTestFiles.filter(
+  (file) => !existsSync(resolve(packageRoot, file)),
+);
+
+if (missingUnitTestFiles.length > 0) {
+  console.error("Unit test runner references missing files:");
+  for (const file of missingUnitTestFiles) {
+    console.error(`  - ${file}`);
+  }
+  process.exit(1);
+}
+
 const child = spawn(
   process.execPath,
   ["--import", "tsx", "--test", ...unitTestFiles],
   {
+    cwd: packageRoot,
     env: childEnv,
     stdio: "inherit",
   },

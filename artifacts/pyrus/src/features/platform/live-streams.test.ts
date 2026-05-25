@@ -127,6 +127,29 @@ test("account page stream is owned by the visible account screen", () => {
   assert.match(accountScreenSource, /placeholderData:\s*retainPreviousData/);
 });
 
+test("account page real requests follow the frame selected account", () => {
+  const accountScreenSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const platformRouterSource = readFileSync(
+    new URL("./PlatformScreenRouter.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(accountScreenSource, /accountViewId/);
+  assert.match(
+    accountScreenSource,
+    /const activeAccountId = selectedAccountId \|\| "combined";/,
+  );
+  assert.match(
+    accountScreenSource,
+    /const accountRequestId = shadowMode \? SHADOW_ACCOUNT_ID : activeAccountId;/,
+  );
+  assert.match(platformRouterSource, /selectedAccountId=\{primaryAccountId\}/);
+  assert.doesNotMatch(platformRouterSource, /onSelectTradingAccount/);
+});
+
 test("account page owns one visible option quote stream for positions surfaces", () => {
   const accountScreenSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),

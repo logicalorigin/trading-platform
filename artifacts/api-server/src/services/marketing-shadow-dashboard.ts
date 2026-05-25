@@ -290,6 +290,123 @@ function buildTradeStats(closedTrades: ShadowClosedTrades) {
   };
 }
 
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickMarketingFields(
+  value: unknown,
+  fields: string[],
+): Record<string, unknown> {
+  const record = recordOrNull(value);
+  if (!record) {
+    return {};
+  }
+
+  return fields.reduce<Record<string, unknown>>((next, field) => {
+    if (record[field] !== undefined) {
+      next[field] = record[field];
+    }
+    return next;
+  }, {});
+}
+
+function marketingAccountPositions(positions: ShadowPositions): unknown[] {
+  return (positions.positions ?? []).map((position) =>
+    pickMarketingFields(position, [
+      "id",
+      "accountId",
+      "accounts",
+      "symbol",
+      "marketDataSymbol",
+      "description",
+      "assetClass",
+      "optionContract",
+      "underlyingMarket",
+      "sector",
+      "quantity",
+      "averageCost",
+      "mark",
+      "dayChange",
+      "dayChangePercent",
+      "unrealizedPnl",
+      "unrealizedPnlPercent",
+      "marketValue",
+      "weightPercent",
+      "betaWeightedDelta",
+      "source",
+      "sourceType",
+      "strategyLabel",
+      "attributionStatus",
+    ]),
+  );
+}
+
+function marketingClosedTrades(closedTrades: ShadowClosedTrades): unknown[] {
+  return (closedTrades.trades ?? []).map((trade) =>
+    pickMarketingFields(trade, [
+      "id",
+      "source",
+      "accountId",
+      "symbol",
+      "side",
+      "assetClass",
+      "quantity",
+      "openDate",
+      "closeDate",
+      "avgOpen",
+      "avgClose",
+      "realizedPnl",
+      "realizedPnlPercent",
+      "holdDurationMinutes",
+      "fees",
+      "commissions",
+      "currency",
+      "sourceType",
+      "strategyLabel",
+      "exitReason",
+      "optionRight",
+      "expirationDate",
+      "dte",
+      "strike",
+      "signalPrice",
+      "peakPrice",
+      "mfePercent",
+      "givebackPercent",
+      "premiumAtRisk",
+    ]),
+  );
+}
+
+function marketingOrders(orders: ShadowOrders): unknown[] {
+  return (orders.orders ?? []).map((order) =>
+    pickMarketingFields(order, [
+      "id",
+      "accountId",
+      "symbol",
+      "side",
+      "type",
+      "assetClass",
+      "quantity",
+      "filledQuantity",
+      "limitPrice",
+      "stopPrice",
+      "timeInForce",
+      "status",
+      "placedAt",
+      "filledAt",
+      "updatedAt",
+      "averageFillPrice",
+      "commission",
+      "source",
+      "sourceType",
+      "strategyLabel",
+    ]),
+  );
+}
+
 function selectMarketingDeployment(deployments: AlgoDeployment[]) {
   return (
     deployments.find(
@@ -493,11 +610,11 @@ export async function fetchMarketingShadowDashboardSnapshot(
         totalPnlPercent: metricValue(summary.metrics, "totalPnlPercent"),
       },
       equityHistory: buildEquityHistory(equityHistory),
-      positions: positions.positions as unknown[],
-      closedTrades: closedTrades.trades as unknown[],
+      positions: marketingAccountPositions(positions),
+      closedTrades: marketingClosedTrades(closedTrades),
       orders: {
-        working: workingOrders.orders as unknown[],
-        history: historyOrders.orders as unknown[],
+        working: marketingOrders(workingOrders),
+        history: marketingOrders(historyOrders),
       },
       risk,
       allocation,

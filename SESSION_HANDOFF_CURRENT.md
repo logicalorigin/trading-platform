@@ -1,27 +1,34 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 18:55 UTC`
-- Current request: clean/merge the dirty worktree and commit the recovered PYRUS migration work.
+- Last updated: `2026-05-25 19:40 UTC`
+- Current request: proceed with the cleanup from the combined review/wiring action plan, without adding new UI surfaces.
 - Current status:
-  - Worktree pileup has been classified and staged as a coherent PYRUS migration set: RayAlgo paths are renamed/deleted, `artifacts/pyrus/` and `lib/pyrus-signals-core/` are staged, and the API/platform/backtest/script changes are staged with them.
-  - Added `.gitignore` coverage for `artifacts/api-server/data/ibkr-remote-desktops.json` and the accidental root `'expirationDate'` shell artifact; the zero-byte accidental file was removed and the sensitive IBKR registry remains unstaged/ignored.
-  - Fixed validation drift found during commit prep: documented five missing env vars in `.env.example`, updated stale Pyrus unit assertions for dynamic flow-history polling, and replaced the deleted `AccountHeaderStrip.jsx` style-scan path with `AccountScreen.jsx`.
+  - Removed stale missing unit-test entries from Pyrus/API runners and added runner preflight checks so future missing listed files fail clearly before `node --test` starts.
+  - Fixed stream request logging so unauthenticated/not-found stream responses stay visible as warnings while explicit client stream closes can remain silent.
+  - Cleaned Account page account selection: removed dead `accountViewId` ownership and the unused `onSelectTradingAccount` path, so real Account requests follow the frame/header `selectedAccountId` with `"combined"` only as fallback.
+  - Tightened the existing marketing shadow dashboard DTO boundary for external feed use: positions, closed trades, and orders are projected to marketing-safe fields instead of passing through raw shadow rows with `providerAccountId`, `debug`, `metadata`, or `sourceEventId`.
 - Changed files this pass:
-  - `.env.example`
-  - `.gitignore`
   - `SESSION_HANDOFF_CURRENT.md`
-  - `artifacts/pyrus/src/screens/TradeScreen.search-handlers.test.mjs`
-  - `artifacts/pyrus/src/lib/uiTokens.test.js`
+  - `artifacts/api-server/scripts/runUnitTests.mjs`
+  - `artifacts/api-server/src/lib/request-logging.ts`
+  - `artifacts/api-server/src/lib/request-logging.test.ts`
+  - `artifacts/api-server/src/routes/marketing.test.ts`
+  - `artifacts/api-server/src/services/marketing-shadow-dashboard.ts`
+  - `artifacts/api-server/src/services/marketing-shadow-dashboard.test.ts`
+  - `artifacts/pyrus/scripts/runUnitTests.mjs`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/PlatformScreenRouter.jsx`
+  - `artifacts/pyrus/src/features/platform/live-streams.test.ts`
+  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
 - Validation state:
-  - `git diff --cached --check` passed.
-  - `pnpm run audit:guards` passed, including the required `audit:replit-startup`, env, markdown path, branding, and API-codegen drift guards.
-  - `pnpm run build` passed, including root typecheck and workspace builds; Vite emitted the existing chunk-size warning only.
-  - `pnpm --filter @workspace/pyrus run test:unit` passed 1094/1094.
-  - `IBKR_BRIDGE_REMOTE_DESKTOPS_FILE=/tmp/pyrus-validation-ibkr-remote-desktops.json pnpm --filter @workspace/api-server run test:unit` passed 744/744.
-  - `pnpm --dir scripts exec node --import tsx --test ./src/pyrus-signals-options-sweep.test.ts ./src/signal-options-exit-policy-sweep.test.ts ./src/shadow-options-management-review.test.ts` passed 12/12.
-  - No unstaged diff remains after validation.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/live-streams.test.ts` passed 41/41.
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/marketing-shadow-dashboard.test.ts src/routes/marketing.test.ts src/lib/request-logging.test.ts` passed 11/11.
+  - `pnpm --filter @workspace/pyrus run test:unit` passed 1095/1095.
+  - `pnpm --filter @workspace/api-server run test:unit` passed 744/744.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
 - Next step:
-  - Commit the staged migration set, then confirm normal `git status` is clean aside from the ignored local IBKR runtime registry.
+  - Review final diff, stage only relevant cleanup files, and commit.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.

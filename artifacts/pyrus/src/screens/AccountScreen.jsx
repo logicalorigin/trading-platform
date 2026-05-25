@@ -467,7 +467,6 @@ const AccountScreenInner = ({
   session,
   accounts = [],
   selectedAccountId,
-  onSelectTradingAccount,
   environment,
   brokerConfigured,
   brokerAuthenticated,
@@ -484,7 +483,6 @@ const AccountScreenInner = ({
     userPreferences.appearance.maskBalances ||
       userPreferences.privacy.hideAccountValues,
   );
-  const [accountViewId, setAccountViewId] = useState("combined");
   const [range, setRange] = useState(() =>
     normalizeAccountRange(readAccountWorkspaceDefault("accountRange", "ALL")),
   );
@@ -544,18 +542,13 @@ const AccountScreenInner = ({
     };
   }, []);
 
-  useEffect(() => {
-    if (!accounts.length && accountViewId !== "combined") {
-      setAccountViewId("combined");
-    }
-  }, [accountViewId, accounts]);
   const markAccountPanelActivated = useCallback((panelId) => {
     setActivatedAccountPanels((current) =>
       current[panelId] ? current : { ...current, [panelId]: true },
     );
   }, []);
 
-  const activeAccountId = accountViewId || selectedAccountId || "combined";
+  const activeAccountId = selectedAccountId || "combined";
   const shadowMode = accountSection === "shadow";
   const effectiveOrderTab =
     shadowMode && orderTab === "working" ? "history" : orderTab;

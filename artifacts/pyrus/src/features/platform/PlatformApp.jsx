@@ -2921,7 +2921,6 @@ export default function PlatformApp() {
       onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
       onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
       onJumpToTradeFromFlow={handleJumpToTradeFromFlow}
-      onSelectTradingAccount={setSelectedAccountId}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}
       onJumpToTradeFromResearch={handleJumpToTradeFromResearch}
       onJumpToTradeFromSignalOptionsCandidate={

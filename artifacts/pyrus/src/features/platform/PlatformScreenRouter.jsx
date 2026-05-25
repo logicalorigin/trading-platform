@@ -99,7 +99,6 @@ export const PlatformScreenRouter = ({
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
   onJumpToTradeFromFlow,
-  onSelectTradingAccount,
   onJumpToTradeFromAccount,
   onJumpToTradeFromResearch,
   onJumpToTradeFromSignalOptionsCandidate,
@@ -206,7 +205,6 @@ export const PlatformScreenRouter = ({
           session={session}
           accounts={accounts}
           selectedAccountId={primaryAccountId}
-          onSelectTradingAccount={onSelectTradingAccount}
           environment={environment}
           brokerConfigured={brokerConfigured}
           brokerAuthenticated={brokerAuthenticated}
