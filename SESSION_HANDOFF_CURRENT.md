@@ -1,34 +1,27 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 19:40 UTC`
-- Current request: proceed with the cleanup from the combined review/wiring action plan, without adding new UI surfaces.
+- Last updated: `2026-05-25 21:17 UTC`
+- Current request: proceed with Phase 0 of the PYRUS theme color CSS-variable cleanup, without starting broad JSX conversion yet.
 - Current status:
-  - Removed stale missing unit-test entries from Pyrus/API runners and added runner preflight checks so future missing listed files fail clearly before `node --test` starts.
-  - Fixed stream request logging so unauthenticated/not-found stream responses stay visible as warnings while explicit client stream closes can remain silent.
-  - Cleaned Account page account selection: removed dead `accountViewId` ownership and the unused `onSelectTradingAccount` path, so real Account requests follow the frame/header `selectedAccountId` with `"combined"` only as fallback.
-  - Tightened the existing marketing shadow dashboard DTO boundary for external feed use: positions, closed trades, and orders are projected to marketing-safe fields instead of passing through raw shadow rows with `providerAccountId`, `debug`, `metadata`, or `sourceEventId`.
+  - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
+  - Phase 0 setup is now implemented: `index.css` defines the missing dark/light CSS variables for accent state backgrounds, dim semantic tones, semantic backgrounds, and `--ra-on-accent`.
+  - Because the repo has no ESLint config, `CSS_VARS_MIGRATION_PLAN.md` now specifies a source guard instead of a planned ESLint guard.
+  - `uiTokens.test.js` now verifies the Phase 0 CSS variables in both theme roots and pins the current production `T.<color>` debt as an upper bound so it cannot expand during routine work.
+  - Phase 0 setup is committed in the latest commit.
+  - Current production `T.<color>` debt is 130 files / 5309 occurrences in `artifacts/pyrus/src` excluding research data and tests. Top clusters: `features/research/PhotonicsObservatory.jsx` 449, `screens/FlowScreen.jsx` 381, `features/trade/TradeOrderTicket.jsx` 193, `screens/GexScreen.jsx` 145, `screens/SettingsScreen.jsx` 136, `screens/DiagnosticsScreen.jsx` 109, `features/platform/PlatformWatchlist.jsx` 103, `HeaderBroadcastScrollerStack.jsx` 101.
+  - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
-  - `artifacts/api-server/scripts/runUnitTests.mjs`
-  - `artifacts/api-server/src/lib/request-logging.ts`
-  - `artifacts/api-server/src/lib/request-logging.test.ts`
-  - `artifacts/api-server/src/routes/marketing.test.ts`
-  - `artifacts/api-server/src/services/marketing-shadow-dashboard.ts`
-  - `artifacts/api-server/src/services/marketing-shadow-dashboard.test.ts`
-  - `artifacts/pyrus/scripts/runUnitTests.mjs`
-  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
-  - `artifacts/pyrus/src/features/platform/PlatformScreenRouter.jsx`
-  - `artifacts/pyrus/src/features/platform/live-streams.test.ts`
-  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
+  - `CSS_VARS_MIGRATION_PLAN.md`
+  - `artifacts/pyrus/src/index.css`
+  - `artifacts/pyrus/src/lib/uiTokens.test.js`
 - Validation state:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/live-streams.test.ts` passed 41/41.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/marketing-shadow-dashboard.test.ts src/routes/marketing.test.ts src/lib/request-logging.test.ts` passed 11/11.
-  - `pnpm --filter @workspace/pyrus run test:unit` passed 1095/1095.
-  - `pnpm --filter @workspace/api-server run test:unit` passed 744/744.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/lib/uiTokens.test.js` passed 24/24.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
-  - `pnpm --filter @workspace/api-server run typecheck` passed.
+  - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
+  - `git diff --check -- CSS_VARS_MIGRATION_PLAN.md SESSION_HANDOFF_CURRENT.md artifacts/pyrus/src/index.css artifacts/pyrus/src/lib/uiTokens.test.js` passed.
 - Next step:
-  - Review final diff, stage only relevant cleanup files, and commit.
+  - Start Phase 1 with high-leverage shared primitives before page-specific JSX color replacements; keep charting color conversion as a later special phase.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.

@@ -260,22 +260,18 @@ Light mode (in `:root[data-pyrus-theme="light"], :root[data-pyrus-theme="light"]
 
 (Both accent presets — `pyrus`, `coral`, `amber`, `green`, `aurora` — override `--ra-color-accent` and a few related variables at the `:root[data-pyrus-accent-preset="..."]` selectors. If `--ra-accent-dim`/`--ra-accent-hover-bg`/`--ra-accent-active-bg`/`--ra-on-accent` should differ per accent preset, audit the preset blocks and add overrides. Default behavior: leave preset blocks unchanged — the new variables fall back to the `:root` values, which is acceptable as a starting point.)
 
-### 4.2 ESLint guard
+### 4.2 Source guard
 
-Add an ESLint `no-restricted-syntax` rule (or equivalent) to flag NEW inline-style reads of `T.<colorKey>`:
+The repo currently has no ESLint config. Use the existing source-audit style in
+`artifacts/pyrus/src/lib/uiTokens.test.js` instead:
 
-```json
-{
-  "rules": {
-    "no-restricted-syntax": ["warn", {
-      "selector": "MemberExpression[object.name='T'][property.name=/^(bg|border|text|accent|green|red|amber|blue|purple|cyan|pink|on|pulse)/]",
-      "message": "Use var(--ra-*) directly. T proxy color access is deprecated; see plan file. Typography (T.sans/T.display/etc.) is fine."
-    }]
-  }
-}
-```
+- Count production `T.<colorKey>` reads under `artifacts/pyrus/src`.
+- Exclude tests and generated research data.
+- Pin the current migration baseline as an upper bound.
 
-Severity `warn` during migration to avoid blocking unrelated work; flip to `error` after Phase 5.
+This lets each migration PR reduce the count without maintaining a huge
+allowlist, while preventing the legacy color path from expanding during routine
+work. After Phase 5, replace the upper-bound guard with a zero-read assertion.
 
 ### 4.3 Optional safety net (recommended)
 
@@ -315,7 +311,7 @@ Remove in Phase 5 cleanup.
 - `pnpm -F @workspace/pyrus typecheck` passes
 - `pnpm -F @workspace/pyrus test:unit` passes
 - New CSS variables resolve to documented values in both `:root` and light override (eyeball in DevTools)
-- ESLint guard fires on a new `T.bg0` test usage
+- Source guard fails if production `T.<color>` debt expands
 
 ---
 

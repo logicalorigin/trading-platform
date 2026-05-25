@@ -35,6 +35,8 @@ const REQUIRED_PALETTE_KEYS = [
   "textMuted",
   "accent",
   "accentDim",
+  "accentHoverBg",
+  "accentActiveBg",
   "green",
   "greenDim",
   "greenBg",
@@ -85,6 +87,53 @@ const LEGACY_STYLE_GUARD_FILES = [
   "features/research/PhotonicsObservatory.jsx",
   "features/research/components/ResearchCalendarView.jsx",
 ];
+
+const CSS_COLOR_TOKEN_PATTERN =
+  /\bT\.(bg0|bg1|bg2|bg3|bg4|border|borderLight|borderFocus|text|textSec|textDim|textMuted|accent|accentDim|accentHoverBg|accentActiveBg|blue|purple|cyan|pink|green|greenDim|greenBg|red|redDim|redBg|amber|amberDim|amberBg|pulseLive|pulseAlert|pulseLoss|onAccent)\b/g;
+
+const CSS_COLOR_TOKEN_MIGRATION_BASELINE = {
+  fileCount: 130,
+  occurrenceCount: 5309,
+};
+
+const PHASE_ZERO_CSS_COLOR_VARS = {
+  dark: [
+    ["--ra-accent-dim", "#08284D"],
+    ["--ra-accent-hover-bg", "rgba(22, 139, 255, 0.12)"],
+    ["--ra-accent-active-bg", "rgba(22, 139, 255, 0.22)"],
+    ["--ra-green-dim", "#173A2A"],
+    ["--ra-green-bg", "rgba(46, 216, 137, 0.11)"],
+    ["--ra-red-dim", "#451522"],
+    ["--ra-red-bg", "rgba(255, 48, 72, 0.12)"],
+    ["--ra-amber-dim", "#42321A"],
+    ["--ra-amber-bg", "rgba(233, 185, 73, 0.12)"],
+    ["--ra-on-accent", "#FFFFFF"],
+  ],
+  light: [
+    ["--ra-accent-dim", "#DCEBFF"],
+    ["--ra-accent-hover-bg", "rgba(11, 102, 216, 0.08)"],
+    ["--ra-accent-active-bg", "rgba(11, 102, 216, 0.16)"],
+    ["--ra-green-dim", "#D4EDE3"],
+    ["--ra-green-bg", "rgba(7, 128, 95, 0.09)"],
+    ["--ra-red-dim", "#F7D7DD"],
+    ["--ra-red-bg", "rgba(217, 40, 64, 0.10)"],
+    ["--ra-amber-dim", "#F4E6C7"],
+    ["--ra-amber-bg", "rgba(184, 117, 7, 0.10)"],
+    ["--ra-on-accent", "#FFFFFF"],
+  ],
+};
+
+const readIndexCss = () =>
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "index.css"), "utf8");
+
+const escapeRegExp = (value) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const cssDeclarationPattern = (name, value) =>
+  new RegExp(`${escapeRegExp(name)}:\\s*${escapeRegExp(value)};`);
+
+const countCssColorTokenReads = (source) =>
+  (source.match(CSS_COLOR_TOKEN_PATTERN) || []).length;
 
 test("THEMES.dark and THEMES.light expose the full warm palette", () => {
   for (const mode of ["dark", "light"]) {
@@ -137,6 +186,25 @@ test("redesign brand accent is the PYRUS blue family on both themes", () => {
   assert.equal(THEMES.light.accent, "#0B66D8");
   assert.equal(THEMES.dark.borderFocus, "#168BFF");
   assert.equal(THEMES.light.borderFocus, "#0B66D8");
+});
+
+test("theme CSS exposes phase-zero color variables in dark and light roots", () => {
+  const cssSource = readIndexCss();
+  const darkRoot = cssSource.match(/^:root \{([\s\S]*?)^\}/m)?.[1] ?? "";
+  const lightRoot =
+    cssSource.match(
+      /^:root\[data-pyrus-theme="light"\],\n:root\[data-pyrus-theme="light"\] \{([\s\S]*?)^\}/m,
+    )?.[1] ?? "";
+
+  assert.ok(darkRoot, "dark :root block should be present");
+  assert.ok(lightRoot, "light theme root block should be present");
+
+  for (const [name, value] of PHASE_ZERO_CSS_COLOR_VARS.dark) {
+    assert.match(darkRoot, cssDeclarationPattern(name, value));
+  }
+  for (const [name, value] of PHASE_ZERO_CSS_COLOR_VARS.light) {
+    assert.match(lightRoot, cssDeclarationPattern(name, value));
+  }
 });
 
 test("pulse-state aliases mirror green/amber/red on both themes", () => {
@@ -215,6 +283,31 @@ test("files using textSize import it from the concrete uiTokens module", () => {
     .sort();
 
   assert.deepEqual(offenders, []);
+});
+
+test("CSS variable migration guard does not allow legacy T color debt to expand", () => {
+  const offenders = collectSourceFiles(SRC_DIR)
+    .map((filePath) => ({
+      filePath,
+      relativePath: relative(SRC_DIR, filePath).replaceAll("\\", "/"),
+    }))
+    .filter(({ relativePath }) => !relativePath.includes(".test."))
+    .filter(({ relativePath }) => !relativePath.startsWith("features/research/data/"))
+    .map(({ filePath, relativePath }) => ({
+      relativePath,
+      count: countCssColorTokenReads(readFileSync(filePath, "utf8")),
+    }))
+    .filter((entry) => entry.count > 0);
+  const occurrenceCount = offenders.reduce((sum, entry) => sum + entry.count, 0);
+
+  assert.ok(
+    offenders.length <= CSS_COLOR_TOKEN_MIGRATION_BASELINE.fileCount,
+    `legacy T color files increased from ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.fileCount} to ${offenders.length}`,
+  );
+  assert.ok(
+    occurrenceCount <= CSS_COLOR_TOKEN_MIGRATION_BASELINE.occurrenceCount,
+    `legacy T color reads increased from ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.occurrenceCount} to ${occurrenceCount}`,
+  );
 });
 
 test("MAX_WIDTHS exposes the three documented sizes plus full-width opt-out", () => {
