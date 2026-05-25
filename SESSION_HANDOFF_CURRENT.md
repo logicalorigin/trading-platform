@@ -1,6 +1,6 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-25 22:27 UTC`
+- Last updated: `2026-05-25 22:28 UTC`
 - Current request: continue Phase 1 of the PYRUS theme color CSS-variable cleanup with the next scoped identity/helper pass.
 - Current status:
   - No production `TODO`/`FIXME`/`HACK`/`XXX` markers were found under `artifacts`, `lib`, or `scripts` after excluding tests and generated research data.
@@ -21,6 +21,7 @@
   - Shared-helper slice is committed and pushed in `9be2e81` (`Convert signal status helpers to CSS color vars`).
   - `marketIdentity.jsx` identity/asset helper conversion is implemented. Its scoped `T.<color>` reads are removed while preserving typography tokens.
   - Production `T.<color>` debt measured at 103 files / 5021 reads after this slice, and the migration guard baseline has been lowered to that count.
+  - Market identity slice is committed and pushed in `02a9280` (`Convert market identity to CSS color vars`).
   - Charting `theme.*`/`withAlpha` hex-color paths in `ResearchChartSurface.tsx` and `ResearchChartFrame.tsx` should remain a later special phase because canvas/chart libraries may need real colors instead of CSS vars.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
@@ -32,7 +33,7 @@
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `pnpm --filter @workspace/pyrus run test:unit` passed 1097/1097.
 - Next step:
-  - Commit and push the `marketIdentity.jsx` CSS-variable slice.
+  - Continue Phase 1 with the next scoped shared-platform pass; likely candidates are `HeaderBroadcastScrollerStack.jsx` and `PlatformWatchlist.jsx`.
 
 - Last updated: `2026-05-25 18:04 UTC`
 - Current request: diagnose why sessions dropped and also inspect directory pileup.
