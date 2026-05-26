@@ -8,10 +8,27 @@ import {
   rememberRootCrashDiagnostic,
 } from "./crashDiagnostics";
 
-const AppContent = lazyWithRetry(async () => {
-  const mod = await import("./AppContent");
+let appContentImport: Promise<{ default: typeof import("./AppContent").default }> | null =
+  null;
 
-  return { default: mod.default };
+const loadAppContent = () => {
+  if (!appContentImport) {
+    appContentImport = import("./AppContent")
+      .then((mod) => ({ default: mod.default }))
+      .catch((error) => {
+        appContentImport = null;
+        throw error;
+      });
+  }
+  return appContentImport;
+};
+
+if (typeof window !== "undefined") {
+  void loadAppContent();
+}
+
+const AppContent = lazyWithRetry(async () => {
+  return loadAppContent();
 }, {
   label: "AppContent",
 });

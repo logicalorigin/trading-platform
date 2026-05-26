@@ -107,7 +107,7 @@ const activeSignalOptionsRunMetadata = new Map<
 >();
 
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250;
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 3;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 10;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
@@ -3203,6 +3203,16 @@ function isRetryableSignalOptionsSkip(
     return true;
   }
 
+  if (
+    payload.preflight === true &&
+    GATEWAY_READINESS_SKIP_REASONS.has(reason)
+  ) {
+    return (
+      options?.gatewayReadinessBlockEnabled === false ||
+      options?.gatewayReady === true
+    );
+  }
+
   if (EXECUTION_BLOCKER_SKIP_REASONS.has(reason)) {
     return !skipPayloadHasSelectedContract(payload);
   }
@@ -3829,7 +3839,7 @@ function buildCockpitPipeline(input: {
       status: pressurePauseState.paused
         ? "attention"
         : stageStatus({
-            blocked: !input.readiness.ready,
+            blocked: !input.readiness.ready && !scanState.running,
             running: scanState.running,
             count: input.deployment.lastEvaluatedAt ? 1 : 0,
           }),
@@ -5749,6 +5759,23 @@ async function processEntryCandidate(input: {
       signalKey: input.signalKey,
       reason: entryGate.reason ?? "entry_gate_failed",
       detail: { entryGate },
+    });
+    return false;
+  }
+
+  if (
+    input.executionBlocker &&
+    GATEWAY_READINESS_SKIP_REASONS.has(input.executionBlocker.reason)
+  ) {
+    await emitSkippedCandidate({
+      deployment: input.deployment,
+      candidate: input.candidate,
+      signalKey: input.signalKey,
+      reason: input.executionBlocker.reason,
+      detail: {
+        ...(input.executionBlocker.detail ?? {}),
+        preflight: true,
+      },
     });
     return false;
   }

@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useEffect,
   useMemo,
   useRef,
@@ -28,9 +30,6 @@ import {
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
-import { OperationsPositionsTable } from "./OperationsPositionsTable";
-import { OperationsSignalDrill } from "./OperationsSignalDrill";
-import { OperationsSignalTable } from "./OperationsSignalTable";
 import { OperationsStatusOrb } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import {
@@ -47,6 +46,41 @@ import {
 import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
+
+const LazyOperationsPositionsTable = lazy(() =>
+  import("./OperationsPositionsTable").then((module) => ({
+    default: module.OperationsPositionsTable,
+  })),
+);
+const LazyOperationsSignalDrill = lazy(() =>
+  import("./OperationsSignalDrill").then((module) => ({
+    default: module.OperationsSignalDrill,
+  })),
+);
+const LazyOperationsSignalTable = lazy(() =>
+  import("./OperationsSignalTable").then((module) => ({
+    default: module.OperationsSignalTable,
+  })),
+);
+
+const AlgoDeferredBlock = ({ label }) => (
+  <div
+    data-testid="algo-deferred-block"
+    style={{
+      minHeight: dim(160),
+      display: "grid",
+      placeItems: "center",
+      border: `1px dashed ${CSS_COLOR.border}`,
+      borderRadius: dim(RADII.sm),
+      color: CSS_COLOR.textDim,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      background: CSS_COLOR.bg1,
+    }}
+  >
+    {label}
+  </div>
+);
 
 const EmptyOperationsState = ({
   candidateDrafts,
@@ -923,39 +957,45 @@ export const AlgoLivePage = ({
             </div>
           </section>
 
-          <OperationsSignalTable
-            signals={visibleSignalRows}
-            candidates={signalOptionsCandidates}
-            signalMatrixStates={signalMatrixStates}
-            cockpitGeneratedAt={cockpitGeneratedAt}
-            cockpitStageItems={cockpitStageItems}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
-            onOpenCandidateInTrade={onOpenCandidateInTrade}
-            renderDrill={({ signal, candidate }) => {
-              const symbol = String(signal?.symbol || "").toUpperCase();
-              const indexed = symbolIndex?.[symbol] || {};
-              return (
-                <OperationsSignalDrill
-                  signal={signal}
-                  candidate={candidate || indexed.candidate}
-                  position={indexed.position}
-                  events={events || []}
-                  userPreferences={userPreferences}
-                  signalOptionsProfile={signalOptionsProfile}
-                />
-              );
-            }}
-          />
+          <Suspense fallback={<AlgoDeferredBlock label="Loading signal table..." />}>
+            <LazyOperationsSignalTable
+              signals={visibleSignalRows}
+              candidates={signalOptionsCandidates}
+              signalMatrixStates={signalMatrixStates}
+              cockpitGeneratedAt={cockpitGeneratedAt}
+              cockpitStageItems={cockpitStageItems}
+              algoIsPhone={algoIsPhone}
+              algoIsNarrow={algoIsNarrow}
+              onOpenCandidateInTrade={onOpenCandidateInTrade}
+              renderDrill={({ signal, candidate }) => {
+                const symbol = String(signal?.symbol || "").toUpperCase();
+                const indexed = symbolIndex?.[symbol] || {};
+                return (
+                  <Suspense fallback={<AlgoDeferredBlock label="Loading signal drilldown..." />}>
+                    <LazyOperationsSignalDrill
+                      signal={signal}
+                      candidate={candidate || indexed.candidate}
+                      position={indexed.position}
+                      events={events || []}
+                      userPreferences={userPreferences}
+                      signalOptionsProfile={signalOptionsProfile}
+                    />
+                  </Suspense>
+                );
+              }}
+            />
+          </Suspense>
 
-          <OperationsPositionsTable
-            positions={signalOptionsPositions}
-            accountPositionsQuery={signalOptionsLedgerPositionsQuery}
-            symbolIndex={symbolIndex}
-            deploymentId={focusedDeploymentId}
-            signalOptionsProfile={signalOptionsProfile}
-            algoIsPhone={algoIsPhone}
-          />
+          <Suspense fallback={<AlgoDeferredBlock label="Loading positions..." />}>
+            <LazyOperationsPositionsTable
+              positions={signalOptionsPositions}
+              accountPositionsQuery={signalOptionsLedgerPositionsQuery}
+              symbolIndex={symbolIndex}
+              deploymentId={focusedDeploymentId}
+              signalOptionsProfile={signalOptionsProfile}
+              algoIsPhone={algoIsPhone}
+            />
+          </Suspense>
 
           {auditPanel}
         </div>

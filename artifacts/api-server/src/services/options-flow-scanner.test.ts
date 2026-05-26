@@ -542,6 +542,46 @@ test("options flow radar scanner keeps its cursor when equivalent universe order
   assert.deepEqual(third.scannedSymbols, ["AAA"]);
 });
 
+test("options flow radar scanner does not advance cursor while skipped", async () => {
+  let blocked = true;
+  let fetchCalls = 0;
+  const scanner = createOptionsFlowRadarScanner({
+    shouldSkip: async () => (blocked ? "market-session-quiet" : null),
+    fetchBatch: async (symbols) => {
+      fetchCalls += 1;
+      return {
+        quotes: symbols.map((symbol) => ({ symbol })),
+      };
+    },
+  });
+
+  const skipped = await scanner.runOnce(["aaa", "bbb", "ccc"], {
+    batchSize: 1,
+    promoteCount: 0,
+  });
+
+  assert.deepEqual(skipped.scannedSymbols, []);
+  assert.equal(skipped.error, "market-session-quiet");
+  assert.equal(fetchCalls, 0);
+  assert.equal(scanner.getCoverage().scannedSymbols, 0);
+  assert.deepEqual(scanner.getCoverage().currentBatch, []);
+  assert.equal(scanner.getCoverage().degradedReason, "market-session-quiet");
+
+  blocked = false;
+  const first = await scanner.runOnce(["aaa", "bbb", "ccc"], {
+    batchSize: 1,
+    promoteCount: 0,
+  });
+  const second = await scanner.runOnce(["aaa", "bbb", "ccc"], {
+    batchSize: 1,
+    promoteCount: 0,
+  });
+
+  assert.deepEqual(first.scannedSymbols, ["AAA"]);
+  assert.deepEqual(second.scannedSymbols, ["BBB"]);
+  assert.equal(fetchCalls, 2);
+});
+
 test("options flow scanner lane preserves watchlist order before broad universe fallback", () => {
   const sources = {
     builtInSymbols: ["SPY", "QQQ"],

@@ -980,7 +980,7 @@ export const OperationsSignalTable = ({
               />
             </div>
           ) : (
-            pageRows.map(({ signal, candidate, scoreBreakdown }, index) => {
+            pageRows.map(({ signal, candidate, scoreBreakdown }) => {
               const symbol = asRecord(signal).symbol;
               const expanded = focus.focusedSymbol === symbol;
               return (
@@ -1009,7 +1009,6 @@ export const OperationsSignalTable = ({
                   algoIsPhone={algoIsPhone}
                   columns={visibleColumns}
                   scanActive={freshness.scanRunning}
-                  scanIndex={index}
                   onRowAction={handleRowAction}
                 />
               );

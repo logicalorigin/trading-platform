@@ -35,7 +35,7 @@ import { PyrusBrandLockup, PyrusWordmark } from "../../components/brand/PyrusLog
 import { PyrusMark } from "../../components/brand/pyrus-mark";
 import { PortfolioPulseZone } from "./PortfolioPulseZone.jsx";
 import { CommandPalette } from "./CommandPalette.jsx";
-import { SCREENS } from "./screenRegistry.jsx";
+import { SCREENS, preloadScreenModule } from "./screenRegistry.jsx";
 import { useAccountSectionTransitionSnapshot } from "./accountSectionTransitionStore.js";
 import { useAccountSection } from "./useAccountSection.js";
 import { LoadingSpinner, SegmentedControl } from "../../components/platform/primitives.jsx";
@@ -414,6 +414,13 @@ const AppHeaderInner = ({
   const handleToggleScrollers = useCallback(() => {
     setScrollersCollapsed((current) => !current);
   }, []);
+  const handleScreenIntent = useCallback(
+    (screenId) => {
+      if (!screenId || screenId === activeScreen) return;
+      void preloadScreenModule(screenId);
+    },
+    [activeScreen],
+  );
 
   const [commandOpen, setCommandOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandOpen(true), []);
@@ -621,6 +628,9 @@ const AppHeaderInner = ({
                         activeScreen === screen.id && "ra-focus-rail",
                       )}
                       onClick={() => handleSetScreen(screen.id)}
+                      onFocus={() => handleScreenIntent(screen.id)}
+                      onPointerEnter={() => handleScreenIntent(screen.id)}
+                      onPointerDown={() => handleScreenIntent(screen.id)}
                       style={{
                         ...motionVars({ accent: CSS_COLOR.accent }),
                         padding: isIconized ? sp("2px 4px") : sp("2px 5px"),
@@ -645,6 +655,7 @@ const AppHeaderInner = ({
                         gap: sp(2),
                       }}
                       onMouseEnter={(event) => {
+                        handleScreenIntent(screen.id);
                         if (activeScreen === screen.id) return;
                         event.currentTarget.style.color = CSS_COLOR.text;
                       }}

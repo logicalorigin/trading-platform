@@ -335,6 +335,22 @@ export function createOptionsFlowRadarScanner(
     return batch;
   }
 
+  function syncSymbolsWithoutAdvancing(symbolsInput: readonly string[]): string[] {
+    const symbols = uniqueSymbols(symbolsInput, normalizeSymbol);
+    selectedSymbolCount = symbols.length;
+    if (!symbols.length) {
+      rotationOffset = 0;
+      cycleSymbols = [];
+      pendingCycleSymbols = null;
+      currentSymbolsMembershipKey = "";
+      currentBatch = [];
+      promotedSymbols = [];
+      return [];
+    }
+    syncCycleSymbols(symbols);
+    return symbols;
+  }
+
   async function runOnce(
     symbolsInput: readonly string[],
     input: {
@@ -351,11 +367,11 @@ export function createOptionsFlowRadarScanner(
       0,
       Math.floor(input.promoteCount ?? DEFAULT_PROMOTE_COUNT),
     );
-    const batch = buildNextBatch(symbolsInput, lastBatchSize);
-    currentBatch = batch;
+    const symbols = syncSymbolsWithoutAdvancing(symbolsInput);
+    currentBatch = [];
     promotedSymbols = [];
 
-    if (!batch.length) {
+    if (!symbols.length) {
       return {
         scannedSymbols: [],
         promotedSymbols: [],
@@ -374,6 +390,18 @@ export function createOptionsFlowRadarScanner(
         promotedSymbols: [],
         failed: false,
         error: skipReason,
+      };
+    }
+
+    const batch = buildNextBatch(symbols, lastBatchSize);
+    currentBatch = batch;
+
+    if (!batch.length) {
+      return {
+        scannedSymbols: [],
+        promotedSymbols: [],
+        failed: false,
+        error: null,
       };
     }
 

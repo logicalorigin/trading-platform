@@ -7,11 +7,28 @@ import {
   rememberBrowserDiagnosticEvent,
 } from "./crashDiagnostics";
 
-const PlatformApp = lazyWithRetry(async () => {
-  // @ts-expect-error JSX module has no declaration file in this TS config
-  const mod = await import("../features/platform/PlatformApp.jsx");
+let platformAppImport: Promise<{ default: ComponentType }> | null = null;
 
-  return { default: mod.default };
+const loadPlatformApp = () => {
+  if (!platformAppImport) {
+    platformAppImport =
+      // @ts-expect-error JSX module has no declaration file in this TS config
+      import("../features/platform/PlatformApp.jsx")
+        .then((mod) => ({ default: mod.default as ComponentType }))
+        .catch((error) => {
+          platformAppImport = null;
+          throw error;
+        });
+  }
+  return platformAppImport;
+};
+
+if (typeof window !== "undefined") {
+  void loadPlatformApp();
+}
+
+const PlatformApp = lazyWithRetry(async () => {
+  return loadPlatformApp();
 }, {
   label: "PlatformApp",
 });

@@ -21,6 +21,7 @@
     pkgs.alsa-lib
     pkgs.libxkbcommon
     pkgs.mesa
+    pkgs.libgbm
     pkgs.libdrm
     pkgs.gtk3
     pkgs.pango

@@ -195,6 +195,15 @@ export const SIGNAL_COLUMN_BY_KEY = new Map(
 const SIGNAL_COLUMN_KEYS = new Set(DEFAULT_SIGNAL_COLUMN_ORDER);
 const ALWAYS_VISIBLE_SIGNAL_COLUMN_KEYS = new Set(ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS);
 
+const classNames = (...values) => values.filter(Boolean).join(" ") || undefined;
+
+const signalCellClassName = (motionState, className) =>
+  classNames(
+    "ra-signal-cell-motion",
+    motionState ? `ra-signal-cell-${motionState}` : null,
+    className,
+  );
+
 export const normalizeSignalColumnOrder = (value) => {
   const requested = Array.isArray(value) ? value : [];
   const seen = new Set();
@@ -457,12 +466,19 @@ const StatusPill = ({
   iconOverride = null,
   toneOverride = null,
   compact = false,
+  motionState = null,
+  className = null,
 }) => {
   const Icon = iconOverride || meta.Icon;
   const tone = toneOverride || meta.tone;
   if (compact) {
     return (
       <span
+        className={classNames(
+          "ra-signal-status-pill",
+          motionState ? `ra-signal-status-pill-${motionState}` : null,
+          className,
+        )}
         title={meta.label}
         aria-label={meta.label}
         style={{
@@ -491,6 +507,11 @@ const StatusPill = ({
   }
   return (
     <span
+      className={classNames(
+        "ra-signal-status-pill",
+        motionState ? `ra-signal-status-pill-${motionState}` : null,
+        className,
+      )}
       title={meta.label}
       style={{
         display: "inline-flex",
@@ -717,8 +738,11 @@ const DataCell = ({
   icon = null,
   detailExtra = null,
   titleValue,
+  motionState = null,
+  className = null,
 }) => (
   <span
+    className={signalCellClassName(motionState, className)}
     title={[
       titleValue ?? (typeof value === "string" ? value : null),
       detail,
@@ -801,8 +825,11 @@ const MobileMetricChip = ({
   detail,
   tone = CSS_COLOR.textSec,
   titleValue,
+  motionState = null,
+  className = null,
 }) => (
   <span
+    className={signalCellClassName(motionState, className)}
     title={compactJoin([titleValue, value, detail])}
     style={{
       display: "inline-grid",
@@ -861,6 +888,7 @@ const SignalHeroCell = ({
 }) => (
   <span
     data-testid="algo-signal-hero-cell"
+    className="ra-signal-cell-motion"
     style={{
       display: "grid",
       gridTemplateColumns: "minmax(0, 1fr)",
@@ -1019,6 +1047,7 @@ const DecisionCell = ({
   latest,
   latestTime,
   verdict,
+  motionState = null,
 }) => {
   const decisionLabel = verdict?.label || statusMeta.label;
   const detailText = decisionDetailText({
@@ -1037,6 +1066,7 @@ const DecisionCell = ({
 
   return (
     <span
+      className={signalCellClassName(motionState)}
       style={{
         display: "grid",
         gap: sp(2),
@@ -1046,6 +1076,10 @@ const DecisionCell = ({
       }}
     >
       <span
+        className={classNames(
+          "ra-signal-decision-pill",
+          verdict?.bucket ? `ra-signal-decision-pill-${verdict.bucket}` : null,
+        )}
         title={compactJoin([decisionLabel, statusMeta.label, detailTitle])}
         style={{
           display: "inline-flex",
@@ -1141,6 +1175,11 @@ const RowActionButton = ({ action, onAction }) => {
   return (
     <button
       type="button"
+      className={classNames(
+        "ra-signal-action-button",
+        action.id === "submit" ? "ra-signal-action-button-ready" : null,
+        action.id === "why" ? "ra-signal-action-button-blocked" : null,
+      )}
       data-testid={`algo-signal-row-action-${action.id}`}
       title={action.title || action.label}
       aria-label={action.label}
@@ -1302,7 +1341,6 @@ export const OperationsSignalRow = ({
   onRowAction,
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   scanActive = false,
-  scanIndex = 0,
 }) => {
   const signalRecord = asRecord(signal);
   const liveQuote = getStoredOptionQuoteSnapshot(
@@ -1397,7 +1435,6 @@ export const OperationsSignalRow = ({
   const rowClassName = [
     "ra-signal-row-focus",
     freshAndHot && !algoIsPhone ? "ra-signal-row-glow" : null,
-    scanActive ? "ra-signal-row-scan" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -1437,6 +1474,73 @@ export const OperationsSignalRow = ({
       ? scoreBreakdown.reasonLabels
       : []),
   ]);
+  const quoteFlashValue =
+    finiteNumberOrNull(effectiveQuote?.mid) ??
+    finiteNumberOrNull(effectiveQuote?.mark) ??
+    finiteNumberOrNull(effectiveQuote?.last) ??
+    finiteNumberOrNull(effectiveQuote?.bid) ??
+    finiteNumberOrNull(effectiveQuote?.ask);
+  const ageFlashClassName = useValueFlash(finiteNumberOrNull(signalRecord.barsSinceSignal), {
+    classify: (next, previous) => {
+      const nextNumber = finiteNumberOrNull(next);
+      const previousNumber = finiteNumberOrNull(previous);
+      if (nextNumber == null || previousNumber == null || nextNumber === previousNumber) {
+        return null;
+      }
+      return nextNumber > previousNumber ? "down" : "up";
+    },
+  });
+  const signalMoveFlashClassName = useValueFlash(finiteNumberOrNull(signalMove.value));
+  const quoteFlashClassName = useValueFlash(quoteFlashValue);
+  const spreadFlashClassName = useValueFlash(finiteNumberOrNull(spreadGauge.widthPct), {
+    classify: (next, previous) => {
+      const nextNumber = finiteNumberOrNull(next);
+      const previousNumber = finiteNumberOrNull(previous);
+      if (nextNumber == null || previousNumber == null || nextNumber === previousNumber) {
+        return null;
+      }
+      return nextNumber < previousNumber ? "up" : "down";
+    },
+  });
+  const scoreFlashClassName = useValueFlash(actionabilityScore);
+  const awaitingScan = /awaiting scan/i.test(statusMeta.label);
+  const quoteEvaluating =
+    scanActive && Boolean(candidate) && blocker === MISSING_VALUE && !hasQuote;
+  const contractEvaluating =
+    scanActive &&
+    Boolean(candidate) &&
+    blocker === MISSING_VALUE &&
+    !hasDisplayValue(rawContract.main);
+  const spreadEvaluating =
+    quoteEvaluating ||
+    (scanActive && hasQuote && !Number.isFinite(Number(spreadGauge.widthPct)));
+  const greeksEvaluating =
+    scanActive && Boolean(selectedContractId) && !hasDisplayValue(rawGreeks.main);
+  const scoreEvaluating = scanActive && !Number.isFinite(actionabilityScore);
+  const gateMotionState =
+    blocker !== MISSING_VALUE || gate.category !== "clear"
+      ? "blocked"
+      : scanActive && awaitingScan
+        ? "evaluating"
+        : "ready";
+  const syncMotionState =
+    sync.label === "Synced"
+      ? "ready"
+      : sync.label === "Mismatch"
+        ? "blocked"
+        : scanActive
+          ? "evaluating"
+          : null;
+  const decisionMotionState =
+    verdict?.bucket === "try"
+      ? "ready"
+      : verdict?.bucket === "pass"
+        ? "blocked"
+        : scanActive || awaitingScan
+          ? "evaluating"
+          : "wait";
+  const rowActionMotionState =
+    rowAction?.id === "submit" ? "ready" : rowAction?.id === "why" ? "blocked" : null;
   const mobileAgeValue = compactJoin([
     bars !== MISSING_VALUE ? `${bars}b` : null,
     signalRecord.timeframe,
@@ -1457,6 +1561,7 @@ export const OperationsSignalRow = ({
       detail: since.detail,
       tone: signalRecord.fresh ? CSS_COLOR.green : CSS_COLOR.amber,
       titleValue: compactJoin([since.main, since.detail, signalRecord.signalAt]),
+      className: ageFlashClassName,
     },
     {
       id: "move",
@@ -1470,6 +1575,7 @@ export const OperationsSignalRow = ({
             ? CSS_COLOR.red
             : CSS_COLOR.textDim,
       titleValue: signalMove.detail,
+      className: signalMoveFlashClassName,
     },
     {
       id: "quote",
@@ -1481,6 +1587,8 @@ export const OperationsSignalRow = ({
       ]),
       tone: quoteState.tone,
       titleValue: executionTitle,
+      motionState: quoteEvaluating ? "evaluating" : hasQuote ? "ready" : null,
+      className: quoteFlashClassName,
     },
     {
       id: "score",
@@ -1489,6 +1597,8 @@ export const OperationsSignalRow = ({
       detail: scoreTierLabel(scoreBreakdown?.tier),
       tone: scoreTone(actionabilityScore),
       titleValue: scoreTitle,
+      motionState: scoreEvaluating ? "evaluating" : null,
+      className: scoreFlashClassName,
     },
   ];
   const desktopCells = {
@@ -1516,6 +1626,7 @@ export const OperationsSignalRow = ({
           since.detail,
           signalRecord.signalAt,
         ])}
+        className={ageFlashClassName}
       />
     ),
     move: (
@@ -1533,6 +1644,7 @@ export const OperationsSignalRow = ({
           signalMove.detail,
           underlyingPrice !== MISSING_VALUE ? `underlying ${underlyingPrice}` : null,
         ])}
+        className={signalMoveFlashClassName}
       />
     ),
     action: (
@@ -1552,6 +1664,7 @@ export const OperationsSignalRow = ({
           contract.main,
           contract.detail,
         ])}
+        motionState={contractEvaluating ? "evaluating" : null}
       />
     ),
     contract: (
@@ -1560,6 +1673,13 @@ export const OperationsSignalRow = ({
         detail={contract.detail}
         tone={hasDisplayValue(rawContract.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
         titleValue={compactJoin([contract.main, contract.detail])}
+        motionState={
+          contractEvaluating
+            ? "evaluating"
+            : hasDisplayValue(rawContract.main)
+              ? "ready"
+              : null
+        }
       />
     ),
     quote: (
@@ -1571,6 +1691,8 @@ export const OperationsSignalRow = ({
         ])}
         tone={quoteState.tone}
         titleValue={executionTitle}
+        motionState={quoteEvaluating ? "evaluating" : hasQuote ? "ready" : null}
+        className={quoteFlashClassName}
         icon={
           <QuoteIcon
             size={SIGNAL_ICON_SIZE}
@@ -1586,6 +1708,8 @@ export const OperationsSignalRow = ({
         value={spreadWidth}
         detail={spreadDetail}
         tone={spreadTone}
+        motionState={spreadEvaluating ? "evaluating" : hasQuote ? "ready" : null}
+        className={spreadFlashClassName}
         detailExtra={
           hasQuote ? (
             <SpreadGauge
@@ -1605,6 +1729,13 @@ export const OperationsSignalRow = ({
         detail={compactGreeksText(greeks.detail)}
         tone={hasDisplayValue(rawGreeks.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
         titleValue={compactJoin([greeks.main, greeks.detail, greeks.full])}
+        motionState={
+          greeksEvaluating
+            ? "evaluating"
+            : hasDisplayValue(rawGreeks.main)
+              ? "ready"
+              : null
+        }
       />
     ),
     gate: (
@@ -1613,6 +1744,7 @@ export const OperationsSignalRow = ({
         detail={gate.detail}
         tone={gate.tone}
         titleValue={compactJoin([gate.label, gate.detail, blocker])}
+        motionState={gateMotionState}
       />
     ),
     sync: (
@@ -1621,6 +1753,7 @@ export const OperationsSignalRow = ({
         detail={sync.detail}
         tone={sync.tone}
         titleValue={compactJoin([sync.label, sync.detail])}
+        motionState={syncMotionState}
       />
     ),
     score: (
@@ -1629,6 +1762,8 @@ export const OperationsSignalRow = ({
         detail={scoreDetail}
         tone={scoreTone(actionabilityScore)}
         titleValue={scoreTitle}
+        motionState={scoreEvaluating ? "evaluating" : null}
+        className={scoreFlashClassName}
       />
     ),
     decision: (
@@ -1641,6 +1776,7 @@ export const OperationsSignalRow = ({
         latest={latest}
         latestTime={latestTime}
         verdict={verdict}
+        motionState={decisionMotionState}
       />
     ),
     rowAction: (
@@ -1652,7 +1788,9 @@ export const OperationsSignalRow = ({
           minWidth: 0,
         }}
       >
-        <RowActionButton action={rowAction} onAction={handleRowAction} />
+        <span className={signalCellClassName(rowActionMotionState)}>
+          <RowActionButton action={rowAction} onAction={handleRowAction} />
+        </span>
       </span>
     ),
   };
@@ -1668,8 +1806,6 @@ export const OperationsSignalRow = ({
       rowClassName={rowClassName}
       rowStyle={{
         "--ra-motion-accent": direction.tone,
-        "--ra-signal-scan-accent": CSS_COLOR.cyan,
-        "--ra-signal-scan-delay": `${Math.min(Math.max(0, Number(scanIndex) || 0), 12) * 45}ms`,
       }}
       row={
         <div
@@ -1820,6 +1956,8 @@ export const OperationsSignalRow = ({
                       detail={metric.detail}
                       tone={metric.tone}
                       titleValue={metric.titleValue}
+                      motionState={metric.motionState}
+                      className={metric.className}
                     />
                   ))}
                 </span>
@@ -1836,6 +1974,7 @@ export const OperationsSignalRow = ({
                 <StatusPill
                   meta={mobileVerdictMeta}
                   compact
+                  motionState={decisionMotionState}
                 />
                 {rowAction ? (
                   <RowActionButton action={rowAction} onAction={handleRowAction} />

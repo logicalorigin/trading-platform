@@ -1,6 +1,6 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import LogoLoader from "../../components/LogoLoader";
-import { lazyWithRetry, preloadDynamicImport } from "../../lib/dynamicImport";
+import { retryDynamicImport } from "../../lib/dynamicImport";
 
 const SCREEN_LOADERS = {
   market: () => import("../../screens/MarketScreen.jsx"),
@@ -15,36 +15,269 @@ const SCREEN_LOADERS = {
   settings: () => import("../../screens/SettingsScreen.jsx"),
 };
 
-const MarketScreen = lazyWithRetry(SCREEN_LOADERS.market, {
-  label: "MarketScreen",
-});
-const FlowScreen = lazyWithRetry(SCREEN_LOADERS.flow, {
-  label: "FlowScreen",
-});
-const GexScreen = lazyWithRetry(SCREEN_LOADERS.gex, {
-  label: "GexScreen",
-});
-const TradeScreen = lazyWithRetry(SCREEN_LOADERS.trade, {
-  label: "TradeScreen",
-});
-const AccountScreen = lazyWithRetry(SCREEN_LOADERS.account, {
-  label: "AccountScreen",
-});
-const ResearchScreen = lazyWithRetry(SCREEN_LOADERS.research, {
-  label: "ResearchScreen",
-});
-const AlgoScreen = lazyWithRetry(SCREEN_LOADERS.algo, {
-  label: "AlgoScreen",
-});
-const BacktestScreen = lazyWithRetry(SCREEN_LOADERS.backtest, {
-  label: "BacktestScreen",
-});
-const DiagnosticsScreen = lazyWithRetry(SCREEN_LOADERS.diagnostics, {
-  label: "DiagnosticsScreen",
-});
-const SettingsScreen = lazyWithRetry(SCREEN_LOADERS.settings, {
-  label: "SettingsScreen",
-});
+const SCREEN_MODULE_PRELOADS = new Map();
+const SCREEN_MODULE_PRELOAD_STATE = new Map();
+const SCREEN_MODULE_COMPONENTS = new Map();
+
+const SCREEN_ROUTE_SHELL_LABELS = {
+  market: {
+    title: "Market Pulse",
+    sections: ["Breadth", "Watchlist", "Charts"],
+  },
+  flow: {
+    title: "Options Flow",
+    sections: ["Tape", "Filters", "Premium"],
+  },
+  gex: {
+    title: "GEX",
+    sections: ["Exposure", "Walls", "Expirations"],
+  },
+  trade: {
+    title: "Trade",
+    sections: ["Ticket", "Chain", "Execution"],
+  },
+  account: {
+    title: "Account",
+    sections: ["Equity", "Positions", "Orders"],
+  },
+  research: {
+    title: "Research",
+    sections: ["Universe", "Themes", "Thesis"],
+  },
+  algo: {
+    title: "Algo",
+    sections: ["Signals", "Actions", "Risk"],
+  },
+  backtest: {
+    title: "Backtest",
+    sections: ["Strategy", "Runs", "Results"],
+  },
+  diagnostics: {
+    title: "Diagnostics",
+    sections: ["Health", "Latency", "Runtime"],
+  },
+  settings: {
+    title: "Settings",
+    sections: ["Profile", "Runtime", "Preferences"],
+  },
+};
+
+const screenModuleLabel = (screenId) => `${screenId}ScreenPreload`;
+
+const loadScreenModule = (
+  screenId,
+  { label = screenModuleLabel(screenId), reloadOnFailure = true } = {},
+) => {
+  const loader = SCREEN_LOADERS[screenId];
+  if (!loader) return Promise.resolve(null);
+  const existing = SCREEN_MODULE_PRELOADS.get(screenId);
+  if (existing) return existing;
+
+  SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
+    status: "loading",
+    startedAt: Date.now(),
+    label,
+  });
+  const promise = retryDynamicImport(loader, {
+    label,
+    reloadOnFailure,
+  })
+    .then((mod) => {
+      if (mod?.default) {
+        SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
+      }
+      SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
+        status: "ready",
+        startedAt: SCREEN_MODULE_PRELOAD_STATE.get(screenId)?.startedAt || null,
+        completedAt: Date.now(),
+        label,
+      });
+      return mod;
+    })
+    .catch((error) => {
+      SCREEN_MODULE_PRELOADS.delete(screenId);
+      SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
+        status: "failed",
+        startedAt: SCREEN_MODULE_PRELOAD_STATE.get(screenId)?.startedAt || null,
+        completedAt: Date.now(),
+        label,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    });
+
+  SCREEN_MODULE_PRELOADS.set(screenId, promise);
+  return promise;
+};
+
+const RouteScreenShell = ({ screenId, error = null }) => {
+  const copy = SCREEN_ROUTE_SHELL_LABELS[screenId] || {
+    title: screenId,
+    sections: ["Workspace", "Data", "Actions"],
+  };
+  return (
+    <div
+      data-testid={`screen-route-shell-${screenId}`}
+      aria-busy={error ? "false" : "true"}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr)",
+        gap: "12px",
+        padding: "16px 24px",
+        background: "var(--ra-surface-0)",
+        color: "var(--ra-text-primary)",
+        fontFamily: "var(--ra-font-sans)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          minWidth: 0,
+        }}
+      >
+        <div style={{ display: "grid", gap: "3px", minWidth: 0 }}>
+          <span
+            style={{
+              color: "var(--ra-text-secondary)",
+              fontSize: "10px",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            {error ? "Route load interrupted" : "Preparing workspace"}
+          </span>
+          <span
+            style={{
+              color: "var(--ra-text-primary)",
+              fontSize: "16px",
+              fontWeight: 600,
+              lineHeight: 1.2,
+            }}
+          >
+            {copy.title}
+          </span>
+        </div>
+        <span
+          style={{
+            flex: "0 0 auto",
+            minHeight: "22px",
+            display: "inline-flex",
+            alignItems: "center",
+            padding: "0 8px",
+            border: "1px solid var(--ra-border-light)",
+            color: error ? "var(--ra-red-500)" : "var(--ra-text-dim)",
+            fontSize: "10px",
+            textTransform: "uppercase",
+          }}
+        >
+          {error ? "Retrying" : "Loading"}
+        </span>
+      </div>
+      <div
+        style={{
+          minWidth: 0,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: "8px",
+        }}
+      >
+        {copy.sections.map((section) => (
+          <div
+            key={section}
+            style={{
+              minHeight: "160px",
+              border: "1px solid var(--ra-border-default)",
+              background: "var(--ra-surface-1)",
+              display: "grid",
+              alignContent: "start",
+              gap: "10px",
+              padding: "12px",
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                color: "var(--ra-text-secondary)",
+                fontSize: "10px",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {section}
+            </span>
+            {[0, 1, 2, 3].map((index) => (
+              <span
+                key={index}
+                style={{
+                  display: "block",
+                  width: `${92 - index * 13}%`,
+                  height: "8px",
+                  background: "var(--ra-surface-3)",
+                  opacity: 0.62,
+                }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const createPreloadableScreen = (screenId, label) => {
+  return function PreloadableScreen(props) {
+    const [ScreenComponent, setScreenComponent] = useState(
+      () => SCREEN_MODULE_COMPONENTS.get(screenId) || null,
+    );
+    const [loadError, setLoadError] = useState(null);
+
+    useEffect(() => {
+      if (ScreenComponent || props?.isVisible === false) {
+        return undefined;
+      }
+      let cancelled = false;
+      setLoadError(null);
+      loadScreenModule(screenId, { label })
+        .then((mod) => {
+          if (!cancelled && mod?.default) {
+            setScreenComponent(() => mod.default);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setLoadError(error);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [ScreenComponent, props?.isVisible]);
+
+    return ScreenComponent ? (
+      <ScreenComponent {...props} />
+    ) : (
+      <RouteScreenShell screenId={screenId} error={loadError} />
+    );
+  };
+};
+
+const MarketScreen = createPreloadableScreen("market", "MarketScreen");
+const FlowScreen = createPreloadableScreen("flow", "FlowScreen");
+const GexScreen = createPreloadableScreen("gex", "GexScreen");
+const TradeScreen = createPreloadableScreen("trade", "TradeScreen");
+const AccountScreen = createPreloadableScreen("account", "AccountScreen");
+const ResearchScreen = createPreloadableScreen("research", "ResearchScreen");
+const AlgoScreen = createPreloadableScreen("algo", "AlgoScreen");
+const BacktestScreen = createPreloadableScreen("backtest", "BacktestScreen");
+const DiagnosticsScreen = createPreloadableScreen("diagnostics", "DiagnosticsScreen");
+const SettingsScreen = createPreloadableScreen("settings", "SettingsScreen");
 
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
@@ -72,6 +305,13 @@ export const SCREEN_MODULE_PRELOAD_ORDER = [
   "settings",
 ];
 
+export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = [
+  "flow",
+  "trade",
+  "algo",
+  "backtest",
+];
+
 export const SCREEN_RENDER_POLICIES = {
   market: { retainInactive: true },
   trade: { retainInactive: true },
@@ -93,10 +333,15 @@ export const buildMountedScreenState = (activeScreen) =>
   Object.fromEntries(SCREENS.map(({ id }) => [id, id === activeScreen]));
 
 export const preloadScreenModule = (screenId) => {
-  const loader = SCREEN_LOADERS[screenId];
-  if (!loader) return;
-  preloadDynamicImport(loader, { label: `${screenId}ScreenPreload` });
+  if (!SCREEN_LOADERS[screenId]) return Promise.resolve(null);
+  return loadScreenModule(screenId, {
+    label: screenModuleLabel(screenId),
+    reloadOnFailure: false,
+  });
 };
+
+export const getScreenModulePreloadSnapshot = () =>
+  Object.fromEntries(SCREEN_MODULE_PRELOAD_STATE.entries());
 
 export const skipStableHiddenScreenRender = (prevProps, nextProps) =>
   prevProps?.isVisible === false && nextProps?.isVisible === false;

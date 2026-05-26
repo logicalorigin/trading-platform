@@ -80,6 +80,7 @@ export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 })
           style={{ display: "block" }}
         >
           <line
+            className="ra-spread-gauge-fill"
             x1="2"
             y1={height / 2}
             x2={width - 2}
@@ -97,15 +98,20 @@ export const SpreadGauge = ({ bid, ask, mid, widthPct, width = 48, height = 6 })
             strokeWidth={height}
             strokeLinecap="round"
           />
-          <line
-            x1={markerX}
-            y1="0.75"
-            x2={markerX}
-            y2={height - 0.75}
-            stroke={tone}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          />
+          <g
+            className="ra-spread-gauge-marker"
+            style={{ transform: `translateX(${markerX}px)` }}
+          >
+            <line
+              x1="0"
+              y1="0.75"
+              x2="0"
+              y2={height - 0.75}
+              stroke={tone}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </g>
         </svg>
       </span>
     </AppTooltip>

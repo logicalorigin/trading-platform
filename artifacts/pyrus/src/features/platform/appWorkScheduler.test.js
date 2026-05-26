@@ -139,7 +139,9 @@ test("keeps header flow owner when active Flow IBKR work is stalled", () => {
 
   assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.classes.realtimeIbkr, false);
-  assert.equal(schedule.streams.watchlistQuoteStream, false);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
+  assert.equal(schedule.streams.marketStockAggregates, false);
+  assert.equal(schedule.streams.accountRealtime, false);
 });
 
 test("keeps shared flow runtime disabled while broad scanner owns flow", () => {

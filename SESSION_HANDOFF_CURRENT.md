@@ -1,16 +1,601 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-26 20:07 UTC`
-- Current request: monitor/audit the rendering-policy changes because pages still feel like they make the user wait.
+- Last updated: `2026-05-26 22:43 UTC`
+- Current request: implement the phased app-deficiency cleanup plan.
 - Current status:
-  - Starting live/runtime audit. Need verify whether the running app has loaded the latest source changes and whether global boot/shell loader time is being used for useful preloading/hydration.
-  - Preserve the staged consolidation work already present in the tree; do not stage, commit, or touch Replit startup config during this audit.
+  - Implemented the first stabilization slice of the cleanup plan across API resource-pressure behavior, signal monitor breadth/staleness handling, signal-options readiness, route/page warmup, quote-stream ownership, and cell-level Signals to Actions motion polish.
+  - Preserved the existing explicit Replit startup policy; startup guard validation passed after the `replit.nix` Chromium dependency change.
+  - Current worktree is ready for a checkpoint commit after this handoff update.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/options-flow-radar-scanner.ts`
+  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/pyrus/src/app/App.tsx`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/features/platform/*`
+  - `artifacts/pyrus/src/screens/*`
+  - `artifacts/pyrus/src/components/platform/signal-language/*`
+  - `artifacts/pyrus/src/index.css`
+  - `replit.nix`
+- Validation state:
+  - Passed: focused API suite for options flow, signal monitor, and signal-options automation.
+  - Passed: focused Pyrus suite for work scheduler, runtime control model, platform root source, and signal row motion.
+  - Passed: `pnpm run audit:replit-startup && pnpm run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run test:unit`.
+  - Passed: `pnpm --filter @workspace/api-server run test:unit` (783/783).
+  - Passed: `pnpm run build:pyrus-app`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Checkpoint commit this stabilization slice, then continue with the next phased cleanup item instead of broadening this commit.
+
+- Last updated: `2026-05-26 22:33 UTC`
+- Current request: continue the active page-by-page deficiency report and improve feature/function coverage.
+- Current status:
+  - Resumed from current worktree and `APP_DEFICIENCY_REPORT_2026-05-26.md`.
+  - Report now includes global shell/Bloomberg evidence, but remaining weak coverage is a systematic per-page surface inventory across scrollable page content.
+  - Next pass will stay read-only: scroll page bodies, collect visible headings/panels/controls/issue lines, and identify gaps or newly exposed deficiencies.
+  - Added `tmp/pyrus-page-surface-inventory.mjs`, which combines source-declared panels/test IDs/API endpoints with live top/mid/bottom DOM snapshots for each screen and viewport.
+  - First browser run found a runner bug (`ReferenceError: unique is not defined` inside `page.evaluate`), not an app failure.
+  - Patched the runner to use a browser-local `dedupe` helper inside the page context.
+  - No order, scan, save/apply, watchlist mutation, bridge mutation, queue/cancel, or settings mutation actions will be clicked.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-page-surface-inventory.mjs`
+- Validation state:
+  - Passed: `node --check tmp/pyrus-page-surface-inventory.mjs`.
+  - Failed then patched: first browser run hit a runner-only `unique` helper scope error.
+  - Pending: rerun patched page surface inventory.
+- Next step:
+  - Rerun the read-only page surface inventory with the Nix `libgbm` LD path, then update the report with coverage gaps and any new current-state findings.
+
+- Last updated: `2026-05-26 22:16 UTC`
+- Current request: implement the Algo right rail rendering-policy fix after diagnosing that the lazy rail module can leave an empty right column.
+- Current status:
+  - Made `AlgoRightRail` a direct `AlgoScreen` import/render instead of a separate lazy module behind `fallback={null}`.
+  - Added source regression checks so the rail remains a core page element while the heavier Algo table/drill/positions/audit content stays deferred.
+  - Browser-smoked desktop and phone Algo rail rendering against the running dev app.
+  - Preserving unrelated dirty files from other active workstreams.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js` (80/80).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+  - Passed: headless Chromium desktop Algo smoke: `algo-live-grid`, `algo-live-right-column`, `algo-right-rail`, `algo-controls-container`, `algo-settings-container`, and `algo-diagnostics-container` all present.
+  - Passed: headless Chromium phone smoke: Settings drawer contains `algo-right-rail` and controls.
+- Next step:
+  - If Algo still feels slow, diagnose remaining page-load pressure separately; the right rail no longer renders through an empty lazy boundary.
+
+- Last updated: `2026-05-26 22:25 UTC`
+- Current request: continue the active goal to find app deficiencies page by page and maintain the report.
+- Current status:
+  - Resumed from the current worktree and existing `APP_DEFICIENCY_REPORT_2026-05-26.md`.
+  - Current report already covers Market, Flow, GEX, Trade, Account, Research, Algo, Backtest, Diagnostics, Settings, accessibility, and mutation-surface inventory.
+  - Next pass is aimed at remaining weak coverage: global shell/header/sidebar/mobile navigation and source-derived page feature inventory, staying read-only/non-destructive.
+  - Added `tmp/pyrus-global-shell-audit.mjs`, a read-only Playwright runner for command palette, notifications, IBKR details, header tape settings, sidebars, mobile bottom/more navigation, mobile drawers/sheets, and Bloomberg dock open state.
+  - Reran the corrected global-shell audit; artifacts are in `output/app-deficiency-global-shell-audit/`.
+  - Confirmed desktop command palette, notifications, IBKR details, signal/flow tape settings, and sidebar collapse open/change state.
+  - Confirmed phone primary bottom nav and More-sheet secondary nav reach all top-level screens; Portfolio Pulse, Algo Monitor, Watchlist, IBKR, and Signal/Flow tape settings sheets open.
+  - New deficiency added to the report: Bloomberg Live is unreliable. Desktop launcher did not expose player controls after 20s; phone dock opened but stayed `LOADING` with `bufferStalledError`.
+  - Shell density evidence added: initial desktop shell controls were 263/263 sub-40px, phone shell 34/39, and phone Watchlist drawer 292/298.
+  - App source remains dirty from other workstreams; preserve unrelated changes.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-global-shell-audit.mjs`
+  - `output/app-deficiency-global-shell-audit/` evidence artifacts
+- Validation state:
+  - Passed: `node --check tmp/pyrus-global-shell-audit.mjs`.
+  - Passed: corrected global shell audit with Nix `libgbm` LD path.
+  - Passed: `git diff --check -- APP_DEFICIENCY_REPORT_2026-05-26.md SESSION_HANDOFF_CURRENT.md tmp/pyrus-global-shell-audit.mjs`.
+  - Passed: JSON parse/summary check for `output/app-deficiency-global-shell-audit/global-shell-audit-results.json`.
+- Next step:
+  - Continue with either source-derived page feature coverage or a paper/sandbox mutation harness before live mutation testing.
+
+- Last updated: `2026-05-26 22:08 UTC`
+- Current request: get `libgbm.so.1` or whatever is needed for headless Chromium, then continue the read-only deficiency audit work.
+- Current status:
+  - Confirmed plain Playwright Chromium headless launch fails on missing `libgbm.so.1`.
+  - Confirmed Nix `libgbm` is available at `/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib/libgbm.so.1`.
+  - Confirmed Playwright Chromium headless launch succeeds with `LD_LIBRARY_PATH=/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}`.
+  - Reran the non-clicking mutation-affordance audit with that library path; artifacts are in `output/app-deficiency-mutation-affordance-audit/`.
+  - Updated `APP_DEFICIENCY_REPORT_2026-05-26.md` with static API mutation inventory and non-clicking UI mutation-affordance inventory.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-api-mutation-inventory.mjs`
+  - `tmp/pyrus-mutation-affordance-audit.mjs`
+  - `output/app-deficiency-api-mutation-inventory/` evidence artifacts
+  - `output/app-deficiency-mutation-affordance-audit/` evidence artifacts
+- Validation state:
+  - Passed: bare Playwright Chromium headless launch with Nix `libgbm` LD path.
+  - Passed: non-clicking mutation-affordance audit with Nix `libgbm` LD path.
+  - Passed: `node --check tmp/pyrus-api-mutation-inventory.mjs && node --check tmp/pyrus-mutation-affordance-audit.mjs`.
+  - Passed: `git diff --check -- APP_DEFICIENCY_REPORT_2026-05-26.md SESSION_HANDOFF_CURRENT.md replit.nix`.
+- Next step:
+  - Continue read-only deficiency coverage or build a paper/sandbox harness before exercising live mutation paths.
+
+- Last updated: `2026-05-26 21:49 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Starting a mutation-affordance inventory pass that will not click any live/destructive controls.
+  - Goal for this pass: make the report explicit about which high-risk UI actions and backend mutation endpoints remain unexecuted/unverified.
+  - No trading, save/apply, queue, cancel, restart, run-scan, enable/disable, delete/remove, or settings mutation actions will be invoked.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
 - Validation state:
   - Pending.
 - Next step:
-  - Probe the running web/API ports, capture navigation/loading timings, inspect preload/readiness code paths, then report concrete causes and fixes.
+  - Add a non-clicking Playwright inventory runner for visible mutation-like controls and generate a static route-method inventory from API route source.
+
+- Last updated: `2026-05-26 21:48 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Ran targeted current smoke after later dirty-tree changes; artifacts are in `output/app-deficiency-current-smoke-20260526-2137/`.
+  - Targeted smoke corrected the route-crash finding: desktop Market and Flow now load in the latest smoke, so the earlier `formatRuntimeCount` root crash is retained as a regression risk rather than current active repro.
+  - Targeted smoke found phone Algo is still intermittent and missed `algo-live-grid`, `algo-operations-header`, `algo-operations-signal-table`, `algo-status-deployment-select`, and `algo-status-toggle-enable`.
+  - Added and ran `tmp/pyrus-accessibility-audit.mjs`; artifacts are in `output/app-deficiency-accessibility-audit/`.
+  - Updated `APP_DEFICIENCY_REPORT_2026-05-26.md` with accessibility-tree evidence: unnamed interactive controls on Market/Trade/Backtest, repeated ambiguous names on Market/Diagnostics/Backtest/Flow, and widespread sub-40px targets.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-accessibility-audit.mjs`
+  - `output/app-deficiency-current-smoke-20260526-2137/` evidence artifacts
+  - `output/app-deficiency-accessibility-audit/` evidence artifacts
+- Validation state:
+  - Passed: targeted current feature smoke with Nix `libgbm` LD path.
+  - Passed: accessibility-tree audit with Nix `libgbm` LD path.
+  - Passed: `git diff --check -- APP_DEFICIENCY_REPORT_2026-05-26.md SESSION_HANDOFF_CURRENT.md tmp/pyrus-feature-audit.mjs tmp/pyrus-interaction-audit.mjs tmp/pyrus-safe-control-audit.mjs tmp/pyrus-deep-readonly-audit.mjs tmp/pyrus-accessibility-audit.mjs`.
+  - Passed: `node --check tmp/pyrus-accessibility-audit.mjs`.
+- Next step:
+  - Run scoped validation, then continue the full deficiency goal only into approved destructive/live-trading paths or add static API/source route coverage if staying read-only.
+
+- Last updated: `2026-05-26 21:37 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Continuing from the report at `APP_DEFICIENCY_REPORT_2026-05-26.md`.
+  - Current tree has changed again after the last report update, including `runtimeControlModel.js`, so the Market/Flow root-crash finding needs a targeted current rerun before it remains framed as current.
+  - Next pass will add real accessibility-tree evidence using the browser accessibility tree instead of only DOM label/target heuristics.
+  - No destructive/live-trading paths will be clicked.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending: targeted current smoke and accessibility audit.
+- Next step:
+  - Run targeted feature audit for Market/Flow/Algo/Trade, then run a non-mutating accessibility-tree audit across top-level screens.
+
+- Last updated: `2026-05-26 21:36 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Ran the deep read-only audit; artifacts are in `output/app-deficiency-deep-readonly-audit/`.
+  - Updated `APP_DEFICIENCY_REPORT_2026-05-26.md` with current-state corrections and deeper findings.
+  - Key report correction: Algo is no longer described as a current blank/no-grid failure; the current issue is downstream readiness (`algo-operations-signal-table`, positions, signal/gateway state) after `algo-live-grid` mounts.
+  - Added current intermittent root-crash evidence for desktop Market/Flow from `output/app-deficiency-current-feature-audit/`, with caveat that the later deep pass loaded those routes.
+  - Added deep Backtest findings: option replay chart reserved/not hydrated, skip telemetry missing, optimizer history not surfaced, Pine adapter pending/awaiting adapter, promoted drafts empty/blocked.
+  - Added deep Settings/Diagnostics evidence: Data & Broker HTTP 500/upstream `/options/chains` timeout, Diagnostics tabs showing order read timeouts, signal-options stale inputs, option-chain upstream failure, gateway blocks, automation scan failures, chart payload shape errors, and memory pressure guidance.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-deep-readonly-audit.mjs`
+  - `output/app-deficiency-current-feature-audit/` evidence artifacts
+  - `output/app-deficiency-deep-readonly-audit/` evidence artifacts
+- Validation state:
+  - Passed: current feature audit with Nix `libgbm` LD path.
+  - Passed: deep read-only audit with Nix `libgbm` LD path.
+  - Pending: scoped `git diff --check`.
+- Next step:
+  - Run scoped whitespace validation, then continue the full deficiency goal with either accessibility/control-label verification or destructive-path review only after explicit approval.
+
+- Last updated: `2026-05-26 21:29 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Reran the current feature audit against the running dirty app; artifacts are in `output/app-deficiency-current-feature-audit/`.
+  - Current-state regression found: desktop Market and desktop Flow fail to mount with a PYRUS root crash, `SyntaxError: Identifier 'formatRuntimeCount' has already been declared`.
+  - Current-state adjustment found: Algo now mounts the live grid on desktop/phone, so the old "blank Algo viewport/no live grid" report claim needs revision. It still lacks `algo-operations-signal-table` and reports `Signal Options Gateway Blocked`, `61 blocked`, `Loading signal table...`, and `Loading positions...`.
+  - Current diagnostics now use the `snapshots` response shape; latest evidence still reports `status: down`, `severity: critical`, API p95 about `2378ms`, RSS about `3737.6 MB`, event-loop max about `9948.9ms`, and resource-pressure `down`/`critical`.
+  - Added `tmp/pyrus-deep-readonly-audit.mjs` to scroll deferred sections and click only safe UI state controls.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-deep-readonly-audit.mjs`
+  - `output/app-deficiency-current-feature-audit/` evidence artifacts
+- Validation state:
+  - Passed: current feature audit with Nix `libgbm` LD path.
+  - Pending: deep read-only audit run.
+- Next step:
+  - Run `tmp/pyrus-deep-readonly-audit.mjs`, then update `APP_DEFICIENCY_REPORT_2026-05-26.md` to replace stale findings with current-state evidence.
+
+- Last updated: `2026-05-26 21:32 UTC`
+- Current request: apply the immediate route-shell/page-code rendering policy everywhere and diagnose why frame/header rendering feels much faster than page bodies.
+- Current status:
+  - Confirmed the frame/header is faster because it is already inside the eagerly mounted platform shell, while page bodies were still behind route-level dynamic imports and, for Research, a second nested lazy import.
+  - Replaced top-level route lazy rendering with a non-suspending `RouteScreenShell` in the screen registry. Active routes now show a page-specific shell immediately instead of blanking the screen stack behind `ScreenLoadingFallback`.
+  - Moved top-level screen code warmup to start shortly after first screen paint (`150ms` delay, `250ms` stagger) independent of the heavier session/memory-gated background data warmup.
+  - Kept heavy data/background warmup behind the existing memory/session gates.
+  - Prewarmed the Research `PhotonicsObservatory` module when `ResearchScreen` is loaded and replaced its generic logo fallback with a research-specific shell.
+  - Browser audit after a 12s post-boot idle window showed all top-level route modules warmed and Flow/GEX/Trade/Account/Algo/Backtest/Diagnostics/Settings rendering without the route shell; Research now shows its own shell briefly before the research root appears.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/ResearchScreen.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js` (80/80).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+  - Passed: headless Chromium route audit with Nix `libgbm` path; no root crash, no route-level logo fallback after warmup.
+- Next step:
+  - If Research still feels too slow, split `PhotonicsObservatory` into a static page frame plus deferred graph/data modules so the research root itself paints immediately instead of showing the research shell for roughly one second.
+
+- Last updated: `2026-05-26 21:18 UTC`
+- Current request: implement the Flow Scanner status/scheduling plan so cached snapshots do not display as active refresh work.
+- Current status:
+  - Updated the runtime Flow Scanner detail formatter to prioritize current work/blockers over cached snapshots.
+  - Updated the radar scanner skip path so market-session/resource/transport skips do not advance the rotation cursor.
+  - Preserving unrelated dirty files from other active passes.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.js`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`
+  - `artifacts/api-server/src/services/options-flow-radar-scanner.ts`
+  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js` (33/33).
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts` (73/73).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Reload or let the running app pick up the frontend change, then verify the Flow Scanner line shows cached/blocked/idle state instead of `loaded; refreshing`.
+
+- Last updated: `2026-05-26 21:16 UTC`
+- Current request: continue the active page-by-page deficiency report using current worktree/runtime evidence.
+- Current status:
+  - Reconfirmed the current report and dirty worktree before continuing.
+  - Important current-state adjustment: app source has changed after the report was first written, including route-shell and Algo rendering work, so stale report claims must be revalidated against the running app before being treated as current deficiencies.
+  - Next audit pass will rerun current feature coverage and then add deeper non-destructive Backtest/Account/chart/header controls where coverage remains thin.
+  - Keep destructive/live-trading actions out of scope unless explicitly approved.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending: current-state browser audit.
+- Next step:
+  - Rerun the feature audit against the current running app with the Nix `libgbm` LD path and compare results against the existing report.
+
+- Last updated: `2026-05-26 21:15 UTC`
+- Current request: continue the page-by-page deficiency audit using the now-working headless browser setup, and keep the report current with the latest safe-control evidence.
+- Current status:
+  - Headless Chromium remains usable in this shell with the Nix `libgbm` library path on `LD_LIBRARY_PATH`.
+  - Added and ran a read-only safe-control Playwright pass at `tmp/pyrus-safe-control-audit.mjs`.
+  - Safe-control artifacts are in `output/app-deficiency-safe-control-audit/`.
+  - Updated `APP_DEFICIENCY_REPORT_2026-05-26.md` with the new evidence: Market grid layout/reset can reproduce not-hydrated chart cards, Flow filters/columns respond but quote-match degradation persists, GEX Table/Graph respond but lack Flow context, Research search works for `NVDA`, Diagnostics tabs remain `DOWN`/`critical`, and Settings/Data & Broker surfaces the `/options/chains` 45s timeout.
+  - No app source or Replit startup files were changed in this pass.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-safe-control-audit.mjs`
+  - `output/app-deficiency-safe-control-audit/` evidence artifacts
+- Validation state:
+  - Passed: read-only safe-control Playwright audit with `LD_LIBRARY_PATH=/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib`.
+  - Pending: final scoped `git diff --check`.
+- Next step:
+  - Run final whitespace validation, then continue the broader deficiency goal with remaining non-destructive Backtest configuration controls or ask before touching destructive trading/mutation paths.
+
+- Last updated: `2026-05-26 21:18 UTC`
+- Current request: apply the immediate route-shell rendering policy across all top-level pages.
+- Current status:
+  - Starting scoped implementation. Goal: top-level screen navigation should not suspend the whole viewport while the page module loads; a route-specific shell should render immediately for every screen.
+  - Preserve unrelated dirty work, audit artifacts, and Replit/startup config.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Patch the screen registry/router shell path, update source tests, then browser-check cold navigation for representative screens including Algo, Trade, Flow, Account, and Research.
+
+- Last updated: `2026-05-26 21:12 UTC`
+- Current request: take a first-principles approach to page load/render slowness and check whether something prevents the Algo page from rendering while in viewport.
+- Current status:
+  - Re-diagnosed from browser timing instead of route fallback only.
+  - Found the main first-principles issue: dynamic screen/module requests share the dev app origin with large API/SSE requests, so background preloads and Algo data requests can occupy browser connection slots and delay code needed for the visible page.
+  - Changed background screen/research preloads to require an observed normal memory state; they no longer start from the default "normal before measured" assumption.
+  - Removed registry-time boot preloading and moved screen preloading to explicit nav intent plus safe idle gates.
+  - Fixed the Algo blank viewport path: `AlgoLivePage` is preloaded as soon as `AlgoScreen` loads, heavy Algo streams/queries wait until the live page module is ready, the live area has a real fallback instead of `null`, and the signal table/positions/drill modules are deferred behind local Suspense boundaries so the operations frame can paint first.
+  - Browser validation now shows direct Algo load renders `algo-live-grid` without pressing Run Scan; the signal table follows after its lazy module resolves. Remaining slowness is dev/API connection contention and heavy table/positions chunks, not a blank viewport gate.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/AppHeader.jsx`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js` (80/80).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+  - Passed: headless Chromium direct Algo load: `algo-live-grid` renders without Run Scan; subsequent check confirms `algo-operations-signal-table` appears after the lazy table module resolves.
+- Next step:
+  - If broader page switching still feels slow, attack the remaining root cause directly: either move dev API/SSE traffic off the Vite origin or introduce lightweight route shells/static imports for top-level screens so visible navigation is not blocked by dynamic module waterfalls.
+
+- Last updated: `2026-05-26 21:08 UTC`
+- Current request: continue the page-by-page deficiency audit and strengthen the report beyond the first screenshot pass.
+- Current status:
+  - Added a read-only feature/control audit runner at `tmp/pyrus-feature-audit.mjs`.
+  - Added a targeted read-only interaction audit runner at `tmp/pyrus-interaction-audit.mjs` for mobile Trade tabs and Account deferred scrolling.
+  - Ran the feature audit across all 10 screens in desktop and phone viewports; artifacts are in `output/app-deficiency-feature-audit/`.
+  - Ran the interaction audit; artifacts are in `output/app-deficiency-interaction-audit/`.
+  - Updated `APP_DEFICIENCY_REPORT_2026-05-26.md` with the second-pass findings and corrected the Account interpretation: deferred Account sections mount, but phone metric rails remain cramped/clipped.
+  - Latest diagnostics still report `DOWN`/`critical`: API p95 `2609ms`, API RSS `3604 MB`, dominant slow route `/signal-monitor/matrix` p95 `16449ms`; prior `/options/chains` p95 reached `45012ms`.
+  - Additional findings added: mobile Algo still lacks live grid, Trade mobile tabs mount but chain remains `CHAIN loading`, Flow quote-match data is unavailable, Research graph keeps a `LOADING...` marker, Backtest has `Pine Port (Pending)` / promoted drafts empty, global header tape is a UX/accessibility risk.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-feature-audit.mjs`
+  - `tmp/pyrus-interaction-audit.mjs`
+  - `output/app-deficiency-feature-audit/` evidence artifacts
+  - `output/app-deficiency-interaction-audit/` evidence artifacts
+- Validation state:
+  - Passed: read-only feature/control Playwright audit with Nix `libgbm` LD path.
+  - Passed: read-only interaction Playwright audit with Nix `libgbm` LD path.
+  - Passed: latest `/api/diagnostics/latest` evidence capture.
+  - Passed: `git diff --check -- APP_DEFICIENCY_REPORT_2026-05-26.md SESSION_HANDOFF_CURRENT.md tmp/pyrus-feature-audit.mjs tmp/pyrus-interaction-audit.mjs`.
+- Next step:
+  - Continue toward full goal by adding deeper safe interaction checks for Market chart controls, Flow filters/columns, GEX graph/table/filter controls, Research search/tabs, Backtest non-running configuration controls, Diagnostics tabs/export visibility, and Settings search/category navigation. Keep destructive trading/mutation paths out unless explicitly approved.
+
+- Last updated: `2026-05-26 20:52 UTC`
+- Current request: find deficiencies in the app by examining each page/feature and produce a report; headless Playwright dependency was also needed to complete browser inspection.
+- Current status:
+  - Completed a first broad desktop/phone Playwright audit across Market, Flow, GEX, Trade, Account, Research, Algo, Backtest, Diagnostics, and Settings.
+  - Wrote the report at `APP_DEFICIENCY_REPORT_2026-05-26.md`.
+  - Headless Chromium works with the Nix-provided `libgbm.so.1` path on `LD_LIBRARY_PATH`; direct apt install remains blocked by Replit.
+  - Confirmed live API/session context: API health OK, live IBKR bridge connected/strict-ready, two accounts available.
+  - Hard findings documented: Diagnostics/API down-critical with severe `/options/chains` latency and API RSS pressure; Algo blank/no live grid after 30s; Trade unreliable/chain stuck; Market desktop chart hydration stuck despite bar data; option snapshot hydration taking 45s and returning no contracts; Account phone metric clipping.
+- Changed files this pass:
+  - `APP_DEFICIENCY_REPORT_2026-05-26.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `tmp/pyrus-page-audit.mjs`
+  - `output/app-deficiency-audit*/` evidence artifacts
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `curl http://127.0.0.1:8080/api/healthz`.
+  - Passed: Playwright Chromium launch/audit runs with `LD_LIBRARY_PATH=/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib`.
+  - Passed: `git diff --check -- APP_DEFICIENCY_REPORT_2026-05-26.md SESSION_HANDOFF_CURRENT.md tmp/pyrus-page-audit.mjs`.
+- Next step:
+  - Start fixes in priority order from the report: API/options-chain pressure, Algo blank render, Trade hydration, Market desktop chart hydration, then phone Account layout.
+
+- Last updated: `2026-05-26 21:05 UTC`
+- Current request: use the newly fixed headless browser dependency to verify the realtime quote/signal behavior.
+- Current status:
+  - Ran headless Playwright Chromium against `http://127.0.0.1:18747/` with an EventSource audit hook.
+  - Browser diagnostics transitioned from `session-not-ready` during initial boot to quote stream `active: true` / `disabledReason: null`.
+  - Browser-side quote EventSources received live `quotes` events; the active stream recorded 81 quote events, and the watchlist DOM moved from blank prices to populated prices and percent changes.
+  - Direct API confirmation during the browser run: quote stream active, line pressure normal at 122/200 lines, signal monitor `all_watchlists` with 90 resolved/90 pinned, latest signal bar `2026-05-26T20:40:00.000Z`.
+  - Signal-options worker scan completed and released the lock; cockpit reported `worker waiting 5s; last batch 90/90 symbols`, `pressurePaused: false`.
+  - Follow-up direct API checks showed signal bars advancing to `2026-05-26T20:55:00.000Z`, worker still covering 90/90 symbols, and line pressure normal around 120/200 lines.
+  - Found a separate long-running headless route-audit process from another Codex session (`tmp/pyrus-interaction-audit.mjs`) with Chromium children; this can pollute resource/CPU measurements. Killed an older stale audit process from this validation, but another active audit remains owned by a different Codex process.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: headless browser quote diagnostics and DOM watchlist price population.
+  - Passed: direct line usage / signal monitor / cockpit API checks.
+- Next step:
+  - If further proof is needed, keep a headless browser open for a longer run and record quote event counts plus watchlist row deltas over multiple minutes.
+
+- Last updated: `2026-05-26 20:42 UTC`
+- Current request: install/fix the dependency needed to run headless Playwright browser tests.
+- Current status:
+  - Replit blocks direct `apt`/Playwright `install-deps`, so the durable fix is Nix-based.
+  - Confirmed `libgbm.so.1` is provided by `nixpkgs#libgbm` and missing from the previous browser runtime library path.
+  - Added `pkgs.libgbm` to `replit.nix`, using `pnpm run replit:config:unlock` before the edit and `pnpm run replit:config:lock` afterward.
+  - Headless Chromium now launches when the current shell includes `$(nix eval --raw nixpkgs#libgbm.outPath)/lib` on `LD_LIBRARY_PATH`; a fresh Replit environment should include this through `REPLIT_LD_LIBRARY_PATH`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `replit.nix`
+- Validation state:
+  - Passed: `pnpm run audit:replit-startup`.
+  - Passed: headless Playwright smoke against `http://127.0.0.1:18747/`; quote diagnostics reported `active: true`, `disabledReason: null`, `requestedSymbolCount: 34`, `batchSize: 34`, `cycleCoveragePct: 100`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Use the same Playwright smoke normally after the Replit environment reloads; in the current shell, prepend `LD_LIBRARY_PATH="$REPLIT_LD_LIBRARY_PATH:$(nix eval --raw nixpkgs#libgbm.outPath)/lib"` if needed.
+
+- Last updated: `2026-05-26 20:41 UTC`
+- Current request: take a first-principles approach because the user still does not perceive page load/render improvement.
+- Current status:
+  - Starting fresh diagnosis from visible user timing rather than assuming the previous route-fallback fix solved the real bottleneck.
+  - Scope: confirm the running dev app serves latest code, measure cold and warm route transitions across screens, separate module/network time from React/data/long-task time, then make the smallest code change that moves the user-visible metric.
+  - Preserve existing dirty work and Replit startup config.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Run Playwright timing probes with Nix `libgbm`, inspect route/screen readiness markers and network/long-task evidence, then patch the actual bottleneck.
+
+- Last updated: `2026-05-26 20:35 UTC`
+- Current request: implement the verified startup/screen preloading fixes so users are not waiting on in-viewport pages.
+- Current status:
+  - Implemented shared import-promise caches for `AppContent`, `PlatformApp`, and all platform screen modules so preloads are reused by the route render path.
+  - Added boot preloading for high-traffic operational screens (`flow`, `trade`, `algo`, `backtest`) and hidden shell warm-mount after those modules settle.
+  - Replaced timer-only screen-code completion with promise-based completion, gated lower-priority screen code preload under critical memory pressure, and exposed module preload state in the warmup snapshot.
+  - Added navigation-time module preload before screen state changes, plus a preloaded-component fast path so already-loaded screens bypass `React.lazy` suspense on navigation.
+  - No Replit startup config files were changed.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/app/App.tsx`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/PlatformShell.jsx`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` (52/52).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+  - Passed: Playwright Chromium audit using Nix `libgbm` in `LD_LIBRARY_PATH`; after 8s warmup on Market, Market -> Flow showed no `screen-loading-fallback`, mounted `flow`, and rendered Flow content.
+  - Passed: multi-page Playwright warm-navigation audit from fresh Market boots; Flow, Trade, Algo, and Backtest all had boot-preloaded modules ready, mounted before navigation, and showed no route-level `screen-loading-fallback`.
+- Next step:
+  - Browser-smoke other common warm navigations (`Trade`, `Algo`, `Backtest`) after the next normal Replit app reload if more timing evidence is needed.
+
+- Last updated: `2026-05-26 20:25 UTC`
+- Current request: implement the verified startup/screen preloading fixes so loader time is used for real page readiness.
+- Current status:
+  - Starting implementation. Scope: shared screen import preload cache, boot-time preload of common operational screens, actual promise-based preload completion, and focused regression tests.
+  - Preserve the staged consolidation work already present in the tree; do not stage, commit, or touch Replit startup config.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Patch screen registry/App boot/PlatformApp preload accounting, update tests, then rerun focused tests/typecheck/headless audit.
+
+- Last updated: `2026-05-26 20:36 UTC`
+- Current request: implement and verify the data-line/resource-pressure fixes for realtime watchlist quotes, fresh all-watchlist signals, and signal-options scan conflicts.
+- Current status:
+  - Added a second quote-stream fix: watchlist quote SSE is no longer disabled by unrelated broad IBKR work-pressure stalls, and the frontend source guard rejects the old `pressure-stalled` quote gate.
+  - Cockpit scan stage now reports an active scan as `running` even when execution readiness is blocked by the quiet market session.
+  - Added a signal-options scan short-circuit so gateway/session-blocked candidates skip before option expiration/chain resolution; this prevents after-hours scans from holding the scan lock while actions cannot execute.
+  - Live checks after final restart: signal monitor profile is all-watchlists with 90 resolved/90 pinned/0 skipped and latest bars advancing through `20:30Z`; quote SSE produces live IBKR events when a visible consumer is attached; line pressure remains normal around 120/200 lines.
+  - After-hours signal-options scans now release the scan lock and report worker wait/last batch after covering 90/90 symbols; the stage still shows blocked between scans because execution readiness is `market_session_quiet`, not resource pressure.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/appWorkScheduler.js`
+  - `artifacts/pyrus/src/features/platform/appWorkScheduler.test.js`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/appWorkScheduler.test.js src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js` (95/95).
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts` (114/114).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+  - Live: app restarted through existing artifact command and is available at `http://localhost:18747/`.
+  - Live: backend quote SSE verified with `SPY,NVDA,QQQ` live events; Playwright browser smoke was blocked by missing system `libgbm.so.1`.
+- Next step:
+  - If the sidebar still shows stale prices, reload the visible app tab and recheck `/api/settings/ibkr-line-usage` for `quoteStreams.activeConsumerCount >= 1`; a hidden/disconnected tab intentionally closes the EventSource.
+
+- Last updated: `2026-05-26 20:26 UTC`
+- Current request: implement the Signals to Actions table motion plan by removing the table-wide shimmer and replacing it with column-specific animations.
+- Current status:
+  - Implemented targeted Signals to Actions motion. The broad row scan shimmer is removed from the row and CSS; `scanActive` now only drives unresolved/evaluating cells.
+  - Added cell-level motion hooks for age, move, quote, spread, greeks, gate, sync, score, decision, mobile metric chips, and row actions.
+  - Added shared primitive hooks for signal dots, spread gauge marker transitions, verdict glyph state motion, and action button reveal/hover.
+  - Reduced-motion coverage was extended for the new cell/status/action classes.
+  - Unrelated API signal-monitor/signal-options files were dirty from another active pass and were left untouched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+  - `artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/SpreadGauge.jsx`
+  - `artifacts/pyrus/src/components/platform/signal-language/VerdictGlyph.jsx`
+  - `artifacts/pyrus/src/index.css`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run test:unit` (1123 tests).
+  - Passed: `git diff --check`.
+- Next step:
+  - Browser-smoke the Algo Signals to Actions table during an active scan to tune opacity/duration if the motion feels too quiet or too busy.
+
+- Last updated: `2026-05-26 20:20 UTC`
+- Current request: find all deficiencies in the app by carefully examining each page, feature, and function, then produce a report.
+- Current status:
+  - Starting broad app audit from the current worktree.
+  - Using current repo state as authoritative; existing dirty files are treated as in-progress/user work and will not be reverted.
+  - Initial focus is route/feature inventory, live app bring-up, browser inspection, and a durable deficiency report.
+  - App is already running at `http://127.0.0.1:18747/`; API health is OK at `http://127.0.0.1:8080/api/healthz`.
+  - Initial route inventory found top-level surfaces: Market, Flow, GEX, Trade, Account, Research, Algo, Backtest, Diagnostics, Settings.
+  - Headless Chromium launch was blocked by missing `libgbm.so.1`; apt is blocked in Replit, but the required library exists in Nix at `/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib`.
+  - Verified Playwright Chromium launches when commands include `LD_LIBRARY_PATH=/nix/store/wilz94hzz4q3fss6qvv625zvww4a6s4s-mesa-libgbm-25.0.1/lib`.
+  - Live diagnostics already show product/runtime deficiencies to report: critical overall diagnostics, elevated API p95, `/signal-monitor/matrix` p95 ~68s, option chain degradation, and COEP report for Replit bridge script.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `curl http://127.0.0.1:8080/api/healthz`.
+  - Passed: Playwright Chromium launch smoke with the Nix `mesa-libgbm` library path.
+  - Note: direct `apt-get install libgbm1` is blocked by Replit dependency-management wrapper; no startup config files were changed.
+- Next step:
+  - Inspect pages with Playwright using the `mesa-libgbm` `LD_LIBRARY_PATH` and capture evidence/screenshots for the deficiency report.
+
+- Last updated: `2026-05-26 20:17 UTC`
+- Current request: implement the data-line/resource-pressure plan and verify watchlist prices plus signal freshness.
+- Current status:
+  - Realtime quote scheduler now keeps foreground IBKR quote streams alive under API RSS/resource-pressure; only stalled/hidden/broker-not-ready gates disable them.
+  - API resource-pressure caps no longer stop signal-options scans or shrink signal monitor evaluation breadth.
+  - Signal monitor defaults and signal-options paper normalization now use all watchlists, max 250 symbols, and evaluation concurrency 10; default ranked-universe expansion is opt-in.
+  - Signal-options duplicate scan requests now return an `already_running` skip/info result instead of surfacing as a 409 failure.
+  - Live checks before the final restart showed line admission healthy, line drift matched, paper signal evaluate covered 90/90 watchlist symbols, and an existing worker scan was still active from the old runtime.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/appWorkScheduler.js`
+  - `artifacts/pyrus/src/features/platform/appWorkScheduler.test.js`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+  - `artifacts/api-server/src/services/resource-pressure.ts`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/signal-options-worker.ts`
+  - `artifacts/api-server/src/services/signal-options-worker.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts` (114/114).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/appWorkScheduler.test.js src/screens/algo/algoHelpers.test.js` (43/43).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check` before the final concurrency bump; re-run after final restart.
+- Next step:
+  - Restart the Replit dev app through the existing artifact command, update live/paper signal profile concurrency to 10 if needed, then verify quote stream, line drift, and signal state again.
+
+- Last updated: `2026-05-26 20:13 UTC`
+- Current request: implement the Signals to Actions table motion plan by removing the table-wide shimmer and replacing it with column-specific animations.
+- Current status:
+  - Starting implementation. Keep the visual feel trading-desk restrained: targeted cell feedback, no table-wide scan shimmer, no row/column resizing, reduced-motion coverage.
+  - Preserve Replit startup config and the existing uncommitted handoff entry from the rendering-policy audit.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Patch `OperationsSignalRow`, signal-language primitives, motion CSS, and focused tests; then run targeted Pyrus validation.
+
+- Last updated: `2026-05-26 20:12 UTC`
+- Current request: monitor/audit the rendering-policy changes because pages still feel like they make the user wait.
+- Current status:
+  - Live source audit complete. The running Vite app is serving the latest rendering-policy changes for Market, Flow, Trade, and Backtest.
+  - The remaining visible waits are primarily above/beside those fixes: global boot has a lazy waterfall (`AppContent` then `PlatformApp`), screen modules are lazy-loaded on first navigation, and background screen preloading starts only after first screen ready plus the configured 750ms stagger.
+  - HTTP timing from the running dev server shows expensive first screen chunks: `FlowScreen.jsx` about 1.0MB/317ms, `TradeScreen.jsx` about 597KB/916ms, `BacktestingPanels.tsx` about 1.18MB/317ms, `SettingsScreen.jsx` about 635KB/191ms, `MultiChartGrid.jsx` about 236KB/107ms, and `TradeOrderTicket.jsx` about 419KB/121ms.
+  - Core API timings were not the main bottleneck in this sample: `/api/session` about 2ms, `/api/watchlists` about 287ms, `/api/signal-monitor/state` about 135ms, `/api/flow/events` about 3ms, `/api/algo/deployments` about 2ms.
+  - Playwright browser timing was blocked by the container missing `libgbm.so.1`, so this audit used served-source checks and HTTP/module timing instead of a real browser waterfall.
+  - Follow-up headless audit now works by running Chromium with Nix `mesa-libgbm` in `LD_LIBRARY_PATH`; no Replit startup config or repo dependency files were changed.
+  - Browser audit confirmed the real visible wait: after an 8s idle warmup on Market, clicking Flow showed the route-level `screen-loading-fallback` after about 500ms and it was still visible after 9s, even though the header/sidebar were live and the warmup snapshot claimed screen code preload was complete.
+  - The warmup snapshot only had `screenReadiness.market`; Flow never reported readiness because the active route was still suspended. `screenCodePreloadCompleteAtMs` is timer-based, not actual import completion.
+  - Memory pressure was `critical`, so hidden screen warm-mount was disabled, but code preloading still ran. This means we preload screen code but do not guarantee active route modules are ready before navigation.
+  - First-pass cold Flow navigation also reproduced a long route fallback: visible around 236ms after click and still not gone after the 20s wait window.
+  - Preserve the staged consolidation work already present in the tree; do not stage, commit, or touch Replit startup config during this audit.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: live served-source checks confirm the previous Market/Flow/Trade/Backtest timer removals are active.
+  - Passed: running dev-server HTTP timings captured for key app, screen, nested screen, and API modules.
+  - Passed: headless Chromium launch after adding Nix `mesa-libgbm` to `LD_LIBRARY_PATH`.
+  - Passed: browser audit reproduced route-level Flow fallback persisting after both cold-fast and warmed navigation.
+- Next step:
+  - Fix direction: stop treating timer completion as code-preload completion; make visible operational screens load during boot or use tracked import promises so route-level Suspense does not cover active pages after navigation.
 
 - Last updated: `2026-05-26 20:06 UTC`
 - Current request: correct the dirty/untracked dependency issues, clean up the worktree, and commit the current work on `main`.

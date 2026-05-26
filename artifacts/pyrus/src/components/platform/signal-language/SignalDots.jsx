@@ -106,6 +106,13 @@ export const SignalDots = ({
         "data-testid": `watchlist-signal-dot-${timeframe}`,
         "data-timeframe": timeframe,
         "data-direction": hasDirection ? direction : "none",
+        className: [
+          "ra-signal-dot",
+          hasDirection ? "ra-signal-dot-active" : null,
+          hasDirection && fresh ? "ra-signal-dot-fresh" : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
         "aria-label": label,
         style: dotStyle,
       };

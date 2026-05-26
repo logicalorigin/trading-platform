@@ -216,11 +216,25 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /ra-signal-row-glow/);
   assert.match(rowSource, /ra-signal-row-focus/);
   assert.match(rowSource, /scanActive = false/);
-  assert.match(rowSource, /scanIndex = 0/);
-  assert.match(rowSource, /ra-signal-row-scan/);
-  assert.match(rowSource, /--ra-signal-scan-accent/);
-  assert.match(rowSource, /--ra-signal-scan-delay/);
+  assert.doesNotMatch(rowSource, /scanIndex = 0/);
+  assert.doesNotMatch(rowSource, /ra-signal-row-scan/);
+  assert.doesNotMatch(rowSource, /--ra-signal-scan-accent/);
+  assert.doesNotMatch(rowSource, /--ra-signal-scan-delay/);
+  assert.match(rowSource, /signalCellClassName/);
+  assert.match(rowSource, /ra-signal-cell-motion/);
+  assert.match(rowSource, /quoteEvaluating/);
+  assert.match(rowSource, /spreadEvaluating/);
+  assert.match(rowSource, /greeksEvaluating/);
+  assert.match(rowSource, /gateMotionState/);
+  assert.match(rowSource, /syncMotionState/);
+  assert.match(rowSource, /decisionMotionState/);
+  assert.match(rowSource, /rowActionMotionState/);
   assert.match(rowSource, /useValueFlash\(liveUnderlyingPrice\)/);
+  assert.match(rowSource, /ageFlashClassName/);
+  assert.match(rowSource, /signalMoveFlashClassName/);
+  assert.match(rowSource, /quoteFlashClassName/);
+  assert.match(rowSource, /spreadFlashClassName/);
+  assert.match(rowSource, /scoreFlashClassName/);
 });
 
 test("algo signal table builds matrix and runtime ticker snapshots once per table", () => {
@@ -266,9 +280,9 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /Scan running/);
   assert.match(tableSource, /scanStageRecord\.detail/);
   assert.match(tableSource, /freshness\.scanDetail/);
-  assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}, index\)/);
+  assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}\)/);
   assert.match(tableSource, /scanActive=\{freshness\.scanRunning\}/);
-  assert.match(tableSource, /scanIndex=\{index\}/);
+  assert.doesNotMatch(tableSource, /scanIndex=\{index\}/);
   assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
   assert.match(tableSource, /SIGNALS_PAGE_SIZE = 30/);
@@ -340,20 +354,25 @@ test("signal row motion classes respect reduced-motion settings", () => {
 
   assert.match(cssSource, /@keyframes raSignalHotGlow/);
   assert.match(cssSource, /@keyframes raSignalGlyphFresh/);
-  assert.match(cssSource, /@keyframes raSignalRowScan/);
+  assert.match(cssSource, /@keyframes raSignalCellEvaluating/);
+  assert.match(cssSource, /@keyframes raSignalCellReveal/);
+  assert.match(cssSource, /@keyframes raSignalStatusPop/);
+  assert.match(cssSource, /@keyframes raSignalBlockedEmphasis/);
+  assert.match(cssSource, /@keyframes raSignalActionIn/);
   assert.match(cssSource, /\.ra-signal-row-focus:focus-visible/);
-  assert.match(cssSource, /\.ra-signal-row-scan::after/);
+  assert.match(cssSource, /\.ra-signal-cell-evaluating/);
+  assert.match(cssSource, /\.ra-signal-decision-pill-try/);
+  assert.match(cssSource, /\.ra-signal-action-button/);
+  assert.match(cssSource, /\.ra-spread-gauge-marker/);
+  assert.doesNotMatch(cssSource, /@keyframes raSignalRowScan/);
+  assert.doesNotMatch(cssSource, /\.ra-signal-row-scan/);
   assert.match(
     cssSource,
-    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-signal-row-glow[\s\S]*?\.ra-signal-row-scan::after[\s\S]*?animation: none/,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-signal-row-glow[\s\S]*?\.ra-signal-cell-evaluating[\s\S]*?\.ra-signal-action-button[\s\S]*?animation: none/,
   );
   assert.match(
     cssSource,
-    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-scan::after[\s\S]*?animation: none/,
-  );
-  assert.match(
-    cssSource,
-    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-scan::after[\s\S]*?animation: none/,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?html\[data-pyrus-reduced-motion="on"\] \.ra-signal-cell-evaluating[\s\S]*?animation: none/,
   );
 });
 

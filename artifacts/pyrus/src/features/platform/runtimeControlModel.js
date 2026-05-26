@@ -35,6 +35,52 @@ const formatRuntimeDuration = (durationMs) => {
   return `${Math.ceil(ms / 60_000)}m`;
 };
 
+const formatRuntimeQuantity = (count, singular, plural = `${singular}s`) => {
+  const rounded = Math.round(count);
+  return `${rounded} ${rounded === 1 ? singular : plural}`;
+};
+
+const formatScannerReason = (reason) => {
+  if (!reason) {
+    return null;
+  }
+  if (reason === "line-cap-exhausted") {
+    return "no scanner lines available";
+  }
+  if (reason === "resource-pressure") {
+    return "resource pressure";
+  }
+  if (reason === "live-warmup") {
+    return "live watchlist warming";
+  }
+  if (reason === "market-session-quiet") {
+    return "market session quiet";
+  }
+  if (reason === "transport-unavailable") {
+    return "transport unavailable";
+  }
+  if (reason === "market-data-not-live") {
+    return "market data not live";
+  }
+  return String(reason).replace(/[-_]+/g, " ");
+};
+
+const formatFlowSnapshotCount = (snapshotCount) =>
+  formatRuntimeQuantity(snapshotCount, "cached flow snapshot");
+
+const formatScannerSymbolList = (symbols) => {
+  if (!Array.isArray(symbols) || symbols.length === 0) {
+    return null;
+  }
+  const normalized = symbols.map((symbol) => String(symbol).trim()).filter(Boolean);
+  if (!normalized.length) {
+    return null;
+  }
+  const visible = normalized.slice(0, 3);
+  const remaining = normalized.length - visible.length;
+  return `${visible.join(", ")}${remaining > 0 ? ` +${remaining}` : ""}`;
+};
+
 const formatFlowScannerRuntimeDetail = (admission, used) => {
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
@@ -49,18 +95,24 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   if (Number.isFinite(used) && used === 0) {
     const activeCount = Number(scanner.deepScanner?.activeCount);
     if (Number.isFinite(activeCount) && activeCount > 0) {
-      const rounded = Math.round(activeCount);
-      return `${rounded} option-chain scan${rounded === 1 ? "" : "s"} active; quotes warming`;
+      return `${formatRuntimeQuantity(activeCount, "option-chain scan")} active; quotes warming`;
     }
     const queuedCount = Number(scanner.deepScanner?.queuedCount);
     if (Number.isFinite(queuedCount) && queuedCount > 0) {
-      return `${Math.round(queuedCount)} scan${Math.round(queuedCount) === 1 ? "" : "s"} queued`;
+      return `${formatRuntimeQuantity(queuedCount, "scan")} queued`;
+    }
+    if (scanner.deepScanner?.draining) {
+      return "deep scan starting";
     }
     const snapshotCount = Number(scanner.deepScanner?.snapshotCount);
-    if (Number.isFinite(snapshotCount) && snapshotCount > 0) {
-      return `${Math.round(snapshotCount)} flow snapshot${Math.round(snapshotCount) === 1 ? "" : "s"} loaded; refreshing`;
-    }
-    const blockedReason = scanner.backgroundBlockedReason;
+    const snapshotDetail =
+      Number.isFinite(snapshotCount) && snapshotCount > 0
+        ? formatFlowSnapshotCount(snapshotCount)
+        : null;
+    const blockedReason =
+      scanner.backgroundBlockedReason ||
+      scanner.radarDegradedReason ||
+      scanner.radar?.degradedReason;
     if (blockedReason === "live-warmup") {
       const remaining = formatRuntimeDuration(scanner.backgroundHoldRemainingMs);
       return `warming live watchlist${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
@@ -71,18 +123,29 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (blockedReason === "resource-pressure") {
       return "degraded: resource pressure";
     }
+    if (blockedReason === "market-session-quiet") {
+      return snapshotDetail
+        ? `market session quiet; ${snapshotDetail}`
+        : "market session quiet";
+    }
     if (blockedReason) {
-      return `paused: ${blockedReason}`;
+      return `paused: ${formatScannerReason(blockedReason)}`;
     }
     const skipReason = scanner.lastSkippedReason;
     if (skipReason) {
       if (skipReason === "line-cap-exhausted") {
         return "paused: no scanner lines available";
       }
-      return `skipped: ${skipReason}`;
+      return `skipped: ${formatScannerReason(skipReason)}`;
     }
-    if (scanner.deepScanner?.draining) {
-      return "deep scan starting";
+    const failedSymbols = formatScannerSymbolList(
+      scanner.deepScanner?.lastFailedSymbols,
+    );
+    if (failedSymbols) {
+      return `last scan failed: ${failedSymbols}`;
+    }
+    if (snapshotDetail) {
+      return snapshotDetail;
     }
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
       return "rotating; awaiting next batch";

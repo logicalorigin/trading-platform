@@ -89,6 +89,12 @@ export const VerdictGlyph = ({
     <AppTooltip content={label}>
       <span
         data-testid={`algo-verdict-${verdict.bucket}`}
+        className={[
+          "ra-verdict-glyph",
+          verdict.bucket ? `ra-verdict-glyph-${verdict.bucket}` : null,
+        ]
+          .filter(Boolean)
+          .join(" ")}
         aria-label={label}
         style={{
           display: "inline-grid",

@@ -952,6 +952,63 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
   }
 }
 
+@keyframes raSignalCellEvaluating {
+  0%, 100% {
+    opacity: 0.72;
+    text-shadow: 0 0 0 transparent;
+  }
+  50% {
+    opacity: 1;
+    text-shadow: 0 0 9px color-mix(in srgb, var(--ra-motion-accent, var(--ra-color-cyan)) 24%, transparent);
+  }
+}
+
+@keyframes raSignalCellReveal {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes raSignalStatusPop {
+  0% {
+    transform: scale(0.94);
+  }
+  58% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes raSignalBlockedEmphasis {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  28% {
+    transform: translateX(-1px);
+  }
+  58% {
+    transform: translateX(1px);
+  }
+}
+
+@keyframes raSignalActionIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .ra-pulse-orb {
   animation: raStatusPulse 2.4s ease-in-out infinite;
   transform-origin: center;
@@ -982,20 +1039,6 @@ html[data-pyrus-reduced-motion="on"] .ra-screen-enter {
     transform: translateX(-120%);
   }
   to {
-    transform: translateX(120%);
-  }
-}
-
-@keyframes raSignalRowScan {
-  0% {
-    opacity: 0;
-    transform: translateX(-120%);
-  }
-  12%, 70% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
     transform: translateX(120%);
   }
 }
@@ -1385,6 +1428,91 @@ summary,
   transform-origin: center;
 }
 
+.ra-signal-cell-motion {
+  transition:
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-signal-cell-evaluating {
+  animation: raSignalCellEvaluating 1200ms var(--ra-motion-ease) infinite;
+}
+
+.ra-signal-cell-ready {
+  animation: raSignalCellReveal var(--ra-motion-standard) var(--ra-motion-enter) 1;
+}
+
+.ra-signal-cell-blocked {
+  animation: raSignalBlockedEmphasis 260ms var(--ra-motion-ease) 1;
+}
+
+.ra-signal-cell-wait {
+  opacity: 0.9;
+}
+
+.ra-signal-status-pill,
+.ra-signal-decision-pill,
+.ra-verdict-glyph,
+.ra-signal-dot,
+.ra-spread-gauge-fill,
+.ra-spread-gauge-marker {
+  transition:
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    stroke var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-spread-gauge-marker {
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+.ra-signal-status-pill-ready,
+.ra-signal-decision-pill-try,
+.ra-verdict-glyph-try,
+.ra-signal-dot-fresh {
+  animation: raSignalStatusPop 220ms var(--ra-motion-enter) 1;
+  transform-origin: center;
+}
+
+.ra-signal-status-pill-evaluating,
+.ra-signal-decision-pill-wait,
+.ra-verdict-glyph-wait {
+  animation: raSignalCellEvaluating 1450ms var(--ra-motion-ease) infinite;
+}
+
+.ra-signal-status-pill-blocked,
+.ra-signal-decision-pill-pass,
+.ra-verdict-glyph-pass,
+.ra-signal-action-button-blocked {
+  animation: raSignalBlockedEmphasis 260ms var(--ra-motion-ease) 1;
+}
+
+.ra-signal-action-button {
+  animation: raSignalActionIn var(--ra-motion-standard) var(--ra-motion-enter) 1;
+  transform-origin: center;
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-micro) var(--ra-motion-ease);
+}
+
+.ra-signal-action-button:hover {
+  transform: translateY(-1px);
+}
+
+.ra-signal-action-button-ready {
+  animation: raSignalActionIn var(--ra-motion-standard) var(--ra-motion-enter) 1;
+}
+
 .ra-signal-row-focus {
   position: relative;
 }
@@ -1408,43 +1536,6 @@ summary,
   border-bottom: 5px solid transparent;
   border-left: 7px solid var(--ra-color-cyan, currentColor);
   transform: translateY(-50%);
-}
-
-.ra-signal-row-scan {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.ra-signal-row-scan::after {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  content: "";
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(
-      in srgb,
-      var(--ra-signal-scan-accent, var(--ra-motion-accent)) 9%,
-      transparent
-    ) 46%,
-    color-mix(
-      in srgb,
-      var(--ra-signal-scan-accent, var(--ra-motion-accent)) 15%,
-      transparent
-    ) 52%,
-    transparent 100%
-  );
-  transform: translateX(-120%);
-  animation: raSignalRowScan 1250ms var(--ra-motion-ease) infinite;
-  animation-delay: var(--ra-signal-scan-delay, 0ms);
-}
-
-.ra-signal-row-scan > * {
-  position: relative;
-  z-index: 1;
 }
 
 .ra-focus-rail {
@@ -2197,9 +2288,24 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   .ra-value-flash-up,
   .ra-value-flash-down,
   .ra-status-pulse,
+  .ra-signal-cell-evaluating,
+  .ra-signal-cell-ready,
+  .ra-signal-cell-blocked,
+  .ra-signal-status-pill-ready,
+  .ra-signal-status-pill-evaluating,
+  .ra-signal-status-pill-blocked,
+  .ra-signal-decision-pill-try,
+  .ra-signal-decision-pill-wait,
+  .ra-signal-decision-pill-pass,
+  .ra-verdict-glyph-try,
+  .ra-verdict-glyph-wait,
+  .ra-verdict-glyph-pass,
+  .ra-signal-dot-fresh,
+  .ra-signal-action-button,
+  .ra-signal-action-button-ready,
+  .ra-signal-action-button-blocked,
   .ra-focus-rail::before,
   .ra-scan-sweep::after,
-  .ra-signal-row-scan::after,
   .ra-skeleton::after,
   .ra-sparkline polyline,
   .ra-sparkline path,
@@ -2214,11 +2320,20 @@ textarea:disabled:not([data-ra-keep-opacity]) {
     opacity: 1;
   }
 
-  .ra-interactive {
+  .ra-interactive,
+  .ra-signal-cell-motion,
+  .ra-signal-status-pill,
+  .ra-signal-decision-pill,
+  .ra-verdict-glyph,
+  .ra-signal-dot,
+  .ra-spread-gauge-fill,
+  .ra-spread-gauge-marker,
+  .ra-signal-action-button {
     transition-duration: 1ms !important;
   }
 
-  .ra-interactive:hover {
+  .ra-interactive:hover,
+  .ra-signal-action-button:hover {
     transform: none;
   }
 
@@ -2241,9 +2356,24 @@ html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
 html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
 html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
 html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-evaluating,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-blocked,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-evaluating,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-blocked,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-try,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-wait,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-pass,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-try,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-wait,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-pass,
+html[data-pyrus-reduced-motion="on"] .ra-signal-dot-fresh,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-blocked,
 html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
 html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
-html[data-pyrus-reduced-motion="on"] .ra-signal-row-scan::after,
 html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
@@ -2258,9 +2388,24 @@ html[data-pyrus-reduced-motion="on"] .ra-signal-glyph-fresh,
 html[data-pyrus-reduced-motion="on"] .ra-value-flash-up,
 html[data-pyrus-reduced-motion="on"] .ra-value-flash-down,
 html[data-pyrus-reduced-motion="on"] .ra-status-pulse,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-evaluating,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-blocked,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-evaluating,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill-blocked,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-try,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-wait,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill-pass,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-try,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-wait,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph-pass,
+html[data-pyrus-reduced-motion="on"] .ra-signal-dot-fresh,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-ready,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button-blocked,
 html[data-pyrus-reduced-motion="on"] .ra-focus-rail::before,
 html[data-pyrus-reduced-motion="on"] .ra-scan-sweep::after,
-html[data-pyrus-reduced-motion="on"] .ra-signal-row-scan::after,
 html[data-pyrus-reduced-motion="on"] .ra-skeleton::after,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline polyline,
 html[data-pyrus-reduced-motion="on"] .ra-sparkline path,
@@ -2277,14 +2422,23 @@ html[data-pyrus-reduced-motion="on"] .ra-sparkline-tail {
 }
 
 html[data-pyrus-reduced-motion="on"] .ra-interactive,
-html[data-pyrus-reduced-motion="on"] .ra-interactive {
+html[data-pyrus-reduced-motion="on"] .ra-interactive,
+html[data-pyrus-reduced-motion="on"] .ra-signal-cell-motion,
+html[data-pyrus-reduced-motion="on"] .ra-signal-status-pill,
+html[data-pyrus-reduced-motion="on"] .ra-signal-decision-pill,
+html[data-pyrus-reduced-motion="on"] .ra-verdict-glyph,
+html[data-pyrus-reduced-motion="on"] .ra-signal-dot,
+html[data-pyrus-reduced-motion="on"] .ra-spread-gauge-fill,
+html[data-pyrus-reduced-motion="on"] .ra-spread-gauge-marker,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button {
   transition-duration: 1ms !important;
 }
 
 html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
 html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
 html[data-pyrus-reduced-motion="on"] .ra-interactive:hover,
-html[data-pyrus-reduced-motion="on"] .ra-bar-fill {
+html[data-pyrus-reduced-motion="on"] .ra-bar-fill,
+html[data-pyrus-reduced-motion="on"] .ra-signal-action-button:hover {
   transform: none !important;
 }
 

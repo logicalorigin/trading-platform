@@ -54,6 +54,7 @@ import {
   SCREENS,
   SCREEN_RENDER_POLICIES,
   ScreenLoadingFallback,
+  preloadScreenModule,
 } from "./screenRegistry.jsx";
 import { useElementSize, useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
@@ -761,6 +762,7 @@ export const PlatformShell = ({
       if (!screenId || screenId === activeScreen) {
         return;
       }
+      void preloadScreenModule(screenId);
       markScreenSwitchStart(screenId, "navigation");
       setScreen(screenId);
     },

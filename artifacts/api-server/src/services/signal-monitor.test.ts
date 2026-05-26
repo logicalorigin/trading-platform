@@ -338,11 +338,11 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     ),
     {
       pressure: "normal",
-      capped: true,
+      capped: false,
       profile: {
         ...configured,
         maxSymbols: 250,
-        evaluationConcurrency: 3,
+        evaluationConcurrency: 10,
       },
     },
   );
@@ -354,7 +354,7 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     {
       ...configured,
       maxSymbols: 250,
-      evaluationConcurrency: 3,
+      evaluationConcurrency: 10,
     },
   );
   assert.deepEqual(
@@ -365,7 +365,7 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     {
       ...configured,
       maxSymbols: 250,
-      evaluationConcurrency: 3,
+      evaluationConcurrency: 10,
     },
   );
   assert.deepEqual(
@@ -376,7 +376,7 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     {
       ...configured,
       maxSymbols: 250,
-      evaluationConcurrency: 3,
+      evaluationConcurrency: 10,
     },
   );
 });

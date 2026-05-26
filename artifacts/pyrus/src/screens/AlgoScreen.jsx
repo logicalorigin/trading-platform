@@ -145,25 +145,53 @@ import { KpiTile } from "./algo/KpiTile.jsx";
 import { HeroKpi } from "./algo/HeroKpi.jsx";
 import { AttentionList } from "./algo/AttentionList.jsx";
 import { PipelineStrip } from "./algo/PipelineStrip.jsx";
+import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
 
 const LazyAlgoAuditPanel = lazy(() =>
   import("./algo/AlgoAuditPanel").then((module) => ({
     default: module.AlgoAuditPanel,
   })),
 );
-const LazyAlgoLivePage = lazy(() =>
-  import("./algo/AlgoLivePage").then((module) => ({
-    default: module.AlgoLivePage,
-  })),
-);
-const LazyAlgoRightRail = lazy(() =>
-  import("./algo/AlgoRightRail").then((module) => ({
-    default: module.AlgoRightRail,
-  })),
-);
+let algoLivePageImport = null;
+const loadAlgoLivePage = () => {
+  if (!algoLivePageImport) {
+    algoLivePageImport = import("./algo/AlgoLivePage")
+      .then((module) => ({
+        default: module.AlgoLivePage,
+      }))
+      .catch((error) => {
+        algoLivePageImport = null;
+        throw error;
+      });
+  }
+  return algoLivePageImport;
+};
+const LazyAlgoLivePage = lazy(loadAlgoLivePage);
+if (typeof window !== "undefined") {
+  void loadAlgoLivePage();
+}
 
 const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
+
+const AlgoLiveLoading = () => (
+  <div
+    data-testid="algo-live-loading"
+    style={{
+      minHeight: dim(220),
+      display: "grid",
+      placeItems: "center",
+      border: `1px dashed ${CSS_COLOR.border}`,
+      borderRadius: dim(RADII.sm),
+      color: CSS_COLOR.textDim,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      background: CSS_COLOR.bg1,
+    }}
+  >
+    Loading signal operations...
+  </div>
+);
 
 const signalOptionsRuleColor = (status) => {
   if (status === "fail") return CSS_COLOR.red;
@@ -260,6 +288,7 @@ export const AlgoScreen = ({
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
+  const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
   const gatewayReady = isGatewayReadyForAlgo(session);
@@ -273,13 +302,34 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
+  useEffect(() => {
+    if (!isVisible) {
+      return undefined;
+    }
+    let cancelled = false;
+    loadAlgoLivePage()
+      .then(() => {
+        if (!cancelled) {
+          setAlgoLivePageReady(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlgoLivePageReady(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isVisible]);
+  const algoLiveDataQueriesEnabled = Boolean(isVisible && algoLivePageReady);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
     mode: environment || "paper",
-    enabled: Boolean(isVisible),
+    enabled: algoLiveDataQueriesEnabled,
   });
   const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
-    enabled: Boolean(isVisible),
+    enabled: algoLiveDataQueriesEnabled,
   });
   const [algoCriticalFallbackReady, setAlgoCriticalFallbackReady] = useState(false);
   const [algoDerivedFallbackReady, setAlgoDerivedFallbackReady] = useState(false);
@@ -376,9 +426,10 @@ export const AlgoScreen = ({
     isVisible,
     markAlgoTiming,
   ]);
-  const algoCriticalQueriesEnabled = Boolean(isVisible);
-  const algoDerivedQueriesEnabled = Boolean(isVisible);
-  const algoPostCriticalQueriesEnabled = Boolean(isVisible);
+  const algoSetupQueriesEnabled = Boolean(isVisible);
+  const algoCriticalQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
+  const algoDerivedQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
+  const algoPostCriticalQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
   const algoRoutineRefetchInterval =
     isVisible && !algoCockpitStreamFreshness.algoCriticalFresh
       ? QUERY_DEFAULTS.refetchInterval
@@ -400,7 +451,7 @@ export const AlgoScreen = ({
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       ...QUERY_DEFAULTS,
-      enabled: algoPostCriticalQueriesEnabled,
+      enabled: algoSetupQueriesEnabled,
       refetchInterval: algoDerivedRefetchInterval,
       retry: false,
     },
@@ -410,7 +461,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: algoCriticalQueriesEnabled,
+        enabled: algoSetupQueriesEnabled,
         refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
@@ -437,7 +488,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: algoCriticalQueriesEnabled,
+        enabled: algoLiveDataQueriesEnabled,
         refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
@@ -1735,7 +1786,7 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        <Suspense fallback={null}>
+        <Suspense fallback={<AlgoLiveLoading />}>
         <LazyAlgoLivePage
           deployments={deployments}
           candidateDrafts={candidateDrafts}
@@ -1797,39 +1848,37 @@ export const AlgoScreen = ({
             </Suspense>
           }
           rightRail={
-            <Suspense fallback={null}>
-              <LazyAlgoRightRail
-                cockpit={cockpit}
-                signalOptionsPositions={signalOptionsPositions}
-                profileDraft={profileDraft}
-                profileBaseline={profileDraftState.baseline}
-                profileDirty={profileDirty}
-                patchProfileDraftPath={patchProfileDraftPath}
-                strategySettingsDraft={strategySettingsDraft}
-                strategyBaseline={strategySettingsDraftState.baseline}
-                strategyDirty={strategyDirty}
-                patchStrategySettingsPath={patchStrategySettingsPath}
-                focusedDeployment={focusedDeployment}
-                handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-                handleSaveAllAdjustments={handleSaveAllAdjustments}
-                handleDiscardAllAdjustments={handleDiscardAllAdjustments}
-                updateProfileMutation={updateProfileMutation}
-                updateStrategySettingsMutation={updateStrategySettingsMutation}
-                cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-                cockpitSkipReasonRows={cockpitSkipReasonRows}
-                cockpitReadinessRows={cockpitReadinessRows}
-                cockpitMarkHealthRows={cockpitMarkHealthRows}
-                cockpitLifecycleRows={cockpitLifecycleRows}
-                cockpitEntryGateRows={cockpitEntryGateRows}
-                cockpitOptionChainRows={cockpitOptionChainRows}
-                cockpitSignalFreshness={cockpitSignalFreshness}
-                cockpitTradePath={cockpitTradePath}
-                diagExpansion={diagExpansion}
-                setDiagExpansion={setDiagExpansion}
-                algoIsPhone={algoIsPhone}
-                algoIsNarrow={algoIsNarrow}
-              />
-            </Suspense>
+            <AlgoRightRail
+              cockpit={cockpit}
+              signalOptionsPositions={signalOptionsPositions}
+              profileDraft={profileDraft}
+              profileBaseline={profileDraftState.baseline}
+              profileDirty={profileDirty}
+              patchProfileDraftPath={patchProfileDraftPath}
+              strategySettingsDraft={strategySettingsDraft}
+              strategyBaseline={strategySettingsDraftState.baseline}
+              strategyDirty={strategyDirty}
+              patchStrategySettingsPath={patchStrategySettingsPath}
+              focusedDeployment={focusedDeployment}
+              handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+              handleSaveAllAdjustments={handleSaveAllAdjustments}
+              handleDiscardAllAdjustments={handleDiscardAllAdjustments}
+              updateProfileMutation={updateProfileMutation}
+              updateStrategySettingsMutation={updateStrategySettingsMutation}
+              cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+              cockpitSkipReasonRows={cockpitSkipReasonRows}
+              cockpitReadinessRows={cockpitReadinessRows}
+              cockpitMarkHealthRows={cockpitMarkHealthRows}
+              cockpitLifecycleRows={cockpitLifecycleRows}
+              cockpitEntryGateRows={cockpitEntryGateRows}
+              cockpitOptionChainRows={cockpitOptionChainRows}
+              cockpitSignalFreshness={cockpitSignalFreshness}
+              cockpitTradePath={cockpitTradePath}
+              diagExpansion={diagExpansion}
+              setDiagExpansion={setDiagExpansion}
+              algoIsPhone={algoIsPhone}
+              algoIsNarrow={algoIsNarrow}
+            />
           }
         />
         </Suspense>

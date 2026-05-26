@@ -42,10 +42,14 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
 
   const appSource = readFileSync(new URL("../../app/App.tsx", import.meta.url), "utf8");
   assert.match(appSource, /\.\/AppContent/);
+  assert.match(appSource, /const loadAppContent = \(\) =>/);
+  assert.match(appSource, /void loadAppContent\(\)/);
   assert.doesNotMatch(appSource, /PyrusPlatform/);
 
   const appContentSource = readFileSync(new URL("../../app/AppContent.tsx", import.meta.url), "utf8");
   assert.match(appContentSource, /features\/platform\/PlatformApp\.jsx/);
+  assert.match(appContentSource, /const loadPlatformApp = \(\) =>/);
+  assert.match(appContentSource, /void loadPlatformApp\(\)/);
   assert.doesNotMatch(appContentSource, /PyrusPlatform/);
 
   const sourceHits = collectSourceFiles(pyrusSrcRoot)
@@ -643,6 +647,7 @@ test("Algo monitor is frame-owned and replaces the activity sidebar feed", () =>
   assert.match(shellSource, /activitySidebarWidth/);
   assert.match(appSource, /const frameAuxiliaryDataEnabled = Boolean/);
   assert.match(appSource, /screenWarmupPhase === "ready"/);
+  assert.match(appSource, /activeScreenBackgroundDataAllowed/);
   assert.match(appSource, /frameAuxiliaryDataEnabled=\{frameAuxiliaryDataEnabled\}/);
   assert.equal(existsSync(retiredActivitySidebarPath), false);
   assert.match(algoMonitorSource, /useListAlgoDeployments/);
@@ -1519,6 +1524,11 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
   );
   assert.match(source, /buildWatchlistQuoteRotationBatch/);
   assert.match(source, /WATCHLIST_QUOTE_STREAM_BATCH_SIZE/);
+  assert.doesNotMatch(
+    source,
+    /pressure-stalled/,
+    "quote streaming should not be gated by unrelated broad IBKR work pressure",
+  );
   assert.match(
     aggregateSymbolsBlock ?? "",
     /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? MARKET_SNAPSHOT_SYMBOLS[\s\S]*: \[\]/,
@@ -1706,11 +1716,16 @@ test("algo signal-options automation uses generated API ownership path", () => {
 
 test("screen shell warmup preloads top-level code without default hidden page mounting", () => {
   const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const appHeaderSource = readFileSync(new URL("./AppHeader.jsx", import.meta.url), "utf8");
   const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
   const routerSource = readFileSync(new URL("./PlatformScreenRouter.jsx", import.meta.url), "utf8");
   const schedulerSource = readFileSync(new URL("./appWorkScheduler.js", import.meta.url), "utf8");
+  const researchScreenSource = readFileSync(
+    new URL("../../screens/ResearchScreen.jsx", import.meta.url),
+    "utf8",
+  );
   const codeWarmupEffect = appSource.match(
-    /useEffect\(\(\) => \{\s*if \(\s*!operationalCodePreloadReady[\s\S]*?\n  \}, \[markWarmupTimeline, operationalCodePreloadReady, screen\]\);/,
+    /useEffect\(\(\) => \{\s*if \(\s*!screenCodePreloadReady[\s\S]*?\n  \}, \[\s*screenCodePreloadReady,\s*markWarmupTimeline,\s*\]\);/,
   )?.[0];
   const shellWarmMountStart = appSource.indexOf(
     "const warmMountOrder = SCREEN_SHELL_WARM_MOUNT_ORDER.filter",
@@ -1756,19 +1771,59 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.ok(researchWorkspaceDataPreloadEffect);
   assert.notEqual(preloadOrderBlock, "", "screen module preload order must be present");
   assert.match(registrySource, /export const preloadScreenModule/);
+  assert.match(registrySource, /const SCREEN_MODULE_PRELOADS = new Map\(\)/);
+  assert.match(registrySource, /const SCREEN_MODULE_COMPONENTS = new Map\(\)/);
+  assert.match(registrySource, /const loadScreenModule = /);
+  assert.match(registrySource, /retryDynamicImport\(loader/);
+  assert.match(registrySource, /SCREEN_MODULE_COMPONENTS\.set\(screenId,\s*mod\.default\)/);
+  assert.match(registrySource, /const createPreloadableScreen = /);
+  assert.match(
+    registrySource,
+    /useState\(\s*\(\) => SCREEN_MODULE_COMPONENTS\.get\(screenId\) \|\| null/,
+  );
+  assert.match(registrySource, /const RouteScreenShell = /);
+  assert.match(registrySource, /data-testid=\{`screen-route-shell-\$\{screenId\}`\}/);
+  assert.match(registrySource, /props\?\.isVisible === false/);
+  assert.match(registrySource, /loadScreenModule\(screenId,\s*\{ label \}\)/);
+  assert.match(registrySource, /setScreenComponent\(\(\) => mod\.default\)/);
+  assert.match(registrySource, /<RouteScreenShell screenId=\{screenId\} error=\{loadError\} \/>/);
+  assert.doesNotMatch(registrySource, /lazyWithRetry/);
+  assert.doesNotMatch(registrySource, /LazyScreen/);
+  assert.match(registrySource, /export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[/);
+  assert.doesNotMatch(registrySource, /preloadBootScreenModules/);
+  assert.doesNotMatch(registrySource, /void preloadScreenModule/);
+  assert.match(registrySource, /export const getScreenModulePreloadSnapshot = /);
+  assert.match(appHeaderSource, /preloadScreenModule/);
+  assert.match(appHeaderSource, /const handleScreenIntent = useCallback/);
+  assert.match(appHeaderSource, /onFocus=\{\(\) => handleScreenIntent\(screen\.id\)\}/);
+  assert.match(appHeaderSource, /onPointerEnter=\{\(\) => handleScreenIntent\(screen\.id\)\}/);
+  assert.match(appHeaderSource, /onPointerDown=\{\(\) => handleScreenIntent\(screen\.id\)\}/);
   assert.match(registrySource, /export const SCREEN_SHELL_WARM_MOUNT_ORDER/);
   assert.match(appSource, /const readWarmupTestOverrides = \(\) =>/);
   assert.match(appSource, /__PYRUS_PERF_WARMUP_OVERRIDES__/);
   assert.match(appSource, /__PYRUS_PERF_WARMUP_SNAPSHOT__/);
   assert.match(appSource, /const warmupTimelineRef = useRef\(\{\}\)/);
+  assert.match(appSource, /const bootScreenShellWarmMountCompleteRef = useRef\(false\)/);
   assert.match(appSource, /queues:\s*\{[\s\S]*screenCodePreloadStarted/);
+  assert.match(appSource, /bootScreenShellWarmMountStarted/);
+  assert.match(appSource, /const screenCodePreloadStartedRef = useRef\(false\)/);
+  assert.match(appSource, /screenModulePreloads:\s*getScreenModulePreloadSnapshot\(\)/);
   assert.match(appSource, /backgroundDataWarmupGateOpenedAtMs/);
   assert.match(appSource, /timelineMs:\s*warmupTimelineRef\.current/);
+  assert.match(appSource, /const screenCodePreloadReady = operationalCodePreloadReady/);
+  assert.match(appSource, /const backgroundScreenPreloadReady = Boolean/);
+  assert.match(appSource, /memoryAllowsBackgroundWarmup/);
   assert.doesNotMatch(routerSource, /const useDeferredActiveScreen = \(screen\) =>/);
   assert.doesNotMatch(routerSource, /window\.requestAnimationFrame\(activate\)/);
   assert.match(routerSource, /const marketDataActive = screen === "market";/);
   assert.match(routerSource, /isVisible=\{backtestDataActive\}/);
   assert.match(registrySource, /SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"/);
+  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"[\s\S]*"trade"[\s\S]*"algo"[\s\S]*"backtest"/);
+  assert.match(appSource, /!firstScreenReady[\s\S]*!backgroundScreenPreloadReady[\s\S]*bootScreenShellWarmMountCompleteRef\.current/);
+  assert.match(appSource, /bootScreenShellWarmMountQueuedAtMs[\s\S]*scheduleIdleWork/);
+  assert.match(appSource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER\.map\(\(screenId\) =>\s*preloadScreenModule\(screenId\),\s*\)/);
+  assert.match(appSource, /bootScreenShellWarmMountCompleteAtMs/);
+  assert.match(appSource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER\.forEach\(\(screenId\) => \{\s*next\[screenId\] = true;/);
   [
     "market",
     "flow",
@@ -1789,12 +1844,17 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(registrySource, /algo:\s*\{\s*retainInactive:\s*true\s*\}/);
   assert.match(registrySource, /backtest:\s*\{\s*retainInactive:\s*true\s*\}/);
   assert.match(registrySource, /research:\s*\{\s*retainInactive:\s*false\s*\}/);
-  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS\s*=\s*750/);
-  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS\s*=\s*500/);
+  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS\s*=\s*150/);
+  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS\s*=\s*250/);
   assert.doesNotMatch(appSource, /OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS/);
-  assert.match(codeWarmupEffect, /screenId !== screen/);
   assert.doesNotMatch(codeWarmupEffect, /scheduleIdleWork/);
+  assert.match(codeWarmupEffect, /screenCodePreloadReady/);
+  assert.doesNotMatch(codeWarmupEffect, /backgroundScreenPreloadReady/);
+  assert.doesNotMatch(codeWarmupEffect, /memoryBlocksOperationalPreload/);
+  assert.match(codeWarmupEffect, /const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER/);
+  assert.match(codeWarmupEffect, /Promise\.allSettled/);
   assert.match(codeWarmupEffect, /preloadScreenModule\(screenId\)/);
+  assert.doesNotMatch(codeWarmupEffect, /const completeTimer = window\.setTimeout/);
   assert.doesNotMatch(codeWarmupEffect, /setScreenWarmupPhase/);
   assert.doesNotMatch(codeWarmupEffect, /setMountedScreens/);
   assert.match(
@@ -1818,13 +1878,16 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(researchWorkspaceCodePreloadEffect, /queueIdleCodePreload\(2_500/);
   assert.match(researchWorkspaceCodePreloadEffect, /preloadDynamicImport/);
   assert.match(researchWorkspaceCodePreloadEffect, /PhotonicsObservatoryPrefetch/);
-  assert.doesNotMatch(researchWorkspaceCodePreloadEffect, /memoryBlocksOperationalPreload/);
+  assert.match(researchWorkspaceCodePreloadEffect, /memoryAllowsBackgroundWarmup/);
   assert.doesNotMatch(researchWorkspaceCodePreloadEffect, /loadResearchThemeDataset/);
-  assert.match(researchWorkspaceDataPreloadEffect, /memoryBlocksOperationalPreload/);
-  assert.match(researchWorkspaceDataPreloadEffect, /backgroundDataWarmupEnabled/);
+  assert.match(researchWorkspaceDataPreloadEffect, /memoryAllowsIdlePrefetch/);
+  assert.doesNotMatch(researchWorkspaceDataPreloadEffect, /memoryBlocksOperationalPreload/);
   assert.match(researchWorkspaceDataPreloadEffect, /queueIdleDataPreload\(4_000/);
   assert.match(researchWorkspaceDataPreloadEffect, /queueIdleDataPreload\(5_500/);
   assert.doesNotMatch(researchWorkspaceDataPreloadEffect, /PhotonicsObservatoryPrefetch/);
+  assert.match(researchScreenSource, /preloadDynamicImport\(loadPhotonicsObservatory/);
+  assert.match(researchScreenSource, /data-testid="research-loading-shell"/);
+  assert.doesNotMatch(researchScreenSource, /<LogoLoader/);
   assert.match(schedulerSource, /mountScreens:\s*false/);
   assert.match(schedulerSource, /const backgroundHistoryReady = screenWarmupPhase === "ready"/);
 });
@@ -2243,14 +2306,34 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
     new URL("../../screens/AlgoScreen.jsx", import.meta.url),
     "utf8",
   );
+  const algoLivePageSource = readFileSync(
+    new URL("../../screens/algo/AlgoLivePage.jsx", import.meta.url),
+    "utf8",
+  );
   const backtestSource = readFileSync(
     new URL("../backtesting/BacktestingPanels.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(isVisible\);/);
-  assert.match(algoSource, /const algoDerivedQueriesEnabled = Boolean\(isVisible\);/);
-  assert.match(algoSource, /const algoPostCriticalQueriesEnabled = Boolean\(isVisible\);/);
+  assert.match(algoSource, /const loadAlgoLivePage = \(\) =>/);
+  assert.match(algoSource, /const LazyAlgoLivePage = lazy\(loadAlgoLivePage\)/);
+  assert.match(algoSource, /void loadAlgoLivePage\(\)/);
+  assert.match(algoSource, /const AlgoLiveLoading = \(\) =>/);
+  assert.match(algoSource, /data-testid="algo-live-loading"/);
+  assert.match(algoSource, /const \[algoLivePageReady, setAlgoLivePageReady\] = useState\(false\)/);
+  assert.match(algoSource, /loadAlgoLivePage\(\)[\s\S]*setAlgoLivePageReady\(true\)/);
+  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible && algoLivePageReady\);/);
+  assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
+  assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
+  assert.match(algoSource, /const algoDerivedQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
+  assert.match(algoSource, /const algoPostCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
+  assert.match(algoSource, /<Suspense fallback=\{<AlgoLiveLoading \/>\}>/);
+  assert.match(algoSource, /import \{ AlgoRightRail \} from "\.\/algo\/AlgoRightRail\.jsx";/);
+  assert.match(algoSource, /rightRail=\{\s*<AlgoRightRail/);
+  assert.doesNotMatch(algoSource, /LazyAlgoRightRail/);
+  assert.doesNotMatch(algoSource, /import\("\.\/algo\/AlgoRightRail/);
+  assert.match(algoLivePageSource, /data-testid="algo-live-right-column"/);
+  assert.match(algoLivePageSource, /\{rightRail\}/);
   assert.doesNotMatch(
     algoSource,
     /const algoCriticalQueriesEnabled = Boolean\([^;\n]*algoCriticalFallbackReady/,
@@ -2269,15 +2352,15 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   );
   assert.match(
     algoSource,
-    /const draftsQuery = useListBacktestDraftStrategies\(\{[\s\S]*enabled:\s*algoPostCriticalQueriesEnabled/,
+    /const draftsQuery = useListBacktestDraftStrategies\(\{[\s\S]*enabled:\s*algoSetupQueriesEnabled/,
   );
   assert.match(
     algoSource,
-    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*enabled:\s*algoCriticalQueriesEnabled/,
+    /const deploymentsQuery = useListAlgoDeployments\([\s\S]*enabled:\s*algoSetupQueriesEnabled/,
   );
   assert.match(
     algoSource,
-    /const eventsQuery = useListExecutionEvents\([\s\S]*enabled:\s*algoCriticalQueriesEnabled/,
+    /const eventsQuery = useListExecutionEvents\([\s\S]*enabled:\s*algoLiveDataQueriesEnabled/,
   );
   assert.equal(
     (backtestSource.match(/useListBacktestDraftStrategies\(\{[\s\S]*?enabled:\s*Boolean\(isVisible\)/g) || []).length,

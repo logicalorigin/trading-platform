@@ -74,7 +74,7 @@ test("default paper signal-options startup widens its signal monitor profile", (
   );
 
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250/);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 3/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 10/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
   assert.match(source, /withSignalMonitorUniverseScope/);
   assert.match(
@@ -1764,6 +1764,42 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
             payload: {
               signalKey,
               reason: "market_session_quiet",
+              preflight: true,
+            },
+          },
+        ] as never,
+        { gatewayReady: false },
+      ),
+    ),
+    [signalKey],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "market_session_quiet",
+              preflight: true,
+            },
+          },
+        ] as never,
+        { gatewayReady: true },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "market_session_quiet",
               selectedContract: { ticker: "SPY20260522C500" },
             },
           },
@@ -3228,9 +3264,9 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
     updatedAt: now,
   } as never;
   const readiness = {
-    ready: true,
-    reason: null,
-    message: "ready",
+    ready: false,
+    reason: "market_session_quiet",
+    message: "The market session is closed for algorithm execution.",
   } as never;
   const candidates = [
     {

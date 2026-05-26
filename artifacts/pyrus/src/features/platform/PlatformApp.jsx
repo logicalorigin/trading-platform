@@ -95,9 +95,11 @@ import {
   resolveGatewayTradingReadiness,
 } from "./bridgeRuntimeModel";
 import {
+  BOOT_SCREEN_MODULE_PRELOAD_ORDER,
   SCREEN_MODULE_PRELOAD_ORDER,
   SCREEN_SHELL_WARM_MOUNT_ORDER,
   buildMountedScreenState,
+  getScreenModulePreloadSnapshot,
   preloadScreenModule,
 } from "./screenRegistry.jsx";
 import {
@@ -206,8 +208,8 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["2m", "5m", "15m"];
-const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 750;
-const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 500;
+const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 150;
+const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 250;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
@@ -270,14 +272,12 @@ const resolveQuoteStreamGateReason = ({
   sessionMetadataSettled,
   brokerConfigured,
   brokerAuthenticated,
-  ibkrWorkPressure,
   quoteStreamEnabled,
 }) => {
   if (!pageVisible) return "page-hidden";
   if (!sessionMetadataSettled) return "session-not-ready";
   if (!brokerConfigured) return "ibkr-not-configured";
   if (!brokerAuthenticated) return "ibkr-not-ready";
-  if (ibkrWorkPressure === "stalled") return "pressure-stalled";
   if (!quoteStreamEnabled) return "runtime-disabled";
   return null;
 };
@@ -494,6 +494,8 @@ export default function PlatformApp() {
     _initialState.selectedAccountId || null,
   );
   const warmupTestOverrides = useMemo(readWarmupTestOverrides, []);
+  const bootScreenShellWarmMountCompleteRef = useRef(false);
+  const screenCodePreloadStartedRef = useRef(false);
   const screenCodePreloadCompleteRef = useRef(false);
   const screenShellWarmMountCompleteRef = useRef(false);
   const researchWorkspaceCodePreloadCompleteRef = useRef(false);
@@ -784,6 +786,7 @@ export default function PlatformApp() {
     pageVisible &&
       sessionMetadataSettled &&
       screenWarmupPhase === "ready" &&
+      activeScreenBackgroundDataAllowed &&
       (backgroundDataWarmupEnabled || isPhone),
   );
   useEffect(() => {
@@ -854,6 +857,12 @@ export default function PlatformApp() {
       firstScreenReady &&
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
+  );
+  const screenCodePreloadReady = operationalCodePreloadReady;
+  const backgroundScreenPreloadReady = Boolean(
+    operationalCodePreloadReady &&
+      sessionMetadataSettled &&
+      memoryAllowsBackgroundWarmup,
   );
   const hiddenScreenPreloadPolicy = useMemo(
     () =>
@@ -1476,7 +1485,8 @@ export default function PlatformApp() {
 
   useEffect(() => {
     if (
-      !operationalCodePreloadReady ||
+      !screenCodePreloadReady ||
+      screenCodePreloadStartedRef.current ||
       screenCodePreloadCompleteRef.current
     ) {
       return undefined;
@@ -1484,43 +1494,95 @@ export default function PlatformApp() {
 
     let cancelled = false;
     const timers = [];
-    const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER.filter(
-      (screenId) => screenId !== screen,
-    );
+    const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER;
     markWarmupTimeline("screenCodePreloadQueuedAtMs");
+    screenCodePreloadStartedRef.current = true;
 
-    preloadOrder.forEach((screenId, index) => {
-      const timerId = window.setTimeout(
-        () => {
-          if (cancelled) {
-            return;
-          }
-          preloadScreenModule(screenId);
-        },
-        OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS +
-          OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS * index,
-      );
-      timers.push(timerId);
-    });
-
-    const completeTimer = window.setTimeout(
-      () => {
+    void Promise.allSettled(
+      preloadOrder.map((screenId, index) =>
+        new Promise((resolve, reject) => {
+          const timerId = window.setTimeout(
+            () => {
+              if (cancelled) {
+                resolve(null);
+                return;
+              }
+              preloadScreenModule(screenId).then(resolve, reject);
+            },
+            OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS +
+              OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS * index,
+          );
+          timers.push(timerId);
+        }),
+      ),
+    ).then((settled) => {
+      if (!cancelled && settled.every((entry) => entry.status === "fulfilled")) {
         screenCodePreloadCompleteRef.current = true;
         markWarmupTimeline("screenCodePreloadCompleteAtMs");
-      },
-      OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS +
-        OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS * preloadOrder.length,
-    );
-    timers.push(completeTimer);
+      }
+    });
 
     return () => {
       cancelled = true;
       timers.forEach((timerId) => window.clearTimeout(timerId));
       if (!screenCodePreloadCompleteRef.current) {
-        screenCodePreloadCompleteRef.current = false;
+        screenCodePreloadStartedRef.current = false;
       }
     };
-  }, [markWarmupTimeline, operationalCodePreloadReady, screen]);
+  }, [
+    screenCodePreloadReady,
+    markWarmupTimeline,
+  ]);
+
+  useEffect(() => {
+    if (
+      !pageVisible ||
+      isPhone ||
+      !firstScreenReady ||
+      !backgroundScreenPreloadReady ||
+      bootScreenShellWarmMountCompleteRef.current
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let idleCleanup = null;
+    markWarmupTimeline("bootScreenShellWarmMountQueuedAtMs");
+    idleCleanup = scheduleIdleWork(() => {
+      if (cancelled) {
+        return;
+      }
+      void Promise.allSettled(
+        BOOT_SCREEN_MODULE_PRELOAD_ORDER.map((screenId) =>
+          preloadScreenModule(screenId),
+        ),
+      ).then(() => {
+        if (cancelled) {
+          return;
+        }
+        setMountedScreens((current) => {
+          const next = { ...current };
+          BOOT_SCREEN_MODULE_PRELOAD_ORDER.forEach((screenId) => {
+            next[screenId] = true;
+          });
+          return next;
+        });
+        bootScreenShellWarmMountCompleteRef.current = true;
+        markWarmupTimeline("bootScreenShellWarmMountCompleteAtMs");
+      });
+    }, 6_000);
+
+    return () => {
+      cancelled = true;
+      idleCleanup?.();
+    };
+  }, [
+    backgroundScreenPreloadReady,
+    firstScreenReady,
+    isPhone,
+    markWarmupTimeline,
+    pageVisible,
+  ]);
 
   useEffect(() => {
     if (
@@ -1597,6 +1659,7 @@ export default function PlatformApp() {
     if (
       !operationalCodePreloadReady ||
       screenWarmupPhase !== "ready" ||
+      !memoryAllowsBackgroundWarmup ||
       warmupTestOverrides.disableResearchWorkspacePreload ||
       researchWorkspaceCodePreloadCompleteRef.current
     ) {
@@ -1641,6 +1704,7 @@ export default function PlatformApp() {
     };
   }, [
     markWarmupTimeline,
+    memoryAllowsBackgroundWarmup,
     operationalCodePreloadReady,
     screenWarmupPhase,
   ]);
@@ -1649,9 +1713,8 @@ export default function PlatformApp() {
     if (
       !operationalCodePreloadReady ||
       screenWarmupPhase !== "ready" ||
-      !backgroundDataWarmupEnabled ||
+      !memoryAllowsIdlePrefetch ||
       warmupTestOverrides.disableResearchWorkspacePreload ||
-      memoryBlocksOperationalPreload ||
       researchWorkspaceDataPreloadCompleteRef.current
     ) {
       return undefined;
@@ -1696,9 +1759,8 @@ export default function PlatformApp() {
       idleCleanups.forEach((cleanup) => cleanup());
     };
   }, [
-    backgroundDataWarmupEnabled,
     markWarmupTimeline,
-    memoryBlocksOperationalPreload,
+    memoryAllowsIdlePrefetch,
     operationalCodePreloadReady,
     screenWarmupPhase,
   ]);
@@ -2260,12 +2322,10 @@ export default function PlatformApp() {
         sessionMetadataSettled,
         brokerConfigured,
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
-        ibkrWorkPressure,
         quoteStreamEnabled: workSchedule.streams.watchlistQuoteStream,
       }),
     [
       brokerConfigured,
-      ibkrWorkPressure,
       pageVisible,
       session?.ibkrBridge?.authenticated,
       sessionMetadataSettled,
@@ -2407,6 +2467,8 @@ export default function PlatformApp() {
       mountedScreenCount: mountedScreenIds.length,
       overrides: warmupTestOverrides,
       completions: {
+        bootScreenShellWarmMountComplete:
+          bootScreenShellWarmMountCompleteRef.current,
         screenCodePreloadComplete: screenCodePreloadCompleteRef.current,
         screenShellWarmMountComplete:
           screenShellWarmMountCompleteRef.current,
@@ -2416,6 +2478,10 @@ export default function PlatformApp() {
           researchWorkspaceDataPreloadCompleteRef.current,
       },
       queues: {
+        bootScreenShellWarmMountStarted:
+          warmupTimelineRef.current.bootScreenShellWarmMountQueuedAtMs != null,
+        bootScreenShellWarmMountCompleted:
+          warmupTimelineRef.current.bootScreenShellWarmMountCompleteAtMs != null,
         screenCodePreloadStarted:
           warmupTimelineRef.current.screenCodePreloadQueuedAtMs != null,
         screenCodePreloadCompleted:
@@ -2438,6 +2504,7 @@ export default function PlatformApp() {
           warmupTimelineRef.current.researchWorkspaceThemeLoadedAtMs != null,
       },
       timelineMs: warmupTimelineRef.current,
+      screenModulePreloads: getScreenModulePreloadSnapshot(),
       gates: {
         operationalCodePreloadReady,
         hiddenScreenWarmMountEnabled: hiddenScreenWarmMountAllowed,

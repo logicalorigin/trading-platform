@@ -93,7 +93,7 @@ const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
   "all_watchlists";
 const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = 250;
-const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 3;
+const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 10;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -108,10 +108,10 @@ const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 250, concurrency: 3 },
-  watch: { maxSymbols: 250, concurrency: 3 },
-  high: { maxSymbols: 250, concurrency: 3 },
-  critical: { maxSymbols: 250, concurrency: 3 },
+  normal: { maxSymbols: 250, concurrency: 10 },
+  watch: { maxSymbols: 250, concurrency: 10 },
+  high: { maxSymbols: 250, concurrency: 10 },
+  critical: { maxSymbols: 250, concurrency: 10 },
 };
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();

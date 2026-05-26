@@ -332,10 +332,7 @@ test("adds flow scanner runtime detail when active leases are zero", () => {
     },
   });
 
-  assert.equal(
-    normalized.flowScanner.detail,
-    "skipped: market-data-not-live",
-  );
+  assert.equal(normalized.flowScanner.detail, "skipped: market data not live");
 });
 
 test("shows active flow scanner work ahead of a stale skip reason", () => {
@@ -352,6 +349,7 @@ test("shows active flow scanner work ahead of a stale skip reason", () => {
       lastSkippedReason: "transport-unavailable",
       deepScanner: {
         activeCount: 2,
+        snapshotCount: 4,
       },
     },
   });
@@ -422,7 +420,7 @@ test("scanner line exhaustion renders as a line budget state", () => {
         draining: false,
         queuedCount: 0,
         activeCount: 0,
-        snapshotCount: 0,
+        snapshotCount: 5,
       },
     },
   });
@@ -445,6 +443,7 @@ test("reports queued flow scanner work ahead of background pauses", () => {
       deepScanner: {
         draining: true,
         queuedCount: 7,
+        snapshotCount: 4,
       },
     },
   });
@@ -498,6 +497,81 @@ test("reports resource-pressure scanner degradation without idle quote-line copy
   });
 
   assert.equal(normalized.flowScanner.detail, "degraded: resource pressure");
+});
+
+test("reports flow scanner background pauses ahead of cached snapshots", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "resource-pressure",
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 3,
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "degraded: resource pressure");
+});
+
+test("reports quiet market radar state ahead of cached snapshots", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      radarDegradedReason: "market-session-quiet",
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 1,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "market session quiet; 1 cached flow snapshot",
+  );
+});
+
+test("reports failed flow scanner symbols when no current work is active", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+        lastFailedSymbols: ["NVDA", "QQQ", "SPY", "TSLA"],
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "last scan failed: NVDA, QQQ, SPY +1");
 });
 
 test("reports enabled flow scanner as rotating between batches", () => {
@@ -637,7 +711,7 @@ test("uses schedulable scanner capacity when filler holds reclaimable lines", ()
   assert.equal(normalized.flowScanner.free, 40);
   assert.equal(
     normalized.flowScanner.detail,
-    "12 flow snapshots loaded; refreshing",
+    "12 cached flow snapshots",
   );
 });
 

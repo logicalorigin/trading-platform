@@ -149,6 +149,7 @@ export const buildPlatformWorkSchedule = ({
       ibkrReady &&
       ibkrWorkPressure !== WORK_PRESSURE_STATE.stalled,
   );
+  const quoteStreamIbkr = Boolean(visible && ibkrReady);
   const criticalIbkr = Boolean(
     visible &&
       ibkrReady &&
@@ -184,7 +185,7 @@ export const buildPlatformWorkSchedule = ({
         tradingEnabled ||
         foregroundIbkr),
   );
-  const watchlistQuoteStream = Boolean(sessionReady && realtimeIbkr);
+  const watchlistQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
 
   return {
     pressure: ibkrWorkPressure,
