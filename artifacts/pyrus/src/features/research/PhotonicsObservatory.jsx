@@ -1,6 +1,22 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
 import { AI_VERTICALS, BRAND, FMP_REVERSE } from "./data/researchSymbols";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  cssColorMix,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   getResearchRuntimeData,
   prefetchResearchThemeDataset,
@@ -42,7 +58,24 @@ import {
   scaleLinear,
   select,
 } from "d3";
-import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis, LabelList } from "recharts";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  ReferenceLine,
+  ScatterChart,
+  Scatter,
+  ZAxis,
+  LabelList,
+} from "recharts";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Settings as SettingsIcon } from "lucide-react";
 
@@ -82,21 +115,15 @@ const FALLBACK_THEME = {
   id: "ai",
   title: "Platform Research",
   subtitle: "Hydrating Research Dataset",
-  accent: T.accent,
+  accent: CSS_COLOR.accent,
   icon: "◆",
   verticals: AI_VERTICALS,
   macro: [],
   available: true,
 };
 
-const toneAlpha = (hex, alpha) => {
-  const normalized = String(hex || "").replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return hex;
-  const r = Number.parseInt(normalized.slice(0, 2), 16);
-  const g = Number.parseInt(normalized.slice(2, 4), 16);
-  const b = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
+const toneAlpha = (color, alpha) =>
+  color ? cssColorMix(color, alpha * 100) : color;
 
 const RESEARCH_LIVE_ENRICHMENT_DELAY_MS = 8_000;
 const RESEARCH_LIVE_REFRESH_DELAY_MS = 500;
@@ -105,8 +132,8 @@ const RESEARCH_THEME_PREFETCH_DELAY_MS = 4_000;
 
 // Standard "card" container used by MarketSummary rows, Detail subsections, etc.
 const STYLE_CARD = {
-  background: T.bg1,
-  border: `1px solid ${T.border}`,
+  background: CSS_COLOR.bg1,
+  border: `1px solid ${CSS_COLOR.border}`,
   borderRadius: RADII.md,
   boxShadow: ELEVATION.sm,
 };
@@ -115,18 +142,18 @@ const STYLE_CARD = {
 const STYLE_LABEL = {
   fontSize: fs(11),
   fontWeight: FONT_WEIGHTS.regular,
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   letterSpacing: 1.5,
   textTransform: "uppercase",
   marginBottom: sp(5),
 };
 
 // Dimmer variant used in MarketSummary row headers
-const STYLE_LABEL_DIM = { ...STYLE_LABEL, color: T.textDim, marginBottom: sp(6) };
+const STYLE_LABEL_DIM = { ...STYLE_LABEL, color: CSS_COLOR.textDim, marginBottom: sp(6) };
 
 // Visual divider between Detail sections
 const STYLE_SECTION = {
-  borderTop: `1px solid ${T.border}`,
+  borderTop: `1px solid ${CSS_COLOR.border}`,
   paddingTop: sp(10),
   marginTop: sp(10),
 };
@@ -395,7 +422,7 @@ function Sparkline({ values, width = 52, height = 16 }) {
     return lastSeen;
   });
   const trend = finite[finite.length - 1] > finite[0];
-  const color = trend ? T.green : T.red;
+  const color = trend ? CSS_COLOR.green : CSS_COLOR.red;
   return (
     <MicroSparkline
       data={plotted}
@@ -412,17 +439,17 @@ function Sparkline({ values, width = 52, height = 16 }) {
 /* ════════════════════════ RANGE BAR (for day/52wk ranges) ════════════════════════ */
 function RangeBar({ low, high, current, color }) {
   if (![low, high, current].every(isFiniteNumber) || high <= low) {
-    return <div style={{ fontSize: fs(10), color: T.textMuted }}>Live range unavailable</div>;
+    return <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>Live range unavailable</div>;
   }
   const pct = ((current - low) / (high - low || 1)) * 100;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs(10) }}>
-      <span style={{ color: T.textDim, minWidth: 50, textAlign: "right" }}>${low.toFixed(2)}</span>
-      <div style={{ flex: 1, height: 4, background: toneAlpha(T.text, 0.06), borderRadius: RADII.xs, position: "relative" }}>
+      <span style={{ color: CSS_COLOR.textDim, minWidth: 50, textAlign: "right" }}>${low.toFixed(2)}</span>
+      <div style={{ flex: 1, height: 4, background: toneAlpha(CSS_COLOR.text, 0.06), borderRadius: RADII.xs, position: "relative" }}>
         <div style={{ position: "absolute", left: 0, top: 0, height: 4, width: pct + "%", background: color, borderRadius: RADII.xs, opacity: 0.5 }} />
-        <div style={{ position: "absolute", left: `calc(${pct}% - 4px)`, top: -2, width: 8, height: 8, borderRadius: RADII.pill, background: color, border: `1.5px solid ${T.bg1}` }} />
+        <div style={{ position: "absolute", left: `calc(${pct}% - 4px)`, top: -2, width: 8, height: 8, borderRadius: RADII.pill, background: color, border: `1.5px solid ${CSS_COLOR.bg1}` }} />
       </div>
-      <span style={{ color: T.textDim, minWidth: 50 }}>${high.toFixed(2)}</span>
+      <span style={{ color: CSS_COLOR.textDim, minWidth: 50 }}>${high.toFixed(2)}</span>
     </div>
   );
 }
@@ -514,23 +541,23 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
       {/* Scenario banner */}
       {hasAdj && (
         <div style={{
-          background: toneAlpha(T.accent, 0.08), border: `1px solid ${toneAlpha(T.accent, 0.2)}`,
-          borderRadius: RADII.sm, padding: sp("6px 10px"), marginBottom: sp(10), fontSize: fs(12), color: T.amber, display: "flex", alignItems: "center", gap: 6,
+          background: toneAlpha(CSS_COLOR.accent, 0.08), border: `1px solid ${toneAlpha(CSS_COLOR.accent, 0.2)}`,
+          borderRadius: RADII.sm, padding: sp("6px 10px"), marginBottom: sp(10), fontSize: fs(12), color: CSS_COLOR.amber, display: "flex", alignItems: "center", gap: 6,
         }}>
           <span style={{ fontSize: fs(12) }}>!</span>
 	          Scenario adjustment applied: {scenarioAdj.revPct ? "Rev " + (scenarioAdj.revPct > 0 ? "+" : "") + scenarioAdj.revPct + "%" : ""} {scenarioAdj.gmAdj ? "GM " + (scenarioAdj.gmAdj > 0 ? "+" : "") + scenarioAdj.gmAdj + "bps" : ""}
-	          <span style={{ fontSize: fs(12), marginLeft: "auto", color: T.textDim }}>{baseFD.years[lastValueIndex] || "Latest"} column adjusted</span>
+	          <span style={{ fontSize: fs(12), marginLeft: "auto", color: CSS_COLOR.textDim }}>{baseFD.years[lastValueIndex] || "Latest"} column adjusted</span>
 	        </div>
 	      )}
 
       {/* Sub-tabs + Period toggle */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8), borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
         <div style={{ display: "flex", gap: 0 }}>
           {[["is", "Income Statement"], ["bs", "Balance Sheet"], ["cf", "Cash Flow"]].map(([id, lb]) => (
             <button key={id} onClick={() => setSubTab(id)} style={{
               background: "none", border: "none",
               borderBottom: subTab === id ? "2px solid " + color : "2px solid transparent",
-              padding: sp("5px 12px"), color: subTab === id ? color : T.textSec,
+              padding: sp("5px 12px"), color: subTab === id ? color : CSS_COLOR.textSec,
               fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer",
             }}>{lb}</button>
           ))}
@@ -545,15 +572,15 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: T.textMuted, letterSpacing: 1, minWidth: 160 }}>
+              <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: CSS_COLOR.textMuted, letterSpacing: 1, minWidth: 160 }}>
                 Item
               </th>
               {activeFD.years.map(y => (
-                <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : T.textSec }}>
+                <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : CSS_COLOR.textSec }}>
                   {y}
                 </th>
               ))}
-              <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: T.textMuted, minWidth: 56 }}>
+              <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: CSS_COLOR.textMuted, minWidth: 56 }}>
                 5-yr trend
               </th>
             </tr>
@@ -571,19 +598,19 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                   onClick={row.expandable ? () => toggle(row.k) : undefined}
                   style={{
                     cursor: row.expandable ? "pointer" : "default",
-                    background: idx % 2 === 0 ? toneAlpha(T.text, 0.012) : "transparent",
-                    borderBottom: `1px solid ${T.border}`,
+                    background: idx % 2 === 0 ? toneAlpha(CSS_COLOR.text, 0.012) : "transparent",
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
                   }}
                 >
                   <td style={{
                     padding: sp("5px 6px 5px ") + (10 + row.d * 18) + "px",
                     fontSize: fs(11),
-                    color: row.bold ? T.text : T.textSec,
+                    color: row.bold ? CSS_COLOR.text : CSS_COLOR.textSec,
                     fontWeight: FONT_WEIGHTS.regular,
                     whiteSpace: "nowrap",
                   }}>
                     {row.expandable && (
-                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: T.textDim, transition: "transform 0.15s" }}>
+                      <span style={{ display: "inline-block", width: 14, fontSize: fs(11), color: CSS_COLOR.textDim, transition: "transform 0.15s" }}>
                         {expanded.has(row.k) ? "\u25BC" : "\u25B6"}
                       </span>
                     )}
@@ -593,7 +620,7 @@ function FinancialsTab({ co, color, fd, scenarioAdj }) {
                   {values.map((v, i) => (
                     <td key={i} style={{
                       padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10),
-                      color: v < 0 ? T.red : (isAdjusted && i === 4 ? T.amber : T.textSec),
+                      color: v < 0 ? CSS_COLOR.red : (isAdjusted && i === 4 ? CSS_COLOR.amber : CSS_COLOR.textSec),
                       fontWeight: FONT_WEIGHTS.regular,
                     }}>
                       {isEPS ? (v < 0 ? "(" + Math.abs(v).toFixed(2) + ")" : v.toFixed(2)) : fmtFS(v)}
@@ -686,7 +713,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
     return (
       <div style={{ marginBottom: sp(4) }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: sp(1) }}>
-          <span style={{ fontSize: fs(10), color: T.textDim }}>{label}</span>
+          <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>{label}</span>
           <span style={{ fontSize: fs(10), color, fontWeight: FONT_WEIGHTS.regular }}>{display?.toFixed(1)}{unit}</span>
         </div>
         <input type="range" min={min} max={max} step={step} value={display || 0}
@@ -714,11 +741,11 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
   return (
       <div>
         {/* DCF Model */}
-        <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(10), marginBottom: sp(10), boxShadow: ELEVATION.sm }}>
+        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(10), marginBottom: sp(10), boxShadow: ELEVATION.sm }}>
           <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color, marginBottom: sp(6), letterSpacing: 1 }}>
             DISCOUNTED CASH FLOW MODEL
           </div>
-          <div style={{ fontSize: fs(10), color: T.textDim, marginBottom: sp(8), lineHeight: 1.5 }}>
+          <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, marginBottom: sp(8), lineHeight: 1.5 }}>
             {liveBaseNotes.length
               ? `${liveBaseNotes.join(" · ")}. WACC and terminal growth remain model assumptions.`
               : "Base case currently falls back to the authored model assumptions for this company."}
@@ -730,41 +757,41 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
         <div style={{ display: "flex", gap: 6, marginTop: sp(8) }}>
           {[
-            ["DCF Intrinsic", dcfVal > 0 ? fmtPrice(dcfVal) : "NEGATIVE", dcfVal > 0 ? T.green : T.red],
-            ["Current Price", fmtPrice(price), T.text],
-            ["Implied Upside", upside != null ? (upside > 0 ? "+" : "") + upside.toFixed(0) + "%" : "\u2014", upside > 0 ? T.green : T.red],
+            ["DCF Intrinsic", dcfVal > 0 ? fmtPrice(dcfVal) : "NEGATIVE", dcfVal > 0 ? CSS_COLOR.green : CSS_COLOR.red],
+            ["Current Price", fmtPrice(price), CSS_COLOR.text],
+            ["Implied Upside", upside != null ? (upside > 0 ? "+" : "") + upside.toFixed(0) + "%" : "\u2014", upside > 0 ? CSS_COLOR.green : CSS_COLOR.red],
           ].map(([label, value, clr]) => (
-            <div key={label} style={{ flex: 1, background: toneAlpha(T.text, 0.01), borderRadius: RADII.sm, padding: sp("4px 4px"), textAlign: "center", border: `1px solid ${T.border}` }}>
-              <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
+            <div key={label} style={{ flex: 1, background: toneAlpha(CSS_COLOR.text, 0.01), borderRadius: RADII.sm, padding: sp("4px 4px"), textAlign: "center", border: `1px solid ${CSS_COLOR.border}` }}>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
               <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular, color: clr, marginTop: sp(1) }}>{value}</div>
             </div>
           ))}
         </div>
         <button onClick={() => setOv({})} style={{
-          marginTop: sp(5), width: "100%", background: T.bg1, border: `1px solid ${T.border}`,
-          borderRadius: RADII.xs, padding: sp(3), color: T.textDim, fontSize: fs(11), cursor: "pointer",
+          marginTop: sp(5), width: "100%", background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: RADII.xs, padding: sp(3), color: CSS_COLOR.textDim, fontSize: fs(11), cursor: "pointer",
         }}>RESET TO BASE CASE</button>
       </div>
 
       {/* What-If Scenario Engine */}
-      <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(14), boxShadow: ELEVATION.sm }}>
+      <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(14), boxShadow: ELEVATION.sm }}>
         <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color, marginBottom: sp(8), letterSpacing: 1 }}>
           WHAT-IF SCENARIO ENGINE
         </div>
-        <div style={{ fontSize: fs(10), color: T.textDim, marginBottom: sp(5), lineHeight: 1.4 }}>
+        <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, marginBottom: sp(5), lineHeight: 1.4 }}>
           This panel is reserved for a server-side scenario engine. The direct browser LLM call was removed so model credentials stay out of the client.
         </div>
         <textarea value={scen} onChange={e => setScen(e.target.value)}
           placeholder={"e.g. 'US imposes 50% tariff on all semiconductor imports from China'\nor '" + co.nm + "'s largest customer switches to a competitor'"}
           style={{
-            width: "100%", background: toneAlpha(T.text, 0.035), border: `1px solid ${T.borderLight}`,
-            borderRadius: RADII.sm, padding: sp(7), color: T.textSec, fontSize: fs(11),
+            width: "100%", background: toneAlpha(CSS_COLOR.text, 0.035), border: `1px solid ${CSS_COLOR.borderLight}`,
+            borderRadius: RADII.sm, padding: sp(7), color: CSS_COLOR.textSec, fontSize: fs(11),
             resize: "vertical", minHeight: 42, boxSizing: "border-box", lineHeight: 1.5,
           }}
         />
         <button onClick={runScenario} disabled={loading || !scen.trim()} style={{
-          marginTop: sp(6), width: "100%", background: loading ? T.text : color, border: "none",
-          borderRadius: RADII.sm, padding: sp("5px 0"), color: loading ? T.textSec : T.bg1,
+          marginTop: sp(6), width: "100%", background: loading ? CSS_COLOR.text : color, border: "none",
+          borderRadius: RADII.sm, padding: sp("5px 0"), color: loading ? CSS_COLOR.textSec : CSS_COLOR.bg1,
           fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: loading ? "wait" : "pointer", letterSpacing: 0.5,
         }}>
           {loading ? "CHECKING..." : "SCENARIO AI STATUS"}
@@ -773,19 +800,19 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
         {aiR && (
           <div style={{
             marginTop: sp(6),
-            background: aiR.impact === "positive" ? toneAlpha(T.green, 0.08) : aiR.impact === "negative" ? toneAlpha(T.red, 0.08) : toneAlpha(T.accent, 0.08),
+            background: aiR.impact === "positive" ? toneAlpha(CSS_COLOR.green, 0.08) : aiR.impact === "negative" ? toneAlpha(CSS_COLOR.red, 0.08) : toneAlpha(CSS_COLOR.accent, 0.08),
             borderRadius: RADII.md,
             padding: sp(10),
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(5) }}>
               <span style={{
                 fontSize: fs(11), padding: sp("2px 6px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase",
-                background: aiR.impact === "positive" ? toneAlpha(T.green, 0.15) : aiR.impact === "negative" ? toneAlpha(T.red, 0.15) : toneAlpha(T.accent, 0.15),
-                color: aiR.impact === "positive" ? T.green : aiR.impact === "negative" ? T.red : T.accent,
+                background: aiR.impact === "positive" ? toneAlpha(CSS_COLOR.green, 0.15) : aiR.impact === "negative" ? toneAlpha(CSS_COLOR.red, 0.15) : toneAlpha(CSS_COLOR.accent, 0.15),
+                color: aiR.impact === "positive" ? CSS_COLOR.green : aiR.impact === "negative" ? CSS_COLOR.red : CSS_COLOR.accent,
               }}>
                 {aiR.impact || "unknown"}
               </span>
-              <span style={{ fontSize: fs(11), color: T.textDim }}>
+              <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>
                 Confidence: {aiR.confidence}
               </span>
             </div>
@@ -796,19 +823,19 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
                 ["Margin Impact", aiR.gmBps ? (aiR.gmBps > 0 ? "+" : "") + aiR.gmBps + " bps" : "\u2014"],
                 ["Valuation", aiR.valPct || "\u2014"],
               ].map(([l, v]) => (
-                <div key={l} style={{ flex: 1, background: toneAlpha(T.text, 0.01), borderRadius: RADII.xs, padding: sp("3px 5px"), border: `1px solid ${T.border}` }}>
-                  <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{l}</div>
-                  <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: T.text, marginTop: sp(2) }}>{v}</div>
+                <div key={l} style={{ flex: 1, background: toneAlpha(CSS_COLOR.text, 0.01), borderRadius: RADII.xs, padding: sp("3px 5px"), border: `1px solid ${CSS_COLOR.border}` }}>
+                  <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1 }}>{l}</div>
+                  <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, marginTop: sp(2) }}>{v}</div>
                 </div>
               ))}
             </div>
 
-            <div style={{ fontSize: fs(10.5), color: T.textSec, lineHeight: 1.6 }}>
+            <div style={{ fontSize: fs(10.5), color: CSS_COLOR.textSec, lineHeight: 1.6 }}>
               {aiR.reasoning}
             </div>
 
             {(aiR.revPct || aiR.gmBps) && (
-              <div style={{ marginTop: sp(8), fontSize: fs(11), color: T.amber }}>
+              <div style={{ marginTop: sp(8), fontSize: fs(11), color: CSS_COLOR.amber }}>
                 \u2192 Adjustments applied to Financials tab (2026E column)
               </div>
             )}
@@ -817,9 +844,9 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
         {scenarioAdj && (scenarioAdj.revPct || scenarioAdj.gmAdj) && (
           <button onClick={() => onScenarioChange(null)} style={{
-            marginTop: sp(8), width: "100%", background: toneAlpha(T.accent, 0.08),
-            border: `1px solid ${toneAlpha(T.accent, 0.2)}`, borderRadius: RADII.xs, padding: sp(5),
-            color: T.amber, fontSize: fs(11), cursor: "pointer",
+            marginTop: sp(8), width: "100%", background: toneAlpha(CSS_COLOR.accent, 0.08),
+            border: `1px solid ${toneAlpha(CSS_COLOR.accent, 0.2)}`, borderRadius: RADII.xs, padding: sp(5),
+            color: CSS_COLOR.amber, fontSize: fs(11), cursor: "pointer",
           }}>CLEAR SCENARIO ADJUSTMENTS</button>
         )}
       </div>
@@ -831,7 +858,7 @@ function ValuationTab({ co, color, fd, live, scenarioAdj, onScenarioChange }) {
 
 // Color shading for stacked bars
 function shade(hex, i) {
-  if (!hex) return T.textDim;
+  if (!hex) return CSS_COLOR.textDim;
   const c = hex.replace("#", "");
   const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16);
   const f = Math.max(0.45, 1 - i * 0.16);
@@ -850,7 +877,7 @@ function getPeers(co, n = 4) {
 // Shared compact sparkline — shows price trend from an array of {price} points.
 function PriceSparkline({ data, width = 80, height = 22 }) {
   if (!data || data.length < 2) {
-    return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
+    return <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>;
   }
   // Downsample to ~50 points max for performance/readability
   const stride = Math.max(1, Math.ceil(data.length / 50));
@@ -863,7 +890,7 @@ function PriceSparkline({ data, width = 80, height = 22 }) {
   const start = prices[0];
   const end = prices[prices.length - 1];
   const ret = start > 0 ? (end - start) / start * 100 : 0;
-  const color = ret >= 0 ? T.green : T.red;
+  const color = ret >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
 
   return (
     <MicroSparkline
@@ -885,25 +912,25 @@ function StackedBar({ data, color, height = 18 }) {
   if (total === 0) return null;
   return (
     <div>
-      <div style={{ display: "flex", height, borderRadius: RADII.xs, overflow: "hidden", border: `1px solid ${T.border}` }}>
+      <div style={{ display: "flex", height, borderRadius: RADII.xs, overflow: "hidden", border: `1px solid ${CSS_COLOR.border}` }}>
         {data.map(([label, val], i) => {
           const pct = val / total * 100;
           return (
             <AppTooltip key={label + i} content={`${label}: ${pct.toFixed(1)}%`}><div key={label + i} style={{
               width: pct + "%", background: shade(color, i),
               display: "flex", alignItems: "center", justifyContent: "center",
-              borderRight: i < data.length - 1 ? `1px solid ${toneAlpha(T.onAccent, 0.4)}` : "none",
+              borderRight: i < data.length - 1 ? `1px solid ${toneAlpha(CSS_COLOR.onAccent, 0.4)}` : "none",
             }}>
-              {pct > 10 && <span style={{ fontSize: textSize("caption"), color: T.onAccent, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3 }}>{Math.round(pct)}%</span>}
+              {pct > 10 && <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.onAccent, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3 }}>{Math.round(pct)}%</span>}
             </div></AppTooltip>
           );
         })}
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: sp(5), flexWrap: "wrap" }}>
         {data.map(([label, val], i) => (
-          <span key={label + i} style={{ fontSize: fs(10), color: T.textSec, display: "inline-flex", alignItems: "center", gap: 3 }}>
+          <span key={label + i} style={{ fontSize: fs(10), color: CSS_COLOR.textSec, display: "inline-flex", alignItems: "center", gap: 3 }}>
             <span style={{ width: 8, height: 8, background: shade(color, i), borderRadius: 1, display: "inline-block" }} />
-            {label} <span style={{ color: T.textDim }}>{(val / total * 100).toFixed(0)}%</span>
+            {label} <span style={{ color: CSS_COLOR.textDim }}>{(val / total * 100).toFixed(0)}%</span>
           </span>
         ))}
       </div>
@@ -913,10 +940,10 @@ function StackedBar({ data, color, height = 18 }) {
 
 // Mini sparkline for trend data (percentages over time)
 function TrendSpark({ values, color, width = 80, height = 22, suffix = "%" }) {
-  if (!values || values.length < 2 || values.every(v => v == null)) return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
+  if (!values || values.length < 2 || values.every(v => v == null)) return <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>;
   const normalized = values.map(v => isFiniteNumber(v) ? v : null);
   const finite = normalized.filter(isFiniteNumber);
-  if (finite.length < 2) return <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>;
+  if (finite.length < 2) return <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>;
   let lastSeen = finite[0];
   const clean = normalized.map(v => {
     if (isFiniteNumber(v)) lastSeen = v;
@@ -933,7 +960,7 @@ function TrendSpark({ values, color, width = 80, height = 22, suffix = "%" }) {
         height={height}
         ariaHidden
       />
-      <span style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{last != null ? last.toFixed(1) + suffix : "—"}</span>
+      <span style={{ fontSize: fs(11), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{last != null ? last.toFixed(1) + suffix : "—"}</span>
     </span>
   );
 }
@@ -952,12 +979,12 @@ function PeerGrid({ co, color, onSelect }) {
   ];
   const getV = (c, k) => k === "gr" ? (c.fin?.rg?.[4] || 0) : c[k];
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
+    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ background: toneAlpha(T.text, 0.018), borderBottom: `1px solid ${T.border}` }}>
-            <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Peer</th>
-            {metrics.map(m => <th key={m.k} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>{m.l}</th>)}
+          <tr style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+            <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Peer</th>
+            {metrics.map(m => <th key={m.k} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>{m.l}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -965,13 +992,13 @@ function PeerGrid({ co, color, onSelect }) {
             const isSelf = c.t === co.t;
             return (
               <tr key={c.t} onClick={() => !isSelf && onSelect && onSelect(c.t)}
-                style={{ cursor: isSelf ? "default" : "pointer", borderBottom: ci < allCos.length - 1 ? `1px solid ${T.border}` : "none", background: isSelf ? toneAlpha(T.accent, 0.06) : "transparent" }}
-                onMouseEnter={e => { if (!isSelf) e.currentTarget.style.background = toneAlpha(T.text, 0.022); }}
+                style={{ cursor: isSelf ? "default" : "pointer", borderBottom: ci < allCos.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none", background: isSelf ? toneAlpha(CSS_COLOR.accent, 0.06) : "transparent" }}
+                onMouseEnter={e => { if (!isSelf) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.022); }}
                 onMouseLeave={e => { if (!isSelf) e.currentTarget.style.background = "transparent"; }}>
                 <td style={{ padding: sp("5px 8px"), fontSize: fs(11) }}>
                   <Logo ticker={c.t} size={12} style={{ marginRight: sp(4) }} />
-                  <span style={{ color: isSelf ? color : T.text, fontWeight: FONT_WEIGHTS.regular}}>{c.t}</span>
-                  <span style={{ color: T.textMuted, marginLeft: sp(4), fontSize: fs(10) }}>{c.s}</span>
+                  <span style={{ color: isSelf ? color : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular}}>{c.t}</span>
+                  <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(4), fontSize: fs(10) }}>{c.s}</span>
                 </td>
                 {metrics.map(m => {
                   const v = getV(c, m.k);
@@ -979,10 +1006,10 @@ function PeerGrid({ co, color, onSelect }) {
                   const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
                   const pos = v != null ? ((v - mn) / rng) : null;
                   return (
-                    <td key={m.k} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular}}>
+                    <td key={m.k} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(11), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular}}>
                       <span>{m.fmt(v)}</span>
-                      {pos != null && <span style={{ display: "inline-block", width: 32, height: 3, background: toneAlpha(T.text, 0.06), borderRadius: RADII.xs, marginLeft: sp(6), position: "relative", verticalAlign: "middle" }}>
-                        <span style={{ position: "absolute", left: `calc(${pos * 100}% - 2px)`, top: -1, width: 5, height: 5, borderRadius: RADII.pill, background: isSelf ? color : T.textDim }} />
+                      {pos != null && <span style={{ display: "inline-block", width: 32, height: 3, background: toneAlpha(CSS_COLOR.text, 0.06), borderRadius: RADII.xs, marginLeft: sp(6), position: "relative", verticalAlign: "middle" }}>
+                        <span style={{ position: "absolute", left: `calc(${pos * 100}% - 2px)`, top: -1, width: 5, height: 5, borderRadius: RADII.pill, background: isSelf ? color : CSS_COLOR.textDim }} />
                       </span>}
                     </td>
                   );
@@ -1022,13 +1049,13 @@ function KeyRatios({ ratios, co, color }) {
         const t = trend(r.k, r.invert);
         const trendValues = ratios.map(x => x[r.k]);
         return (
-          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, padding: sp("5px 7px") }}>
+          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, padding: sp("5px 7px") }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(2) }}>
-              <span style={{ fontSize: textSize("caption"), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>{r.l}</span>
-              {t && <span style={{ fontSize: textSize("caption"), color: t.good ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>{t.dir === "up" ? "▲" : "▼"}</span>}
+              <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>{r.l}</span>
+              {t && <span style={{ fontSize: textSize("caption"), color: t.good ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>{t.dir === "up" ? "▲" : "▼"}</span>}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{r.fmt(latest[r.k])}</span>
+              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{r.fmt(latest[r.k])}</span>
               <TrendSpark values={trendValues} color={color} width={40} height={16} suffix="" />
             </div>
           </div></AppTooltip>
@@ -1054,16 +1081,16 @@ function OpsStrip({ co, color }) {
     ["Institutional", own.institutional != null ? own.institutional + "%" : null],
   ].filter(x => x[1] != null);
   if (items.length === 0) return (
-    <div style={{ padding: sp("10px 12px"), background: toneAlpha(T.text, 0.015), border: `1px dashed ${T.border}`, borderRadius: RADII.sm, textAlign: "center" }}>
-      <span style={{ fontSize: fs(10), color: T.textMuted, fontStyle: "italic" }}>Operations data pending</span>
+    <div style={{ padding: sp("10px 12px"), background: toneAlpha(CSS_COLOR.text, 0.015), border: `1px dashed ${CSS_COLOR.border}`, borderRadius: RADII.sm, textAlign: "center" }}>
+      <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, fontStyle: "italic" }}>Operations data pending</span>
     </div>
   );
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
       {items.map(([l, v]) => (
-        <div key={l} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, padding: sp("4px 7px") }}>
-          <div style={{ fontSize: textSize("caption"), color: T.textMuted, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(1) }}>{l}</div>
-          <div style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</div>
+        <div key={l} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, padding: sp("4px 7px") }}>
+          <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(1) }}>{l}</div>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</div>
         </div>
       ))}
     </div>
@@ -1072,9 +1099,9 @@ function OpsStrip({ co, color }) {
 
 function DataNotReported({ label }) {
   return (
-    <div style={{ padding: sp("10px 12px"), background: toneAlpha(T.text, 0.018), border: `1px solid ${T.border}`, borderRadius: RADII.sm }}>
-      <span style={{ fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Not reported</span>
-      <span style={{ display: "block", marginTop: sp(3), fontSize: fs(11), color: T.textDim, lineHeight: 1.45 }}>{label}</span>
+    <div style={{ padding: sp("10px 12px"), background: toneAlpha(CSS_COLOR.text, 0.018), border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm }}>
+      <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Not reported</span>
+      <span style={{ display: "block", marginTop: sp(3), fontSize: fs(11), color: CSS_COLOR.textDim, lineHeight: 1.45 }}>{label}</span>
     </div>
   );
 }
@@ -1101,19 +1128,19 @@ function CashFlowTable({ fd, color }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: T.textMuted, letterSpacing: 1, minWidth: 180 }}>Item</th>
-            {fd.years.map(y => <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : T.textSec }}>{y}</th>)}
-            <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: T.textMuted }}>trend</th>
+            <th style={{ textAlign: "left", padding: sp("5px 6px"), fontSize: fs(11), color: CSS_COLOR.textMuted, letterSpacing: 1, minWidth: 180 }}>Item</th>
+            {fd.years.map(y => <th key={y} style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(11), color: y.includes("E") ? color : CSS_COLOR.textSec }}>{y}</th>)}
+            <th style={{ textAlign: "center", padding: sp("5px 4px"), fontSize: fs(10), color: CSS_COLOR.textMuted }}>trend</th>
           </tr>
         </thead>
         <tbody>
           {CF_TEMPLATE.map((row, idx) => {
             const values = fd.cfData.map(d => d[row.k]);
             return (
-              <tr key={row.k} style={{ background: idx % 2 === 0 ? toneAlpha(T.text, 0.012) : "transparent", borderBottom: `1px solid ${T.border}` }}>
-                <td style={{ padding: sp("5px 6px 5px ") + (10 + row.d * 14) + "px", fontSize: fs(11), color: row.bold ? T.text : T.textSec, fontWeight: FONT_WEIGHTS.regular, whiteSpace: "nowrap" }}>{row.l}</td>
+              <tr key={row.k} style={{ background: idx % 2 === 0 ? toneAlpha(CSS_COLOR.text, 0.012) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                <td style={{ padding: sp("5px 6px 5px ") + (10 + row.d * 14) + "px", fontSize: fs(11), color: row.bold ? CSS_COLOR.text : CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular, whiteSpace: "nowrap" }}>{row.l}</td>
                 {values.map((v, i) => (
-                  <td key={i} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10), color: v < 0 ? T.red : T.textSec, fontWeight: FONT_WEIGHTS.regular}}>
+                  <td key={i} style={{ padding: sp("5px 8px"), textAlign: "right", fontSize: fs(10), color: v < 0 ? CSS_COLOR.red : CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular}}>
                     {fmtFS(v)}
                   </td>
                 ))}
@@ -1218,7 +1245,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
     priceHistory.length > 1 && isFiniteNumber(startPrice) && isFiniteNumber(endPrice) && startPrice > 0
       ? ((endPrice - startPrice) / startPrice) * 100
       : null;
-  const retColor = periodReturn >= 0 ? T.green : T.red;
+  const retColor = periodReturn >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
 
   // Show 52-week ref lines only when period is long enough to be visually meaningful
   const showRefs = ["6M", "YTD", "1Y", "5Y"].includes(pricePeriod);
@@ -1251,7 +1278,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       isFiniteNumber(startPrice) && startPrice > 0
         ? ((d.price - startPrice) / startPrice) * 100
         : 0;
-    const chgColor = chg >= 0 ? T.green : T.red;
+    const chgColor = chg >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
     const isIntraday = histInterval === "15min" || histInterval === "1hour";
     const dt = d.isoDT ? new Date(d.isoDT) : d.fullDate ? new Date(d.fullDate) : null;
     const dateLabel = dt
@@ -1274,16 +1301,16 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
   const periods = ["1W", "1M", "3M", "6M", "YTD", "1Y", "5Y"];
 
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("12px 14px"), boxShadow: ELEVATION.sm }}>
+    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("12px 14px"), boxShadow: ELEVATION.sm }}>
       {/* Header: label left, period selector right */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(8) }}>
-        <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textMuted, letterSpacing: 1.5, textTransform: "uppercase" }}>Price history</div>
-        <div style={{ display: "flex", gap: 1, background: toneAlpha(T.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
+        <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textMuted, letterSpacing: 1.5, textTransform: "uppercase" }}>Price history</div>
+        <div style={{ display: "flex", gap: 1, background: toneAlpha(CSS_COLOR.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
           {periods.map(p => (
             <button key={p} onClick={() => setPricePeriod(p)} style={{
-              background: pricePeriod === p ? T.bg1 : "transparent",
+              background: pricePeriod === p ? CSS_COLOR.bg1 : "transparent",
               border: "none", borderRadius: RADII.xs, padding: sp("2px 8px"), fontSize: fs(10),
-              color: pricePeriod === p ? vc.c : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3,
+              color: pricePeriod === p ? vc.c : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: 0.3,
               boxShadow: pricePeriod === p ? ELEVATION.sm : "none",
             }}>{p}</button>
           ))}
@@ -1292,26 +1319,26 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
 
       {/* Price summary row */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: sp(10) }}>
-        <span style={{ fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: 0, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, letterSpacing: 0, fontVariantNumeric: "tabular-nums" }}>
           {fmtPrice(endPrice)}
         </span>
         {isFiniteNumber(periodReturn) ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("3px 10px"), borderRadius: RADII.lg, background: periodReturn >= 0 ? toneAlpha(T.green, 0.10) : toneAlpha(T.red, 0.10), fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: retColor, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("3px 10px"), borderRadius: RADII.lg, background: periodReturn >= 0 ? toneAlpha(CSS_COLOR.green, 0.10) : toneAlpha(CSS_COLOR.red, 0.10), fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: retColor, fontVariantNumeric: "tabular-nums" }}>
             <span>{periodReturn >= 0 ? "▲" : "▼"}</span>
             <span>{periodReturn >= 0 ? "+" : ""}{periodReturn.toFixed(2)}%</span>
             <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, opacity: 0.7, marginLeft: sp(2) }}>over {pricePeriod}</span>
           </span>
         ) : (
-          <span style={{ fontSize: fs(10), color: T.textMuted }}>Return unavailable</span>
+          <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>Return unavailable</span>
         )}
         {/* Data status pill — shows interval (15m/1h/D) for live intraday */}
         {(() => {
           const intervalLabel = histInterval === "15min" ? " · 15M" : histInterval === "1hour" ? " · 1H" : histInterval === "daily" ? " · DAILY" : "";
-          const pill = loading ? { label: "LOADING", bg: toneAlpha(T.amber, 0.10), fg: T.amber, dot: T.amber }
-            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: toneAlpha(T.green, 0.10), fg: T.green, dot: T.green, pulse: true }
-            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: toneAlpha(T.red, 0.08), fg: T.red, dot: T.red }
-            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: toneAlpha(T.text, 0.04), fg: T.textDim, dot: T.textDim }
-            : { label: "WAITING", bg: toneAlpha(T.text, 0.04), fg: T.textDim, dot: T.textMuted };
+          const pill = loading ? { label: "LOADING", bg: toneAlpha(CSS_COLOR.amber, 0.10), fg: CSS_COLOR.amber, dot: CSS_COLOR.amber }
+            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: toneAlpha(CSS_COLOR.green, 0.10), fg: CSS_COLOR.green, dot: CSS_COLOR.green, pulse: true }
+            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: toneAlpha(CSS_COLOR.red, 0.08), fg: CSS_COLOR.red, dot: CSS_COLOR.red }
+            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textDim }
+            : { label: "WAITING", bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim, dot: CSS_COLOR.textMuted };
           return (
             <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}><span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: sp("2px 8px"), borderRadius: RADII.md, background: pill.bg, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, color: pill.fg, letterSpacing: 0.5 }}>
               <span style={{ width: 5, height: 5, borderRadius: RADII.pill, background: pill.dot, animation: pill.pulse ? "researchObservatoryPulse 1.8s ease-in-out infinite" : "none" }} />
@@ -1319,9 +1346,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
             </span></AppTooltip>
           );
         })()}
-        <span style={{ marginLeft: "auto", fontSize: fs(10), color: T.textDim, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ marginLeft: "auto", fontSize: fs(10), color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
           {isFiniteNumber(wkLow) && isFiniteNumber(wkHigh)
-            ? <>52w range: <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkLow.toFixed(2)}</span> – <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkHigh.toFixed(2)}</span></>
+            ? <>52w range: <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkLow.toFixed(2)}</span> – <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>{wkHigh.toFixed(2)}</span></>
             : "52w range unavailable"}
         </span>
       </div>
@@ -1336,9 +1363,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
                 <stop offset="100%" stopColor={vc.c} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <XAxis dataKey="date" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} interval={tickInterval} minTickGap={8} />
+            <XAxis dataKey="date" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} interval={tickInterval} minTickGap={8} />
             <YAxis
-              tick={{ fontSize: fs(10), fill: T.textMuted, fontVariantNumeric: "tabular-nums" }}
+              tick={{ fontSize: fs(10), fill: CSS_COLOR.textMuted, fontVariantNumeric: "tabular-nums" }}
               axisLine={false} tickLine={false}
               domain={priceDomain}
               tickCount={6}
@@ -1352,22 +1379,22 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
             />
             <Tooltip content={<CustomTooltip />} cursor={{ stroke: vc.c, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.5 }} />
             {showRefs && isFiniteNumber(wkHigh) && (
-              <ReferenceLine y={wkHigh} stroke={T.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
-                label={{ value: "52w hi " + wkHigh.toFixed(0), position: "right", fill: T.textDim, fontSize: textSize("caption") }} />
+              <ReferenceLine y={wkHigh} stroke={CSS_COLOR.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w hi " + wkHigh.toFixed(0), position: "right", fill: CSS_COLOR.textDim, fontSize: textSize("caption") }} />
             )}
             {showRefs && isFiniteNumber(wkLow) && (
-              <ReferenceLine y={wkLow} stroke={T.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
-                label={{ value: "52w lo " + wkLow.toFixed(0), position: "right", fill: T.textDim, fontSize: textSize("caption") }} />
+              <ReferenceLine y={wkLow} stroke={CSS_COLOR.textDim} strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w lo " + wkLow.toFixed(0), position: "right", fill: CSS_COLOR.textDim, fontSize: textSize("caption") }} />
             )}
             {/* Linear interpolation — more faithful to actual price action than monotone smoothing */}
-            <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: T.bg1, strokeWidth: 2 }} isAnimationActive={false} />
+            <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: CSS_COLOR.bg1, strokeWidth: 2 }} isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
         {!loading && priceHistory.length === 0 ? (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <div style={{ padding: sp("10px 12px"), borderRadius: RADII.md, border: `1px solid ${T.border}`, background: toneAlpha(T.bg1, 0.92), boxShadow: ELEVATION.md, textAlign: "center" }}>
-              <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textSec, letterSpacing: 0.4 }}>Broker chart unavailable</div>
-              <div style={{ marginTop: sp(4), fontSize: fs(10), color: T.textDim }}>No broker bars returned for {co.t} over {pricePeriod}.</div>
+            <div style={{ padding: sp("10px 12px"), borderRadius: RADII.md, border: `1px solid ${CSS_COLOR.border}`, background: toneAlpha(CSS_COLOR.bg1, 0.92), boxShadow: ELEVATION.md, textAlign: "center" }}>
+              <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textSec, letterSpacing: 0.4 }}>Broker chart unavailable</div>
+              <div style={{ marginTop: sp(4), fontSize: fs(10), color: CSS_COLOR.textDim }}>No broker bars returned for {co.t} over {pricePeriod}.</div>
             </div>
           </div>
         ) : null}
@@ -1450,20 +1477,20 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
       ttmFields: { rev: fund && fund !== "loading" && fund.revenueTTM != null, gm: fund && fund !== "loading" && fund.grossMarginTTM != null, beta: fund && fund !== "loading" && fund.beta != null },
     };
   });
-  const thStyle = { textAlign: "right", padding: sp("6px 7px"), fontSize: textSize("caption"), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" };
+  const thStyle = { textAlign: "right", padding: sp("6px 7px"), fontSize: textSize("caption"), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" };
   const thLeft = { ...thStyle, textAlign: "left" };
-  const cellBase = { padding: sp("7px 7px"), fontSize: fs(11), color: T.text, textAlign: "right", whiteSpace: "nowrap" };
+  const cellBase = { padding: sp("7px 7px"), fontSize: fs(11), color: CSS_COLOR.text, textAlign: "right", whiteSpace: "nowrap" };
 
   // Live-data indicator — tiny dot that signals the cell is sourced from live API (not authored fallback)
   const Dot = ({ live }) => (
-    <AppTooltip content={live ? "Live" : "Authored fallback"}><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: live ? T.green : toneAlpha(T.text, 0.12), marginLeft: sp(4), verticalAlign: "middle" }} /></AppTooltip>
+    <AppTooltip content={live ? "Live" : "Authored fallback"}><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: live ? CSS_COLOR.green : toneAlpha(CSS_COLOR.text, 0.12), marginLeft: sp(4), verticalAlign: "middle" }} /></AppTooltip>
   );
 
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
+    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ background: toneAlpha(T.text, 0.018), borderBottom: `1px solid ${T.border}` }}>
+          <tr style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
             <th style={thLeft}>Peer</th>
             <th style={thStyle}>Mkt Cap</th>
             <th style={thStyle}>P/E</th>
@@ -1477,15 +1504,15 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
         <tbody>
           {rows.map((r, i) => {
             const clickable = !r.focal && r.status === "ok";
-            const rowBg = r.focal ? `${accent}12` : (i % 2 ? toneAlpha(T.text, 0.012) : "transparent");
+            const rowBg = r.focal ? `${accent}12` : (i % 2 ? toneAlpha(CSS_COLOR.text, 0.012) : "transparent");
             const rowStyle = {
-              borderBottom: i < rows.length - 1 ? `1px solid ${T.border}` : "none",
+              borderBottom: i < rows.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
               background: rowBg,
               cursor: clickable ? "pointer" : "default",
               opacity: r.status === "ok" ? 1 : 0.55,
               transition: "background .12s",
             };
-            const leftCell = { ...cellBase, textAlign: "left", fontWeight: FONT_WEIGHTS.regular, color: r.focal ? T.text : T.text };
+            const leftCell = { ...cellBase, textAlign: "left", fontWeight: FONT_WEIGHTS.regular, color: r.focal ? CSS_COLOR.text : CSS_COLOR.text };
             return (
               <tr key={r.ticker + "-" + i} style={rowStyle}
                   onClick={() => { if (clickable) onSelect(r.ticker); }}
@@ -1497,11 +1524,11 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                     <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular}}>
                       {r.cc ? r.cc + " " : ""}{r.label}
                     </span>
-                    {r.focal && <span style={{ fontSize: textSize("caption"), padding: sp("1px 5px"), background: accent, color: T.onAccent, borderRadius: RADII.xs, letterSpacing: .5, fontWeight: FONT_WEIGHTS.regular }}>FOCAL</span>}
-                    {r.status === "pvt" && <span style={{ fontSize: textSize("caption"), color: T.textDim, fontStyle: "italic" }}>(private)</span>}
-                    {r.status === "unknown" && <span style={{ fontSize: textSize("caption"), color: T.textDim, fontStyle: "italic" }}>(not covered)</span>}
+                    {r.focal && <span style={{ fontSize: textSize("caption"), padding: sp("1px 5px"), background: accent, color: CSS_COLOR.onAccent, borderRadius: RADII.xs, letterSpacing: .5, fontWeight: FONT_WEIGHTS.regular }}>FOCAL</span>}
+                    {r.status === "pvt" && <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontStyle: "italic" }}>(private)</span>}
+                    {r.status === "unknown" && <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontStyle: "italic" }}>(not covered)</span>}
                   </span>
-                  {r.name && <div style={{ fontSize: textSize("caption"), color: T.textDim, marginTop: sp(1), fontWeight: FONT_WEIGHTS.regular }}>{r.name.length > 32 ? r.name.slice(0, 32) + "…" : r.name}</div>}
+                  {r.name && <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, marginTop: sp(1), fontWeight: FONT_WEIGHTS.regular }}>{r.name.length > 32 ? r.name.slice(0, 32) + "…" : r.name}</div>}
                 </td>
                 <td style={cellBase}>
                   {fmt.mc(r.mc)}
@@ -1512,18 +1539,18 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                   {r.status === "ok" && <Dot live={r.liveFields?.pe} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : fmt.rev(r.rev)}
+                  {r.isLoading ? <span style={{ color: CSS_COLOR.textMuted }}>…</span> : fmt.rev(r.rev)}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.rev} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : (r.gm == null ? "—" : r.gm.toFixed(0) + "%")}
+                  {r.isLoading ? <span style={{ color: CSS_COLOR.textMuted }}>…</span> : (r.gm == null ? "—" : r.gm.toFixed(0) + "%")}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.gm} />}
                 </td>
                 <td style={cellBase}>
-                  {r.isLoading ? <span style={{ color: T.textMuted }}>…</span> : fmt.beta(r.beta)}
+                  {r.isLoading ? <span style={{ color: CSS_COLOR.textMuted }}>…</span> : fmt.beta(r.beta)}
                   {r.status === "ok" && !r.isLoading && <Dot live={r.ttmFields?.beta} />}
                 </td>
-                <td style={{ ...cellBase, color: r.off52 != null && r.off52 < -20 ? T.red : r.off52 != null && r.off52 > -5 ? T.green : T.text }}>
+                <td style={{ ...cellBase, color: r.off52 != null && r.off52 < -20 ? CSS_COLOR.red : r.off52 != null && r.off52 > -5 ? CSS_COLOR.green : CSS_COLOR.text }}>
                   {fmt.pct(r.off52)}
                   {r.status === "ok" && <Dot live={r.liveFields?.off52} />}
                 </td>
@@ -1532,17 +1559,17 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
                     liveHist[r.ticker] && liveHist[r.ticker].length >= 2 ? (
                       <PriceSparkline data={liveHist[r.ticker]} width={72} height={22} />
                     ) : (
-                      <span style={{ color: T.textMuted, fontSize: textSize("caption") }}>loading…</span>
+                      <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>loading…</span>
                     )
-                  ) : <span style={{ color: T.textMuted, fontSize: fs(10) }}>—</span>}
+                  ) : <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10) }}>—</span>}
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <div style={{ padding: sp("5px 8px"), fontSize: textSize("caption"), color: T.textMuted, background: toneAlpha(T.text, 0.01), borderTop: `1px solid ${T.border}`, letterSpacing: .3 }}>
-        <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: T.green, marginRight: sp(4), verticalAlign: "middle" }} />
+      <div style={{ padding: sp("5px 8px"), fontSize: textSize("caption"), color: CSS_COLOR.textMuted, background: toneAlpha(CSS_COLOR.text, 0.01), borderTop: `1px solid ${CSS_COLOR.border}`, letterSpacing: .3 }}>
+        <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: CSS_COLOR.green, marginRight: sp(4), verticalAlign: "middle" }} />
         Live dots = platform or research APIs · Click a peer row to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
       </div>
     </div>
@@ -1610,10 +1637,10 @@ function FilingsTab({ co, apiKey }) {
   // Badge color per filing category
   const typeBadge = (type) => {
     const cat = filingCategory(type);
-    if (cat === "10K") return { bg: toneAlpha(T.red, 0.12), fg: T.red };
-    if (cat === "10Q") return { bg: toneAlpha(T.blue, 0.12), fg: T.blue };
-    if (cat === "8K") return { bg: toneAlpha(T.amber, 0.12), fg: T.amber };
-    return { bg: toneAlpha(T.text, 0.04), fg: T.textDim };
+    if (cat === "10K") return { bg: toneAlpha(CSS_COLOR.red, 0.12), fg: CSS_COLOR.red };
+    if (cat === "10Q") return { bg: toneAlpha(CSS_COLOR.blue, 0.12), fg: CSS_COLOR.blue };
+    if (cat === "8K") return { bg: toneAlpha(CSS_COLOR.amber, 0.12), fg: CSS_COLOR.amber };
+    return { bg: toneAlpha(CSS_COLOR.text, 0.04), fg: CSS_COLOR.textDim };
   };
 
   const fmtDate = (iso) => {
@@ -1653,13 +1680,13 @@ function FilingsTab({ co, apiKey }) {
       <div style={{ marginBottom: sp(16) }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(5) }}>
           <div style={STYLE_LABEL}>SEC Filings · Recent</div>
-          <div style={{ display: "inline-flex", gap: 2, background: toneAlpha(T.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
+          <div style={{ display: "inline-flex", gap: 2, background: toneAlpha(CSS_COLOR.text, 0.03), borderRadius: RADII.sm, padding: sp(2) }}>
             {[["all", "All"], ["10K", "10-K"], ["10Q", "10-Q"], ["8K", "8-K"], ["other", "Other"]].map(([k, lb]) => (
               <button key={k} onClick={() => setFilingTypeFilter(k)} style={{
-                background: filingTypeFilter === k ? T.bg1 : "transparent",
+                background: filingTypeFilter === k ? CSS_COLOR.bg1 : "transparent",
                 border: "none", borderRadius: RADII.xs, padding: sp("3px 8px"),
                 fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular,
-                color: filingTypeFilter === k ? T.text : T.textDim, cursor: "pointer",
+                color: filingTypeFilter === k ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer",
                 boxShadow: filingTypeFilter === k ? ELEVATION.sm : "none",
               }}>{lb}</button>
             ))}
@@ -1667,22 +1694,22 @@ function FilingsTab({ co, apiKey }) {
         </div>
 
         {!apiKey && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             Add FMP API key in settings to load SEC filings
           </div>
         )}
         {apiKey && filings === null && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.amber, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.amber, fontSize: fs(11) }}>
             ⌛ Loading filings…
           </div>
         )}
         {apiKey && filings && filings.length === 0 && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             No filings data returned for {co.t} {co.cc?.includes("🇺🇸") ? "" : "(foreign issuer — SEC filings may be limited)"}
           </div>
         )}
         {apiKey && filteredFilings.length > 0 && (
-          <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, overflow: "hidden", maxHeight: 280, overflowY: "auto" }}>
+          <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, overflow: "hidden", maxHeight: 280, overflowY: "auto" }}>
             {filteredFilings.map((f, i) => {
               const badge = typeBadge(f.type);
               return (
@@ -1691,16 +1718,16 @@ function FilingsTab({ co, apiKey }) {
                      display: "grid", gridTemplateColumns: "60px 95px 1fr auto",
                      gap: 10, alignItems: "center",
                      padding: sp("7px 10px"),
-                     borderBottom: i < filteredFilings.length - 1 ? `1px solid ${T.border}` : "none",
-                     background: i % 2 ? toneAlpha(T.text, 0.008) : "transparent",
+                     borderBottom: i < filteredFilings.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
+                     background: i % 2 ? toneAlpha(CSS_COLOR.text, 0.008) : "transparent",
                      textDecoration: "none", color: "inherit", cursor: "pointer",
                      transition: "background .12s",
                    }}
-                   onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.accent, 0.06)}
-                   onMouseLeave={e => e.currentTarget.style.background = i % 2 ? toneAlpha(T.text, 0.008) : "transparent"}>
+                   onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.accent, 0.06)}
+                   onMouseLeave={e => e.currentTarget.style.background = i % 2 ? toneAlpha(CSS_COLOR.text, 0.008) : "transparent"}>
                   <span style={{ display: "inline-block", padding: sp("2px 5px"), borderRadius: RADII.xs, background: badge.bg, color: badge.fg, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3, textAlign: "center" }}>{f.type}</span>
-                  <span style={{ fontSize: fs(10), color: T.textDim }}>{fmtDate(f.fillingDate || f.filingDate)}</span>
-                  <span style={{ fontSize: fs(11), color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>{fmtDate(f.fillingDate || f.filingDate)}</span>
+                  <span style={{ fontSize: fs(11), color: CSS_COLOR.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {f.type?.includes("10-K") ? "Annual Report" :
                      f.type?.includes("10-Q") ? "Quarterly Report" :
                      f.type?.includes("8-K") ? "Current Report" :
@@ -1708,7 +1735,7 @@ function FilingsTab({ co, apiKey }) {
                      f.type?.includes("S-1") ? "Registration Statement" :
                      f.type || "Filing"}
                   </span>
-                  <span style={{ fontSize: fs(14), color: T.textMuted }}>↗</span>
+                  <span style={{ fontSize: fs(14), color: CSS_COLOR.textMuted }}>↗</span>
                 </a>
               );
             })}
@@ -1738,7 +1765,7 @@ function FilingsTab({ co, apiKey }) {
                   loadTranscript(q, y);
                 }
               }}
-              style={{ fontSize: fs(10), padding: sp("3px 6px"), border: `1px solid ${T.borderLight}`, borderRadius: RADII.xs, background: T.bg1, color: T.textSec, cursor: "pointer" }}
+              style={{ fontSize: fs(10), padding: sp("3px 6px"), border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.xs, background: CSS_COLOR.bg1, color: CSS_COLOR.textSec, cursor: "pointer" }}
             >
               <option value="latest">Latest</option>
               {transcriptList.slice(0, 20).map((entry, i) => {
@@ -1753,61 +1780,61 @@ function FilingsTab({ co, apiKey }) {
         </div>
 
         {!apiKey && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             Add FMP API key to load transcripts
           </div>
         )}
         {apiKey && transcriptLoading && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.amber, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.amber, fontSize: fs(11) }}>
             ⌛ Loading transcript…
           </div>
         )}
         {apiKey && !transcriptLoading && !transcript && (
-          <div style={{ padding: sp("20px 12px"), background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, textAlign: "center", color: T.textDim, fontSize: fs(11) }}>
+          <div style={{ padding: sp("20px 12px"), background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(11) }}>
             No transcript available for {co.t}
           </div>
         )}
         {transcript && (
-          <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
+          <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
             {/* Header */}
-            <div style={{ padding: sp("8px 12px"), borderBottom: `1px solid ${T.border}`, background: toneAlpha(T.text, 0.018) }}>
+            <div style={{ padding: sp("8px 12px"), borderBottom: `1px solid ${CSS_COLOR.border}`, background: toneAlpha(CSS_COLOR.text, 0.018) }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>Q{transcript.quarter} {transcript.year}</span>
-                <span style={{ fontSize: fs(11), color: T.textDim }}>{fmtDate(transcript.date)}</span>
-                <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: "auto" }}>
+                <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>Q{transcript.quarter} {transcript.year}</span>
+                <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{fmtDate(transcript.date)}</span>
+                <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>
                   {transcript.content ? (transcript.content.length / 1000).toFixed(1) + "k chars" : ""}
                 </span>
               </div>
             </div>
 
             {/* Body */}
-            <div style={{ padding: sp("10px 12px"), fontSize: fs(12), color: T.text, lineHeight: 1.55, maxHeight: transcriptExpanded ? "70vh" : 260, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+            <div style={{ padding: sp("10px 12px"), fontSize: fs(12), color: CSS_COLOR.text, lineHeight: 1.55, maxHeight: transcriptExpanded ? "70vh" : 260, overflowY: "auto", whiteSpace: "pre-wrap" }}>
               {transcriptSections?.prepared && (
                 <>
-                  <div style={{ fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginBottom: sp(6) }}>Prepared Remarks</div>
+                  <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginBottom: sp(6) }}>Prepared Remarks</div>
                   <div>{transcriptExpanded ? transcriptSections.prepared : transcriptSections.prepared.slice(0, 2200) + (transcriptSections.prepared.length > 2200 ? "…" : "")}</div>
                 </>
               )}
               {transcriptExpanded && transcriptSections?.qa && (
                 <>
-                  <div style={{ fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginTop: sp(14), marginBottom: sp(6), borderTop: `1px solid ${T.border}`, paddingTop: sp(10) }}>Q&A Session</div>
+                  <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .5, textTransform: "uppercase", marginTop: sp(14), marginBottom: sp(6), borderTop: `1px solid ${CSS_COLOR.border}`, paddingTop: sp(10) }}>Q&A Session</div>
                   <div>{transcriptSections.qa}</div>
                 </>
               )}
             </div>
 
             {/* Expand/collapse footer */}
-            <div style={{ padding: sp("6px 10px"), borderTop: `1px solid ${T.border}`, background: toneAlpha(T.text, 0.012), textAlign: "center" }}>
+            <div style={{ padding: sp("6px 10px"), borderTop: `1px solid ${CSS_COLOR.border}`, background: toneAlpha(CSS_COLOR.text, 0.012), textAlign: "center" }}>
               <button onClick={() => setTranscriptExpanded(!transcriptExpanded)} style={{
                 background: "none", border: "none", padding: sp("2px 8px"),
-                fontSize: fs(10), color: T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3,
+                fontSize: fs(10), color: CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3,
               }}>
                 {transcriptExpanded ? "▲ Collapse" : transcriptSections?.qa ? "▼ Expand full transcript (incl. Q&A)" : "▼ Expand full transcript"}
               </button>
             </div>
           </div>
         )}
-        <div style={{ fontSize: textSize("caption"), color: T.textMuted, marginTop: sp(6), textAlign: "right" }}>
+        <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, marginTop: sp(6), textAlign: "right" }}>
           Transcripts & filings via FMP · Click any filing to open on SEC EDGAR
         </div>
       </div>
@@ -2025,11 +2052,11 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
             ["Dividend", co.fin?.div ? "$" + co.fin.div.toFixed(2) : "—", false],
             ["Shares", (isFiniteNumber(valuationBase.sh) ? valuationBase.sh.toFixed(0) + "M" : "—"), valuationBase.hasLiveShares],
           ].map(([l, v, isLive], i) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("3px 8px"), background: Math.floor(i / 3) % 2 === 0 ? toneAlpha(T.text, 0.01) : "transparent", borderBottom: `1px solid ${T.border}` }}>
-              <span style={{ fontSize: fs(11), color: T.textDim }}>{l}</span>
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("3px 8px"), background: Math.floor(i / 3) % 2 === 0 ? toneAlpha(CSS_COLOR.text, 0.01) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+              <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{l}</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <span style={{ fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</span>
-                {isLive && <AppTooltip content="Live from FMP"><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: T.green }} /></AppTooltip>}
+                <span style={{ fontSize: fs(11), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{v}</span>
+                {isLive && <AppTooltip content="Live from FMP"><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.xs, background: CSS_COLOR.green }} /></AppTooltip>}
               </span>
             </div>
           ))}
@@ -2037,16 +2064,16 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
 
         {/* ── RANGE BARS ── */}
         <div style={{ marginBottom: sp(10) }}>
-          <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(2) }}>Day Range</div>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, marginBottom: sp(2) }}>Day Range</div>
           <RangeBar low={dayLow} high={dayHigh} current={price} color={vc.c} />
-          <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(2), marginTop: sp(5) }}>52 Week Range</div>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, marginBottom: sp(2), marginTop: sp(5) }}>52 Week Range</div>
           <RangeBar low={wkLow} high={wkHigh} current={price} color={vc.c} />
         </div>
 
         {/* ── DESCRIPTION + PRODUCT ── */}
         <div style={STYLE_SECTION}>
-          <p style={{ fontSize: fs(13), color: T.textSec, lineHeight: 1.7, margin: "0 0 8px" }}>{co.d}</p>
-          <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("6px 10px"), fontSize: fs(11), color: T.textSec }}>{co.pr}</div>
+          <p style={{ fontSize: fs(13), color: CSS_COLOR.textSec, lineHeight: 1.7, margin: "0 0 8px" }}>{co.d}</p>
+          <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("6px 10px"), fontSize: fs(11), color: CSS_COLOR.textSec }}>{co.pr}</div>
         </div>
 
         {/* ── SUPPLY CHAIN + RISKS/CATALYSTS ── */}
@@ -2054,36 +2081,36 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           <div>
             <div style={STYLE_LABEL}>Supply chain</div>
             <div style={{ marginBottom: sp(8) }}>
-              <div style={{ fontSize: fs(10), color: T.textMuted, marginBottom: sp(3) }}>SUPPLIERS → ({sup.length})</div>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginBottom: sp(3) }}>SUPPLIERS → ({sup.length})</div>
               {sup.length > 0 ? sup.map(sx => (
-                <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ fontSize: fs(11), color: T.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
-                  onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
+                  onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <Logo ticker={sx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === sx.t) || COMPANIES[0]).v].c }}>${sx.t}</span>
-                  <span style={{ color: T.textMuted, marginLeft: sp(4) }}>{sx.l}</span>
+                  <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>{sx.l}</span>
                 </div>
-              )) : <div style={{ fontSize: fs(11), color: T.textMuted }}>{"—"}</div>}
+              )) : <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>{"—"}</div>}
             </div>
             <div>
-              <div style={{ fontSize: fs(10), color: T.textMuted, marginBottom: sp(3) }}>→ CUSTOMERS ({cust.length})</div>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginBottom: sp(3) }}>→ CUSTOMERS ({cust.length})</div>
               {cust.length > 0 ? cust.map(cx => (
-                <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ fontSize: fs(11), color: T.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
-                  onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, padding: sp("2px 0"), cursor: "pointer", borderRadius: RADII.xs }}
+                  onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <Logo ticker={cx.t} size={12} style={{ marginRight: sp(3) }} /><span style={{ color: VX[(COMPANIES.find(c => c.t === cx.t) || COMPANIES[0]).v].c }}>${cx.t}</span>
-                  <span style={{ color: T.textMuted, marginLeft: sp(4) }}>{cx.l}</span>
+                  <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>{cx.l}</span>
                 </div>
-              )) : <div style={{ fontSize: fs(11), color: T.textMuted }}>End buyer</div>}
+              )) : <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>End buyer</div>}
             </div>
           </div>
           <div>
-            <div style={{ background: toneAlpha(T.red, 0.03), borderRadius: RADII.sm, padding: sp(7), marginBottom: sp(6) }}>
-              <div style={{ fontSize: fs(10), color: T.red, letterSpacing: 1.5, marginBottom: sp(4) }}>RISKS</div>
-              {co.ri.map((r, i) => <div key={i} style={{ fontSize: fs(11), color: T.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{r}</div>)}
+            <div style={{ background: toneAlpha(CSS_COLOR.red, 0.03), borderRadius: RADII.sm, padding: sp(7), marginBottom: sp(6) }}>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.red, letterSpacing: 1.5, marginBottom: sp(4) }}>RISKS</div>
+              {co.ri.map((r, i) => <div key={i} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{r}</div>)}
             </div>
-            <div style={{ background: toneAlpha(T.green, 0.03), borderRadius: RADII.sm, padding: sp(7) }}>
-              <div style={{ fontSize: fs(10), color: T.green, letterSpacing: 1.5, marginBottom: sp(4) }}>CATALYSTS</div>
-              {co.ca.map((c, i) => <div key={i} style={{ fontSize: fs(11), color: T.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{c}</div>)}
+            <div style={{ background: toneAlpha(CSS_COLOR.green, 0.03), borderRadius: RADII.sm, padding: sp(7) }}>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.green, letterSpacing: 1.5, marginBottom: sp(4) }}>CATALYSTS</div>
+              {co.ca.map((c, i) => <div key={i} style={{ fontSize: fs(11), color: CSS_COLOR.textDim, marginBottom: sp(2), paddingLeft: sp(12), lineHeight: 1.5 }}>{c}</div>)}
             </div>
           </div>
         </div>
@@ -2093,8 +2120,8 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
           <div style={STYLE_LABEL}>Annual Revenue</div>
           <ResponsiveContainer width="100%" height={75}>
             <BarChart data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
-              <XAxis dataKey="year" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: fs(11), fill: T.textMuted }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="year" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: fs(11), fill: CSS_COLOR.textMuted }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={chartTooltipContentStyle} formatter={(v) => [fmtMC(v), "Revenue"]} />
               <Bar dataKey="rev" fill={vc.c} radius={[4, 4, 0, 0]} barSize={28} fillOpacity={0.7}>
                 {fd.years.map((y, i) => <Cell key={i} fill={y.includes("E") ? vc.c + "88" : vc.c} />)}
@@ -2140,13 +2167,13 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Customer concentration</div>
             {co.tc && co.tc.length > 0 ? (
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(10) }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(10) }}>
                 <StackedBar data={co.tc.map(([n, p]) => [n, p])} color={vc.c} height={20} />
-                <div style={{ marginTop: sp(8), paddingTop: sp(8), borderTop: `1px solid ${T.border}` }}>
+                <div style={{ marginTop: sp(8), paddingTop: sp(8), borderTop: `1px solid ${CSS_COLOR.border}` }}>
                   {co.tc.map(([n, p]) => (
                     <div key={n} style={{ display: "flex", justifyContent: "space-between", padding: sp("2px 0"), fontSize: fs(11) }}>
-                      <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{n}</span>
-                      <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{p}%</span>
+                      <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>{n}</span>
+                      <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{p}%</span>
                     </div>
                   ))}
                 </div>
@@ -2160,20 +2187,20 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Product portfolio</div>
             {co.pl && co.pl.length > 0 ? (
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, overflow: "hidden" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr style={{ background: toneAlpha(T.text, 0.018), borderBottom: `1px solid ${T.border}` }}>
-                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Product</th>
-                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Description</th>
-                      <th style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Position</th>
+                    <tr style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Product</th>
+                      <th style={{ textAlign: "left", padding: sp("5px 8px"), fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Description</th>
+                      <th style={{ textAlign: "right", padding: sp("5px 8px"), fontSize: fs(10), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular, letterSpacing: 1, textTransform: "uppercase" }}>Position</th>
                     </tr>
                   </thead>
                   <tbody>
                     {co.pl.map((p, i) => (
-                      <tr key={i} style={{ borderBottom: i < co.pl.length - 1 ? `1px solid ${T.border}` : "none" }}>
-                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{p.name}</td>
-                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: T.textSec }}>{p.desc}</td>
+                      <tr key={i} style={{ borderBottom: i < co.pl.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none" }}>
+                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{p.name}</td>
+                        <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: CSS_COLOR.textSec }}>{p.desc}</td>
                         <td style={{ padding: sp("5px 8px"), fontSize: fs(11), color: vc.c, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>{p.pos || "—"}</td>
                       </tr>
                     ))}
@@ -2181,7 +2208,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
                 </table>
               </div>
             ) : (
-              <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("8px 12px"), fontSize: fs(11), color: T.textSec }}>{co.pr}</div>
+              <div style={{ background: vc.bg, borderRadius: RADII.md, padding: sp("8px 12px"), fontSize: fs(11), color: CSS_COLOR.textSec }}>{co.pr}</div>
             )}
           </div>
 
@@ -2189,7 +2216,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           <div style={{ marginBottom: sp(14) }}>
             <div style={STYLE_LABEL}>Peer comparison</div>
             <PeerGrid co={co} color={vc.c} onSelect={onSelect} />
-            <div style={{ fontSize: fs(10), color: T.textMuted, marginTop: sp(4), fontStyle: "italic" }}>
+            <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginTop: sp(4), fontStyle: "italic" }}>
               Peers selected by closest market cap within same sub-layer and vertical. Dot shows rank in peer set.
             </div>
           </div>
@@ -2198,36 +2225,36 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: sp(14) }}>
             <div>
               <div style={STYLE_LABEL}>Suppliers ({sup.length})</div>
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
                 {sup.length > 0 ? sup.map(sx => {
                   const sCo = COMPANIES.find(c => c.t === sx.t);
                   return (
                     <div key={sx.t + sx.l} onClick={() => onSelect && onSelect(sx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
-                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={sx.t} size={14} />
-                      <span style={{ color: sCo ? VX[sCo.v].c : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>{sx.t}</span>
-                      <span style={{ color: T.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{sx.l}</span>
+                      <span style={{ color: sCo ? VX[sCo.v].c : CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>{sx.t}</span>
+                      <span style={{ color: CSS_COLOR.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{sx.l}</span>
                     </div>
                   );
-                }) : <div style={{ fontSize: fs(11), color: T.textMuted, padding: sp(4) }}>End of chain</div>}
+                }) : <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, padding: sp(4) }}>End of chain</div>}
               </div>
             </div>
             <div>
               <div style={STYLE_LABEL}>Customers ({cust.length})</div>
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, padding: sp(8), minHeight: 60 }}>
                 {cust.length > 0 ? cust.map(cx => {
                   const cCo = COMPANIES.find(c => c.t === cx.t);
                   return (
                     <div key={cx.t + cx.l} onClick={() => onSelect && onSelect(cx.t)} style={{ display: "flex", alignItems: "center", gap: 5, padding: sp("3px 4px"), cursor: "pointer", borderRadius: RADII.xs, fontSize: fs(11) }}
-                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <Logo ticker={cx.t} size={14} />
-                      <span style={{ color: cCo ? VX[cCo.v].c : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>{cx.t}</span>
-                      <span style={{ color: T.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{cx.l}</span>
+                      <span style={{ color: cCo ? VX[cCo.v].c : CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>{cx.t}</span>
+                      <span style={{ color: CSS_COLOR.textMuted, marginLeft: "auto", fontSize: fs(10) }}>{cx.l}</span>
                     </div>
                   );
-                }) : <div style={{ fontSize: fs(11), color: T.textMuted, padding: sp(4) }}>End buyer</div>}
+                }) : <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, padding: sp(4) }}>End buyer</div>}
               </div>
             </div>
           </div>
@@ -2254,30 +2281,30 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
           <div style={{ marginBottom: sp(12) }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sp(4) }}>
               <div style={STYLE_LABEL}>Quarterly EPS · actual vs estimate</div>
-              <div style={{ display: "flex", gap: 10, fontSize: fs(10), color: T.textDim }}>
+              <div style={{ display: "flex", gap: 10, fontSize: fs(10), color: CSS_COLOR.textDim }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: T.bg1, borderRadius: 1 }} />Estimate
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.bg1, borderRadius: 1 }} />Estimate
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: T.green, borderRadius: 1 }} />Beat
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.green, borderRadius: 1 }} />Beat
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ width: 8, height: 8, background: T.red, borderRadius: 1 }} />Miss
+                  <span style={{ width: 8, height: 8, background: CSS_COLOR.red, borderRadius: 1 }} />Miss
                 </span>
               </div>
             </div>
-            <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("8px 10px") }}>
+            <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("8px 10px") }}>
 	              <ResponsiveContainer width="100%" height={140}>
 	                <BarChart data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
-	                  <XAxis dataKey="label" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false} />
-	                  <YAxis tick={{ fontSize: fs(10), fill: T.textMuted }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
+	                  <XAxis dataKey="label" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false} />
+	                  <YAxis tick={{ fontSize: fs(10), fill: CSS_COLOR.textMuted }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
 	                  <Tooltip contentStyle={chartTooltipContentStyle}
 	                    formatter={(v, name) => [isFiniteNumber(v) ? "$" + v.toFixed(2) : "—", name]} />
-	                  <Bar dataKey="estimate" fill={T.bg3} radius={[2, 2, 0, 0]} barSize={10} name="Est" />
+	                  <Bar dataKey="estimate" fill={CSS_COLOR.bg3} radius={[2, 2, 0, 0]} barSize={10} name="Est" />
 	                  <Bar dataKey="actual" radius={[2, 2, 0, 0]} barSize={10} name="Actual">
-	                    {fd.qEPS.map((e, i) => <Cell key={i} fill={e.beat == null ? T.textDim : e.beat ? T.green : T.red} />)}
+	                    {fd.qEPS.map((e, i) => <Cell key={i} fill={e.beat == null ? CSS_COLOR.textDim : e.beat ? CSS_COLOR.green : CSS_COLOR.red} />)}
 	                  </Bar>
-	                  <ReferenceLine y={0} stroke={T.textMuted} />
+	                  <ReferenceLine y={0} stroke={CSS_COLOR.textMuted} />
 	                </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2299,23 +2326,23 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
           <div style={STYLE_SECTION}>
             <div style={STYLE_LABEL}>Investment intensity</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(10) }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(10) }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(4) }}>
-                  <span style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>R&D ÷ Revenue</span>
+                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>R&D ÷ Revenue</span>
                   <TrendSpark values={fd.ratiosData.map(r => r.rdIntensity)} color={vc.c} width={120} height={30} />
                 </div>
-                <div style={{ fontSize: fs(10), color: T.textMuted }}>
+                <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>
                   {co.v === "compute" ? "High R&D intensity is expected — tech leadership requires it" :
                    co.v === "photonics" ? "Photonics R&D reflects process and device innovation" :
                    co.v === "hyperscaler" ? "Hyperscaler R&D funds both software and silicon" : "Steady R&D reinvestment sustains margin"}
                 </div>
               </div>
-              <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(10) }}>
+              <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(10) }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(4) }}>
-                  <span style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>Capex ÷ Revenue</span>
+                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1, fontWeight: FONT_WEIGHTS.regular }}>Capex ÷ Revenue</span>
                   <TrendSpark values={fd.ratiosData.map(r => r.capexIntensity)} color={vc.c} width={120} height={30} />
                 </div>
-                <div style={{ fontSize: fs(10), color: T.textMuted }}>
+                <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>
                   {co.v === "hyperscaler" ? "AI buildout cycle drives sustained elevated capex" :
                    co.v === "dcInfra" ? "Capital-intensive DC infrastructure by design" :
                    co.v === "memory" || co.s === "Foundry" ? "Fab capex cycles drive margin volatility" : "Typical asset-light model"}
@@ -2328,16 +2355,16 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
 	          {latestRatio?.runwayQtrs != null && (
 	            <div style={STYLE_SECTION}>
 	              <div style={STYLE_LABEL}>Cash runway</div>
-	              <div style={{ background: latestRatio.runwayQtrs < 4 ? toneAlpha(T.red, 0.04) : latestRatio.runwayQtrs < 8 ? toneAlpha(T.amber, 0.04) : toneAlpha(T.green, 0.04),
-	                border: "1px solid " + (latestRatio.runwayQtrs < 4 ? toneAlpha(T.red, 0.15) : latestRatio.runwayQtrs < 8 ? toneAlpha(T.amber, 0.15) : toneAlpha(T.green, 0.15)),
+	              <div style={{ background: latestRatio.runwayQtrs < 4 ? toneAlpha(CSS_COLOR.red, 0.04) : latestRatio.runwayQtrs < 8 ? toneAlpha(CSS_COLOR.amber, 0.04) : toneAlpha(CSS_COLOR.green, 0.04),
+	                border: "1px solid " + (latestRatio.runwayQtrs < 4 ? toneAlpha(CSS_COLOR.red, 0.15) : latestRatio.runwayQtrs < 8 ? toneAlpha(CSS_COLOR.amber, 0.15) : toneAlpha(CSS_COLOR.green, 0.15)),
 	                borderRadius: RADII.sm, padding: sp("8px 12px"), display: "flex", alignItems: "center", gap: 10 }}>
 	                <div>
-	                  <div style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: latestRatio.runwayQtrs < 4 ? T.red : latestRatio.runwayQtrs < 8 ? T.amber : T.green }}>
+	                  <div style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: latestRatio.runwayQtrs < 4 ? CSS_COLOR.red : latestRatio.runwayQtrs < 8 ? CSS_COLOR.amber : CSS_COLOR.green }}>
 	                    {latestRatio.runwayQtrs}<span style={{ fontSize: fs(11), marginLeft: sp(3) }}>quarters</span>
 	                  </div>
-	                  <div style={{ fontSize: fs(10), color: T.textDim }}>Implied runway at current burn rate</div>
+	                  <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>Implied runway at current burn rate</div>
 	                </div>
-	                <div style={{ fontSize: fs(11), color: T.textSec, flex: 1 }}>
+	                <div style={{ fontSize: fs(11), color: CSS_COLOR.textSec, flex: 1 }}>
 	                  {latestRatio.runwayQtrs < 4 ? "Short runway — capital raise or profitability inflection needed near-term." :
 	                   latestRatio.runwayQtrs < 8 ? "Manageable runway but dilution risk over medium-term if burn continues." :
 	                   "Comfortable runway supports operational execution through the cycle."}
@@ -2420,26 +2447,26 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
     return { ...base, ratiosData };
   }, [co, focalFinancials, live?.mc]);
   return (
-    <div style={{ background: T.bg1, borderRadius: RADII.lg, border: `1px solid ${T.border}`, overflow: "hidden", animation: "slideUp 0.3s ease", boxShadow: ELEVATION.md }}>
+    <div style={{ background: CSS_COLOR.bg1, borderRadius: RADII.lg, border: `1px solid ${CSS_COLOR.border}`, overflow: "hidden", animation: "slideUp 0.3s ease", boxShadow: ELEVATION.md }}>
       {/* ── HEADER ── */}
-      <div style={{ padding: sp("12px 16px 10px"), background: `linear-gradient(to bottom, ${toneAlpha(T.text, 0.01)}, transparent)`, borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ padding: sp("12px 16px 10px"), background: `linear-gradient(to bottom, ${toneAlpha(CSS_COLOR.text, 0.01)}, transparent)`, borderBottom: `1px solid ${CSS_COLOR.border}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: fs(11), color: T.textDim }}>{vc.n} &middot; {co.s}</div>
+            <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{vc.n} &middot; {co.s}</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: sp(3) }}>
-              <Logo ticker={co.t} size={22} style={{ marginRight: sp(6) }} /><span style={{ fontSize: fs(22), color: T.text }}>{co.cc} {co.t}</span>
-              <span style={{ fontSize: fs(13), color: T.textDim }}>{co.nm}</span>
+              <Logo ticker={co.t} size={22} style={{ marginRight: sp(6) }} /><span style={{ fontSize: fs(22), color: CSS_COLOR.text }}>{co.cc} {co.t}</span>
+              <span style={{ fontSize: fs(13), color: CSS_COLOR.textDim }}>{co.nm}</span>
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: sp(4) }}>
-              <span style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtPrice(price)}</span>
-              <span style={{ fontSize: fs(12), color: isFiniteNumber(dailyChg) && dailyChg >= 0 ? T.green : T.red }}>
+              <span style={{ fontSize: fs(20), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{fmtPrice(price)}</span>
+              <span style={{ fontSize: fs(12), color: isFiniteNumber(dailyChg) && dailyChg >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
                 {isFiniteNumber(dailyChg) && isFiniteNumber(dailyPct)
                   ? `${dailyChg >= 0 ? "+" : ""}${dailyChg.toFixed(2)} (${dailyPct >= 0 ? "+" : ""}${dailyPct.toFixed(2)}%)`
                   : "—"}
               </span>
             </div>
             {(bid != null || ask != null) ? (
-              <div style={{ fontSize: fs(10), color: T.textMuted, marginTop: sp(2) }}>
+              <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginTop: sp(2) }}>
                 {bid != null ? `Bid ${bid.toFixed(2)}` : "Bid —"} &nbsp;&middot;&nbsp; {ask != null ? `Ask ${ask.toFixed(2)}` : "Ask —"}
               </div>
             ) : null}
@@ -2450,13 +2477,13 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
             <AppTooltip content="Open this symbol on the Trade tab"><button
               onClick={() => onJumpToTrade && onJumpToTrade(co.t)}
               style={{
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
+                background: CSS_COLOR.bg1,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: RADII.sm,
                 padding: sp("4px 10px"),
                 fontSize: fs(11),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.text,
+                color: CSS_COLOR.text,
                 cursor: "pointer",
                 display: "inline-flex",
                 alignItems: "center",
@@ -2494,11 +2521,11 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                 }
               }}
               style={{
-                background: copyStatus === "copied" ? toneAlpha(T.green, 0.12) : copyStatus === "error" ? toneAlpha(T.red, 0.12) : T.bg1,
-                border: `1px solid ${copyStatus === "copied" ? toneAlpha(T.green, 0.35) : copyStatus === "error" ? toneAlpha(T.red, 0.35) : toneAlpha(T.text, 0.08)}`,
+                background: copyStatus === "copied" ? toneAlpha(CSS_COLOR.green, 0.12) : copyStatus === "error" ? toneAlpha(CSS_COLOR.red, 0.12) : CSS_COLOR.bg1,
+                border: `1px solid ${copyStatus === "copied" ? toneAlpha(CSS_COLOR.green, 0.35) : copyStatus === "error" ? toneAlpha(CSS_COLOR.red, 0.35) : toneAlpha(CSS_COLOR.text, 0.08)}`,
                 borderRadius: RADII.sm, padding: sp("4px 10px"),
                 fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
-                color: copyStatus === "copied" ? T.green : copyStatus === "error" ? T.red : T.textSec,
+                color: copyStatus === "copied" ? CSS_COLOR.green : copyStatus === "error" ? CSS_COLOR.red : CSS_COLOR.textSec,
                 cursor: "pointer",
                 display: "inline-flex", alignItems: "center", gap: 5,
                 transition: "all .2s ease",
@@ -2519,12 +2546,12 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
       <div style={{ padding: sp("10px 14px 14px"), maxHeight: "70vh", overflowY: "auto" }}>
         {/* ── TAB BAR ── */}
-        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginBottom: sp(10), marginTop: -2 }}>
+        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${CSS_COLOR.border}`, marginBottom: sp(10), marginTop: -2 }}>
           {[["overview", "Overview"], ["business", "Business"], ["financials", "Financials"], ["valuation", "Valuation"], ["filings", "📄 Filings"]].map(([id, lb]) => (
             <button key={id} onClick={() => setDetailTab(id)} style={{
               background: "none", border: "none",
               borderBottom: detailTab === id ? "2px solid " + vc.c : "2px solid transparent",
-              padding: sp("6px 14px"), color: detailTab === id ? vc.c : T.textDim,
+              padding: sp("6px 14px"), color: detailTab === id ? vc.c : CSS_COLOR.textDim,
               fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3,
             }}>{lb}</button>
           ))}
@@ -2546,10 +2573,10 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
         {detailTab === "filings" && <FilingsTab co={co} apiKey={apiKey} />}
 
         {/* ── BACK TO GRAPH (always visible) ── */}
-        <div style={{ borderTop: `1px solid ${T.border}`, marginTop: sp(16), paddingTop: sp(12), textAlign: "center" }}>
+        <div style={{ borderTop: `1px solid ${CSS_COLOR.border}`, marginTop: sp(16), paddingTop: sp(12), textAlign: "center" }}>
           <button onClick={onClose} style={{
-            background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md,
-            padding: sp("6px 20px"), boxShadow: ELEVATION.sm, color: T.textDim, fontSize: fs(10), cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
+            background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md,
+            padding: sp("6px 20px"), boxShadow: ELEVATION.sm, color: CSS_COLOR.textDim, fontSize: fs(10), cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
           }}>Back to graph</button>
         </div>
       </div>
@@ -2595,7 +2622,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                 const srcGrp = stages.flatMap(st => st.groups).find(g => g.tickers.includes(s));
                 const k = s + ">" + sg + ">" + tg;
                 const v = Math.max(80, Math.round(rev / (edgeCountCache[s] || 1)));
-                if (!cfMap[k]) cfMap[k] = { from: sg, to: tg, ticker: s, value: 0, color: srcGrp?.bc || T.textDim };
+                if (!cfMap[k]) cfMap[k] = { from: sg, to: tg, ticker: s, value: 0, color: srcGrp?.bc || CSS_COLOR.textDim };
                 cfMap[k].value += v;
               }
             });
@@ -2925,7 +2952,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
             const focGrp = focGrpId ? allGroups.find(g => g.id === focGrpId) : null;
             const active = (isGrpMode ? null : focused) || hoverTicker;
             const activeCo = active ? COMPANIES.find(c => c.t === active) : null;
-            const activeBrand = active ? (BRAND[active] || [T.textDim])[0] : null;
+            const activeBrand = active ? (BRAND[active] || [CSS_COLOR.textDim])[0] : null;
             const anyFocus = active || focGrpId;
 
             // Total rev per stage for percentage calc
@@ -2935,9 +2962,9 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
               <div style={{ position: "relative" }}>
                 {(focused || focGrpId) && (
                   <button onClick={() => { setFocused(null); setHoverTicker(null); }} style={{
-                    position: "absolute", top: 4, right: 6, zIndex: 5, background: T.bg1,
-                    border: `1px solid ${T.borderLight}`, borderRadius: RADII.sm, padding: sp("3px 10px"),
-                    fontSize: fs(10), color: T.textSec, cursor: "pointer",
+                    position: "absolute", top: 4, right: 6, zIndex: 5, background: CSS_COLOR.bg1,
+                    border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.sm, padding: sp("3px 10px"),
+                    fontSize: fs(10), color: CSS_COLOR.textSec, cursor: "pointer",
                     boxShadow: ELEVATION.sm, fontWeight: FONT_WEIGHTS.regular,
                   }}>✕ Back</button>
                 )}
@@ -2983,7 +3010,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         <rect x={g.cx} y={g.y} width={nodeW} height={g.h} rx={3}
                           filter={dimmed ? "none" : "url(#nodeShadow)"}
                           fill={g.bc} fillOpacity={dimmed ? 0.15 : 0.92}
-                          stroke={isGrpFocus ? T.text : gHasActive ? activeBrand : toneAlpha(T.text, 0.08)}
+                          stroke={isGrpFocus ? CSS_COLOR.text : gHasActive ? activeBrand : toneAlpha(CSS_COLOR.text, 0.08)}
                           strokeWidth={isGrpFocus || gHasActive ? 1.5 : 0.5}
                           style={{ transition: "fill-opacity 0.3s ease" }} />
                         {/* Two-line external label with percentage */}
@@ -2994,12 +3021,12 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           return (
                             <g opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity 0.3s ease", pointerEvents: "none" }}>
                               <text x={lx} y={g.y + g.h / 2 - 4} fontSize={fs(11)} textAnchor={anchor}
-                                fontFamily={T.display} fill={T.text} fontWeight={FONT_WEIGHTS.regular}
+                                fontFamily={T.display} fill={CSS_COLOR.text} fontWeight={FONT_WEIGHTS.regular}
                                 dominantBaseline="middle">{g.label}</text>
                               <text x={lx} y={g.y + g.h / 2 + 9} fontSize={9.5} textAnchor={anchor}
                                 fontFamily={T.display} dominantBaseline="middle">
-                                <tspan fill={T.text} fontWeight={FONT_WEIGHTS.regular}>{pct}%</tspan>
-                                <tspan fill={T.textDim}> · {fmtMC(g.rev)}</tspan>
+                                <tspan fill={CSS_COLOR.text} fontWeight={FONT_WEIGHTS.regular}>{pct}%</tspan>
+                                <tspan fill={CSS_COLOR.textDim}> · {fmtMC(g.rev)}</tspan>
                               </text>
                             </g>
                           );
@@ -3021,7 +3048,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                       .sort((a, b) => b.total - a.total).slice(0, 5)
                       .map((p, i) => (
                         <text key={"fl"+i} x={p.mx} y={p.my - 5} textAnchor="middle"
-                          fontSize={fs(9)} fill={T.textMuted} fontWeight={FONT_WEIGHTS.regular} fontFamily={T.display}
+                          fontSize={fs(9)} fill={CSS_COLOR.textMuted} fontWeight={FONT_WEIGHTS.regular} fontFamily={T.display}
                           style={{ pointerEvents: "none" }}>{fmtMC(p.total)}</text>
                       ));
                   })()}
@@ -3031,7 +3058,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     const isRight = i === 6;
                     const isLeft = i === 0;
                     const cx = colX[i] + nodeW / 2;
-                    const stageColor = st.groups[0]?.bc || T.textDim;
+                    const stageColor = st.groups[0]?.bc || CSS_COLOR.textDim;
                     return (
                       <g key={"hdr"+i}>
                         {/* Subtle accent dot */}
@@ -3039,7 +3066,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         {/* Stage label */}
                         <text x={cx} y={27}
                           textAnchor={isLeft ? "start" : isRight ? "end" : "middle"}
-                          fontSize={9.5} fill={T.textDim} fontWeight={FONT_WEIGHTS.regular}
+                          fontSize={9.5} fill={CSS_COLOR.textDim} fontWeight={FONT_WEIGHTS.regular}
                           fontFamily={T.display}
                           style={{ letterSpacing: "0.04em", textTransform: "uppercase" }}>
                           {isLeft ? (
@@ -3052,7 +3079,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     );
                   })}
                   {/* Thin divider line beneath stage headers */}
-                  <line x1={4} x2={W - 4} y1={32} y2={32} stroke={T.border} strokeWidth={1} />
+                  <line x1={4} x2={W - 4} y1={32} y2={32} stroke={CSS_COLOR.border} strokeWidth={1} />
                 </svg>
 
                 {/* Hover tooltip */}
@@ -3088,17 +3115,17 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   const outT = groupFlows.filter(f => f.from === focGrpId).reduce((a, f) => a + f.total, 0);
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-                      background: T.bg1, border: `1px solid ${T.borderLight}`, borderRadius: RADII.md,
+                      background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
                       padding: sp("10px 14px"), minWidth: 320, maxWidth: 480,
                       boxShadow: ELEVATION.lg, zIndex: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: sp(6), paddingBottom: sp(6), borderBottom: "2px solid " + focGrp.bc }}>
                         <span style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{focGrp.label}</span>
-                        <span style={{ fontSize: fs(12), color: T.textDim }}>{focGrp.tickers.length} cos · {fmtMC(focGrp.rev)}</span>
+                        <span style={{ fontSize: fs(12), color: CSS_COLOR.textDim }}>{focGrp.tickers.length} cos · {fmtMC(focGrp.rev)}</span>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: sp(6) }}>
                         {[["INFLOWS", inT], ["GROUP REV", focGrp.rev], ["OUTFLOWS", outT]].map(([l, v]) => (
-                          <div key={l} style={{ textAlign: "center", padding: sp(3), background: toneAlpha(T.text, 0.015), borderRadius: RADII.xs }}>
-                            <div style={{ fontSize: textSize("caption"), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
+                          <div key={l} style={{ textAlign: "center", padding: sp(3), background: toneAlpha(CSS_COLOR.text, 0.015), borderRadius: RADII.xs }}>
+                            <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
                             <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>{fmtMC(v)}</div>
                           </div>
                         ))}
@@ -3109,13 +3136,13 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           const pct = focGrp.rev > 0 ? (co.r / focGrp.rev * 100).toFixed(0) : 0;
                           return (
                             <div key={co.t} onClick={e => { e.stopPropagation(); setFocused(co.t); }}
-                              style={{ display: "flex", alignItems: "center", gap: 4, padding: sp("4px 6px"), cursor: "pointer", borderRadius: RADII.sm, border: `1px solid ${T.border}` }}
-                              onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.02)}
+                              style={{ display: "flex", alignItems: "center", gap: 4, padding: sp("4px 6px"), cursor: "pointer", borderRadius: RADII.sm, border: `1px solid ${CSS_COLOR.border}` }}
+                              onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.02)}
                               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                               <Logo ticker={co.t} size={18} />
                               <div>
-                                <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>{co.t} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.textDim, fontSize: fs(10) }}>{pct}%</span></div>
-                                <div style={{ fontSize: fs(10), color: T.textDim }}>{fmtPrice(price)}</div>
+                                <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>{co.t} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, fontSize: fs(10) }}>{pct}%</span></div>
+                                <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>{fmtPrice(price)}</div>
                               </div>
                             </div>
                           );
@@ -3133,25 +3160,25 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                   const customers = EDGES.filter(([s]) => s === focused).map(([, t, l]) => ({ t, l }));
                   return (
                     <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-                      background: T.bg1, border: `1px solid ${T.borderLight}`, borderRadius: RADII.md,
+                      background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
                       padding: sp("10px 14px"), minWidth: 320, maxWidth: 440,
                       boxShadow: ELEVATION.lg, zIndex: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: sp(6) }}>
                         <Logo ticker={focused} size={28} />
                         <div>
-                          <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{activeCo.cc} {focused} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.textDim, fontSize: fs(12) }}>{activeCo.nm}</span></div>
+                          <div style={{ fontSize: fs(14), fontWeight: FONT_WEIGHTS.regular }}>{activeCo.cc} {focused} <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, fontSize: fs(12) }}>{activeCo.nm}</span></div>
                           <div style={{ fontSize: fs(11), color: vc.c }}>{vc.n} · {activeCo.s}</div>
                         </div>
                         <div style={{ marginLeft: "auto", textAlign: "right" }}>
                           <div style={{ fontSize: fs(16), fontWeight: FONT_WEIGHTS.regular }}>{fmtPrice(price)}</div>
-                          <div style={{ fontSize: fs(10), color: T.textDim }}>{fmtMC(activeCo.r)} rev</div>
+                          <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim }}>{fmtMC(activeCo.r)} rev</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: fs(11), color: T.textSec, lineHeight: 1.4, padding: sp("4px 0"), borderTop: `1px solid ${T.border}`, fontStyle: "italic" }}>{activeCo.pr}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3, padding: sp("5px 0"), borderBottom: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: fs(11), color: CSS_COLOR.textSec, lineHeight: 1.4, padding: sp("4px 0"), borderTop: `1px solid ${CSS_COLOR.border}`, fontStyle: "italic" }}>{activeCo.pr}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 3, padding: sp("5px 0"), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
                         {[["MC", fmtMC(activeCo.mc)], ["P/E", activeCo.pe ? activeCo.pe + "x" : "—"], ["GM", activeCo.g + "%"], ["Growth", (activeCo.fin?.rg?.[4] > 0 ? "+" : "") + (activeCo.fin?.rg?.[4] || 0) + "%"]].map(([l, v]) => (
                           <div key={l} style={{ textAlign: "center" }}>
-                            <div style={{ fontSize: textSize("caption"), color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
+                            <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>{l}</div>
                             <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>{v}</div>
                           </div>
                         ))}
@@ -3159,22 +3186,22 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: sp(4) }}>
                         {[["SUPPLIERS", suppliers], ["CUSTOMERS", customers]].map(([label, list]) => (
                           <div key={label}>
-                            <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: T.textMuted, marginBottom: sp(2) }}>{label} ({list.length})</div>
+                            <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textMuted, marginBottom: sp(2) }}>{label} ({list.length})</div>
                             {list.slice(0, 5).map(s => (
                               <div key={s.t + s.l} onClick={e => { e.stopPropagation(); setFocused(s.t); }}
-                                style={{ fontSize: fs(10), color: T.textSec, padding: sp("2px 0"), cursor: "pointer", display: "flex", gap: 3, alignItems: "center" }}
-                                onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                                style={{ fontSize: fs(10), color: CSS_COLOR.textSec, padding: sp("2px 0"), cursor: "pointer", display: "flex", gap: 3, alignItems: "center" }}
+                                onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                                <Logo ticker={s.t} size={12} /><span style={{ fontWeight: FONT_WEIGHTS.regular }}>{s.t}</span><span style={{ color: T.textMuted, fontSize: textSize("caption") }}>{s.l}</span>
+                                <Logo ticker={s.t} size={12} /><span style={{ fontWeight: FONT_WEIGHTS.regular }}>{s.t}</span><span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>{s.l}</span>
                               </div>
                             ))}
-                            {list.length > 5 && <div style={{ fontSize: textSize("caption"), color: T.textMuted }}>+{list.length - 5} more</div>}
+                            {list.length > 5 && <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted }}>+{list.length - 5} more</div>}
                           </div>
                         ))}
                       </div>
                       <button onClick={e => { e.stopPropagation(); onSelect && onSelect(focused); setFocused(null); }}
                         style={{ marginTop: sp(8), width: "100%", background: vc.c, border: "none", borderRadius: RADII.sm, padding: sp("6px 0"),
-                          color: T.onAccent, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer" }}>
+                          color: CSS_COLOR.onAccent, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer" }}>
                         View full analysis →
                       </button>
                     </div>
@@ -3191,8 +3218,8 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
 }
 
 function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveFund = {} }) {
-  const lbl = { fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(6) };
-  const card = { background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, boxShadow: ELEVATION.sm };
+  const lbl = { fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(6) };
+  const card = { background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, boxShadow: ELEVATION.sm };
 
   const themeVerticals = theme?.verticals || AI_VERTICALS;
   const themeCos = COMPANIES.filter(c => themeMatchesCompany(theme || THEMES.ai, c));
@@ -3256,13 +3283,13 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
       {/* ═══ ROW 1: HEADLINE METRICS ═══ */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: sp(14) }}>
         {[
-          ["Total Market Cap", fmtMC(totalMC), T.text, T.green],
-          ["Combined Revenue", fmtMC(totalRev), T.text, T.blue],
-          ["Median P/E", medPE.toFixed(1) + "x", T.text, T.amber],
-          ["Avg " + primaryMacroName, avgMacro + "%", T.amber, theme?.accent || T.accent],
+          ["Total Market Cap", fmtMC(totalMC), CSS_COLOR.text, CSS_COLOR.green],
+          ["Combined Revenue", fmtMC(totalRev), CSS_COLOR.text, CSS_COLOR.blue],
+          ["Median P/E", medPE.toFixed(1) + "x", CSS_COLOR.text, CSS_COLOR.amber],
+          ["Avg " + primaryMacroName, avgMacro + "%", CSS_COLOR.amber, theme?.accent || CSS_COLOR.accent],
         ].map(([label, value, color, accent]) => (
           <div key={label} style={{ ...card, padding: sp("7px 10px") }}>
-            <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: sp(3) }}>{label}</div>
+            <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: sp(3) }}>{label}</div>
             <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color }}>{value}</div>
             <div style={{ height: 2, borderRadius: 1, background: accent, opacity: 0.3, marginTop: sp(4) }} />
           </div>
@@ -3274,18 +3301,18 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: sp(6) }}>
           <div style={lbl}>Ecosystem heatmap</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: fs(10), color: T.red }}>\u25C0 Declining</span>
+            <span style={{ fontSize: fs(10), color: CSS_COLOR.red }}>\u25C0 Declining</span>
             <div style={{ display: "flex", gap: 1 }}>
               {[-30,-15,0,15,30,60,100].map(g => (
                 <div key={g} style={{ width: 10, height: 6, borderRadius: 1,
-                  background: g < 0 ? toneAlpha(T.red, 0.3 + Math.abs(g) / 60) : g === 0 ? toneAlpha(T.text, 0.1) : toneAlpha(T.green, 0.2 + g / 150),
+                  background: g < 0 ? toneAlpha(CSS_COLOR.red, 0.3 + Math.abs(g) / 60) : g === 0 ? toneAlpha(CSS_COLOR.text, 0.1) : toneAlpha(CSS_COLOR.green, 0.2 + g / 150),
                 }} />
               ))}
             </div>
-            <span style={{ fontSize: fs(10), color: T.green }}>Growing \u25B6</span>
+            <span style={{ fontSize: fs(10), color: CSS_COLOR.green }}>Growing \u25B6</span>
           </div>
         </div>
-        <div style={{ background: T.text, borderRadius: RADII.md, padding: sp(6), overflow: "hidden" }}>
+        <div style={{ background: CSS_COLOR.text, borderRadius: RADII.md, padding: sp(6), overflow: "hidden" }}>
           {verts.map(v => {
             const cosSorted = [...v.cos].sort((a, b) => b.mc - a.mc);
             return (
@@ -3297,7 +3324,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                       justifyContent: "center", padding: sp("0 5px"), cursor: "pointer", borderRadius: RADII.xs,
                       background: v.color + "15", borderRight: "2px solid " + v.color }}>
                     <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color, lineHeight: 1.2 }}>{v.name}</span>
-                    <span style={{ fontSize: fs(10), color: toneAlpha(T.onAccent, 0.3) }}>{v.count} cos</span>
+                    <span style={{ fontSize: fs(10), color: toneAlpha(CSS_COLOR.onAccent, 0.3) }}>{v.count} cos</span>
                   </div>
                   {/* Company cells */}
                   {cosSorted.map(c => {
@@ -3305,12 +3332,12 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                     const gr = c.fin?.rg?.[4] || 0;
                     const price = resolveResearchPrice(c, liveData[c.t]);
                     // Diverging color: red for negative, green for positive growth
-                    const bg = gr < -10 ? toneAlpha(T.red, Math.min(0.9, 0.4 + Math.abs(gr) / 80))
-                      : gr < 0 ? toneAlpha(T.red, 0.25 + Math.abs(gr) / 40)
-                      : gr < 10 ? toneAlpha(T.onAccent, 0.06 + gr / 100)
-                      : gr < 40 ? toneAlpha(T.green, 0.15 + gr / 120)
-                      : toneAlpha(T.green, Math.min(0.85, 0.3 + gr / 150));
-                    const textColor = gr < -5 ? toneAlpha(T.red, 0.38) : gr < 10 ? toneAlpha(T.onAccent, 0.6) : gr < 40 ? toneAlpha(T.green, 0.46) : T.green;
+                    const bg = gr < -10 ? toneAlpha(CSS_COLOR.red, Math.min(0.9, 0.4 + Math.abs(gr) / 80))
+                      : gr < 0 ? toneAlpha(CSS_COLOR.red, 0.25 + Math.abs(gr) / 40)
+                      : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.06 + gr / 100)
+                      : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.15 + gr / 120)
+                      : toneAlpha(CSS_COLOR.green, Math.min(0.85, 0.3 + gr / 150));
+                    const textColor = gr < -5 ? toneAlpha(CSS_COLOR.red, 0.38) : gr < 10 ? toneAlpha(CSS_COLOR.onAccent, 0.6) : gr < 40 ? toneAlpha(CSS_COLOR.green, 0.46) : CSS_COLOR.green;
                     const br = BRAND[c.t] || [v.color, c.t.slice(0,2)];
                     return (
                       <div key={c.t} onClick={() => onSelect && onSelect(c.t)}
@@ -3323,11 +3350,11 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                         onMouseEnter={e => { e.currentTarget.style.outline = "1.5px solid " + v.color; e.currentTarget.style.zIndex = "5"; e.currentTarget.style.transform = "scale(1.03)"; }}
                         onMouseLeave={e => { e.currentTarget.style.outline = "none"; e.currentTarget.style.zIndex = "0"; e.currentTarget.style.transform = "none"; }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: T.onAccent, textShadow: `0 1px 3px ${toneAlpha(T.bg0, 0.5)}`, letterSpacing: 0.3 }}>{c.t}</span>
+                          <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.onAccent, textShadow: `0 1px 3px ${toneAlpha(CSS_COLOR.bg0, 0.5)}`, letterSpacing: 0.3 }}>{c.t}</span>
                           {pct > 12 && <span style={{ fontSize: fs(10), color: textColor, marginLeft: "auto" }}>{gr > 0 ? "+" : ""}{gr}%</span>}
                         </div>
                         {pct > 6 && (
-                          <span style={{ fontSize: fs(11), color: toneAlpha(T.onAccent, 0.55), marginTop: sp(1) }}>
+                          <span style={{ fontSize: fs(11), color: toneAlpha(CSS_COLOR.onAccent, 0.55), marginTop: sp(1) }}>
                             {fmtPrice(price)}
                           </span>
                         )}
@@ -3366,24 +3393,24 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <svg width={96} height={96} viewBox="0 0 96 96" style={{ flexShrink: 0 }}>
                   {arcs.map(d => (
-                    <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={T.bg1} strokeWidth={1.5}
+                    <path key={d.name} d={d.path} fill={d.color} fillOpacity={0.7} stroke={CSS_COLOR.bg1} strokeWidth={1.5}
                       style={{ cursor: "pointer", transition: "fill-opacity 0.15s" }}
                       onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
                       onMouseEnter={e => e.target.setAttribute("fill-opacity", "1")}
                       onMouseLeave={e => e.target.setAttribute("fill-opacity", "0.7")} />
                   ))}
-                  <circle cx={cx} cy={cy} r={r - 2} fill={T.bg1} />
-                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={fs(10)} fontWeight={FONT_WEIGHTS.regular} fill={T.text} fontFamily={T.display}>{fmtMC(total)}</text>
+                  <circle cx={cx} cy={cy} r={r - 2} fill={CSS_COLOR.bg1} />
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={fs(10)} fontWeight={FONT_WEIGHTS.regular} fill={CSS_COLOR.text} fontFamily={T.display}>{fmtMC(total)}</text>
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
                   {data.map(d => (
                     <div key={d.name} onClick={() => onFilterVertical && onFilterVertical(verts.find(v => v.name === d.name)?.k)}
                       style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: sp("1px 0"), borderRadius: RADII.xs }}
-                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.03)}
+                      onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.03)}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <span style={{ width: 6, height: 6, borderRadius: RADII.pill, background: d.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: fs(10), color: T.textSec, flex: 1 }}>{d.name}</span>
-                      <span style={{ fontSize: fs(10), color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{d.pct.toFixed(1)}%</span>
+                      <span style={{ fontSize: fs(10), color: CSS_COLOR.textSec, flex: 1 }}>{d.name}</span>
+                      <span style={{ fontSize: fs(10), color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{d.pct.toFixed(1)}%</span>
                     </div>
                   ))}
                 </div>
@@ -3404,26 +3431,26 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
               <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
                 style={{ ...card, padding: sp(8), cursor: "pointer", transition: "border-color 0.15s" }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
-                onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(T.text, 0.05)}>
+                onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(CSS_COLOR.text, 0.05)}>
                 <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: sp(6) }}>
                   <span style={{ width: 6, height: 6, borderRadius: RADII.pill, background: v.color }} />
                   <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</span>
-                  <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: "auto" }}>{v.count}</span>
+                  <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>{v.count}</span>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, marginBottom: sp(6) }}>
                   {[["GM", v.gm + "%"], ["Growth", (avgGr > 0 ? "+" : "") + avgGr + "%"], ["MC", fmtMC(v.mc)], ["Rev", fmtMC(v.rev)]].map(([l, val]) => (
-                    <div key={l} style={{ background: toneAlpha(T.text, 0.018), borderRadius: RADII.xs, padding: sp("2px 4px") }}>
-                      <div style={{ fontSize: fs(10), color: T.textDim, textTransform: "uppercase" }}>{l}</div>
-                      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{val}</div>
+                    <div key={l} style={{ background: toneAlpha(CSS_COLOR.text, 0.018), borderRadius: RADII.xs, padding: sp("2px 4px") }}>
+                      <div style={{ fontSize: fs(10), color: CSS_COLOR.textDim, textTransform: "uppercase" }}>{l}</div>
+                      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{val}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: sp(4) }}>
+                <div style={{ borderTop: `1px solid ${CSS_COLOR.border}`, paddingTop: sp(4) }}>
                   {topCos.map(c => (
                     <div key={c.t} onClick={e => { e.stopPropagation(); onSelect && onSelect(c.t); }}
                       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: sp("1px 0"), cursor: "pointer" }}>
-                      <span style={{ fontSize: fs(11), color: T.textSec }}><Logo ticker={c.t} size={10} style={{ marginRight: sp(2) }} />{c.t}</span>
-                      <span style={{ fontSize: fs(11), color: T.textDim }}>{fmtMC(c.mc)}</span>
+                      <span style={{ fontSize: fs(11), color: CSS_COLOR.textSec }}><Logo ticker={c.t} size={10} style={{ marginRight: sp(2) }} />{c.t}</span>
+                      <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{fmtMC(c.mc)}</span>
                     </div>
                   ))}
                 </div>
@@ -3438,13 +3465,13 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
               <div key={v.k} onClick={() => onFilterVertical && onFilterVertical(v.k)}
                 style={{ ...card, padding: sp(6), cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = v.color + "44"}
-                onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(T.text, 0.05)}>
+                onMouseLeave={e => e.currentTarget.style.borderColor = toneAlpha(CSS_COLOR.text, 0.05)}>
                 <span style={{ width: 5, height: 5, borderRadius: RADII.pill, background: v.color, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, color: v.color }}>{v.name}</div>
-                  <div style={{ fontSize: fs(11), color: T.textDim }}>{v.count} cos &middot; {v.gm}% GM &middot; {avgGr > 0 ? "+" : ""}{avgGr}%</div>
+                  <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{v.count} cos &middot; {v.gm}% GM &middot; {avgGr > 0 ? "+" : ""}{avgGr}%</div>
                 </div>
-                <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtMC(v.mc)}</span>
+                <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{fmtMC(v.mc)}</span>
               </div>
             );
           })}
@@ -3457,10 +3484,10 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={{ ...card, padding: sp("8px 4px") }}>
           <ResponsiveContainer width="100%" height={200}>
             <ScatterChart margin={{ top: 14, right: 16, bottom: 8, left: 0 }}>
-              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false}
-                label={{ value: "P/E Ratio", position: "bottom", fontSize: fs(10), fill: T.textMuted, offset: -2 }} />
-              <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: fs(10), fill: T.textDim }} axisLine={false} tickLine={false}
-                label={{ value: "Rev Growth %", angle: -90, position: "insideLeft", fontSize: fs(10), fill: T.textMuted, offset: 10 }} />
+              <XAxis type="number" dataKey="pe" name="P/E" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false}
+                label={{ value: "P/E Ratio", position: "bottom", fontSize: fs(10), fill: CSS_COLOR.textMuted, offset: -2 }} />
+              <YAxis type="number" dataKey="growth" name="Growth" tick={{ fontSize: fs(10), fill: CSS_COLOR.textDim }} axisLine={false} tickLine={false}
+                label={{ value: "Rev Growth %", angle: -90, position: "insideLeft", fontSize: fs(10), fill: CSS_COLOR.textMuted, offset: 10 }} />
               <ZAxis type="number" dataKey="mc" range={[30, 500]} />
               <Tooltip cursor={false} content={({ payload }) => {
                 if (!payload?.[0]) return null;
@@ -3476,7 +3503,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
               }} />
               <Scatter data={scatterData}>
                 {scatterData.map((d, i) => <Cell key={i} fill={d.color} fillOpacity={0.6} stroke={d.color} strokeWidth={0.5} />)}
-                <LabelList dataKey="name" position="top" style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, fill: T.textDim }} offset={6} />
+                <LabelList dataKey="name" position="top" style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, fill: CSS_COLOR.textDim }} offset={6} />
               </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
@@ -3491,20 +3518,20 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
         <div style={{ ...card, padding: sp(8), overflowX: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: "100px repeat(" + macroAxes.length + ", 1fr)", gap: 2 }}>
             <div />
-            {macroAxes.map(m => <div key={m.k} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{m.n}</div>)}
+            {macroAxes.map(m => <div key={m.k} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{m.n}</div>)}
             {verts.map(v => [
               <div key={v.k + "n"} onClick={() => onFilterVertical && onFilterVertical(v.k)}
                 style={{ padding: sp("3px 4px"), fontSize: fs(10), color: v.color, fontWeight: FONT_WEIGHTS.regular, display: "flex", alignItems: "center", cursor: "pointer", borderRadius: RADII.xs }}
-                onMouseEnter={e => e.currentTarget.style.background = toneAlpha(T.text, 0.04)}
+                onMouseEnter={e => e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.04)}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                 <span style={{ width: 5, height: 5, borderRadius: RADII.pill, background: v.color, marginRight: sp(4), flexShrink: 0 }} />
-                {v.name} <span style={{ color: T.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
+                {v.name} <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
               </div>,
               ...macroAxes.map(m => {
                 const mk = m.k;
                 const val = v.count ? Math.round(v.cos.reduce((a, c) => a + (c.ms?.[mk] || 0), 0) / v.count * 100) : 0;
-                const bg = val > 70 ? toneAlpha(T.red, val / 180) : val > 40 ? toneAlpha(T.amber, val / 220) : toneAlpha(T.green, val / 280);
-                return <div key={v.k + mk} style={{ background: bg, borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: val > 50 ? T.bg1 : T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{val}</div>;
+                const bg = val > 70 ? toneAlpha(CSS_COLOR.red, val / 180) : val > 40 ? toneAlpha(CSS_COLOR.amber, val / 220) : toneAlpha(CSS_COLOR.green, val / 280);
+                return <div key={v.k + mk} style={{ background: bg, borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: val > 50 ? CSS_COLOR.bg1 : CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>{val}</div>;
               }),
             ])}
           </div>
@@ -3574,12 +3601,12 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
   const modes = [["vertical","Vertical"],["pe","P/E"],["growth","Growth"],["ai","AI Exp"]];
   return (
     <div style={{ position: "absolute", top: 5, right: 8, display: "flex", gap: 2, zIndex: 2, alignItems: "center" }}>
-      <span style={{ fontSize: fs(10), color: T.textMuted, marginRight: sp(2), lineHeight: "18px" }}>Color:</span>
+      <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginRight: sp(2), lineHeight: "18px" }}>Color:</span>
       {modes.map(([id, lb]) => (
         <button key={id} onClick={(e) => { e.stopPropagation(); setColorMode(id); }} style={{
-          background: colorMode === id ? toneAlpha(T.text, 0.07) : "transparent",
+          background: colorMode === id ? toneAlpha(CSS_COLOR.text, 0.07) : "transparent",
           border: "none", borderRadius: RADII.xs, padding: sp("1px 4px"), fontSize: fs(10), cursor: "pointer",
-          color: colorMode === id ? T.text : T.textMuted, fontWeight: FONT_WEIGHTS.regular,
+          color: colorMode === id ? CSS_COLOR.text : CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular,
         }}>{lb}</button>
       ))}
       <AppTooltip content="Unpin all nodes and reset to authored layout"><button
@@ -3593,9 +3620,9 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
           }
         }}
         style={{
-          background: "transparent", border: `1px solid ${T.border}`, borderRadius: RADII.xs,
+          background: "transparent", border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.xs,
           padding: sp("1px 6px"), fontSize: fs(10), cursor: "pointer", marginLeft: sp(6),
-          color: T.textDim, fontWeight: FONT_WEIGHTS.regular,
+          color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular,
         }}>⟲ Reset</button></AppTooltip>
     </div>
   );
@@ -3616,12 +3643,12 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   const W = 680, H = 390;
   const tSet = useMemo(() => new Set(cos.map(c => c.t)), [cos]);
 
-  const peScale = useMemo(() => scaleLinear().domain([8, 40, 180]).range([T.green, T.amber, T.red]).clamp(true), []);
-  const grScale = useMemo(() => scaleLinear().domain([-10, 25, 100]).range([T.red, T.amber, T.green]).clamp(true), []);
-  const aiScale = useMemo(() => scaleLinear().domain([0.3, 0.65, 1]).range([T.textDim, T.amber, T.red]).clamp(true), []);
+  const peScale = useMemo(() => scaleLinear().domain([8, 40, 180]).range([CSS_COLOR.green, CSS_COLOR.amber, CSS_COLOR.red]).clamp(true), []);
+  const grScale = useMemo(() => scaleLinear().domain([-10, 25, 100]).range([CSS_COLOR.red, CSS_COLOR.amber, CSS_COLOR.green]).clamp(true), []);
+  const aiScale = useMemo(() => scaleLinear().domain([0.3, 0.65, 1]).range([CSS_COLOR.textDim, CSS_COLOR.amber, CSS_COLOR.red]).clamp(true), []);
 
   const getColor = useCallback((d) => {
-    if (colorMode === "pe") return d.pe ? peScale(d.pe) : T.textMuted;
+    if (colorMode === "pe") return d.pe ? peScale(d.pe) : CSS_COLOR.textMuted;
     if (colorMode === "growth") return grScale(d.fin?.rg?.[4] || 0);
     if (colorMode === "ai") return aiScale(d.ms?.ai || 0.5);
     return VX[d.v].c;
@@ -3637,17 +3664,17 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // SVG filter for selected node glow
     const defs = g.append("defs");
     defs.append("filter").attr("id", "glow").attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%")
-      .append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 3).attr("flood-color", T.accent).attr("flood-opacity", 0.6);
+      .append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 3).attr("flood-color", CSS_COLOR.accent).attr("flood-opacity", 0.6);
 
     // Zone labels
     ZONES.forEach(([x, y, label], zi) => {
       g.append("line").attr("x1", 0).attr("x2", W).attr("y1", y - 6).attr("y2", y - 6)
-        .attr("stroke", T.border).attr("stroke-width", 0.4).attr("stroke-dasharray", "2,5").attr("class", "zone-line");
+        .attr("stroke", CSS_COLOR.border).attr("stroke-width", 0.4).attr("stroke-dasharray", "2,5").attr("class", "zone-line");
       const zg = g.append("g").attr("class", "zone-label").attr("cursor", "pointer")
         .on("click", (e) => { e.stopPropagation(); setZoneHl(prev => prev === zi ? null : zi); });
       zg.append("rect").attr("x", 0).attr("y", y - 4).attr("width", 120).attr("height", 18).attr("fill", "transparent");
       zg.append("text").attr("x", x).attr("y", y + 4).text(label)
-        .attr("fill", T.textMuted).attr("font-size", fs(10)).attr("font-family", T.display).attr("class", "zone-text");
+        .attr("fill", CSS_COLOR.textMuted).attr("font-size", fs(10)).attr("font-family", T.display).attr("class", "zone-text");
     });
 
     // Auto-layout fallback for meta-themes (empty POS) — see computeAutoPos helper above
@@ -3694,7 +3721,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
     // Edges with curved paths
     const link = g.append("g").selectAll("path").data(links).join("path")
-      .attr("stroke", T.borderLight).attr("stroke-width", 0.6)
+      .attr("stroke", CSS_COLOR.borderLight).attr("stroke-width", 0.6)
       .attr("stroke-dasharray", "3,3")
       .attr("stroke-opacity", 0.5)
       .attr("fill", "none")
@@ -3716,7 +3743,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     node.append("circle")
       .attr("r", d => d.r + 2)
       .attr("fill", "none")
-      .attr("stroke", d => d.pe != null && d.pe > 0 ? T.green : d.fin?.eps > 0 ? T.green : T.red)
+      .attr("stroke", d => d.pe != null && d.pe > 0 ? CSS_COLOR.green : d.fin?.eps > 0 ? CSS_COLOR.green : CSS_COLOR.red)
       .attr("stroke-width", 1)
       .attr("stroke-opacity", 0.35)
       .attr("class", "profit-ring");
@@ -3724,7 +3751,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Main circle: white bg + colored ring
     node.append("circle")
       .attr("r", d => d.r)
-      .attr("fill", T.bg1)
+      .attr("fill", CSS_COLOR.bg1)
       .attr("fill-opacity", 1)
       .attr("stroke", d => getColor(d))
       .attr("stroke-width", 1.5)
@@ -3733,7 +3760,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Branded initial circle (inside node - moves with simulation, zero lag)
     node.append("circle")
       .attr("r", d => Math.max(5, d.r * 0.7))
-      .attr("fill", d => (BRAND[d.t] || [T.textDim])[0])
+      .attr("fill", d => (BRAND[d.t] || [CSS_COLOR.textDim])[0])
       .attr("class", "brand-circle");
 
     // Brand initial text
@@ -3741,7 +3768,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => (BRAND[d.t] || ["", d.t.slice(0,2)])[1])
       .attr("text-anchor", "middle")
       .attr("dominant-baseline", "central")
-      .attr("fill", T.bg1)
+      .attr("fill", CSS_COLOR.bg1)
       .attr("font-size", d => Math.max(5, Math.min(9, d.r * 0.55)))
       .attr("font-weight", FONT_WEIGHTS.regular)
       .attr("font-family", T.display)
@@ -3753,7 +3780,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => d.t)
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 9)
-      .attr("fill", T.textDim)
+      .attr("fill", CSS_COLOR.textDim)
       .attr("font-size", d => Math.max(8, Math.min(10, d.r * 0.6)))
       .attr("font-family", T.display).attr("font-weight", FONT_WEIGHTS.regular);
 
@@ -3762,7 +3789,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => d.r >= 16 ? fmtMC(d._mc) : (d._pe ? d._pe + "x" : ""))
       .attr("text-anchor", "middle")
       .attr("dy", d => d.r + 17)
-      .attr("fill", T.textMuted)
+      .attr("fill", CSS_COLOR.textMuted)
       .attr("font-size", fs(7))
       .attr("font-family", T.display);
 
@@ -3773,20 +3800,20 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       const tip = tipRef.current;
       if (!tip) return;
       const vc = VX[d.v];
-      const br = BRAND[d.t] || [T.textDim, d.t.slice(0,2)];
+      const br = BRAND[d.t] || [CSS_COLOR.textDim, d.t.slice(0,2)];
       const tipPrice = resolveResearchPrice(d, liveData[d.t]);
       // Green dot for live-sourced fields, gray for authored fallback
-      const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? T.green : toneAlpha(T.text, 0.12)};margin-left:4px;vertical-align:middle"></span>`;
-      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:${T.onAccent};font-size:10px;font-weight: ${FONT_WEIGHTS.regular};font-family:${T.display};">${br[1]}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${T.text};font-size:14px;margin-left:auto;font-family:${T.display};">${fmtPrice(tipPrice)}</span></div>` +
-        `<div style="color:${T.textSec};font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
+      const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? CSS_COLOR.green : toneAlpha(CSS_COLOR.text, 0.12)};margin-left:4px;vertical-align:middle"></span>`;
+      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:${CSS_COLOR.onAccent};font-size:10px;font-weight: ${FONT_WEIGHTS.regular};font-family:${T.display};">${br[1]}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight: ${FONT_WEIGHTS.regular};color:${CSS_COLOR.text};font-size:14px;margin-left:auto;font-family:${T.display};">${fmtPrice(tipPrice)}</span></div>` +
+        `<div style="color:${CSS_COLOR.textSec};font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
         `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font-size:12px;">` +
-        `<span style="color:${T.textDim}">Mkt Cap</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
-        `<span style="color:${T.textDim}">Revenue ${d._revIsLive ? 'TTM' : ''}</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._rev)}${dot(d._revIsLive)}</span>` +
-        `<span style="color:${T.textDim}">GM</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d._gm != null ? Math.round(d._gm) + '%' : '\u2014'}${dot(d._gmIsLive)}</span>` +
-        `<span style="color:${T.textDim}">P/E</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d._pe ? Number(d._pe).toFixed(1) + 'x' : '\u2014'}</span>` +
-        `<span style="color:${T.textDim}">Growth</span><span style="color:${T.text};font-weight: ${FONT_WEIGHTS.regular}">${d.fin?.rg?.[4] ? '+' + d.fin.rg[4] + '%' : '\u2014'}</span>` +
+        `<span style="color:${CSS_COLOR.textDim}">Mkt Cap</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
+        `<span style="color:${CSS_COLOR.textDim}">Revenue ${d._revIsLive ? 'TTM' : ''}</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${fmtMC(d._rev)}${dot(d._revIsLive)}</span>` +
+        `<span style="color:${CSS_COLOR.textDim}">GM</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d._gm != null ? Math.round(d._gm) + '%' : '\u2014'}${dot(d._gmIsLive)}</span>` +
+        `<span style="color:${CSS_COLOR.textDim}">P/E</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d._pe ? Number(d._pe).toFixed(1) + 'x' : '\u2014'}</span>` +
+        `<span style="color:${CSS_COLOR.textDim}">Growth</span><span style="color:${CSS_COLOR.text};font-weight: ${FONT_WEIGHTS.regular}">${d.fin?.rg?.[4] ? '+' + d.fin.rg[4] + '%' : '\u2014'}</span>` +
         `</div>` +
-        `<div style="color:${T.textSec};font-size:11px;margin-top:5px;border-top:1px solid ${T.border};padding-top:4px;font-style:italic">${d.pr}</div>`;
+        `<div style="color:${CSS_COLOR.textSec};font-size:11px;margin-top:5px;border-top:1px solid ${CSS_COLOR.border};padding-top:4px;font-style:italic">${d.pr}</div>`;
       tip.style.display = "block";
     })
     .on("mousemove", (e, d) => {
@@ -3875,7 +3902,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     const hovCo = COMPANIES.find(c => c.t === hovered);
     const active = sel || hovered; // whichever is set
     const activeCo = selCo || hovCo;
-    const ac = activeCo ? VX[activeCo.v].c : T.textMuted;
+    const ac = activeCo ? VX[activeCo.v].c : CSS_COLOR.textMuted;
     const isClick = !!sel; // stronger effect for clicks
     const sq = (searchQuery || "").toLowerCase();
     const zoneYs = ZONES.map(z => z[1]);
@@ -3887,16 +3914,16 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("fill", d => {
         if (!d || !d.source) return "transparent";
         const hit = (d.source.t === active || d.target.t === active);
-        return hit ? T.textSec : "transparent";
+        return hit ? CSS_COLOR.textSec : "transparent";
       });
 
     // Edges
     svg.selectAll("path[stroke-dasharray]").transition().duration(200)
       .attr("stroke", d => {
-        if (!d || !d.source) return T.borderLight;
+        if (!d || !d.source) return CSS_COLOR.borderLight;
         if (d.source.t === active || d.target.t === active) return ac;
         if (hovered && !sel && (d.source.t === hovered || d.target.t === hovered)) return ac;
-        return T.borderLight;
+        return CSS_COLOR.borderLight;
       })
       .attr("stroke-width", d => {
         if (!d || !d.source) return 0.6;
@@ -3914,7 +3941,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
     // Main circles
 
     svg.selectAll(".main-circle").transition().duration(200)
-      .attr("fill", T.bg1)
+      .attr("fill", CSS_COLOR.bg1)
       .attr("fill-opacity", d => {
         const matchesSearch = sq && (d.t.toLowerCase().includes(sq) || d.nm.toLowerCase().includes(sq));
         const inZone = zoneHl === null || (POS[d.t] && Math.abs(POS[d.t][1] - zoneYs[zoneHl]) < 35);
@@ -3926,8 +3953,8 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       })
       .attr("stroke", d => {
         const matchesSearch = sq && (d.t.toLowerCase().includes(sq) || d.nm.toLowerCase().includes(sq));
-        if (matchesSearch) return T.text;
-        if (d.t === active) return T.text;
+        if (matchesSearch) return CSS_COLOR.text;
+        if (d.t === active) return CSS_COLOR.text;
         if (active && isConn(d.t)) return getColor(d);
         return getColor(d);
       })
@@ -3969,7 +3996,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       });
 
     // Zone labels
-    svg.selectAll(".zone-text").attr("fill", (d, i) => zoneHl === i ? T.text : T.textMuted)
+    svg.selectAll(".zone-text").attr("fill", (d, i) => zoneHl === i ? CSS_COLOR.text : CSS_COLOR.textMuted)
       .attr("font-weight", FONT_WEIGHTS.regular)
       .attr("font-size", (d, i) => zoneHl === i ? 12 : 10);
 
@@ -4016,7 +4043,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
   }, [sel, hovered, zoneHl, searchQuery, getColor]);
 
   return (
-    <div style={{ position: "relative", background: T.bg1, borderRadius: RADII.md, overflow: "hidden", border: `1px solid ${T.border}`, boxShadow: ELEVATION.sm }}>
+    <div style={{ position: "relative", background: CSS_COLOR.bg1, borderRadius: RADII.md, overflow: "hidden", border: `1px solid ${CSS_COLOR.border}`, boxShadow: ELEVATION.sm }}>
       <GraphToolbar colorMode={colorMode} setColorMode={setColorMode} nodesRef={nodesRef} simRef={simRef} />
       <svg ref={ref} width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }} />
 
@@ -4030,13 +4057,13 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       {/* Legend */}
       <div style={{ position: "absolute", bottom: 4, left: 8, display: "flex", gap: 5, flexWrap: "wrap" }}>
         {Object.entries(theme?.verticals || AI_VERTICALS).map(([k, v]) => (
-          <span key={k} style={{ fontSize: fs(10), color: !vFilter || vFilter === k ? v.c : T.textMuted }}>
+          <span key={k} style={{ fontSize: fs(10), color: !vFilter || vFilter === k ? v.c : CSS_COLOR.textMuted }}>
             <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: RADII.pill, background: v.c, marginRight: sp(2), opacity: !vFilter || vFilter === k ? 1 : 0.2 }} />
             {v.n}
           </span>
         ))}
         {colorMode !== "vertical" && (
-          <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: sp(4) }}>
+          <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: sp(4) }}>
             | ring = {"\u{1F7E2}"} profitable {"\u{1F534}"} unprofitable
           </span>
         )}
@@ -4069,11 +4096,11 @@ function Comps({ cos, sel, onSel }) {
   });
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ fontSize: fs(11), color: T.textMuted, marginBottom: sp(4) }}>{cos.length} companies &middot; sorted by {cols.find(c => c.k === sortKey)?.l}</div>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: fs(10), background: T.bg1, borderRadius: RADII.md }}>
+      <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted, marginBottom: sp(4) }}>{cos.length} companies &middot; sorted by {cols.find(c => c.k === sortKey)?.l}</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: fs(10), background: CSS_COLOR.bg1, borderRadius: RADII.md }}>
         <thead><tr>
           {cols.map(col => (
-            <th key={col.k} onClick={() => toggleSort(col.k)} style={{ textAlign: "left", padding: sp("4px 4px"), borderBottom: `1px solid ${T.border}`, color: sortKey === col.k ? T.text : T.textMuted, fontSize: fs(10), textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", width: col.w || "auto" }}>
+            <th key={col.k} onClick={() => toggleSort(col.k)} style={{ textAlign: "left", padding: sp("4px 4px"), borderBottom: `1px solid ${CSS_COLOR.border}`, color: sortKey === col.k ? CSS_COLOR.text : CSS_COLOR.textMuted, fontSize: fs(10), textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", whiteSpace: "nowrap", width: col.w || "auto" }}>
               {col.l}{sortKey === col.k ? (sortDir > 0 ? " \u25B2" : " \u25BC") : ""}
             </th>
           ))}
@@ -4082,18 +4109,18 @@ function Comps({ cos, sel, onSel }) {
           const vc = VX[c.v];
           const gr = c.fin?.rg?.[4] || 0;
           return (
-            <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(T.text, 0.05) : "transparent", borderBottom: `1px solid ${T.border}`, transition: "background 0.1s" }}
-              onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = toneAlpha(T.text, 0.025); }}
+            <tr key={c.t} onClick={() => onSel(c.t)} style={{ cursor: "pointer", background: c.t === sel ? toneAlpha(CSS_COLOR.text, 0.05) : "transparent", borderBottom: `1px solid ${CSS_COLOR.border}`, transition: "background 0.1s" }}
+              onMouseEnter={e => { if (c.t !== sel) e.currentTarget.style.background = toneAlpha(CSS_COLOR.text, 0.025); }}
               onMouseLeave={e => { if (c.t !== sel) e.currentTarget.style.background = "transparent"; }}>
-              <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : T.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
+              <td style={{ padding: sp("3px 4px"), color: c.t === sel ? vc.c : CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}><Logo ticker={c.t} size={14} style={{ marginRight: sp(4) }} />${c.t}</td>
               <td style={{ padding: sp("3px 2px"), fontSize: fs(11) }}>{c.cc}</td>
               <td style={{ padding: sp("3px 4px") }}><span style={{ fontSize: fs(10), color: vc.c, background: vc.bg, padding: sp("1px 4px"), borderRadius: RADII.xs }}>{vc.n}</span></td>
-              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{fmtMC(c.mc)}</td>
-              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{fmtMC(c.r)}</td>
-              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{c.g}%</td>
-              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{c.pe ? c.pe + "x" : "\u2014"}</td>
-              <td style={{ padding: sp("3px 4px"), color: gr > 30 ? T.green : gr < 0 ? T.red : T.textSec }}>{gr > 0 ? "+" : ""}{gr}%</td>
-              <td style={{ padding: sp("3px 4px"), color: T.textSec }}>{(c.ms?.ai * 100 || 0).toFixed(0)}%</td>
+              <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{fmtMC(c.mc)}</td>
+              <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{fmtMC(c.r)}</td>
+              <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{c.g}%</td>
+              <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{c.pe ? c.pe + "x" : "\u2014"}</td>
+              <td style={{ padding: sp("3px 4px"), color: gr > 30 ? CSS_COLOR.green : gr < 0 ? CSS_COLOR.red : CSS_COLOR.textSec }}>{gr > 0 ? "+" : ""}{gr}%</td>
+              <td style={{ padding: sp("3px 4px"), color: CSS_COLOR.textSec }}>{(c.ms?.ai * 100 || 0).toFixed(0)}%</td>
             </tr>
           );
         })}</tbody>
@@ -4123,24 +4150,24 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
     return { mk, name: macroNames[mk], companies: top };
   });
 
-  const cellBg = (val) => val > 70 ? toneAlpha(T.red, val / 180) : val > 40 ? toneAlpha(T.amber, val / 220) : toneAlpha(T.green, val / 280);
+  const cellBg = (val) => val > 70 ? toneAlpha(CSS_COLOR.red, val / 180) : val > 40 ? toneAlpha(CSS_COLOR.amber, val / 220) : toneAlpha(CSS_COLOR.green, val / 280);
 
   return (
     <div>
       {/* Vertical-level heatmap */}
-      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
+      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Macro sensitivity by vertical
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "110px repeat(" + macroKeys.length + ", 1fr)", gap: 2, marginBottom: sp(16) }}>
         <div />
-        {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: T.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
+        {macroKeys.map(mk => <div key={mk} style={{ padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular, textTransform: "uppercase" }}>{macroNames[mk]}</div>)}
         {vertSummary.map(v => [
           <div key={v.k + "n"} style={{ padding: sp("3px 4px"), fontSize: fs(11), color: v.color, fontWeight: FONT_WEIGHTS.regular, display: "flex", alignItems: "center" }}>
             <span style={{ width: 5, height: 5, borderRadius: RADII.pill, background: v.color, marginRight: sp(4), flexShrink: 0 }} />
-            {v.name} <span style={{ color: T.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
+            {v.name} <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(3), fontWeight: FONT_WEIGHTS.regular }}>({v.count})</span>
           </div>,
           ...macroKeys.map(mk => (
-            <div key={v.k + mk} style={{ background: cellBg(v[mk]), borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: v[mk] > 50 ? T.bg1 : T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
+            <div key={v.k + mk} style={{ background: cellBg(v[mk]), borderRadius: RADII.xs, padding: sp("3px 0"), textAlign: "center", fontSize: fs(10), color: v[mk] > 50 ? CSS_COLOR.bg1 : CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>
               {v[mk]}
             </div>
           )),
@@ -4148,20 +4175,20 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
       </div>
 
       {/* Most exposed companies per factor */}
-      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
+      <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: sp(5) }}>
         Most exposed companies
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(" + Math.min(4, macroKeys.length) + ", 1fr)", gap: 8 }}>
         {topExposed.map(({ mk, name, companies }) => (
-          <div key={mk} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp(7) }}>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.textDim, marginBottom: sp(4) }}>{name}</div>
+          <div key={mk} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp(7) }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.textDim, marginBottom: sp(4) }}>{name}</div>
             {companies.map(c => {
-              const vc = VX[c.v] || { c: T.textDim };
+              const vc = VX[c.v] || { c: CSS_COLOR.textDim };
               const val = Math.round((c.ms?.[mk] || 0) * 100);
               return (
-                <div key={c.t} onClick={() => onSel(c.t)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 0"), cursor: "pointer", borderBottom: `1px solid ${T.border}` }}>
-                  <Logo ticker={c.t} size={11} style={{ marginRight: sp(2) }} /><span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: c.t === sel ? vc.c : T.textSec }}>{c.cc} ${c.t}</span>
-                  <span style={{ fontSize: fs(11), color: val > 70 ? T.red : val > 40 ? T.amber : T.green, fontWeight: FONT_WEIGHTS.regular }}>{val}</span>
+                <div key={c.t} onClick={() => onSel(c.t)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 0"), cursor: "pointer", borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+                  <Logo ticker={c.t} size={11} style={{ marginRight: sp(2) }} /><span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: c.t === sel ? vc.c : CSS_COLOR.textSec }}>{c.cc} ${c.t}</span>
+                  <span style={{ fontSize: fs(11), color: val > 70 ? CSS_COLOR.red : val > 40 ? CSS_COLOR.amber : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>{val}</span>
                 </div>
               );
             })}
@@ -4183,16 +4210,16 @@ function ResearchLoadingState({ theme }) {
         {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
       </style>
       <div style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: RADII.md,
         boxShadow: ELEVATION.md,
         overflow: "hidden",
       }}>
         <div style={{
           padding: sp("18px 20px 14px"),
-          borderBottom: `1px solid ${T.border}`,
-          background: `linear-gradient(180deg, ${theme.accent}10 0%, ${toneAlpha(T.bg1, 0.96)} 100%)`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
+          background: `linear-gradient(180deg, ${theme.accent}10 0%, ${toneAlpha(CSS_COLOR.bg1, 0.96)} 100%)`,
         }}>
           <div style={{ fontSize: fs(11), color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
             Research
@@ -4207,17 +4234,17 @@ function ResearchLoadingState({ theme }) {
                 width: 20,
                 height: 20,
                 borderRadius: RADII.pill,
-                border: `2px solid ${T.border}`,
+                border: `2px solid ${CSS_COLOR.border}`,
                 borderTopColor: theme.accent,
                 animation: "researchWorkspaceSpin 820ms linear infinite",
                 flexShrink: 0,
               }}
             />
-            <div style={{ fontFamily: T.display, fontSize: fs(28), color: T.text }}>
+            <div style={{ fontFamily: T.display, fontSize: fs(28), color: CSS_COLOR.text }}>
               Loading research workspace
             </div>
           </div>
-          <div style={{ fontSize: fs(12), color: T.textSec, marginTop: sp(6), lineHeight: 1.6, maxWidth: 520 }}>
+          <div style={{ fontSize: fs(12), color: CSS_COLOR.textSec, marginTop: sp(6), lineHeight: 1.6, maxWidth: 520 }}>
             The curated universe, graph relationships, and thesis metadata are being loaded into the platform shell. Live market data wiring stays available while the authored research dataset hydrates.
           </div>
         </div>
@@ -4232,8 +4259,8 @@ function ResearchLoadingState({ theme }) {
                     style={{
                       height: column === 0 && row === 0 ? 180 : 84,
                       borderRadius: RADII.md,
-                      border: `1px solid ${T.border}`,
-                      background: `linear-gradient(90deg, ${toneAlpha(T.text, 0.025)} 0%, ${toneAlpha(T.text, 0.055)} 50%, ${toneAlpha(T.text, 0.025)} 100%)`,
+                      border: `1px solid ${CSS_COLOR.border}`,
+                      background: `linear-gradient(90deg, ${toneAlpha(CSS_COLOR.text, 0.025)} 0%, ${toneAlpha(CSS_COLOR.text, 0.055)} 50%, ${toneAlpha(CSS_COLOR.text, 0.025)} 100%)`,
                       backgroundSize: "220px 100%",
                       animation: "shimmer 1.6s linear infinite",
                     }}
@@ -4551,7 +4578,7 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div data-testid="research-screen" className="photonics-research-root" style={{ background: T.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: T.text, backgroundImage: `radial-gradient(circle at 20% 50%, ${toneAlpha(T.accent, 0.02)} 0%, transparent 50%), radial-gradient(circle at 80% 20%, ${toneAlpha(T.blue, 0.015)} 0%, transparent 50%)` }}>
+    <div data-testid="research-screen" className="photonics-research-root" style={{ background: CSS_COLOR.bg1, height: "100%", minHeight: 0, overflowY: "auto", color: CSS_COLOR.text, backgroundImage: `radial-gradient(circle at 20% 50%, ${toneAlpha(CSS_COLOR.accent, 0.02)} 0%, transparent 50%), radial-gradient(circle at 80% 20%, ${toneAlpha(CSS_COLOR.blue, 0.015)} 0%, transparent 50%)` }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: sp(0); }
         .photonics-research-root { font-family: var(--ra-font-sans); }
@@ -4589,16 +4616,16 @@ export default function PhotonicsObservatory({
 
       {/* Header */}
       <div className="photonics-research-header" style={{ padding: sp("14px 14px 0"), position: "relative" }}>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, ${toneAlpha(T.blue, 0.03)} 0%, transparent 40%)`, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, ${toneAlpha(CSS_COLOR.blue, 0.03)} 0%, transparent 40%)`, pointerEvents: "none" }} />
 
         {researchMetaReady ? (
           <ThemeSwitcher themeId={themeId} setThemeId={setThemeId} themes={themeMap} themeOrder={themeOrder} />
         ) : (
-          <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
+          <div style={{ position: "relative", marginBottom: sp(14), paddingBottom: sp(10), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+            <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, letterSpacing: 2, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
               Investment Thesis
             </div>
-            <div style={{ fontSize: fs(11), color: T.textDim }}>Loading curated research themes…</div>
+            <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>Loading curated research themes…</div>
           </div>
         )}
 
@@ -4607,7 +4634,7 @@ export default function PhotonicsObservatory({
             <div style={{ fontSize: fs(11), color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
               {currentTheme.subtitle}
             </div>
-            <h1 style={{ fontFamily: T.display, fontSize: fs(28), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(2) }}>
+            <h1 style={{ fontFamily: T.display, fontSize: fs(28), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(2) }}>
               {currentTheme.title}
             </h1>
           </div>
@@ -4615,13 +4642,13 @@ export default function PhotonicsObservatory({
             <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color: currentTheme.accent }}>
               {researchDataReady ? fmtMC(themeUniverse.reduce((a, c) => a + c.mc, 0)) : "…"}
             </div>
-            <div style={{ fontSize: fs(11), color: T.textMuted }}>
+            <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>
               {researchDataReady
                 ? `${themeUniverse.length} cos / ${activeEdges.length} links`
                 : "Loading universe…"}
               <span style={{ fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                background: dataStatus === "live" ? toneAlpha(T.green, 0.10) : dataStatus === "loading" ? toneAlpha(T.amber, 0.10) : toneAlpha(T.text, 0.04),
-                color: dataStatus === "live" ? T.green : dataStatus === "loading" ? T.amber : T.textMuted,
+                background: dataStatus === "live" ? toneAlpha(CSS_COLOR.green, 0.10) : dataStatus === "loading" ? toneAlpha(CSS_COLOR.amber, 0.10) : toneAlpha(CSS_COLOR.text, 0.04),
+                color: dataStatus === "live" ? CSS_COLOR.green : dataStatus === "loading" ? CSS_COLOR.amber : CSS_COLOR.textMuted,
               }}>{dataStatus === "live" ? "\u25CF LIVE" : dataStatus === "loading" ? "LOADING..." : "STATIC"}</span>
               {prefetchProgress.total > 0 && (
                 <AppTooltip content={prefetchProgress.active
@@ -4629,8 +4656,8 @@ export default function PhotonicsObservatory({
                     : `Fundamentals prefetch complete: ${prefetchProgress.done} companies refreshed`}><span
                   style={{
                     fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                    background: prefetchProgress.active ? toneAlpha(T.blue, 0.12) : toneAlpha(T.green, 0.08),
-                    color: prefetchProgress.active ? T.blue : T.green,
+                    background: prefetchProgress.active ? toneAlpha(CSS_COLOR.blue, 0.12) : toneAlpha(CSS_COLOR.green, 0.08),
+                    color: prefetchProgress.active ? CSS_COLOR.blue : CSS_COLOR.green,
                 }}>
                   {prefetchProgress.active
                     ? `\u29BF ${prefetchProgress.done}/${prefetchProgress.total}`
@@ -4643,15 +4670,15 @@ export default function PhotonicsObservatory({
                     : `Intraday history prefetch complete: ${histPrefetchProgress.done} companies with 1H bars cached`}><span
                   style={{
                     fontSize: fs(10), padding: sp("1px 5px"), borderRadius: RADII.xs, fontWeight: FONT_WEIGHTS.regular, marginLeft: sp(4),
-                    background: histPrefetchProgress.active ? toneAlpha(T.purple, 0.12) : toneAlpha(T.green, 0.08),
-                    color: histPrefetchProgress.active ? T.purple : T.green,
+                    background: histPrefetchProgress.active ? toneAlpha(CSS_COLOR.purple, 0.12) : toneAlpha(CSS_COLOR.green, 0.08),
+                    color: histPrefetchProgress.active ? CSS_COLOR.purple : CSS_COLOR.green,
                 }}>
                   {histPrefetchProgress.active
                     ? `\u29BF ${histPrefetchProgress.done}/${histPrefetchProgress.total} 1H`
                     : `\u2713 ${histPrefetchProgress.done} 1H`}
                 </span></AppTooltip>
               )}
-              <button aria-label="Research settings" onClick={() => setShowSettings(s => !s)} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm, width: 28, minWidth: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
+              <button aria-label="Research settings" onClick={() => setShowSettings(s => !s)} style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm, width: 28, minWidth: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: CSS_COLOR.textDim, marginLeft: sp(2), verticalAlign: "middle" }}><SettingsIcon size={14} strokeWidth={2} /></button>
             </div>
           </div>
         </div>
@@ -4665,20 +4692,20 @@ export default function PhotonicsObservatory({
             disabled={!researchDataReady}
             onKeyDown={e => { if (e.key === "Enter" && cos.length === 1) { setSel(cos[0].t); setQ(""); } if (e.key === "Escape") { setQ(""); setSel(null); } }}
             placeholder={researchDataReady ? "Search ticker or company..." : "Loading ticker universe..."}
-            style={{ width: "100%", background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("6px 10px"), color: T.text, fontSize: fs(11), outline: "none", boxShadow: ELEVATION.sm, opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
+            style={{ width: "100%", background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("6px 10px"), color: CSS_COLOR.text, fontSize: fs(11), outline: "none", boxShadow: ELEVATION.sm, opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
           />
           {q && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: fs(11), color: T.textMuted }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
-            <button onClick={() => setQ("")} style={{ background: toneAlpha(T.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: T.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
+            <span style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
+            <button onClick={() => setQ("")} style={{ background: toneAlpha(CSS_COLOR.text, 0.06), border: "none", borderRadius: RADII.pill, width: 16, height: 16, cursor: "pointer", color: CSS_COLOR.textDim, fontSize: fs(10), display: "flex", alignItems: "center", justifyContent: "center", padding: sp(0), lineHeight: 1 }}>✕</button>
           </span>}
         </div>
 
         {/* Vertical filter pills */}
         {researchMetaReady && (
         <div className="photonics-research-filter-row" style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4) }}>
-          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? T.bg1 : "transparent", border: !vf ? `1px solid ${T.borderLight}` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? T.text : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? ELEVATION.sm : "none" }}>ALL</button>
+          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? CSS_COLOR.bg1 : "transparent", border: !vf ? `1px solid ${CSS_COLOR.borderLight}` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), color: !vf ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, boxShadow: !vf ? ELEVATION.sm : "none" }}>ALL</button>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
-            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? T.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : T.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "all 0.15s" }}>
+            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? CSS_COLOR.bg1 : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: RADII.sm, padding: sp("3px 8px"), fontSize: fs(11), boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular, transition: "all 0.15s" }}>
               {v.n}
             </button>
           ))}
@@ -4688,9 +4715,9 @@ export default function PhotonicsObservatory({
         {/* Sub-layer pills */}
         {subs.length > 0 && (
           <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: sp(4), animation: "fadeIn 0.2s ease" }}>
-            <button onClick={() => setSf(null)} style={{ background: !sf ? toneAlpha(T.text, 0.06) : toneAlpha(T.text, 0.03), border: "none", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: !sf ? T.textMuted : T.text, cursor: "pointer" }}>All layers</button>
+            <button onClick={() => setSf(null)} style={{ background: !sf ? toneAlpha(CSS_COLOR.text, 0.06) : toneAlpha(CSS_COLOR.text, 0.03), border: "none", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: !sf ? CSS_COLOR.textMuted : CSS_COLOR.text, cursor: "pointer" }}>All layers</button>
             {subs.map(s => (
-              <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : toneAlpha(T.text, 0.03), border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: sf === s ? currentTheme.verticals[vf]?.c : T.textSec, cursor: "pointer" }}>
+              <button key={s} onClick={() => setSf(sf === s ? null : s)} style={{ background: sf === s ? currentTheme.verticals[vf]?.bg : toneAlpha(CSS_COLOR.text, 0.03), border: sf === s ? `1px solid ${currentTheme.verticals[vf]?.c}22` : "1px solid transparent", borderRadius: RADII.xs, padding: sp("3px 7px"), fontSize: fs(10), color: sf === s ? currentTheme.verticals[vf]?.c : CSS_COLOR.textSec, cursor: "pointer" }}>
                 {s}
               </button>
             ))}
@@ -4699,9 +4726,9 @@ export default function PhotonicsObservatory({
 
         {/* View tabs */}
         {researchMetaReady && (
-        <div className="photonics-research-view-tabs" style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginTop: sp(8) }}>
+        <div className="photonics-research-view-tabs" style={{ display: "flex", gap: 0, borderBottom: `1px solid ${CSS_COLOR.border}`, marginTop: sp(8) }}>
           {[["graph", "Graph"], ["comps", "Comps"], ["macro", "Macro"], ["calendar", "📅 Calendar"]].map(([id, lb]) => (
-            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? `2px solid ${currentTheme.accent}` : "2px solid transparent", padding: sp("6px 12px"), color: view === id ? T.text : T.textDim, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3 }}>
+            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? `2px solid ${currentTheme.accent}` : "2px solid transparent", padding: sp("6px 12px"), color: view === id ? CSS_COLOR.text : CSS_COLOR.textDim, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, cursor: "pointer", letterSpacing: 0.3 }}>
               {lb}
             </button>
           ))}
@@ -4736,19 +4763,19 @@ export default function PhotonicsObservatory({
         ) : themeUniverse.length === 0 ? (
           <div style={{ animation: "fadeIn 0.3s ease", maxWidth: 560, margin: "60px auto", textAlign: "center" }}>
             <div style={{ fontSize: fs(48), color: currentTheme.accent, marginBottom: sp(12), opacity: 0.4 }}>{currentTheme.icon}</div>
-            <h2 style={{ fontFamily: T.display, fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: T.text, marginBottom: sp(8), letterSpacing: 0 }}>
+            <h2 style={{ fontFamily: T.display, fontSize: fs(26), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, marginBottom: sp(8), letterSpacing: 0 }}>
               {currentTheme.title}
             </h2>
-            <div style={{ fontSize: fs(12), color: T.textDim, lineHeight: 1.6, marginBottom: sp(18) }}>
+            <div style={{ fontSize: fs(12), color: CSS_COLOR.textDim, lineHeight: 1.6, marginBottom: sp(18) }}>
               {currentTheme.subtitle}
             </div>
-            <div style={{ fontSize: fs(12), color: T.textSec, lineHeight: 1.6, maxWidth: 420, margin: "0 auto 18px" }}>
+            <div style={{ fontSize: fs(12), color: CSS_COLOR.textSec, lineHeight: 1.6, maxWidth: 420, margin: "0 auto 18px" }}>
               No covered companies are available for this thesis in the current research dataset.
             </div>
             <div style={{ marginTop: sp(16) }}>
               <button onClick={() => setThemeId("ai")} style={{
-                background: T.bg1, border: `1px solid ${T.borderLight}`, borderRadius: RADII.md,
-                padding: sp("6px 18px"), fontSize: fs(11), color: T.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
+                background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.borderLight}`, borderRadius: RADII.md,
+                padding: sp("6px 18px"), fontSize: fs(11), color: CSS_COLOR.textSec, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
               }}>← Back to AI Trade</button>
             </div>
           </div>
@@ -4761,7 +4788,7 @@ export default function PhotonicsObservatory({
                 {/* Selected company indicator bar */}
                 <div style={{
                   marginTop: sp(10), marginBottom: sp(8), padding: sp("7px 12px"),
-                  background: T.bg1, borderRadius: RADII.md, border: `1px solid ${T.border}`,
+                  background: CSS_COLOR.bg1, borderRadius: RADII.md, border: `1px solid ${CSS_COLOR.border}`,
                   boxShadow: ELEVATION.sm,
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   animation: "fadeIn 0.2s ease",
@@ -4769,12 +4796,12 @@ export default function PhotonicsObservatory({
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Logo ticker={selCo.t} size={20} />
                     <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: VX[selCo.v].c }}>{selCo.cc} {selCo.t}</span>
-                    <span style={{ fontSize: fs(11), color: T.textDim }}>{selCo.nm}</span>
-                    <span style={{ fontSize: fs(11), color: T.textMuted }}>&middot; {VX[selCo.v].n}</span>
+                    <span style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>{selCo.nm}</span>
+                    <span style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>&middot; {VX[selCo.v].n}</span>
                   </div>
                   <button onClick={() => setSel(null)} style={{
-                    background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.sm,
-                    padding: sp("3px 8px"), fontSize: fs(11), color: T.textDim, cursor: "pointer",
+                    background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.sm,
+                    padding: sp("3px 8px"), fontSize: fs(11), color: CSS_COLOR.textDim, cursor: "pointer",
                   }}>✕ Close</button>
                 </div>
                 <Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} />

@@ -41,6 +41,8 @@ import {
   mapNewsSentimentToScore,
 } from "../lib/formatters";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -412,33 +414,33 @@ const MarketScreenInner = ({
         : "quotes pending",
       tone: isFiniteNumber(breadth.advancePct)
         ? breadth.advancePct >= 55
-          ? T.green
+          ? CSS_COLOR.green
           : breadth.advancePct <= 45
-            ? T.red
-            : T.amber
-        : T.textDim,
+            ? CSS_COLOR.red
+            : CSS_COLOR.amber
+        : CSS_COLOR.textDim,
     },
     {
       label: "Put / Call",
       value: isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE,
       sub: putCallBullish == null ? "neutral unavailable" : putCallBullish ? "call skew" : "put skew",
-      tone: putCallBullish == null ? T.textDim : putCallBullish ? T.green : T.red,
+      tone: putCallBullish == null ? CSS_COLOR.textDim : putCallBullish ? CSS_COLOR.green : CSS_COLOR.red,
     },
     {
       label: "Vol proxy",
       value: volatilityProxy?.sym || MISSING_VALUE,
       sub: formatSignedPercent(volatilityProxy?.pct),
       tone: !isFiniteNumber(volatilityProxy?.pct)
-        ? T.textDim
+        ? CSS_COLOR.textDim
         : volatilityProxy.pct <= 0
-          ? T.green
-          : T.amber,
+          ? CSS_COLOR.green
+          : CSS_COLOR.amber,
     },
     {
       label: "Sector flow",
       value: strongestSectorFlow?.sector || MISSING_VALUE,
       sub: strongestSectorFlow ? `${strongestSectorFlow.net >= 0 ? "+" : "-"}${fmtM(Math.abs(strongestSectorFlow.net))}` : "flow pending",
-      tone: !strongestSectorFlow ? T.textDim : strongestSectorFlow.net >= 0 ? T.green : T.red,
+      tone: !strongestSectorFlow ? CSS_COLOR.textDim : strongestSectorFlow.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
     },
   ];
 
@@ -450,7 +452,7 @@ const MarketScreenInner = ({
         flexDirection: "column",
         height: "100%",
         overflow: "hidden",
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
       }}
     >
       <div
@@ -526,7 +528,7 @@ const MarketScreenInner = ({
                 justifyContent: "space-between",
                 alignItems: "center",
                 minHeight: dim(18),
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -547,7 +549,7 @@ const MarketScreenInner = ({
                 <Card key={item.label} style={{ padding: sp("6px 8px"), minHeight: dim(48) }}>
                   <div
                     style={{
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       fontFamily: T.sans,
                       fontSize: textSize("body"),
                       fontWeight: FONT_WEIGHTS.regular,
@@ -567,7 +569,7 @@ const MarketScreenInner = ({
                   >
                     {item.value}
                   </div>
-                  <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(1) }}>
+                  <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(1) }}>
                     {item.sub}
                   </div>
                 </Card>
@@ -579,7 +581,7 @@ const MarketScreenInner = ({
                 right={
                   <span
                     style={{
-                      color: flowStatus === "live" ? T.accent : T.textMuted,
+                      color: flowStatus === "live" ? CSS_COLOR.accent : CSS_COLOR.textMuted,
                       fontFamily: T.sans,
                       fontSize: textSize("body"),
                     }}
@@ -627,11 +629,11 @@ const MarketScreenInner = ({
                                 cursor: "pointer",
                               }}
                             >
-                              <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "left" }}>
+                              <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "left" }}>
                                 {sector.sector}
                               </span>
-                              <span style={{ position: "relative", height: dim(8), background: `${T.textMuted}1f`, borderRadius: dim(RADII.pill) }}>
-                                <span style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: dim(1), background: T.borderLight }} />
+                              <span style={{ position: "relative", height: dim(8), background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`, borderRadius: dim(RADII.pill) }}>
+                                <span style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: dim(1), background: CSS_COLOR.borderLight }} />
                                 <span
                                   style={{
                                     position: "absolute",
@@ -640,11 +642,11 @@ const MarketScreenInner = ({
                                     left: sector.net >= 0 ? "50%" : undefined,
                                     right: sector.net < 0 ? "50%" : undefined,
                                     width: `${widthPct}%`,
-                                    background: sector.net >= 0 ? T.green : T.red,
+                                    background: sector.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
                                   }}
                                 />
                               </span>
-                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
+                              <span style={{ color: sector.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
                                 {sector.net >= 0 ? "+" : "-"}
                                 {fmtM(Math.abs(sector.net))}
                               </span>
@@ -670,11 +672,11 @@ const MarketScreenInner = ({
               <CardTitle>Leadership / Weakness</CardTitle>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
                 {[
-                  ["Leaders", marketMovers.leaders, T.green],
-                  ["Laggards", marketMovers.laggards, T.red],
+                  ["Leaders", marketMovers.leaders, CSS_COLOR.green],
+                  ["Laggards", marketMovers.laggards, CSS_COLOR.red],
                 ].map(([label, rows, color]) => (
                   <div key={label} style={{ minWidth: 0 }}>
-                    <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(3) }}>
+                    <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(3) }}>
                       {label.toUpperCase()}
                     </div>
                     {rows.map((row, index) => (
@@ -688,7 +690,7 @@ const MarketScreenInner = ({
                           gap: sp(5),
                           width: "100%",
                           border: "none",
-                          borderTop: index ? `1px solid ${T.border}55` : "none",
+                          borderTop: index ? `1px solid ${cssColorMix(CSS_COLOR.border, 33)}` : "none",
                           background: "transparent",
                           padding: sp("2px 0"),
                           cursor: "pointer",
@@ -696,7 +698,7 @@ const MarketScreenInner = ({
                         }}
                       >
                         <span style={{ color, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>{row.sym}</span>
-                        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {row.group}
                         </span>
                         <span style={{ color, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
@@ -742,9 +744,9 @@ const MarketScreenInner = ({
                       fontFamily: T.sans,
                     }}
                   >
-                    <span style={{ color: T.textDim }}>{item.term}</span>
+                    <span style={{ color: CSS_COLOR.textDim }}>{item.term}</span>
                     <MarketIdentityInline ticker={item.sym} size={12} showChips={false} />
-                    <span style={{ height: dim(6), position: "relative", background: `${T.textMuted}1f`, borderRadius: dim(RADII.pill) }}>
+                    <span style={{ height: dim(6), position: "relative", background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`, borderRadius: dim(RADII.pill) }}>
                       <span
                         className="ra-bar-fill"
                         style={{
@@ -753,12 +755,12 @@ const MarketScreenInner = ({
                           bottom: 0,
                           left: 0,
                           width: `${width}%`,
-                          background: pos == null ? T.textMuted : pos ? T.green : T.red,
+                          background: pos == null ? CSS_COLOR.textMuted : pos ? CSS_COLOR.green : CSS_COLOR.red,
                           opacity: 0.85,
                         }}
                       />
                     </span>
-                    <span style={{ color: pos == null ? T.textDim : pos ? T.green : T.red, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
+                    <span style={{ color: pos == null ? CSS_COLOR.textDim : pos ? CSS_COLOR.green : CSS_COLOR.red, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
                       {formatSignedPercent(item.pct)}
                     </span>
                   </div>
@@ -769,14 +771,14 @@ const MarketScreenInner = ({
           <Card style={{ padding: sp("7px 10px") }}>
             <CardTitle>Breadth</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginBottom: sp(6) }}>
-              <span style={{ color: T.green, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: CSS_COLOR.green, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
                 {breadth.total ? breadth.advancers : MISSING_VALUE}
               </span>
-              <span style={{ flex: 1, display: "flex", height: dim(8), background: T.bg1, overflow: "hidden" }}>
-                <span style={{ width: `${upPct}%`, background: T.green }} />
-                <span style={{ width: `${downPct}%`, background: T.red }} />
+              <span style={{ flex: 1, display: "flex", height: dim(8), background: CSS_COLOR.bg1, overflow: "hidden" }}>
+                <span style={{ width: `${upPct}%`, background: CSS_COLOR.green }} />
+                <span style={{ width: `${downPct}%`, background: CSS_COLOR.red }} />
               </span>
-              <span style={{ color: T.red, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: CSS_COLOR.red, fontFamily: T.sans, fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>
@@ -787,9 +789,9 @@ const MarketScreenInner = ({
                 ["Lead", breadth.leader?.sym || MISSING_VALUE],
                 ["Lag", breadth.laggard?.sym || MISSING_VALUE],
               ].map(([label, value]) => (
-                <div key={label} style={{ display: "flex", justifyContent: "space-between", background: `${T.bg3}55`, padding: sp("3px 5px") }}>
-                  <span style={{ color: T.textDim }}>{label}</span>
-                  <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>{value}</span>
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", background: `${cssColorMix(CSS_COLOR.bg3, 33)}`, padding: sp("3px 5px") }}>
+                  <span style={{ color: CSS_COLOR.textDim }}>{label}</span>
+                  <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>{value}</span>
                 </div>
               ))}
             </div>
@@ -802,14 +804,14 @@ const MarketScreenInner = ({
               padding: sp("6px 8px"),
             }}
           >
-            <CardTitle right={<Badge color={T.purple}>Regime</Badge>}>
+            <CardTitle right={<Badge color={CSS_COLOR.purple}>Regime</Badge>}>
               Market Read
             </CardTitle>
             <div
               style={{
                 fontSize: fs(10),
                 fontFamily: T.sans,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 lineHeight: 1.45,
               }}
             >
@@ -844,8 +846,8 @@ const MarketScreenInner = ({
                     fontSize: textSize("caption"),
                     color:
                       newsStatusLabel === "live · news"
-                        ? T.accent
-                        : T.textDim,
+                        ? CSS_COLOR.accent
+                        : CSS_COLOR.textDim,
                     fontFamily: T.sans,
                   }}
                 >
@@ -871,12 +873,12 @@ const MarketScreenInner = ({
                     alignItems: "flex-start",
                     borderBottom:
                       index < newsItems.length - 1
-                        ? `1px solid ${T.border}06`
+                        ? `1px solid ${cssColorMix(CSS_COLOR.border, 2)}`
                         : "none",
                     cursor: item.articleUrl ? "pointer" : "default",
                   }}
                   onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = T.accentHoverBg)
+                    (e.currentTarget.style.background = CSS_COLOR.accentHoverBg)
                   }
                   onMouseLeave={(e) =>
                     (e.currentTarget.style.background = "transparent")
@@ -891,7 +893,7 @@ const MarketScreenInner = ({
                     );
                   }}
                 >
-                  <Badge color={T.accent}>{item.tag}</Badge>
+                  <Badge color={CSS_COLOR.accent}>{item.tag}</Badge>
                   <div
                     style={{
                       width: dim(4),
@@ -899,10 +901,10 @@ const MarketScreenInner = ({
                       borderRadius: dim(RADII.pill),
                       background:
                         item.s === 1
-                          ? T.green
+                          ? CSS_COLOR.green
                           : item.s === -1
-                            ? T.red
-                            : T.textDim,
+                            ? CSS_COLOR.red
+                            : CSS_COLOR.textDim,
                       marginTop: sp(4),
                       flexShrink: 0,
                     }}
@@ -911,7 +913,7 @@ const MarketScreenInner = ({
                     style={{
                       flex: 1,
                       fontSize: fs(10),
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       fontFamily: T.sans,
                       lineHeight: 1.4,
                     }}
@@ -921,7 +923,7 @@ const MarketScreenInner = ({
                   <span
                     style={{
                       fontSize: textSize("body"),
-                      color: T.textMuted,
+                      color: CSS_COLOR.textMuted,
                       fontFamily: T.sans,
                       whiteSpace: "nowrap",
                     }}
@@ -949,8 +951,8 @@ const MarketScreenInner = ({
                     fontSize: textSize("caption"),
                     color:
                       calendarStatusLabel === "earnings · live"
-                        ? T.accent
-                        : T.textDim,
+                        ? CSS_COLOR.accent
+                        : CSS_COLOR.textDim,
                     fontFamily: T.sans,
                   }}
                 >
@@ -964,12 +966,12 @@ const MarketScreenInner = ({
               calendarItems.map((ev, i) => {
                 const tc =
                   ev.type === "fomc" || ev.type === "cpi"
-                    ? T.amber
+                    ? CSS_COLOR.amber
                     : ev.type === "earnings"
-                      ? T.green
+                      ? CSS_COLOR.green
                       : ev.type === "holiday"
-                        ? T.red
-                        : T.accent;
+                        ? CSS_COLOR.red
+                        : CSS_COLOR.accent;
                 return (
                   <div
                     key={ev.id}
@@ -982,7 +984,7 @@ const MarketScreenInner = ({
                       padding: sp("3px 0"),
                       borderBottom:
                         i < calendarItems.length - 1
-                          ? `1px solid ${T.border}06`
+                          ? `1px solid ${cssColorMix(CSS_COLOR.border, 2)}`
                           : "none",
                     }}
                   >
@@ -1001,7 +1003,7 @@ const MarketScreenInner = ({
                           fontSize: fs(10),
                           fontWeight: FONT_WEIGHTS.regular,
                           fontFamily: T.sans,
-                          color: T.text,
+                          color: CSS_COLOR.text,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -1012,7 +1014,7 @@ const MarketScreenInner = ({
                       <div
                         style={{
                           fontSize: textSize("body"),
-                          color: T.textMuted,
+                          color: CSS_COLOR.textMuted,
                           fontFamily: T.sans,
                         }}
                       >

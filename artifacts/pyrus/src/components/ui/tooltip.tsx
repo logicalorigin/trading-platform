@@ -76,19 +76,37 @@ const INTERACTIVE_TRIGGER_ROLES = new Set([
   "tab",
 ])
 
-const isInteractiveTooltipTrigger = (
-  trigger: React.ReactElement<{
-    href?: string
-    onClick?: React.MouseEventHandler<HTMLElement>
-    role?: string
-  }>,
-): boolean => {
+type InteractiveTooltipTriggerProps = {
+  asChild?: boolean
+  children?: React.ReactNode
+  href?: string
+  onClick?: React.MouseEventHandler<HTMLElement>
+  role?: string
+}
+
+function hasInteractiveTooltipDescendant(node: React.ReactNode): boolean {
+  return React.Children.toArray(node).some(
+    (child) =>
+      React.isValidElement<InteractiveTooltipTriggerProps>(child) &&
+      isInteractiveTooltipTrigger(child),
+  )
+}
+
+function isInteractiveTooltipTrigger(
+  trigger: React.ReactElement<InteractiveTooltipTriggerProps>,
+): boolean {
   if (typeof trigger.type === "string") {
     const tagName = trigger.type.toLowerCase()
     if (INTERACTIVE_TRIGGER_TAGS.has(tagName)) return true
     if (tagName === "a" && trigger.props.href) return true
   }
   if (trigger.props.role && INTERACTIVE_TRIGGER_ROLES.has(trigger.props.role)) {
+    return true
+  }
+  if (
+    trigger.props.asChild &&
+    hasInteractiveTooltipDescendant(trigger.props.children)
+  ) {
     return true
   }
   return typeof trigger.props.onClick === "function"
@@ -166,27 +184,27 @@ function AppTooltip({
       {children}
     </span>
   )
-  const touchTrigger = React.isValidElement<{
-    onPointerDown?: React.PointerEventHandler<HTMLElement>
-    onClick?: React.MouseEventHandler<HTMLElement>
-    role?: string
-  }>(trigger)
-    && !isInteractiveTooltipTrigger(trigger)
-    ? React.cloneElement(trigger, {
-        onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-          trigger.props.onPointerDown?.(event)
-          if (event.defaultPrevented) return
-          if (event.pointerType !== "touch" && event.pointerType !== "pen") return
-          if (!open) {
-            event.preventDefault()
-            event.stopPropagation()
-            setOpen(true)
-            return
-          }
-          setOpen(false)
-        },
-      })
-    : trigger
+  const touchTrigger =
+    React.isValidElement<
+      InteractiveTooltipTriggerProps & {
+        onPointerDown?: React.PointerEventHandler<HTMLElement>
+      }
+    >(trigger) && !isInteractiveTooltipTrigger(trigger)
+      ? React.cloneElement(trigger, {
+          onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+            trigger.props.onPointerDown?.(event)
+            if (event.defaultPrevented) return
+            if (event.pointerType !== "touch" && event.pointerType !== "pen") return
+            if (!open) {
+              event.preventDefault()
+              event.stopPropagation()
+              setOpen(true)
+              return
+            }
+            setOpen(false)
+          },
+        })
+      : trigger
 
   return (
     <Tooltip open={open} onOpenChange={setOpen}>

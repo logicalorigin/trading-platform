@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { CSS_COLOR, RADII, T, cssColorMix, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   EmptyState,
   ToggleGroup,
@@ -8,21 +13,8 @@ import {
   mutedLabelStyle,
 } from "./accountUtils";
 
-const hexToRgb = (value) => {
-  const normalized = String(value || "").replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
-  return {
-    r: parseInt(normalized.slice(0, 2), 16),
-    g: parseInt(normalized.slice(2, 4), 16),
-    b: parseInt(normalized.slice(4, 6), 16),
-  };
-};
-
-const rgba = (hex, alpha) => {
-  const rgb = hexToRgb(hex);
-  if (!rgb) return "transparent";
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-};
+const rgba = (color, alpha) =>
+  color ? cssColorMix(color, alpha * 100) : "transparent";
 
 const treemapLayout = (items, x, y, w, h) => {
   if (!items.length) return [];
@@ -499,15 +491,15 @@ export const PositionTreemapContent = ({
 
   const colorFor = (pct) => {
     const numeric = finiteNumber(pct);
-    if (numeric == null) return rgba(T.textMuted, 0.18);
+    if (numeric == null) return rgba(CSS_COLOR.textMuted, 0.18);
     const clipped = Math.max(-PCT_CLIP, Math.min(PCT_CLIP, numeric));
     const intensity = Math.abs(clipped) / PCT_CLIP;
     const alpha = 0.18 + intensity * 0.72;
-    return rgba(clipped >= 0 ? T.green : T.red, alpha);
+    return rgba(clipped >= 0 ? CSS_COLOR.green : CSS_COLOR.red, alpha);
   };
 
-  const labelFill = T.text;
-  const subLabelFill = rgba(T.text, 0.85);
+  const labelFill = CSS_COLOR.text;
+  const subLabelFill = rgba(CSS_COLOR.text, 0.85);
 
   if (!items.length && !animatedRects.length) {
     return <EmptyState title="No positions" body={emptyBody} />;
@@ -551,7 +543,7 @@ export const PositionTreemapContent = ({
                 width={Math.max(0, rect.w - 1)}
                 height={Math.max(0, rect.h - 1)}
                 fill={colorFor(pct)}
-                stroke={T.bg0}
+                stroke={CSS_COLOR.bg0}
                 strokeWidth={1}
               >
                 <title>{`${rect.symbol} · ${formatAccountMoney(
@@ -605,7 +597,7 @@ export const PositionTreemapContent = ({
           gap: sp(4),
           fontSize: textSize("caption"),
           fontFamily: T.sans,
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
         }}
       >
         <span>{`-${PCT_CLIP}%`}</span>

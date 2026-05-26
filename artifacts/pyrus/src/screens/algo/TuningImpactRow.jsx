@@ -1,4 +1,5 @@
 import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -20,10 +21,10 @@ export const TuningImpactRow = ({
 }) => {
   const hasImpact = Number(count) > 0;
   const impactTone = !hasImpact
-    ? T.textDim
+    ? CSS_COLOR.textDim
     : warningWhenNonZero
-      ? tone || T.amber
-      : tone || T.text;
+      ? tone || CSS_COLOR.amber
+      : tone || CSS_COLOR.text;
   const impactSummary = hasImpact
     ? total != null
       ? `${count} / ${total}`
@@ -38,15 +39,15 @@ export const TuningImpactRow = ({
         gap: sp(6),
         alignItems: "center",
         padding: sp("4px 8px"),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
         minWidth: 0,
       }}
     >
       <span
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: textSize("body"),
           fontWeight: 500,
@@ -86,7 +87,7 @@ export const TuningImpactRow = ({
         >
           {impactSummary}
           {sampleSymbols.length > 0 && (
-            <span style={{ color: T.textDim, marginLeft: sp(6) }}>
+            <span style={{ color: CSS_COLOR.textDim, marginLeft: sp(6) }}>
               · {sampleSymbols.join(", ")}
             </span>
           )}

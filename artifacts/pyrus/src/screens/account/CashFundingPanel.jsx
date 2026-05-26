@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate } from "../../lib/timeZone";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import {
@@ -17,7 +20,7 @@ import {
 
 const CASH_ACTIVITY_PAGE_SIZE = 25;
 
-const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
+const SummaryMetric = ({ label, value, tone = CSS_COLOR.text, subvalue }) => (
   <div
     style={{
       padding: sp("3px 0"),
@@ -30,7 +33,7 @@ const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
       {value}
     </div>
     {subvalue ? (
-      <div style={{ color: T.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>{subvalue}</div>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>{subvalue}</div>
     ) : null}
   </div>
 );
@@ -85,7 +88,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
             gridTemplateColumns: `repeat(auto-fit, minmax(${dim(120)}px, 1fr))`,
             gap: sp("3px 8px"),
             paddingBottom: sp(4),
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
           }}
         >
           <SummaryMetric
@@ -100,7 +103,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
           <SummaryMetric
             label="Dividends YTD"
             value={formatAccountMoney(query.data.dividendsYtd, currency, true, maskValues)}
-            tone={T.green}
+            tone={CSS_COLOR.green}
             subvalue={`MTD ${formatAccountMoney(query.data.dividendsMonth, currency, true, maskValues)}`}
           />
           <SummaryMetric
@@ -111,7 +114,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
           <SummaryMetric
             label="Fees YTD"
             value={formatAccountMoney(query.data.feesYtd, currency, true, maskValues)}
-            tone={T.red}
+            tone={CSS_COLOR.red}
           />
         </div>
 
@@ -180,7 +183,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
               pageCount={paginatedActivities.pageCount}
               pageSize={CASH_ACTIVITY_PAGE_SIZE}
               total={paginatedActivities.total}
-              style={{ paddingTop: sp(4), borderTop: `1px solid ${T.border}` }}
+              style={{ paddingTop: sp(4), borderTop: `1px solid ${CSS_COLOR.border}` }}
             />
           </div>
 
@@ -189,7 +192,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
               display: "grid",
               gap: sp(5),
               paddingLeft: sp(2),
-              borderLeft: `1px solid ${T.border}`,
+              borderLeft: `1px solid ${CSS_COLOR.border}`,
             }}
           >
             <div style={mutedLabelStyle}>Recent Dividends</div>
@@ -200,13 +203,13 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
                   className="ra-row-enter"
                   style={{
                     padding: sp("2px 0"),
-                    borderBottom: `1px solid ${T.border}`,
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
                     display: "grid",
                     gap: sp(3),
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                    <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, minWidth: 0 }}>
+                    <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular, minWidth: 0 }}>
                       {dividend.symbol ? (
                         <MarketIdentityInline
                           item={{
@@ -223,20 +226,20 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => {
                         "Cash"
                       )}
                     </div>
-                    <div style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                    <div style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                       {formatAccountMoney(dividend.amount, dividend.currency, false, maskValues)}
                     </div>
                   </div>
-                  <div style={{ color: T.textSec, fontSize: textSize("label"), lineHeight: 1.25 }}>
+                  <div style={{ color: CSS_COLOR.textSec, fontSize: textSize("label"), lineHeight: 1.25 }}>
                     {dividend.description || "Dividend"}
                   </div>
-                  <div style={{ color: T.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>
+                  <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("label"), fontFamily: T.sans }}>
                     {formatAppDate(dividend.paidDate)}
                   </div>
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textMuted, fontSize: textSize("body") }}>No recent dividend rows.</div>
+              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>No recent dividend rows.</div>
             )}
           </div>
         </div>

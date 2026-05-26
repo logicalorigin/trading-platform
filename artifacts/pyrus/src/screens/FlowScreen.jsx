@@ -91,6 +91,9 @@ import {
   mapNewsSentimentToScore,
 } from "../lib/formatters";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   MISSING_VALUE,
@@ -184,29 +187,29 @@ const getFlowContractLabel = (event) => {
 };
 
 const FLOW_PRESET_COLORS = Object.freeze({
-  "ask-calls": T.green,
-  "bid-puts": T.red,
-  "zero-dte": T.amber,
-  "premium-50k": T.text,
-  "premium-250k": T.amber,
-  "vol-oi": T.cyan,
-  sweeps: T.amber,
-  blocks: T.accent,
-  repeats: T.cyan,
-  golden: T.amber,
+  "ask-calls": CSS_COLOR.green,
+  "bid-puts": CSS_COLOR.red,
+  "zero-dte": CSS_COLOR.amber,
+  "premium-50k": CSS_COLOR.text,
+  "premium-250k": CSS_COLOR.amber,
+  "vol-oi": CSS_COLOR.cyan,
+  sweeps: CSS_COLOR.amber,
+  blocks: CSS_COLOR.accent,
+  repeats: CSS_COLOR.cyan,
+  golden: CSS_COLOR.amber,
 });
 
 const getFlowSourceBasisMeta = (value) => {
   if (value === "confirmed_trade") {
-    return { label: "TRADE", detail: "Confirmed trade", color: T.green };
+    return { label: "TRADE", detail: "Confirmed trade", color: CSS_COLOR.green };
   }
   if (value === "snapshot_activity") {
-    return { label: "SNAP", detail: "Snapshot activity", color: T.accent };
+    return { label: "SNAP", detail: "Snapshot activity", color: CSS_COLOR.accent };
   }
   if (value === "fallback_estimate") {
-    return { label: "FALLBK", detail: "Fallback estimate", color: T.amber };
+    return { label: "FALLBK", detail: "Fallback estimate", color: CSS_COLOR.amber };
   }
-  return { label: "N/A", detail: "Unavailable", color: T.textDim };
+  return { label: "N/A", detail: "Unavailable", color: CSS_COLOR.textDim };
 };
 
 const formatOptionPrice = (value) =>
@@ -267,7 +270,7 @@ const resolveFlowFillSpreadMeta = (event) => {
       spreadPct: null,
       label: "N/A",
       shortLabel: "N/A",
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       crossed: false,
     };
   }
@@ -281,7 +284,7 @@ const resolveFlowFillSpreadMeta = (event) => {
       spreadPct: null,
       label: "Crossed market",
       shortLabel: "X",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       crossed: true,
     };
   }
@@ -298,7 +301,7 @@ const resolveFlowFillSpreadMeta = (event) => {
       spreadPct,
       label: "Locked market",
       shortLabel: "LOCK",
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       crossed: false,
     };
   }
@@ -313,24 +316,24 @@ const resolveFlowFillSpreadMeta = (event) => {
       spreadPct,
       label: "Below bid",
       shortLabel: "BID-",
-      color: T.red,
+      color: CSS_COLOR.red,
       crossed: false,
     };
   }
   if (position <= 0.1) {
-    return { fill, bid, ask, spread, spreadPct, label: "At bid", shortLabel: "BID", color: T.red, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "At bid", shortLabel: "BID", color: CSS_COLOR.red, crossed: false };
   }
   if (position <= 0.4) {
-    return { fill, bid, ask, spread, spreadPct, label: "Bid side", shortLabel: "BID", color: T.red, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "Bid side", shortLabel: "BID", color: CSS_COLOR.red, crossed: false };
   }
   if (position <= 0.6) {
-    return { fill, bid, ask, spread, spreadPct, label: "Mid", shortLabel: "MID", color: T.textDim, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "Mid", shortLabel: "MID", color: CSS_COLOR.textDim, crossed: false };
   }
   if (position <= 0.9) {
-    return { fill, bid, ask, spread, spreadPct, label: "Ask side", shortLabel: "ASK", color: event?.cp === "P" ? T.red : T.green, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "Ask side", shortLabel: "ASK", color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, crossed: false };
   }
   if (position <= 1) {
-    return { fill, bid, ask, spread, spreadPct, label: "At ask", shortLabel: "ASK", color: event?.cp === "P" ? T.red : T.green, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "At ask", shortLabel: "ASK", color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, crossed: false };
   }
   return {
     fill,
@@ -340,7 +343,7 @@ const resolveFlowFillSpreadMeta = (event) => {
     spreadPct,
     label: "Above ask",
     shortLabel: "ASK+",
-    color: event?.cp === "P" ? T.red : T.green,
+    color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green,
     crossed: false,
   };
 };
@@ -382,7 +385,7 @@ const resolveFlowQuality = ({
   if (hasSourceError || hasVisibleDegradation) {
     return {
       label: "Degraded",
-      color: T.red,
+      color: CSS_COLOR.red,
       ratio: coverageRatio,
       detail:
         providerSummary?.erroredSource?.errorMessage ||
@@ -397,7 +400,7 @@ const resolveFlowQuality = ({
   if (staleFlowEvents) {
     return {
       label: "Stale",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       ratio: coverageRatio,
       detail: "Showing the last captured flow while the current scanner batch is quiet.",
       newestAgeMs,
@@ -408,7 +411,7 @@ const resolveFlowQuality = ({
   if (livePaused || (newestAgeMs !== null && newestAgeMs > 120_000)) {
     return {
       label: "Stale",
-      color: T.amber,
+      color: CSS_COLOR.amber,
       ratio: coverageRatio,
       detail: livePaused
         ? "Tape is paused on the last captured snapshot."
@@ -421,7 +424,7 @@ const resolveFlowQuality = ({
   if (hasLiveFlow && (coverageRatio >= 0.95 || !totalSymbols)) {
     return {
       label: "Full",
-      color: T.green,
+      color: CSS_COLOR.green,
       ratio: 1,
       detail: `${sourceLabel} covering the active watchlist.`,
       newestAgeMs,
@@ -432,7 +435,7 @@ const resolveFlowQuality = ({
   if (hasLiveFlow && coverageRatio >= 0.5) {
     return {
       label: "Partial",
-      color: T.accent,
+      color: CSS_COLOR.accent,
       ratio: coverageRatio,
       detail: "Watchlist rotation is still filling in coverage.",
       newestAgeMs,
@@ -442,7 +445,7 @@ const resolveFlowQuality = ({
 
   return {
     label: "Thin",
-    color: flowStatus === "loading" ? T.accent : T.textDim,
+    color: flowStatus === "loading" ? CSS_COLOR.accent : CSS_COLOR.textDim,
     ratio: coverageRatio,
     detail:
       flowStatus === "loading"
@@ -458,16 +461,16 @@ const getFlowExecutionMeta = (event) => {
   if (normalizedSide === "BUY") {
     return {
       label: event?.type === "SWEEP" ? "ASK+" : "ASK",
-      color: event?.cp === "P" ? T.red : T.green,
+      color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green,
     };
   }
   if (normalizedSide === "SELL") {
     return {
       label: event?.type === "BLOCK" ? "BID" : "BID-",
-      color: T.red,
+      color: CSS_COLOR.red,
     };
   }
-  return { label: "MID", color: T.textDim };
+  return { label: "MID", color: CSS_COLOR.textDim };
 };
 
 const FlowLoadingBlock = ({
@@ -509,7 +512,7 @@ const FlowPlaceholderCard = ({
           fontSize: fs(10),
           fontWeight: FONT_WEIGHTS.regular,
           fontFamily: T.sans,
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
         }}
       >
         {title}
@@ -562,31 +565,31 @@ const formatCoveragePercent = (value) => {
 
 const getPremiumSideBasisMeta = (value) => {
   if (value === "quote_match") {
-    return { label: "Quote matched", color: T.green };
+    return { label: "Quote matched", color: CSS_COLOR.green };
   }
   if (value === "tick_test") {
-    return { label: "Trade tick-test", color: T.amber };
+    return { label: "Trade tick-test", color: CSS_COLOR.amber };
   }
   if (value === "mixed") {
-    return { label: "Mixed side", color: T.accent };
+    return { label: "Mixed side", color: CSS_COLOR.accent };
   }
-  return { label: "Unclassified", color: T.textDim };
+  return { label: "Unclassified", color: CSS_COLOR.textDim };
 };
 
 const getPremiumClassificationConfidenceMeta = (value) => {
   if (value === "high") {
-    return { label: "High confidence", color: T.green, muted: false };
+    return { label: "High confidence", color: CSS_COLOR.green, muted: false };
   }
   if (value === "medium") {
-    return { label: "Medium confidence", color: T.accent, muted: false };
+    return { label: "Medium confidence", color: CSS_COLOR.accent, muted: false };
   }
   if (value === "low") {
-    return { label: "Low confidence", color: T.amber, muted: true };
+    return { label: "Low confidence", color: CSS_COLOR.amber, muted: true };
   }
   if (value === "very_low") {
-    return { label: "Very low confidence", color: T.amber, muted: true };
+    return { label: "Very low confidence", color: CSS_COLOR.amber, muted: true };
   }
-  return { label: "No side confidence", color: T.textDim, muted: true };
+  return { label: "No side confidence", color: CSS_COLOR.textDim, muted: true };
 };
 
 const inferPremiumClassificationConfidence = (coverage) => {
@@ -616,42 +619,42 @@ const FLOW_PREMIUM_SEGMENT_CONFIG = [
     flow: "inflow",
     bucket: "large",
     label: "Inflow Large",
-    color: T.green,
+    color: CSS_COLOR.green,
   },
   {
     key: "inflow.small",
     flow: "inflow",
     bucket: "small",
     label: "Inflow Small",
-    color: T.cyan,
+    color: CSS_COLOR.cyan,
   },
   {
     key: "inflow.medium",
     flow: "inflow",
     bucket: "medium",
     label: "Inflow Medium",
-    color: T.blue,
+    color: CSS_COLOR.blue,
   },
   {
     key: "outflow.large",
     flow: "outflow",
     bucket: "large",
     label: "Outflow Large",
-    color: T.red,
+    color: CSS_COLOR.red,
   },
   {
     key: "outflow.small",
     flow: "outflow",
     bucket: "small",
     label: "Outflow Small",
-    color: T.amber,
+    color: CSS_COLOR.amber,
   },
   {
     key: "outflow.medium",
     flow: "outflow",
     bucket: "medium",
     label: "Outflow Medium",
-    color: T.pink,
+    color: CSS_COLOR.pink,
   },
 ];
 
@@ -1070,7 +1073,7 @@ const PremiumDistributionDonut = ({
           cy={cy}
           r={(innerRadius + maxOuterRadius) / 2}
           fill="none"
-          stroke={hasNeutral ? T.textMuted : `${T.borderLight}88`}
+          stroke={hasNeutral ? CSS_COLOR.textMuted : `${cssColorMix(CSS_COLOR.borderLight, 53)}`}
           strokeWidth={maxOuterRadius - innerRadius}
           opacity={hasNeutral ? 0.7 : 0.42}
         />
@@ -1079,7 +1082,7 @@ const PremiumDistributionDonut = ({
           y={cy - 2}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill={T.text}
+          fill={CSS_COLOR.text}
           fontSize={11}
           fontWeight={400}
           fontFamily={T.display}
@@ -1091,7 +1094,7 @@ const PremiumDistributionDonut = ({
           y={cy + 11}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill={hasNeutral ? T.textDim : netColor}
+          fill={hasNeutral ? CSS_COLOR.textDim : netColor}
           fontSize={7}
           fontWeight={400}
           fontFamily={T.mono}
@@ -1121,7 +1124,7 @@ const PremiumDistributionDonut = ({
         cy={cy}
         r={(innerRadius + minOuterRadius) / 2}
         fill="none"
-        stroke={`${T.borderLight}66`}
+        stroke={`${cssColorMix(CSS_COLOR.borderLight, 40)}`}
         strokeWidth={minOuterRadius - innerRadius}
       />
       {(() => {
@@ -1164,7 +1167,7 @@ const PremiumDistributionDonut = ({
                 end,
               )}
               fill={row.color}
-              stroke={T.bg0}
+              stroke={CSS_COLOR.bg0}
               strokeWidth={0.75}
               opacity={0.94}
             >
@@ -1177,12 +1180,12 @@ const PremiumDistributionDonut = ({
                   y={labelPoint.y}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  fill={T.bg0}
+                  fill={CSS_COLOR.bg0}
                   fontSize={5.4}
                   fontWeight={400}
                   fontFamily={T.mono}
                   paintOrder="stroke"
-                  stroke={`${row.color}66`}
+                  stroke={cssColorAlpha(row.color, "66")}
                   strokeWidth={1.1}
                 >
                   {valueLabel}
@@ -1197,7 +1200,7 @@ const PremiumDistributionDonut = ({
         y={cy - 2}
         textAnchor="middle"
         dominantBaseline="middle"
-        fill={T.text}
+        fill={CSS_COLOR.text}
         fontSize={11}
         fontWeight={400}
         fontFamily={T.display}
@@ -1238,7 +1241,7 @@ const NetIntensityMeter = ({ netKilo, maxAbsNetKilo }) => {
         position: "relative",
         height: dim(2),
         width: "100%",
-        background: `${T.borderLight}33`,
+        background: `${cssColorMix(CSS_COLOR.borderLight, 20)}`,
         overflow: "hidden",
       }}
     >
@@ -1250,7 +1253,7 @@ const NetIntensityMeter = ({ netKilo, maxAbsNetKilo }) => {
           bottom: 0,
           left: positive ? "50%" : `${50 - width}%`,
           width: `${width}%`,
-          background: positive ? T.green : T.red,
+          background: positive ? CSS_COLOR.green : CSS_COLOR.red,
         }}
       />
     </div>
@@ -1282,7 +1285,7 @@ const BucketDivergingBar = ({
     >
       <span
         style={{
-          color: T.red,
+          color: CSS_COLOR.red,
           fontFamily: T.mono,
           fontSize: fs(8),
           textAlign: "right",
@@ -1293,7 +1296,7 @@ const BucketDivergingBar = ({
       </span>
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: fs(8),
           fontWeight: FONT_WEIGHTS.regular,
@@ -1308,7 +1311,7 @@ const BucketDivergingBar = ({
           position: "relative",
           height: dim(6),
           minWidth: 0,
-          background: `${T.borderLight}24`,
+          background: `${cssColorMix(CSS_COLOR.borderLight, 14)}`,
           overflow: "hidden",
         }}
       >
@@ -1319,7 +1322,7 @@ const BucketDivergingBar = ({
             bottom: 0,
             left: `${50 - sellWidth}%`,
             width: `${sellWidth}%`,
-            background: T.red,
+            background: CSS_COLOR.red,
             opacity: 0.9,
           }}
         />
@@ -1330,7 +1333,7 @@ const BucketDivergingBar = ({
             bottom: 0,
             left: "50%",
             width: `${buyWidth}%`,
-            background: T.green,
+            background: CSS_COLOR.green,
             opacity: 0.9,
           }}
         />
@@ -1341,14 +1344,14 @@ const BucketDivergingBar = ({
             bottom: 0,
             left: "50%",
             width: 1,
-            background: T.textMuted,
+            background: CSS_COLOR.textMuted,
             opacity: 0.72,
           }}
         />
       </div>
       <span
         style={{
-          color: T.green,
+          color: CSS_COLOR.green,
           fontFamily: T.mono,
           fontSize: fs(8),
           textAlign: "left",
@@ -1356,7 +1359,7 @@ const BucketDivergingBar = ({
         }}
       >
         {formatPremiumCompactFromKiloUsd(buyKilo)}
-        <span style={{ color: T.textDim }}>{countLabel}</span>
+        <span style={{ color: CSS_COLOR.textDim }}>{countLabel}</span>
       </span>
     </div>
   );
@@ -1382,7 +1385,7 @@ const PremiumDistributionWidget = ({
           gap: sp(3),
           minWidth: 0,
           width: "100%",
-          borderBottom: `1px solid ${T.borderLight}55`,
+          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.borderLight, 33)}`,
         }}
       >
         <FlowLoadingBlock width="74%" height={dim(10)} />
@@ -1396,10 +1399,10 @@ const PremiumDistributionWidget = ({
 
   const netColor =
     widget.netPremium > 0
-      ? T.green
+      ? CSS_COLOR.green
       : widget.netPremium < 0
-        ? T.red
-        : T.textDim;
+        ? CSS_COLOR.red
+        : CSS_COLOR.textDim;
   const netKilo = premiumToKiloUsd(widget.netPremium);
   const rows = buildPremiumDistributionRows(widget);
   const neutralKiloUsd = premiumToKiloUsd(getPremiumNeutralPremium(widget));
@@ -1460,9 +1463,9 @@ const PremiumDistributionWidget = ({
         width: "100%",
         minHeight: dim(widgetHydrationWarning ? 96 : 82),
         border: "none",
-        borderBottom: `1px solid ${T.borderLight}55`,
-        background: selected ? `${T.accent}10` : "transparent",
-        boxShadow: selected ? `inset 3px 0 0 ${T.accent}` : "none",
+        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.borderLight, 33)}`,
+        background: selected ? `${cssColorMix(CSS_COLOR.accent, 6)}` : "transparent",
+        boxShadow: selected ? `inset 3px 0 0 ${CSS_COLOR.accent}` : "none",
         cursor: "pointer",
       }}
     >
@@ -1476,7 +1479,7 @@ const PremiumDistributionWidget = ({
       >
         <span
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.mono,
             fontSize: fs(7),
             minWidth: dim(20),
@@ -1486,7 +1489,7 @@ const PremiumDistributionWidget = ({
         </span>
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.display,
             fontSize: fs(11),
             fontWeight: FONT_WEIGHTS.regular,
@@ -1510,7 +1513,7 @@ const PremiumDistributionWidget = ({
         </span>
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: fs(7),
             minWidth: 0,
@@ -1575,7 +1578,7 @@ const PremiumDistributionWidget = ({
         <div
           title={widgetHydrationWarning}
           style={{
-            color: T.amber,
+            color: CSS_COLOR.amber,
             fontFamily: T.sans,
             fontSize: fs(6),
             fontWeight: FONT_WEIGHTS.regular,
@@ -1870,9 +1873,9 @@ const FlowOverviewPanel = ({
   const liveFlowSnapshot = broadFlowSnapshot;
   const flowScannerTone = flowScannerEnabled
     ? flowScannerOwnerActive
-      ? T.green
-      : T.amber
-    : T.accent;
+      ? CSS_COLOR.green
+      : CSS_COLOR.amber
+    : CSS_COLOR.accent;
   const toggleFlowScanner = useCallback(() => {
     const nextEnabled = !flowScannerEnabled;
     setFlowScannerControlState({ enabled: nextEnabled });
@@ -2085,7 +2088,7 @@ const FlowOverviewPanel = ({
       label: labelParts.join(" · "),
       tone: sourceTone,
       warning: data?.source?.hydrationWarning || null,
-      warningTone: sourceConfidenceMeta.muted ? T.amber : T.textMuted,
+      warningTone: sourceConfidenceMeta.muted ? CSS_COLOR.amber : CSS_COLOR.textMuted,
     };
   }, [premiumDistributionPanelQuery.data]);
   const newsItems = useMemo(() => {
@@ -2337,7 +2340,7 @@ const FlowOverviewPanel = ({
             ? "LEAN BEAR"
             : "BEARISH";
   const compassColor =
-    compassScore >= 20 ? T.green : compassScore >= -20 ? T.amber : T.red;
+    compassScore >= 20 ? CSS_COLOR.green : compassScore >= -20 ? CSS_COLOR.amber : CSS_COLOR.red;
 
   const maxTickerPrem = Math.max(
     1,
@@ -2381,9 +2384,9 @@ const FlowOverviewPanel = ({
         : providerSummary.label;
   const flowDisplayColor =
     !hasLiveFlow && ibkrLoginRequired
-      ? T.amber
+      ? CSS_COLOR.amber
       : flowDisplayLabel === "IBKR delayed"
-        ? T.amber
+        ? CSS_COLOR.amber
         : providerSummary.color;
   const displayableFlowError = getDisplayableFlowError(providerSummary);
   const feedStateLabel = (() => {
@@ -2397,12 +2400,12 @@ const FlowOverviewPanel = ({
     return "No Flow";
   })();
   const feedStateColor = (() => {
-    if (livePaused || flowEventsFilteredOut) return T.amber;
-    if (hasLiveFlow) return staleFlowEvents ? T.amber : T.green;
-    if (flowStatus === "loading") return T.accent;
-    if (flowQuality?.label === "Degraded") return T.red;
-    if (flowScannerCoverageActive) return T.accent;
-    return flowQuality?.color || T.textDim;
+    if (livePaused || flowEventsFilteredOut) return CSS_COLOR.amber;
+    if (hasLiveFlow) return staleFlowEvents ? CSS_COLOR.amber : CSS_COLOR.green;
+    if (flowStatus === "loading") return CSS_COLOR.accent;
+    if (flowQuality?.label === "Degraded") return CSS_COLOR.red;
+    if (flowScannerCoverageActive) return CSS_COLOR.accent;
+    return flowQuality?.color || CSS_COLOR.textDim;
   })();
   const emptyFlowDetail =
     flowStatus === "loading"
@@ -2668,31 +2671,31 @@ const FlowOverviewPanel = ({
       label: "Total Premium",
       value: fmtM(totalCallPrem + totalPutPrem),
       sub: `${filtered.length} shown`,
-      color: T.text,
+      color: CSS_COLOR.text,
     },
     {
       label: "Net Premium",
       value: `${netPrem >= 0 ? "+" : "-"}${fmtM(Math.abs(netPrem))}`,
       sub: netPrem >= 0 ? "Bullish balance" : "Bearish balance",
-      color: netPrem >= 0 ? T.green : T.red,
+      color: netPrem >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
     },
     {
       label: "0DTE",
       value: zeroDteCount,
       sub: fmtM(zeroDtePrem),
-      color: T.amber,
+      color: CSS_COLOR.amber,
     },
     {
       label: "Golden",
       value: goldenCount,
       sub: `${sweepCount} sweeps · ${blockCount} blocks`,
-      color: T.cyan,
+      color: CSS_COLOR.cyan,
     },
     {
       label: "Leader",
       value: mostActive.sym,
       sub: fmtM(mostActive.calls + mostActive.puts),
-      color: T.purple,
+      color: CSS_COLOR.purple,
     },
     {
       label: "Smart Money",
@@ -2866,16 +2869,16 @@ const FlowOverviewPanel = ({
 
   const renderTapeCell = (columnId, event) => {
     const sideColor =
-      event.side === "BUY" ? T.green : event.side === "SELL" ? T.red : T.textDim;
-    const cpColor = event.cp === "C" ? T.green : T.red;
+      event.side === "BUY" ? CSS_COLOR.green : event.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim;
+    const cpColor = event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
     const scoreColor =
-      event.score >= 80 ? T.amber : event.score >= 60 ? T.green : T.textDim;
+      event.score >= 80 ? CSS_COLOR.amber : event.score >= 60 ? CSS_COLOR.green : CSS_COLOR.textDim;
     const typeColor =
       event.type === "SWEEP"
-        ? T.amber
+        ? CSS_COLOR.amber
         : event.type === "BLOCK"
-          ? T.accent
-          : T.purple;
+          ? CSS_COLOR.accent
+          : CSS_COLOR.purple;
     const executionMeta = getFlowExecutionMeta(event);
     const cluster = clusterFor(event);
     const volToOi =
@@ -2893,7 +2896,7 @@ const FlowOverviewPanel = ({
       const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
       const occurredAt = event.occurredAt ? formatFlowAppTime(event.occurredAt) : event.time;
       const ageMs = Math.max(0, flowNowMs - (Date.parse(event.occurredAt || "") || flowNowMs));
-      const ageColor = ageMs < 60_000 ? T.green : ageMs < 300_000 ? T.textSec : T.textDim;
+      const ageColor = ageMs < 60_000 ? CSS_COLOR.green : ageMs < 300_000 ? CSS_COLOR.textSec : CSS_COLOR.textDim;
       return (
         <AppTooltip content={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}><span
           data-testid="flow-tape-cell-time"
@@ -2906,7 +2909,7 @@ const FlowOverviewPanel = ({
     if (columnId === "ticker") {
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
-          {event.golden ? <span style={{ color: T.amber }}>★</span> : null}
+          {event.golden ? <span style={{ color: CSS_COLOR.amber }}>★</span> : null}
           <MarketIdentityInline
             ticker={event.ticker}
             size={14}
@@ -2917,7 +2920,7 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "expiration") {
       return (
-        <AppTooltip content={event.expirationDate || undefined}><span style={{ color: T.textDim }}>
+        <AppTooltip content={event.expirationDate || undefined}><span style={{ color: CSS_COLOR.textDim }}>
           {formatExpirationLabel(event.expirationDate)}
         </span></AppTooltip>
       );
@@ -2944,7 +2947,7 @@ const FlowOverviewPanel = ({
               display: "inline-flex",
               alignItems: "center",
               minWidth: 0,
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           >
@@ -2958,9 +2961,9 @@ const FlowOverviewPanel = ({
                 gap: sp(2),
                 padding: sp("0px 4px"),
                 borderRadius: dim(2),
-                border: `1px solid ${T.cyan}40`,
-                background: `${T.cyan}14`,
-                color: T.cyan,
+                border: `1px solid ${cssColorMix(CSS_COLOR.cyan, 25)}`,
+                background: `${cssColorMix(CSS_COLOR.cyan, 8)}`,
+                color: CSS_COLOR.cyan,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
               }}
@@ -2987,10 +2990,10 @@ const FlowOverviewPanel = ({
             textAlign: "right",
             color:
               event.premium > 250000
-                ? T.amber
+                ? CSS_COLOR.amber
                 : event.premium > 100000
-                  ? T.text
-                  : T.textSec,
+                  ? CSS_COLOR.text
+                  : CSS_COLOR.textSec,
             fontWeight: FONT_WEIGHTS.regular,
           }}
         >
@@ -3016,7 +3019,7 @@ const FlowOverviewPanel = ({
               ? "Option mark"
               : "Option mark unavailable"
           }><span
-          style={{ textAlign: "right", color: T.textSec, fontWeight: FONT_WEIGHTS.label }}
+          style={{ textAlign: "right", color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.label }}
         >
           {formatOptionPrice(event.mark)}
         </span></AppTooltip>
@@ -3060,10 +3063,10 @@ const FlowOverviewPanel = ({
               lineHeight: 1,
             }}
           >
-            <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
               B {formatOptionPrice(bid)}
             </span>
-            <span style={{ color: event.cp === "P" ? T.red : T.green, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
               A {formatOptionPrice(ask)}
             </span>
           </div>
@@ -3074,14 +3077,14 @@ const FlowOverviewPanel = ({
               borderRadius: dim(RADII.pill),
               overflow: "hidden",
               border: "none",
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
             }}
           >
             <span
               style={{
                 position: "absolute",
                 inset: 0,
-                background: `linear-gradient(90deg, ${T.red}55 0%, ${T.textDim}45 50%, ${event.cp === "P" ? T.red : T.green}66 100%)`,
+                background: `linear-gradient(90deg, ${cssColorMix(CSS_COLOR.red, 33)} 0%, ${cssColorMix(CSS_COLOR.textDim, 27)} 50%, ${cssColorAlpha(event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, "66")} 100%)`,
               }}
             />
             {fillPosition !== null ? (
@@ -3095,7 +3098,7 @@ const FlowOverviewPanel = ({
                   transform: "translateX(-50%)",
                   borderRadius: dim(1),
                   background: fillSpreadMeta.color,
-                  boxShadow: `0 0 0 1px ${T.bg0}`,
+                  boxShadow: `0 0 0 1px ${CSS_COLOR.bg0}`,
                 }}
               />
             ) : null}
@@ -3105,14 +3108,14 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "bid") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatOptionPrice(event.bid)}
         </span>
       );
     }
     if (columnId === "ask") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatOptionPrice(event.ask)}
         </span>
       );
@@ -3132,8 +3135,8 @@ const FlowOverviewPanel = ({
               fillSpreadMeta.crossed ||
               (isFiniteNumber(fillSpreadMeta.spreadPct) &&
                 fillSpreadMeta.spreadPct > 10)
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
           }}
         >
           {fillSpreadMeta.crossed
@@ -3147,14 +3150,14 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "size") {
       return (
-        <span style={{ textAlign: "right", color: T.textSec }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textSec }}>
           {fmtCompactNumber(event.vol)}
         </span>
       );
     }
     if (columnId === "oi") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {fmtCompactNumber(event.oi)}
         </span>
       );
@@ -3164,7 +3167,7 @@ const FlowOverviewPanel = ({
         <span
           style={{
             textAlign: "right",
-            color: isFiniteNumber(volToOi) && volToOi > 1 ? T.amber : T.textDim,
+            color: isFiniteNumber(volToOi) && volToOi > 1 ? CSS_COLOR.amber : CSS_COLOR.textDim,
             fontWeight: FONT_WEIGHTS.regular,
           }}
         >
@@ -3174,14 +3177,14 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "dte") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {Number.isFinite(event.dte) ? `${event.dte}d` : MISSING_VALUE}
         </span>
       );
     }
     if (columnId === "iv") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {isFiniteNumber(event.iv)
             ? `${(event.iv * 100).toFixed(1)}%`
             : MISSING_VALUE}
@@ -3190,7 +3193,7 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "spot") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {isFiniteNumber(event.spot) ? event.spot.toFixed(2) : MISSING_VALUE}
         </span>
       );
@@ -3208,7 +3211,7 @@ const FlowOverviewPanel = ({
           }><span
           style={{
             textAlign: "right",
-            color: isAtOrInTheMoney ? T.green : T.amber,
+            color: isAtOrInTheMoney ? CSS_COLOR.green : CSS_COLOR.amber,
             fontWeight: FONT_WEIGHTS.regular,
           }}
         >
@@ -3221,12 +3224,12 @@ const FlowOverviewPanel = ({
     if (columnId === "moneyness") {
       const color =
         event.moneyness === "ITM"
-          ? T.green
+          ? CSS_COLOR.green
           : event.moneyness === "ATM"
-            ? T.amber
+            ? CSS_COLOR.amber
             : event.moneyness === "OTM"
-              ? T.textSec
-              : T.textDim;
+              ? CSS_COLOR.textSec
+              : CSS_COLOR.textDim;
       return (
         <span style={{ textAlign: "right", color, fontWeight: FONT_WEIGHTS.regular }}>
           {event.moneyness && event.moneyness !== "UNKNOWN"
@@ -3237,35 +3240,35 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "distance") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatSignedPercent(event.distancePercent)}
         </span>
       );
     }
     if (columnId === "delta") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatGreekValue(event.delta)}
         </span>
       );
     }
     if (columnId === "gamma") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatGreekValue(event.gamma)}
         </span>
       );
     }
     if (columnId === "theta") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatGreekValue(event.theta)}
         </span>
       );
     }
     if (columnId === "vega") {
       return (
-        <span style={{ textAlign: "right", color: T.textDim }}>
+        <span style={{ textAlign: "right", color: CSS_COLOR.textDim }}>
           {formatGreekValue(event.vega)}
         </span>
       );
@@ -3310,9 +3313,9 @@ const FlowOverviewPanel = ({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${isPinned ? T.amber : T.border}`,
-              background: isPinned ? `${T.amber}18` : T.bg2,
-              color: isPinned ? T.amber : T.textDim,
+              border: `1px solid ${isPinned ? CSS_COLOR.amber : CSS_COLOR.border}`,
+              background: isPinned ? `${cssColorMix(CSS_COLOR.amber, 9)}` : CSS_COLOR.bg2,
+              color: isPinned ? CSS_COLOR.amber : CSS_COLOR.textDim,
               cursor: "pointer",
               padding: 0,
             }}
@@ -3329,9 +3332,9 @@ const FlowOverviewPanel = ({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              border: `1px solid ${copied ? T.green : T.border}`,
-              background: copied ? `${T.green}18` : T.bg2,
-              color: copied ? T.green : T.textDim,
+              border: `1px solid ${copied ? CSS_COLOR.green : CSS_COLOR.border}`,
+              background: copied ? `${cssColorMix(CSS_COLOR.green, 9)}` : CSS_COLOR.bg2,
+              color: copied ? CSS_COLOR.green : CSS_COLOR.textDim,
               cursor: "pointer",
               padding: 0,
             }}
@@ -3352,8 +3355,8 @@ const FlowOverviewPanel = ({
               alignItems: "center",
               justifyContent: "center",
               border: "none",
-              background: T.bg1,
-              color: T.textSec,
+              background: CSS_COLOR.bg1,
+              color: CSS_COLOR.textSec,
               cursor: "pointer",
               padding: 0,
               borderRadius: dim(RADII.pill),
@@ -3367,15 +3370,15 @@ const FlowOverviewPanel = ({
     return null;
   };
 
-  const toolbarChipStyle = (active, accent = T.accent) => ({
+  const toolbarChipStyle = (active, accent = CSS_COLOR.accent) => ({
     padding: sp("4px 10px"),
     fontSize: textSize("caption"),
     fontFamily: T.sans,
     fontWeight: active ? 600 : 500,
     letterSpacing: "0.02em",
     border: "none",
-    background: active ? `${accent}18` : T.bg2,
-    color: active ? accent : T.textSec,
+    background: active ? cssColorAlpha(accent, "18") : CSS_COLOR.bg2,
+    color: active ? accent : CSS_COLOR.textSec,
     cursor: "pointer",
     borderRadius: dim(RADII.pill),
     transition: "background 120ms ease, color 120ms ease",
@@ -3383,14 +3386,14 @@ const FlowOverviewPanel = ({
 
   const panelLabelStyle = {
     fontSize: textSize("caption"),
-    color: T.textMuted,
+    color: CSS_COLOR.textMuted,
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   };
 
-  const toolButtonStyle = (active, accent = T.accent) => ({
+  const toolButtonStyle = (active, accent = CSS_COLOR.accent) => ({
     ...toolbarChipStyle(active, accent),
     minHeight: dim(28),
     display: "inline-flex",
@@ -3433,7 +3436,7 @@ const FlowOverviewPanel = ({
       padding: 0,
       border: "none",
       background: "transparent",
-      color: active ? T.text : T.textMuted,
+      color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
       cursor: sortable ? "pointer" : "default",
       font: "inherit",
       fontWeight: FONT_WEIGHTS.regular,
@@ -3487,9 +3490,9 @@ const FlowOverviewPanel = ({
       const pinned = pinnedEventId === event.id;
       const executionMeta = getFlowExecutionMeta(event);
       const rowAccent = selected
-        ? T.accent
+        ? CSS_COLOR.accent
         : pinned || event.golden
-          ? T.amber
+          ? CSS_COLOR.amber
           : executionMeta.color;
       return {
         className: joinMotionClasses(
@@ -3504,19 +3507,19 @@ const FlowOverviewPanel = ({
         onMouseEnter: (entry) => {
           if (!selected) {
             entry.currentTarget.style.background = pinned
-              ? `${T.amber}18`
+              ? `${cssColorMix(CSS_COLOR.amber, 9)}`
               : event.golden
-                ? `${T.amber}18`
-                : T.bg2;
+                ? `${cssColorMix(CSS_COLOR.amber, 9)}`
+                : CSS_COLOR.bg2;
           }
         },
         onMouseLeave: (entry) => {
           entry.currentTarget.style.background = selected
-            ? `${T.accent}12`
+            ? `${cssColorMix(CSS_COLOR.accent, 7)}`
             : pinned
-              ? `${T.amber}10`
+              ? `${cssColorMix(CSS_COLOR.amber, 6)}`
               : event.golden
-                ? `${T.amber}0f`
+                ? `${cssColorMix(CSS_COLOR.amber, 6)}`
                 : "transparent";
         },
         style: {
@@ -3526,13 +3529,13 @@ const FlowOverviewPanel = ({
           fontFamily: T.sans,
           columnGap: sp(2),
           alignItems: "center",
-          borderBottom: `1px solid ${T.border}15`,
+          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 8)}`,
           background: selected
-            ? `${T.accent}12`
+            ? `${cssColorMix(CSS_COLOR.accent, 7)}`
             : pinned
-              ? `${T.amber}10`
+              ? `${cssColorMix(CSS_COLOR.amber, 6)}`
               : event.golden
-                ? `${T.amber}0f`
+                ? `${cssColorMix(CSS_COLOR.amber, 6)}`
                 : "transparent",
           cursor: "pointer",
         },
@@ -3567,13 +3570,13 @@ const FlowOverviewPanel = ({
           gap: sp(6),
         }}
       >
-        <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
+        <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
           Filters
         </span>
         <AppTooltip content="Collapse filters"><button
           type="button"
           onClick={() => setFiltersOpen(false)}
-          style={toolButtonStyle(false, T.textDim)}
+          style={toolButtonStyle(false, CSS_COLOR.textDim)}
           aria-label="Collapse Flow filters"
         >
           <PanelLeftClose size={13} />
@@ -3586,7 +3589,7 @@ const FlowOverviewPanel = ({
           flexDirection: "column",
           gap: sp(3),
           fontSize: textSize("body"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
         }}
       >
@@ -3601,10 +3604,10 @@ const FlowOverviewPanel = ({
           style={{
             width: "100%",
             padding: sp("7px 10px"),
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             border: "none",
             borderRadius: dim(RADII.md),
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(10),
           }}
@@ -3617,7 +3620,7 @@ const FlowOverviewPanel = ({
           flexDirection: "column",
           gap: sp(3),
           fontSize: textSize("body"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
         }}
       >
@@ -3632,10 +3635,10 @@ const FlowOverviewPanel = ({
           style={{
             width: "100%",
             padding: sp("7px 10px"),
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             border: "none",
             borderRadius: dim(RADII.md),
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(10),
           }}
@@ -3653,7 +3656,7 @@ const FlowOverviewPanel = ({
                 updateFlowTapeFilters({ filter: key });
               }}
               color={
-                key === "golden" ? T.amber : key === "cluster" ? T.cyan : undefined
+                key === "golden" ? CSS_COLOR.amber : key === "cluster" ? CSS_COLOR.cyan : undefined
               }
             >
               {label}
@@ -3733,8 +3736,8 @@ const FlowOverviewPanel = ({
           onClick={saveCurrentScan}
           style={{
             ...toolButtonStyle(false),
-            color: T.accent,
-            borderColor: T.accent,
+            color: CSS_COLOR.accent,
+            borderColor: CSS_COLOR.accent,
           }}
         >
           Save preset
@@ -3743,7 +3746,7 @@ const FlowOverviewPanel = ({
           type="button"
           onClick={handleToggleLivePaused}
           aria-label={livePaused ? "Resume" : "Pause"}
-          style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
+          style={toolButtonStyle(livePaused, livePaused ? CSS_COLOR.amber : CSS_COLOR.green)}
         >
           {livePaused ? <Play size={13} /> : null}
           {livePaused ? "Resume" : "Pause"}
@@ -3765,14 +3768,14 @@ const FlowOverviewPanel = ({
                   padding: sp("3px 7px"),
                   borderRadius: dim(3),
                   border: `1px solid ${
-                    activeScanId === scan.id ? T.accent : T.border
+                    activeScanId === scan.id ? CSS_COLOR.accent : CSS_COLOR.border
                   }`,
                   background:
-                    activeScanId === scan.id ? `${T.accent}18` : T.bg1,
+                    activeScanId === scan.id ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
                   cursor: "pointer",
                   fontSize: textSize("body"),
                   fontFamily: T.sans,
-                  color: activeScanId === scan.id ? T.accent : T.textSec,
+                  color: activeScanId === scan.id ? CSS_COLOR.accent : CSS_COLOR.textSec,
                 }}
               >
                 <span>{scan.name}</span>
@@ -3785,7 +3788,7 @@ const FlowOverviewPanel = ({
                   style={{
                     background: "transparent",
                     border: "none",
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     cursor: "pointer",
                     fontSize: fs(10),
                     padding: 0,
@@ -3816,7 +3819,7 @@ const FlowOverviewPanel = ({
         display: "flex",
         flexDirection: "column",
         gap: sp(7),
-        boxShadow: isMobileFlowLayout ? undefined : `0 18px 48px ${T.bg0}cc`,
+        boxShadow: isMobileFlowLayout ? undefined : `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`,
         maxHeight: isMobileFlowLayout ? undefined : "calc(100vh - 128px)",
         overflowY: isMobileFlowLayout ? "visible" : "auto",
       }}
@@ -3830,17 +3833,17 @@ const FlowOverviewPanel = ({
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: sp(1) }}>
-          <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
+          <span style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
             Columns
           </span>
-          <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+          <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
             Show, hide, and order the tape fields.
           </span>
         </div>
         <AppTooltip content="Close columns"><button
           type="button"
           onClick={() => setColumnsOpen(false)}
-          style={toolButtonStyle(false, T.textDim)}
+          style={toolButtonStyle(false, CSS_COLOR.textDim)}
           aria-label="Close Flow column drawer"
         >
           x
@@ -3862,8 +3865,8 @@ const FlowOverviewPanel = ({
                 gap: sp(4),
                 alignItems: "center",
                 padding: sp("5px 6px"),
-                border: `1px solid ${checked ? T.borderLight : T.border}`,
-                background: checked ? T.bg1 : T.bg0,
+                border: `1px solid ${checked ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
+                background: checked ? CSS_COLOR.bg1 : CSS_COLOR.bg0,
               }}
             >
               <label
@@ -3873,7 +3876,7 @@ const FlowOverviewPanel = ({
                   gap: sp(6),
                   minWidth: 0,
                   fontSize: textSize("caption"),
-                  color: checked ? T.text : T.textDim,
+                  color: checked ? CSS_COLOR.text : CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   cursor: "pointer",
                 }}
@@ -3899,7 +3902,7 @@ const FlowOverviewPanel = ({
                 disabled={index === 0}
                 onClick={() => moveColumn(columnId, -1)}
                 style={{
-                  ...toolbarChipStyle(false, T.textDim),
+                  ...toolbarChipStyle(false, CSS_COLOR.textDim),
                   opacity: index === 0 ? 0.45 : 1,
                 }}
               >
@@ -3910,7 +3913,7 @@ const FlowOverviewPanel = ({
                 disabled={index === columnOrder.length - 1}
                 onClick={() => moveColumn(columnId, 1)}
                 style={{
-                  ...toolbarChipStyle(false, T.textDim),
+                  ...toolbarChipStyle(false, CSS_COLOR.textDim),
                   opacity: index === columnOrder.length - 1 ? 0.45 : 1,
                 }}
               >
@@ -3925,7 +3928,7 @@ const FlowOverviewPanel = ({
         type="button"
         onClick={resetColumns}
         style={{
-          ...toolButtonStyle(false, T.textDim),
+          ...toolButtonStyle(false, CSS_COLOR.textDim),
           alignSelf: "flex-start",
         }}
       >
@@ -3958,16 +3961,16 @@ const FlowOverviewPanel = ({
     const sentiment = classifyFlowSentiment(event);
     const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
     const sentimentColor =
-      sentiment === "bull" ? T.green : sentiment === "bear" ? T.red : T.textDim;
+      sentiment === "bull" ? CSS_COLOR.green : sentiment === "bear" ? CSS_COLOR.red : CSS_COLOR.textDim;
     const sideColor =
-      event.side === "BUY" ? T.green : event.side === "SELL" ? T.red : T.textDim;
+      event.side === "BUY" ? CSS_COLOR.green : event.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim;
     const typeColor =
       event.type === "SWEEP"
-        ? T.amber
+        ? CSS_COLOR.amber
         : event.type === "BLOCK"
-          ? T.accent
-          : T.purple;
-    const cpColor = event.cp === "C" ? T.green : T.red;
+          ? CSS_COLOR.accent
+          : CSS_COLOR.purple;
+    const cpColor = event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
     const volToOi =
       isFiniteNumber(event.vol) && isFiniteNumber(event.oi) && event.oi > 0
         ? event.vol / event.oi
@@ -3983,7 +3986,7 @@ const FlowOverviewPanel = ({
       ? `${formatOptionPrice(fillSpreadMeta.fill)} ${fillSpreadMeta.shortLabel}`
       : MISSING_VALUE;
     const mobileChipStyle = (
-      color = T.textDim,
+      color = CSS_COLOR.textDim,
       { fill = false, strong = false, compact = false } = {},
     ) => ({
       display: "inline-flex",
@@ -3994,7 +3997,7 @@ const FlowOverviewPanel = ({
       padding: compact ? sp("0 3px") : sp("1px 5px"),
       borderRadius: dim(RADII.pill),
       border: "none",
-      background: fill ? `${color}18` : "transparent",
+      background: fill ? cssColorAlpha(color, "18") : "transparent",
       color,
       fontFamily: T.sans,
       fontSize: fs(9),
@@ -4032,19 +4035,19 @@ const FlowOverviewPanel = ({
           ...motionRowStyle(index, 10, 140),
           ...motionVars({
             accent: selected
-              ? T.accent
+              ? CSS_COLOR.accent
               : pinned || event.golden
-                ? T.amber
+                ? CSS_COLOR.amber
                 : executionMeta.color,
           }),
           padding: sp("7px 9px"),
-          borderBottom: `1px solid ${T.borderLight}`,
+          borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
           background: selected
-            ? `${T.accent}12`
+            ? `${cssColorMix(CSS_COLOR.accent, 7)}`
             : pinned
-              ? `${T.amber}10`
+              ? `${cssColorMix(CSS_COLOR.amber, 6)}`
               : event.golden
-                ? `${T.amber}0f`
+                ? `${cssColorMix(CSS_COLOR.amber, 6)}`
                 : "transparent",
           display: "flex",
           flexDirection: "column",
@@ -4074,7 +4077,7 @@ const FlowOverviewPanel = ({
               style={{
                 fontSize: fs(13),
                 fontWeight: FONT_WEIGHTS.label,
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
@@ -4097,7 +4100,7 @@ const FlowOverviewPanel = ({
             <span
               style={{
                 fontSize: fs(9),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 lineHeight: 1,
                 whiteSpace: "nowrap",
@@ -4107,7 +4110,7 @@ const FlowOverviewPanel = ({
             </span>
             {event.golden ? (
               <AppTooltip content="Golden setup">
-                <span aria-label="Golden setup" style={{ color: T.amber, lineHeight: 1 }}>
+                <span aria-label="Golden setup" style={{ color: CSS_COLOR.amber, lineHeight: 1 }}>
                   ★
                 </span>
               </AppTooltip>
@@ -4124,7 +4127,7 @@ const FlowOverviewPanel = ({
             <span
               style={{
                 fontSize: fs(12),
-                color: event.premium >= 250000 ? T.amber : T.text,
+                color: event.premium >= 250000 ? CSS_COLOR.amber : CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.label,
                 whiteSpace: "nowrap",
@@ -4148,7 +4151,7 @@ const FlowOverviewPanel = ({
           }}
         >
           <AppTooltip content="Trade age">
-            <span style={mobileChipStyle(T.textSec, { strong: true })}>{ageLabel}</span>
+            <span style={mobileChipStyle(CSS_COLOR.textSec, { strong: true })}>{ageLabel}</span>
           </AppTooltip>
           <AppTooltip content={sentiment === "bull" ? "Bullish" : sentiment === "bear" ? "Bearish" : "Neutral"}>
             <span
@@ -4177,22 +4180,22 @@ const FlowOverviewPanel = ({
           </span>
           {event.isUnusual ? (
             <AppTooltip content="Volume exceeds open interest">
-              <span style={mobileChipStyle(T.cyan, { fill: true, strong: true })}>V/OI</span>
+              <span style={mobileChipStyle(CSS_COLOR.cyan, { fill: true, strong: true })}>V/OI</span>
             </AppTooltip>
           ) : null}
           {cluster ? (
             <AppTooltip content={`${cluster.count} prints · ${fmtM(cluster.totalPrem)} total premium`}>
-              <span style={mobileChipStyle(T.cyan, { fill: true })}>R{cluster.count}</span>
+              <span style={mobileChipStyle(CSS_COLOR.cyan, { fill: true })}>R{cluster.count}</span>
             </AppTooltip>
           ) : null}
-          <span style={mobileChipStyle(T.textDim)}>
+          <span style={mobileChipStyle(CSS_COLOR.textDim)}>
             {fmtCompactNumber(event.vol)}/{fmtCompactNumber(event.oi)}
           </span>
-          <span style={mobileChipStyle(T.textDim)}>
+          <span style={mobileChipStyle(CSS_COLOR.textDim)}>
             {Number.isFinite(event.dte) ? `${event.dte}d` : MISSING_VALUE}
           </span>
           {isFiniteNumber(volToOi) ? (
-            <span style={mobileChipStyle(volToOi > 1 ? T.amber : T.textDim)}>
+            <span style={mobileChipStyle(volToOi > 1 ? CSS_COLOR.amber : CSS_COLOR.textDim)}>
               {volToOi.toFixed(volToOi >= 10 ? 0 : 1)}x
             </span>
           ) : null}
@@ -4211,8 +4214,8 @@ const FlowOverviewPanel = ({
             style={mobileChipStyle(
               fillSpreadMeta.crossed ||
                 (isFiniteNumber(fillSpreadMeta.spreadPct) && fillSpreadMeta.spreadPct > 10)
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
             )}
           >
             {spreadLabel}
@@ -4259,7 +4262,7 @@ const FlowOverviewPanel = ({
 	        <span
 	          style={{
 	            fontSize: textSize("body"),
-	            color: T.textDim,
+	            color: CSS_COLOR.textDim,
 	            fontFamily: T.sans,
 	            fontWeight: FONT_WEIGHTS.regular,
 	          }}
@@ -4269,7 +4272,7 @@ const FlowOverviewPanel = ({
 	      ) : null}
       {FLOW_BUILT_IN_PRESETS.map((preset) => {
         const active = activeFlowPresetId === preset.id;
-        const presetColor = FLOW_PRESET_COLORS[preset.id] || T.accent;
+        const presetColor = FLOW_PRESET_COLORS[preset.id] || CSS_COLOR.accent;
         return (
           <button
             key={preset.id}
@@ -4280,8 +4283,8 @@ const FlowOverviewPanel = ({
 	              padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
 	              border: "none",
 	              borderRadius: dim(RADII.pill),
-	              background: active ? `${presetColor}18` : T.bg2,
-	              color: active ? presetColor : T.textSec,
+	              background: active ? cssColorAlpha(presetColor, "18") : CSS_COLOR.bg2,
+	              color: active ? presetColor : CSS_COLOR.textSec,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: active ? 600 : 500,
@@ -4302,8 +4305,8 @@ const FlowOverviewPanel = ({
 	            padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
 	            border: "none",
 	            borderRadius: dim(RADII.pill),
-	            background: T.bg1,
-            color: T.textSec,
+	            background: CSS_COLOR.bg1,
+            color: CSS_COLOR.textSec,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.medium,
@@ -4327,8 +4330,8 @@ const FlowOverviewPanel = ({
 	            padding: sp(isMobileFlowLayout ? "3px 8px" : "4px 10px"),
             border: "none",
             borderRadius: dim(RADII.pill),
-            background: `${T.accent}18`,
-            color: T.accent,
+            background: `${cssColorMix(CSS_COLOR.accent, 9)}`,
+            color: CSS_COLOR.accent,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.label,
@@ -4360,7 +4363,7 @@ const FlowOverviewPanel = ({
         height: "100%",
         overflow: "hidden",
         position: "relative",
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
       }}
     >
       <div
@@ -4407,7 +4410,7 @@ const FlowOverviewPanel = ({
                   fontSize: fs(12),
                   fontWeight: FONT_WEIGHTS.regular,
                   fontFamily: T.sans,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                 }}
               >
                 Options Flow Tape
@@ -4415,7 +4418,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: textSize("body"),
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                 }}
               >
@@ -4432,8 +4435,8 @@ const FlowOverviewPanel = ({
                 gap: sp(4),
                 padding: sp("2px 6px"),
                 borderRadius: dim(3),
-                border: `1px solid ${feedStateColor}30`,
-                background: `${feedStateColor}12`,
+                border: `1px solid ${cssColorAlpha(feedStateColor, "30")}`,
+                background: cssColorAlpha(feedStateColor, "12"),
                 color: feedStateColor,
                 fontSize: textSize("body"),
                 fontFamily: T.sans,
@@ -4455,9 +4458,9 @@ const FlowOverviewPanel = ({
                   minWidth: 0,
                   maxWidth: isMobileFlowLayout ? "100%" : dim(260),
                   padding: sp("3px 7px"),
-                  border: `1px solid ${T.amber}35`,
-                  background: `${T.amber}12`,
-                  color: T.amber,
+                  border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
+                  background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+                  color: CSS_COLOR.amber,
                   fontSize: textSize("body"),
                   fontFamily: T.sans,
                   cursor: "pointer",
@@ -4511,7 +4514,7 @@ const FlowOverviewPanel = ({
               type="button"
               onClick={handleToggleLivePaused}
               aria-label={livePaused ? "Resume" : "Pause"}
-              style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
+              style={toolButtonStyle(livePaused, livePaused ? CSS_COLOR.amber : CSS_COLOR.green)}
             >
 	              {livePaused ? <Play size={14} /> : <Pause size={14} />}
 	              {!isMobileFlowLayout ? (livePaused ? "Resume" : "Pause") : null}
@@ -4563,7 +4566,7 @@ const FlowOverviewPanel = ({
               left: dim(8),
               right: dim(8),
               zIndex: 18,
-              boxShadow: `0 18px 48px ${T.bg0}cc`,
+              boxShadow: `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}`,
             }}
           >
             {filterPanel}
@@ -4624,7 +4627,7 @@ const FlowOverviewPanel = ({
               <div
                 style={{
                   padding: sp(isMobileFlowLayout ? "6px 8px 5px" : "8px 10px 6px"),
-                  borderBottom: `1px solid ${T.border}`,
+                  borderBottom: `1px solid ${CSS_COLOR.border}`,
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "flex-start",
@@ -4639,7 +4642,7 @@ const FlowOverviewPanel = ({
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
                       letterSpacing: 0,
-                      color: T.text,
+                      color: CSS_COLOR.text,
                     }}
                   >
                     {isMobileFlowLayout ? "Flow Tape" : "Live Flow Tape"}
@@ -4647,7 +4650,7 @@ const FlowOverviewPanel = ({
                   <span
                     style={{
                       fontSize: textSize("body"),
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       fontFamily: T.sans,
                     }}
                   >
@@ -4670,20 +4673,20 @@ const FlowOverviewPanel = ({
                       scrollbarWidth: "none",
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                     }}
                   >
                     {[
-                      ["Bull", flowSentimentSummary.bullPremium, T.green],
-                      ["Bear", flowSentimentSummary.bearPremium, T.red],
+                      ["Bull", flowSentimentSummary.bullPremium, CSS_COLOR.green],
+                      ["Bear", flowSentimentSummary.bearPremium, CSS_COLOR.red],
                       [
                         "Net",
                         flowSentimentSummary.netPremium,
                         flowSentimentSummary.netPremium > 0
-                          ? T.green
+                          ? CSS_COLOR.green
                           : flowSentimentSummary.netPremium < 0
-                            ? T.red
-                            : T.textDim,
+                            ? CSS_COLOR.red
+                            : CSS_COLOR.textDim,
                       ],
                     ].map(([label, value, color]) => (
                       <AppTooltip key={label} content={`${label} ${fmtM(value)}`}>
@@ -4718,18 +4721,18 @@ const FlowOverviewPanel = ({
                       flexWrap: "wrap",
                       fontSize: textSize("body"),
                       fontFamily: T.sans,
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                     }}
                   >
                     <span>
                       Bull{" "}
-                      <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                      <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                         {fmtM(flowSentimentSummary.bullPremium)}
                       </span>
                     </span>
                     <span>
                       Bear{" "}
-                      <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                      <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                         {fmtM(flowSentimentSummary.bearPremium)}
                       </span>
                     </span>
@@ -4739,10 +4742,10 @@ const FlowOverviewPanel = ({
                         style={{
                           color:
                             flowSentimentSummary.netPremium > 0
-                              ? T.green
+                              ? CSS_COLOR.green
                               : flowSentimentSummary.netPremium < 0
-                                ? T.red
-                                : T.textDim,
+                                ? CSS_COLOR.red
+                                : CSS_COLOR.textDim,
                           fontWeight: FONT_WEIGHTS.regular,
                         }}
                       >
@@ -4770,7 +4773,7 @@ const FlowOverviewPanel = ({
                       overflow: "hidden",
                       borderRadius: dim(RADII.pill),
                       border: "none",
-                      background: T.bg1,
+                      background: CSS_COLOR.bg1,
                     }}
                   >
                     <span
@@ -4778,7 +4781,7 @@ const FlowOverviewPanel = ({
                         width: `${Math.round(flowSentimentSummary.bullShare * 100)}%`,
                         minWidth:
                           flowSentimentSummary.bullPremium > 0 ? dim(3) : 0,
-                        background: T.green,
+                        background: CSS_COLOR.green,
                       }}
                     />
                     <span
@@ -4786,7 +4789,7 @@ const FlowOverviewPanel = ({
                         width: `${Math.round(flowSentimentSummary.neutralShare * 100)}%`,
                         minWidth:
                           flowSentimentSummary.neutralPremium > 0 ? dim(3) : 0,
-                        background: `${T.textDim}80`,
+                        background: `${cssColorMix(CSS_COLOR.textDim, 50)}`,
                       }}
                     />
                     <span
@@ -4794,7 +4797,7 @@ const FlowOverviewPanel = ({
                         width: `${Math.round(flowSentimentSummary.bearShare * 100)}%`,
                         minWidth:
                           flowSentimentSummary.bearPremium > 0 ? dim(3) : 0,
-                        background: T.red,
+                        background: CSS_COLOR.red,
                       }}
                     />
                   </div></AppTooltip>
@@ -4845,7 +4848,7 @@ const FlowOverviewPanel = ({
                         justifyContent: "flex-end",
                         fontSize: textSize("body"),
                         fontFamily: T.sans,
-                        color: T.textDim,
+                        color: CSS_COLOR.textDim,
                       }}
                     >
                       <span>Neutral {fmtM(flowSentimentSummary.neutralPremium)}</span>
@@ -4899,9 +4902,9 @@ const FlowOverviewPanel = ({
                           <div
                             style={{
                               padding: sp("6px 10px"),
-                              borderTop: `1px solid ${T.border}`,
+                              borderTop: `1px solid ${CSS_COLOR.border}`,
                               fontSize: textSize("body"),
-                              color: T.textDim,
+                              color: CSS_COLOR.textDim,
                               fontFamily: T.sans,
                             }}
                           >
@@ -4946,7 +4949,7 @@ const FlowOverviewPanel = ({
                                     padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
                                     columnGap: sp(2),
                                     alignItems: "center",
-                                    borderBottom: `1px solid ${T.border}15`,
+                                    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 8)}`,
                                   }}
                                 >
                                   {tapeColumns.map((column, columnIndex) => (
@@ -4999,9 +5002,9 @@ const FlowOverviewPanel = ({
                           padding: sp("6px 10px"),
                           fontSize: textSize("body"),
                           fontWeight: FONT_WEIGHTS.regular,
-                          color: T.textMuted,
+                          color: CSS_COLOR.textMuted,
                           letterSpacing: "0.04em",
-                          borderBottom: `1px solid ${T.border}`,
+                          borderBottom: `1px solid ${CSS_COLOR.border}`,
                           columnGap: sp(2),
                           fontFamily: T.sans,
                         }}
@@ -5015,9 +5018,9 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             padding: sp("6px 10px"),
-                            borderTop: `1px solid ${T.border}`,
+                            borderTop: `1px solid ${CSS_COLOR.border}`,
                             fontSize: textSize("body"),
-                            color: T.textDim,
+                            color: CSS_COLOR.textDim,
                             fontFamily: T.sans,
                           }}
                         >
@@ -5049,7 +5052,7 @@ const FlowOverviewPanel = ({
                     <span
                       style={{
                         fontSize: textSize("body"),
-                        color: T.textDim,
+                        color: CSS_COLOR.textDim,
                         fontFamily: T.sans,
                       }}
                     >
@@ -5071,22 +5074,22 @@ const FlowOverviewPanel = ({
                   {
                     label: "Total premium",
                     value: fmtM(selectedTickerSummary.totalPremium),
-                    tone: T.text,
+                    tone: CSS_COLOR.text,
                   },
                   {
                     label: "Call / put",
                     value: `${fmtM(selectedCallPremium)} / ${fmtM(selectedPutPremium)}`,
-                    tone: selectedCallPremium >= selectedPutPremium ? T.green : T.red,
+                    tone: selectedCallPremium >= selectedPutPremium ? CSS_COLOR.green : CSS_COLOR.red,
                   },
                   {
                     label: "Unusual",
                     value: selectedTickerSummary.unusualCount,
-                    tone: T.amber,
+                    tone: CSS_COLOR.amber,
                   },
                   {
                     label: "0DTE",
                     value: selectedTickerSummary.zeroDteCount,
-                    tone: T.cyan,
+                    tone: CSS_COLOR.cyan,
                   },
                 ].map((metric) => (
                   <Stat
@@ -5104,7 +5107,7 @@ const FlowOverviewPanel = ({
                         padding: sp("10px 11px"),
                         border: "none",
                         borderRadius: dim(RADII.md),
-                        background: T.bg1,
+                        background: CSS_COLOR.bg1,
                         display: "flex",
                         flexDirection: "column",
                         gap: sp(4),
@@ -5123,7 +5126,7 @@ const FlowOverviewPanel = ({
                             fontSize: fs(11),
                             fontWeight: FONT_WEIGHTS.regular,
                             fontFamily: T.sans,
-                            color: T.text,
+                            color: CSS_COLOR.text,
                           }}
                         >
                           {selectedEvt.ticker} {selectedEvt.cp}
@@ -5140,22 +5143,22 @@ const FlowOverviewPanel = ({
                           flexWrap: "wrap",
                         }}
                       >
-                        <Badge color={selectedEvt.cp === "C" ? T.green : T.red}>
+                        <Badge color={selectedEvt.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red}>
                           {selectedEvt.side}
                         </Badge>
                         <Badge color={flowProviderColor(selectedEvt.provider)}>
                           {selectedEvt.sourceLabel}
                         </Badge>
-                        <Badge color={selectedEvt.type === "SWEEP" ? T.amber : T.accent}>
+                        <Badge color={selectedEvt.type === "SWEEP" ? CSS_COLOR.amber : CSS_COLOR.accent}>
                           {selectedEvt.type}
                         </Badge>
                         <Badge
                           color={
                             selectedEvt.score >= 80
-                              ? T.amber
+                              ? CSS_COLOR.amber
                               : selectedEvt.score >= 60
-                                ? T.green
-                                : T.textDim
+                                ? CSS_COLOR.green
+                                : CSS_COLOR.textDim
                           }
                         >
                           {selectedEvt.score}
@@ -5165,9 +5168,9 @@ const FlowOverviewPanel = ({
                         type="button"
                         onClick={() => onJumpToTrade?.(selectedEvt)}
                         style={{
-                          ...toolbarChipStyle(false, T.accent),
+                          ...toolbarChipStyle(false, CSS_COLOR.accent),
                           alignSelf: "flex-start",
-                          color: T.accent,
+                          color: CSS_COLOR.accent,
                         }}
                       >
                         Open in Trade
@@ -5187,7 +5190,7 @@ const FlowOverviewPanel = ({
                 >
                   <CardTitle
                     right={
-                      <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                      <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                         {selectedTickerEvents.length} rows
                       </span>
                     }
@@ -5208,25 +5211,25 @@ const FlowOverviewPanel = ({
                         label: "Ask premium",
                         value: fmtM(selectedTickerSideSplit.askPremium),
                         sub: `${selectedTickerSideSplit.askCount} prints`,
-                        color: T.green,
+                        color: CSS_COLOR.green,
                       },
                       {
                         label: "Bid premium",
                         value: fmtM(selectedTickerSideSplit.bidPremium),
                         sub: `${selectedTickerSideSplit.bidCount} prints`,
-                        color: T.red,
+                        color: CSS_COLOR.red,
                       },
                       {
                         label: "Call premium",
                         value: fmtM(selectedCallPremium),
                         sub: `${selectedTickerEvents.filter((event) => event.cp === "C").length} calls`,
-                        color: T.green,
+                        color: CSS_COLOR.green,
                       },
                       {
                         label: "Put premium",
                         value: fmtM(selectedPutPremium),
                         sub: `${selectedTickerEvents.filter((event) => event.cp === "P").length} puts`,
-                        color: T.red,
+                        color: CSS_COLOR.red,
                       },
                     ].map((metric, index) => (
                       <div
@@ -5235,10 +5238,10 @@ const FlowOverviewPanel = ({
                           flex: "1 1 auto",
                           minWidth: dim(90),
                           padding: sp("3px 8px"),
-                          borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                          borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                         }}
                       >
-                        <div style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans, letterSpacing: "0.04em", textTransform: "uppercase" }}>
                           {metric.label.toUpperCase()}
                         </div>
                         <div
@@ -5252,7 +5255,7 @@ const FlowOverviewPanel = ({
                         >
                           {metric.value}
                         </div>
-                        <div style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                        <div style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                           {metric.sub}
                         </div>
                       </div>
@@ -5282,26 +5285,26 @@ const FlowOverviewPanel = ({
                               alignItems: "center",
                               background: "transparent",
                               border: "none",
-                              borderBottom: `1px solid ${T.border}`,
+                              borderBottom: `1px solid ${CSS_COLOR.border}`,
                               padding: sp("3px 0"),
                               cursor: "pointer",
                             }}
                           >
-                            <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
+                            <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
                               {expiry.label}
                             </span>
-                            <span style={{ display: "flex", height: dim(6), background: T.bg1, overflow: "hidden" }}>
-                              <span style={{ width: `${callPct}%`, background: T.green }} />
-                              <span style={{ flex: 1, background: T.red }} />
+                            <span style={{ display: "flex", height: dim(6), background: CSS_COLOR.bg1, overflow: "hidden" }}>
+                              <span style={{ width: `${callPct}%`, background: CSS_COLOR.green }} />
+                              <span style={{ flex: 1, background: CSS_COLOR.red }} />
                             </span>
-                            <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
+                            <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
                               {fmtM(expiry.premium)}
                             </span>
                           </button>
                         );
                       })
                     ) : (
-                      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
+                      <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
                         No expiry ladder for the selected ticker yet.
                       </span>
                     )}
@@ -5318,17 +5321,17 @@ const FlowOverviewPanel = ({
                             display: "flex",
                             justifyContent: "space-between",
                             gap: sp(4),
-                            background: T.bg1,
+                            background: CSS_COLOR.bg1,
                             border: "none",
                             borderRadius: dim(RADII.sm),
-                            color: T.textDim,
+                            color: CSS_COLOR.textDim,
                             fontFamily: T.sans,
                             fontSize: textSize("body"),
                             padding: sp("4px 5px"),
                             cursor: "pointer",
                           }}
                         >
-                          <span style={{ color: strike.event.cp === "C" ? T.green : T.red }}>
+                          <span style={{ color: strike.event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red }}>
                             {strike.label}
                           </span>
                           <span>{fmtM(strike.premium)}</span>
@@ -5346,17 +5349,17 @@ const FlowOverviewPanel = ({
                             display: "flex",
                             justifyContent: "space-between",
                             gap: sp(4),
-                            background: T.bg1,
+                            background: CSS_COLOR.bg1,
                             border: "none",
                             borderRadius: dim(RADII.sm),
-                            color: T.textDim,
+                            color: CSS_COLOR.textDim,
                             fontFamily: T.sans,
                             fontSize: textSize("body"),
                             padding: sp("4px 5px"),
                             cursor: "pointer",
                           }}
                         >
-                          <span style={{ color: contract.cp === "C" ? T.green : T.red }}>
+                          <span style={{ color: contract.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red }}>
                             {contract.cp}
                             {contract.strike}
                           </span>
@@ -5374,11 +5377,11 @@ const FlowOverviewPanel = ({
                 style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", minWidth: 0 }}
               >
                 {[
-                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: T.green },
-                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: T.red },
-                  { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), tone: T.textDim },
-                  { label: "Sweep / block", value: `${executionStats.sweepCount} / ${executionStats.blockCount}`, sub: `${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`, tone: T.text },
-                  { label: "Avg size / top exp", value: isFiniteNumber(executionStats.avgSize) ? fmtCompactNumber(executionStats.avgSize) : MISSING_VALUE, sub: executionStats.topExpiration, tone: T.text },
+                  { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), tone: CSS_COLOR.green },
+                  { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), tone: CSS_COLOR.red },
+                  { label: "Mid / other", value: executionStats.midCount, sub: fmtM(executionStats.midPrem), tone: CSS_COLOR.textDim },
+                  { label: "Sweep / block", value: `${executionStats.sweepCount} / ${executionStats.blockCount}`, sub: `${fmtM(executionStats.sweepPrem)} / ${fmtM(executionStats.blockPrem)}`, tone: CSS_COLOR.text },
+                  { label: "Avg size / top exp", value: isFiniteNumber(executionStats.avgSize) ? fmtCompactNumber(executionStats.avgSize) : MISSING_VALUE, sub: executionStats.topExpiration, tone: CSS_COLOR.text },
                 ].map((metric, index) => (
                   <div
                     key={metric.label}
@@ -5386,7 +5389,7 @@ const FlowOverviewPanel = ({
                       flex: "1 1 auto",
                       minWidth: dim(110),
                       padding: sp("0 8px"),
-                      borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                      borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                     }}
                   >
                     <Stat
@@ -5399,7 +5402,7 @@ const FlowOverviewPanel = ({
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans, letterSpacing: "0.02em" }}>
+              <div style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans, letterSpacing: "0.02em" }}>
                 Basis mix · trade {executionStats.tradeCount} · snapshot {executionStats.snapshotCount}
               </div>
                 </Card>
@@ -5407,7 +5410,7 @@ const FlowOverviewPanel = ({
                 <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(4) }}>
               <CardTitle
                 right={
-                  <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                  <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                     ranked
                   </span>
                 }
@@ -5422,8 +5425,8 @@ const FlowOverviewPanel = ({
                       style={{
                         width: "100%",
                         textAlign: "left",
-                        background: T.bg1,
-                        border: `1px solid ${selectedEvt?.id === event.id ? T.accent : T.border}`,
+                        background: CSS_COLOR.bg1,
+                        border: `1px solid ${selectedEvt?.id === event.id ? CSS_COLOR.accent : CSS_COLOR.border}`,
                         padding: sp("7px 8px"),
                         cursor: "pointer",
                         display: "flex",
@@ -5432,11 +5435,11 @@ const FlowOverviewPanel = ({
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                        <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, fontFamily: T.sans, color: T.text }}>
+                        <span style={{ fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, fontFamily: T.sans, color: CSS_COLOR.text }}>
                           {event.ticker} {event.cp}
                           {event.strike}
                         </span>
-                        <span style={{ fontSize: textSize("body"), fontFamily: T.sans, color: T.amber, fontWeight: FONT_WEIGHTS.regular }}>
+                        <span style={{ fontSize: textSize("body"), fontFamily: T.sans, color: CSS_COLOR.amber, fontWeight: FONT_WEIGHTS.regular }}>
                           {actionScore.toFixed(0)}
                         </span>
                       </div>
@@ -5444,13 +5447,13 @@ const FlowOverviewPanel = ({
                         <Badge color={getFlowExecutionMeta(event).color}>
                           {getFlowExecutionMeta(event).label}
                         </Badge>
-                        <Badge color={event.type === "SWEEP" ? T.amber : T.accent}>
+                        <Badge color={event.type === "SWEEP" ? CSS_COLOR.amber : CSS_COLOR.accent}>
                           {event.type}
                         </Badge>
-                        {event.isUnusual ? <Badge color={T.cyan}>VOL/OI</Badge> : null}
-                        {cluster ? <Badge color={T.cyan}>Repeat {cluster.count}×</Badge> : null}
+                        {event.isUnusual ? <Badge color={CSS_COLOR.cyan}>VOL/OI</Badge> : null}
+                        {cluster ? <Badge color={CSS_COLOR.cyan}>Repeat {cluster.count}×</Badge> : null}
                       </div>
-                      <div style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                      <div style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                         {fmtM(event.premium)} · {event.time} ET · {event.dte}d
                       </div>
                     </button>
@@ -5460,7 +5463,7 @@ const FlowOverviewPanel = ({
                 <Card style={{ padding: sp("6px 8px"), display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle
                 right={
-                  <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                  <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                     {activeTicker || "market"}
                   </span>
                 }
@@ -5482,14 +5485,14 @@ const FlowOverviewPanel = ({
                               gap: sp(2),
                               padding: sp("6px 7px"),
                               textDecoration: "none",
-                              color: T.text,
-                              background: T.bg1,
+                              color: CSS_COLOR.text,
+                              background: CSS_COLOR.bg1,
                               border: "none",
                               borderRadius: dim(RADII.md),
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                              <span style={{ fontSize: textSize("body"), fontFamily: T.sans, color: T.textDim }}>
+                              <span style={{ fontSize: textSize("body"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
                                 {item.tag}
                               </span>
                               <span
@@ -5498,10 +5501,10 @@ const FlowOverviewPanel = ({
                                   fontFamily: T.sans,
                                   color:
                                     item.sentimentScore > 0
-                                      ? T.green
+                                      ? CSS_COLOR.green
                                       : item.sentimentScore < 0
-                                        ? T.red
-                                        : T.textDim,
+                                        ? CSS_COLOR.red
+                                        : CSS_COLOR.textDim,
                                 }}
                               >
                                 {item.time}
@@ -5509,7 +5512,7 @@ const FlowOverviewPanel = ({
                             </div>
                             <span style={{ fontSize: fs(10), lineHeight: 1.35 }}>{item.title}</span>
                             {item.publisher ? (
-                              <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                              <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                                 {item.publisher}
                               </span>
                             ) : null}
@@ -5532,9 +5535,9 @@ const FlowOverviewPanel = ({
                   )}
               <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
                 {[
-                  { label: "News", value: "Live", color: T.green },
-                  { label: "Dark pool", value: "Not wired", color: T.textDim },
-                  { label: "Insider", value: "Not wired", color: T.textDim },
+                  { label: "News", value: "Live", color: CSS_COLOR.green },
+                  { label: "Dark pool", value: "Not wired", color: CSS_COLOR.textDim },
+                  { label: "Insider", value: "Not wired", color: CSS_COLOR.textDim },
                 ].map((item) => (
                   <span
                     key={item.label}
@@ -5544,8 +5547,8 @@ const FlowOverviewPanel = ({
                       gap: sp(3),
                       padding: sp("2px 6px"),
                       borderRadius: dim(3),
-                      background: `${item.color}12`,
-                      border: `1px solid ${item.color}25`,
+                      background: cssColorAlpha(item.color, "12"),
+                      border: `1px solid ${cssColorAlpha(item.color, "25")}`,
                       color: item.color,
                       fontSize: textSize("body"),
                       fontFamily: T.sans,
@@ -5570,7 +5573,7 @@ const FlowOverviewPanel = ({
                         alignItems: "center",
                         gap: sp(6),
                         padding: sp("6px 8px"),
-                        background: T.bg1,
+                        background: CSS_COLOR.bg1,
                         border: "none",
                         borderRadius: dim(RADII.sm),
                       }}
@@ -5580,18 +5583,18 @@ const FlowOverviewPanel = ({
                           fontSize: textSize("caption"),
                           fontWeight: FONT_WEIGHTS.regular,
                           fontFamily: T.sans,
-                          color: strike.event.cp === "C" ? T.green : T.red,
+                          color: strike.event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red,
                         }}
                       >
                         {strike.label}
                       </span>
-                      <span style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                      <span style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                         {strike.count} prints · {fmtM(strike.premium)}
                       </span>
                     </div>
                   ))
                 ) : (
-                  <div style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}>
+                  <div style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                     No strike concentration yet for the selected ticker.
                   </div>
                 )}
@@ -5604,15 +5607,15 @@ const FlowOverviewPanel = ({
                   return (
                     <div key={sector.sector} style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: textSize("body"), fontFamily: T.sans }}>
-                        <span style={{ color: T.text }}>{sector.sector}</span>
-                        <span style={{ color: bullish >= 0 ? T.green : T.red }}>
+                        <span style={{ color: CSS_COLOR.text }}>{sector.sector}</span>
+                        <span style={{ color: bullish >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
                           {bullish >= 0 ? "+" : "-"}
                           {fmtM(Math.abs(bullish))}
                         </span>
                       </div>
-                      <div style={{ display: "flex", height: dim(6), overflow: "hidden", background: T.bg3 }}>
-                        <div style={{ width: `${callPct}%`, background: T.green }} />
-                        <div style={{ flex: 1, background: T.red }} />
+                      <div style={{ display: "flex", height: dim(6), overflow: "hidden", background: CSS_COLOR.bg3 }}>
+                        <div style={{ width: `${callPct}%`, background: CSS_COLOR.green }} />
+                        <div style={{ flex: 1, background: CSS_COLOR.red }} />
                       </div>
                     </div>
                   );
@@ -5647,7 +5650,7 @@ const FlowOverviewPanel = ({
                     style={{
                       fontSize: textSize("caption"),
                       fontWeight: FONT_WEIGHTS.regular,
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       letterSpacing: "0.04em",
                       fontVariant: "all-small-caps",
                       whiteSpace: "nowrap",
@@ -5671,7 +5674,7 @@ const FlowOverviewPanel = ({
                   <div
                     style={{
                       fontSize: textSize("body"),
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       fontFamily: T.sans,
                       marginTop: sp(1),
                     }}
@@ -5686,7 +5689,7 @@ const FlowOverviewPanel = ({
             >
               <div
                 style={{
-                  background: T.bg1,
+                  background: CSS_COLOR.bg1,
                   border: "none",
                   borderRadius: dim(RADII.md),
                   padding: sp("8px 10px"),
@@ -5707,7 +5710,7 @@ const FlowOverviewPanel = ({
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
                       letterSpacing: 0,
-                      color: T.text,
+                      color: CSS_COLOR.text,
                     }}
                   >
                     Premium Tide
@@ -5720,9 +5723,9 @@ const FlowOverviewPanel = ({
                       fontFamily: T.sans,
                     }}
                   >
-                    <span style={{ color: T.green }}>■ Calls {fmtM(totalCallPrem)}</span>
-                    <span style={{ color: T.red }}>■ Puts {fmtM(totalPutPrem)}</span>
-                    <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
+                    <span style={{ color: CSS_COLOR.green }}>■ Calls {fmtM(totalCallPrem)}</span>
+                    <span style={{ color: CSS_COLOR.red }}>■ Puts {fmtM(totalPutPrem)}</span>
+                    <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
                       Net {netPrem >= 0 ? "+" : ""}
                       {fmtM(Math.abs(netPrem))}
                     </span>
@@ -5732,7 +5735,7 @@ const FlowOverviewPanel = ({
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={flowTide}>
                       <CartesianGrid
-                        stroke={T.borderLight || T.border}
+                        stroke={CSS_COLOR.borderLight || CSS_COLOR.border}
                         strokeDasharray="0"
                         vertical={false}
                       />
@@ -5740,12 +5743,12 @@ const FlowOverviewPanel = ({
                         dataKey="time"
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: textSize("caption"), fill: T.textMuted }}
+                        tick={{ fontSize: textSize("caption"), fill: CSS_COLOR.textMuted }}
                       />
                       <YAxis
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: textSize("caption"), fill: T.textMuted }}
+                        tick={{ fontSize: textSize("caption"), fill: CSS_COLOR.textMuted }}
                         tickFormatter={(value) => `$${(value / 1e6).toFixed(1)}M`}
                       />
                       <Tooltip
@@ -5756,15 +5759,15 @@ const FlowOverviewPanel = ({
                       />
                       <ReferenceLine
                         y={0}
-                        stroke={T.textMuted}
+                        stroke={CSS_COLOR.textMuted}
                         strokeDasharray="0"
                       />
                       <Area
                         type="monotone"
                         dataKey="cumNet"
-                        stroke={T.accent}
+                        stroke={CSS_COLOR.accent}
                         strokeWidth={1.25}
-                        fill={T.accent}
+                        fill={CSS_COLOR.accent}
                         fillOpacity={0.18}
                       />
                     </AreaChart>
@@ -5787,7 +5790,7 @@ const FlowOverviewPanel = ({
                       fontWeight: FONT_WEIGHTS.label,
                       fontFamily: T.sans,
                       letterSpacing: 0,
-                      color: T.text,
+                      color: CSS_COLOR.text,
                     }}
                   >
                     Ticker Leaders
@@ -5795,7 +5798,7 @@ const FlowOverviewPanel = ({
                   <span
                     style={{
                       fontSize: textSize("body"),
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       fontFamily: T.sans,
                     }}
                   >
@@ -5814,7 +5817,7 @@ const FlowOverviewPanel = ({
                       style={{
                         marginBottom: sp(6),
                         paddingBottom: sp(4),
-                        borderBottom: `1px solid ${T.border}30`,
+                        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 19)}`,
                       }}
                     >
                       <div
@@ -5834,7 +5837,7 @@ const FlowOverviewPanel = ({
                         />
                         <span
                           style={{
-                            color: net >= 0 ? T.green : T.red,
+                            color: net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
                             fontWeight: FONT_WEIGHTS.regular,
                           }}
                         >
@@ -5848,7 +5851,7 @@ const FlowOverviewPanel = ({
                           height: dim(8),
                           borderRadius: dim(2),
                           overflow: "hidden",
-                          background: T.bg1,
+                          background: CSS_COLOR.bg1,
                           width: `${barWidth}%`,
                           marginBottom: sp(3),
                         }}
@@ -5856,11 +5859,11 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             width: `${callPct}%`,
-                            background: T.green,
+                            background: CSS_COLOR.green,
                             height: "100%",
                           }}
                         />
-                        <div style={{ flex: 1, background: T.red, height: "100%" }} />
+                        <div style={{ flex: 1, background: CSS_COLOR.red, height: "100%" }} />
                       </div>
                       {topContracts.length ? (
                         <div
@@ -5873,7 +5876,7 @@ const FlowOverviewPanel = ({
                           }}
                         >
                           {topContracts.map((contract) => {
-                            const cpColor = contract.cp === "C" ? T.green : T.red;
+                            const cpColor = contract.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
                             const volLabel =
                               contract.vol >= 1000
                                 ? `${(contract.vol / 1000).toFixed(1)}K`
@@ -5887,7 +5890,7 @@ const FlowOverviewPanel = ({
                                   alignItems: "center",
                                   gap: sp(4),
                                   padding: sp("6px 10px"),
-                                  background: `${cpColor}14`,
+                                  background: cssColorAlpha(cpColor, "14"),
                                   border: "none",
                                   borderRadius: dim(RADII.md),
                                   cursor: "pointer",
@@ -5911,7 +5914,7 @@ const FlowOverviewPanel = ({
                                     justifyContent: "space-between",
                                     fontSize: textSize("body"),
                                     fontFamily: T.sans,
-                                    color: T.textDim,
+                                    color: CSS_COLOR.textDim,
                                   }}
                                 >
                                   <span>{volLabel}</span>
@@ -5937,7 +5940,7 @@ const FlowOverviewPanel = ({
             >
               <div
                 style={{
-                  background: T.bg1,
+                  background: CSS_COLOR.bg1,
                   border: "none",
                   borderRadius: dim(RADII.md),
                   padding: sp("6px 10px"),
@@ -5957,7 +5960,7 @@ const FlowOverviewPanel = ({
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
                   letterSpacing: 0,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                 }}
               >
                 Flow Clock
@@ -5965,7 +5968,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: textSize("body"),
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                 }}
               >
@@ -5985,10 +5988,10 @@ const FlowOverviewPanel = ({
                 const heightPct = (bucket.count / flowClockMaxCount) * 100;
                 const color =
                   bucket.prem > 1500000
-                    ? T.amber
+                    ? CSS_COLOR.amber
                     : bucket.prem > 1000000
-                      ? T.accent
-                      : T.textDim;
+                      ? CSS_COLOR.accent
+                      : CSS_COLOR.textDim;
                 return (
                   <div
                     key={index}
@@ -6018,7 +6021,7 @@ const FlowOverviewPanel = ({
                 display: "flex",
                 justifyContent: "space-between",
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 marginTop: sp(2),
                 padding: sp("0 2px"),
@@ -6032,24 +6035,24 @@ const FlowOverviewPanel = ({
               style={{
                 marginTop: sp(2),
                 padding: sp("3px 6px"),
-                background: T.bg1,
+                background: CSS_COLOR.bg1,
                 borderRadius: dim(3),
                 fontSize: textSize("body"),
                 fontFamily: T.sans,
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 display: "flex",
                 justifyContent: "space-between",
               }}
             >
               <span>
                 Peak{" "}
-                <span style={{ color: T.amber, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: CSS_COLOR.amber, fontWeight: FONT_WEIGHTS.regular }}>
                   {flowClockPeak}
                 </span>
               </span>
               <span>
                 Avg{" "}
-                <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>
                   {flowClockAverage}/30m
                 </span>
               </span>
@@ -6058,7 +6061,7 @@ const FlowOverviewPanel = ({
 
           <div
             style={{
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               border: "none",
               borderRadius: dim(RADII.md),
               padding: sp("6px 10px"),
@@ -6078,7 +6081,7 @@ const FlowOverviewPanel = ({
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
                   letterSpacing: 0,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                 }}
               >
                 Order Flow
@@ -6086,7 +6089,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: textSize("body"),
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                 }}
               >
@@ -6147,10 +6150,10 @@ const FlowOverviewPanel = ({
                           fontSize: fs(10),
                         }}
                       >
-                        <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                        <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                           ${buy.toFixed(0)}M
                         </span>
-                        <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                        <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                           ${sell.toFixed(0)}M
                         </span>
                       </div>
@@ -6160,20 +6163,20 @@ const FlowOverviewPanel = ({
                           height: dim(4),
                           borderRadius: dim(2),
                           overflow: "hidden",
-                          background: T.bg1,
+                          background: CSS_COLOR.bg1,
                         }}
                       >
                         <div
                           style={{
                             width: `${buyPct}%`,
-                            background: T.green,
+                            background: CSS_COLOR.green,
                             opacity: 0.85,
                           }}
                         />
                         <div
                           style={{
                             width: `${100 - buyPct}%`,
-                            background: T.red,
+                            background: CSS_COLOR.red,
                             opacity: 0.85,
                           }}
                         />
@@ -6181,14 +6184,14 @@ const FlowOverviewPanel = ({
                       <div
                         style={{
                           fontSize: textSize("body"),
-                          color: T.textDim,
+                          color: CSS_COLOR.textDim,
                           fontFamily: T.sans,
                         }}
                       >
                         {buyPct.toFixed(1)}% buy ·{" "}
                         <span
                           style={{
-                            color: buy >= sell ? T.green : T.red,
+                            color: buy >= sell ? CSS_COLOR.green : CSS_COLOR.red,
                             fontWeight: FONT_WEIGHTS.regular,
                           }}
                         >
@@ -6199,7 +6202,7 @@ const FlowOverviewPanel = ({
                   </div>
                   <div
                     style={{
-                      borderTop: `1px solid ${T.border}`,
+                      borderTop: `1px solid ${CSS_COLOR.border}`,
                       paddingTop: sp(2),
                     }}
                   >
@@ -6235,7 +6238,7 @@ const FlowOverviewPanel = ({
 
           <div
             style={{
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               border: "none",
               borderRadius: dim(RADII.md),
               padding: sp("6px 10px"),
@@ -6255,7 +6258,7 @@ const FlowOverviewPanel = ({
                   fontWeight: FONT_WEIGHTS.label,
                   fontFamily: T.sans,
                   letterSpacing: 0,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                 }}
               >
                 Expiration Buckets
@@ -6263,7 +6266,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: textSize("body"),
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                 }}
               >
@@ -6286,13 +6289,13 @@ const FlowOverviewPanel = ({
                         marginBottom: 1,
                       }}
                     >
-                      <span style={{ color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
+                      <span style={{ color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>
                         {bucket.bucket === "0DTE" ? (
-                          <span style={{ color: T.amber, marginRight: 3 }}>⚡</span>
+                          <span style={{ color: CSS_COLOR.amber, marginRight: 3 }}>⚡</span>
                         ) : null}
                         {bucket.bucket}
                       </span>
-                      <span style={{ color: T.textDim }}>
+                      <span style={{ color: CSS_COLOR.textDim }}>
                         {bucket.count} prints · {fmtM(total)}
                       </span>
                     </div>
@@ -6302,18 +6305,18 @@ const FlowOverviewPanel = ({
                         height: dim(7),
                         borderRadius: dim(2),
                         overflow: "hidden",
-                        background: T.bg1,
+                        background: CSS_COLOR.bg1,
                         width: `${barWidth}%`,
                       }}
                     >
                       <div
                         style={{
                           width: `${callPct}%`,
-                          background: T.green,
+                          background: CSS_COLOR.green,
                           opacity: 0.85,
                         }}
                       />
-                      <div style={{ flex: 1, background: T.red, opacity: 0.85 }} />
+                      <div style={{ flex: 1, background: CSS_COLOR.red, opacity: 0.85 }} />
                     </div>
                   </div>
                 );

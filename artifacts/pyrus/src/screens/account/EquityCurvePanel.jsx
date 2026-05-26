@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
@@ -51,10 +57,10 @@ const finiteNumber = (value) => {
 
 const toneColor = (value) =>
   value == null || Number.isNaN(Number(value))
-    ? T.textDim
+    ? CSS_COLOR.textDim
     : Number(value) >= 0
-      ? T.green
-      : T.red;
+      ? CSS_COLOR.green
+      : CSS_COLOR.red;
 
 const useStableEquityRangeResponse = (
   response,
@@ -89,7 +95,7 @@ const inspectionDateFromPoint = (point) => {
   return new Date(timestampMs).toISOString().slice(0, 10);
 };
 
-const ToggleChip = ({ active, color = T.accent, onClick, children, title }) => (
+const ToggleChip = ({ active, color = CSS_COLOR.accent, onClick, children, title }) => (
   <AppTooltip content={title}>
     <button
       type="button"
@@ -102,9 +108,9 @@ const ToggleChip = ({ active, color = T.accent, onClick, children, title }) => (
         height: dim(22),
         padding: sp("0 8px"),
         borderRadius: dim(RADII.pill),
-        border: `1px solid ${active ? color : T.border}`,
-        background: active ? `${color}1f` : "transparent",
-        color: active ? color : T.textMuted,
+        border: `1px solid ${active ? color : CSS_COLOR.border}`,
+        background: active ? cssColorAlpha(color, "1f") : "transparent",
+        color: active ? color : CSS_COLOR.textMuted,
         fontSize: textSize("label"),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.medium,
@@ -120,7 +126,7 @@ const ToggleChip = ({ active, color = T.accent, onClick, children, title }) => (
           width: dim(6),
           height: dim(6),
           borderRadius: dim(RADII.pill),
-          background: active ? color : T.borderLight,
+          background: active ? color : CSS_COLOR.borderLight,
           flexShrink: 0,
         }}
       />
@@ -180,7 +186,7 @@ const PinOverlay = ({ chart, timestampMs, compact, visible = true }) => {
         bottom: dim(compact ? 16 : 22),
         left: position,
         width: 1,
-        background: T.accent,
+        background: CSS_COLOR.accent,
         opacity: visible ? 1 : 0,
         transition: "opacity 200ms ease-out",
         pointerEvents: "none",
@@ -198,7 +204,7 @@ export const EquityCurvePanel = ({
   range,
   onRangeChange,
   currency,
-  accentColor = T.accent,
+  accentColor = CSS_COLOR.accent,
   rightRail,
   sourceLabel = "Flex",
   maskValues = false,
@@ -265,21 +271,21 @@ export const EquityCurvePanel = ({
         key: "SPY",
         label: "SPY",
         dataKey: "benchmarkSpyPercent",
-        color: T.accent,
+        color: CSS_COLOR.accent,
         data: spyBenchmarkData,
       },
       {
         key: "QQQ",
         label: "QQQ",
         dataKey: "benchmarkQqqPercent",
-        color: T.purple,
+        color: CSS_COLOR.purple,
         data: qqqBenchmarkData,
       },
       {
         key: "DJIA",
         label: "DJIA",
         dataKey: "benchmarkDjiaPercent",
-        color: T.amber,
+        color: CSS_COLOR.amber,
         data: djiaBenchmarkData,
       },
     ],
@@ -510,7 +516,7 @@ export const EquityCurvePanel = ({
             <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
               <div
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontSize: fs(compact ? 22 : 28),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
@@ -540,14 +546,14 @@ export const EquityCurvePanel = ({
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>
                   {formatAccountSignedMoney(displayedDelta, currency, true, maskValues)}
                 </span>
-                <span style={{ color: T.textMuted }}>·</span>
+                <span style={{ color: CSS_COLOR.textMuted }}>·</span>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>
                   {formatAccountPercent(displayedDeltaPercent, 2, maskValues)}
                 </span>
                 {scrubPoint?.timestamp ? (
                   <>
-                    <span style={{ color: T.textMuted }}>·</span>
-                    <span style={{ color: T.textMuted }}>
+                    <span style={{ color: CSS_COLOR.textMuted }}>·</span>
+                    <span style={{ color: CSS_COLOR.textMuted }}>
                       {formatAppDateTime(scrubPoint.timestamp)}
                     </span>
                   </>
@@ -633,7 +639,7 @@ export const EquityCurvePanel = ({
               alignItems: "center",
               minHeight: dim(compact ? 14 : 16),
               visibility: activeEvent ? "visible" : "hidden",
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: textSize(compact ? "micro" : "label"),
               lineHeight: 1.25,
@@ -673,14 +679,14 @@ export const EquityCurvePanel = ({
               justifyContent: "space-between",
               gap: sp(6),
               flexWrap: "wrap",
-              borderTop: `1px solid ${T.border}`,
+              borderTop: `1px solid ${CSS_COLOR.border}`,
               paddingTop: sp(4),
             }}
           >
             <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap", alignItems: "center" }}>
               <ToggleChip
                 active={showEvents}
-                color={T.green}
+                color={CSS_COLOR.green}
                 onClick={() => setShowEvents((current) => !current)}
                 title="Show deposits, withdrawals, dividends, cash events, and trade events on the chart"
               >
@@ -707,7 +713,7 @@ export const EquityCurvePanel = ({
                 display: "flex",
                 gap: sp(4),
                 flexWrap: "wrap",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: textSize(compact ? "micro" : "label"),
                 fontFamily: T.sans,
                 fontVariantNumeric: "tabular-nums",

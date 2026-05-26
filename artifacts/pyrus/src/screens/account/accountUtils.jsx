@@ -1,5 +1,20 @@
-import { useState } from "react";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, getCurrentTheme, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  useState,
+} from "react";
+import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
+  ELEVATION,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  getCurrentTheme,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 
 const isLightTheme = () => getCurrentTheme() === "light";
 import { formatAppDateTime } from "../../lib/timeZone";
@@ -81,7 +96,7 @@ export const toneForValue = (value) => {
   return Number(value) >= 0 ? "var(--ra-pnl-positive)" : "var(--ra-pnl-negative)";
 };
 
-export const cellSubTextStyle = (tone = T.textMuted) => ({
+export const cellSubTextStyle = (tone = CSS_COLOR.textMuted) => ({
   color: tone,
   fontFamily: T.data,
   fontSize: textSize("caption"),
@@ -103,7 +118,7 @@ export const metricTitle = (metric) => {
 
 export const panelStyle = {
   get background() {
-    return T.bg1;
+    return CSS_COLOR.bg1;
   },
   border: "none",
   get borderRadius() {
@@ -119,7 +134,7 @@ export const sectionTitleStyle = {
     return textSize("displaySmall");
   },
   get color() {
-    return T.text;
+    return CSS_COLOR.text;
   },
   get fontFamily() {
     return T.sans;
@@ -134,7 +149,7 @@ export const sectionEyebrowStyle = {
     return textSize("caption");
   },
   get color() {
-    return T.textMuted;
+    return CSS_COLOR.textMuted;
   },
   get fontFamily() {
     return T.sans;
@@ -149,7 +164,7 @@ export const mutedLabelStyle = {
     return textSize("caption");
   },
   get color() {
-    return T.textMuted;
+    return CSS_COLOR.textMuted;
   },
   get fontFamily() {
     return T.sans;
@@ -171,54 +186,48 @@ const tokenTone = (tokenName) => {
 
 const colorTone = (color) => ({
   color,
-  border: color.startsWith("var(")
-    ? `color-mix(in srgb, ${color} 28%, transparent)`
-    : `${color}44`,
+  border: cssColorAlpha(color, "44"),
   bg: isLightTheme()
-    ? color.startsWith("var(")
-      ? `color-mix(in srgb, ${color} 10%, transparent)`
-      : `${color}14`
-    : color.startsWith("var(")
-      ? `color-mix(in srgb, ${color} 13%, transparent)`
-      : `${color}18`,
+    ? cssColorAlpha(color, "14")
+    : cssColorAlpha(color, "18"),
 });
 
 const toneValueMap = () => ({
-  default: { color: T.textDim, border: T.border, bg: T.bg2 },
+  default: { color: CSS_COLOR.textDim, border: CSS_COLOR.border, bg: CSS_COLOR.bg2 },
   accent: {
-    color: T.accent,
-    border: `${T.accent}44`,
-    bg: isLightTheme() ? `${T.accent}14` : T.accentDim,
+    color: CSS_COLOR.accent,
+    border: `${cssColorMix(CSS_COLOR.accent, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.accent, 8)}` : CSS_COLOR.accentDim,
   },
   green: {
-    color: T.green,
-    border: `${T.green}44`,
-    bg: isLightTheme() ? `${T.green}14` : T.greenBg,
+    color: CSS_COLOR.green,
+    border: `${cssColorMix(CSS_COLOR.green, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.green, 8)}` : CSS_COLOR.greenBg,
   },
   red: {
-    color: T.red,
-    border: `${T.red}44`,
-    bg: isLightTheme() ? `${T.red}14` : T.redBg,
+    color: CSS_COLOR.red,
+    border: `${cssColorMix(CSS_COLOR.red, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.red, 8)}` : CSS_COLOR.redBg,
   },
   amber: {
-    color: T.amber,
-    border: `${T.amber}44`,
-    bg: isLightTheme() ? `${T.amber}14` : T.amberBg,
+    color: CSS_COLOR.amber,
+    border: `${cssColorMix(CSS_COLOR.amber, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.amber, 8)}` : CSS_COLOR.amberBg,
   },
   cyan: {
-    color: T.cyan,
-    border: `${T.cyan}44`,
-    bg: isLightTheme() ? `${T.cyan}14` : `${T.cyan}18`,
+    color: CSS_COLOR.cyan,
+    border: `${cssColorMix(CSS_COLOR.cyan, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.cyan, 8)}` : `${cssColorMix(CSS_COLOR.cyan, 9)}`,
   },
   purple: {
-    color: T.purple,
-    border: `${T.purple}44`,
-    bg: isLightTheme() ? `${T.purple}14` : `${T.purple}18`,
+    color: CSS_COLOR.purple,
+    border: `${cssColorMix(CSS_COLOR.purple, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.purple, 8)}` : `${cssColorMix(CSS_COLOR.purple, 9)}`,
   },
   pink: {
-    color: T.pink,
-    border: `${T.pink}44`,
-    bg: isLightTheme() ? `${T.pink}14` : `${T.pink}18`,
+    color: CSS_COLOR.pink,
+    border: `${cssColorMix(CSS_COLOR.pink, 27)}`,
+    bg: isLightTheme() ? `${cssColorMix(CSS_COLOR.pink, 8)}` : `${cssColorMix(CSS_COLOR.pink, 9)}`,
   },
   "pnl-positive": tokenTone("--ra-pnl-positive"),
   "pnl-negative": tokenTone("--ra-pnl-negative"),
@@ -242,8 +251,8 @@ export const denseButtonStyle = (active = false) => ({
   padding: sp("0 10px"),
   borderRadius: dim(RADII.pill),
   border: "none",
-  background: active ? T.bg1 : "transparent",
-  color: active ? T.text : T.textDim,
+  background: active ? CSS_COLOR.bg1 : "transparent",
+  color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
   boxShadow: active ? ELEVATION.sm : "none",
   fontSize: textSize("control"),
   fontFamily: T.sans,
@@ -264,10 +273,10 @@ export const primaryButtonStyle = {
   borderRadius: dim(RADII.pill),
   border: "none",
   get background() {
-    return T.accent;
+    return CSS_COLOR.accent;
   },
   get color() {
-    return T.onAccent;
+    return CSS_COLOR.onAccent;
   },
   get fontSize() {
     return textSize("control");
@@ -291,10 +300,10 @@ export const secondaryButtonStyle = {
   borderRadius: dim(RADII.pill),
   border: "none",
   get background() {
-    return T.bg2;
+    return CSS_COLOR.bg2;
   },
   get color() {
-    return T.text;
+    return CSS_COLOR.text;
   },
   get fontSize() {
     return textSize("control");
@@ -319,7 +328,7 @@ export const ghostButtonStyle = {
   border: "none",
   background: "transparent",
   get color() {
-    return T.textSec;
+    return CSS_COLOR.textSec;
   },
   get fontSize() {
     return textSize("control");
@@ -345,10 +354,10 @@ export const controlInputStyle = {
   },
   border: "none",
   get background() {
-    return T.bg2;
+    return CSS_COLOR.bg2;
   },
   get color() {
-    return T.text;
+    return CSS_COLOR.text;
   },
   get fontSize() {
     return textSize("control");
@@ -370,13 +379,13 @@ export const controlSelectStyle = {
     return dim(RADII.xs);
   },
   get border() {
-    return `1px solid ${T.border}`;
+    return `1px solid ${CSS_COLOR.border}`;
   },
   get background() {
-    return T.bg0;
+    return CSS_COLOR.bg0;
   },
   get color() {
-    return T.text;
+    return CSS_COLOR.text;
   },
   get fontSize() {
     return textSize("control");
@@ -393,10 +402,10 @@ export const tableHeaderStyle = {
   top: 0,
   zIndex: 1,
   get background() {
-    return T.bg1;
+    return CSS_COLOR.bg1;
   },
   get color() {
-    return T.textSec;
+    return CSS_COLOR.textSec;
   },
   get fontSize() {
     return textSize("body");
@@ -408,7 +417,7 @@ export const tableHeaderStyle = {
   letterSpacing: "0.06em",
   textTransform: "uppercase",
   get borderBottom() {
-    return `1px solid ${T.border}`;
+    return `1px solid ${CSS_COLOR.border}`;
   },
 };
 
@@ -417,7 +426,7 @@ export const tableCellStyle = {
     return sp("3px 8px");
   },
   get borderBottom() {
-    return `1px solid ${T.borderLight}`;
+    return `1px solid ${CSS_COLOR.borderLight}`;
   },
   get fontSize() {
     return textSize("body");
@@ -426,7 +435,7 @@ export const tableCellStyle = {
     return T.sans;
   },
   get color() {
-    return T.textSec;
+    return CSS_COLOR.textSec;
   },
   fontVariantNumeric: "tabular-nums",
   whiteSpace: "nowrap",
@@ -519,7 +528,7 @@ export const StatTile = ({
       <div
         style={{
           marginTop: sp(compact ? 1 : 4),
-          color: palette.color === T.textDim ? T.text : palette.color,
+          color: palette.color === CSS_COLOR.textDim ? CSS_COLOR.text : palette.color,
           fontSize: textSize(compact ? "metric" : "bodyStrong"),
           fontFamily: T.data,
           fontWeight: FONT_WEIGHTS.regular,
@@ -532,7 +541,7 @@ export const StatTile = ({
         <div
           style={{
             marginTop: sp(compact ? 1 : 3),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontSize: textSize(compact ? "label" : "caption"),
             fontFamily: T.data,
             lineHeight: 1.3,
@@ -555,18 +564,18 @@ export const EmptyState = ({ title, body, action }) => (
       justifyContent: "center",
       gap: sp(8),
       padding: sp("16px 18px"),
-      color: T.textMuted,
+      color: CSS_COLOR.textMuted,
       fontSize: textSize("body"),
       fontFamily: T.sans,
-      border: `1px dashed ${T.border}`,
+      border: `1px dashed ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.md),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       textAlign: "center",
     }}
   >
     <div
       style={{
-        color: T.text,
+        color: CSS_COLOR.text,
         fontSize: textSize("paragraphMuted"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: 0,
@@ -574,7 +583,7 @@ export const EmptyState = ({ title, body, action }) => (
     >
       {title}
     </div>
-    <div style={{ lineHeight: 1.5, color: T.textMuted }}>{body}</div>
+    <div style={{ lineHeight: 1.5, color: CSS_COLOR.textMuted }}>{body}</div>
     {action}
   </div>
 );
@@ -614,7 +623,7 @@ export const Panel = ({
         justifyContent: "space-between",
         gap: sp(compact ? 4 : 8),
         padding: sp(compact ? "4px 5px 3px" : "6px 10px 4px"),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         flexWrap: "wrap",
       }}
     >
@@ -656,7 +665,7 @@ export const Panel = ({
             {rightRail ? (
               <div
                 style={{
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontSize: textSize("label"),
                   fontFamily: T.data,
                   fontWeight: FONT_WEIGHTS.regular,
@@ -691,7 +700,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
           <span
             aria-hidden
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.data,
               fontSize: textSize("label"),
               width: 10,
@@ -708,7 +717,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
       {rightSlot ? (
         <div
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.data,
             fontSize: textSize("label"),
             fontWeight: FONT_WEIGHTS.regular,
@@ -732,7 +741,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
           justifyContent: "space-between",
           gap: sp(5),
           border: "none",
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           background: "transparent",
           color: "inherit",
           textAlign: "left",
@@ -753,7 +762,7 @@ export const SectionHeader = ({ title, rightSlot, onToggle, expanded }) => {
         justifyContent: "space-between",
         gap: sp(5),
         paddingBottom: sp(2),
-        borderBottom: `1px solid ${T.border}`,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
       }}
     >
       {inner}
@@ -818,9 +827,9 @@ export const InlineError = ({ error, onRetry }) => (
     role="alert"
     style={{
       padding: sp(10),
-      color: T.red,
-      background: T.redBg,
-      border: `1px solid ${T.red}55`,
+      color: CSS_COLOR.red,
+      background: CSS_COLOR.redBg,
+      border: `1px solid ${cssColorMix(CSS_COLOR.red, 33)}`,
       borderRadius: dim(RADII.sm),
       fontSize: textSize("body"),
       fontFamily: T.sans,
@@ -833,7 +842,7 @@ export const InlineError = ({ error, onRetry }) => (
         type="button"
         className="ra-interactive"
         onClick={onRetry}
-        style={{ ...secondaryButtonStyle, marginTop: sp(10), color: T.red }}
+        style={{ ...secondaryButtonStyle, marginTop: sp(10), color: CSS_COLOR.red }}
       >
         Retry
       </button>

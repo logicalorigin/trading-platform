@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCancelOrder,
@@ -42,6 +47,9 @@ import {
 } from "../../lib/formatters";
 import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -131,7 +139,7 @@ const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
 const OPEN_POSITION_GRID_TEMPLATE =
   "72px 36px 76px 42px 48px 48px 38px 48px 48px 52px 44px 18px";
 
-const tradeNumericCellStyle = (color = T.textSec) => ({
+const tradeNumericCellStyle = (color = CSS_COLOR.textSec) => ({
   color,
   textAlign: "right",
   fontFamily: T.data,
@@ -142,7 +150,7 @@ const tradeNumericCellStyle = (color = T.textSec) => ({
 });
 
 const tradePnlTone = (value) =>
-  !isFiniteNumber(value) ? T.textDim : value >= 0 ? T.green : T.red;
+  !isFiniteNumber(value) ? CSS_COLOR.textDim : value >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
 
 const tradeSignedMoney = (value) =>
   isFiniteNumber(value) ? `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(0)}` : MISSING_VALUE;
@@ -559,17 +567,17 @@ export const TradePositionsPanel = ({
   const headerSummaryColor =
     tab === "orders"
       ? pendingOrderCount > 0
-        ? T.amber
-        : T.textDim
+        ? CSS_COLOR.amber
+        : CSS_COLOR.textDim
       : tab === "history" && brokerConfigured
         ? historyCount > 0
-          ? T.accent
-          : T.textDim
+          ? CSS_COLOR.accent
+          : CSS_COLOR.textDim
         : hasOpenPnl
           ? totalOpenPnl >= 0
-            ? T.green
-            : T.red
-          : T.textDim;
+            ? CSS_COLOR.green
+            : CSS_COLOR.red
+          : CSS_COLOR.textDim;
   const headerSummaryValue =
     tab === "orders"
       ? `${pendingOrderCount} LIVE`
@@ -600,7 +608,7 @@ export const TradePositionsPanel = ({
         title: `Flatten ${p.ticker} ${p.contract}`,
         detail: "Submit a live market order to close this broker position.",
         confirmLabel: "SEND LIVE CLOSE",
-        confirmTone: T.red,
+        confirmTone: CSS_COLOR.red,
         lines: [
           { label: "ACCOUNT", value: accountId || MISSING_VALUE },
           { label: "SYMBOL", value: p.ticker },
@@ -674,7 +682,7 @@ export const TradePositionsPanel = ({
         detail:
           "Submit live broker orders to flatten every open IBKR position in the active account.",
         confirmLabel: "FLATTEN LIVE POSITIONS",
-        confirmTone: T.red,
+        confirmTone: CSS_COLOR.red,
         lines: [
           { label: "ACCOUNT", value: accountId || MISSING_VALUE },
           { label: "POSITIONS", value: String(livePositions.length) },
@@ -753,7 +761,7 @@ export const TradePositionsPanel = ({
         detail:
           "Preview and synchronize live protective stop orders for every open broker position.",
         confirmLabel: "SYNC LIVE STOPS",
-        confirmTone: T.amber,
+        confirmTone: CSS_COLOR.amber,
         lines: [
           { label: "ACCOUNT", value: accountId || MISSING_VALUE },
           { label: "POSITIONS", value: String(livePositions.length) },
@@ -913,7 +921,7 @@ export const TradePositionsPanel = ({
       title: `Cancel ${order.symbol} ${order.type.toUpperCase()} order`,
       detail: "Send a live broker cancellation request for this working IBKR order.",
       confirmLabel: "CANCEL LIVE ORDER",
-      confirmTone: T.red,
+      confirmTone: CSS_COLOR.red,
       lines: [
         { label: "ACCOUNT", value: accountId || MISSING_VALUE },
         { label: "SYMBOL", value: order.symbol },
@@ -938,8 +946,8 @@ export const TradePositionsPanel = ({
   return (
     <div
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         padding: sp("12px 14px"),
         display: "flex",
@@ -954,7 +962,7 @@ export const TradePositionsPanel = ({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           paddingBottom: sp(4),
           gap: sp(4),
         }}
@@ -975,20 +983,20 @@ export const TradePositionsPanel = ({
               padding: sp(0),
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "open" ? T.text : T.textMuted,
+              color: tab === "open" ? CSS_COLOR.text : CSS_COLOR.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "open"
-                  ? `2px solid ${T.accent}`
+                  ? `2px solid ${CSS_COLOR.accent}`
                   : "2px solid transparent",
               paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
             OPEN{" "}
-            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {openPositions.length}
             </span>
           </button>
@@ -1000,20 +1008,20 @@ export const TradePositionsPanel = ({
               padding: sp(0),
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "history" ? T.text : T.textMuted,
+              color: tab === "history" ? CSS_COLOR.text : CSS_COLOR.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "history"
-                  ? `2px solid ${T.accent}`
+                  ? `2px solid ${CSS_COLOR.accent}`
                   : "2px solid transparent",
               paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
             HIST{" "}
-            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {historyCount}
             </span>
           </button>
@@ -1025,20 +1033,20 @@ export const TradePositionsPanel = ({
               padding: sp(0),
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
-              color: tab === "orders" ? T.text : T.textMuted,
+              color: tab === "orders" ? CSS_COLOR.text : CSS_COLOR.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
               cursor: "pointer",
               borderBottom:
                 tab === "orders"
-                  ? `2px solid ${T.accent}`
+                  ? `2px solid ${CSS_COLOR.accent}`
                   : "2px solid transparent",
               paddingBottom: sp(2),
               whiteSpace: "nowrap",
             }}
           >
             ORDERS{" "}
-            <span style={{ color: T.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textMuted, fontWeight: FONT_WEIGHTS.regular }}>
               {brokerConfigured ? liveOrders.length : 0}
             </span>
           </button>
@@ -1058,11 +1066,11 @@ export const TradePositionsPanel = ({
       {gatewayActionDisabled ? (
         <div
           style={{
-            background: `${T.amber}12`,
-            border: `1px solid ${T.amber}35`,
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
             borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
-            color: T.amber,
+            color: CSS_COLOR.amber,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             lineHeight: 1.35,
@@ -1088,7 +1096,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1106,7 +1114,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1123,7 +1131,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1139,7 +1147,7 @@ export const TradePositionsPanel = ({
 	                  gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
 	                  gap: sp(3),
                   fontSize: textSize("caption"),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
@@ -1195,15 +1203,15 @@ export const TradePositionsPanel = ({
                       padding: sp("3px 4px"),
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
-                      borderBottom: `1px solid ${T.border}08`,
+                      borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
                       cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
                       transition: "background 0.1s",
                       background: "transparent",
-                      boxShadow: p._isUser ? `inset 1px 0 0 ${T.accent}` : "none",
+                      boxShadow: p._isUser ? `inset 1px 0 0 ${CSS_COLOR.accent}` : "none",
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = T.bg2;
+                      e.currentTarget.style.background = CSS_COLOR.bg2;
                     }}
                     onMouseLeave={(e) =>
                       (e.currentTarget.style.background = "transparent")
@@ -1215,7 +1223,7 @@ export const TradePositionsPanel = ({
 	                        display: "inline-flex",
 	                        alignItems: "center",
 	                        gap: sp(4),
-	                        color: T.text,
+	                        color: CSS_COLOR.text,
 	                        fontWeight: FONT_WEIGHTS.regular,
 	                      }}
 	                    >
@@ -1236,47 +1244,47 @@ export const TradePositionsPanel = ({
                     </span>
                     <span
                       style={{
-                        color: T.textSec,
+                        color: CSS_COLOR.textSec,
                         fontWeight: FONT_WEIGHTS.regular,
                         fontSize: textSize("caption"),
                         padding: sp("1px 4px"),
-                        background: T.bg0,
+                        background: CSS_COLOR.bg0,
                         borderRadius: dim(2),
-                        border: `1px solid ${T.border}`,
+                        border: `1px solid ${CSS_COLOR.border}`,
                         textAlign: "center",
                         alignSelf: "center",
                       }}
                     >
                       {p.side}
                     </span>
-                    <span style={{ color: T.textSec, fontSize: textSize("body") }}>
+                    <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("body") }}>
                       {p.contract}
                     </span>
                     <span
                       title={display.openedSourceLabel || undefined}
-                      style={{ color: display.openedLabel ? T.textSec : T.textDim, textAlign: "right" }}
+                      style={{ color: display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim, textAlign: "right" }}
                     >
                       {openedText}
                     </span>
                     <span
                       title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeNumericCellStyle(display.quote?.bid != null ? T.textSec : T.textDim)}
+                      style={tradeNumericCellStyle(display.quote?.bid != null ? CSS_COLOR.textSec : CSS_COLOR.textDim)}
                     >
                       {bidText}
                     </span>
                     <span
                       title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeNumericCellStyle(display.quote?.ask != null ? T.textSec : T.textDim)}
+                      style={tradeNumericCellStyle(display.quote?.ask != null ? CSS_COLOR.textSec : CSS_COLOR.textDim)}
                     >
                       {askText}
                     </span>
-                    <span style={tradeNumericCellStyle(T.textDim)}>
+                    <span style={tradeNumericCellStyle(CSS_COLOR.textDim)}>
                       {p.qty}
                     </span>
-                    <span style={tradeNumericCellStyle(T.textSec)}>
+                    <span style={tradeNumericCellStyle(CSS_COLOR.textSec)}>
                       {entryText}
                     </span>
-                    <span style={tradeNumericCellStyle(T.text)}>
+                    <span style={tradeNumericCellStyle(CSS_COLOR.text)}>
                       {markText}
                     </span>
                     <span style={tradeNumericCellStyle(tradePnlTone(p.pnl))}>
@@ -1303,8 +1311,8 @@ export const TradePositionsPanel = ({
                       }}
                       style={{
                         background: "transparent",
-                        border: `1px solid ${T.red}40`,
-                        color: T.red,
+                        border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
+                        color: CSS_COLOR.red,
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
@@ -1340,7 +1348,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: fs(10),
                 fontFamily: T.sans,
               padding: sp(16),
@@ -1356,7 +1364,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1373,7 +1381,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1388,7 +1396,7 @@ export const TradePositionsPanel = ({
               title="Loading broker fills"
               detail="Requesting broker execution history for the active account."
               loading
-              tone={T.accent}
+              tone={CSS_COLOR.accent}
             />
           ) : !executionRows.length ? (
             <div
@@ -1397,7 +1405,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1414,7 +1422,7 @@ export const TradePositionsPanel = ({
                     "40px 30px minmax(0,1fr) 24px 50px 64px 42px",
                   gap: sp(3),
                   fontSize: textSize("caption"),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
@@ -1438,16 +1446,16 @@ export const TradePositionsPanel = ({
                     padding: sp("3px 4px"),
                     fontSize: textSize("caption"),
                     fontFamily: T.sans,
-                    borderBottom: `1px solid ${T.border}08`,
+                    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
                     alignItems: "center",
                   }}
                 >
-                  <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
+                  <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
                     {execution.ticker}
                   </span>
                   <span
                     style={{
-                      color: execution.side === "BUY" ? T.green : T.red,
+                      color: execution.side === "BUY" ? CSS_COLOR.green : CSS_COLOR.red,
                       fontWeight: FONT_WEIGHTS.regular,
                     }}
                   >
@@ -1455,7 +1463,7 @@ export const TradePositionsPanel = ({
                   </span>
                   <AppTooltip content={execution.contract}><span
                     style={{
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       fontSize: textSize("body"),
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -1464,10 +1472,10 @@ export const TradePositionsPanel = ({
                   >
                     {execution.contract}
                   </span></AppTooltip>
-                  <span style={{ color: T.textDim, textAlign: "right" }}>
+                  <span style={{ color: CSS_COLOR.textDim, textAlign: "right" }}>
                     {execution.qty}
                   </span>
-                  <span style={{ color: T.textDim, textAlign: "right" }}>
+                  <span style={{ color: CSS_COLOR.textDim, textAlign: "right" }}>
                     {isFiniteNumber(execution.price)
                       ? execution.price.toFixed(2)
                       : MISSING_VALUE}
@@ -1476,10 +1484,10 @@ export const TradePositionsPanel = ({
                     style={{
                       color:
                         !isFiniteNumber(execution.netAmount)
-                          ? T.textDim
+                          ? CSS_COLOR.textDim
                           : execution.netAmount >= 0
-                            ? T.green
-                            : T.red,
+                            ? CSS_COLOR.green
+                            : CSS_COLOR.red,
                       textAlign: "right",
                     }}
                     >
@@ -1489,7 +1497,7 @@ export const TradePositionsPanel = ({
                   </span>
                   <span
                     style={{
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       textAlign: "right",
                       fontSize: textSize("caption"),
                     }}
@@ -1521,7 +1529,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1538,7 +1546,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1556,7 +1564,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1571,7 +1579,7 @@ export const TradePositionsPanel = ({
               title="Loading live orders"
               detail="Requesting live IBKR orders for the active account."
               loading
-              tone={T.accent}
+              tone={CSS_COLOR.accent}
             />
           ) : !liveOrders.length ? (
             <div
@@ -1580,7 +1588,7 @@ export const TradePositionsPanel = ({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 padding: sp(16),
@@ -1597,7 +1605,7 @@ export const TradePositionsPanel = ({
                     "42px 30px 44px 22px 28px 58px 42px 24px",
                   gap: sp(3),
                   fontSize: textSize("caption"),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
                   padding: "0 4px",
                 }}
@@ -1644,29 +1652,29 @@ export const TradePositionsPanel = ({
                       padding: sp("3px 4px"),
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
-                      borderBottom: `1px solid ${T.border}08`,
+                      borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
                       cursor: isOption ? "pointer" : "default",
                       alignItems: "center",
                     }}
                   >
-                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
+                    <span style={{ fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
                       {order.symbol}
                     </span>
                     <span
                       style={{
-                        color: order.side === "buy" ? T.green : T.red,
+                        color: order.side === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
                         fontWeight: FONT_WEIGHTS.regular,
                       }}
                     >
                       {order.side === "buy" ? "BUY" : "SELL"}
                     </span>
-                    <span style={{ color: T.textSec }}>
+                    <span style={{ color: CSS_COLOR.textSec }}>
                       {order.type.toUpperCase()}
                     </span>
-                    <span style={{ color: T.textDim, textAlign: "right" }}>
+                    <span style={{ color: CSS_COLOR.textDim, textAlign: "right" }}>
                       {order.quantity}
                     </span>
-                    <span style={{ color: T.textDim, textAlign: "right" }}>
+                    <span style={{ color: CSS_COLOR.textDim, textAlign: "right" }}>
                       {order.filledQuantity}
                     </span>
                     <span
@@ -1681,7 +1689,7 @@ export const TradePositionsPanel = ({
                     </span>
                     <span
                       style={{
-                        color: T.textDim,
+                        color: CSS_COLOR.textDim,
                         textAlign: "right",
                         fontSize: textSize("caption"),
                       }}
@@ -1702,8 +1710,8 @@ export const TradePositionsPanel = ({
                       disabled={cancelDisabled}
                       style={{
                         background: "transparent",
-                        border: `1px solid ${isTerminal ? T.border : T.red}40`,
-                        color: isTerminal ? T.textDim : T.red,
+                        border: `1px solid ${cssColorAlpha(isTerminal ? CSS_COLOR.border : CSS_COLOR.red, "40")}`,
+                        color: isTerminal ? CSS_COLOR.textDim : CSS_COLOR.red,
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
@@ -1731,7 +1739,7 @@ export const TradePositionsPanel = ({
           style={{
             display: "flex",
             gap: sp(4),
-            borderTop: `1px solid ${T.border}`,
+            borderTop: `1px solid ${CSS_COLOR.border}`,
             paddingTop: sp(5),
             marginTop: "auto",
           }}
@@ -1743,9 +1751,9 @@ export const TradePositionsPanel = ({
               flex: 1,
               padding: sp("4px 0"),
               background: "transparent",
-              border: `1px solid ${T.red}40`,
+              border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
               borderRadius: dim(3),
-              color: T.red,
+              color: CSS_COLOR.red,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -1762,9 +1770,9 @@ export const TradePositionsPanel = ({
               flex: 1,
               padding: sp("4px 0"),
               background: "transparent",
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(3),
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -1781,9 +1789,9 @@ export const TradePositionsPanel = ({
               flex: 1,
               padding: sp("4px 0"),
               background: "transparent",
-              border: `1px solid ${T.amber}40`,
+              border: `1px solid ${cssColorMix(CSS_COLOR.amber, 25)}`,
               borderRadius: dim(3),
-              color: T.amber,
+              color: CSS_COLOR.amber,
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -1805,11 +1813,11 @@ export const TradePositionsPanel = ({
       ) : (
         <div
           style={{
-            borderTop: `1px solid ${T.border}`,
+            borderTop: `1px solid ${CSS_COLOR.border}`,
             paddingTop: sp(5),
             marginTop: "auto",
             fontSize: textSize("body"),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
           }}
         >
@@ -1827,7 +1835,7 @@ export const TradePositionsPanel = ({
         }
         lines={liveConfirmState?.lines || []}
         confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM LIVE ACTION"}
-        confirmTone={liveConfirmState?.confirmTone || T.red}
+        confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
         pending={liveConfirmPending}
         error={liveConfirmError}
         onCancel={closeLiveConfirm}

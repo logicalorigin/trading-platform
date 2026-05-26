@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   Clock,
@@ -12,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -66,9 +72,9 @@ const EmptyOperationsState = ({
   >
     <div
       style={{
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         padding: sp("14px 16px"),
         minWidth: 0,
         width: "min(100%, 460px)",
@@ -77,7 +83,7 @@ const EmptyOperationsState = ({
       <SectionHeader title="Setup Shadow Deployment" />
       <div
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           lineHeight: 1.45,
@@ -90,9 +96,9 @@ const EmptyOperationsState = ({
         <div
           data-testid="algo-setup-loading"
           style={{
-            border: `1px dashed ${T.border}`,
+            border: `1px dashed ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.sm),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: fs(10),
             lineHeight: 1.45,
@@ -108,11 +114,11 @@ const EmptyOperationsState = ({
             onChange={(event) => setSelectedDraftId(event.target.value)}
             style={{
               width: "100%",
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               border: "none",
               borderRadius: dim(RADII.md),
               padding: sp("8px 10px"),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(10),
               fontFamily: T.sans,
               outline: "none",
@@ -130,11 +136,11 @@ const EmptyOperationsState = ({
             placeholder="Deployment name"
             style={{
               width: "100%",
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               border: "none",
               borderRadius: dim(RADII.md),
               padding: sp("8px 10px"),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(10),
               fontFamily: T.sans,
               outline: "none",
@@ -146,11 +152,11 @@ const EmptyOperationsState = ({
             placeholder="SPY, QQQ, NVDA"
             style={{
               width: "100%",
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               border: "none",
               borderRadius: dim(RADII.md),
               padding: sp("8px 10px"),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(10),
               fontFamily: T.sans,
               outline: "none",
@@ -166,8 +172,8 @@ const EmptyOperationsState = ({
                 disabled: createDeploymentMutation.isPending,
               }),
               border: "none",
-              background: T.accent,
-              color: T.onAccent,
+              background: CSS_COLOR.accent,
+              color: CSS_COLOR.onAccent,
             }}
           >
             {createDeploymentMutation.isPending
@@ -178,9 +184,9 @@ const EmptyOperationsState = ({
       ) : (
         <div
           style={{
-            border: `1px dashed ${T.border}`,
+            border: `1px dashed ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.sm),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: fs(10),
             lineHeight: 1.45,
@@ -259,12 +265,12 @@ const AlgoOptionQuoteStreamGroup = ({ underlying, providerContractIds }) => {
 const HEADER_ICON_SIZE = 13;
 
 const activitySegmentColor = (tone) => {
-  if (tone === "green") return T.green;
-  if (tone === "amber") return T.amber;
-  if (tone === "red") return T.red;
-  if (tone === "cyan") return T.cyan;
-  if (tone === "muted") return T.textMuted;
-  return T.textDim;
+  if (tone === "green") return CSS_COLOR.green;
+  if (tone === "amber") return CSS_COLOR.amber;
+  if (tone === "red") return CSS_COLOR.red;
+  if (tone === "cyan") return CSS_COLOR.cyan;
+  if (tone === "muted") return CSS_COLOR.textMuted;
+  return CSS_COLOR.textDim;
 };
 
 const ActivitySummaryInline = ({ activitySummary }) => {
@@ -279,7 +285,7 @@ const ActivitySummaryInline = ({ activitySummary }) => {
         gap: sp(5),
         rowGap: sp(2),
         padding: sp("2px 6px"),
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         minHeight: dim(24),
@@ -537,7 +543,7 @@ export const AlgoLivePage = ({
       detail: focusedDeployment?.lastEvaluatedAt
         ? `scan ${formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)}`
         : "no scan yet",
-      color: refreshPending ? T.amber : T.textSec,
+      color: refreshPending ? CSS_COLOR.amber : CSS_COLOR.textSec,
       icon: Clock,
       severity: refreshPending ? "warning" : "neutral",
     },
@@ -547,7 +553,7 @@ export const AlgoLivePage = ({
       detail: latestEvent
         ? formatRelativeTimeShort(latestEvent.occurredAt)
         : "no execution events",
-      color: latestEvent ? T.cyan : T.textDim,
+      color: latestEvent ? CSS_COLOR.cyan : CSS_COLOR.textDim,
       icon: Activity,
       severity: "neutral",
     },
@@ -555,7 +561,7 @@ export const AlgoLivePage = ({
       label: "Signals",
       value: `${freshSignals} / ${totalSignals}`,
       detail: freshSignalsPct ? `${freshSignalsPct} fresh` : "no scan yet",
-      color: freshSignals > 0 ? T.green : T.textSec,
+      color: freshSignals > 0 ? CSS_COLOR.green : CSS_COLOR.textSec,
       icon: Layers,
       severity: "neutral",
     },
@@ -565,7 +571,7 @@ export const AlgoLivePage = ({
       detail: `${blockedCandidates.toLocaleString()} blocked${
         pendingCandidates > 0 ? ` · ${pendingCandidates.toLocaleString()} pending` : ""
       }`,
-      color: blockedCandidates > 0 ? T.amber : T.green,
+      color: blockedCandidates > 0 ? CSS_COLOR.amber : CSS_COLOR.green,
       icon: Layers,
       severity: blockedCandidates > 0 ? "warning" : "neutral",
     },
@@ -573,7 +579,7 @@ export const AlgoLivePage = ({
       label: "Risk",
       value: riskRecord.dailyHaltActive ? "halt active" : "within limits",
       detail: `loss left ${formatMoney(cockpitKpis?.dailyLossRemaining, 0)}`,
-      color: riskRecord.dailyHaltActive ? T.red : T.green,
+      color: riskRecord.dailyHaltActive ? CSS_COLOR.red : CSS_COLOR.green,
       icon: riskRecord.dailyHaltActive ? ShieldAlert : ShieldCheck,
       severity: riskRecord.dailyHaltActive ? "critical" : "neutral",
     },
@@ -583,8 +589,8 @@ export const AlgoLivePage = ({
       detail: `${riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0}/${riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?"} symbols`,
       color:
         openPremiumUsage != null && openPremiumUsage >= 0.7
-          ? T.amber
-          : T.textSec,
+          ? CSS_COLOR.amber
+          : CSS_COLOR.textSec,
       icon: Wallet,
       severity:
         openPremiumUsage != null && openPremiumUsage >= 0.7
@@ -595,7 +601,7 @@ export const AlgoLivePage = ({
       label: "P&L",
       value: `R ${formatMoney(realizedToday, 0)} / U ${formatMoney(unrealized, 0)}`,
       detail: `${openPositions.toLocaleString()} open`,
-      color: realizedToday + unrealized > 0 ? T.green : realizedToday + unrealized < 0 ? T.red : T.text,
+      color: realizedToday + unrealized > 0 ? CSS_COLOR.green : realizedToday + unrealized < 0 ? CSS_COLOR.red : CSS_COLOR.text,
       icon: Wallet,
       severity: "neutral",
     },
@@ -603,7 +609,7 @@ export const AlgoLivePage = ({
       label: "Record",
       value: `${wins}W / ${losses}L`,
       detail: recordDetail || "session",
-      color: Number.isFinite(profitFactor) && profitFactor >= 1 ? T.green : T.textSec,
+      color: Number.isFinite(profitFactor) && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
       icon: ShieldCheck,
       severity: "neutral",
     },
@@ -636,9 +642,9 @@ export const AlgoLivePage = ({
             alignSelf: "flex-end",
             minHeight: dim(26),
             padding: sp("4px 9px"),
-            border: `1px solid ${T.accent}`,
-            background: T.accent,
-            color: T.onAccent,
+            border: `1px solid ${CSS_COLOR.accent}`,
+            background: CSS_COLOR.accent,
+            color: CSS_COLOR.onAccent,
           }}
         >
           Settings
@@ -680,8 +686,8 @@ export const AlgoLivePage = ({
               justifyContent: "space-between",
               gap: sp(algoIsPhone ? 5 : 8),
               padding: algoIsPhone ? sp("4px 6px") : sp("6px 10px"),
-              background: T.bg0,
-              borderBottom: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg0,
+              borderBottom: `1px solid ${CSS_COLOR.border}`,
               flexWrap: "wrap",
             }}
           >
@@ -695,7 +701,7 @@ export const AlgoLivePage = ({
             >
               <span
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: fs(algoIsPhone ? 11 : 13),
                   fontWeight: 600,
@@ -725,7 +731,7 @@ export const AlgoLivePage = ({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: sp(2),
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                   letterSpacing: "0.04em",
@@ -739,7 +745,7 @@ export const AlgoLivePage = ({
               {!algoIsPhone && signalMonitorProfile?.watchlistId ? (
                 <span
                   style={{
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
                     letterSpacing: "0.04em",
@@ -759,7 +765,7 @@ export const AlgoLivePage = ({
                   style={{
                     width: 1,
                     height: dim(18),
-                    background: T.border,
+                    background: CSS_COLOR.border,
                     marginInline: sp(1),
                   }}
                 />
@@ -787,10 +793,10 @@ export const AlgoLivePage = ({
                     justifyContent: "center",
                     gap: sp(3),
                     border: `1px solid ${
-                      focusedDeployment.enabled ? T.amber : T.green
+                      focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green
                     }`,
                     background: "transparent",
-                    color: focusedDeployment.enabled ? T.amber : T.green,
+                    color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
                   }}
                 >
                   <DeploymentToggleIcon
@@ -816,9 +822,9 @@ export const AlgoLivePage = ({
                     alignItems: "center",
                     justifyContent: "center",
                     gap: sp(3),
-                    border: `1px solid ${T.accent}`,
+                    border: `1px solid ${CSS_COLOR.accent}`,
                     background: "transparent",
-                    color: T.accent,
+                    color: CSS_COLOR.accent,
                   }}
                 >
                   <RefreshCw
@@ -838,9 +844,9 @@ export const AlgoLivePage = ({
               display: "grid",
               gap: sp(algoIsPhone ? 4 : 7),
               padding: sp(algoIsPhone ? "5px" : denseOperationsLayout ? "7px" : "8px"),
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               minWidth: 0,
             }}
           >
@@ -895,7 +901,7 @@ export const AlgoLivePage = ({
                 alignItems: "center",
                 minWidth: 0,
                 paddingTop: sp(2),
-                borderTop: `1px solid ${T.border}`,
+                borderTop: `1px solid ${CSS_COLOR.border}`,
               }}
             >
               {hasActivitySummary ? (
@@ -994,8 +1000,8 @@ export const AlgoLivePage = ({
             style={{
               width: "100%",
               height: "90vh",
-              background: T.bg0,
-              borderTop: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg0,
+              borderTop: `1px solid ${CSS_COLOR.border}`,
               boxShadow: "0 -18px 42px rgba(0,0,0,0.45)",
               display: "flex",
               flexDirection: "column",
@@ -1009,7 +1015,7 @@ export const AlgoLivePage = ({
                 justifyContent: "flex-end",
                 alignItems: "center",
                 padding: sp("6px 8px"),
-                borderBottom: `1px solid ${T.border}`,
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
                 flex: "0 0 auto",
               }}
             >

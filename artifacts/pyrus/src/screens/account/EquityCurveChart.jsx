@@ -1,4 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import {
   AreaSeries,
   BaselineSeries,
@@ -10,15 +15,24 @@ import {
   createChart,
 } from "lightweight-charts";
 import {
+  CSS_COLOR,
+  THEMES,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   T,
   dim,
 } from "../../lib/uiTokens.jsx";
 import { TYPE_PX } from "../../lib/typography";
+import {
+  resolveCanvasAlphaColor,
+  resolveCanvasColor,
+} from "../../features/charting/chartCanvasColors";
 import { formatAccountMoney, formatAccountSignedMoney } from "./accountUtils";
 
 const NAV_PRICE_SCALE_ID = "left";
 const BENCHMARK_PRICE_SCALE_ID = "right";
+
+const chartColor = resolveCanvasColor;
+const chartColorAlpha = resolveCanvasAlphaColor;
 
 const sliceFiniteSeries = (data, valueKey) =>
   data
@@ -44,40 +58,40 @@ const buildPercentFormatter = () => (value) => {
 const buildChartOptions = ({ compact }) => ({
   autoSize: false,
   layout: {
-    background: { type: ColorType.Solid, color: T.bg1 },
-    textColor: T.textMuted,
+    background: { type: ColorType.Solid, color: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1) },
+    textColor: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
     fontFamily: T.sans,
     fontSize: compact ? TYPE_PX.micro : TYPE_PX.label,
     attributionLogo: false,
   },
   grid: {
     vertLines: { visible: false },
-    horzLines: { color: T.borderLight, style: LineStyle.Solid, visible: true },
+    horzLines: { color: chartColor(CSS_COLOR.borderLight, THEMES.dark.borderLight), style: LineStyle.Solid, visible: true },
   },
   crosshair: {
     mode: CrosshairMode.Magnet,
     vertLine: {
-      color: T.textMuted,
+      color: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
       width: 1,
       style: LineStyle.Solid,
       visible: true,
       labelVisible: true,
-      labelBackgroundColor: T.bg2,
+      labelBackgroundColor: chartColor(CSS_COLOR.bg2, THEMES.dark.bg2),
     },
     horzLine: {
-      color: T.textMuted,
+      color: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
       width: 1,
       style: LineStyle.Dashed,
       visible: true,
       labelVisible: true,
-      labelBackgroundColor: T.bg2,
+      labelBackgroundColor: chartColor(CSS_COLOR.bg2, THEMES.dark.bg2),
     },
   },
   leftPriceScale: {
     visible: true,
     borderVisible: false,
     ticksVisible: false,
-    textColor: T.textMuted,
+    textColor: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
     minimumWidth: compact ? 48 : 64,
     scaleMargins: { top: 0.12, bottom: 0.08 },
     mode: PriceScaleMode.Normal,
@@ -86,7 +100,7 @@ const buildChartOptions = ({ compact }) => ({
     visible: false,
     borderVisible: false,
     ticksVisible: false,
-    textColor: T.textMuted,
+    textColor: chartColor(CSS_COLOR.textMuted, THEMES.dark.textMuted),
     minimumWidth: compact ? 36 : 48,
     scaleMargins: { top: 0.12, bottom: 0.08 },
     mode: PriceScaleMode.Normal,
@@ -105,41 +119,44 @@ const buildChartOptions = ({ compact }) => ({
   handleScale: false,
 });
 
-const buildNavSeriesOptions = (accentColor, currency, maskValues, chartMode) => ({
-  priceScaleId: NAV_PRICE_SCALE_ID,
-  lineColor: accentColor,
-  topColor: `${accentColor}48`,
-  bottomColor: `${accentColor}05`,
-  lineWidth: 2,
-  lineType: 0,
-  priceLineVisible: false,
-  lastValueVisible: true,
-  crosshairMarkerVisible: true,
-  crosshairMarkerRadius: 4,
-  crosshairMarkerBorderColor: T.bg1,
-  crosshairMarkerBackgroundColor: accentColor,
-  priceFormat: {
-    type: "custom",
-    formatter: buildPriceFormatter(chartMode, currency, maskValues),
-    minMove: 0.01,
-  },
-});
+const buildNavSeriesOptions = (accentColor, currency, maskValues, chartMode) => {
+  const resolvedAccent = chartColor(accentColor, THEMES.dark.accent);
+  return {
+    priceScaleId: NAV_PRICE_SCALE_ID,
+    lineColor: resolvedAccent,
+    topColor: chartColorAlpha(accentColor, "48", THEMES.dark.accent),
+    bottomColor: chartColorAlpha(accentColor, "05", THEMES.dark.accent),
+    lineWidth: 2,
+    lineType: 0,
+    priceLineVisible: false,
+    lastValueVisible: true,
+    crosshairMarkerVisible: true,
+    crosshairMarkerRadius: 4,
+    crosshairMarkerBorderColor: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1),
+    crosshairMarkerBackgroundColor: resolvedAccent,
+    priceFormat: {
+      type: "custom",
+      formatter: buildPriceFormatter(chartMode, currency, maskValues),
+      minMove: 0.01,
+    },
+  };
+};
 
 const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
   priceScaleId: NAV_PRICE_SCALE_ID,
   baseValue: { type: "price", price: 0 },
-  topLineColor: T.green,
-  topFillColor1: `${T.green}3a`,
-  topFillColor2: `${T.green}05`,
-  bottomLineColor: T.red,
-  bottomFillColor1: `${T.red}05`,
-  bottomFillColor2: `${T.red}3a`,
+  topLineColor: chartColor(CSS_COLOR.green, THEMES.dark.green),
+  topFillColor1: chartColorAlpha(CSS_COLOR.green, "3b", THEMES.dark.green),
+  topFillColor2: chartColorAlpha(CSS_COLOR.green, "05", THEMES.dark.green),
+  bottomLineColor: chartColor(CSS_COLOR.red, THEMES.dark.red),
+  bottomFillColor1: chartColorAlpha(CSS_COLOR.red, "05", THEMES.dark.red),
+  bottomFillColor2: chartColorAlpha(CSS_COLOR.red, "3b", THEMES.dark.red),
   lineWidth: 2,
   priceLineVisible: false,
   lastValueVisible: true,
   crosshairMarkerVisible: true,
   crosshairMarkerRadius: 4,
-  crosshairMarkerBorderColor: T.bg1,
+  crosshairMarkerBorderColor: chartColor(CSS_COLOR.bg1, THEMES.dark.bg1),
   priceFormat: {
     type: "custom",
     formatter: buildPriceFormatter(chartMode, currency, maskValues),
@@ -149,7 +166,7 @@ const buildPnlSeriesOptions = (currency, maskValues, chartMode) => ({
 
 const buildBenchmarkSeriesOptions = (benchmark) => ({
   priceScaleId: BENCHMARK_PRICE_SCALE_ID,
-  color: benchmark.color,
+  color: chartColor(benchmark.color, THEMES.dark.accent),
   lineWidth: 1.5,
   lineStyle: LineStyle.Dashed,
   priceLineVisible: false,

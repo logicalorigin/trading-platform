@@ -1,8 +1,11 @@
-import { useNumberTick } from "../../lib/numberTick";
+import {
+  useNumberTick,
+} from "../../lib/numberTick";
 import { Check, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/Button.jsx";
 import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -44,8 +47,8 @@ export const AlgoSaveBar = ({
         bottom: 0,
         zIndex: 20,
         padding: sp("10px 16px"),
-        background: T.bg1,
-        borderTop: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
         boxShadow: "0 -8px 16px -12px rgba(0,0,0,0.4)",
         display: "flex",
         alignItems: "center",
@@ -61,12 +64,12 @@ export const AlgoSaveBar = ({
               display: "inline-flex",
               alignItems: "center",
               gap: sp(2),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
             }}
           >
-            <Check size={12} color={T.green} />
+            <Check size={12} color={CSS_COLOR.green} />
             All changes saved
           </span>
         ) : (
@@ -79,7 +82,7 @@ export const AlgoSaveBar = ({
               gap: sp(2),
               border: "none",
               background: "transparent",
-              color: T.amber,
+              color: CSS_COLOR.amber,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               cursor: "pointer",
@@ -100,8 +103,8 @@ export const AlgoSaveBar = ({
               left: 0,
               bottom: "calc(100% + 10px)",
               padding: sp(3),
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg2,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.md),
               maxHeight: dim(240),
               overflowY: "auto",
@@ -119,7 +122,7 @@ export const AlgoSaveBar = ({
                   gridTemplateColumns: "minmax(0, 1fr) auto",
                   gap: sp(4),
                   alignItems: "baseline",
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                   minWidth: 0,
@@ -136,7 +139,7 @@ export const AlgoSaveBar = ({
                 </span>
                 <span
                   style={{
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     fontFamily: T.data,
                     whiteSpace: "nowrap",
                   }}

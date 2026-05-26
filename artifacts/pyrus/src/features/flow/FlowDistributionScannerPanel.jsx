@@ -1,7 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
 import { Card, DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { useViewportBelow } from "../../lib/responsive";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { CSS_COLOR, cssColorMix, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { FlowScannerStatusPanel } from "./FlowScannerStatusPanel.jsx";
 
 const RAIL_BREAKPOINT_PX = 1100;
@@ -33,9 +37,9 @@ const SegmentedToggle = ({
       alignItems: "center",
       gap: sp(2),
       padding: sp(2),
-      border: `1px solid ${T.border}`,
+      border: `1px solid ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
     }}
   >
     {options.map(([optionValue, label]) => {
@@ -49,8 +53,8 @@ const SegmentedToggle = ({
           style={{
             border: "none",
             borderRadius: dim(RADII.sm),
-            background: active ? `${T.accent}14` : "transparent",
-            color: active ? T.accent : T.textMuted,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 8)}` : "transparent",
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: fs(8),
@@ -74,9 +78,9 @@ const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
       alignItems: "center",
       gap: sp(2),
       padding: sp(2),
-      border: `1px solid ${T.border}`,
+      border: `1px solid ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
     }}
   >
     {BUCKET_TOGGLE_OPTIONS.map(([bucket, label]) => {
@@ -92,8 +96,8 @@ const BucketVisibilityToggle = ({ visibleBuckets, onToggleBucket }) => (
             minWidth: dim(24),
             border: "none",
             borderRadius: dim(RADII.sm),
-            background: active ? `${T.accent}14` : "transparent",
-            color: active ? T.accent : T.textMuted,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 8)}` : "transparent",
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: fs(8),
@@ -136,7 +140,7 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
       <div
         title={sourceWarning}
         style={{
-          color: warningTone || T.amber,
+          color: warningTone || CSS_COLOR.amber,
           fontFamily: T.sans,
           fontSize: fs(7),
           fontWeight: FONT_WEIGHTS.regular,
@@ -235,7 +239,7 @@ export const FlowDistributionScannerPanel = ({
       <DataUnavailableState
         title="Premium distribution unavailable"
         detail={detail}
-        tone={query?.data?.status === "unconfigured" ? T.amber : T.textDim}
+        tone={query?.data?.status === "unconfigured" ? CSS_COLOR.amber : CSS_COLOR.textDim}
         minHeight={96}
       />
     </Card>
@@ -332,7 +336,7 @@ export const FlowDistributionScannerPanel = ({
         <span
           style={{
             flex: "0 0 auto",
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: fs(7),
             fontWeight: FONT_WEIGHTS.regular,

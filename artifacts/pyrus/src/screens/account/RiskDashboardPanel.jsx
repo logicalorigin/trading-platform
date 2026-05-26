@@ -1,4 +1,4 @@
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   Pill,
   formatAccountMoney,
@@ -14,14 +14,14 @@ const marginCushionPercent = (value, maskValues = false) =>
     ? "—"
     : formatAccountPercent(Number(value), 1, maskValues);
 
-const MetricCard = ({ label, value, title, tone = T.text, subvalue, isFirst = false }) => (
+const MetricCard = ({ label, value, title, tone = CSS_COLOR.text, subvalue, isFirst = false }) => (
   <AppTooltip content={title}>
     <div
       style={{
         flex: "1 1 auto",
         minWidth: dim(72),
         padding: sp("3px 10px"),
-        borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
+        borderLeft: isFirst ? "none" : `1px solid ${CSS_COLOR.border}`,
         display: "grid",
         gap: sp(1),
       }}
@@ -41,7 +41,7 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue, isFirst = fa
         {value}
       </div>
       {subvalue ? (
-        <div style={{ color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>{subvalue}</div>
+        <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>{subvalue}</div>
       ) : null}
     </div>
   </AppTooltip>
@@ -50,7 +50,7 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue, isFirst = fa
 const MarginGauge = ({ value, maskValues = false }) => {
   const pctValue = Number(value);
   const pct = Number.isFinite(pctValue) ? Math.max(0, Math.min(100, pctValue)) : 0;
-  const tone = pct > 50 ? T.green : pct > 25 ? T.amber : T.red;
+  const tone = pct > 50 ? CSS_COLOR.green : pct > 25 ? CSS_COLOR.amber : CSS_COLOR.red;
   return (
     <div
       style={{
@@ -78,7 +78,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
           height: dim(12),
           borderRadius: dim(RADII.pill),
           overflow: "hidden",
-          background: T.bg2,
+          background: CSS_COLOR.bg2,
           border: "none",
         }}
       >
@@ -91,7 +91,7 @@ const MarginGauge = ({ value, maskValues = false }) => {
           }}
         />
       </div>
-      <div style={{ color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
         IBKR Cushion
       </div>
     </div>
@@ -105,7 +105,7 @@ export const RiskCompactContent = ({
 }) => {
   if (!data) {
     return (
-      <div style={{ color: T.textMuted, fontSize: textSize("body"), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body"), fontFamily: T.sans }}>
         Risk metrics load after account and position streams are connected.
       </div>
     );
@@ -126,7 +126,7 @@ export const RiskCompactContent = ({
           flexWrap: "nowrap",
           overflowX: "auto",
           paddingTop: sp(4),
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
           minWidth: 0,
         }}
       >
@@ -163,7 +163,7 @@ export const RiskCompactContent = ({
           flexWrap: "nowrap",
           overflowX: "auto",
           paddingTop: sp(4),
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
           minWidth: 0,
         }}
       >

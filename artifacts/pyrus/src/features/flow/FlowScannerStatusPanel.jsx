@@ -1,11 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Activity,
   AlertTriangle,
   Power,
   RadioTower,
 } from "lucide-react";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  cssColorAlpha,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { Badge, Card, MicroSparkline, Pill } from "../../components/platform/primitives.jsx";
 import {
@@ -49,14 +64,14 @@ const Sparkline = ({ values, color, width = 56, height = 14 }) =>
     />
   ) : null;
 
-const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
+const ProgressBar = ({ ratio, color = CSS_COLOR.accent, height = 4 }) => {
   const clamped = Math.max(0, Math.min(1, ratio || 0));
   return (
     <div
       style={{
         height,
         width: "100%",
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         borderRadius: dim(RADII.pill),
         border: "none",
         overflow: "hidden",
@@ -75,12 +90,12 @@ const ProgressBar = ({ ratio, color = T.accent, height = 4 }) => {
   );
 };
 
-const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec }) => (
+const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = CSS_COLOR.textSec }) => (
   <div
     style={{
       minWidth: 0,
       padding: sp("8px 10px"),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       border: "none",
       borderRadius: dim(RADII.sm),
       transition:
@@ -89,7 +104,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
   >
     <div
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
@@ -137,7 +152,7 @@ const ScannerMetric = ({ label, value, detail, chart, dotColor, tone = T.textSec
       <div
         style={{
           marginTop: sp(3),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: fs(7),
           lineHeight: 1.1,
@@ -156,10 +171,10 @@ const TickerChip = ({ symbol, label, tone, title }) => (
   <AppTooltip content={title}>
     <span
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = `${tone}24`;
+        event.currentTarget.style.background = cssColorAlpha(tone, "24");
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = `${tone}12`;
+        event.currentTarget.style.background = cssColorAlpha(tone, "12");
       }}
       style={{
         display: "inline-flex",
@@ -168,7 +183,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
         padding: sp("2px 8px"),
         borderRadius: dim(RADII.pill),
         border: "none",
-        background: `${tone}14`,
+        background: cssColorAlpha(tone, "14"),
         color: tone,
         fontFamily: T.sans,
         fontSize: fs(10),
@@ -179,7 +194,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
       }}
     >
       <span>{symbol}</span>
-      {label ? <span style={{ color: T.textMuted }}>{label}</span> : null}
+      {label ? <span style={{ color: CSS_COLOR.textMuted }}>{label}</span> : null}
     </span>
   </AppTooltip>
 );
@@ -208,7 +223,7 @@ export const FlowScannerStatusPanel = ({
   oldestScanAt = null,
   scannerConfig = {},
   onToggle,
-  toggleTone = T.accent,
+  toggleTone = CSS_COLOR.accent,
   formatAppTime,
   showToggle = true,
   dense = false,
@@ -259,12 +274,12 @@ export const FlowScannerStatusPanel = ({
         : cycleEstimateLabel
           ? `${coverageModeLabel} · ${cycleEstimateLabel}`
           : coverageModeLabel;
-  const sourceTone = flowDisplayColor || T.textSec;
+  const sourceTone = flowDisplayColor || CSS_COLOR.textSec;
   const scanDegraded = enabled && flowQuality?.label === "Degraded";
   const scannerRuntimeActive = Boolean(
     ownerActive || runtimeControl.flowScanner?.active,
   );
-  const statusTone = scanDegraded ? flowQuality?.color || T.red : toggleTone;
+  const statusTone = scanDegraded ? flowQuality?.color || CSS_COLOR.red : toggleTone;
   const statusLabel = enabled
     ? scanDegraded
       ? "Degraded"
@@ -298,7 +313,7 @@ export const FlowScannerStatusPanel = ({
         padding: dense || vertical ? sp("6px 8px") : sp("8px 10px"),
         display: "grid",
         gap: sp(6),
-        borderColor: scannerRuntimeActive || scanDegraded ? `${statusTone}66` : T.border,
+        borderColor: scannerRuntimeActive || scanDegraded ? cssColorAlpha(statusTone, "66") : CSS_COLOR.border,
         height: vertical ? "100%" : undefined,
         alignContent: vertical ? "start" : undefined,
       }}
@@ -322,7 +337,7 @@ export const FlowScannerStatusPanel = ({
           />
           <span
             style={{
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: fs(11),
               fontWeight: FONT_WEIGHTS.regular,
@@ -354,7 +369,7 @@ export const FlowScannerStatusPanel = ({
             display: "flex",
             alignItems: "center",
             gap: sp(6),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: fs(8),
             minWidth: 0,
@@ -362,7 +377,7 @@ export const FlowScannerStatusPanel = ({
         >
           <span>
             Cycle{" "}
-            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
               {formatCount(scannedCoverageSymbols)}/{formatCount(totalCoverageSymbols || scannedCoverageSymbols)}
             </span>
           </span>
@@ -397,11 +412,11 @@ export const FlowScannerStatusPanel = ({
           value={`${formatCount(scannedCoverageSymbols)}/${formatCount(totalCoverageSymbols || scannedCoverageSymbols)}`}
           chart={
             totalCoverageSymbols > 0 ? (
-              <ProgressBar ratio={coverageRatio} color={T.accent} />
+              <ProgressBar ratio={coverageRatio} color={CSS_COLOR.accent} />
             ) : null
           }
           detail={selectedDetail}
-          tone={T.textSec}
+          tone={CSS_COLOR.textSec}
         />
         <ScannerMetric
           label="Scanning now"
@@ -411,7 +426,7 @@ export const FlowScannerStatusPanel = ({
               ? `+${currentBatch.length - 3} active`
               : `${formatCount(displayBatchSize)} batch / ${formatCount(displayConcurrency)} conc`
           }
-          tone={currentBatch.length ? T.accent : T.textDim}
+          tone={currentBatch.length ? CSS_COLOR.accent : CSS_COLOR.textDim}
         />
         <ScannerMetric
           label="Lines"
@@ -432,9 +447,9 @@ export const FlowScannerStatusPanel = ({
         <ScannerMetric
           label="Quality"
           value={flowQuality?.label || MISSING_VALUE}
-          dotColor={flowQuality?.color || T.textDim}
+          dotColor={flowQuality?.color || CSS_COLOR.textDim}
           detail={flowQuality?.detail}
-          tone={flowQuality?.color || T.textDim}
+          tone={flowQuality?.color || CSS_COLOR.textDim}
         />
       </div>
 
@@ -456,7 +471,7 @@ export const FlowScannerStatusPanel = ({
               key={`current-${symbol}`}
               symbol={symbol}
               label="scanning"
-              tone={T.accent}
+              tone={CSS_COLOR.accent}
               title={`${symbol} is in the active scanner batch`}
             />
           ))}
@@ -465,7 +480,7 @@ export const FlowScannerStatusPanel = ({
               key={`recent-${entry.symbol}`}
               symbol={entry.symbol}
               label={formatRelative(entry.scannedAt)}
-              tone={T.textSec}
+              tone={CSS_COLOR.textSec}
               title={
                 formatAppTime
                   ? `${entry.symbol} last scanned ${formatAppTime(entry.scannedAt)}`
@@ -477,7 +492,7 @@ export const FlowScannerStatusPanel = ({
             <TickerChip
               symbol={`+${formatCount(pendingCount)}`}
               label="pending"
-              tone={T.textMuted}
+              tone={CSS_COLOR.textMuted}
               title={`${formatCount(pendingCount)} symbols pending in this cycle`}
             />
           ) : null}

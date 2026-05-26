@@ -1,4 +1,9 @@
-import { memo, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Bell,
   Briefcase,
@@ -12,12 +17,25 @@ import {
   Zap,
 } from "lucide-react";
 import { useListOrders, useListPositions } from "@workspace/api-client-react";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAccountSummaryField } from "./live-streams";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore.js";
-import { BROAD_MARKET_FLOW_STORE_KEY, useMarketFlowSnapshotForStoreKey } from "./marketFlowStore.js";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  useMarketFlowSnapshotForStoreKey,
+} from "./marketFlowStore.js";
 import { QUERY_DEFAULTS } from "./queryDefaults.js";
 
 const WORKING_ORDER_STATUSES = new Set([
@@ -55,16 +73,16 @@ const fmtPercent = (value, digits = 1) => {
 
 const pnlTone = (value) => {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric === 0) return T.textSec;
-  return numeric > 0 ? T.green : T.red;
+  if (!Number.isFinite(numeric) || numeric === 0) return CSS_COLOR.textSec;
+  return numeric > 0 ? CSS_COLOR.green : CSS_COLOR.red;
 };
 
 const cushionTone = (percent) => {
   const numeric = Number(percent);
-  if (!Number.isFinite(numeric)) return T.textSec;
-  if (numeric >= 50) return T.green;
-  if (numeric >= 25) return T.amber;
-  return T.red;
+  if (!Number.isFinite(numeric)) return CSS_COLOR.textSec;
+  if (numeric >= 50) return CSS_COLOR.green;
+  if (numeric >= 25) return CSS_COLOR.amber;
+  return CSS_COLOR.red;
 };
 
 const usePulseOnIncrease = (count) => {
@@ -81,7 +99,7 @@ const usePulseOnIncrease = (count) => {
   return pulseToken;
 };
 
-const PulseChip = ({ icon: Icon, value, tone = T.text, title, accent, onClick, pulseToken }) => {
+const PulseChip = ({ icon: Icon, value, tone = CSS_COLOR.text, title, accent, onClick, pulseToken }) => {
   const interactive = typeof onClick === "function";
   const Tag = interactive ? "button" : "div";
   return (
@@ -114,7 +132,7 @@ const PulseChip = ({ icon: Icon, value, tone = T.text, title, accent, onClick, p
         }}
         onMouseEnter={(event) => {
           if (!interactive) return;
-          event.currentTarget.style.background = T.accentHoverBg;
+          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
         }}
         onMouseLeave={(event) => {
           if (!interactive) return;
@@ -206,9 +224,9 @@ const PortfolioPulseZoneInner = ({
         ? TrendingUp
         : TrendingDown;
   const alertTone =
-    totalAlerts === 0 ? T.textMuted : lossAlerts > winAlerts ? T.red : T.amber;
-  const positionsTone = positionsCount > 0 ? T.text : T.textMuted;
-  const ordersTone = workingOrdersCount > 0 ? T.text : T.textMuted;
+    totalAlerts === 0 ? CSS_COLOR.textMuted : lossAlerts > winAlerts ? CSS_COLOR.red : CSS_COLOR.amber;
+  const positionsTone = positionsCount > 0 ? CSS_COLOR.text : CSS_COLOR.textMuted;
+  const ordersTone = workingOrdersCount > 0 ? CSS_COLOR.text : CSS_COLOR.textMuted;
   const signalSnapshot = useSignalMonitorSnapshot();
   const signalEventsCount = Array.isArray(signalSnapshot?.events)
     ? signalSnapshot.events.length
@@ -218,9 +236,9 @@ const PortfolioPulseZoneInner = ({
     ? flowSnapshot.flowEvents.length
     : 0;
   const algoEventsCount = Array.isArray(algoEvents) ? algoEvents.length : 0;
-  const signalTone = signalEventsCount > 0 ? T.accent : T.textMuted;
-  const flowTone = flowEventsCount > 0 ? T.accent : T.textMuted;
-  const algoTone = algoEventsCount > 0 ? T.accent : T.textMuted;
+  const signalTone = signalEventsCount > 0 ? CSS_COLOR.accent : CSS_COLOR.textMuted;
+  const flowTone = flowEventsCount > 0 ? CSS_COLOR.accent : CSS_COLOR.textMuted;
+  const algoTone = algoEventsCount > 0 ? CSS_COLOR.accent : CSS_COLOR.textMuted;
   const liveEventsTotal = signalEventsCount + flowEventsCount + algoEventsCount;
   const signalPulse = usePulseOnIncrease(signalEventsCount);
   const flowPulse = usePulseOnIncrease(flowEventsCount);
@@ -240,7 +258,7 @@ const PortfolioPulseZoneInner = ({
               gap: sp(2),
               padding: sp(4),
               minWidth: 0,
-              background: T.bg0,
+              background: CSS_COLOR.bg0,
               overflow: "visible",
             }
           : {
@@ -249,9 +267,9 @@ const PortfolioPulseZoneInner = ({
               gap: sp(2),
               padding: sp("1px 8px"),
               minWidth: 0,
-              background: T.bg0,
-              borderTop: `1px solid ${T.borderLight}`,
-              boxShadow: `0 1px 0 ${T.border}`,
+              background: CSS_COLOR.bg0,
+              borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+              boxShadow: `0 1px 0 ${CSS_COLOR.border}`,
               flexShrink: 0,
               overflow: "hidden",
             }
@@ -263,7 +281,7 @@ const PortfolioPulseZoneInner = ({
         tone={pnlTone(dayPnlValue)}
         title="Day P/L (realized + unrealized today)"
       />
-      <span style={{ width: 1, alignSelf: "stretch", background: T.borderLight, opacity: 0.6 }} aria-hidden="true" />
+      <span style={{ width: 1, alignSelf: "stretch", background: CSS_COLOR.borderLight, opacity: 0.6 }} aria-hidden="true" />
       <PulseChip
         icon={Briefcase}
         value={brokerQueryEnabled ? String(positionsCount) : MISSING_VALUE}
@@ -286,14 +304,14 @@ const PortfolioPulseZoneInner = ({
         }
         onClick={brokerQueryEnabled && workingOrdersCount > 0 ? onOrdersClick : undefined}
       />
-      <span style={{ width: 1, alignSelf: "stretch", background: T.borderLight, opacity: 0.6 }} aria-hidden="true" />
+      <span style={{ width: 1, alignSelf: "stretch", background: CSS_COLOR.borderLight, opacity: 0.6 }} aria-hidden="true" />
       <PulseChip
         icon={Shield}
         value={fmtPercent(cushionValue, 0)}
         tone={cushionTone(cushionValue)}
         title="Maintenance margin cushion"
       />
-      <span style={{ width: 1, alignSelf: "stretch", background: T.borderLight, opacity: 0.6 }} aria-hidden="true" />
+      <span style={{ width: 1, alignSelf: "stretch", background: CSS_COLOR.borderLight, opacity: 0.6 }} aria-hidden="true" />
       <PulseChip
         icon={Bell}
         value={totalAlerts > 0 ? String(totalAlerts) : "0"}
@@ -339,9 +357,9 @@ const PortfolioPulseZoneInner = ({
                 minHeight: dim(22),
                 padding: sp("0 6px"),
                 background: "transparent",
-                border: `1px solid ${T.borderLight}`,
+                border: `1px solid ${CSS_COLOR.borderLight}`,
                 borderRadius: dim(RADII.xs),
-                color: liveEventsTotal > 0 ? T.accent : T.textMuted,
+                color: liveEventsTotal > 0 ? CSS_COLOR.accent : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontVariantNumeric: "tabular-nums",
                 fontWeight: FONT_WEIGHTS.medium,
@@ -464,21 +482,21 @@ const PortfolioPulseZoneInner = ({
               padding: 0,
               marginLeft: sp(2),
               background: "transparent",
-              border: `1px solid ${T.borderLight}`,
+              border: `1px solid ${CSS_COLOR.borderLight}`,
               borderRadius: dim(RADII.xs),
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               cursor: "pointer",
               transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
             }}
             onMouseEnter={(event) => {
-              event.currentTarget.style.background = T.accentHoverBg;
-              event.currentTarget.style.color = T.accent;
-              event.currentTarget.style.borderColor = T.accent;
+              event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+              event.currentTarget.style.color = CSS_COLOR.accent;
+              event.currentTarget.style.borderColor = CSS_COLOR.accent;
             }}
             onMouseLeave={(event) => {
               event.currentTarget.style.background = "transparent";
-              event.currentTarget.style.color = T.textSec;
-              event.currentTarget.style.borderColor = T.borderLight;
+              event.currentTarget.style.color = CSS_COLOR.textSec;
+              event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
             }}
           >
             {scrollersCollapsed ? (

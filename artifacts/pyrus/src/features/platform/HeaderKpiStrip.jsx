@@ -11,6 +11,42 @@ import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
 export const DEFAULT_HEADER_KPI_CONFIG = [
   { symbol: "SPY", label: "S&P 500" },
   { symbol: "QQQ", label: "Nasdaq 100" },
@@ -82,19 +118,19 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
         gap: sp(compact ? 2 : 4),
         background: "transparent",
         border: "none",
-        borderLeft: isFirst ? "none" : `1px solid ${T.borderLight}`,
-        color: T.text,
+        borderLeft: isFirst ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
+        color: CSS_COLOR.text,
         cursor: "pointer",
         overflow: "visible",
         transition: "background 0.12s ease, color 0.12s ease",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = T.accentHoverBg;
-        event.currentTarget.style.color = T.accent;
+        event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+        event.currentTarget.style.color = CSS_COLOR.accent;
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = "transparent";
-        event.currentTarget.style.color = T.text;
+        event.currentTarget.style.color = CSS_COLOR.text;
       }}
     >
       <span
@@ -107,7 +143,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
           overflow: "visible",
           fontSize: textSize("body"),
           fontWeight: FONT_WEIGHTS.medium,
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontFamily: T.sans,
           lineHeight: 1.1,
           letterSpacing: 0,
@@ -122,7 +158,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
           fontSize: textSize("body"),
           fontWeight: FONT_WEIGHTS.medium,
           fontFamily: T.sans,
-          color: T.text,
+          color: CSS_COLOR.text,
           lineHeight: 1.15,
           whiteSpace: "nowrap",
           fontVariantNumeric: "tabular-nums",
@@ -138,7 +174,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
           fontWeight: FONT_WEIGHTS.medium,
           fontFamily: T.sans,
           color:
-            positive == null ? T.textDim : positive ? T.green : T.red,
+            positive == null ? CSS_COLOR.textDim : positive ? CSS_COLOR.green : CSS_COLOR.red,
           lineHeight: 1.15,
           whiteSpace: "nowrap",
           fontVariantNumeric: "tabular-nums",

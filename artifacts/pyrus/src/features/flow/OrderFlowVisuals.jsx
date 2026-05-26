@@ -1,16 +1,16 @@
-import { FONT_WEIGHTS, MISSING_VALUE, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  T,
+  cssColorMix,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 
-const rgba = (hex, alpha) => {
-  const normalized = String(hex).replace("#", "");
-  const value = Number.parseInt(normalized.length === 3
-    ? normalized.split("").map((char) => `${char}${char}`).join("")
-    : normalized, 16);
-  if (!Number.isFinite(value)) return hex;
-  const r = (value >> 16) & 255;
-  const g = (value >> 8) & 255;
-  const b = value & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
+const rgba = (color, alpha) => cssColorMix(color, alpha * 100);
 
 export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const totalBuy = flow.buyXL + flow.buyL + flow.buyM + flow.buyS;
@@ -18,14 +18,14 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const total = totalBuy + totalSell || 1;
   const net = totalBuy - totalSell;
   const segs = [
-    { value: flow.buyXL, color: rgba(T.green, 0.42) },
-    { value: flow.buyL, color: rgba(T.green, 0.95) },
-    { value: flow.buyM, color: rgba(T.green, 0.72) },
-    { value: flow.buyS, color: rgba(T.green, 0.46) },
-    { value: flow.sellS, color: rgba(T.red, 0.38) },
-    { value: flow.sellM, color: rgba(T.red, 0.58) },
-    { value: flow.sellL, color: rgba(T.red, 0.78) },
-    { value: flow.sellXL, color: rgba(T.red, 0.94) },
+    { value: flow.buyXL, color: rgba(CSS_COLOR.green, 0.42) },
+    { value: flow.buyL, color: rgba(CSS_COLOR.green, 0.95) },
+    { value: flow.buyM, color: rgba(CSS_COLOR.green, 0.72) },
+    { value: flow.buyS, color: rgba(CSS_COLOR.green, 0.46) },
+    { value: flow.sellS, color: rgba(CSS_COLOR.red, 0.38) },
+    { value: flow.sellM, color: rgba(CSS_COLOR.red, 0.58) },
+    { value: flow.sellL, color: rgba(CSS_COLOR.red, 0.78) },
+    { value: flow.sellXL, color: rgba(CSS_COLOR.red, 0.94) },
   ];
 
   const cx = size / 2;
@@ -56,7 +56,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         key={index}
         d={d}
         fill={seg.color}
-        stroke={T.bg2}
+        stroke={CSS_COLOR.bg2}
         strokeWidth={1}
       />
     );
@@ -70,7 +70,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         y={cy - 4}
         textAnchor="middle"
         fontSize={fs(7)}
-        fill={T.textMuted}
+        fill={CSS_COLOR.textMuted}
         fontFamily={T.sans}
         letterSpacing="0.08em"
       >
@@ -82,7 +82,7 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         textAnchor="middle"
         fontSize={fs(11)}
         fontWeight={400}
-        fill={net >= 0 ? T.green : T.red}
+        fill={net >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
         fontFamily={T.sans}
       >
         {`${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(0)}M`}
@@ -107,7 +107,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         fontSize: textSize("caption"),
       }}
     >
-      <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
+      <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
         {Number.isFinite(buy) ? `$${buy.toFixed(1)}M` : MISSING_VALUE}
       </span>
       <div
@@ -117,13 +117,13 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           style={{
             width: `${buyPct}%`,
             height: "100%",
-            background: T.green,
+            background: CSS_COLOR.green,
             opacity: 0.85,
             borderRadius: dim(1),
           }}
         />
       </div>
-      <span style={{ textAlign: "center", color: T.textSec, fontWeight: FONT_WEIGHTS.regular }}>
+      <span style={{ textAlign: "center", color: CSS_COLOR.textSec, fontWeight: FONT_WEIGHTS.regular }}>
         {label}
       </span>
       <div
@@ -137,13 +137,13 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           style={{
             width: `${sellPct}%`,
             height: "100%",
-            background: T.red,
+            background: CSS_COLOR.red,
             opacity: 0.85,
             borderRadius: dim(1),
           }}
         />
       </div>
-      <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+      <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
         {Number.isFinite(sell) ? `$${sell.toFixed(1)}M` : MISSING_VALUE}
       </span>
     </div>

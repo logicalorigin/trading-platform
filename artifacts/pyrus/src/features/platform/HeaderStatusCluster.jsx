@@ -18,7 +18,17 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
@@ -54,6 +64,45 @@ import { platformJsonRequest } from "./platformJsonRequest";
 import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
+
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
@@ -268,7 +317,7 @@ const buildMarketClockState = (now = Date.now(), preferences) => {
       timerLabel: formatClockCountdown(
         daysUntilOpen * 86400 + openSeconds - currentSeconds,
       ),
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
     };
   }
 
@@ -279,7 +328,7 @@ const buildMarketClockState = (now = Date.now(), preferences) => {
       label: "Pre-market",
       action: "Opens",
       timerLabel: formatClockCountdown(openSeconds - currentSeconds),
-      color: T.amber,
+      color: CSS_COLOR.amber,
     };
   }
 
@@ -290,7 +339,7 @@ const buildMarketClockState = (now = Date.now(), preferences) => {
       label: "Market open",
       action: "Closes",
       timerLabel: formatClockCountdown(closeSeconds - currentSeconds),
-      color: T.green,
+      color: CSS_COLOR.green,
     };
   }
 
@@ -303,7 +352,7 @@ const buildMarketClockState = (now = Date.now(), preferences) => {
       timerLabel: formatClockCountdown(
         nextBusinessDayOffset * 86400 + openSeconds - currentSeconds,
       ),
-      color: T.amber,
+      color: CSS_COLOR.amber,
     };
   }
 
@@ -315,7 +364,7 @@ const buildMarketClockState = (now = Date.now(), preferences) => {
     timerLabel: formatClockCountdown(
       nextBusinessDayOffset * 86400 + openSeconds - currentSeconds,
     ),
-    color: T.textDim,
+    color: CSS_COLOR.textDim,
   };
 };
 
@@ -332,7 +381,7 @@ const resolveHeaderIbkrPingMs = (connection, latencyStats) => {
 const HeaderIbkrDetailRow = ({
   label,
   value,
-  tone = T.text,
+  tone = CSS_COLOR.text,
   wrap = false,
 }) => (
   <div
@@ -349,7 +398,7 @@ const HeaderIbkrDetailRow = ({
   >
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.04em",
@@ -421,7 +470,7 @@ const HeaderIbkrMetricRail = ({ tiles = [] }) => (
               minWidth: 0,
               padding: sp("5px 7px"),
               borderRadius: dim(RADII.sm),
-              background: `${tile.tone}0f`,
+              background: `${cssColorMix(tile.tone, 6)}`,
               color: tile.tone,
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
@@ -438,7 +487,7 @@ const HeaderIbkrMetricRail = ({ tiles = [] }) => (
             <span
               style={{
                 minWidth: 0,
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontSize: fs(8),
                 fontWeight: FONT_WEIGHTS.regular,
                 letterSpacing: "0.04em",
@@ -479,14 +528,14 @@ const HeaderIbkrTriggerMetric = ({ label, value, tone }) => (
       minWidth: 0,
       padding: sp("4px 6px"),
       borderRadius: dim(RADII.sm),
-      background: `${tone || T.textSec}0f`,
+      background: `${cssColorMix(tone || CSS_COLOR.textSec, 6)}`,
       fontFamily: T.sans,
       lineHeight: 1.05,
     }}
   >
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: fs(8),
         fontWeight: FONT_WEIGHTS.regular,
         letterSpacing: "0.04em",
@@ -500,7 +549,7 @@ const HeaderIbkrTriggerMetric = ({ label, value, tone }) => (
     </span>
     <span
       style={{
-        color: tone || T.textSec,
+        color: tone || CSS_COLOR.textSec,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
         fontVariantNumeric: "tabular-nums",
@@ -572,7 +621,7 @@ const HeaderIbkrTriggerSummary = ({
       ? {
           label: "Lines",
           value: lineDisplayValue,
-          tone: compactLineUsage?.tone || T.textSec,
+          tone: compactLineUsage?.tone || CSS_COLOR.textSec,
         }
       : null,
   ].filter(Boolean);
@@ -616,7 +665,7 @@ const HeaderIbkrTriggerSummary = ({
         </span>
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontSize: textSize(compressed ? "micro" : "caption"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
@@ -650,7 +699,7 @@ const HeaderIbkrTriggerSummary = ({
               alignItems: "baseline",
               gap: sp(3),
               minWidth: "max-content",
-              color: compactLineUsage?.tone || T.textSec,
+              color: compactLineUsage?.tone || CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: textSize(compressed ? "body" : "caption"),
               fontWeight: FONT_WEIGHTS.medium,
@@ -660,7 +709,7 @@ const HeaderIbkrTriggerSummary = ({
           >
             <span
               style={{
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontSize: textSize("micro"),
                 fontWeight: FONT_WEIGHTS.medium,
                 letterSpacing: 0,
@@ -674,7 +723,7 @@ const HeaderIbkrTriggerSummary = ({
         ) : null}
         <span
           style={{
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
@@ -695,7 +744,7 @@ const HeaderIbkrTriggerSummary = ({
                       fontSize: "0.7em",
                       verticalAlign: "super",
                       marginLeft: 1,
-                      color: T.textMuted,
+                      color: CSS_COLOR.textMuted,
                       letterSpacing: 0,
                     }}
                   >
@@ -778,7 +827,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
               ? ` · ${Math.round(reserveLineCount).toLocaleString()} reserve`
               : ""
           }`,
-          tone: T.textSec,
+          tone: CSS_COLOR.textSec,
         }
       : null,
     warmupPending
@@ -801,7 +850,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
   const percent = Number.isFinite(compact?.percent)
     ? Math.max(0, Math.min(100, compact.percent))
     : 0;
-  const tone = compact?.tone || lineUsage.bridge?.tone || T.textSec;
+  const tone = compact?.tone || lineUsage.bridge?.tone || CSS_COLOR.textSec;
   const summaryText =
     Number.isFinite(used) && Number.isFinite(cap)
       ? `${Math.round(used)} of ${Math.round(cap)} · ${
@@ -817,8 +866,8 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
         marginBottom: sp(8),
         padding: sp("6px 8px"),
         background: "transparent",
-        borderTop: `1px solid ${T.borderLight}`,
-        borderBottom: `1px solid ${T.borderLight}`,
+        borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
         fontFamily: T.sans,
       }}
     >
@@ -833,7 +882,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
       >
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
             letterSpacing: "0.04em",
@@ -848,7 +897,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
             minWidth: 0,
             height: dim(4),
             borderRadius: dim(RADII.pill),
-            background: T.borderLight,
+            background: CSS_COLOR.borderLight,
             overflow: "hidden",
           }}
         >
@@ -864,7 +913,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
         </span>
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
             fontVariantNumeric: "tabular-nums",
@@ -879,7 +928,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
           style={{
             border: "none",
             background: "transparent",
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -919,7 +968,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                 minWidth: 0,
                 padding: sp("5px 7px"),
                 borderRadius: dim(RADII.sm),
-                background: `${item.tone}0d`,
+                background: `${cssColorMix(item.tone, 5)}`,
                 color: item.tone,
                 fontSize: textSize("paragraphMuted"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -928,7 +977,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
             >
               <span
                 style={{
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontSize: fs(8),
                   fontWeight: FONT_WEIGHTS.regular,
                   letterSpacing: "0.04em",
@@ -960,13 +1009,13 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
               display: "grid",
               gridTemplateColumns: `minmax(${dim(120)}px, 1fr) repeat(3, minmax(${dim(44)}px, auto))`,
               gap: sp(10),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
               letterSpacing: "0.04em",
               textTransform: "uppercase",
               paddingBottom: sp(6),
-              borderBottom: `1px solid ${T.borderLight}`,
+              borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
             }}
           >
             <span>Lane</span>
@@ -987,13 +1036,13 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
                 padding: sp("8px 0"),
                 borderBottom:
                   index < lineUsage.rows.length - 1
-                    ? `1px solid ${T.borderLight}`
+                    ? `1px solid ${CSS_COLOR.borderLight}`
                     : "none",
               }}
             >
               <span
                 style={{
-                  color: row.id === "total" ? T.text : T.textSec,
+                  color: row.id === "total" ? CSS_COLOR.text : CSS_COLOR.textSec,
                   minWidth: 0,
                   fontWeight:
                     row.id === "total"
@@ -1033,7 +1082,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
               <span
                 style={{
                   textAlign: "right",
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -1052,7 +1101,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage, compactLineUsage }) => {
               <span
                 style={{
                   textAlign: "right",
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -1090,8 +1139,8 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
             gap: sp(8),
             alignItems: "start",
             padding: sp("8px 10px"),
-            background: T.bg1,
-            border: `1px solid ${model.issue.tone}55`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${cssColorMix(model.issue.tone, 33)}`,
             borderRadius: dim(RADII.sm),
             color: model.issue.tone,
             fontFamily: T.sans,
@@ -1168,7 +1217,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
         marginTop: sp(6),
         display: "grid",
         gap: sp(6),
-        borderTop: `1px solid ${T.borderLight}`,
+        borderTop: `1px solid ${CSS_COLOR.borderLight}`,
       }}
     >
       <button
@@ -1183,7 +1232,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
           padding: sp("6px 2px 0"),
           border: "none",
           background: "transparent",
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           cursor: "pointer",
           fontFamily: T.sans,
           fontSize: fs(8),
@@ -1227,9 +1276,9 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
                   gap: sp(3),
                   minWidth: 0,
                   padding: sp("6px 8px"),
-                  border: `1px solid ${T.borderLight}`,
+                  border: `1px solid ${CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.sm),
-                  background: T.bg1,
+                  background: CSS_COLOR.bg1,
                 }}
               >
                 <div
@@ -1238,7 +1287,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
                     alignItems: "center",
                     justifyContent: "space-between",
                     gap: sp(4),
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     fontFamily: T.sans,
                     fontSize: fs(8),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -1488,7 +1537,7 @@ export const HeaderStatusCluster = ({
     fontSize: textSize(compressed ? "micro" : "caption"),
     fontWeight: FONT_WEIGHTS.medium,
     fontFamily: T.sans,
-    color: T.textMuted,
+    color: CSS_COLOR.textMuted,
     letterSpacing: compressed ? 0 : "0.04em",
     textTransform: "uppercase",
     whiteSpace: "nowrap",
@@ -2125,13 +2174,13 @@ export const HeaderStatusCluster = ({
             maxWidth: "none",
             padding: sp(compact ? "2px 14px 2px 3px" : compressed ? "2px 15px 2px 4px" : "6px 20px 6px 8px"),
             position: "relative",
-            color: T.text,
+            color: CSS_COLOR.text,
             appearance: "none",
             font: "inherit",
             cursor: "pointer",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.background = T.accentHoverBg;
+            event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
           }}
           onMouseLeave={(event) => {
             event.currentTarget.style.background = "transparent";
@@ -2148,7 +2197,7 @@ export const HeaderStatusCluster = ({
           />
           <ChevronDown
             size={dim(12)}
-            color={T.textMuted}
+            color={CSS_COLOR.textMuted}
             strokeWidth={2.3}
             style={{
               position: "absolute",
@@ -2169,7 +2218,7 @@ export const HeaderStatusCluster = ({
                 position: "fixed",
                 inset: 0,
                 zIndex: 279,
-                background: `${T.bg0}66`,
+                background: `${cssColorMix(CSS_COLOR.bg0, 40)}`,
                 touchAction: "none",
               }}
             />
@@ -2202,13 +2251,13 @@ export const HeaderStatusCluster = ({
               padding: bridgePopoverAsSheet
                 ? sp("8px 8px max(12px, env(safe-area-inset-bottom))")
                 : sp(8),
-              background: T.bg0,
-              border: bridgePopoverAsSheet ? `1px solid ${T.borderLight}` : "none",
+              background: CSS_COLOR.bg0,
+              border: bridgePopoverAsSheet ? `1px solid ${CSS_COLOR.borderLight}` : "none",
               borderBottom: bridgePopoverAsSheet ? "none" : undefined,
               borderTopLeftRadius: bridgePopoverAsSheet ? dim(RADII.md) : undefined,
               borderTopRightRadius: bridgePopoverAsSheet ? dim(RADII.md) : undefined,
-              boxShadow: bridgePopoverAsSheet ? `0 -18px 48px ${T.bg0}cc` : ELEVATION.lg,
-              color: T.text,
+              boxShadow: bridgePopoverAsSheet ? `0 -18px 48px ${cssColorMix(CSS_COLOR.bg0, 80)}` : ELEVATION.lg,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
             }}
           >
@@ -2232,7 +2281,7 @@ export const HeaderStatusCluster = ({
               >
                 <span
                   style={{
-                    color: T.text,
+                    color: CSS_COLOR.text,
                     fontSize: textSize("paragraph"),
                     fontWeight: FONT_WEIGHTS.medium,
                     fontFamily: T.sans,
@@ -2241,7 +2290,7 @@ export const HeaderStatusCluster = ({
                 >
                   IB Gateway
                 </span>
-                <span style={{ color: T.textMuted, fontSize: textSize("paragraphMuted") }}>
+                <span style={{ color: CSS_COLOR.textMuted, fontSize: textSize("paragraphMuted") }}>
                   ·
                 </span>
                 <span
@@ -2260,7 +2309,7 @@ export const HeaderStatusCluster = ({
               </div>
               <span
                 style={{
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontSize: textSize("paragraphMuted"),
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
@@ -2283,7 +2332,7 @@ export const HeaderStatusCluster = ({
                     border: "none",
                     borderRadius: dim(RADII.sm),
                     background: "transparent",
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     cursor: "pointer",
                   }}
                 >
@@ -2312,10 +2361,10 @@ export const HeaderStatusCluster = ({
                     justifyContent: "center",
                     gap: sp(6),
                     padding: sp("6px 12px"),
-                    border: `1px solid ${T.border}`,
+                    border: `1px solid ${CSS_COLOR.border}`,
                     borderRadius: dim(RADII.sm),
-                    background: T.bg1,
-                    color: T.textSec,
+                    background: CSS_COLOR.bg1,
+                    color: CSS_COLOR.textSec,
                     cursor: bridgeLauncherBusy ? "default" : "pointer",
                     fontSize: textSize("paragraphMuted"),
                     fontWeight: FONT_WEIGHTS.medium,
@@ -2337,8 +2386,8 @@ export const HeaderStatusCluster = ({
                   gap: sp(5),
                   marginBottom: sp(8),
                   padding: sp(8),
-                  background: T.bg1,
-                  border: `1px solid ${T.borderLight}`,
+                  background: CSS_COLOR.bg1,
+                  border: `1px solid ${CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.sm),
                 }}
               >
@@ -2346,7 +2395,7 @@ export const HeaderStatusCluster = ({
                   style={{
                     display: "grid",
                     gap: sp(4),
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     fontSize: textSize("caption"),
                     fontFamily: T.sans,
                     fontWeight: FONT_WEIGHTS.medium,
@@ -2362,10 +2411,10 @@ export const HeaderStatusCluster = ({
                     disabled={bridgeLauncherBusy}
                     style={{
                       minHeight: dim(28),
-                      border: `1px solid ${T.border}`,
+                      border: `1px solid ${CSS_COLOR.border}`,
                       borderRadius: dim(RADII.sm),
-                      background: T.bg0,
-                      color: T.text,
+                      background: CSS_COLOR.bg0,
+                      color: CSS_COLOR.text,
                       padding: sp("5px 8px"),
                       font: "inherit",
                     }}
@@ -2375,7 +2424,7 @@ export const HeaderStatusCluster = ({
                   style={{
                     display: "grid",
                     gap: sp(4),
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     fontSize: textSize("caption"),
                     fontFamily: T.sans,
                     fontWeight: FONT_WEIGHTS.medium,
@@ -2390,10 +2439,10 @@ export const HeaderStatusCluster = ({
                     disabled={bridgeLauncherBusy}
                     style={{
                       minHeight: dim(28),
-                      border: `1px solid ${T.border}`,
+                      border: `1px solid ${CSS_COLOR.border}`,
                       borderRadius: dim(RADII.sm),
-                      background: T.bg0,
-                      color: T.text,
+                      background: CSS_COLOR.bg0,
+                      color: CSS_COLOR.text,
                       padding: sp("5px 8px"),
                       font: "inherit",
                     }}
@@ -2421,10 +2470,10 @@ export const HeaderStatusCluster = ({
                       alignItems: "center",
                       justifyContent: "center",
                       gap: sp(6),
-                      border: `1px solid ${T.accent}`,
+                      border: `1px solid ${CSS_COLOR.accent}`,
                       borderRadius: dim(RADII.sm),
-                      background: `${T.accent}18`,
-                      color: T.accent,
+                      background: `${cssColorMix(CSS_COLOR.accent, 9)}`,
+                      color: CSS_COLOR.accent,
                       cursor: autoLoginActionDisabled ? "default" : "pointer",
                       fontSize: textSize("paragraphMuted"),
                       fontWeight: FONT_WEIGHTS.medium,
@@ -2454,10 +2503,10 @@ export const HeaderStatusCluster = ({
                     aria-disabled={bridgeLauncherBusy}
                     style={{
                       minHeight: dim(28),
-                      border: `1px solid ${T.border}`,
+                      border: `1px solid ${CSS_COLOR.border}`,
                       borderRadius: dim(RADII.sm),
-                      background: T.bg0,
-                      color: T.textSec,
+                      background: CSS_COLOR.bg0,
+                      color: CSS_COLOR.textSec,
                       cursor: bridgeLauncherBusy ? "default" : "pointer",
                       fontSize: textSize("paragraphMuted"),
                       fontWeight: FONT_WEIGHTS.medium,
@@ -2476,12 +2525,12 @@ export const HeaderStatusCluster = ({
                   minHeight: dim(32),
                   marginBottom: sp(8),
                   padding: sp("10px 12px"),
-                  background: T.bg1,
-                  border: `1px solid ${T.borderLight}`,
+                  background: CSS_COLOR.bg1,
+                  border: `1px solid ${CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.sm),
                   color: bridgeLauncherError
-                    ? T.red
-                    : T.textSec,
+                    ? CSS_COLOR.red
+                    : CSS_COLOR.textSec,
                   fontSize: textSize("paragraphMuted"),
                   lineHeight: 1.4,
                   fontFamily: T.sans,
@@ -2518,10 +2567,10 @@ export const HeaderStatusCluster = ({
           gap: sp(compressed ? 3 : 0),
           overflow: "visible",
           paddingLeft: sp(compressed ? 5 : 8),
-          borderLeft: `1px solid ${T.borderLight}`,
+          borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.background = T.accentHoverBg;
+          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
         }}
         onMouseLeave={(event) => {
           event.currentTarget.style.background = "transparent";
@@ -2558,7 +2607,7 @@ export const HeaderStatusCluster = ({
           background: "transparent",
           border: "none",
           borderRadius: 0,
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           cursor: "pointer",
           fontSize: fs(compressed ? 11 : 13),
           lineHeight: 1,
@@ -2567,12 +2616,12 @@ export const HeaderStatusCluster = ({
           transition: "background 0.12s ease, color 0.12s ease",
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.background = T.accentHoverBg;
-          event.currentTarget.style.color = T.accent;
+          event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+          event.currentTarget.style.color = CSS_COLOR.accent;
         }}
         onMouseLeave={(event) => {
           event.currentTarget.style.background = "transparent";
-          event.currentTarget.style.color = T.textSec;
+          event.currentTarget.style.color = CSS_COLOR.textSec;
         }}
       >
         {theme === "dark" ? "☼" : "☾"}

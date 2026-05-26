@@ -3,6 +3,7 @@ import {
   formatOptionContractLabel,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
   MISSING_VALUE,
   RADII,
   T,
@@ -587,7 +588,7 @@ export const resolveCandidateGateDisplay = (candidate) => {
   const record = asRecord(candidate);
   const reason = String(record.reason || "").trim();
   if (!reason) {
-    return { category: "clear", label: "Gate clear", detail: "no blocker", tone: T.green };
+    return { category: "clear", label: "Gate clear", detail: "no blocker", tone: CSS_COLOR.green };
   }
   const category = candidateReasonCategory(record);
   return {
@@ -596,10 +597,10 @@ export const resolveCandidateGateDisplay = (candidate) => {
     detail: formatEnumLabel(reason),
     tone:
       category === "risk" || category === "gateway"
-        ? T.red
+        ? CSS_COLOR.red
         : category === "liquidity" || category === "contract_resolution" || category === "marking"
-          ? T.amber
-          : T.textDim,
+          ? CSS_COLOR.amber
+          : CSS_COLOR.textDim,
   };
 };
 
@@ -609,18 +610,18 @@ export const resolveCandidateSyncDisplay = (candidate) => {
   const syncStatus = String(record.syncStatus || "").trim();
   const actionStatus = String(record.actionStatus || record.status || "").trim();
   if (syncStatus === "mismatch" || actionStatus === "mismatch") {
-    return { label: "Mismatch", detail: shadowLinkSummary(shadowLink), tone: T.red };
+    return { label: "Mismatch", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.red };
   }
   if (syncStatus === "event_only") {
-    return { label: "Event only", detail: shadowLinkSummary(shadowLink), tone: T.amber };
+    return { label: "Event only", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.amber };
   }
   if (shadowLink.fillId || shadowLink.orderId || shadowLink.positionId) {
-    return { label: "Synced", detail: shadowLinkSummary(shadowLink), tone: T.green };
+    return { label: "Synced", detail: shadowLinkSummary(shadowLink), tone: CSS_COLOR.green };
   }
   return {
     label: syncStatus ? formatEnumLabel(syncStatus) : "Pending",
     detail: actionStatus ? signalOptionsActionLabel(actionStatus) : "shadow link pending",
-    tone: syncStatus ? T.textSec : T.textDim,
+    tone: syncStatus ? CSS_COLOR.textSec : CSS_COLOR.textDim,
   };
 };
 
@@ -1174,25 +1175,25 @@ export const formatContractSelectionSummary = (selection) => {
 };
 
 export const signalOptionsActionColor = (status) => {
-  if (status === "shadow_filled") return T.green;
-  if (status === "manual_override" || status === "partial_shadow") return T.amber;
-  if (status === "blocked" || status === "mismatch") return T.red;
-  if (status === "closed") return T.textDim;
-  return T.cyan;
+  if (status === "shadow_filled") return CSS_COLOR.green;
+  if (status === "manual_override" || status === "partial_shadow") return CSS_COLOR.amber;
+  if (status === "blocked" || status === "mismatch") return CSS_COLOR.red;
+  if (status === "closed") return CSS_COLOR.textDim;
+  return CSS_COLOR.cyan;
 };
 
 export const cockpitStageColor = (status) => {
-  if (status === "healthy") return T.green;
-  if (status === "running") return T.cyan;
-  if (status === "attention" || status === "stale") return T.amber;
-  if (status === "blocked") return T.red;
-  return T.textDim;
+  if (status === "healthy") return CSS_COLOR.green;
+  if (status === "running") return CSS_COLOR.cyan;
+  if (status === "attention" || status === "stale") return CSS_COLOR.amber;
+  if (status === "blocked") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
 };
 
 export const cockpitAttentionColor = (severity) => {
-  if (severity === "critical") return T.red;
-  if (severity === "warning") return T.amber;
-  return T.cyan;
+  if (severity === "critical") return CSS_COLOR.red;
+  if (severity === "warning") return CSS_COLOR.amber;
+  return CSS_COLOR.cyan;
 };
 
 export const PROFILE_NUMBER_FIELDS = [
@@ -1497,15 +1498,15 @@ export const deriveSignalOptionsHaltControlStatus = ({
 
 export const compactButtonStyle = ({
   active = false,
-  color = T.accent,
+  color = CSS_COLOR.accent,
   fill = false,
   disabled = false,
 } = {}) => ({
   padding: sp("6px 12px"),
   borderRadius: dim(RADII.pill),
   border: "none",
-  background: active ? color : T.bg2,
-  color: active ? T.onAccent : T.text,
+  background: active ? color : CSS_COLOR.bg2,
+  color: active ? CSS_COLOR.onAccent : CSS_COLOR.text,
   fontSize: textSize("caption"),
   fontFamily: T.sans,
   fontWeight: active ? 600 : 500,

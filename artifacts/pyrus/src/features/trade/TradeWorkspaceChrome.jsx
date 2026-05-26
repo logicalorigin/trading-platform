@@ -30,10 +30,12 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
   T,
+  cssColorAlpha,
   dim,
   fs,
   sp,
@@ -70,13 +72,13 @@ const TickerTabStripItem = ({
   const isActive = ticker === active;
   const badges = [
     workspace?.selectedContract?.strike
-      ? { label: "OPT", color: T.accent }
+      ? { label: "OPT", color: CSS_COLOR.accent }
       : null,
     signalState?.fresh
-      ? { label: "SIG", color: T.green }
+      ? { label: "SIG", color: CSS_COLOR.green }
       : null,
     (flow?.events || []).length
-      ? { label: "FLOW", color: T.cyan }
+      ? { label: "FLOW", color: CSS_COLOR.cyan }
       : null,
   ].filter(Boolean).slice(0, 3);
 
@@ -94,23 +96,23 @@ const TickerTabStripItem = ({
       data-trade-tab-ticker={ticker}
       className={joinMotionClasses("ra-interactive", isActive && "ra-focus-rail")}
       style={{
-        ...motionVars({ accent: T.accent }),
+        ...motionVars({ accent: CSS_COLOR.accent }),
         display: "flex",
         alignItems: "center",
         gap: sp(5),
         padding: sp("4px 8px 5px"),
-        background: isActive ? T.bg2 : "transparent",
+        background: isActive ? CSS_COLOR.bg2 : "transparent",
         borderTop: isActive
-          ? `2px solid ${T.accent}`
+          ? `2px solid ${CSS_COLOR.accent}`
           : "2px solid transparent",
         borderLeft:
           dropSide === "before"
-            ? `3px solid ${T.accent}`
-            : `1px solid ${isActive ? T.border : "transparent"}`,
+            ? `3px solid ${CSS_COLOR.accent}`
+            : `1px solid ${isActive ? CSS_COLOR.border : "transparent"}`,
         borderRight:
           dropSide === "after"
-            ? `3px solid ${T.accent}`
-            : `1px solid ${isActive ? T.border : "transparent"}`,
+            ? `3px solid ${CSS_COLOR.accent}`
+            : `1px solid ${isActive ? CSS_COLOR.border : "transparent"}`,
         borderTopLeftRadius: dim(RADII.xs),
         borderTopRightRadius: dim(RADII.xs),
         cursor: dragging ? "grabbing" : "grab",
@@ -125,14 +127,14 @@ const TickerTabStripItem = ({
       <MarketIdentityMark
         item={{ ticker, name: info?.name || ticker }}
         size={16}
-        style={{ borderColor: isActive ? T.accent : T.border }}
+        style={{ borderColor: isActive ? CSS_COLOR.accent : CSS_COLOR.border }}
       />
       <span
         style={{
           fontSize: fs(11),
           fontWeight: FONT_WEIGHTS.regular,
           fontFamily: T.sans,
-          color: isActive ? T.text : T.textSec,
+          color: isActive ? CSS_COLOR.text : CSS_COLOR.textSec,
         }}
       >
         {ticker}
@@ -155,7 +157,7 @@ const TickerTabStripItem = ({
           fontFamily: T.sans,
           color:
             pos == null
-              ? T.textDim
+              ? CSS_COLOR.textDim
               : pos
                 ? "var(--ra-pnl-positive)"
                 : "var(--ra-pnl-negative)",
@@ -173,9 +175,9 @@ const TickerTabStripItem = ({
             width: dim(7),
             height: dim(7),
             borderRadius: dim(RADII.pill),
-            border: `1px solid ${badge.color}55`,
-            background: `${badge.color}22`,
-            boxShadow: isActive ? `0 0 0 1px ${T.bg1}` : "none",
+            border: `1px solid ${cssColorAlpha(badge.color, "55")}`,
+            background: cssColorAlpha(badge.color, "22"),
+            boxShadow: isActive ? `0 0 0 1px ${CSS_COLOR.bg1}` : "none",
             flexShrink: 0,
           }}
         />
@@ -191,7 +193,7 @@ const TickerTabStripItem = ({
           style={{
             background: "transparent",
             border: "none",
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             cursor: "pointer",
             fontSize: fs(11),
             padding: 0,
@@ -305,8 +307,8 @@ export const TickerTabStrip = ({
         alignItems: "stretch",
         gap: sp(1),
         padding: sp("4px 6px 0"),
-        background: T.bg1,
-        borderBottom: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
         overflowX: "auto",
         overflowY: "hidden",
         flexShrink: 0,
@@ -334,7 +336,7 @@ export const TickerTabStrip = ({
         style={{
           background: "transparent",
           border: "none",
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           cursor: "pointer",
           fontSize: fs(13),
           padding: sp("3px 8px"),
@@ -397,8 +399,8 @@ export const TradeTickerHeader = ({
         alignItems: "center",
         flexWrap: compactHeader ? "wrap" : "nowrap",
         gap: compactHeader ? sp("6px 8px") : sp(16),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
         padding: sp(compactHeader ? "8px 10px" : "8px 14px"),
         flexShrink: 0,
@@ -424,7 +426,7 @@ export const TradeTickerHeader = ({
             fontSize: fs(20),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: T.text,
+            color: CSS_COLOR.text,
             letterSpacing: 0,
             whiteSpace: "nowrap",
           }}
@@ -435,7 +437,7 @@ export const TradeTickerHeader = ({
           style={{
             display: compactHeader ? "none" : undefined,
             fontSize: fs(11),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -468,7 +470,7 @@ export const TradeTickerHeader = ({
             fontSize: fs(compactHeader ? 20 : 22),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: T.text,
+            color: CSS_COLOR.text,
             whiteSpace: "nowrap",
           }}
         >
@@ -479,7 +481,7 @@ export const TradeTickerHeader = ({
             fontSize: fs(12),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: pos == null ? T.textDim : pos ? T.green : T.red,
+            color: pos == null ? CSS_COLOR.textDim : pos ? CSS_COLOR.green : CSS_COLOR.red,
             whiteSpace: "nowrap",
           }}
         >
@@ -492,7 +494,7 @@ export const TradeTickerHeader = ({
             fontSize: fs(12),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: pos == null ? T.textDim : pos ? T.green : T.red,
+            color: pos == null ? CSS_COLOR.textDim : pos ? CSS_COLOR.green : CSS_COLOR.red,
             whiteSpace: "nowrap",
           }}
         >
@@ -514,44 +516,44 @@ export const TradeTickerHeader = ({
         }}
       >
         <div>
-          <span style={{ color: T.textMuted }}>VOL </span>
-          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.textMuted }}>VOL </span>
+          <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
             {fmtQuoteVolume(info?.volume)}
           </span>
         </div>
         <div>
-          <span style={{ color: T.textMuted }}>IV </span>
-          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.textMuted }}>IV </span>
+          <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
             {isFiniteNumber(info?.iv)
               ? `${(info.iv * 100).toFixed(1)}%`
               : MISSING_VALUE}
           </span>
         </div>
         <div>
-          <span style={{ color: T.textMuted }}>IMP </span>
+          <span style={{ color: CSS_COLOR.textMuted }}>IMP </span>
           <span
             style={{
-              color: impMove != null ? T.cyan : T.textDim,
+              color: impMove != null ? CSS_COLOR.cyan : CSS_COLOR.textDim,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           >
             {impMove != null ? `±${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
-          <span style={{ color: T.textDim }}>
+          <span style={{ color: CSS_COLOR.textDim }}>
             {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
           </span>
         </div>
         <div>
-          <span style={{ color: T.textMuted }}>ATM </span>
-          <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.textMuted }}>ATM </span>
+          <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
             {atmRow?.k ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </div>
         <div>
-          <span style={{ color: T.textMuted }}>CHAIN </span>
+          <span style={{ color: CSS_COLOR.textMuted }}>CHAIN </span>
           <span
             style={{
-              color: resolvedChainStatus === "live" ? T.accent : T.textDim,
+              color: resolvedChainStatus === "live" ? CSS_COLOR.accent : CSS_COLOR.textDim,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           >

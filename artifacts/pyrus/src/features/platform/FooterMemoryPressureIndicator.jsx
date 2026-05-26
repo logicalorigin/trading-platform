@@ -13,6 +13,45 @@ import {
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
   watch: "--ra-pressure-watch",
@@ -81,7 +120,7 @@ const miniTrackStyle = () => ({
   width: dim(CLUSTER_BAR_WIDTH),
   height: dim(CLUSTER_BAR_HEIGHT),
   borderRadius: dim(RADII.xs),
-  background: `${T.textMuted}1f`,
+  background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`,
   overflow: "hidden",
   flexShrink: 0,
 });
@@ -222,11 +261,11 @@ const sectionStyle = {
   display: "grid",
   gap: sp(8),
   padding: sp("12px 14px"),
-  borderBottom: `1px solid ${T.border}`,
+  borderBottom: `1px solid ${CSS_COLOR.border}`,
 };
 
 const sectionHeaderStyle = {
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
   letterSpacing: "0.04em",
@@ -241,13 +280,13 @@ const rowGridStyle = {
 };
 
 const rowLabelStyle = {
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   minWidth: 0,
 };
 
 const rowValueStyle = {
-  color: T.text,
+  color: CSS_COLOR.text,
   fontSize: textSize("caption"),
   fontVariantNumeric: "tabular-nums",
   minWidth: 0,
@@ -294,7 +333,7 @@ const DriverRows = ({ rows }) =>
             gap: sp(5),
             padding: sp("7px 8px"),
             borderRadius: dim(RADII.sm),
-            background: T.bg2,
+            background: CSS_COLOR.bg2,
           }}
         >
           <div
@@ -305,12 +344,12 @@ const DriverRows = ({ rows }) =>
               alignItems: "center",
             }}
           >
-            <div style={{ minWidth: 0, color: T.text, fontSize: textSize("caption") }}>
+            <div style={{ minWidth: 0, color: CSS_COLOR.text, fontSize: textSize("caption") }}>
               {driver.label}
             </div>
             <LevelPill level={driver.level} />
           </div>
-          <div style={{ ...rowValueStyle, color: T.textMuted }}>
+          <div style={{ ...rowValueStyle, color: CSS_COLOR.textMuted }}>
             {driver.detail} / {driver.contribution}
           </div>
           {driver.metrics.length ? (
@@ -336,7 +375,7 @@ const DriverRows = ({ rows }) =>
       ))}
     </div>
   ) : (
-    <div style={{ ...rowValueStyle, color: T.textMuted }}>
+    <div style={{ ...rowValueStyle, color: CSS_COLOR.textMuted }}>
       No driver sample available yet.
     </div>
   );
@@ -353,7 +392,7 @@ const ThresholdRows = ({ rows }) => (
           alignItems: "baseline",
         }}
       >
-        <div style={{ ...rowLabelStyle, color: T.textSec }}>{row.label}</div>
+        <div style={{ ...rowLabelStyle, color: CSS_COLOR.textSec }}>{row.label}</div>
         <div style={rowValueStyle}>{row.summary}</div>
       </div>
     ))}
@@ -444,7 +483,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
         >
           <span
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
               letterSpacing: "0.04em",
@@ -462,7 +501,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
               width: dim(64),
               height: dim(6),
               borderRadius: dim(RADII.pill),
-              background: `${T.textMuted}1f`,
+              background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`,
               overflow: "hidden",
               flexShrink: 0,
             }}
@@ -504,14 +543,14 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
           maxHeight: "min(72vh, 640px)",
           overflowY: "auto",
           padding: 0,
-          border: `1px solid ${T.border}`,
+          border: `1px solid ${CSS_COLOR.border}`,
         }}
       >
         <div
           style={{
             display: "grid",
             gap: 0,
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
           }}
         >
@@ -526,7 +565,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
               <div style={sectionHeaderStyle}>Memory Pressure</div>
               <div
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontSize: textSize("body"),
                   fontWeight: FONT_WEIGHTS.medium,
                 }}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 import {
   buildRiskLevelDisplayModel,
   getRiskGaugeColorStops,
@@ -106,12 +106,12 @@ test("risk gauge color stops follow account risk semantics", () => {
   assert.equal(marginModel.riskPercent, 18);
   assert.equal(marginModel.status.label, "Safe");
   assert.deepEqual(getRiskGaugeColorStops(marginModel), [
-    { offset: 0, color: T.green },
-    { offset: 0.49, color: T.green },
-    { offset: 0.5, color: T.amber },
-    { offset: 0.74, color: T.amber },
-    { offset: 0.75, color: T.red },
-    { offset: 1, color: T.red },
+    { offset: 0, color: CSS_COLOR.green },
+    { offset: 0.49, color: CSS_COLOR.green },
+    { offset: 0.5, color: CSS_COLOR.amber },
+    { offset: 0.74, color: CSS_COLOR.amber },
+    { offset: 0.75, color: CSS_COLOR.red },
+    { offset: 1, color: CSS_COLOR.red },
   ]);
 
   const cashModel = buildRiskLevelDisplayModel({
@@ -134,8 +134,8 @@ test("risk gauge color stops follow account risk semantics", () => {
   assert.equal(cashModel.status.label, "Cash");
   assert.equal(cashModel.riskPercent, 0);
   assert.deepEqual(getRiskGaugeColorStops(cashModel), [
-    { offset: 0, color: T.cyan },
-    { offset: 1, color: T.cyan },
+    { offset: 0, color: CSS_COLOR.cyan },
+    { offset: 1, color: CSS_COLOR.cyan },
   ]);
 });
 

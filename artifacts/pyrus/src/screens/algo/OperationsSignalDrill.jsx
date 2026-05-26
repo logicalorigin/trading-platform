@@ -1,5 +1,8 @@
-import { useMemo } from "react";
 import {
+  useMemo,
+} from "react";
+import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -60,7 +63,7 @@ const Row = ({ label, value, tone }) => (
   >
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: "0.04em",
@@ -71,7 +74,7 @@ const Row = ({ label, value, tone }) => (
     </span>
     <span
       style={{
-        color: tone || T.text,
+        color: tone || CSS_COLOR.text,
         fontFamily: T.sans,
         fontSize: textSize("body"),
         overflow: "hidden",
@@ -154,7 +157,7 @@ const OverviewPane = ({ signal, candidate, position }) => {
           ].filter((item) => item && item !== MISSING_VALUE).join(" · ") ||
           MISSING_VALUE
         }
-        tone={freshness === "FRESH" ? T.green : freshness === "STALE" ? T.amber : T.text}
+        tone={freshness === "FRESH" ? CSS_COLOR.green : freshness === "STALE" ? CSS_COLOR.amber : CSS_COLOR.text}
       />
       <Row
         label="Counter"
@@ -190,8 +193,8 @@ const OverviewPane = ({ signal, candidate, position }) => {
           value={`${qty}× @ ${entry} → ${mark}`}
           tone={
             Number(position.lastMarkPrice ?? 0) >= Number(position.entryPrice ?? 0)
-              ? T.green
-              : T.red
+              ? CSS_COLOR.green
+              : CSS_COLOR.red
           }
         />
       ) : (
@@ -201,7 +204,7 @@ const OverviewPane = ({ signal, candidate, position }) => {
         <Row
           label="Blocker"
           value={formatEnumLabel(candidate.reason)}
-          tone={T.amber}
+          tone={CSS_COLOR.amber}
         />
       ) : null}
     </div>
@@ -214,7 +217,7 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
       <div
         style={{
           padding: sp("12px 14px"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("body"),
         }}
@@ -286,7 +289,7 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
           ].filter((item) => item && item !== MISSING_VALUE).join(" · ") ||
           MISSING_VALUE
         }
-        tone={scoreBreakdown.tier === "high" ? T.green : scoreBreakdown.tier === "low" ? T.red : T.amber}
+        tone={scoreBreakdown.tier === "high" ? CSS_COLOR.green : scoreBreakdown.tier === "low" ? CSS_COLOR.red : CSS_COLOR.amber}
       />
       <Row
         label="Reasons"
@@ -329,7 +332,7 @@ const ActionPane = ({ candidate, events = [], signalOptionsProfile }) => {
       <Row
         label="Blocker"
         value={blocker !== MISSING_VALUE ? `${gate.label} · ${blocker}` : gate.label}
-        tone={blocker !== MISSING_VALUE ? T.amber : T.textSec}
+        tone={blocker !== MISSING_VALUE ? CSS_COLOR.amber : CSS_COLOR.textSec}
       />
       <Row label="Latest" value={candidateLatestActivityLabel(candidate)} />
       <Row label="Shadow" value={`${sync.label} · ${shadowLinkSummary(candidate.shadowLink)}`} tone={sync.tone} />
@@ -350,7 +353,7 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
       <div
         style={{
           padding: sp("12px 14px"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("body"),
         }}
@@ -422,10 +425,10 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
         value={formatMoney(unrealized, 2)}
         tone={
           Number(unrealized) > 0
-            ? T.green
+            ? CSS_COLOR.green
             : Number(unrealized) < 0
-              ? T.red
-              : T.text
+              ? CSS_COLOR.red
+              : CSS_COLOR.text
         }
       />
       <Row label="Premium" value={formatMoney(position.premiumAtRisk)} />
@@ -433,14 +436,14 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
       <Row
         label="Giveback"
         value={giveback == null ? MISSING_VALUE : formatPct(giveback, 1)}
-        tone={Number(giveback) < 0 ? T.amber : T.green}
+        tone={Number(giveback) < 0 ? CSS_COLOR.amber : CSS_COLOR.green}
       />
       <Row
         label="Stop distance"
         value={stopDistance == null ? MISSING_VALUE : formatPct(stopDistance, 1)}
-        tone={Number(stopDistance) <= 20 ? T.amber : T.textSec}
+        tone={Number(stopDistance) <= 20 ? CSS_COLOR.amber : CSS_COLOR.textSec}
       />
-      <Row label="Move signal" value={move.detail} tone={Number(move.pct) >= 0 ? T.green : T.red} />
+      <Row label="Move signal" value={move.detail} tone={Number(move.pct) >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
       <Row label="Opened" value={formatRelativeTimeShort(position.openedAt)} />
       <Row label="Marked" value={formatRelativeTimeShort(position.lastMarkedAt)} />
       <Row label="Quality" value={quality} />
@@ -448,14 +451,14 @@ const PositionPane = ({ position, candidate, signalOptionsProfile }) => {
         <Row
           label="Hard stop"
           value={`triggers @ ${formatPlainPrice(triggerPrice, 2)}`}
-          tone={T.amber}
+          tone={CSS_COLOR.amber}
         />
       ) : null}
       {Number.isFinite(currentStop) ? (
         <Row
           label="Active stop"
           value={formatPlainPrice(currentStop, 2)}
-          tone={T.amber}
+          tone={CSS_COLOR.amber}
         />
       ) : null}
     </div>
@@ -469,7 +472,7 @@ const HistoryPane = ({ candidate, events, userPreferences }) => {
       <div
         style={{
           padding: sp("12px 14px"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("body"),
         }}
@@ -516,13 +519,13 @@ const HistoryPane = ({ candidate, events, userPreferences }) => {
             padding: sp("2px 0"),
           }}
         >
-          <span style={{ color: T.textDim, fontFamily: T.sans }}>
+          <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans }}>
             {formatAppTimeForPreferences(row.occurredAt, userPreferences)}
           </span>
-          <span style={{ color: T.accent }}>
+          <span style={{ color: CSS_COLOR.accent }}>
             {row.label}
           </span>
-          <span style={{ color: T.textSec, lineHeight: 1.35 }}>
+          <span style={{ color: CSS_COLOR.textSec, lineHeight: 1.35 }}>
             {row.summary}
           </span>
         </div>
@@ -557,7 +560,7 @@ export const OperationsSignalDrill = ({
           display: "flex",
           gap: sp(1),
           padding: sp("4px 8px"),
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
         }}
       >
         {ALGO_DRILL_TABS.map((tab) => {
@@ -571,8 +574,8 @@ export const OperationsSignalDrill = ({
                 padding: sp("3px 10px"),
                 borderRadius: dim(RADII.pill),
                 border: "none",
-                background: selected ? T.bg2 : "transparent",
-                color: selected ? T.text : T.textMuted,
+                background: selected ? CSS_COLOR.bg2 : "transparent",
+                color: selected ? CSS_COLOR.text : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: selected ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,

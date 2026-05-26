@@ -1,7 +1,14 @@
-import { Clock, Crosshair, Maximize2, Minimize2, Plus, Wrench } from "lucide-react";
+import {
+  Clock,
+  Crosshair,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Wrench,
+} from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 // @ts-expect-error JSX import from a .jsx module
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 type ChartMobileToolbarProps = {
   timeframeLabel: string;
@@ -28,7 +35,7 @@ const buttonStyle = (active: boolean): CSSProperties => ({
   padding: sp("4px 2px"),
   border: "none",
   background: "transparent",
-  color: active ? T.accent : T.textSec,
+  color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
   fontFamily: T.sans,
   fontSize: fs(8),
   fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
@@ -85,8 +92,8 @@ const ToolbarButton = ({
             height: dim(14),
             padding: "0 4px",
             borderRadius: dim(RADII.pill),
-            background: T.accent,
-            color: T.onAccent,
+            background: CSS_COLOR.accent,
+            color: CSS_COLOR.onAccent,
             fontFamily: T.sans,
             fontSize: fs(7),
             fontWeight: FONT_WEIGHTS.medium,
@@ -130,7 +137,7 @@ export const ChartMobileToolbar = ({
         alignItems: "stretch",
         gap: sp(1),
         padding: sp("3px 2px max(3px, env(safe-area-inset-bottom))"),
-        borderTop: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
       }}
     >
       <ToolbarButton

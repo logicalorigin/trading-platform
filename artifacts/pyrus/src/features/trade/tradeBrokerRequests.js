@@ -2,7 +2,7 @@ import {
   formatOptionContractLabel,
   parseExpirationValue,
 } from "../../lib/formatters";
-import { MISSING_VALUE, T } from "../../lib/uiTokens";
+import { CSS_COLOR, MISSING_VALUE, T } from "../../lib/uiTokens";
 
 const buildApiUrl = (path, params = {}) => {
   const url = new URL(path, window.location.origin);
@@ -69,18 +69,18 @@ export const sameOptionContract = (left, right) => {
 export const orderStatusColor = (status) => {
   switch (status) {
     case "filled":
-      return T.green;
+      return CSS_COLOR.green;
     case "accepted":
     case "submitted":
     case "partially_filled":
     case "pending_submit":
-      return T.accent;
+      return CSS_COLOR.accent;
     case "canceled":
     case "expired":
-      return T.textDim;
+      return CSS_COLOR.textDim;
     case "rejected":
-      return T.red;
+      return CSS_COLOR.red;
     default:
-      return T.text;
+      return CSS_COLOR.text;
   }
 };

@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { fetchEarningsCalendar } from "../lib/researchApi";
 import { Logo } from "./ResearchLogo";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, fs, sp, textSize } from "../../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  fs,
+  sp,
+  textSize,
+} from "../../../lib/uiTokens.jsx";
 
 
 export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
@@ -85,10 +99,10 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
   };
 
   const timeBadge = t => {
-    if (t === "bmo") return { label: "BMO", bg: T.greenBg, fg: T.green, title: "Before market open" };
-    if (t === "amc") return { label: "AMC", bg: `${T.purple}26`, fg: T.purple, title: "After market close" };
-    if (t === "dmh") return { label: "DMH", bg: T.amberBg, fg: T.amber, title: "During market hours" };
-    return { label: "—", bg: T.bg2, fg: T.textDim, title: "Time not specified" };
+    if (t === "bmo") return { label: "BMO", bg: CSS_COLOR.greenBg, fg: CSS_COLOR.green, title: "Before market open" };
+    if (t === "amc") return { label: "AMC", bg: `${cssColorMix(CSS_COLOR.purple, 15)}`, fg: CSS_COLOR.purple, title: "After market close" };
+    if (t === "dmh") return { label: "DMH", bg: CSS_COLOR.amberBg, fg: CSS_COLOR.amber, title: "During market hours" };
+    return { label: "—", bg: CSS_COLOR.bg2, fg: CSS_COLOR.textDim, title: "Time not specified" };
   };
 
   const fmtEPS = n => (n == null || isNaN(n)) ? "—" : (n >= 0 ? "$" : "–$") + Math.abs(n).toFixed(2);
@@ -99,7 +113,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
     if (abs >= 1e6) return "$" + (n / 1e6).toFixed(0) + "M";
     return "$" + n;
   };
-  const accent = T.accent;
+  const accent = CSS_COLOR.accent;
 
   return (
     <div style={{ animation: "fadeIn 0.3s ease" }}>
@@ -109,7 +123,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
           <div style={{ fontSize: fs(11), color: accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: FONT_WEIGHTS.regular }}>
             Earnings & Catalysts
           </div>
-          <h2 style={{ fontFamily: T.display, fontSize: fs(30), fontWeight: FONT_WEIGHTS.regular, color: T.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(3) }}>
+          <h2 style={{ fontFamily: T.display, fontSize: fs(30), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text, letterSpacing: 0, lineHeight: 1.05, marginTop: sp(3) }}>
             Catalyst Calendar
           </h2>
         </div>
@@ -117,7 +131,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
           <div style={{ fontSize: fs(18), fontWeight: FONT_WEIGHTS.regular, color: accent }}>
             {entries === null ? "…" : visible.length}
           </div>
-          <div style={{ fontSize: fs(10), color: T.textMuted, letterSpacing: 0.3 }}>
+          <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, letterSpacing: 0.3 }}>
             scheduled next {rangeFilter === "7d" ? "week" : rangeFilter === "30d" ? "30 days" : "90 days"}
           </div>
         </div>
@@ -125,13 +139,13 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* ── FILTERS ── */}
       <div style={{ display: "flex", gap: sp(10), alignItems: "center", marginBottom: sp(12), flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", gap: sp(2), background: T.bg1, borderRadius: RADII.sm, padding: sp(2) }}>
+        <div style={{ display: "inline-flex", gap: sp(2), background: CSS_COLOR.bg1, borderRadius: RADII.sm, padding: sp(2) }}>
           {[["7d", "7 days"], ["30d", "30 days"], ["90d", "90 days"]].map(([k, lb]) => (
             <button key={k} onClick={() => setRangeFilter(k)} style={{
-              background: rangeFilter === k ? T.bg1 : "transparent",
+              background: rangeFilter === k ? CSS_COLOR.bg1 : "transparent",
               border: "none", borderRadius: RADII.sm, padding: sp("5px 12px"),
               fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular,
-              color: rangeFilter === k ? T.text : T.textDim, cursor: "pointer",
+              color: rangeFilter === k ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer",
               boxShadow: rangeFilter === k ? ELEVATION.sm : "none",
               transition: "all .12s",
             }}>{lb}</button>
@@ -140,22 +154,22 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
         {/* Theme filter */}
         <div style={{ display: "inline-flex", gap: sp(3), alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: fs(10), color: T.textMuted, letterSpacing: .5, textTransform: "uppercase", marginRight: sp(4) }}>Theme:</span>
+          <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, letterSpacing: .5, textTransform: "uppercase", marginRight: sp(4) }}>Theme:</span>
           <button onClick={() => setThemeFilter(null)} style={{
-            background: !themeFilter ? T.bg1 : "transparent",
-            border: !themeFilter ? `1px solid ${T.border}` : "1px solid transparent",
+            background: !themeFilter ? CSS_COLOR.bg1 : "transparent",
+            border: !themeFilter ? `1px solid ${CSS_COLOR.border}` : "1px solid transparent",
             borderRadius: RADII.sm, padding: sp("4px 10px"), fontSize: fs(10),
-            color: !themeFilter ? T.text : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
+            color: !themeFilter ? CSS_COLOR.text : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
           }}>All</button>
           {Object.keys(themes).filter(id => themes[id].available).map(tid => {
             const t = themes[tid];
             const active = themeFilter === tid;
             return (
               <button key={tid} onClick={() => setThemeFilter(active ? null : tid)} style={{
-                background: active ? T.bg1 : "transparent",
+                background: active ? CSS_COLOR.bg1 : "transparent",
                 border: active ? `1px solid ${t.accent}66` : "1px solid transparent",
                 borderRadius: RADII.sm, padding: sp("4px 9px"), fontSize: fs(10),
-                color: active ? t.accent : T.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
+                color: active ? t.accent : CSS_COLOR.textDim, cursor: "pointer", fontWeight: FONT_WEIGHTS.regular,
                 display: "inline-flex", alignItems: "center", gap: sp(3),
                 boxShadow: active ? `0 1px 3px ${t.accent}22` : "none",
               }}>
@@ -169,31 +183,31 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* ── STATE: LOADING / NO KEY / EMPTY / LIST ── */}
       {!apiKey && (
-        <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: T.textDim, fontSize: fs(12) }}>
+        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
           <div style={{ fontSize: fs(32), opacity: 0.3, marginBottom: sp(8) }}>🔑</div>
-          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: T.textSec }}>FMP API key required</div>
-          <div style={{ fontSize: fs(11), color: T.textDim }}>Add a key in settings (gear icon) to load the earnings calendar.</div>
+          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: CSS_COLOR.textSec }}>FMP API key required</div>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>Add a key in settings (gear icon) to load the earnings calendar.</div>
         </div>
       )}
 
       {apiKey && entries === null && (
-        <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: T.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(11), color: T.amber, marginBottom: sp(6) }}>⌛ Fetching calendar…</div>
-          <div style={{ fontSize: fs(10), color: T.textMuted }}>Calling FMP earnings calendar endpoint for next 90 days.</div>
+        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.amber, marginBottom: sp(6) }}>⌛ Fetching calendar…</div>
+          <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted }}>Calling FMP earnings calendar endpoint for next 90 days.</div>
         </div>
       )}
 
       {apiKey && entries && entries.length === 0 && (
-        <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: T.textDim, fontSize: fs(12) }}>
+        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
           <div style={{ fontSize: fs(32), opacity: 0.3, marginBottom: sp(8) }}>📅</div>
-          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: T.textSec }}>No earnings data returned</div>
-          <div style={{ fontSize: fs(11), color: T.textDim }}>Either no companies in our universe report in the next 90 days, or the API response was empty.</div>
+          <div style={{ fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(4), color: CSS_COLOR.textSec }}>No earnings data returned</div>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.textDim }}>Either no companies in our universe report in the next 90 days, or the API response was empty.</div>
         </div>
       )}
 
       {apiKey && entries && entries.length > 0 && grouped.length === 0 && (
-        <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: T.textDim, fontSize: fs(12) }}>
-          <div style={{ fontSize: fs(11), color: T.textMuted }}>No events match the current filters — try widening the range or clearing the theme filter.</div>
+        <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: RADII.md, padding: sp("30px 20px"), textAlign: "center", color: CSS_COLOR.textDim, fontSize: fs(12) }}>
+          <div style={{ fontSize: fs(11), color: CSS_COLOR.textMuted }}>No events match the current filters — try widening the range or clearing the theme filter.</div>
         </div>
       )}
 
@@ -206,15 +220,15 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             <div style={{
               position: "sticky", top: 0, zIndex: 2,
               display: "flex", alignItems: "baseline", gap: sp(8),
-              padding: sp("5px 8px"), background: `linear-gradient(to bottom, ${T.bg1} 75%, color-mix(in srgb, ${T.bg1} 85%, transparent))`,
-              borderBottom: `1px solid ${T.border}`,
+              padding: sp("5px 8px"), background: `linear-gradient(to bottom, ${CSS_COLOR.bg1} 75%, color-mix(in srgb, ${CSS_COLOR.bg1} 85%, transparent))`,
+              borderBottom: `1px solid ${CSS_COLOR.border}`,
             }}>
-              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{dh.primary}</span>
+              <span style={{ fontSize: fs(13), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{dh.primary}</span>
               {dh.rel && <span style={{ fontSize: fs(10), color: accent, fontWeight: FONT_WEIGHTS.regular, letterSpacing: .3 }}>{dh.rel}</span>}
-              <span style={{ fontSize: fs(10), color: T.textMuted, marginLeft: "auto" }}>{group.rows.length} event{group.rows.length !== 1 ? "s" : ""}</span>
+              <span style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginLeft: "auto" }}>{group.rows.length} event{group.rows.length !== 1 ? "s" : ""}</span>
             </div>
             {/* Rows */}
-            <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", overflow: "hidden" }}>
+            <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderTop: "none", borderRadius: "0 0 8px 8px", overflow: "hidden" }}>
               {group.rows.map((row, i) => {
                 const co = cos.find(c => c.t === row.internalTicker);
                 if (!co) return null;
@@ -235,13 +249,13 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                       gridTemplateColumns: "52px 1fr auto auto auto",
                       gap: sp(12), alignItems: "center",
                       padding: sp("9px 10px"),
-                      borderBottom: i < group.rows.length - 1 ? `1px solid ${T.border}` : "none",
-                      background: i % 2 ? T.bg2 : "transparent",
+                      borderBottom: i < group.rows.length - 1 ? `1px solid ${CSS_COLOR.border}` : "none",
+                      background: i % 2 ? CSS_COLOR.bg2 : "transparent",
                       cursor: "pointer",
                       transition: "background .12s",
                     }}
                     onMouseEnter={e => e.currentTarget.style.background = vc.bg}
-                    onMouseLeave={e => e.currentTarget.style.background = i % 2 ? T.bg2 : "transparent"}
+                    onMouseLeave={e => e.currentTarget.style.background = i % 2 ? CSS_COLOR.bg2 : "transparent"}
                   >
                     {/* Time badge */}
                     <AppTooltip content={tb.title}><span style={{
@@ -255,7 +269,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: sp(5) }}>
                           <span style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: vc.c }}>{co.cc} {co.t}</span>
-                          <span style={{ fontSize: fs(10), color: T.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>{co.nm}</span>
+                          <span style={{ fontSize: fs(10), color: CSS_COLOR.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>{co.nm}</span>
                         </div>
                         {themeChips.length > 0 && (
                           <div style={{ display: "flex", gap: sp(3), marginTop: sp(2) }}>
@@ -272,25 +286,25 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
                     {/* EPS est (or actual if reported) */}
                     <div style={{ textAlign: "right", minWidth: 80 }}>
-                      <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>
+                      <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>
                         {reported ? "EPS Act" : "EPS Est"}
                       </div>
-                      <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: reported ? (beat ? T.green : T.red) : T.text }}>
+                      <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: reported ? (beat ? CSS_COLOR.green : CSS_COLOR.red) : CSS_COLOR.text }}>
                         {reported ? fmtEPS(epsActual) : fmtEPS(epsEst)}
                       </div>
                       {reported && epsEst != null && (
-                        <div style={{ fontSize: textSize("caption"), color: T.textDim }}>est {fmtEPS(epsEst)}</div>
+                        <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>est {fmtEPS(epsEst)}</div>
                       )}
                     </div>
 
                     {/* Rev est */}
                     <div style={{ textAlign: "right", minWidth: 70 }}>
-                      <div style={{ fontSize: textSize("caption"), color: T.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>Rev Est</div>
-                      <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>{fmtRev(revEst)}</div>
+                      <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, letterSpacing: .3, textTransform: "uppercase" }}>Rev Est</div>
+                      <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>{fmtRev(revEst)}</div>
                     </div>
 
                     {/* Arrow indicator */}
-                    <span style={{ fontSize: fs(14), color: T.textMuted }}>›</span>
+                    <span style={{ fontSize: fs(14), color: CSS_COLOR.textMuted }}>›</span>
                   </div>
                 );
               })}
@@ -301,7 +315,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
 
       {/* Footer */}
       {grouped.length > 0 && (
-        <div style={{ fontSize: fs(10), color: T.textMuted, marginTop: sp(12), textAlign: "center" }}>
+        <div style={{ fontSize: fs(10), color: CSS_COLOR.textMuted, marginTop: sp(12), textAlign: "center" }}>
           Calendar data: FMP · Cached 1 hour · Click any row to open detail panel
         </div>
       )}

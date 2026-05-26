@@ -11,7 +11,17 @@ import {
   Tv,
 } from "lucide-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
@@ -45,25 +55,25 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
       alignItems: "center",
       gap: sp(7),
       padding: sp("6px 7px"),
-      border: `1px solid ${T.borderLight}`,
+      border: `1px solid ${CSS_COLOR.borderLight}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
-      color: T.text,
+      background: CSS_COLOR.bg1,
+      color: CSS_COLOR.text,
       textAlign: "left",
       cursor: "pointer",
       fontFamily: T.sans,
       transition: "background 0.12s ease, border-color 0.12s ease",
     }}
     onMouseEnter={(event) => {
-      event.currentTarget.style.background = T.accentHoverBg;
-      event.currentTarget.style.borderColor = `${T.accent}33`;
+      event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+      event.currentTarget.style.borderColor = `${cssColorMix(CSS_COLOR.accent, 20)}`;
     }}
     onMouseLeave={(event) => {
-      event.currentTarget.style.background = T.bg1;
-      event.currentTarget.style.borderColor = T.borderLight;
+      event.currentTarget.style.background = CSS_COLOR.bg1;
+      event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
     }}
   >
-    <Icon size={16} strokeWidth={2.1} style={{ color: T.accent }} />
+    <Icon size={16} strokeWidth={2.1} style={{ color: CSS_COLOR.accent }} />
     <span style={{ minWidth: 0 }}>
       <span
         style={{
@@ -86,7 +96,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             lineHeight: 1.1,
@@ -99,20 +109,20 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
   </button>
 );
 
-const StatusChip = ({ label, value, tone = T.textSec }) => (
+const StatusChip = ({ label, value, tone = CSS_COLOR.textSec }) => (
   <div
     style={{
       minWidth: 0,
       padding: sp("5px 7px"),
-      border: `1px solid ${T.borderLight}`,
+      border: `1px solid ${CSS_COLOR.borderLight}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       fontFamily: T.sans,
     }}
   >
     <div
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: textSize("caption"),
         lineHeight: 1.05,
         fontWeight: FONT_WEIGHTS.medium,
@@ -182,7 +192,7 @@ export const MobileMoreSheet = ({
           display: "grid",
           gap: sp(10),
           padding: sp("10px 10px max(14px, env(safe-area-inset-bottom))"),
-          background: T.bg0,
+          background: CSS_COLOR.bg0,
         }}
       >
         <div
@@ -208,10 +218,10 @@ export const MobileMoreSheet = ({
                   alignItems: "center",
                   gap: sp(7),
                   padding: sp("0 7px"),
-                  border: `1px solid ${active ? `${T.accent}40` : T.borderLight}`,
+                  border: `1px solid ${active ? `${cssColorMix(CSS_COLOR.accent, 25)}` : CSS_COLOR.borderLight}`,
                   borderRadius: dim(RADII.xs),
-                  background: active ? T.accentHoverBg : T.bg1,
-                  color: active ? T.accent : T.textSec,
+                  background: active ? CSS_COLOR.accentHoverBg : CSS_COLOR.bg1,
+                  color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
@@ -245,21 +255,21 @@ export const MobileMoreSheet = ({
             label="WL"
             value={(activeWatchlist?.name || "Core").toUpperCase()}
           />
-          <StatusChip label="SYM" value={selectedSymbol} tone={T.text} />
+          <StatusChip label="SYM" value={selectedSymbol} tone={CSS_COLOR.text} />
           <StatusChip
             label="IBKR"
             value={session?.configured?.ibkr ? "READY" : "OFF"}
-            tone={session?.configured?.ibkr ? T.green : T.red}
+            tone={session?.configured?.ibkr ? CSS_COLOR.green : CSS_COLOR.red}
           />
           <StatusChip
             label="HIST"
             value={String(historicalProvider).toUpperCase()}
-            tone={session?.configured?.ibkr ? T.green : T.textDim}
+            tone={session?.configured?.ibkr ? CSS_COLOR.green : CSS_COLOR.textDim}
           />
           <StatusChip
             label="RSCH"
             value={String(researchProvider).toUpperCase()}
-            tone={session?.configured?.research ? T.green : T.textDim}
+            tone={session?.configured?.research ? CSS_COLOR.green : CSS_COLOR.textDim}
           />
           <StatusChip label="APP" value="v0.1.0" />
         </div>
@@ -307,7 +317,7 @@ export const MobileMoreSheet = ({
           <FlaskConical
             size={14}
             strokeWidth={2}
-            style={{ color: T.textMuted, flexShrink: 0 }}
+            style={{ color: CSS_COLOR.textMuted, flexShrink: 0 }}
           />
         </div>
       </div>

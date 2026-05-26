@@ -1,6 +1,11 @@
-import { useId, useMemo } from "react";
+import {
+  useId,
+  useMemo,
+} from "react";
 import { buildAlgoTuningImpact } from "../../features/platform/algoTuningImpactModel";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -87,10 +92,10 @@ const compactInputStyle = ({ invalid, disabled }) => ({
   width: "100%",
   minWidth: 0,
   padding: sp("0 6px"),
-  border: `1px solid ${invalid ? T.red : T.border}`,
+  border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
   borderRadius: dim(RADII.xs),
-  background: T.bg1,
-  color: T.text,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.text,
   fontFamily: T.data,
   fontSize: textSize("caption"),
   outline: "none",
@@ -127,9 +132,9 @@ const CompactSwitch = ({ checked, disabled, ariaLabel, testId, onChange }) => (
       height: dim(16),
       minWidth: dim(27),
       minHeight: dim(16),
-      border: `1px solid ${checked ? T.accent : T.border}`,
+      border: `1px solid ${checked ? CSS_COLOR.accent : CSS_COLOR.border}`,
       borderRadius: dim(8),
-      background: checked ? `${T.accent}22` : "transparent",
+      background: checked ? `${cssColorMix(CSS_COLOR.accent, 13)}` : "transparent",
       padding: dim(1),
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.55 : 1,
@@ -147,7 +152,7 @@ const CompactSwitch = ({ checked, disabled, ariaLabel, testId, onChange }) => (
         width: dim(10),
         height: dim(10),
         borderRadius: dim(5),
-        background: checked ? T.accent : T.textMuted,
+        background: checked ? CSS_COLOR.accent : CSS_COLOR.textMuted,
         display: "block",
       }}
     />
@@ -159,7 +164,7 @@ const compactImpactSummary = (field, impact) => {
   const count = Number(impact.count || 0);
   const hasImpact = count > 0;
   return {
-    color: hasImpact && field.warningWhenNonZero !== false ? T.amber : T.textMuted,
+    color: hasImpact && field.warningWhenNonZero !== false ? CSS_COLOR.amber : CSS_COLOR.textMuted,
     label:
       impact.total != null
         ? `${count}/${impact.total}`
@@ -281,7 +286,7 @@ const CompactFieldInput = ({
         <span
           aria-hidden="true"
           style={{
-            color: invalid ? T.red : T.text,
+            color: invalid ? CSS_COLOR.red : CSS_COLOR.text,
             fontFamily: T.data,
             fontSize: textSize("body"),
             fontWeight: FONT_WEIGHTS.label,
@@ -341,7 +346,7 @@ const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
   >
     <span
       style={{
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.label,
@@ -363,7 +368,7 @@ const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
           width: dim(5),
           height: dim(5),
           borderRadius: dim(3),
-          background: T.accent,
+          background: CSS_COLOR.accent,
           flex: "0 0 auto",
         }}
       />
@@ -459,7 +464,7 @@ const CompactSettingCell = ({
         >
           <span
             style={{
-              color: value ? T.textSec : T.textMuted,
+              color: value ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("micro"),
               overflow: "hidden",
@@ -500,7 +505,7 @@ const CompactSettingCell = ({
             <span
               aria-hidden="true"
               style={{
-                color: invalid ? T.red : T.textMuted,
+                color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("micro"),
                 lineHeight: 1,
@@ -515,7 +520,7 @@ const CompactSettingCell = ({
       {invalid ? (
         <span
           style={{
-            color: T.red,
+            color: CSS_COLOR.red,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
           }}
@@ -634,7 +639,7 @@ const CompactCompoundSettingCell = ({
         >
           <span
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("micro"),
               lineHeight: 1,
@@ -672,7 +677,7 @@ const CompactCompoundSettingCell = ({
             <span
               aria-hidden="true"
               style={{
-                color: invalid ? T.red : T.textMuted,
+                color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("micro"),
                 lineHeight: 1,
@@ -687,7 +692,7 @@ const CompactCompoundSettingCell = ({
       {invalid ? (
         <span
           style={{
-            color: T.red,
+            color: CSS_COLOR.red,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
           }}
@@ -709,9 +714,9 @@ const ExpandedLimitsSection = ({
     <div
       data-testid="algo-profile-capacity-banner"
       style={{
-        border: `1px solid ${T.amber}35`,
+        border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
         borderRadius: dim(RADII.sm),
-        background: `${T.amber}0d`,
+        background: `${cssColorMix(CSS_COLOR.amber, 5)}`,
         padding: sp("8px 10px"),
         display: "flex",
         alignItems: "center",
@@ -723,7 +728,7 @@ const ExpandedLimitsSection = ({
     >
       <span
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("body"),
         }}
@@ -740,9 +745,9 @@ const ExpandedLimitsSection = ({
           ...compactButtonStyle({
             disabled: disabled || updateProfileMutation?.isPending,
           }),
-          border: `1px solid ${T.amber}`,
-          background: T.amber,
-          color: T.onAccent,
+          border: `1px solid ${CSS_COLOR.amber}`,
+          background: CSS_COLOR.amber,
+          color: CSS_COLOR.onAccent,
         }}
       >
         APPLY
@@ -814,7 +819,7 @@ export const AlgoSettingsRegion = ({
             key={group.groupId}
             data-testid={`algo-compact-group-${group.groupId}`}
             style={{
-              borderTop: index === 0 ? "none" : `1px solid ${T.borderLight}`,
+              borderTop: index === 0 ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
               paddingTop: index === 0 ? 0 : sp(4),
               minWidth: 0,
             }}

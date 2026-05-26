@@ -1,5 +1,7 @@
-import { useMemo } from "react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  useMemo,
+} from "react";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { EmptyState, formatAccountSignedMoney } from "./accountUtils";
 
 const SVG_W = 320;
@@ -135,7 +137,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
         >
           {formatAccountSignedMoney(stats.last.pnl, currency, false, maskValues)}
         </span>
-        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: T.textDim }}>
+        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
           {formatIntradayMarketTime(stats.last.timestampMs)} ET
         </span>
       </div>
@@ -176,7 +178,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
               y1={chart.zeroY}
               x2={SVG_W - PAD.r}
               y2={chart.zeroY}
-              stroke={T.border}
+              stroke={CSS_COLOR.border}
               strokeWidth={0.5}
               strokeDasharray="2 2"
             />
@@ -190,7 +192,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
               cy={chart.yFor(stats.last.pnl)}
               r={3}
               fill={lineColor}
-              stroke={T.bg1}
+              stroke={CSS_COLOR.bg1}
               strokeWidth={1}
             />
           </>
@@ -201,7 +203,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
             textAnchor="middle"
             fontSize={10}
             fontFamily={T.mono}
-            fill={T.textMuted}
+            fill={CSS_COLOR.textMuted}
           >
             Awaiting more samples
           </text>
@@ -215,17 +217,17 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
           fontFamily: T.sans,
         }}
       >
-        <span style={{ color: T.textMuted }}>
+        <span style={{ color: CSS_COLOR.textMuted }}>
           HIGH{" "}
           <span style={{ color: "var(--ra-pnl-positive)", fontWeight: FONT_WEIGHTS.regular }}>
             {formatAccountSignedMoney(stats.high, currency, false, maskValues)}
           </span>
         </span>
-        <span style={{ color: T.textMuted }}>
+        <span style={{ color: CSS_COLOR.textMuted }}>
           SAMPLES{" "}
-          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{series.length}</span>
+          <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{series.length}</span>
         </span>
-        <span style={{ color: T.textMuted }}>
+        <span style={{ color: CSS_COLOR.textMuted }}>
           LOW{" "}
           <span style={{ color: "var(--ra-pnl-negative)", fontWeight: FONT_WEIGHTS.regular }}>
             {formatAccountSignedMoney(stats.low, currency, false, maskValues)}
@@ -235,7 +237,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
       <div
         style={{
           height: dim(3),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
           borderRadius: dim(RADII.pill),
           overflow: "hidden",
         }}
@@ -244,7 +246,7 @@ export const IntradayPnlContent = ({ query, currency = "USD", maskValues = false
           style={{
             width: `${sessionPctElapsed}%`,
             height: "100%",
-            background: T.accent,
+            background: CSS_COLOR.accent,
             opacity: 0.7,
           }}
         />

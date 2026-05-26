@@ -1,6 +1,9 @@
 import React from "react";
-import { ShieldCheck } from "lucide-react";
 import {
+  ShieldCheck,
+} from "lucide-react";
+import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -15,9 +18,9 @@ const SEVERITY_GLYPH = {
 };
 
 const severityColor = (severity) => {
-  if (severity === "critical") return T.red;
-  if (severity === "warning") return T.amber;
-  return T.cyan;
+  if (severity === "critical") return CSS_COLOR.red;
+  if (severity === "warning") return CSS_COLOR.amber;
+  return CSS_COLOR.cyan;
 };
 
 export const OperationsAttentionStrip = ({
@@ -37,8 +40,8 @@ export const OperationsAttentionStrip = ({
         flexWrap: "wrap",
         gap: sp(embedded ? 4 : 6),
         rowGap: sp(2),
-        background: embedded ? "transparent" : T.bg1,
-        border: embedded ? "none" : `1px solid ${T.border}`,
+        background: embedded ? "transparent" : CSS_COLOR.bg1,
+        border: embedded ? "none" : `1px solid ${CSS_COLOR.border}`,
         borderRadius: embedded ? 0 : dim(RADII.md),
         padding: embedded ? sp("2px 6px") : sp("6px 10px"),
         minWidth: 0,
@@ -47,7 +50,7 @@ export const OperationsAttentionStrip = ({
     >
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -63,7 +66,7 @@ export const OperationsAttentionStrip = ({
             display: "inline-flex",
             alignItems: "center",
             gap: sp(3),
-            color: T.green,
+            color: CSS_COLOR.green,
             fontFamily: T.sans,
             fontSize: embedded ? textSize("caption") : textSize("body"),
           }}
@@ -84,7 +87,7 @@ export const OperationsAttentionStrip = ({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: sp(2),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: embedded ? textSize("caption") : textSize("body"),
                 lineHeight: 1.3,
@@ -110,7 +113,7 @@ export const OperationsAttentionStrip = ({
       {overflow > 0 ? (
         <span
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontStyle: "italic",

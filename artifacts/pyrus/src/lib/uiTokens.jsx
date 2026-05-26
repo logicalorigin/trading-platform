@@ -111,6 +111,59 @@ export const TYPOGRAPHY = {
   display: FONT_STACKS.sans,
 };
 
+export const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  onAccent: "var(--ra-on-accent)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+});
+
+export const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${Math.round(percent)}%, transparent)`;
+
+export const cssColorAlpha = (color, alphaHex) => {
+  const normalizedColor = String(color || "").trim();
+  const normalizedAlpha = String(alphaHex || "").trim();
+  if (!normalizedColor) return "transparent";
+  if (/^#[0-9a-fA-F]{6}$/.test(normalizedColor) && /^[0-9a-fA-F]{2}$/.test(normalizedAlpha)) {
+    return `${normalizedColor}${normalizedAlpha}`;
+  }
+  const alpha = Number.parseInt(normalizedAlpha, 16);
+  if (!Number.isFinite(alpha)) {
+    return normalizedColor;
+  }
+  return cssColorMix(normalizedColor, (alpha / 255) * 100);
+};
+
 export const FONT_WEIGHTS = {
   regular: 400,
   medium: 500,
@@ -335,6 +388,10 @@ export const T = new Proxy(
         return TYPOGRAPHY[prop];
       }
 
+      if (typeof prop === "string" && prop in CSS_COLOR) {
+        return CSS_COLOR[prop];
+      }
+
       if (typeof prop === "string") {
         return THEMES[CURRENT_THEME]?.[prop];
       }
@@ -413,5 +470,21 @@ export const getToken = (name, fallback = "") => {
 
 export const resolveTokenColor = (name, fallback = "") =>
   getToken(name, fallback);
+
+export const resolveCssColor = (color, fallback = "") => {
+  const value = String(color || "").trim();
+  if (!value) return fallback;
+  if (!value.includes("var(")) return value;
+  if (
+    typeof document === "undefined" ||
+    typeof window === "undefined" ||
+    typeof window.getComputedStyle !== "function"
+  ) {
+    return fallback || value;
+  }
+
+  const styles = window.getComputedStyle(document.documentElement);
+  return resolveCssVarValue(styles, value) || fallback || value;
+};
 
 export const MISSING_VALUE = "—";

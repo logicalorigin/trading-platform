@@ -102,6 +102,8 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -164,9 +166,9 @@ const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
 
 const signalOptionsRuleColor = (status) => {
-  if (status === "fail") return T.red;
-  if (status === "warning") return T.amber;
-  return T.green;
+  if (status === "fail") return CSS_COLOR.red;
+  if (status === "warning") return CSS_COLOR.amber;
+  return CSS_COLOR.green;
 };
 
 const formatCockpitMetric = (metrics, key, formatter = (value) => value) =>
@@ -1346,7 +1348,7 @@ export const AlgoScreen = ({
       detail: selectedDraft
         ? `${selectedDraft.name} · ${selectedDraft.mode}`
         : "awaiting promotion",
-      color: T.accent,
+      color: CSS_COLOR.accent,
     },
     {
       label: "Deployments",
@@ -1356,10 +1358,10 @@ export const AlgoScreen = ({
         : "none created",
       color:
         Number(cockpitTradePath.blockedCandidates) > 0
-          ? T.red
+          ? CSS_COLOR.red
           : deployments.length
-            ? T.green
-            : T.textDim,
+            ? CSS_COLOR.green
+            : CSS_COLOR.textDim,
     },
     {
       label: "Data Bridge",
@@ -1369,7 +1371,7 @@ export const AlgoScreen = ({
         (session?.ibkrBridge?.transport === "tws"
           ? `IB Gateway ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
           : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`),
-      color: cockpitReadiness?.ready ? T.green : bridgeTone.color,
+      color: cockpitReadiness?.ready ? CSS_COLOR.green : bridgeTone.color,
     },
     {
       label: "Today P&L",
@@ -1377,10 +1379,10 @@ export const AlgoScreen = ({
       detail: `R ${formatMoney(cockpitKpis.dailyRealizedPnl, 2)} / U ${formatMoney(cockpitKpis.openUnrealizedPnl, 2)}`,
       color:
         Number(cockpitKpis.todayPnl) < 0
-          ? T.red
+          ? CSS_COLOR.red
           : Number(cockpitKpis.todayPnl) > 0
-            ? T.green
-            : T.textDim,
+            ? CSS_COLOR.green
+            : CSS_COLOR.textDim,
     },
     {
       label: "Latest Event",
@@ -1388,69 +1390,69 @@ export const AlgoScreen = ({
       detail: latestEvent
         ? formatRelativeTimeShort(latestEvent.occurredAt)
         : "no execution events",
-      color: latestEvent ? T.cyan : T.textDim,
+      color: latestEvent ? CSS_COLOR.cyan : CSS_COLOR.textDim,
     },
   ];
 
   const cockpitRiskCards = [
-    ["Today P&L", formatMoney(cockpitKpis.todayPnl, 2), T.text],
-    ["Loss left", formatMoney(cockpitKpis.dailyLossRemaining, 2), T.text],
-    ["Premium", formatMoney(cockpitKpis.openPremium, 2), T.amber],
+    ["Today P&L", formatMoney(cockpitKpis.todayPnl, 2), CSS_COLOR.text],
+    ["Loss left", formatMoney(cockpitKpis.dailyLossRemaining, 2), CSS_COLOR.text],
+    ["Premium", formatMoney(cockpitKpis.openPremium, 2), CSS_COLOR.amber],
     [
       "Open symbols",
       `${cockpitKpis.openSymbols ?? 0}/${cockpitKpis.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
-      T.cyan,
+      CSS_COLOR.cyan,
     ],
-    ["Candidates", cockpitKpis.candidates ?? signalOptionsCandidates.length, T.cyan],
-    ["Blocked", cockpitKpis.blockedCandidates ?? 0, T.red],
-    ["Filled", cockpitKpis.shadowFilledCandidates ?? 0, T.green],
-    ["Positions", cockpitKpis.openPositions ?? signalOptionsPositions.length, T.green],
+    ["Candidates", cockpitKpis.candidates ?? signalOptionsCandidates.length, CSS_COLOR.cyan],
+    ["Blocked", cockpitKpis.blockedCandidates ?? 0, CSS_COLOR.red],
+    ["Filled", cockpitKpis.shadowFilledCandidates ?? 0, CSS_COLOR.green],
+    ["Positions", cockpitKpis.openPositions ?? signalOptionsPositions.length, CSS_COLOR.green],
   ];
 
   const signalOptionsPerformanceCards = [
     [
       "Closed",
       Number(signalOptionsPerformanceSummary.closedTrades ?? 0).toLocaleString(),
-      T.text,
+      CSS_COLOR.text,
     ],
     [
       "Realized",
       formatMoney(signalOptionsPerformanceSummary.realizedPnl, 2),
       Number(signalOptionsPerformanceSummary.realizedPnl) < 0
-        ? T.red
+        ? CSS_COLOR.red
         : Number(signalOptionsPerformanceSummary.realizedPnl) > 0
-          ? T.green
-          : T.text,
+          ? CSS_COLOR.green
+          : CSS_COLOR.text,
     ],
     [
       "Win rate",
       formatPct(signalOptionsPerformanceSummary.winRatePercent, 1),
-      T.cyan,
+      CSS_COLOR.cyan,
     ],
     [
       "Profit factor",
       formatPlainPrice(signalOptionsPerformanceSummary.profitFactor, 2),
-      T.amber,
+      CSS_COLOR.amber,
     ],
     [
       "Expectancy",
       formatMoney(signalOptionsPerformanceSummary.expectancy, 2),
-      T.text,
+      CSS_COLOR.text,
     ],
     [
       "Open premium",
       formatMoney(signalOptionsOpenExposure.openPremium, 2),
-      T.amber,
+      CSS_COLOR.amber,
     ],
     [
       "Symbol slots",
       `${signalOptionsOpenExposure.openSymbols ?? cockpitKpis.openSymbols ?? 0}/${signalOptionsOpenExposure.maxOpenSymbols ?? signalOptionsProfile.riskCaps.maxOpenSymbols}`,
-      signalOptionsOpenExposure.atOpenSymbolCapacity ? T.amber : T.cyan,
+      signalOptionsOpenExposure.atOpenSymbolCapacity ? CSS_COLOR.amber : CSS_COLOR.cyan,
     ],
     [
       "Unmarked",
       Number(signalOptionsOpenExposure.unmarkedPositions ?? 0).toLocaleString(),
-      Number(signalOptionsOpenExposure.unmarkedPositions) ? T.amber : T.green,
+      Number(signalOptionsOpenExposure.unmarkedPositions) ? CSS_COLOR.amber : CSS_COLOR.green,
     ],
   ];
 
@@ -1525,7 +1527,7 @@ export const AlgoScreen = ({
       data-testid="algo-screen"
       data-layout={algoIsPhone ? "phone" : algoIsNarrow ? "tablet" : "desktop"}
       style={{
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
         height: "100%",
         width: "100%",
         overflowY: "auto",
@@ -1547,9 +1549,9 @@ export const AlgoScreen = ({
         <div
           className="ra-panel-enter ra-focus-rail"
           style={{
-            ...motionVars({ accent: T.amber }),
-            background: `${T.amber}12`,
-            border: `1px solid ${T.amber}35`,
+            ...motionVars({ accent: CSS_COLOR.amber }),
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
             borderRadius: dim(RADII.sm),
             padding: sp("10px 12px"),
             display: "flex",
@@ -1565,7 +1567,7 @@ export const AlgoScreen = ({
                 fontSize: fs(11),
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
-                color: T.amber,
+                color: CSS_COLOR.amber,
                 letterSpacing: "0.04em",
               }}
             >
@@ -1574,7 +1576,7 @@ export const AlgoScreen = ({
             <span
               style={{
                 fontSize: textSize("caption"),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 lineHeight: 1.45,
               }}
@@ -1594,7 +1596,7 @@ export const AlgoScreen = ({
             <div
               style={{
                 fontSize: textSize("body"),
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 textAlign: "right",
               }}
@@ -1610,9 +1612,9 @@ export const AlgoScreen = ({
               style={{
                 padding: sp("7px 10px"),
                 borderRadius: dim(RADII.xs),
-                border: `1px solid ${T.amber}`,
-                background: T.amber,
-                color: T.onAccent,
+                border: `1px solid ${CSS_COLOR.amber}`,
+                background: CSS_COLOR.amber,
+                color: CSS_COLOR.onAccent,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -1630,7 +1632,7 @@ export const AlgoScreen = ({
                 gridColumn: "1 / -1",
                 width: "100%",
                 fontSize: textSize("body"),
-                color: bridgeLauncherError ? T.red : T.textDim,
+                color: bridgeLauncherError ? CSS_COLOR.red : CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 lineHeight: 1.45,
                 wordBreak: "break-word",

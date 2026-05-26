@@ -1,4 +1,8 @@
-import { useQuery, useQueryClient, useQueries } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  useQueries,
+} from "@tanstack/react-query";
 import {
   Suspense,
   useCallback,
@@ -161,6 +165,9 @@ import {
 } from "../features/platform/marketFlowStore";
 import { normalizeFlowOptionExpirationIso } from "../features/platform/flowOptionChartIdentity";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -302,24 +309,24 @@ const TradeContractContextStrip = ({
 }) => {
   const sourceTone =
     statusTone === "good"
-      ? T.green
+      ? CSS_COLOR.green
       : statusTone === "warn"
-        ? T.amber
+        ? CSS_COLOR.amber
         : statusTone === "bad"
-          ? T.red
-          : T.textSec;
+          ? CSS_COLOR.red
+          : CSS_COLOR.textSec;
   const spreadPct =
     isFiniteNumber(spread) && isFiniteNumber(mark) && mark > 0
       ? (spread / mark) * 100
       : null;
   const spreadTone =
     !isFiniteNumber(spreadPct)
-      ? T.textDim
+      ? CSS_COLOR.textDim
       : spreadPct >= 18
-        ? T.red
+        ? CSS_COLOR.red
         : spreadPct >= 8
-          ? T.amber
-          : T.green;
+          ? CSS_COLOR.amber
+          : CSS_COLOR.green;
   const freshnessTitle = [
     quoteUpdatedAt ? `Quote ${formatRelativeTimeShort(quoteUpdatedAt)}` : null,
     barUpdatedAt ? `Bars ${formatRelativeTimeShort(barUpdatedAt)}` : null,
@@ -341,7 +348,7 @@ const TradeContractContextStrip = ({
       <MetricChip
         label="Ctr"
         value={contractLabel}
-        tone={T.textSec}
+        tone={CSS_COLOR.textSec}
         title={contractLabel}
         style={{ maxWidth: dim(116) }}
       />
@@ -356,7 +363,7 @@ const TradeContractContextStrip = ({
       <MetricChip
         label="B/A"
         value={`${formatContextPrice(bid)} / ${formatContextPrice(ask)}`}
-        tone={T.textSec}
+        tone={CSS_COLOR.textSec}
         title={`Quote freshness: ${quoteFreshness || "unknown"}`}
         style={{ maxWidth: dim(112) }}
       />
@@ -375,13 +382,13 @@ const TradeContractContextStrip = ({
       <MetricChip
         label="Δ"
         value={isFiniteNumber(delta) ? Math.abs(delta).toFixed(2) : MISSING_VALUE}
-        tone={T.accent}
+        tone={CSS_COLOR.accent}
         style={{ maxWidth: dim(58) }}
       />
       <MetricChip
         label="Vol/OI"
         value={`${formatContextCompact(volume)} / ${formatContextCompact(openInterest)}`}
-        tone={T.textSec}
+        tone={CSS_COLOR.textSec}
         style={{ maxWidth: dim(102) }}
       />
       <MetricChip
@@ -389,10 +396,10 @@ const TradeContractContextStrip = ({
         value={barFreshness || "unknown"}
         tone={
           barFreshness === "live"
-            ? T.green
+            ? CSS_COLOR.green
             : barFreshness === "unavailable"
-              ? T.textDim
-              : T.amber
+              ? CSS_COLOR.textDim
+              : CSS_COLOR.amber
         }
         style={{ maxWidth: dim(74) }}
       />
@@ -806,7 +813,7 @@ const TradePanelShell = ({
       minWidth: 0,
       display: "flex",
       flexDirection: "column",
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       border: "none",
       overflow: "hidden",
     }}
@@ -820,13 +827,13 @@ const TradePanelShell = ({
           alignItems: "center",
           justifyContent: "space-between",
           gap: sp(8),
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           fontFamily: T.sans,
         }}
       >
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontSize: textSize("bodyStrong"),
             fontWeight: FONT_WEIGHTS.label,
             letterSpacing: 0,
@@ -837,7 +844,7 @@ const TradePanelShell = ({
         {meta ? (
           <span
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontSize: textSize("caption"),
               whiteSpace: "nowrap",
             }}
@@ -1199,7 +1206,7 @@ const TradeContractDetailPanel = ({
         : bearishCount > bullishCount
           ? "bearish"
           : topEvent?.bias || "neutral";
-    const color = bias === "bearish" ? T.red : bias === "bullish" ? T.green : T.amber;
+    const color = bias === "bearish" ? CSS_COLOR.red : bias === "bullish" ? CSS_COLOR.green : CSS_COLOR.amber;
     return {
       color,
       label:
@@ -1612,8 +1619,8 @@ const TradeContractDetailPanel = ({
                         <AppTooltip content={chartFlowBadge.tooltip}><div
                           data-testid="trade-contract-option-chart-flow-badge"
                           style={{
-                            border: `1px solid ${chartFlowBadge.color}66`,
-                            background: `${chartFlowBadge.color}18`,
+                            border: `1px solid ${cssColorAlpha(chartFlowBadge.color, "66")}`,
+                            background: cssColorAlpha(chartFlowBadge.color, "18"),
                             color: chartFlowBadge.color,
                             borderRadius: dim(3),
                             padding: sp(iconOnly ? "3px 4px" : "4px 6px"),
@@ -1626,7 +1633,7 @@ const TradeContractDetailPanel = ({
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
                             pointerEvents: "auto",
-                            boxShadow: `0 0 0 1px ${T.bg4}cc`,
+                            boxShadow: `0 0 0 1px ${cssColorMix(CSS_COLOR.bg4, 80)}`,
                           }}
                         >
                           {iconOnly ? "Flow" : chartFlowBadge.label}
@@ -1673,7 +1680,7 @@ const TradeContractDetailPanel = ({
         </div>
         <div
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             whiteSpace: "nowrap",
@@ -1715,7 +1722,7 @@ const TradeSpotFlowPanel = ({ ticker }) => {
           display: "grid",
           gridTemplateRows: "auto auto",
           gap: sp(6),
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontFamily: T.sans,
           fontSize: fs(10),
         }}
@@ -1729,33 +1736,33 @@ const TradeSpotFlowPanel = ({ ticker }) => {
             fontFamily: T.sans,
           }}
         >
-          <span style={{ color: T.textDim }}>{ticker || MISSING_VALUE}</span>
-          <span style={{ color: T.text }}>
+          <span style={{ color: CSS_COLOR.textDim }}>{ticker || MISSING_VALUE}</span>
+          <span style={{ color: CSS_COLOR.text }}>
             {flow.events?.length || 0} prints
           </span>
         </div>
         <div
           style={{
             border: "none",
-            background: T.bg0,
+            background: CSS_COLOR.bg0,
             padding: sp(6),
             overflow: "hidden",
           }}
         >
           {latest ? (
             <div>
-              <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+              <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {latest.side || "flow"}{" "}
                 {latest.contract || latest.ticker || ticker}
               </div>
-              <div style={{ marginTop: sp(4), color: T.textDim }}>
+              <div style={{ marginTop: sp(4), color: CSS_COLOR.textDim }}>
                 {latest.occurredAt
                   ? formatRelativeTimeShort(latest.occurredAt)
                   : flow.status}
               </div>
             </div>
           ) : (
-            <span style={{ color: T.textDim }}>No recent spot flow</span>
+            <span style={{ color: CSS_COLOR.textDim }}>No recent spot flow</span>
           )}
         </div>
       </div>
@@ -1791,7 +1798,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
                 gridTemplateColumns: "minmax(0, 1fr) auto",
                 gap: sp(8),
                 background: "transparent",
-                borderBottom: `1px solid ${T.border}`,
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
                 padding: sp("4px 0"),
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
@@ -1799,7 +1806,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
             >
               <span
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -1807,7 +1814,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
               >
                 {event.contract || event.ticker || ticker}
               </span>
-              <span style={{ color: event.cp === "P" ? T.red : T.green }}>
+              <span style={{ color: event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green }}>
                 {event.side || event.cp || "flow"}
               </span>
             </div>
@@ -1818,7 +1825,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
               minHeight: dim(72),
               display: "grid",
               placeItems: "center",
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: fs(10),
             }}
@@ -1951,7 +1958,7 @@ const TradeDeferredPanel = ({
         display: "grid",
         placeItems: detail ? "center" : "stretch",
         padding: detail ? sp(10) : 0,
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
       }}
     >
       {detail ? (
@@ -1960,7 +1967,7 @@ const TradeDeferredPanel = ({
             display: "grid",
             gap: sp(8),
             justifyItems: "center",
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             textAlign: "center",
@@ -1973,9 +1980,9 @@ const TradeDeferredPanel = ({
               onClick={onAction}
               style={{
                 padding: sp("4px 8px"),
-                border: `1px solid ${T.border}`,
-                background: T.bg1,
-                color: T.textSec,
+                border: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg1,
+                color: CSS_COLOR.textSec,
                 borderRadius: dim(RADII.xs),
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
@@ -3905,12 +3912,12 @@ const TradeScreenInner = ({
           price: Number(level.price),
           color:
             level.tone === "stop"
-              ? T.red
+              ? CSS_COLOR.red
               : level.tone === "support"
-                ? T.green
+                ? CSS_COLOR.green
                 : level.tone === "resistance"
-                  ? T.amber
-                  : T.cyan,
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.cyan,
           lineWidth: 1,
           axisLabelVisible: true,
           title: level.label || "Level",
@@ -3927,10 +3934,10 @@ const TradeScreenInner = ({
 
   const tradeMobileTabButtonStyle = (active) => ({
     minHeight: dim(40),
-    border: `1px solid ${active ? T.accent : T.border}`,
+    border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
     borderRadius: dim(RADII.xs),
-    background: active ? `${T.accent}18` : T.bg1,
-    color: active ? T.text : T.textSec,
+    background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+    color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
     fontFamily: T.sans,
     fontSize: fs(10),
     fontWeight: FONT_WEIGHTS.regular,
@@ -3941,8 +3948,8 @@ const TradeScreenInner = ({
     minHeight: dim(38),
     border: "none",
     borderRadius: dim(RADII.xs),
-    background: T.bg1,
-    color: T.textSec,
+    background: CSS_COLOR.bg1,
+    color: CSS_COLOR.textSec,
     fontFamily: T.sans,
     fontSize: fs(10),
     fontWeight: FONT_WEIGHTS.regular,
@@ -4212,11 +4219,11 @@ const TradeScreenInner = ({
             className="ra-panel-enter ra-focus-rail"
             style={{
               ...motionVars({
-                accent: automationContractMatches ? T.cyan : T.amber,
+                accent: automationContractMatches ? CSS_COLOR.cyan : CSS_COLOR.amber,
               }),
-              background: automationContractMatches ? `${T.cyan}12` : `${T.amber}12`,
+              background: automationContractMatches ? `${cssColorMix(CSS_COLOR.cyan, 7)}` : `${cssColorMix(CSS_COLOR.amber, 7)}`,
               border: `1px solid ${
-                automationContractMatches ? `${T.cyan}35` : `${T.amber}45`
+                automationContractMatches ? `${cssColorMix(CSS_COLOR.cyan, 21)}` : `${cssColorMix(CSS_COLOR.amber, 27)}`
               }`,
               borderRadius: dim(RADII.sm),
               padding: sp("8px 10px"),
@@ -4237,7 +4244,7 @@ const TradeScreenInner = ({
               >
                 <span
                   style={{
-                    color: T.text,
+                    color: CSS_COLOR.text,
                     fontFamily: T.sans,
                     fontSize: fs(11),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -4247,7 +4254,7 @@ const TradeScreenInner = ({
                 </span>
                 <span
                   style={{
-                    color: automationContractMatches ? T.cyan : T.amber,
+                    color: automationContractMatches ? CSS_COLOR.cyan : CSS_COLOR.amber,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -4258,7 +4265,7 @@ const TradeScreenInner = ({
               </div>
               <div
                 style={{
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
                   marginTop: 3,
@@ -4294,8 +4301,8 @@ const TradeScreenInner = ({
                 padding: sp("6px 8px"),
                 borderRadius: dim(RADII.xs),
                 border: "none",
-                background: T.bg0,
-                color: T.textDim,
+                background: CSS_COLOR.bg0,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -4533,7 +4540,7 @@ const TradeScreenInner = ({
           <span
             style={{
               fontSize: textSize("caption"),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               letterSpacing: "0.04em",
               marginRight: sp(2),
@@ -4550,8 +4557,8 @@ const TradeScreenInner = ({
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              background: tradeTimeframeSync ? T.accent : T.bg3,
-              color: tradeTimeframeSync ? T.onAccent : T.textDim,
+              background: tradeTimeframeSync ? CSS_COLOR.accent : CSS_COLOR.bg3,
+              color: tradeTimeframeSync ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
               border: "none",
               borderRadius: dim(RADII.xs),
               cursor: "pointer",
@@ -4569,8 +4576,8 @@ const TradeScreenInner = ({
               fontSize: textSize("caption"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              background: tradeCrosshairSync ? T.accent : T.bg3,
-              color: tradeCrosshairSync ? T.onAccent : T.textDim,
+              background: tradeCrosshairSync ? CSS_COLOR.accent : CSS_COLOR.bg3,
+              color: tradeCrosshairSync ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
               border: "none",
               borderRadius: dim(RADII.xs),
               cursor: "pointer",

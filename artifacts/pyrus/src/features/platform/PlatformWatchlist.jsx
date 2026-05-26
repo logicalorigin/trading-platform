@@ -1,10 +1,28 @@
 import { useSearchUniverseTickers } from "@workspace/api-client-react";
-import { ChevronDown, GripVertical, ListChecks, Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import {
+  ChevronDown,
+  GripVertical,
+  ListChecks,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { SignalDots } from "../../components/platform/signal-language";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   formatQuotePrice,
   formatSignedPercent,
@@ -40,6 +58,45 @@ import {
 } from "./watchlistModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 // MicroSparkline + extractSparklineValues are exported from
 // components/platform/primitives.jsx — imported above.
@@ -140,7 +197,7 @@ const WatchlistRow = memo(
       isWatchlistSignalDirection(signalDirection) &&
       bestSignalState?.status !== "error" &&
       bestSignalState?.status !== "unavailable";
-    const signalColor = signalDirection === "buy" ? T.blue : T.red;
+    const signalColor = signalDirection === "buy" ? CSS_COLOR.blue : CSS_COLOR.red;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
 	    const priceValue = isFiniteNumber(snapshot?.price)
@@ -164,13 +221,13 @@ const WatchlistRow = memo(
     };
     const addActionDisabled = busy;
     const rowBackground = dragging
-      ? `${T.accent}10`
+      ? `${cssColorMix(CSS_COLOR.accent, 6)}`
       : dragOver
-        ? `${T.accent}18`
+        ? `${cssColorMix(CSS_COLOR.accent, 9)}`
         : selectedForRemoval
-          ? `${T.accent}18`
+          ? `${cssColorMix(CSS_COLOR.accent, 9)}`
         : selectedRow
-          ? T.bg3
+          ? CSS_COLOR.bg3
           : "transparent";
     const mobileDense = density === "mobile-dense";
     const sparklineData = resolveSparklineData(item.sym, snapshot, fallback, priceValue);
@@ -208,10 +265,10 @@ const WatchlistRow = memo(
           placeItems: "center",
           borderRadius: dim(RADII.xs),
           border: `1px solid ${
-            selectedForRemoval ? T.accent : rowSelectable ? T.border : T.borderLight
+            selectedForRemoval ? CSS_COLOR.accent : rowSelectable ? CSS_COLOR.border : CSS_COLOR.borderLight
           }`,
-          background: selectedForRemoval ? T.accent : "transparent",
-          color: selectedForRemoval ? T.onAccent : T.textMuted,
+          background: selectedForRemoval ? CSS_COLOR.accent : "transparent",
+          color: selectedForRemoval ? CSS_COLOR.onAccent : CSS_COLOR.textMuted,
           cursor: rowSelectable && !busy ? "pointer" : "default",
           padding: 0,
           flexShrink: 0,
@@ -228,8 +285,8 @@ const WatchlistRow = memo(
             style={{
               width: dim(7),
               height: dim(4),
-              borderLeft: `1.5px solid ${T.onAccent}`,
-              borderBottom: `1.5px solid ${T.onAccent}`,
+              borderLeft: `1.5px solid ${CSS_COLOR.onAccent}`,
+              borderBottom: `1.5px solid ${CSS_COLOR.onAccent}`,
               transform: "rotate(-45deg)",
               marginTop: dim(-1),
             }}
@@ -242,7 +299,7 @@ const WatchlistRow = memo(
         data-testid="watchlist-day-change"
         style={{
           color:
-            pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
+            pctPositive == null ? CSS_COLOR.textMuted : pctPositive ? CSS_COLOR.green : CSS_COLOR.red,
           fontFamily: T.sans,
           fontSize: textSize("body"),
           fontVariantNumeric: "tabular-nums",
@@ -270,9 +327,9 @@ const WatchlistRow = memo(
               onSignalAction?.(item.sym, bestSignalState);
             }}
             style={{
-              border: `1px solid ${signalFresh ? signalColor : `${signalColor}88`}`,
-              background: signalFresh ? `${signalColor}24` : `${signalColor}14`,
-              color: signalFresh ? signalColor : `${signalColor}d0`,
+              border: `1px solid ${signalFresh ? signalColor : `${cssColorMix(signalColor, 53)}`}`,
+              background: signalFresh ? `${cssColorMix(signalColor, 14)}` : `${cssColorMix(signalColor, 8)}`,
+              color: signalFresh ? signalColor : `${cssColorMix(signalColor, 82)}`,
               cursor: "pointer",
               fontFamily: T.sans,
               fontSize: fs(7),
@@ -281,7 +338,7 @@ const WatchlistRow = memo(
               lineHeight: 1,
               padding: sp("2px 5px"),
               borderRadius: dim(RADII.pill),
-              boxShadow: signalFresh ? `0 0 0 2px ${signalColor}20` : "none",
+              boxShadow: signalFresh ? `0 0 0 2px ${cssColorMix(signalColor, 13)}` : "none",
               whiteSpace: "nowrap",
             }}
           >
@@ -327,14 +384,14 @@ const WatchlistRow = memo(
             ...motionRowStyle(itemIndex, 7, 140),
             ...motionVars({
               accent: selectedRow
-                ? T.accent
+                ? CSS_COLOR.accent
                 : hasSignal
                   ? signalColor
                   : pctPositive == null
-                    ? T.accent
+                    ? CSS_COLOR.accent
                     : pctPositive
-                      ? T.green
-                      : T.red,
+                      ? CSS_COLOR.green
+                      : CSS_COLOR.red,
             }),
             width: "100%",
             height: 44,
@@ -345,8 +402,8 @@ const WatchlistRow = memo(
             padding: "4px 8px",
             border: "none",
             background:
-              selectedRow || dragOver ? `${T.accent}12` : rowBackground,
-            color: T.text,
+              selectedRow || dragOver ? `${cssColorMix(CSS_COLOR.accent, 7)}` : rowBackground,
+            color: CSS_COLOR.text,
             cursor: selectionMode ? (rowSelectable ? "pointer" : "default") : "pointer",
             textAlign: "left",
             fontFamily: T.sans,
@@ -372,7 +429,7 @@ const WatchlistRow = memo(
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -415,7 +472,7 @@ const WatchlistRow = memo(
             <span
               className={priceFlashClassName}
               style={{
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontVariantNumeric: "tabular-nums",
@@ -466,14 +523,14 @@ const WatchlistRow = memo(
           ...motionRowStyle(itemIndex, 7, 140),
           ...motionVars({
             accent: selectedRow
-              ? T.accent
+              ? CSS_COLOR.accent
               : hasSignal
                 ? signalColor
                 : pctPositive == null
-                  ? T.accent
+                  ? CSS_COLOR.accent
                   : pctPositive
-                    ? T.green
-                    : T.red,
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.red,
           }),
           display: "grid",
           gridTemplateColumns: [
@@ -486,7 +543,7 @@ const WatchlistRow = memo(
           cursor: selectionMode ? (rowSelectable ? "pointer" : "default") : "pointer",
           alignItems: "center",
           background:
-            selectedRow || dragOver ? `${T.accent}12` : rowBackground,
+            selectedRow || dragOver ? `${cssColorMix(CSS_COLOR.accent, 7)}` : rowBackground,
           opacity: dragging ? 0.55 : 1,
         }}
       >
@@ -506,7 +563,7 @@ const WatchlistRow = memo(
               size={14}
               strokeWidth={2}
               style={{
-                color: canDrag ? T.textSec : T.textMuted,
+                color: canDrag ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
                 opacity: canDrag ? 1 : 0.35,
                 cursor: canDrag ? "grab" : "default",
               }}
@@ -531,7 +588,7 @@ const WatchlistRow = memo(
                   fontSize: textSize("paragraph"),
                   fontWeight: FONT_WEIGHTS.medium,
                   fontFamily: T.sans,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   letterSpacing: 0,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -580,7 +637,7 @@ const WatchlistRow = memo(
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "flex-end",
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: textSize("paragraphMuted"),
                 fontVariantNumeric: "tabular-nums",
@@ -615,8 +672,8 @@ const WatchlistRow = memo(
                 placeItems: "center",
                 border: "none",
                 borderRadius: dim(RADII.sm),
-                background: T.accent,
-                color: T.onAccent,
+                background: CSS_COLOR.accent,
+                color: CSS_COLOR.onAccent,
                 cursor: addActionDisabled ? "default" : "pointer",
                 transition: "background 0.18s ease",
               }}
@@ -949,8 +1006,8 @@ export const Watchlist = ({
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        background: T.bg1,
-        borderRight: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        borderRight: `1px solid ${CSS_COLOR.border}`,
         position: "relative",
       }}
     >
@@ -981,8 +1038,8 @@ export const Watchlist = ({
               padding: sp("8px 12px"),
               borderRadius: dim(RADII.sm),
               background: "transparent",
-              border: `1px solid ${T.border}`,
-              color: T.text,
+              border: `1px solid ${CSS_COLOR.border}`,
+              color: CSS_COLOR.text,
               cursor: "pointer",
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
@@ -1001,7 +1058,7 @@ export const Watchlist = ({
             >
               {activeWatchlist?.name || "Watchlists"}
             </span>
-            <ChevronDown size={15} style={{ color: T.textSec, flexShrink: 0 }} />
+            <ChevronDown size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
           </button>
           {watchlistMenuOpen ? (
             <div
@@ -1012,8 +1069,8 @@ export const Watchlist = ({
                 left: 0,
                 right: 0,
                 zIndex: 20,
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
+                background: CSS_COLOR.bg1,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
                 boxShadow: ELEVATION.lg,
                 overflow: "hidden",
@@ -1035,10 +1092,10 @@ export const Watchlist = ({
                     gap: sp(8),
                     padding: sp("8px 10px"),
                     background:
-                      watchlist.id === activeWatchlistId ? `${T.accent}12` : "transparent",
+                      watchlist.id === activeWatchlistId ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
                     border: "none",
-                    borderBottom: `1px solid ${T.border}20`,
-                    color: T.text,
+                    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
+                    color: CSS_COLOR.text,
                     cursor: "pointer",
                     textAlign: "left",
                   }}
@@ -1050,7 +1107,7 @@ export const Watchlist = ({
                         fontSize: textSize("paragraphMuted"),
                         fontWeight: FONT_WEIGHTS.medium,
                         fontFamily: T.sans,
-                        color: T.text,
+                        color: CSS_COLOR.text,
                         letterSpacing: 0,
                       }}
                     >
@@ -1060,7 +1117,7 @@ export const Watchlist = ({
                       style={{
                         display: "block",
                         fontSize: textSize("body"),
-                        color: T.textMuted,
+                        color: CSS_COLOR.textMuted,
                         fontFamily: T.sans,
                         marginTop: sp(2),
                       }}
@@ -1071,7 +1128,7 @@ export const Watchlist = ({
                   {watchlist.isDefault ? (
                     <span
                       style={{
-                        color: T.green,
+                        color: CSS_COLOR.green,
                         fontSize: textSize("caption"),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.medium,
@@ -1099,9 +1156,9 @@ export const Watchlist = ({
               display: "grid",
               placeItems: "center",
               borderRadius: dim(RADII.sm),
-              background: selectionMode ? `${T.accent}16` : "transparent",
-              border: `1px solid ${selectionMode ? T.accent : T.border}`,
-              color: selectionMode ? T.accent : T.textSec,
+              background: selectionMode ? `${cssColorMix(CSS_COLOR.accent, 9)}` : "transparent",
+              border: `1px solid ${selectionMode ? CSS_COLOR.accent : CSS_COLOR.border}`,
+              color: selectionMode ? CSS_COLOR.accent : CSS_COLOR.textSec,
               cursor: removableItems.length && !busy ? "pointer" : "default",
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -1134,8 +1191,8 @@ export const Watchlist = ({
               placeItems: "center",
               borderRadius: dim(RADII.sm),
               background: "transparent",
-              border: `1px solid ${T.border}`,
-              color: T.accent,
+              border: `1px solid ${CSS_COLOR.border}`,
+              color: CSS_COLOR.accent,
               cursor: "pointer",
             }}
             className="ra-interactive"
@@ -1167,7 +1224,7 @@ export const Watchlist = ({
               borderRadius: dim(RADII.sm),
               background: "transparent",
               border: "none",
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               cursor: activeWatchlist && !busy ? "pointer" : "default",
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -1185,9 +1242,9 @@ export const Watchlist = ({
             style={{
               padding: sp("6px 8px"),
               borderRadius: dim(RADII.sm),
-              background: activeWatchlist?.isDefault ? `${T.green}12` : "transparent",
+              background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.green, 7)}` : "transparent",
               border: "none",
-              color: activeWatchlist?.isDefault ? T.green : T.textSec,
+              color: activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.textSec,
               cursor:
                 activeWatchlist && !activeWatchlist.isDefault && !busy
                   ? "pointer"
@@ -1210,7 +1267,7 @@ export const Watchlist = ({
               borderRadius: dim(RADII.sm),
               background: "transparent",
               border: "none",
-              color: watchlists.length <= 1 ? T.textMuted : T.red,
+              color: watchlists.length <= 1 ? CSS_COLOR.textMuted : CSS_COLOR.red,
               cursor:
                 activeWatchlist && watchlists.length > 1 && !busy
                   ? "pointer"
@@ -1236,16 +1293,16 @@ export const Watchlist = ({
               alignItems: "center",
               gap: sp(8),
               padding: sp("6px 8px"),
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
-              background: `${T.accent}0f`,
+              background: `${cssColorMix(CSS_COLOR.accent, 6)}`,
             }}
           >
             <span
               data-testid="watchlist-selection-count"
               style={{
                 minWidth: 0,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontVariantNumeric: "tabular-nums",
@@ -1265,10 +1322,10 @@ export const Watchlist = ({
               style={{
                 minHeight: dim(26),
                 padding: sp("4px 9px"),
-                border: `1px solid ${selectedRemovalCount ? T.red : T.border}`,
+                border: `1px solid ${selectedRemovalCount ? CSS_COLOR.red : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: selectedRemovalCount ? `${T.red}18` : "transparent",
-                color: selectedRemovalCount ? T.red : T.textMuted,
+                background: selectedRemovalCount ? `${cssColorMix(CSS_COLOR.red, 9)}` : "transparent",
+                color: selectedRemovalCount ? CSS_COLOR.red : CSS_COLOR.textMuted,
                 cursor: selectedRemovalCount && !busy ? "pointer" : "default",
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
@@ -1302,9 +1359,9 @@ export const Watchlist = ({
                 style={{
                   padding: sp("6px 4px"),
                   borderRadius: dim(RADII.sm),
-                  background: active ? T.accent : "transparent",
+                  background: active ? CSS_COLOR.accent : "transparent",
                   border: "none",
-                  color: active ? T.onAccent : T.textSec,
+                  color: active ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
@@ -1329,11 +1386,11 @@ export const Watchlist = ({
               padding: sp("8px 12px"),
               borderRadius: dim(RADII.sm),
               background: "transparent",
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               minWidth: 0,
             }}
           >
-            <Search size={15} style={{ color: T.textSec, flexShrink: 0 }} />
+            <Search size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1346,7 +1403,7 @@ export const Watchlist = ({
                 outline: "none",
                 fontSize: textSize("paragraphMuted"),
                 fontFamily: T.sans,
-                color: T.text,
+                color: CSS_COLOR.text,
               }}
             />
           </div>
@@ -1361,8 +1418,8 @@ export const Watchlist = ({
               width: dim(48),
               borderRadius: dim(RADII.sm),
               background: "transparent",
-              border: `1px solid ${T.border}`,
-              color: directionEnabled ? T.textSec : T.textMuted,
+              border: `1px solid ${CSS_COLOR.border}`,
+              color: directionEnabled ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
               cursor: directionEnabled ? "pointer" : "default",
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -1379,7 +1436,7 @@ export const Watchlist = ({
           <div
             data-testid="watchlist-add-panel"
             style={{
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               background: "transparent",
               overflow: "hidden",
@@ -1391,7 +1448,7 @@ export const Watchlist = ({
                 alignItems: "center",
                 gap: sp(8),
                 padding: sp("10px 12px"),
-                borderBottom: `1px solid ${T.border}`,
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
               }}
             >
               <input
@@ -1405,7 +1462,7 @@ export const Watchlist = ({
                   outline: "none",
                   fontSize: textSize("paragraphMuted"),
                   fontFamily: T.sans,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   letterSpacing: 0,
                 }}
               />
@@ -1421,7 +1478,7 @@ export const Watchlist = ({
                   placeItems: "center",
                   border: "none",
                   background: "transparent",
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   cursor: "pointer",
                   borderRadius: dim(RADII.sm),
                 }}
@@ -1449,7 +1506,7 @@ export const Watchlist = ({
                         padding: sp("10px 12px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.borderLight}`,
+                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
                         textAlign: "left",
                         cursor: "pointer",
                       }}
@@ -1459,7 +1516,7 @@ export const Watchlist = ({
                           fontSize: textSize("paragraphMuted"),
                           fontWeight: FONT_WEIGHTS.medium,
                           fontFamily: T.sans,
-                          color: T.text,
+                          color: CSS_COLOR.text,
                           letterSpacing: 0,
                         }}
                       >
@@ -1468,7 +1525,7 @@ export const Watchlist = ({
                       <span
                         style={{
                           fontSize: textSize("body"),
-                          color: T.textSec,
+                          color: CSS_COLOR.textSec,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -1491,18 +1548,18 @@ export const Watchlist = ({
                         padding: sp("10px 12px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.borderLight}`,
+                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
                         cursor: "pointer",
                         fontFamily: T.sans,
                         fontSize: textSize("paragraphMuted"),
                         fontWeight: FONT_WEIGHTS.medium,
-                        color: T.text,
+                        color: CSS_COLOR.text,
                       }}
                     >
                       <span>{symbol}</span>
                       <span
                         style={{
-                          color: T.textMuted,
+                          color: CSS_COLOR.textMuted,
                           fontSize: textSize("caption"),
                           letterSpacing: "0.04em",
                           textTransform: "uppercase",
@@ -1520,7 +1577,7 @@ export const Watchlist = ({
                 <div
                   style={{
                     padding: sp("10px 8px"),
-                    color: T.textDim,
+                    color: CSS_COLOR.textDim,
                     fontSize: textSize("caption"),
                     fontFamily: T.sans,
                   }}
@@ -1575,9 +1632,9 @@ export const Watchlist = ({
       <div
         style={{
           padding: sp("10px 14px"),
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
           fontSize: textSize("body"),
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           display: "flex",
           justifyContent: "space-between",
@@ -1600,7 +1657,7 @@ export const Watchlist = ({
             padding: sp("4px 10px"),
             border: "none",
             background: "transparent",
-            color: T.accent,
+            color: CSS_COLOR.accent,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -1632,7 +1689,7 @@ export const Watchlist = ({
             display: "grid",
             gap: sp(10),
             padding: sp("10px 10px max(14px, env(safe-area-inset-bottom))"),
-            background: T.bg0,
+            background: CSS_COLOR.bg0,
           }}
         >
           <div
@@ -1648,10 +1705,10 @@ export const Watchlist = ({
               disabled={busy}
               style={{
                 minHeight: dim(42),
-                border: `1px solid ${T.border}`,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: T.bg1,
-                color: T.accent,
+                background: CSS_COLOR.bg1,
+                color: CSS_COLOR.accent,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -1668,10 +1725,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || busy}
               style={{
                 minHeight: dim(42),
-                border: `1px solid ${T.border}`,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: T.bg1,
-                color: T.textSec,
+                background: CSS_COLOR.bg1,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -1688,10 +1745,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || activeWatchlist.isDefault || busy}
               style={{
                 minHeight: dim(42),
-                border: `1px solid ${activeWatchlist?.isDefault ? T.green : T.border}`,
+                border: `1px solid ${activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: activeWatchlist?.isDefault ? `${T.green}12` : T.bg1,
-                color: activeWatchlist?.isDefault ? T.green : T.textSec,
+                background: activeWatchlist?.isDefault ? `${cssColorMix(CSS_COLOR.green, 7)}` : CSS_COLOR.bg1,
+                color: activeWatchlist?.isDefault ? CSS_COLOR.green : CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -1711,10 +1768,10 @@ export const Watchlist = ({
               disabled={!activeWatchlist || watchlists.length <= 1 || busy}
               style={{
                 minHeight: dim(42),
-                border: `1px solid ${T.border}`,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.sm),
-                background: T.bg1,
-                color: watchlists.length <= 1 ? T.textMuted : T.red,
+                background: CSS_COLOR.bg1,
+                color: watchlists.length <= 1 ? CSS_COLOR.textMuted : CSS_COLOR.red,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
@@ -1733,9 +1790,9 @@ export const Watchlist = ({
           <div
             data-testid="watchlist-manage-add-panel"
             style={{
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.md),
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               overflow: "hidden",
             }}
           >
@@ -1745,10 +1802,10 @@ export const Watchlist = ({
                 alignItems: "center",
                 gap: sp(8),
                 padding: sp("12px 14px"),
-                borderBottom: `1px solid ${T.borderLight}`,
+                borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
               }}
             >
-              <Search size={15} style={{ color: T.textSec, flexShrink: 0 }} />
+              <Search size={15} style={{ color: CSS_COLOR.textSec, flexShrink: 0 }} />
               <input
                 value={addQuery}
                 onChange={(event) => setAddQuery(event.target.value)}
@@ -1759,7 +1816,7 @@ export const Watchlist = ({
                   background: "transparent",
                   border: "none",
                   outline: "none",
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: textSize("paragraphMuted"),
                   letterSpacing: 0,
@@ -1786,8 +1843,8 @@ export const Watchlist = ({
                         padding: sp("0 14px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.borderLight}`,
-                        color: T.text,
+                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
+                        color: CSS_COLOR.text,
                         textAlign: "left",
                         cursor: "pointer",
                       }}
@@ -1808,7 +1865,7 @@ export const Watchlist = ({
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
-                          color: T.textSec,
+                          color: CSS_COLOR.textSec,
                           fontSize: textSize("body"),
                         }}
                       >
@@ -1833,8 +1890,8 @@ export const Watchlist = ({
                         padding: sp("0 14px"),
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1px solid ${T.borderLight}`,
-                        color: T.text,
+                        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
+                        color: CSS_COLOR.text,
                         cursor: "pointer",
                         fontFamily: T.sans,
                         fontSize: textSize("paragraphMuted"),
@@ -1844,7 +1901,7 @@ export const Watchlist = ({
                       <span>{symbol}</span>
                       <span
                         style={{
-                          color: T.textMuted,
+                          color: CSS_COLOR.textMuted,
                           fontSize: textSize("caption"),
                           letterSpacing: "0.04em",
                           textTransform: "uppercase",
@@ -1861,7 +1918,7 @@ export const Watchlist = ({
                 <div
                   style={{
                     padding: sp("12px 8px"),
-                    color: T.textDim,
+                    color: CSS_COLOR.textDim,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
                   }}

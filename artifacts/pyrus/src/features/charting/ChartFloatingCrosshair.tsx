@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 // @ts-expect-error JSX import from a .jsx module
-import { FONT_WEIGHTS, T, fs, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, T, fs, sp } from "../../lib/uiTokens.jsx";
 
 type ChartFloatingCrosshairProps = {
   visible: boolean;
@@ -60,10 +60,10 @@ export const ChartFloatingCrosshair = ({
 
   const deltaTone =
     payload.delta == null || payload.delta === 0
-      ? T.textSec
+      ? CSS_COLOR.textSec
       : payload.delta > 0
-        ? T.green
-        : T.red;
+        ? CSS_COLOR.green
+        : CSS_COLOR.red;
 
   const wrapperStyle: CSSProperties = {
     position: "absolute",
@@ -114,9 +114,9 @@ export const ChartFloatingCrosshair = ({
         <span style={{ color: "var(--ra-tooltip-muted)" }}>O</span>
         <span style={{ textAlign: "right" }}>{formatNum(payload.open)}</span>
         <span style={{ color: "var(--ra-tooltip-muted)" }}>H</span>
-        <span style={{ color: T.green, textAlign: "right" }}>{formatNum(payload.high)}</span>
+        <span style={{ color: CSS_COLOR.green, textAlign: "right" }}>{formatNum(payload.high)}</span>
         <span style={{ color: "var(--ra-tooltip-muted)" }}>L</span>
-        <span style={{ color: T.red, textAlign: "right" }}>{formatNum(payload.low)}</span>
+        <span style={{ color: CSS_COLOR.red, textAlign: "right" }}>{formatNum(payload.low)}</span>
         <span style={{ color: "var(--ra-tooltip-muted)" }}>C</span>
         <span style={{ textAlign: "right", fontWeight: FONT_WEIGHTS.medium }}>{formatNum(payload.close)}</span>
       </div>

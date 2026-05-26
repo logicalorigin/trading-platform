@@ -1,4 +1,4 @@
-import { T } from "../../lib/uiTokens";
+import { CSS_COLOR, T } from "../../lib/uiTokens";
 
 export const flowProviderColor = (provider) =>
-  provider === "ibkr" ? T.accent : provider === "polygon" ? T.cyan : T.textDim;
+  provider === "ibkr" ? CSS_COLOR.accent : provider === "polygon" ? CSS_COLOR.cyan : CSS_COLOR.textDim;

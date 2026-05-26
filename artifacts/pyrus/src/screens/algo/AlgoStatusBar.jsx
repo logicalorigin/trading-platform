@@ -1,4 +1,14 @@
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { Badge } from "../../components/platform/primitives.jsx";
 import { PulseDot } from "../../components/ui/PulseDot.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
@@ -26,12 +36,12 @@ export const AlgoStatusBar = ({
 }) => {
   const evalState =
     !focusedDeployment?.enabled
-      ? { active: false, color: T.textMuted, label: "Algo paused" }
+      ? { active: false, color: CSS_COLOR.textMuted, label: "Algo paused" }
       : lastEvalMsAgo != null && lastEvalMsAgo < 60_000
-        ? { active: true, color: T.green, label: "Algo evaluating live" }
+        ? { active: true, color: CSS_COLOR.green, label: "Algo evaluating live" }
         : lastEvalMsAgo != null && lastEvalMsAgo < 5 * 60_000
-          ? { active: true, color: T.amber, label: "Evaluations slowing" }
-          : { active: false, color: T.textDim, label: "Algo idle" };
+          ? { active: true, color: CSS_COLOR.amber, label: "Evaluations slowing" }
+          : { active: false, color: CSS_COLOR.textDim, label: "Algo idle" };
   const mode = String(focusedDeployment?.mode || environment || "").toUpperCase();
   const symbolCount = focusedDeployment?.symbolUniverse?.length ?? 0;
   const subtitle = focusedDeployment
@@ -45,7 +55,7 @@ export const AlgoStatusBar = ({
       data-testid="algo-status-bar"
       className="ra-panel-enter"
       style={{
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         border: "none",
         borderRadius: dim(RADII.sm),
         padding: sp(narrow ? "6px 8px" : "9px 12px"),
@@ -74,7 +84,7 @@ export const AlgoStatusBar = ({
             style={{
               fontSize: fs(11),
               fontFamily: T.sans,
-              color: T.text,
+              color: CSS_COLOR.text,
               letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
@@ -88,10 +98,10 @@ export const AlgoStatusBar = ({
             value={focusedDeployment?.id || ""}
             onChange={(event) => onSelectDeployment?.(event.target.value)}
             style={{
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg1,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
-              color: T.text,
+              color: CSS_COLOR.text,
               padding: sp("6px 10px"),
               fontFamily: T.sans,
               fontSize: textSize("body"),
@@ -112,8 +122,8 @@ export const AlgoStatusBar = ({
             style={{
               fontSize: textSize("caption"),
               fontFamily: T.sans,
-              color: T.textDim,
-              border: `1px dashed ${T.border}`,
+              color: CSS_COLOR.textDim,
+              border: `1px dashed ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               padding: sp("3px 7px"),
             }}
@@ -121,14 +131,14 @@ export const AlgoStatusBar = ({
             create from a promoted draft
           </span>
         )}
-        {!narrow && <Badge color={T.textMuted}>Shadow</Badge>}
-        <Badge color={gatewayReady ? T.textSec : T.amber}>
+        {!narrow && <Badge color={CSS_COLOR.textMuted}>Shadow</Badge>}
+        <Badge color={gatewayReady ? CSS_COLOR.textSec : CSS_COLOR.amber}>
           {gatewayReady ? "DATA" : "BLOCKED"}
         </Badge>
-        <Badge color={focusedDeployment?.enabled ? T.green : T.textDim}>
+        <Badge color={focusedDeployment?.enabled ? CSS_COLOR.green : CSS_COLOR.textDim}>
           {focusedDeployment?.enabled ? "ON" : "OFF"}
         </Badge>
-        {!narrow && bridgeTone && bridgeTone.color !== T.green ? (
+        {!narrow && bridgeTone && bridgeTone.color !== CSS_COLOR.green ? (
           <Badge color={bridgeTone.color}>{bridgeTone.label.toUpperCase()}</Badge>
         ) : null}
         <div style={{ flex: narrow ? "0 0 100%" : 1 }} />
@@ -151,14 +161,14 @@ export const AlgoStatusBar = ({
             pending={togglePending}
             pendingLabel={focusedDeployment?.enabled ? "Disabling..." : "Enabling..."}
             variant={focusedDeployment?.enabled ? "secondary" : "primary"}
-            color={focusedDeployment?.enabled ? T.amber : T.green}
+            color={focusedDeployment?.enabled ? CSS_COLOR.amber : CSS_COLOR.green}
             size="sm"
             style={
               focusedDeployment?.enabled
                 ? {
-                    border: `1px solid ${T.amber}`,
-                    color: T.amber,
-                    background: T.bg0,
+                    border: `1px solid ${CSS_COLOR.amber}`,
+                    color: CSS_COLOR.amber,
+                    background: CSS_COLOR.bg0,
                   }
                 : null
             }
@@ -176,17 +186,17 @@ export const AlgoStatusBar = ({
             style={{
               border: !focusedDeployment
                 ? "none"
-                : `1px solid ${gatewayReady ? T.cyan : T.amber}`,
+                : `1px solid ${gatewayReady ? CSS_COLOR.cyan : CSS_COLOR.amber}`,
               background: !focusedDeployment
-                ? T.textMuted
+                ? CSS_COLOR.textMuted
                 : gatewayReady
-                  ? T.cyanBg
-                  : T.amberBg,
+                  ? cssColorMix(CSS_COLOR.cyan, 10)
+                  : CSS_COLOR.amberBg,
               color: !focusedDeployment
-                ? T.bg0
+                ? CSS_COLOR.bg0
                 : gatewayReady
-                  ? T.cyan
-                  : T.amber,
+                  ? CSS_COLOR.cyan
+                  : CSS_COLOR.amber,
             }}
           >
             {!gatewayReady
@@ -201,7 +211,7 @@ export const AlgoStatusBar = ({
         style={{
           fontFamily: T.sans,
           fontSize: fs(8),
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           letterSpacing: "0.04em",
           display: "flex",
           flexWrap: "wrap",

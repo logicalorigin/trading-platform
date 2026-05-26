@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   usePlaceOrder,
@@ -49,6 +53,9 @@ import { useValueFlash } from "../../lib/motion";
 import { buildSignalOptionsDeviation } from "./automationDeviationModel";
 import { buildTicketReadinessModel } from "./tradeTicketReadinessModel.js";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -68,7 +75,7 @@ import { PayoffDiagram } from "./PayoffDiagram.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const readinessToneColor = (tone) =>
-  tone === "good" ? T.green : tone === "warn" ? T.amber : tone === "bad" ? T.red : T.textDim;
+  tone === "good" ? CSS_COLOR.green : tone === "warn" ? CSS_COLOR.amber : tone === "bad" ? CSS_COLOR.red : CSS_COLOR.textDim;
 
 const TicketReadinessStrip = ({ model }) => {
   const tone = readinessToneColor(model?.tone);
@@ -80,8 +87,8 @@ const TicketReadinessStrip = ({ model }) => {
         alignItems: "stretch",
         gap: sp(6),
         minWidth: 0,
-        border: `1px solid ${tone}38`,
-        background: `${tone}10`,
+        border: `1px solid ${cssColorAlpha(tone, "38")}`,
+        background: cssColorAlpha(tone, "10"),
         padding: sp("6px 7px"),
       }}
     >
@@ -99,7 +106,7 @@ const TicketReadinessStrip = ({ model }) => {
         <span
           style={{
             minWidth: 0,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             overflow: "hidden",
@@ -160,7 +167,7 @@ export const TradeOrderTicket = ({
       ? (spread / prem) * 100
       : null;
   const delta = isFiniteNumber(rawDelta) ? Math.abs(rawDelta) : null;
-  const contractColor = slot.cp === "C" ? T.green : T.red;
+  const contractColor = slot.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
   const expInfo = expiration || {
     value: slot.exp,
     label: slot.exp,
@@ -467,12 +474,12 @@ export const TradeOrderTicket = ({
       ? accountId || MISSING_VALUE
       : MISSING_VALUE;
   const selectedExecutionColor = executionIsShadow
-    ? T.pink
+    ? CSS_COLOR.pink
     : brokerConfigured
       ? gatewayTradingReady
-        ? T.green
-        : T.amber
-      : T.textDim;
+        ? CSS_COLOR.green
+        : CSS_COLOR.amber
+      : CSS_COLOR.textDim;
   const ticketEntryReferencePrice = ticketIsOptions
     ? side === "SELL"
       ? isFiniteNumber(bid)
@@ -499,7 +506,7 @@ export const TradeOrderTicket = ({
     >
       {TICKET_ASSET_MODES.map((mode) => {
         const active = normalizedTicketAssetMode === mode;
-        const color = mode === "equity" ? T.cyan : T.accent;
+        const color = mode === "equity" ? CSS_COLOR.cyan : CSS_COLOR.accent;
         return (
           <button
             key={mode}
@@ -507,9 +514,9 @@ export const TradeOrderTicket = ({
             onClick={() => setTicketAssetMode(mode)}
             data-testid={`trade-ticket-asset-mode-${mode}`}
             style={{
-              border: `1px solid ${active ? color : T.border}`,
+              border: `1px solid ${active ? color : CSS_COLOR.border}`,
               background: active ? color : "transparent",
-              color: active ? T.onAccent : T.textSec,
+              color: active ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               borderRadius: dim(RADII.xs),
               padding: sp("6px 0"),
               fontFamily: T.sans,
@@ -546,7 +553,7 @@ export const TradeOrderTicket = ({
         >
           {selectedExecutionLabel}
         </span>
-        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
           {selectedExecutionAccount}
         </span>
       </div>
@@ -559,16 +566,16 @@ export const TradeOrderTicket = ({
       >
         {TRADING_EXECUTION_MODES.map((mode) => {
           const active = executionMode === mode;
-          const color = mode === "shadow" ? T.pink : T.green;
+          const color = mode === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
           return (
             <button
               key={mode}
               type="button"
               onClick={() => setExecutionMode(mode)}
               style={{
-                border: `1px solid ${active ? color : T.border}`,
+                border: `1px solid ${active ? color : CSS_COLOR.border}`,
                 background: active ? color : "transparent",
-                color: active ? T.onAccent : T.textSec,
+                color: active ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 borderRadius: dim(RADII.xs),
                 padding: sp("5px 0"),
                 fontFamily: T.sans,
@@ -586,12 +593,12 @@ export const TradeOrderTicket = ({
       {!gatewayTradingReady && (
         <div
           style={{
-            background: `${T.amber}12`,
-            border: `1px solid ${T.amber}35`,
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
             borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             fontSize: textSize("body"),
-            color: T.amber,
+            color: CSS_COLOR.amber,
             fontFamily: T.sans,
             lineHeight: 1.35,
           }}
@@ -612,8 +619,8 @@ export const TradeOrderTicket = ({
       style={{
         display: "grid",
         gap: sp(6),
-        border: `1px solid ${T.border}`,
-        background: T.bg0,
+        border: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg0,
         borderRadius: dim(RADII.sm),
         padding: sp(8),
       }}
@@ -628,7 +635,7 @@ export const TradeOrderTicket = ({
       >
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(11),
             fontWeight: FONT_WEIGHTS.regular,
@@ -636,7 +643,7 @@ export const TradeOrderTicket = ({
         >
           {ticketInstrumentLabel}
         </span>
-        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
+        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
           {ticketInstrumentDetail}
         </span>
       </div>
@@ -652,17 +659,17 @@ export const TradeOrderTicket = ({
               border: `1px solid ${
                 side === value
                   ? value === "BUY"
-                    ? T.green
-                    : T.red
-                  : T.border
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.red
+                  : CSS_COLOR.border
               }`,
               background:
                 side === value
                   ? value === "BUY"
-                    ? T.green
-                    : T.red
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.red
                   : "transparent",
-              color: side === value ? T.onAccent : T.textSec,
+              color: side === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               borderRadius: dim(RADII.xs),
               padding: sp("6px 0"),
               fontFamily: T.sans,
@@ -688,9 +695,9 @@ export const TradeOrderTicket = ({
             type="button"
             onClick={() => setOrderType(value)}
             style={{
-              border: `1px solid ${orderType === value ? T.accent : T.border}`,
-              background: orderType === value ? T.accent : "transparent",
-              color: orderType === value ? T.onAccent : T.textSec,
+              border: `1px solid ${orderType === value ? CSS_COLOR.accent : CSS_COLOR.border}`,
+              background: orderType === value ? CSS_COLOR.accent : "transparent",
+              color: orderType === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               borderRadius: dim(RADII.xs),
               padding: sp("5px 0"),
               fontFamily: T.sans,
@@ -714,7 +721,7 @@ export const TradeOrderTicket = ({
           style={{
             display: "grid",
             gap: sp(5),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -730,10 +737,10 @@ export const TradeOrderTicket = ({
             onChange={(event) => setQty(event.target.value)}
             style={{
               width: "100%",
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg1,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
@@ -746,7 +753,7 @@ export const TradeOrderTicket = ({
           style={{
             display: "grid",
             gap: sp(3),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
@@ -761,11 +768,11 @@ export const TradeOrderTicket = ({
             onChange={(event) => setLimitPrice(event.target.value)}
             style={{
               width: "100%",
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg1,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               color:
-                orderType === "MKT" || orderType === "STP" ? T.textMuted : T.text,
+                orderType === "MKT" || orderType === "STP" ? CSS_COLOR.textMuted : CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
@@ -779,7 +786,7 @@ export const TradeOrderTicket = ({
           style={{
             display: "grid",
             gap: sp(5),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -796,13 +803,13 @@ export const TradeOrderTicket = ({
             onChange={(event) => setStopPrice(event.target.value)}
             style={{
               width: "100%",
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg1,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               color:
                 orderType === "STP" || orderType === "STP_LMT"
-                  ? T.text
-                  : T.textMuted,
+                  ? CSS_COLOR.text
+                  : CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("paragraphMuted"),
               fontWeight: FONT_WEIGHTS.medium,
@@ -827,9 +834,9 @@ export const TradeOrderTicket = ({
             type="button"
             onClick={() => setTif(value)}
             style={{
-              border: `1px solid ${tif === value ? T.accent : T.border}`,
-              background: tif === value ? T.accent : "transparent",
-              color: tif === value ? T.onAccent : T.textSec,
+              border: `1px solid ${tif === value ? CSS_COLOR.accent : CSS_COLOR.border}`,
+              background: tif === value ? CSS_COLOR.accent : "transparent",
+              color: tif === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               borderRadius: dim(RADII.sm),
               padding: sp("8px 0"),
               fontFamily: T.sans,
@@ -851,9 +858,9 @@ export const TradeOrderTicket = ({
           type="button"
           disabled
           style={{
-            border: `1px solid ${T.border}`,
-            background: T.bg1,
-            color: T.textMuted,
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
+            color: CSS_COLOR.textMuted,
             borderRadius: dim(RADII.sm),
             padding: sp("10px 0"),
             fontFamily: T.sans,
@@ -868,9 +875,9 @@ export const TradeOrderTicket = ({
           type="button"
           disabled
           style={{
-            border: `1px solid ${T.border}`,
-            background: T.bg1,
-            color: T.textMuted,
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
+            color: CSS_COLOR.textMuted,
             borderRadius: dim(RADII.sm),
             padding: sp("10px 0"),
             fontFamily: T.sans,
@@ -1001,8 +1008,8 @@ export const TradeOrderTicket = ({
       <div
         data-testid="trade-order-ticket"
         style={{
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.md),
           padding: sp("16px 18px"),
           display: "flex",
@@ -1014,10 +1021,10 @@ export const TradeOrderTicket = ({
           style={{
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
           }}
         >
@@ -1542,7 +1549,7 @@ export const TradeOrderTicket = ({
       confirmLabel: hasAttachedExits
         ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
         : `${ticketActionLabel} IBKR ORDER`,
-      confirmTone: isLong ? T.green : T.red,
+      confirmTone: isLong ? CSS_COLOR.green : CSS_COLOR.red,
       lines: [
         { label: "ACCOUNT", value: accountId || MISSING_VALUE },
         { label: "SYMBOL", value: slot.ticker },
@@ -1582,7 +1589,7 @@ export const TradeOrderTicket = ({
               {
                 label: "STOP LOSS",
                 value: formatTicketPrice(stopLoss),
-                valueColor: T.red,
+                valueColor: CSS_COLOR.red,
               },
             ]
           : []),
@@ -1591,7 +1598,7 @@ export const TradeOrderTicket = ({
               {
                 label: "TAKE PROFIT",
                 value: formatTicketPrice(takeProfit),
-                valueColor: T.green,
+                valueColor: CSS_COLOR.green,
               },
             ]
           : []),
@@ -1610,7 +1617,7 @@ export const TradeOrderTicket = ({
         {
           label: isLong ? "EST COST" : "EST CREDIT",
           value: costDisplay,
-          valueColor: isLong ? T.red : T.green,
+          valueColor: isLong ? CSS_COLOR.red : CSS_COLOR.green,
         },
       ],
       onConfirm: submitLiveBrokerOrder,
@@ -1758,7 +1765,7 @@ export const TradeOrderTicket = ({
     previewIsPending ||
     sellCallSubmitBlocked ||
     (executionIsShadow && gatewayTradingBlocked);
-  const primarySubmitColor = executionIsShadow ? T.pink : isLong ? T.green : T.red;
+  const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : isLong ? CSS_COLOR.green : CSS_COLOR.red;
   const primarySubmitLabel = executionIsShadow
     ? gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
@@ -1792,14 +1799,14 @@ export const TradeOrderTicket = ({
 	    previewDisplayOrder?.auxPrice ??
 	    null;
   const sellCallStatusColor = !sellCallIntent.applies
-    ? T.textDim
+    ? CSS_COLOR.textDim
     : sellCallIntent.allowed
       ? sellCallIntent.strategyIntent === "covered_call"
-        ? T.cyan
-        : T.green
+        ? CSS_COLOR.cyan
+        : CSS_COLOR.green
       : sellCallIntent.contextPending
-        ? T.amber
-        : T.red;
+        ? CSS_COLOR.amber
+        : CSS_COLOR.red;
   const sellCallCoverageRows = sellCallIntent.applies
     ? [
         [
@@ -1827,8 +1834,8 @@ export const TradeOrderTicket = ({
         data-testid="trade-order-ticket"
         className="ra-panel-enter"
         style={{
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.md),
           padding: sp("16px 18px"),
           display: "flex",
@@ -1841,10 +1848,10 @@ export const TradeOrderTicket = ({
         style={{
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.regular,
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontFamily: T.sans,
           letterSpacing: "0.04em",
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           paddingBottom: sp(4),
         }}
       >
@@ -1855,11 +1862,11 @@ export const TradeOrderTicket = ({
         <div
           style={{
             border: `1px solid ${
-              automationAlreadyShadowFilled ? `${T.green}45` : `${T.cyan}35`
+              automationAlreadyShadowFilled ? `${cssColorMix(CSS_COLOR.green, 27)}` : `${cssColorMix(CSS_COLOR.cyan, 21)}`
             }`,
             background: automationAlreadyShadowFilled
-              ? `${T.green}10`
-              : `${T.cyan}10`,
+              ? `${cssColorMix(CSS_COLOR.green, 6)}`
+              : `${cssColorMix(CSS_COLOR.cyan, 6)}`,
             borderRadius: dim(RADII.sm),
             padding: sp("7px 8px"),
             display: "grid",
@@ -1877,7 +1884,7 @@ export const TradeOrderTicket = ({
             <div>
               <div
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: fs(10),
                   fontWeight: FONT_WEIGHTS.regular,
@@ -1887,7 +1894,7 @@ export const TradeOrderTicket = ({
               </div>
               <div
                 style={{
-                  color: automationAlreadyShadowFilled ? T.green : T.textDim,
+                  color: automationAlreadyShadowFilled ? CSS_COLOR.green : CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
                   marginTop: sp(2),
@@ -1904,10 +1911,10 @@ export const TradeOrderTicket = ({
               type="button"
               onClick={restoreAutomationPlan}
               style={{
-                border: `1px solid ${T.border}`,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
-                background: T.bg0,
-                color: T.cyan,
+                background: CSS_COLOR.bg0,
+                color: CSS_COLOR.cyan,
                 fontFamily: T.sans,
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -1924,8 +1931,8 @@ export const TradeOrderTicket = ({
               display: "flex",
               flexWrap: "nowrap",
               overflowX: "auto",
-              border: `1px solid ${T.border}`,
-              background: T.bg0,
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg0,
               borderRadius: dim(RADII.xs),
               minWidth: 0,
             }}
@@ -1937,13 +1944,13 @@ export const TradeOrderTicket = ({
                   flex: "1 1 auto",
                   minWidth: dim(78),
                   padding: sp("5px 8px"),
-                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
-                  background: row.changed ? `${T.amber}10` : "transparent",
+                  borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
+                  background: row.changed ? `${cssColorMix(CSS_COLOR.amber, 6)}` : "transparent",
                 }}
               >
                 <div
                   style={{
-                    color: row.changed ? T.amber : T.textMuted,
+                    color: row.changed ? CSS_COLOR.amber : CSS_COLOR.textMuted,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -1953,7 +1960,7 @@ export const TradeOrderTicket = ({
                 </div>
                 <AppTooltip content={`Plan: ${row.planned} / Current: ${row.current}`}><div
                   style={{
-                    color: T.text,
+                    color: CSS_COLOR.text,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     marginTop: sp(2),
@@ -1972,8 +1979,8 @@ export const TradeOrderTicket = ({
       {shadowAddExposureWarningActive ? (
         <div
           style={{
-            border: `1px solid ${T.amber}55`,
-            background: `${T.amber}12`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.amber, 33)}`,
+            background: `${cssColorMix(CSS_COLOR.amber, 7)}`,
             borderRadius: dim(RADII.sm),
             padding: sp("6px 8px"),
             display: "grid",
@@ -1982,7 +1989,7 @@ export const TradeOrderTicket = ({
         >
           <div
             style={{
-              color: T.amber,
+              color: CSS_COLOR.amber,
               fontFamily: T.sans,
               fontSize: fs(10),
               fontWeight: FONT_WEIGHTS.regular,
@@ -1992,7 +1999,7 @@ export const TradeOrderTicket = ({
           </div>
           <div
             style={{
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: textSize("body"),
               lineHeight: 1.35,
@@ -2015,7 +2022,7 @@ export const TradeOrderTicket = ({
             fontSize: fs(13),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: T.text,
+            color: CSS_COLOR.text,
           }}
         >
           {slot.ticker}
@@ -2033,7 +2040,7 @@ export const TradeOrderTicket = ({
             {slot.cp}
           </span>
         ) : null}
-        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
           {ticketInstrumentDetail}
         </span>
       </div>
@@ -2044,7 +2051,7 @@ export const TradeOrderTicket = ({
             gridTemplateColumns: "1fr 1fr 1fr",
             gap: sp(4),
             padding: sp("4px 6px"),
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(RADII.xs),
             fontFamily: T.sans,
           }}
@@ -2053,7 +2060,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2063,7 +2070,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.text,
+                color: CSS_COLOR.text,
                 lineHeight: 1,
               }}
             >
@@ -2074,7 +2081,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2086,10 +2093,10 @@ export const TradeOrderTicket = ({
                 fontWeight: FONT_WEIGHTS.regular,
                 color:
                   Number(info?.chg) > 0
-                    ? T.green
+                    ? CSS_COLOR.green
                     : Number(info?.chg) < 0
-                      ? T.red
-                      : T.text,
+                      ? CSS_COLOR.red
+                      : CSS_COLOR.text,
                 lineHeight: 1,
               }}
             >
@@ -2097,7 +2104,7 @@ export const TradeOrderTicket = ({
                 ? `${Number(info.chg) >= 0 ? "+" : "-"}${Math.abs(Number(info.chg)).toFixed(2)}`
                 : MISSING_VALUE}
             </div>
-            <div style={{ fontSize: textSize("caption"), color: T.textDim }}>
+            <div style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>
               {Number.isFinite(Number(info?.pct))
                 ? `${Number(info.pct) >= 0 ? "+" : ""}${Number(info.pct).toFixed(2)}%`
                 : MISSING_VALUE}
@@ -2107,7 +2114,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2117,7 +2124,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 lineHeight: 1,
               }}
             >
@@ -2132,7 +2139,7 @@ export const TradeOrderTicket = ({
             gridTemplateColumns: "1fr 1fr 1fr",
             gap: sp(4),
             padding: sp("4px 6px"),
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(RADII.xs),
             fontFamily: T.sans,
           }}
@@ -2141,7 +2148,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2151,7 +2158,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.red,
+                color: CSS_COLOR.red,
                 lineHeight: 1,
               }}
             >
@@ -2162,7 +2169,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2172,7 +2179,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.text,
+                color: CSS_COLOR.text,
                 lineHeight: 1,
               }}
             >
@@ -2181,7 +2188,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: textSize("caption"),
-                color: isFiniteNumber(spreadPct) && spreadPct > 3 ? T.amber : T.textDim,
+                color: isFiniteNumber(spreadPct) && spreadPct > 3 ? CSS_COLOR.amber : CSS_COLOR.textDim,
               }}
             >
               {isFiniteNumber(spread) && isFiniteNumber(spreadPct)
@@ -2193,7 +2200,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
@@ -2203,7 +2210,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: T.green,
+                color: CSS_COLOR.green,
                 lineHeight: 1,
               }}
             >
@@ -2220,10 +2227,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("4px 0"),
-              background: isLong ? T.green : "transparent",
-              border: `1px solid ${isLong ? T.green : T.border}`,
+              background: isLong ? CSS_COLOR.green : "transparent",
+              border: `1px solid ${isLong ? CSS_COLOR.green : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
-              color: isLong ? T.onAccent : T.textSec,
+              color: isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2238,10 +2245,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("4px 0"),
-              background: !isLong ? T.red : "transparent",
-              border: `1px solid ${!isLong ? T.red : T.border}`,
+              background: !isLong ? CSS_COLOR.red : "transparent",
+              border: `1px solid ${!isLong ? CSS_COLOR.red : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
-              color: !isLong ? T.onAccent : T.textSec,
+              color: !isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2260,10 +2267,10 @@ export const TradeOrderTicket = ({
               style={{
                 flex: 1,
                 padding: sp("4px 0"),
-                background: orderType === t ? T.accent : "transparent",
-                border: `1px solid ${orderType === t ? T.accent : T.border}`,
+                background: orderType === t ? CSS_COLOR.accent : "transparent",
+                border: `1px solid ${orderType === t ? CSS_COLOR.accent : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
-                color: orderType === t ? T.onAccent : T.textSec,
+                color: orderType === t ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 fontSize: fs(t === "STP_LMT" ? 7 : 9),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2278,8 +2285,8 @@ export const TradeOrderTicket = ({
       {sellCallIntent.applies ? (
         <div
           style={{
-            border: `1px solid ${sellCallStatusColor}55`,
-            background: `${sellCallStatusColor}12`,
+            border: `1px solid ${cssColorAlpha(sellCallStatusColor, "55")}`,
+            background: cssColorAlpha(sellCallStatusColor, "12"),
             borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             display: "grid",
@@ -2304,7 +2311,7 @@ export const TradeOrderTicket = ({
             >
               {sellCallIntent.intentLabel}
             </span>
-            <span style={{ color: T.textDim, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
               {sellCallIntent.coverage.underlying || slot.ticker}
             </span>
           </div>
@@ -2314,8 +2321,8 @@ export const TradeOrderTicket = ({
               display: "flex",
               flexWrap: "nowrap",
               overflowX: "auto",
-              border: `1px solid ${T.border}`,
-              background: T.bg0,
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg0,
               borderRadius: dim(RADII.xs),
               minWidth: 0,
             }}
@@ -2327,12 +2334,12 @@ export const TradeOrderTicket = ({
                   flex: "1 1 auto",
                   minWidth: dim(70),
                   padding: sp("4px 8px"),
-                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                  borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                 }}
               >
                 <div
                   style={{
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     fontSize: fs(6),
                     fontWeight: FONT_WEIGHTS.regular,
                   }}
@@ -2341,7 +2348,7 @@ export const TradeOrderTicket = ({
                 </div>
                 <div
                   style={{
-                    color: T.text,
+                    color: CSS_COLOR.text,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.regular,
                     marginTop: sp(1),
@@ -2385,10 +2392,10 @@ export const TradeOrderTicket = ({
               onClick={() => setQty(n)}
               style={{
                 padding: sp("4px 7px"),
-                background: qtyNum === n ? T.accent : "transparent",
-                border: `1px solid ${qtyNum === n ? T.accent : T.border}`,
+                background: qtyNum === n ? CSS_COLOR.accent : "transparent",
+                border: `1px solid ${qtyNum === n ? CSS_COLOR.accent : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
-                color: qtyNum === n ? T.onAccent : T.textSec,
+                color: qtyNum === n ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2403,7 +2410,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               fontSize: fs(6),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
@@ -2420,11 +2427,11 @@ export const TradeOrderTicket = ({
             }
             style={{
               width: "100%",
-              background: T.bg1,
-              border: `1px solid ${T.border}`,
+              background: CSS_COLOR.bg1,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(11),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2436,7 +2443,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(6),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
                 marginBottom: sp(1),
               }}
@@ -2450,11 +2457,11 @@ export const TradeOrderTicket = ({
               onChange={(e) => setStopPrice(e.target.value)}
               style={{
                 width: "100%",
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
+                background: CSS_COLOR.bg1,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
                 padding: sp("3px 6px"),
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontSize: fs(11),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2466,7 +2473,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               fontSize: fs(6),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               letterSpacing: "0.04em",
               marginBottom: sp(1),
             }}
@@ -2486,11 +2493,11 @@ export const TradeOrderTicket = ({
             }
             style={{
               width: "100%",
-              background: parentPriceDisabled ? T.bg2 : T.bg3,
-              border: `1px solid ${T.border}`,
+              background: parentPriceDisabled ? CSS_COLOR.bg2 : CSS_COLOR.bg3,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
-              color: parentPriceDisabled ? T.textDim : T.text,
+              color: parentPriceDisabled ? CSS_COLOR.textDim : CSS_COLOR.text,
               fontSize: fs(11),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2504,7 +2511,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               fontSize: fs(6),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
@@ -2519,10 +2526,10 @@ export const TradeOrderTicket = ({
               disabled={executionIsShadow}
               onClick={() => setAttachStopLoss((value) => !value)}
               style={{
-                border: `1px solid ${attachStopLoss ? T.red : T.border}`,
+                border: `1px solid ${attachStopLoss ? CSS_COLOR.red : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
-                background: attachStopLoss ? T.red : "transparent",
-                color: attachStopLoss ? T.onAccent : T.textSec,
+                background: attachStopLoss ? CSS_COLOR.red : "transparent",
+                color: attachStopLoss ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2542,11 +2549,11 @@ export const TradeOrderTicket = ({
             onChange={(e) => setStopLoss(e.target.value)}
             style={{
               width: "100%",
-              background: stopLossExitDisabled ? T.bg2 : T.bg3,
-              border: `1px solid ${attachStopLoss ? `${T.red}45` : T.border}`,
+              background: stopLossExitDisabled ? CSS_COLOR.bg2 : CSS_COLOR.bg3,
+              border: `1px solid ${attachStopLoss ? `${cssColorMix(CSS_COLOR.red, 27)}` : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
-              color: stopLossExitDisabled ? T.textDim : T.red,
+              color: stopLossExitDisabled ? CSS_COLOR.textDim : CSS_COLOR.red,
               fontSize: fs(11),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2555,7 +2562,7 @@ export const TradeOrderTicket = ({
           />
           <div
             style={{
-              color: attachStopLoss ? T.red : T.textDim,
+              color: attachStopLoss ? CSS_COLOR.red : CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
@@ -2571,7 +2578,7 @@ export const TradeOrderTicket = ({
           <div
             style={{
               fontSize: fs(6),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               letterSpacing: "0.04em",
               marginBottom: sp(1),
               display: "flex",
@@ -2586,10 +2593,10 @@ export const TradeOrderTicket = ({
               disabled={executionIsShadow}
               onClick={() => setAttachTakeProfit((value) => !value)}
               style={{
-                border: `1px solid ${attachTakeProfit ? T.green : T.border}`,
+                border: `1px solid ${attachTakeProfit ? CSS_COLOR.green : CSS_COLOR.border}`,
                 borderRadius: dim(RADII.xs),
-                background: attachTakeProfit ? T.green : "transparent",
-                color: attachTakeProfit ? T.onAccent : T.textSec,
+                background: attachTakeProfit ? CSS_COLOR.green : "transparent",
+                color: attachTakeProfit ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.regular,
@@ -2609,11 +2616,11 @@ export const TradeOrderTicket = ({
             onChange={(e) => setTakeProfit(e.target.value)}
             style={{
               width: "100%",
-              background: takeProfitExitDisabled ? T.bg2 : T.bg3,
-              border: `1px solid ${attachTakeProfit ? `${T.green}45` : T.border}`,
+              background: takeProfitExitDisabled ? CSS_COLOR.bg2 : CSS_COLOR.bg3,
+              border: `1px solid ${attachTakeProfit ? `${cssColorMix(CSS_COLOR.green, 27)}` : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               padding: sp("3px 6px"),
-              color: takeProfitExitDisabled ? T.textDim : T.green,
+              color: takeProfitExitDisabled ? CSS_COLOR.textDim : CSS_COLOR.green,
               fontSize: fs(11),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2622,7 +2629,7 @@ export const TradeOrderTicket = ({
           />
           <div
             style={{
-              color: attachTakeProfit ? T.green : T.textDim,
+              color: attachTakeProfit ? CSS_COLOR.green : CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.regular,
@@ -2644,10 +2651,10 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("3px 0"),
-              background: tif === t ? T.accent : "transparent",
-              border: `1px solid ${tif === t ? T.accent : T.border}`,
+              background: tif === t ? CSS_COLOR.accent : "transparent",
+              border: `1px solid ${tif === t ? CSS_COLOR.accent : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
-              color: tif === t ? T.onAccent : T.textSec,
+              color: tif === t ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               fontSize: textSize("body"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -2677,34 +2684,34 @@ export const TradeOrderTicket = ({
               fontFamily: T.sans,
             }}
           >
-            <span style={{ color: T.textMuted }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>
               BE{" "}
-              <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
                 {breakeven.toFixed(2)}
               </span>{" "}
-              <span style={{ color: T.textDim }}>
+              <span style={{ color: CSS_COLOR.textDim }}>
                 {beMovePct == null
                   ? `(${MISSING_VALUE})`
                   : `(${beMovePct >= 0 ? "+" : ""}${beMovePct.toFixed(1)}%)`}
               </span>
             </span>
-            <span style={{ color: T.textMuted }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>
               {isLong ? "Risk" : "Credit"}{" "}
-              <span style={{ color: isLong ? T.red : T.green, fontWeight: FONT_WEIGHTS.regular }}>
+              <span style={{ color: isLong ? CSS_COLOR.red : CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                 ${cost.toFixed(0)}
               </span>
             </span>
-            <span style={{ color: T.textMuted }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>
               POP{" "}
               <span
                 style={{
                   color: !isFiniteNumber(pop)
-                    ? T.textDim
+                    ? CSS_COLOR.textDim
                     : pop >= 50
-                      ? T.green
+                      ? CSS_COLOR.green
                       : pop >= 30
-                        ? T.amber
-                        : T.red,
+                        ? CSS_COLOR.amber
+                        : CSS_COLOR.red,
                   fontWeight: FONT_WEIGHTS.regular,
                 }}
               >
@@ -2719,30 +2726,30 @@ export const TradeOrderTicket = ({
             display: "grid",
             gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
             gap: sp(4),
-            border: `1px solid ${T.border}`,
-            background: T.bg0,
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg0,
             borderRadius: dim(RADII.xs),
             padding: sp("6px 7px"),
             fontFamily: T.sans,
           }}
         >
           {[
-            ["NOTIONAL", costDisplay, T.text],
+            ["NOTIONAL", costDisplay, CSS_COLOR.text],
             [
               "STOP",
               attachStopLoss ? formatTicketMoney(stopLoss) : "OFF",
-              attachStopLoss ? T.red : T.textDim,
+              attachStopLoss ? CSS_COLOR.red : CSS_COLOR.textDim,
             ],
             [
               "TARGET",
               attachTakeProfit ? formatTicketMoney(takeProfit) : "OFF",
-              attachTakeProfit ? T.green : T.textDim,
+              attachTakeProfit ? CSS_COLOR.green : CSS_COLOR.textDim,
             ],
           ].map(([label, value, color]) => (
             <div key={label} style={{ minWidth: 0 }}>
               <div
                 style={{
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontSize: textSize("caption"),
                   fontWeight: FONT_WEIGHTS.regular,
                 }}
@@ -2769,8 +2776,8 @@ export const TradeOrderTicket = ({
       {previewSnapshot && (
         <div
           style={{
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
             padding: sp("6px 8px"),
             display: "grid",
@@ -2781,20 +2788,20 @@ export const TradeOrderTicket = ({
           }}
         >
           <div>
-            <span style={{ color: T.textMuted }}>PREVIEW</span>{" "}
-            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>PREVIEW</span>{" "}
+            <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.accountId}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textMuted }}>CONID</span>{" "}
-            <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>CONID</span>{" "}
+            <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {previewSnapshot.resolvedContractId}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textMuted }}>TYPE</span>{" "}
-            <span style={{ color: T.text }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>TYPE</span>{" "}
+            <span style={{ color: CSS_COLOR.text }}>
               {formatEnumLabel(
                 previewDisplayOrder?.orderType ||
                   previewDisplayOrder?.type ||
@@ -2803,14 +2810,14 @@ export const TradeOrderTicket = ({
             </span>
           </div>
           <div>
-            <span style={{ color: T.textMuted }}>TIF</span>{" "}
-            <span style={{ color: T.text }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>TIF</span>{" "}
+            <span style={{ color: CSS_COLOR.text }}>
               {String(previewDisplayOrder?.tif || previewDisplayOrder?.timeInForce || tif).toUpperCase()}
             </span>
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
-            <span style={{ color: T.textMuted }}>PAYLOAD</span>{" "}
-            <span style={{ color: T.textSec }}>
+            <span style={{ color: CSS_COLOR.textMuted }}>PAYLOAD</span>{" "}
+            <span style={{ color: CSS_COLOR.textSec }}>
               {String(previewDisplayOrder?.side || previewDisplayOrder?.action || side).toUpperCase()}{" "}
               {previewDisplayOrder?.quantity ?? previewDisplayOrder?.totalQuantity ?? qtyNum} {previewSnapshot.symbol}
               {Number.isFinite(Number(previewDisplayPrice))
@@ -2820,8 +2827,8 @@ export const TradeOrderTicket = ({
           </div>
           {hasAttachedExits ? (
             <div style={{ gridColumn: "1 / -1" }}>
-              <span style={{ color: T.textMuted }}>EXITS</span>{" "}
-              <span style={{ color: previewIsTwsStructured ? T.green : T.amber }}>
+              <span style={{ color: CSS_COLOR.textMuted }}>EXITS</span>{" "}
+              <span style={{ color: previewIsTwsStructured ? CSS_COLOR.green : CSS_COLOR.amber }}>
                 {previewIsTwsStructured
                   ? attachedExitPreviewLabel || "none"
                   : "structured TWS preview required"}
@@ -2843,10 +2850,10 @@ export const TradeOrderTicket = ({
           disabled={previewDisabled}
           style={{
             padding: sp("7px 0"),
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontSize: fs(10),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
@@ -2872,10 +2879,10 @@ export const TradeOrderTicket = ({
           disabled={primarySubmitDisabled}
 	          style={{
             padding: sp("7px 0"),
-            background: primarySubmitDisabled ? T.bg3 : primarySubmitColor,
+            background: primarySubmitDisabled ? CSS_COLOR.bg3 : primarySubmitColor,
             border: "none",
             borderRadius: dim(RADII.xs),
-            color: primarySubmitDisabled ? T.textDim : T.onAccent,
+            color: primarySubmitDisabled ? CSS_COLOR.textDim : CSS_COLOR.onAccent,
             fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
@@ -2900,7 +2907,7 @@ export const TradeOrderTicket = ({
         }
         lines={liveConfirmState?.lines || []}
         confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM IBKR ORDER"}
-        confirmTone={liveConfirmState?.confirmTone || T.red}
+        confirmTone={liveConfirmState?.confirmTone || CSS_COLOR.red}
         pending={liveConfirmPending}
         error={liveConfirmError}
         onCancel={closeLiveConfirm}

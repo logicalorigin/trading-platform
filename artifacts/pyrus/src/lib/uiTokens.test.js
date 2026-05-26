@@ -12,6 +12,7 @@ import {
   THEMES,
   TYPOGRAPHY,
   TYPOGRAPHY_SIZES,
+  cssColorAlpha,
   dim,
   fs,
   resolveEffectiveThemePreference,
@@ -91,9 +92,12 @@ const LEGACY_STYLE_GUARD_FILES = [
 const CSS_COLOR_TOKEN_PATTERN =
   /\bT\.(bg0|bg1|bg2|bg3|bg4|border|borderLight|borderFocus|text|textSec|textDim|textMuted|accent|accentDim|accentHoverBg|accentActiveBg|blue|purple|cyan|pink|green|greenDim|greenBg|red|redDim|redBg|amber|amberDim|amberBg|pulseLive|pulseAlert|pulseLoss|onAccent)\b/g;
 
+const HEX_ALPHA_SUFFIX_PATTERN =
+  /\$\{[^}]+\}[0-9a-fA-F]{2}(?=[`"',)\s])|\+\s*["'][0-9a-fA-F]{2}["']/g;
+
 const CSS_COLOR_TOKEN_MIGRATION_BASELINE = {
-  fileCount: 103,
-  occurrenceCount: 5021,
+  fileCount: 0,
+  occurrenceCount: 0,
 };
 
 const PHASE_ZERO_CSS_COLOR_VARS = {
@@ -248,6 +252,23 @@ test("legacy data typography tokens resolve to the app IBM Plex stack", () => {
   assert.equal(T.mono, T.sans);
 });
 
+test("legacy T color tokens resolve to CSS variables", () => {
+  assert.equal(T.green, "var(--ra-green-500)");
+  assert.equal(T.red, "var(--ra-red-500)");
+  assert.equal(T.amber, "var(--ra-amber-500)");
+  assert.equal(T.accent, "var(--ra-color-accent)");
+  assert.equal(T.bg1, "var(--ra-surface-1)");
+  assert.equal(T.text, "var(--ra-text-primary)");
+});
+
+test("cssColorAlpha preserves hex colors and converts CSS variables to color-mix", () => {
+  assert.equal(cssColorAlpha("#ff0000", "80"), "#ff000080");
+  assert.equal(
+    cssColorAlpha("var(--ra-pink-500)", "48"),
+    "color-mix(in srgb, var(--ra-pink-500) 28%, transparent)",
+  );
+});
+
 test("textSize returns a positive number for known and unknown roles", () => {
   setCurrentScale("m");
   for (const role of [
@@ -285,7 +306,7 @@ test("files using textSize import it from the concrete uiTokens module", () => {
   assert.deepEqual(offenders, []);
 });
 
-test("CSS variable migration guard does not allow legacy T color debt to expand", () => {
+test("CSS variable migration guard rejects legacy T color reads", () => {
   const offenders = collectSourceFiles(SRC_DIR)
     .map((filePath) => ({
       filePath,
@@ -302,12 +323,29 @@ test("CSS variable migration guard does not allow legacy T color debt to expand"
 
   assert.ok(
     offenders.length <= CSS_COLOR_TOKEN_MIGRATION_BASELINE.fileCount,
-    `legacy T color files increased from ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.fileCount} to ${offenders.length}`,
+    `legacy T color files must stay at ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.fileCount}; found ${offenders.length}`,
   );
   assert.ok(
     occurrenceCount <= CSS_COLOR_TOKEN_MIGRATION_BASELINE.occurrenceCount,
-    `legacy T color reads increased from ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.occurrenceCount} to ${occurrenceCount}`,
+    `legacy T color reads must stay at ${CSS_COLOR_TOKEN_MIGRATION_BASELINE.occurrenceCount}; found ${occurrenceCount}`,
   );
+});
+
+test("theme colors do not append hex alpha suffixes directly", () => {
+  const offenders = collectSourceFiles(SRC_DIR)
+    .map((filePath) => ({
+      filePath,
+      relativePath: relative(SRC_DIR, filePath).replaceAll("\\", "/"),
+    }))
+    .filter(({ relativePath }) => !relativePath.includes(".test."))
+    .filter(({ relativePath }) => !relativePath.startsWith("features/research/"))
+    .map(({ filePath, relativePath }) => ({
+      relativePath,
+      count: (readFileSync(filePath, "utf8").match(HEX_ALPHA_SUFFIX_PATTERN) || []).length,
+    }))
+    .filter((entry) => entry.count > 0);
+
+  assert.deepEqual(offenders, []);
 });
 
 test("MAX_WIDTHS exposes the three documented sizes plus full-width opt-out", () => {

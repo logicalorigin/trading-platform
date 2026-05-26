@@ -1,4 +1,4 @@
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   IbkrConnectionLane,
@@ -23,7 +23,7 @@ const StatusRow = ({ label, ok, detail }) => (
       gap: sp(5),
       alignItems: "start",
       padding: sp("3px 0"),
-      borderBottom: `1px solid ${T.border}`,
+      borderBottom: `1px solid ${CSS_COLOR.border}`,
     }}
   >
     <span
@@ -31,17 +31,17 @@ const StatusRow = ({ label, ok, detail }) => (
         width: 7,
         height: 7,
         borderRadius: dim(RADII.pill),
-        background: ok ? T.green : T.amber,
-        boxShadow: ok ? `0 0 8px ${T.green}` : "none",
+        background: ok ? CSS_COLOR.green : CSS_COLOR.amber,
+        boxShadow: ok ? `0 0 8px ${CSS_COLOR.green}` : "none",
         marginTop: sp(3),
       }}
     />
     <div style={{ minWidth: 0 }}>
-      <div style={{ color: T.text, fontSize: textSize("label"), fontWeight: FONT_WEIGHTS.regular }}>{label}</div>
+      <div style={{ color: CSS_COLOR.text, fontSize: textSize("label"), fontWeight: FONT_WEIGHTS.regular }}>{label}</div>
       <div
         style={{
           marginTop: sp(2),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontSize: textSize("label"),
           fontFamily: T.sans,
           lineHeight: 1.4,
@@ -114,7 +114,7 @@ export const SetupHealthPanel = ({
                 display: "grid",
                 gap: sp(4),
                 padding: sp("3px 0 5px"),
-                borderBottom: `1px solid ${T.border}`,
+                borderBottom: `1px solid ${CSS_COLOR.border}`,
               }}
             >
               <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
@@ -211,16 +211,16 @@ export const SetupHealthPanel = ({
           {!health.schemaReady ? (
             <div
               style={{
-                borderTop: `1px solid ${T.border}`,
+                borderTop: `1px solid ${CSS_COLOR.border}`,
                 paddingTop: sp(5),
                 display: "grid",
                 gap: sp(3),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontSize: textSize("body"),
                 lineHeight: 1.35,
               }}
             >
-              <div style={{ ...mutedLabelStyle, color: T.amber }}>Schema Action</div>
+              <div style={{ ...mutedLabelStyle, color: CSS_COLOR.amber }}>Schema Action</div>
               <div>Run <code>pnpm --filter @workspace/db run push</code> to create the missing tables.</div>
             </div>
           ) : null}
@@ -233,7 +233,7 @@ export const SetupHealthPanel = ({
           ) : (
             <div
               style={{
-                borderTop: `1px solid ${T.border}`,
+                borderTop: `1px solid ${CSS_COLOR.border}`,
                 paddingTop: sp(5),
                 display: "grid",
                 gap: sp(5),

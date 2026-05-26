@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getGexDashboard as getGexDashboardRequest } from "@workspace/api-client-react";
 import {
@@ -48,7 +53,18 @@ import {
 } from "../features/gex/useGexZeroGamma.js";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 
 const GEX_HEATMAP_PAGE_SIZE = 40;
@@ -84,22 +100,12 @@ const fmtPercent = (value, digits = 1) =>
 const pct = (numerator, denominator) =>
   denominator > 0 ? numerator / denominator : 0;
 
-const rgba = (hex, alpha) => {
-  const normalized = String(hex).replace("#", "");
-  const value = Number.parseInt(normalized.length === 3
-    ? normalized.split("").map((char) => `${char}${char}`).join("")
-    : normalized, 16);
-  if (!Number.isFinite(value)) return hex;
-  const r = (value >> 16) & 255;
-  const g = (value >> 8) & 255;
-  const b = value & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
+const rgba = (color, alpha) => cssColorMix(color, alpha * 100);
 
 const fieldStyle = {
-  background: T.bg0,
+  background: CSS_COLOR.bg0,
   border: "none",
-  color: T.text,
+  color: CSS_COLOR.text,
   fontFamily: T.sans,
   fontSize: textSize("bodyStrong"),
   height: dim(30),
@@ -110,7 +116,7 @@ const SegmentControl = ({ value, options, onChange }) => (
   <div
     style={{
       display: "inline-flex",
-      background: T.bg0,
+      background: CSS_COLOR.bg0,
       border: "none",
     }}
   >
@@ -124,9 +130,9 @@ const SegmentControl = ({ value, options, onChange }) => (
           style={{
             padding: sp("6px 9px"),
             border: 0,
-            borderRight: `1px solid ${T.border}`,
-            background: active ? T.accentDim : "transparent",
-            color: active ? T.text : T.textSec,
+            borderRight: `1px solid ${CSS_COLOR.border}`,
+            background: active ? CSS_COLOR.accentDim : "transparent",
+            color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             cursor: "pointer",
@@ -147,7 +153,7 @@ const SectionTitle = ({ children, right }) => (
       justifyContent: "space-between",
       gap: sp(8),
       padding: sp("6px 10px 4px"),
-      borderBottom: `1px solid ${T.borderLight || T.border}`,
+      borderBottom: `1px solid ${CSS_COLOR.borderLight || CSS_COLOR.border}`,
     }}
   >
     <div
@@ -160,7 +166,7 @@ const SectionTitle = ({ children, right }) => (
     >
       <span
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: textSize("bodyStrong"),
           fontWeight: FONT_WEIGHTS.label,
@@ -174,13 +180,13 @@ const SectionTitle = ({ children, right }) => (
   </div>
 );
 
-const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
+const MetricTile = ({ label, value, sub, color = CSS_COLOR.text, glossaryKey }) => (
   <div
     style={{
       minWidth: dim(112),
       flex: "1 1 112px",
       padding: sp("10px 8px"),
-      borderRight: `1px solid ${T.border}`,
+      borderRight: `1px solid ${CSS_COLOR.border}`,
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
@@ -194,7 +200,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
         display: "inline-flex",
         alignItems: "center",
         gap: sp(3),
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: "0.04em",
@@ -219,7 +225,7 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
     </span>
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
       }}
@@ -231,10 +237,10 @@ const MetricTile = ({ label, value, sub, color = T.text, glossaryKey }) => (
 
 const MetaLine = ({ label, value }) => (
   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8) }}>
-    <span style={{ color: T.textDim, fontSize: textSize("caption") }}>{label}</span>
+    <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>{label}</span>
     <span
       style={{
-        color: T.text,
+        color: CSS_COLOR.text,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.emphasis,
@@ -253,7 +259,7 @@ const TickerMetaSummary = ({ data }) => {
     <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
       <div
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: textSize("bodyStrong"),
           fontWeight: FONT_WEIGHTS.emphasis,
@@ -285,7 +291,7 @@ const ChartShell = ({ title, subtitle, right, children, minHeight = 260 }) => (
       <div
         style={{
           padding: sp("7px 10px 0"),
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontSize: textSize("caption"),
         }}
       >
@@ -300,7 +306,7 @@ const SectionHeading = ({ title }) => (
   <div style={{ display: "flex", alignItems: "center", gap: sp(8), padding: sp("2px 2px") }}>
     <h2
       style={{
-        color: T.text,
+        color: CSS_COLOR.text,
         fontFamily: T.sans,
         fontSize: fs(15),
         fontWeight: FONT_WEIGHTS.emphasis,
@@ -309,7 +315,7 @@ const SectionHeading = ({ title }) => (
     >
       {title}
     </h2>
-    <span style={{ flex: 1, height: 1, background: T.border }} />
+    <span style={{ flex: 1, height: 1, background: CSS_COLOR.border }} />
   </div>
 );
 
@@ -319,25 +325,25 @@ const GexTooltip = ({ active, payload, spot }) => {
   return (
     <div
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.borderLight}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.borderLight}`,
         padding: sp(8),
-        color: T.text,
+        color: CSS_COLOR.text,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         boxShadow: ELEVATION.md,
       }}
     >
-      <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
+      <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
         ${row.strike} · {fmtPercent((row.strike - spot) / spot)}
       </div>
-      <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
+      <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
         Net {fmtCurrency(row.netGex)}
       </div>
-      <div style={{ color: T.green }}>Call {fmtCurrency(row.callGex)}</div>
-      <div style={{ color: T.red }}>Put {fmtCurrency(row.putGex)}</div>
-      <div style={{ color: T.textSec }}>Call OI {fmtNumber(row.callOi)}</div>
-      <div style={{ color: T.textSec }}>Put OI {fmtNumber(row.putOi)}</div>
+      <div style={{ color: CSS_COLOR.green }}>Call {fmtCurrency(row.callGex)}</div>
+      <div style={{ color: CSS_COLOR.red }}>Put {fmtCurrency(row.putGex)}</div>
+      <div style={{ color: CSS_COLOR.textSec }}>Call OI {fmtNumber(row.callOi)}</div>
+      <div style={{ color: CSS_COLOR.textSec }}>Put OI {fmtNumber(row.putOi)}</div>
     </div>
   );
 };
@@ -369,36 +375,36 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
     >
       <ResponsiveContainer width="100%" height={286}>
         <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
+          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
-          <Tooltip cursor={{ fill: `${T.textMuted}14` }} content={<GexTooltip spot={spot} />} />
+          <Tooltip cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }} content={<GexTooltip spot={spot} />} />
           <ReferenceLine
             x={Math.round(spot)}
-            stroke={T.cyan}
+            stroke={CSS_COLOR.cyan}
             strokeDasharray="4 4"
-            label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
+            label={{ value: "Spot", fill: CSS_COLOR.cyan, fontSize: fs(10), position: "top" }}
           />
           {series === "net" ? (
             <Bar dataKey="netGex" isAnimationActive={false}>
               {data.map((row) => (
                 <Cell
                   key={row.strike}
-                  fill={row.netGex >= 0 ? T.green : T.red}
+                  fill={row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
                   stroke={
                     row.strike === callWall || row.strike === putWall
-                      ? T.text
+                      ? CSS_COLOR.text
                       : "transparent"
                   }
                   strokeWidth={row.strike === callWall || row.strike === putWall ? 2 : 0}
@@ -407,8 +413,8 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
             </Bar>
           ) : (
             <>
-              <Bar dataKey="callGex" fill={T.green} isAnimationActive={false} />
-              <Bar dataKey="putGex" fill={T.red} isAnimationActive={false} />
+              <Bar dataKey="callGex" fill={CSS_COLOR.green} isAnimationActive={false} />
+              <Bar dataKey="putGex" fill={CSS_COLOR.red} isAnimationActive={false} />
             </>
           )}
         </BarChart>
@@ -426,38 +432,38 @@ const ExpiryChart = ({ rows, spot }) => {
     >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
+          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
             tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
-            cursor={{ fill: `${T.textMuted}14` }}
+            cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload;
               return (
                 <div style={tooltipBoxStyle}>
                   <b>{row.label}</b>
-                  <div style={{ color: T.green }}>Call {fmtCurrency(row.callGex)}</div>
-                  <div style={{ color: T.red }}>Put {fmtCurrency(row.putGex)}</div>
-                  <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
+                  <div style={{ color: CSS_COLOR.green }}>Call {fmtCurrency(row.callGex)}</div>
+                  <div style={{ color: CSS_COLOR.red }}>Put {fmtCurrency(row.putGex)}</div>
+                  <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
                     Net {fmtCurrency(row.netGex)}
                   </div>
                 </div>
               );
             }}
           />
-          <Bar dataKey="callGex" fill={T.green} stackId="expiry" isAnimationActive={false} />
-          <Bar dataKey="putGex" fill={T.red} stackId="expiry" isAnimationActive={false} />
+          <Bar dataKey="callGex" fill={CSS_COLOR.green} stackId="expiry" isAnimationActive={false} />
+          <Bar dataKey="putGex" fill={CSS_COLOR.red} stackId="expiry" isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </ChartShell>
@@ -465,10 +471,10 @@ const ExpiryChart = ({ rows, spot }) => {
 };
 
 const tooltipBoxStyle = {
-  background: T.bg1,
-  border: `1px solid ${T.borderLight}`,
+  background: CSS_COLOR.bg1,
+  border: `1px solid ${CSS_COLOR.borderLight}`,
   padding: sp(8),
-  color: T.text,
+  color: CSS_COLOR.text,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   boxShadow: ELEVATION.md,
@@ -499,31 +505,31 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
       {data.length ? (
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-            <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
+            <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
             <XAxis
               dataKey="price"
               type="number"
               domain={["dataMin", "dataMax"]}
               tickFormatter={(value) => `$${value.toFixed(0)}`}
-              tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
               tickFormatter={(value) => `${(value / 1e6).toFixed(0)}M`}
-              tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+              tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
               axisLine={false}
               tickLine={false}
             />
             <Tooltip
-              cursor={{ fill: `${T.textMuted}14` }}
+              cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const row = payload[0].payload;
                 return (
                   <div style={tooltipBoxStyle}>
                     <b>{fmtPrice(row.price)}</b>
-                    <div style={{ color: row.netGex >= 0 ? T.green : T.red }}>
+                    <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
                       Net {fmtCurrency(row.netGex)}
                     </div>
                   </div>
@@ -532,21 +538,21 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
             />
             <ReferenceLine
               x={spot}
-              stroke={T.cyan}
+              stroke={CSS_COLOR.cyan}
               strokeDasharray="4 4"
-              label={{ value: "Spot", fill: T.cyan, fontSize: fs(10), position: "top" }}
+              label={{ value: "Spot", fill: CSS_COLOR.cyan, fontSize: fs(10), position: "top" }}
             />
             {zeroPrice != null ? (
               <ReferenceLine
                 x={zeroPrice}
-                stroke={T.amber}
+                stroke={CSS_COLOR.amber}
                 strokeDasharray="2 4"
-                label={{ value: "Zero", fill: T.amber, fontSize: fs(10), position: "top" }}
+                label={{ value: "Zero", fill: CSS_COLOR.amber, fontSize: fs(10), position: "top" }}
               />
             ) : null}
             <Bar dataKey="netGex" isAnimationActive={false}>
               {data.map((row) => (
-                <Cell key={row.price} fill={row.netGex >= 0 ? T.green : T.red} />
+                <Cell key={row.price} fill={row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
               ))}
             </Bar>
           </BarChart>
@@ -590,37 +596,37 @@ const OiChart = ({ rows, spot }) => {
     >
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke={T.borderLight} strokeDasharray="0" vertical={false} />
+          <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
             minTickGap={18}
           />
           <YAxis
             tickFormatter={(value) => (value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${(value / 1e3).toFixed(0)}K`)}
-            tick={{ fill: T.textDim, fontSize: fs(10), fontFamily: T.sans }}
+            tick={{ fill: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}
             axisLine={false}
             tickLine={false}
           />
-          <ReferenceLine x={Math.round(spot)} stroke={T.cyan} strokeDasharray="4 4" />
+          <ReferenceLine x={Math.round(spot)} stroke={CSS_COLOR.cyan} strokeDasharray="4 4" />
           <Tooltip
-            cursor={{ fill: `${T.textMuted}14` }}
+            cursor={{ fill: `${cssColorMix(CSS_COLOR.textMuted, 8)}` }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload;
               return (
                 <div style={tooltipBoxStyle}>
                   <b>${row.strike}</b>
-                  <div style={{ color: T.green }}>Call OI {fmtNumber(row.callOi)}</div>
-                  <div style={{ color: T.red }}>Put OI {fmtNumber(row.putOi)}</div>
+                  <div style={{ color: CSS_COLOR.green }}>Call OI {fmtNumber(row.callOi)}</div>
+                  <div style={{ color: CSS_COLOR.red }}>Put OI {fmtNumber(row.putOi)}</div>
                 </div>
               );
             }}
           />
-          <Bar dataKey="callOi" fill={T.green} stackId="oi" isAnimationActive={false} />
-          <Bar dataKey="putOi" fill={T.red} stackId="oi" isAnimationActive={false} />
+          <Bar dataKey="callOi" fill={CSS_COLOR.green} stackId="oi" isAnimationActive={false} />
+          <Bar dataKey="putOi" fill={CSS_COLOR.red} stackId="oi" isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </ChartShell>
@@ -680,11 +686,11 @@ const HeatmapCard = ({ rows, spot }) => {
   }, [page, paginatedStrikes.safePage]);
 
   const cellColor = (value) => {
-    if (!value || !model.maxAbs) return T.bg0;
+    if (!value || !model.maxAbs) return CSS_COLOR.bg0;
     const alpha = Math.min(0.85, Math.max(0.08, Math.abs(value) / model.maxAbs));
     return value > 0
-      ? rgba(T.green, alpha)
-      : rgba(T.red, alpha);
+      ? rgba(CSS_COLOR.green, alpha)
+      : rgba(CSS_COLOR.red, alpha);
   };
 
   return (
@@ -704,7 +710,7 @@ const HeatmapCard = ({ rows, spot }) => {
             height: dim(26),
             padding: sp("0 8px"),
             cursor: "pointer",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
           }}
         >
           {expanded ? "Collapse" : `Expand (${model.strikes.length} strikes)`}
@@ -738,7 +744,7 @@ const HeatmapCard = ({ rows, spot }) => {
                   <td
                     style={{
                       ...heatmapHeaderStyle,
-                      color: Math.abs(strike - spot) < 0.5 ? T.cyan : T.textSec,
+                      color: Math.abs(strike - spot) < 0.5 ? CSS_COLOR.cyan : CSS_COLOR.textSec,
                     }}
                   >
                     ${strike}
@@ -752,9 +758,9 @@ const HeatmapCard = ({ rows, spot }) => {
                         style={{
                           padding: sp("5px 6px"),
                           textAlign: "center",
-                          borderBottom: `1px solid ${T.border}`,
+                          borderBottom: `1px solid ${CSS_COLOR.border}`,
                           background: cellColor(value),
-                          color: Math.abs(value) > model.maxAbs * 0.5 ? T.text : T.textSec,
+                          color: Math.abs(value) > model.maxAbs * 0.5 ? CSS_COLOR.text : CSS_COLOR.textSec,
                         }}
                       >
                         {Math.abs(value) > model.maxAbs * 0.04
@@ -788,9 +794,9 @@ const HeatmapCard = ({ rows, spot }) => {
 const heatmapHeaderStyle = {
   padding: sp("5px 6px"),
   textAlign: "center",
-  color: T.textDim,
-  background: T.bg1,
-  borderBottom: `1px solid ${T.border}`,
+  color: CSS_COLOR.textDim,
+  background: CSS_COLOR.bg1,
+  borderBottom: `1px solid ${CSS_COLOR.border}`,
   whiteSpace: "nowrap",
 };
 
@@ -807,7 +813,7 @@ const SignalsCard = ({ signals }) => (
       {signals.length ? (
         signals.map((signal, index) => {
           const Icon = signal.kind === "Magnet" ? Target : signal.kind === "Support" ? ShieldCheck : AlertTriangle;
-          const color = signal.severity === "STRONG" ? T.amber : T.cyan;
+          const color = signal.severity === "STRONG" ? CSS_COLOR.amber : CSS_COLOR.cyan;
           return (
             <div
               key={`${signal.kind}-${index}`}
@@ -815,12 +821,12 @@ const SignalsCard = ({ signals }) => (
                 display: "grid",
                 gap: sp(4),
                 paddingBottom: sp(8),
-                borderBottom: index < signals.length - 1 ? `1px solid ${T.border}` : 0,
+                borderBottom: index < signals.length - 1 ? `1px solid ${CSS_COLOR.border}` : 0,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: sp(7) }}>
                 <Icon size={14} color={color} />
-                <b style={{ color: T.text, fontSize: textSize("body"), fontFamily: T.display }}>
+                <b style={{ color: CSS_COLOR.text, fontSize: textSize("body"), fontFamily: T.display }}>
                   {signal.kind}
                 </b>
                 <InfoTooltipIcon
@@ -830,10 +836,10 @@ const SignalsCard = ({ signals }) => (
                   {signal.severity}
                 </span>
               </div>
-              <div style={{ color: T.textSec, fontSize: textSize("caption"), lineHeight: 1.4 }}>
+              <div style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), lineHeight: 1.4 }}>
                 {signal.description}
               </div>
-              <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+              <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
                 @ {fmtPrice(signal.level)} · {fmtPercent(signal.delta)}
               </div>
             </div>
@@ -895,7 +901,7 @@ const SqueezeCard = ({ squeeze, source }) => {
     ["Volume", factors.volumeConfirm, "factorVolume"],
     ["DEX", factors.dexBias, "factorDex"],
   ];
-  const color = squeeze.bias === "BULLISH" ? T.green : T.red;
+  const color = squeeze.bias === "BULLISH" ? CSS_COLOR.green : CSS_COLOR.red;
   const displayedClassifiedFlowCount = Number(
     source?.classifiedFlowEventCount || squeeze.flowEventCount || 0,
   );
@@ -924,23 +930,23 @@ const SqueezeCard = ({ squeeze, source }) => {
             <span style={{ color, fontSize: fs(14), fontWeight: FONT_WEIGHTS.medium, fontFamily: T.display }}>
               {verdictLabel || "—"}
             </span>
-            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
               ({squeeze.score || 0}/100)
             </span>
             <InfoTooltipIcon entry={getGexGlossaryEntry("squeezeProbability")} />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(7) }}>
-          <Zap size={15} color={T.amber} />
+          <Zap size={15} color={CSS_COLOR.amber} />
           <span style={{ color, fontSize: fs(18), fontWeight: FONT_WEIGHTS.emphasis }}>
             {squeeze.score || 0}
           </span>
-          <span style={{ color: T.textDim, fontSize: textSize("caption") }}>/100</span>
+          <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>/100</span>
           <span style={{ marginLeft: "auto", color, fontSize: textSize("caption") }}>
             {squeeze.bias} · {squeeze.verdict}
           </span>
         </div>
-        <div style={{ height: dim(7), background: T.bg0, border: `1px solid ${T.border}` }}>
+        <div style={{ height: dim(7), background: CSS_COLOR.bg0, border: `1px solid ${CSS_COLOR.border}` }}>
           <div
             style={{
               width: `${Math.max(0, Math.min(100, squeeze.score || 0))}%`,
@@ -952,9 +958,9 @@ const SqueezeCard = ({ squeeze, source }) => {
         {squeeze.flowPending ? (
           <div
             style={{
-              color: T.amber,
-              background: T.amberBg,
-              border: `1px solid ${T.amberDim}`,
+              color: CSS_COLOR.amber,
+              background: CSS_COLOR.amberBg,
+              border: `1px solid ${CSS_COLOR.amberDim}`,
               padding: sp(7),
               fontSize: textSize("caption"),
             }}
@@ -962,7 +968,7 @@ const SqueezeCard = ({ squeeze, source }) => {
             Flow factors are waiting for IBKR-backed flow context.
           </div>
         ) : (
-          <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
             IBKR-backed flow events: {displayedClassifiedFlowCount}/{displayedRawFlowCount} classified
           </div>
         )}
@@ -973,7 +979,7 @@ const SqueezeCard = ({ squeeze, source }) => {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontSize: textSize("caption"),
                 }}
               >
@@ -983,12 +989,12 @@ const SqueezeCard = ({ squeeze, source }) => {
                 </span>
                 <span>{Math.round(value || 0)}/25</span>
               </div>
-              <div style={{ height: dim(4), background: T.bg0, marginTop: sp(3) }}>
+              <div style={{ height: dim(4), background: CSS_COLOR.bg0, marginTop: sp(3) }}>
                 <div
                   style={{
                     width: `${Math.max(0, Math.min(100, ((value || 0) / 25) * 100))}%`,
                     height: "100%",
-                    background: value >= 18 ? T.green : value >= 10 ? T.amber : T.red,
+                    background: value >= 18 ? CSS_COLOR.green : value >= 10 ? CSS_COLOR.amber : CSS_COLOR.red,
                   }}
                 />
               </div>
@@ -999,7 +1005,7 @@ const SqueezeCard = ({ squeeze, source }) => {
           <div data-testid="gex-squeeze-stronger" style={{ display: "grid", gap: sp(4) }}>
             <div
               style={{
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 letterSpacing: "0.04em",
@@ -1012,7 +1018,7 @@ const SqueezeCard = ({ squeeze, source }) => {
               style={{
                 margin: 0,
                 paddingLeft: sp(14),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontSize: textSize("caption"),
                 lineHeight: 1.4,
                 display: "grid",
@@ -1029,16 +1035,16 @@ const SqueezeCard = ({ squeeze, source }) => {
           <div
             data-testid="gex-squeeze-implication"
             style={{
-              borderTop: `1px solid ${T.border}`,
+              borderTop: `1px solid ${CSS_COLOR.border}`,
               paddingTop: sp(7),
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: textSize("caption"),
               lineHeight: 1.5,
             }}
           >
             <div
               style={{
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 letterSpacing: "0.04em",
@@ -1087,11 +1093,11 @@ const ProfileTable = ({ profile }) => {
               {paginatedProfile.pageRows.map((row) => (
                 <tr key={row.strike}>
                   <td style={tableCellStyle}>${row.strike}</td>
-                  <td style={{ ...tableCellStyle, color: row.netGex >= 0 ? T.green : T.red }}>
+                  <td style={{ ...tableCellStyle, color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
                     {fmtCurrency(row.netGex)}
                   </td>
-                  <td style={{ ...tableCellStyle, color: T.green }}>{fmtCurrency(row.callGex)}</td>
-                  <td style={{ ...tableCellStyle, color: T.red }}>{fmtCurrency(row.putGex)}</td>
+                  <td style={{ ...tableCellStyle, color: CSS_COLOR.green }}>{fmtCurrency(row.callGex)}</td>
+                  <td style={{ ...tableCellStyle, color: CSS_COLOR.red }}>{fmtCurrency(row.putGex)}</td>
                   <td style={tableCellStyle}>{fmtNumber(row.callOi)}</td>
                   <td style={tableCellStyle}>{fmtNumber(row.putOi)}</td>
                 </tr>
@@ -1115,8 +1121,8 @@ const ProfileTable = ({ profile }) => {
 
 const tableHeaderStyle = {
   padding: sp("5px 7px"),
-  color: T.textDim,
-  borderBottom: `1px solid ${T.border}`,
+  color: CSS_COLOR.textDim,
+  borderBottom: `1px solid ${CSS_COLOR.border}`,
   textAlign: "right",
   fontFamily: T.sans,
   fontWeight: FONT_WEIGHTS.emphasis,
@@ -1124,8 +1130,8 @@ const tableHeaderStyle = {
 
 const tableCellStyle = {
   padding: sp("5px 7px"),
-  color: T.textSec,
-  borderBottom: `1px solid ${T.border}`,
+  color: CSS_COLOR.textSec,
+  borderBottom: `1px solid ${CSS_COLOR.border}`,
   textAlign: "right",
   fontFamily: T.sans,
 };
@@ -1307,7 +1313,7 @@ export default function GexScreen({
         ...fieldStyle,
       }}
     >
-      <Search size={14} color={T.textDim} />
+      <Search size={14} color={CSS_COLOR.textDim} />
       <input
         value={tickerDraft}
         onChange={(event) => setTickerDraft(event.target.value.toUpperCase())}
@@ -1321,7 +1327,7 @@ export default function GexScreen({
           border: 0,
           outline: 0,
           background: "transparent",
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.emphasis,
           fontSize: textSize("bodyStrong"),
@@ -1374,8 +1380,8 @@ export default function GexScreen({
         flex: 1,
         minHeight: 0,
         overflow: "auto",
-        background: T.bg0,
-        color: T.text,
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
         fontFamily: T.sans,
         WebkitOverflowScrolling: isPhone ? "touch" : undefined,
       }}
@@ -1437,10 +1443,10 @@ export default function GexScreen({
                       flex: "0 0 auto",
                       minHeight: dim(36),
                       padding: sp("0 10px"),
-                      border: `1px solid ${active ? T.accent : T.border}`,
+                      border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
                       borderRadius: dim(RADII.xs),
-                      background: active ? `${T.accent}18` : T.bg1,
-                      color: active ? T.text : T.textSec,
+                      background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+                      color: active ? CSS_COLOR.text : CSS_COLOR.textSec,
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
                       cursor: "pointer",
@@ -1489,14 +1495,14 @@ export default function GexScreen({
               minWidth: 0,
             }}
           >
-            <div style={{ color: T.textDim, fontSize: textSize("caption") }}>Spot</div>
-            <div style={{ color: T.text, fontSize: fs(isPhone ? 20 : 24), fontWeight: FONT_WEIGHTS.emphasis }}>
+            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Spot</div>
+            <div style={{ color: CSS_COLOR.text, fontSize: fs(isPhone ? 20 : 24), fontWeight: FONT_WEIGHTS.emphasis }}>
               {fmtPrice(spot)}
             </div>
             <div
               style={{
                 color:
-                  quoteChange == null ? T.textDim : quoteChange >= 0 ? T.green : T.red,
+                  quoteChange == null ? CSS_COLOR.textDim : quoteChange >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
                 fontSize: textSize("caption"),
               }}
             >
@@ -1513,31 +1519,31 @@ export default function GexScreen({
             <ConcentrationTile
               label="0DTE Exp"
               value={concentration.zeroDTE}
-              color={T.amber}
+              color={CSS_COLOR.amber}
               glossaryKey="concentration0dte"
             />
             <ConcentrationTile
               label="Weekly Exp"
               value={concentration.weekly}
-              color={T.cyan}
+              color={CSS_COLOR.cyan}
               glossaryKey="concentrationWeekly"
             />
             <ConcentrationTile
               label="Monthly Exp"
               value={concentration.monthly}
-              color={T.purple}
+              color={CSS_COLOR.purple}
               glossaryKey="concentrationMonthly"
             />
           </div>
           <TickerMetaSummary data={gexData} />
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: sp(6), color: T.textSec }}>
+            <div style={{ display: "flex", alignItems: "center", gap: sp(6), color: CSS_COLOR.textSec }}>
               <SlidersHorizontal size={14} />
               <span style={{ fontSize: textSize("caption"), display: "inline-flex", alignItems: "center", gap: sp(3) }}>
                 IV scenario
                 <InfoTooltipIcon entry={getGexGlossaryEntry("ivSimulation")} />
               </span>
-              <span style={{ marginLeft: "auto", color: T.amber, fontWeight: FONT_WEIGHTS.emphasis }}>
+              <span style={{ marginLeft: "auto", color: CSS_COLOR.amber, fontWeight: FONT_WEIGHTS.emphasis }}>
                 {ivAdjustment >= 0 ? "+" : ""}
                 {(ivAdjustment * 100).toFixed(0)}%
               </span>
@@ -1549,9 +1555,9 @@ export default function GexScreen({
               step={1}
               value={ivAdjustment * 100}
               onChange={(event) => setIvAdjustment(Number(event.target.value) / 100)}
-              style={{ width: "100%", accentColor: T.accent, marginTop: sp(8) }}
+              style={{ width: "100%", accentColor: CSS_COLOR.accent, marginTop: sp(8) }}
             />
-            <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
               Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
             </div>
           </div>
@@ -1597,49 +1603,49 @@ export default function GexScreen({
                 label="Net GEX"
                 value={fmtCurrency(metrics.netGex)}
                 sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "—"}`}
-                color={metrics.netGex >= 0 ? T.green : T.red}
+                color={metrics.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
                 glossaryKey="netGex"
               />
               <MetricTile
                 label="Call GEX"
                 value={fmtCurrency(metrics.callGex)}
                 sub={`${fmtNumber(metrics.callOi)} OI`}
-                color={T.green}
+                color={CSS_COLOR.green}
                 glossaryKey="callGex"
               />
               <MetricTile
                 label="Put GEX"
                 value={fmtCurrency(metrics.putGex)}
                 sub={`${fmtNumber(metrics.putOi)} OI`}
-                color={T.red}
+                color={CSS_COLOR.red}
                 glossaryKey="putGex"
               />
               <MetricTile
                 label="Total GEX"
                 value={fmtCurrency(metrics.totalGex)}
                 sub={`${fmtNumber(metrics.callOi + metrics.putOi)} OI`}
-                color={T.cyan}
+                color={CSS_COLOR.cyan}
                 glossaryKey="totalGex"
               />
               <MetricTile
                 label="Call Wall"
                 value={fmtPrice(metrics.callWall)}
                 sub={fmtPercent((metrics.callWall - spot) / spot)}
-                color={T.green}
+                color={CSS_COLOR.green}
                 glossaryKey="callWall"
               />
               <MetricTile
                 label="Put Wall"
                 value={fmtPrice(metrics.putWall)}
                 sub={fmtPercent((metrics.putWall - spot) / spot)}
-                color={T.red}
+                color={CSS_COLOR.red}
                 glossaryKey="putWall"
               />
               <MetricTile
                 label="Zero Gamma"
                 value={fmtPrice(metrics.zeroGamma)}
                 sub={metrics.zeroGamma ? fmtPercent((metrics.zeroGamma - spot) / spot) : "—"}
-                color={T.cyan}
+                color={CSS_COLOR.cyan}
                 glossaryKey="zeroGamma"
               />
             </Card>
@@ -1703,13 +1709,13 @@ export default function GexScreen({
 }
 
 const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
-  <div style={{ background: T.bg0, border: "none", padding: sp(8) }}>
+  <div style={{ background: CSS_COLOR.bg0, border: "none", padding: sp(8) }}>
     <div
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: sp(3),
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontSize: textSize("caption"),
       }}
     >
@@ -1726,7 +1732,7 @@ const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
 
 const IntradayDeltaPill = ({ label, value, testId }) => {
   const tone =
-    value == null ? T.textDim : value >= 0 ? T.green : T.red;
+    value == null ? CSS_COLOR.textDim : value >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
   const formatted =
     value == null
       ? "—"
@@ -1737,7 +1743,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
       style={{
         flex: 1,
         minWidth: 0,
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
         border: "none",
         padding: sp(8),
         display: "grid",
@@ -1746,7 +1752,7 @@ const IntradayDeltaPill = ({ label, value, testId }) => {
     >
       <div
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -1769,19 +1775,19 @@ const IntradayChartTooltip = ({ active, payload }) => {
   return (
     <div
       style={{
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
         border: "none",
         padding: sp(6),
         fontSize: textSize("caption"),
         fontFamily: T.sans,
       }}
     >
-      <div style={{ color: T.textDim }}>
+      <div style={{ color: CSS_COLOR.textDim }}>
         {ts ? ts.toLocaleTimeString() : "--"}
       </div>
       <div
         style={{
-          color: point?.netGex >= 0 ? T.green : T.red,
+          color: point?.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
           fontWeight: FONT_WEIGHTS.emphasis,
         }}
       >
@@ -1797,8 +1803,8 @@ const IntradayCard = ({ snapshots }) => {
   const lastTone =
     intraday.series.length > 0 &&
     intraday.series[intraday.series.length - 1].netGex >= 0
-      ? T.green
-      : T.red;
+      ? CSS_COLOR.green
+      : CSS_COLOR.red;
   return (
     <Card noPad>
       <SectionTitle>Intraday ΔGEX</SectionTitle>
@@ -1823,7 +1829,7 @@ const IntradayCard = ({ snapshots }) => {
                 margin={{ top: 4, right: 6, left: 0, bottom: 0 }}
               >
                 <CartesianGrid
-                  stroke={T.borderLight || T.border}
+                  stroke={CSS_COLOR.borderLight || CSS_COLOR.border}
                   strokeDasharray="0"
                   vertical={false}
                 />
@@ -1834,7 +1840,7 @@ const IntradayCard = ({ snapshots }) => {
                   hide
                 />
                 <YAxis hide />
-                <ReferenceLine y={0} stroke={T.textDim} strokeDasharray="2 2" />
+                <ReferenceLine y={0} stroke={CSS_COLOR.textDim} strokeDasharray="2 2" />
                 <Tooltip content={<IntradayChartTooltip />} />
                 <Area
                   type="monotone"
@@ -1849,13 +1855,13 @@ const IntradayCard = ({ snapshots }) => {
             </ResponsiveContainer>
           </div>
         ) : (
-          <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
             {intraday.series.length === 1
               ? "Awaiting a second snapshot to plot intraday change."
               : "No intraday snapshots yet for this session."}
           </div>
         )}
-        <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+        <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
           {snapshots.length} full-chain IBKR snapshot{snapshots.length === 1 ? "" : "s"}
           {intraday.isSparse && hasSeries
             ? " · sparse — Δ Recent uses last 5 points"

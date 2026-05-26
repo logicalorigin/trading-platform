@@ -1,6 +1,8 @@
-import { useMemo } from "react";
+import {
+  useMemo,
+} from "react";
 import { useGetBars } from "@workspace/api-client-react";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../../lib/timeZone";
 import {
   formatAccountMoney,
@@ -86,8 +88,8 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
           height: dim(height),
           border: "none",
           borderRadius: dim(RADII.xs),
-          background: T.bg0,
-          color: T.textMuted,
+          background: CSS_COLOR.bg0,
+          color: CSS_COLOR.textMuted,
           display: "grid",
           placeItems: "center",
           fontFamily: T.sans,
@@ -133,11 +135,11 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
   const tradeShortSide = /short|sell/i.test(trade?.side || "");
   const lineTone = tradeShortSide
     ? lastClose <= firstClose
-      ? T.green
-      : T.red
+      ? CSS_COLOR.green
+      : CSS_COLOR.red
     : lastClose >= firstClose
-      ? T.green
-      : T.red;
+      ? CSS_COLOR.green
+      : CSS_COLOR.red;
   const areaPath = `${linePath} L${pathPoints[pathPoints.length - 1].x.toFixed(1)},${(padT + chartH).toFixed(1)} L${padL},${(padT + chartH).toFixed(1)} Z`;
   const entryPx = Number(trade?.avgOpen);
   const exitPx = Number(trade?.avgClose);
@@ -158,7 +160,7 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
         <div style={mutedLabelStyle}>
           {symbol} · {timeframe} BARS
         </div>
-        <div style={{ fontSize: textSize("body"), fontFamily: T.data, color: T.textDim }}>
+        <div style={{ fontSize: textSize("body"), fontFamily: T.data, color: CSS_COLOR.textDim }}>
           {bars.length} bars
         </div>
       </div>
@@ -183,7 +185,7 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
             y={yFor(entryPx)}
             lineTop={padT}
             lineBottom={padT + chartH}
-            color={T.green}
+            color={CSS_COLOR.green}
             title={`Entry · ${formatAccountPrice(entryPx, 2, maskValues)} · ${formatAppDateTime(openMs)}`}
           />
         ) : null}
@@ -194,7 +196,7 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
             y={yFor(exitPx)}
             lineTop={padT}
             lineBottom={padT + chartH}
-            color={T.red}
+            color={CSS_COLOR.red}
             title={`Exit · ${formatAccountPrice(exitPx, 2, maskValues)} · ${formatAppDateTime(closeMs)}`}
             align="end"
           />
@@ -219,10 +221,10 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
 const UnavailableForensicsMessage = ({ children }) => (
   <div
     style={{
-      border: `1px dashed ${T.border}`,
+      border: `1px dashed ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg0,
-      color: T.textMuted,
+      background: CSS_COLOR.bg0,
+      color: CSS_COLOR.textMuted,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       padding: sp("6px 8px"),
@@ -237,7 +239,7 @@ const AxisLabel = ({ x, y, anchor = "start", children }) => (
   <text
     x={x}
     y={y}
-    fill={T.textMuted}
+    fill={CSS_COLOR.textMuted}
     fontFamily={T.data}
     fontSize={9}
     textAnchor={anchor}
@@ -268,7 +270,7 @@ const TradeMarker = ({
       strokeDasharray="2 2"
       opacity={0.6}
     />
-    <circle cx={x} cy={y} r={4} fill={color} stroke={T.bg1} strokeWidth={1} />
+    <circle cx={x} cy={y} r={4} fill={color} stroke={CSS_COLOR.bg1} strokeWidth={1} />
     <text
       x={align === "end" ? x - 4 : x + 4}
       y={y - 6}
@@ -284,7 +286,7 @@ const TradeMarker = ({
 );
 
 const lifecycleToneColor = (tone) =>
-  tone === "green" ? T.green : tone === "red" ? T.red : T.cyan;
+  tone === "green" ? CSS_COLOR.green : tone === "red" ? CSS_COLOR.red : CSS_COLOR.cyan;
 
 export const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
   if (!rows.length) return null;
@@ -318,15 +320,15 @@ export const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               gap: sp(5),
               border: "none",
               borderRadius: dim(RADII.xs),
-              background: T.bg0,
+              background: CSS_COLOR.bg0,
               padding: sp("4px 5px"),
               alignItems: "center",
               fontFamily: T.sans,
               fontSize: textSize("body"),
             }}
           >
-            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{row.label}</span>
-            <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{row.label}</span>
+            <span style={{ color: CSS_COLOR.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.detail}
             </span>
             <span style={{ color: lifecycleToneColor(row.tone), fontFamily: T.data, fontWeight: FONT_WEIGHTS.regular }}>
@@ -369,7 +371,7 @@ export const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
           x2={width - padX}
           y1={trackY}
           y2={trackY}
-          stroke={T.border}
+          stroke={CSS_COLOR.border}
           strokeWidth={1}
         />
         <AxisLabel x={padX} y={height - 4}>
@@ -399,7 +401,7 @@ export const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
                 strokeWidth={0.6}
                 opacity={0.6}
               />
-              <circle cx={event.x} cy={cy} r={4} fill={color} stroke={T.bg1} strokeWidth={1} />
+              <circle cx={event.x} cy={cy} r={4} fill={color} stroke={CSS_COLOR.bg1} strokeWidth={1} />
               <text
                 x={event.x}
                 y={cy - 7}

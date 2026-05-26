@@ -10,6 +10,9 @@ import {
   Send,
 } from "lucide-react";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -251,7 +254,7 @@ const directionMeta = (direction) => {
     return {
       label: "BUY",
       trend: "BULLISH",
-      tone: T.green,
+      tone: CSS_COLOR.green,
       primitive: "buy",
     };
   }
@@ -259,14 +262,14 @@ const directionMeta = (direction) => {
     return {
       label: "SELL",
       trend: "BEARISH",
-      tone: T.red,
+      tone: CSS_COLOR.red,
       primitive: "sell",
     };
   }
   return {
     label: MISSING_VALUE,
     trend: MISSING_VALUE,
-    tone: T.textDim,
+    tone: CSS_COLOR.textDim,
     primitive: null,
   };
 };
@@ -284,22 +287,22 @@ const formatBars = (value) => {
 };
 
 const liquidityMeta = (candidate) => {
-  if (!candidate) return { Icon: MinusCircle, tone: T.textDim };
+  if (!candidate) return { Icon: MinusCircle, tone: CSS_COLOR.textDim };
   const reason = String(candidate.reason || "");
   if (
     reason === "missing_bid_ask" ||
     reason === "spread_too_wide" ||
     reason === "bid_below_minimum"
   ) {
-    return { Icon: AlertTriangle, tone: T.amber };
+    return { Icon: AlertTriangle, tone: CSS_COLOR.amber };
   }
   if (
     asRecord(candidate.quote).bid != null ||
     asRecord(candidate.liquidity).bid != null
   ) {
-    return { Icon: CheckCircle2, tone: T.green };
+    return { Icon: CheckCircle2, tone: CSS_COLOR.green };
   }
-  return { Icon: MinusCircle, tone: T.textDim };
+  return { Icon: MinusCircle, tone: CSS_COLOR.textDim };
 };
 
 const hasDisplayValue = (value) =>
@@ -343,10 +346,10 @@ const formatSpreadWidth = (widthPct) => {
 
 const scoreTone = (score) => {
   const numeric = Number(score);
-  if (!Number.isFinite(numeric)) return T.textDim;
-  if (numeric >= 75) return T.green;
-  if (numeric < 50) return T.red;
-  return T.amber;
+  if (!Number.isFinite(numeric)) return CSS_COLOR.textDim;
+  if (numeric >= 75) return CSS_COLOR.green;
+  if (numeric < 50) return CSS_COLOR.red;
+  return CSS_COLOR.amber;
 };
 
 const scoreTierLabel = (tier) => {
@@ -404,38 +407,38 @@ const missingGreeksDisplay = ({
 
 const statusPillMeta = (signal, candidate, blocker) => {
   if (blocker !== MISSING_VALUE) {
-    return { label: blocker, tone: T.red, Icon: Ban };
+    return { label: blocker, tone: CSS_COLOR.red, Icon: Ban };
   }
   const actionStatus = candidate?.actionStatus || candidate?.status;
   if (actionStatus) {
     const label = signalOptionsActionLabel(actionStatus);
     const normalized = String(actionStatus).toLowerCase();
     if (normalized.includes("block") || normalized.includes("mismatch")) {
-      return { label, tone: T.red, Icon: Ban };
+      return { label, tone: CSS_COLOR.red, Icon: Ban };
     }
     if (
       normalized.includes("ready") ||
       normalized.includes("filled") ||
       normalized.includes("available")
     ) {
-      return { label, tone: T.green, Icon: CheckCircle2 };
+      return { label, tone: CSS_COLOR.green, Icon: CheckCircle2 };
     }
     if (normalized.includes("stale")) {
-      return { label, tone: T.amber, Icon: Clock };
+      return { label, tone: CSS_COLOR.amber, Icon: Clock };
     }
     return {
       label,
-      tone: signalOptionsActionColor(actionStatus) || T.textDim,
+      tone: signalOptionsActionColor(actionStatus) || CSS_COLOR.textDim,
       Icon: Radar,
     };
   }
   if (signal?.status === "unavailable") {
-    return { label: "Unavailable", tone: T.textDim, Icon: MinusCircle };
+    return { label: "Unavailable", tone: CSS_COLOR.textDim, Icon: MinusCircle };
   }
   if (signal?.fresh === false) {
-    return { label: "Stale", tone: T.amber, Icon: Clock };
+    return { label: "Stale", tone: CSS_COLOR.amber, Icon: Clock };
   }
-  return { label: "Awaiting scan", tone: T.cyan, Icon: Radar };
+  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
 };
 
 const compactPillLabel = (label) => {
@@ -472,8 +475,8 @@ const StatusPill = ({
           flex: "0 0 auto",
           padding: sp("0 6px"),
           borderRadius: dim(RADII.pill),
-          border: `1px solid ${tone}44`,
-          background: `${tone}18`,
+          border: `1px solid ${cssColorAlpha(tone, "44")}`,
+          background: cssColorAlpha(tone, "18"),
           color: tone,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -497,8 +500,8 @@ const StatusPill = ({
         minWidth: 0,
         padding: sp("1px 6px"),
         borderRadius: dim(RADII.pill),
-        border: `1px solid ${tone}33`,
-        background: `${tone}1A`,
+        border: `1px solid ${cssColorAlpha(tone, "33")}`,
+        background: cssColorAlpha(tone, "1A"),
         color: tone,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -529,20 +532,20 @@ const StatusPill = ({
 };
 
 const DECISION_DETAIL_META = {
-  clear: { tone: T.green, label: "Gate clear" },
-  liquidity: { tone: T.amber, label: "Liquidity" },
-  risk: { tone: T.red, label: "Risk" },
-  gateway: { tone: T.red, label: "Gateway" },
-  contract_resolution: { tone: T.amber, label: "Contract" },
-  signal_policy: { tone: T.amber, label: "Policy" },
-  marking: { tone: T.amber, label: "Marking" },
-  other: { tone: T.textDim, label: "Other" },
+  clear: { tone: CSS_COLOR.green, label: "Gate clear" },
+  liquidity: { tone: CSS_COLOR.amber, label: "Liquidity" },
+  risk: { tone: CSS_COLOR.red, label: "Risk" },
+  gateway: { tone: CSS_COLOR.red, label: "Gateway" },
+  contract_resolution: { tone: CSS_COLOR.amber, label: "Contract" },
+  signal_policy: { tone: CSS_COLOR.amber, label: "Policy" },
+  marking: { tone: CSS_COLOR.amber, label: "Marking" },
+  other: { tone: CSS_COLOR.textDim, label: "Other" },
 };
 
 const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => {
   if (!candidate) {
     return {
-      tone: T.cyan,
+      tone: CSS_COLOR.cyan,
       shortLabel: "Monitor only",
       fullLabel: "No action candidate resolved",
     };
@@ -559,7 +562,7 @@ const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => 
   const actionStatus = String(candidate?.actionStatus || candidate?.status || "").trim();
   if (actionStatus && actionStatus !== "candidate") {
     return {
-      tone: statusMeta.tone || T.textDim,
+      tone: statusMeta.tone || CSS_COLOR.textDim,
       shortLabel: statusMeta.label,
       fullLabel: statusMeta.label,
     };
@@ -567,7 +570,7 @@ const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => 
 
   if (String(statusMeta?.label || "").toLowerCase() === "awaiting scan") {
     return {
-      tone: T.cyan,
+      tone: CSS_COLOR.cyan,
       shortLabel: "Awaiting scan",
       fullLabel: "Candidate awaiting next scan",
     };
@@ -709,8 +712,8 @@ const latestTimelineItem = (candidate) => {
 const DataCell = ({
   value,
   detail,
-  tone = T.textSec,
-  detailTone = T.textMuted,
+  tone = CSS_COLOR.textSec,
+  detailTone = CSS_COLOR.textMuted,
   icon = null,
   detailExtra = null,
   titleValue,
@@ -796,7 +799,7 @@ const MobileMetricChip = ({
   label,
   value,
   detail,
-  tone = T.textSec,
+  tone = CSS_COLOR.textSec,
   titleValue,
 }) => (
   <span
@@ -809,16 +812,16 @@ const MobileMetricChip = ({
       minWidth: 0,
       height: dim(18),
       padding: sp("0 4px"),
-      border: `1px solid ${T.border}`,
+      border: `1px solid ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.pill),
-      background: `${T.bg2}cc`,
+      background: `${cssColorMix(CSS_COLOR.bg2, 80)}`,
       overflow: "hidden",
       lineHeight: 1,
     }}
   >
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: fs(8),
         lineHeight: 1,
         overflow: "hidden",
@@ -890,13 +893,13 @@ const SignalHeroCell = ({
           direction={direction.primitive}
           freshnessRatio={freshnessRatio}
           freshnessBars={signalRecord.barsSinceSignal}
-          tone={T.textSec}
+          tone={CSS_COLOR.textSec}
           className={signalRecord.fresh ? "ra-signal-glyph-fresh" : undefined}
         />
         <StrategyTag candidate={candidate} signal={signalRecord} />
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontSize: fs(13),
             fontWeight: FONT_WEIGHTS.medium,
             minWidth: 0,
@@ -924,7 +927,7 @@ const SignalHeroCell = ({
           gap: sp(5),
           minWidth: 0,
           overflow: "hidden",
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontSize: textSize("caption"),
           whiteSpace: "nowrap",
           lineHeight: 1.12,
@@ -939,7 +942,7 @@ const SignalHeroCell = ({
         <span
           className={priceFlashClassName}
           style={{
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontVariantNumeric: "tabular-nums",
             fontWeight: FONT_WEIGHTS.medium,
             flex: "0 0 auto",
@@ -1053,8 +1056,8 @@ const DecisionCell = ({
           minWidth: 0,
           padding: sp("2px 7px 2px 3px"),
           borderRadius: dim(RADII.pill),
-          border: `1px solid ${(verdict?.tone || statusMeta.tone)}40`,
-          background: `${verdict?.tone || statusMeta.tone}1C`,
+          border: `1px solid ${cssColorAlpha(verdict?.tone || statusMeta.tone, "40")}`,
+          background: cssColorAlpha(verdict?.tone || statusMeta.tone, "1C"),
           color: verdict?.tone || statusMeta.tone,
           overflow: "hidden",
           whiteSpace: "nowrap",
@@ -1082,7 +1085,7 @@ const DecisionCell = ({
       <span
         title={detailTitle}
         style={{
-          color: decisionDetailMeta?.tone || T.textMuted,
+          color: decisionDetailMeta?.tone || CSS_COLOR.textMuted,
           fontSize: textSize("caption"),
           lineHeight: 1.12,
           minWidth: 0,
@@ -1104,7 +1107,7 @@ const resolveRowAction = ({ candidate, blocker, signalRecord, verdict }) => {
       id: "why",
       label: "Why?",
       title: blocker,
-      tone: T.amber,
+      tone: CSS_COLOR.amber,
       Icon: HelpCircle,
     };
   }
@@ -1113,7 +1116,7 @@ const resolveRowAction = ({ candidate, blocker, signalRecord, verdict }) => {
     id: "submit",
     label: "Submit",
     title: "Open pre-filled trade ticket",
-    tone: T.green,
+    tone: CSS_COLOR.green,
     Icon: Send,
   };
 };
@@ -1124,7 +1127,7 @@ const RowActionButton = ({ action, onAction }) => {
       <span
         aria-hidden="true"
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           display: "inline-flex",
           justifyContent: "center",
           width: "100%",
@@ -1155,8 +1158,8 @@ const RowActionButton = ({ action, onAction }) => {
         width: dim(28),
         height: dim(24),
         borderRadius: dim(RADII.sm),
-        border: `1px solid ${action.tone}44`,
-        background: `${action.tone}18`,
+        border: `1px solid ${cssColorAlpha(action.tone, "44")}`,
+        background: cssColorAlpha(action.tone, "18"),
         color: action.tone,
         cursor: "pointer",
       }}
@@ -1183,9 +1186,9 @@ export const OperationsSignalTableHeader = ({
         gap: sp(2),
         alignItems: "center",
         padding: sp("2px 6px"),
-        borderBottom: `1px solid ${T.border}`,
-        background: T.bg1,
-        color: T.textMuted,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: 0,
@@ -1217,7 +1220,7 @@ export const OperationsSignalTableHeader = ({
               strokeWidth={1.8}
               aria-hidden="true"
               style={{
-                color: active ? T.accent : T.textMuted,
+                color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
                 transform: active && sortDirection === "asc" ? "rotate(180deg)" : "none",
               }}
             />
@@ -1254,14 +1257,14 @@ export const OperationsSignalTableHeader = ({
                 padding: 0,
                 border: 0,
                 background: "transparent",
-                color: active ? T.text : T.textMuted,
+                color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
                 letterSpacing: 0,
                 textTransform: "uppercase",
                 cursor: "pointer",
-                textDecoration: active ? `underline ${T.accent}66` : "none",
+                textDecoration: active ? `underline ${cssColorMix(CSS_COLOR.accent, 40)}` : "none",
                 textUnderlineOffset: dim(3),
               }}
             >
@@ -1449,7 +1452,7 @@ export const OperationsSignalRow = ({
       label: "Age",
       value: mobileAgeValue,
       detail: since.detail,
-      tone: signalRecord.fresh ? T.green : T.amber,
+      tone: signalRecord.fresh ? CSS_COLOR.green : CSS_COLOR.amber,
       titleValue: compactJoin([since.main, since.detail, signalRecord.signalAt]),
     },
     {
@@ -1459,10 +1462,10 @@ export const OperationsSignalRow = ({
       detail: signalMove.label,
       tone:
         Number(signalMove.value) > 0
-          ? T.green
+          ? CSS_COLOR.green
           : Number(signalMove.value) < 0
-            ? T.red
-            : T.textDim,
+            ? CSS_COLOR.red
+            : CSS_COLOR.textDim,
       titleValue: signalMove.detail,
     },
     {
@@ -1504,7 +1507,7 @@ export const OperationsSignalRow = ({
       <DataCell
         value={since.main}
         detail={since.detail}
-        tone={signalRecord.fresh ? T.green : T.amber}
+        tone={signalRecord.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
         titleValue={compactJoin([
           since.main !== MISSING_VALUE ? `${since.main} since signal` : null,
           since.detail,
@@ -1518,10 +1521,10 @@ export const OperationsSignalRow = ({
         detail={signalMove.detail}
         tone={
           Number(signalMove.value) > 0
-            ? T.green
+            ? CSS_COLOR.green
             : Number(signalMove.value) < 0
-              ? T.red
-              : T.textDim
+              ? CSS_COLOR.red
+              : CSS_COLOR.textDim
         }
         titleValue={compactJoin([
           signalMove.detail,
@@ -1535,10 +1538,10 @@ export const OperationsSignalRow = ({
         detail={actionDetail}
         tone={
           signalState.freshness === "FRESH"
-            ? T.green
+            ? CSS_COLOR.green
             : signalState.freshness === "STALE"
-              ? T.amber
-              : T.textDim
+              ? CSS_COLOR.amber
+              : CSS_COLOR.textDim
         }
         titleValue={compactJoin([
           actionPlan.main,
@@ -1552,7 +1555,7 @@ export const OperationsSignalRow = ({
       <DataCell
         value={contract.main}
         detail={contract.detail}
-        tone={hasDisplayValue(rawContract.main) ? T.textSec : T.textDim}
+        tone={hasDisplayValue(rawContract.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
         titleValue={compactJoin([contract.main, contract.detail])}
       />
     ),
@@ -1597,7 +1600,7 @@ export const OperationsSignalRow = ({
       <DataCell
         value={compactGreeksText(greeks.main)}
         detail={compactGreeksText(greeks.detail)}
-        tone={hasDisplayValue(rawGreeks.main) ? T.textSec : T.textDim}
+        tone={hasDisplayValue(rawGreeks.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
         titleValue={compactJoin([greeks.main, greeks.detail, greeks.full])}
       />
     ),
@@ -1657,7 +1660,7 @@ export const OperationsSignalRow = ({
       rowHeight={algoIsPhone ? 84 : 56}
       expandedHeight={320}
       selectionAccent={direction.tone}
-      borderTone={T.border}
+      borderTone={CSS_COLOR.border}
       dataTestId={`algo-signal-row-${signalRecord.symbol}`}
       rowClassName={rowClassName}
       rowStyle={{ "--ra-motion-accent": direction.tone }}
@@ -1677,11 +1680,11 @@ export const OperationsSignalRow = ({
             boxSizing: "border-box",
             fontFamily: T.sans,
             fontSize: fs(11),
-            color: T.text,
+            color: CSS_COLOR.text,
             lineHeight: 1.12,
             boxShadow: `inset ${algoIsPhone ? 2 : 3}px 0 0 ${direction.tone}`,
             background: freshAndHot
-              ? `linear-gradient(90deg, ${verdict.tone}${algoIsPhone ? "0D" : "12"} 0%, transparent 55%)`
+              ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, algoIsPhone ? "0D" : "12")} 0%, transparent 55%)`
               : "transparent",
           }}
         >
@@ -1711,7 +1714,7 @@ export const OperationsSignalRow = ({
                     direction={direction.primitive}
                     freshnessRatio={freshnessRatio}
                     freshnessBars={signalRecord.barsSinceSignal}
-                    tone={T.textSec}
+                    tone={CSS_COLOR.textSec}
                     size={16}
                     className={signalRecord.fresh ? "ra-signal-glyph-fresh" : undefined}
                   />
@@ -1741,7 +1744,7 @@ export const OperationsSignalRow = ({
                   <span
                     className={priceFlashClassName}
                     style={{
-                      color: T.textMuted,
+                      color: CSS_COLOR.textMuted,
                       fontVariantNumeric: "tabular-nums",
                       flex: "0 0 auto",
                     }}
@@ -1756,7 +1759,7 @@ export const OperationsSignalRow = ({
                     alignItems: "center",
                     gap: sp(4),
                     minWidth: 0,
-                    color: T.textDim,
+                    color: CSS_COLOR.textDim,
                     fontSize: textSize("caption"),
                     fontWeight: FONT_WEIGHTS.regular,
                     overflow: "hidden",
@@ -1775,7 +1778,7 @@ export const OperationsSignalRow = ({
                   </span>
                   <span
                     style={{
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       flex: "0 1 auto",

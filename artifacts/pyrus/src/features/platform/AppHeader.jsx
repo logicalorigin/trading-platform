@@ -1,4 +1,9 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import {
   Activity,
   Bell,
@@ -12,7 +17,18 @@ import {
   TrendingUp,
   WalletCards,
 } from "lucide-react";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PyrusBrandLockup, PyrusWordmark } from "../../components/brand/PyrusLogo";
@@ -62,7 +78,7 @@ const AccountSectionTransitionStatus = () => {
   }
 
   const label = `Loading ${targetSection}...`;
-  const tone = targetSection === "shadow" ? T.pink : T.green;
+  const tone = targetSection === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
   return (
     <span
       data-testid="header-account-section-transition"
@@ -74,9 +90,9 @@ const AccountSectionTransitionStatus = () => {
         minHeight: dim(24),
         padding: sp("0 8px"),
         borderRadius: dim(RADII.pill),
-        border: `1px solid ${T.border}`,
-        background: T.bg1,
-        color: T.textSec,
+        border: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize("label"),
         whiteSpace: "nowrap",
@@ -97,10 +113,10 @@ const ModeChip = ({ environment }) => {
   const label = isLive ? "LIVE" : mode === "paper" ? "PAPER" : (environment || "—").toString().toUpperCase();
   const isPaper = mode === "paper";
   const palette = isLive
-    ? { bg: `${T.red}22`, border: T.red, text: T.red }
+    ? { bg: `${cssColorMix(CSS_COLOR.red, 13)}`, border: CSS_COLOR.red, text: CSS_COLOR.red }
     : isPaper
-      ? { bg: T.bg0, border: T.borderLight, text: T.textSec }
-      : { bg: T.bg0, border: T.borderLight, text: T.textMuted };
+      ? { bg: CSS_COLOR.bg0, border: CSS_COLOR.borderLight, text: CSS_COLOR.textSec }
+      : { bg: CSS_COLOR.bg0, border: CSS_COLOR.borderLight, text: CSS_COLOR.textMuted };
   return (
     <AppTooltip
       content={
@@ -133,7 +149,7 @@ const ModeChip = ({ environment }) => {
           whiteSpace: "nowrap",
           flex: "0 0 auto",
           ...(isLive
-            ? { boxShadow: `0 0 0 0 ${T.red}33`, animation: "pulseAlertLoss 2.8s ease-in-out infinite" }
+            ? { boxShadow: `0 0 0 0 ${cssColorMix(CSS_COLOR.red, 20)}`, animation: "pulseAlertLoss 2.8s ease-in-out infinite" }
             : {}),
         }}
       >
@@ -189,7 +205,7 @@ const fmtCompactCurrency = (value, masked = false) => {
   return `$${numeric.toFixed(0)}`;
 };
 
-const MobileHeaderChip = ({ label, value, tone = T.text }) => (
+const MobileHeaderChip = ({ label, value, tone = CSS_COLOR.text }) => (
   <span
     className="ra-header-chip ra-mobile-header-chip"
     style={{
@@ -201,9 +217,9 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
       maxWidth: dim(126),
       minHeight: dim(22),
       padding: sp("2px 6px"),
-      border: `1px solid ${T.borderLight}`,
+      border: `1px solid ${CSS_COLOR.borderLight}`,
       borderRadius: dim(RADII.pill),
-      background: T.bg0,
+      background: CSS_COLOR.bg0,
       color: tone,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
@@ -215,7 +231,7 @@ const MobileHeaderChip = ({ label, value, tone = T.text }) => (
   >
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: textSize("micro"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: 0,
@@ -253,9 +269,9 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        border: `1px solid ${active ? T.accent : T.border}`,
-        background: active ? `${T.accent}18` : T.bg1,
-        color: active ? T.accent : T.textSec,
+        border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
+        background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+        color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
         borderRadius: dim(RADII.pill),
         cursor: "pointer",
       }}
@@ -289,23 +305,23 @@ const MobileHeaderContext = ({ activeScreen, selectedSymbol }) => {
         justifyContent: "center",
         gap: sp(5),
         padding: sp("0 8px"),
-        border: `1px solid ${T.borderLight}`,
+        border: `1px solid ${CSS_COLOR.borderLight}`,
         borderRadius: dim(RADII.pill),
-        background: T.bg0,
-        color: T.text,
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
         fontFamily: T.sans,
         boxSizing: "border-box",
         overflow: "hidden",
       }}
     >
-      <Icon size={dim(13)} strokeWidth={2.2} color={T.accent} style={{ flex: "0 0 auto" }} />
+      <Icon size={dim(13)} strokeWidth={2.2} color={CSS_COLOR.accent} style={{ flex: "0 0 auto" }} />
       <span
         style={{
           minWidth: 0,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
           lineHeight: 1,
@@ -317,7 +333,7 @@ const MobileHeaderContext = ({ activeScreen, selectedSymbol }) => {
         <span
           style={{
             flex: "0 0 auto",
-            color: T.text,
+            color: CSS_COLOR.text,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
             lineHeight: 1,
@@ -441,10 +457,10 @@ const AppHeaderInner = ({
             ? "max(5px, env(safe-area-inset-top)) 7px 4px"
             : sp(headerTight ? "2px 4px" : "2px 6px"),
           minWidth: 0,
-          background: T.bg1,
-          borderTop: isLiveMode(environment) ? `1px solid ${T.red}` : "none",
+          background: CSS_COLOR.bg1,
+          borderTop: isLiveMode(environment) ? `1px solid ${CSS_COLOR.red}` : "none",
           borderBottom: "none",
-          boxShadow: `0 1px 0 ${T.border}`,
+          boxShadow: `0 1px 0 ${CSS_COLOR.border}`,
           flexShrink: 0,
           overflow: "hidden",
         }}
@@ -497,7 +513,7 @@ const AppHeaderInner = ({
                 />
               </div>
               <MobileHeaderChip label="ACCT" value={compactAccountId} />
-              <MobileHeaderChip label="NLV" value={compactNetLiq} tone={T.text} />
+              <MobileHeaderChip label="NLV" value={compactNetLiq} tone={CSS_COLOR.text} />
             </div>
             <div
               className="ra-mobile-title-bar"
@@ -523,7 +539,7 @@ const AppHeaderInner = ({
                 }}
               >
                 <PyrusMark className="h-[21px] w-[21px]" />
-                <PyrusWordmark width={96} title="" style={{ color: T.text }} />
+                <PyrusWordmark width={96} title="" style={{ color: CSS_COLOR.text }} />
                 <ModeChip environment={environment} />
               </div>
               <MobileHeaderContext
@@ -606,7 +622,7 @@ const AppHeaderInner = ({
                       )}
                       onClick={() => handleSetScreen(screen.id)}
                       style={{
-                        ...motionVars({ accent: T.accent }),
+                        ...motionVars({ accent: CSS_COLOR.accent }),
                         padding: isIconized ? sp("2px 4px") : sp("2px 5px"),
                         minHeight: dim(22),
                         fontSize: textSize("body"),
@@ -616,10 +632,10 @@ const AppHeaderInner = ({
                         border: "none",
                         borderRadius: 0,
                         cursor: "pointer",
-                        color: activeScreen === screen.id ? T.text : T.textSec,
+                        color: activeScreen === screen.id ? CSS_COLOR.text : CSS_COLOR.textSec,
                         boxShadow:
                           activeScreen === screen.id
-                            ? `inset 0 -1px 0 ${T.accent}`
+                            ? `inset 0 -1px 0 ${CSS_COLOR.accent}`
                             : "none",
                         transition: "color 0.18s ease, box-shadow 0.18s ease",
                         position: "relative",
@@ -630,11 +646,11 @@ const AppHeaderInner = ({
                       }}
                       onMouseEnter={(event) => {
                         if (activeScreen === screen.id) return;
-                        event.currentTarget.style.color = T.text;
+                        event.currentTarget.style.color = CSS_COLOR.text;
                       }}
                       onMouseLeave={(event) => {
                         if (activeScreen === screen.id) return;
-                        event.currentTarget.style.color = T.textSec;
+                        event.currentTarget.style.color = CSS_COLOR.textSec;
                       }}
                     >
                       {isIconized ? (
@@ -681,9 +697,9 @@ const AppHeaderInner = ({
                     minHeight: dim(22),
                     padding: sp("0 6px"),
                     background: "transparent",
-                    border: `1px solid ${T.borderLight}`,
+                    border: `1px solid ${CSS_COLOR.borderLight}`,
                     borderRadius: dim(RADII.xs),
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     cursor: "pointer",
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
@@ -691,14 +707,14 @@ const AppHeaderInner = ({
                     transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
                   }}
                   onMouseEnter={(event) => {
-                    event.currentTarget.style.background = T.accentHoverBg;
-                    event.currentTarget.style.color = T.accent;
-                    event.currentTarget.style.borderColor = T.accent;
+                    event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+                    event.currentTarget.style.color = CSS_COLOR.accent;
+                    event.currentTarget.style.borderColor = CSS_COLOR.accent;
                   }}
                   onMouseLeave={(event) => {
                     event.currentTarget.style.background = "transparent";
-                    event.currentTarget.style.color = T.textSec;
-                    event.currentTarget.style.borderColor = T.borderLight;
+                    event.currentTarget.style.color = CSS_COLOR.textSec;
+                    event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
                   }}
                 >
                   <Search size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
@@ -707,7 +723,7 @@ const AppHeaderInner = ({
                       style={{
                         fontFamily: T.mono,
                         fontSize: fs(10),
-                        color: T.textMuted,
+                        color: CSS_COLOR.textMuted,
                         letterSpacing: "0.04em",
                       }}
                     >
@@ -736,21 +752,21 @@ const AppHeaderInner = ({
                     width: dim(26),
                     height: dim(22),
                     background: "transparent",
-                    border: `1px solid ${T.borderLight}`,
+                    border: `1px solid ${CSS_COLOR.borderLight}`,
                     borderRadius: dim(RADII.xs),
-                    color: unseenNotifications > 0 ? T.accent : T.textSec,
+                    color: unseenNotifications > 0 ? CSS_COLOR.accent : CSS_COLOR.textSec,
                     cursor: "pointer",
                     transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
                   }}
                   onMouseEnter={(event) => {
-                    event.currentTarget.style.background = T.accentHoverBg;
-                    event.currentTarget.style.color = T.accent;
-                    event.currentTarget.style.borderColor = T.accent;
+                    event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
+                    event.currentTarget.style.color = CSS_COLOR.accent;
+                    event.currentTarget.style.borderColor = CSS_COLOR.accent;
                   }}
                   onMouseLeave={(event) => {
                     event.currentTarget.style.background = "transparent";
-                    event.currentTarget.style.color = unseenNotifications > 0 ? T.accent : T.textSec;
-                    event.currentTarget.style.borderColor = T.borderLight;
+                    event.currentTarget.style.color = unseenNotifications > 0 ? CSS_COLOR.accent : CSS_COLOR.textSec;
+                    event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
                   }}
                 >
                   <Bell size={dim(13)} strokeWidth={2.2} aria-hidden="true" />
@@ -764,8 +780,8 @@ const AppHeaderInner = ({
                         height: dim(13),
                         padding: sp("0px 3px"),
                         borderRadius: dim(RADII.pill),
-                        background: T.accent,
-                        color: T.onAccent,
+                        background: CSS_COLOR.accent,
+                        color: CSS_COLOR.onAccent,
                         fontFamily: T.sans,
                         fontSize: fs(8),
                         fontWeight: FONT_WEIGHTS.medium,

@@ -18,6 +18,9 @@ import {
 } from "lucide-react";
 import { StatusPill } from "../../components/platform/primitives.jsx";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -41,10 +44,10 @@ import {
 } from "./algoSettingsFields";
 
 const STATUS_TONES = {
-  armed: { color: T.textSec, border: T.border, background: T.bg1 },
-  active: { color: T.red, border: `${T.red}80`, background: `${T.red}12` },
-  off: { color: T.amber, border: `${T.amber}80`, background: `${T.amber}12` },
-  forced: { color: T.red, border: T.red, background: `${T.red}18` },
+  armed: { color: CSS_COLOR.textSec, border: CSS_COLOR.border, background: CSS_COLOR.bg1 },
+  active: { color: CSS_COLOR.red, border: `${cssColorMix(CSS_COLOR.red, 50)}`, background: `${cssColorMix(CSS_COLOR.red, 7)}` },
+  off: { color: CSS_COLOR.amber, border: `${cssColorMix(CSS_COLOR.amber, 50)}`, background: `${cssColorMix(CSS_COLOR.amber, 7)}` },
+  forced: { color: CSS_COLOR.red, border: CSS_COLOR.red, background: `${cssColorMix(CSS_COLOR.red, 9)}` },
 };
 
 const HALT_GROUP_LABELS = {
@@ -99,12 +102,12 @@ const COMPACT_SETTING_ICONS = {
 
 const overallHaltState = (statuses) => {
   if (statuses.some((status) => status.state === "active" || status.state === "forced")) {
-    return { label: "Active", color: T.red };
+    return { label: "Active", color: CSS_COLOR.red };
   }
   if (statuses.length && statuses.every((status) => status.state === "off")) {
-    return { label: "Off", color: T.amber };
+    return { label: "Off", color: CSS_COLOR.amber };
   }
-  return { label: "Armed", color: T.cyan };
+  return { label: "Armed", color: CSS_COLOR.cyan };
 };
 
 const compactUnitLabel = (field) => {
@@ -121,10 +124,10 @@ const compactInputStyle = ({ invalid, disabled }) => ({
   width: "100%",
   minWidth: 0,
   padding: sp("0 5px"),
-  border: `1px solid ${invalid ? T.red : T.border}`,
+  border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
   borderRadius: dim(RADII.xs),
-  background: T.bg1,
-  color: T.text,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.text,
   fontFamily: T.data,
   fontSize: textSize("caption"),
   outline: "none",
@@ -173,7 +176,7 @@ const CompactSettingInput = ({
         <span
           aria-hidden="true"
           style={{
-            color: invalid ? T.red : T.textMuted,
+            color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
             lineHeight: 1,
@@ -208,9 +211,9 @@ const InlineSwitch = ({
       height: dim(14),
       minWidth: dim(25),
       minHeight: dim(14),
-      border: `1px solid ${checked ? tone.color : T.border}`,
+      border: `1px solid ${checked ? tone.color : CSS_COLOR.border}`,
       borderRadius: dim(7),
-      background: checked ? `${tone.color}22` : "transparent",
+      background: checked ? cssColorAlpha(tone.color, "22") : "transparent",
       display: "flex",
       alignItems: "center",
       justifyContent: checked ? "flex-end" : "flex-start",
@@ -228,7 +231,7 @@ const InlineSwitch = ({
         width: dim(8),
         height: dim(8),
         borderRadius: dim(4),
-        background: checked ? tone.color : T.textMuted,
+        background: checked ? tone.color : CSS_COLOR.textMuted,
         display: "block",
       }}
     />
@@ -296,7 +299,7 @@ const ControlToggleCell = ({
         padding: sp("2px 0"),
         minWidth: 0,
         width: "100%",
-        color: checked ? tone.color : T.textMuted,
+        color: checked ? tone.color : CSS_COLOR.textMuted,
         opacity: disabled ? 0.55 : 1,
         boxSizing: "border-box",
       }}
@@ -319,7 +322,7 @@ const ControlToggleCell = ({
         <span
           data-testid={`algo-halt-label-${control.id}`}
           style={{
-            color: checked ? T.textSec : T.textMuted,
+            color: checked ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
@@ -341,7 +344,7 @@ const ControlToggleCell = ({
               width: dim(5),
               height: dim(5),
               borderRadius: dim(3),
-              background: T.accent,
+              background: CSS_COLOR.accent,
               flex: "0 0 auto",
             }}
           />
@@ -378,8 +381,8 @@ const ControlToggleCell = ({
             width: dim(6),
             height: dim(6),
             borderRadius: dim(3),
-            background: T.red,
-            boxShadow: `0 0 0 2px ${T.bg2}`,
+            background: CSS_COLOR.red,
+            boxShadow: `0 0 0 2px ${CSS_COLOR.bg2}`,
           }}
         />
       ) : null}
@@ -442,12 +445,12 @@ const CompactStandaloneSettingCell = ({
           size={13}
           strokeWidth={1.9}
           aria-hidden="true"
-          style={{ color: T.textMuted, flex: "0 0 auto" }}
+          style={{ color: CSS_COLOR.textMuted, flex: "0 0 auto" }}
         />
         <span
           data-testid={`algo-halt-label-${id}`}
           style={{
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.label,
@@ -469,7 +472,7 @@ const CompactStandaloneSettingCell = ({
               width: dim(5),
               height: dim(5),
               borderRadius: dim(3),
-              background: T.accent,
+              background: CSS_COLOR.accent,
               flex: "0 0 auto",
             }}
           />
@@ -538,7 +541,7 @@ export const HaltStrip = ({
       >
         <span
           style={{
-            color: focusedDeployment ? T.text : T.textMuted,
+            color: focusedDeployment ? CSS_COLOR.text : CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             fontWeight: FONT_WEIGHTS.label,
@@ -555,7 +558,7 @@ export const HaltStrip = ({
       {dirty ? (
         <div
           style={{
-            color: T.amber,
+            color: CSS_COLOR.amber,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
           }}
@@ -569,14 +572,14 @@ export const HaltStrip = ({
           key={group.id}
           aria-label={`${group.label} halt controls`}
           style={{
-            borderTop: index === 0 ? "none" : `1px solid ${T.borderLight}`,
+            borderTop: index === 0 ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
             paddingTop: index === 0 ? 0 : sp(2),
             minWidth: 0,
           }}
         >
           <div
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: textSize("micro"),
               fontWeight: 600,

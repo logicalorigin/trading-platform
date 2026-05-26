@@ -33,6 +33,8 @@ import {
 } from "./optionChainVirtualRows";
 import { MarketIdentityInline } from "../platform/marketIdentity";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -159,25 +161,8 @@ const doesExpirationOptionMatchValue = (option, value) =>
         option.label === value),
   );
 
-const hexToRgb = (value) => {
-  const normalized = String(value || "").replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return null;
-  }
-  return {
-    r: parseInt(normalized.slice(0, 2), 16),
-    g: parseInt(normalized.slice(2, 4), 16),
-    b: parseInt(normalized.slice(4, 6), 16),
-  };
-};
-
-const rgba = (hex, alpha) => {
-  const rgb = hexToRgb(hex);
-  if (!rgb) {
-    return "transparent";
-  }
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-};
+const rgba = (color, alpha) =>
+  color ? cssColorMix(color, alpha * 100) : "transparent";
 
 const normalizeLogValue = (value, maxValue) => {
   if (!isFiniteNumber(value) || value <= 0 || maxValue <= 0) {
@@ -223,7 +208,7 @@ const ChainStatePanel = ({
   loading = false,
   actionLabel = null,
   onAction = null,
-  tone = T.textSec,
+  tone = CSS_COLOR.textSec,
 }) => (
   <div
     className={loading ? "ra-scan-sweep" : "ra-panel-enter"}
@@ -235,10 +220,10 @@ const ChainStatePanel = ({
       alignItems: "center",
       justifyContent: "center",
       gap: sp(10),
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
-      background: T.bg0,
-      border: `1px dashed ${T.border}`,
+      background: CSS_COLOR.bg0,
+      border: `1px dashed ${CSS_COLOR.border}`,
       borderRadius: dim(RADII.xs),
     }}
   >
@@ -254,8 +239,8 @@ const ChainStatePanel = ({
           width: dim(18),
           height: dim(18),
           borderRadius: dim(RADII.pill),
-          border: `2px solid ${T.border}`,
-          borderTopColor: T.accent,
+          border: `2px solid ${CSS_COLOR.border}`,
+          borderTopColor: CSS_COLOR.accent,
           animation: "tradeChainSpin 900ms linear infinite",
           flexShrink: 0,
         }}
@@ -278,9 +263,9 @@ const ChainStatePanel = ({
         type="button"
         onClick={onAction}
         style={{
-          border: `1px solid ${T.border}`,
-          background: T.bg1,
-          color: T.textSec,
+          border: `1px solid ${CSS_COLOR.border}`,
+          background: CSS_COLOR.bg1,
+          color: CSS_COLOR.textSec,
           borderRadius: dim(RADII.xs),
           padding: sp("4px 8px"),
           fontSize: textSize("caption"),
@@ -309,8 +294,8 @@ const ChainRefreshSpinner = () => (
         width: dim(12),
         height: dim(12),
         borderRadius: dim(RADII.pill),
-        border: `2px solid ${T.border}`,
-        borderTopColor: T.amber,
+        border: `2px solid ${CSS_COLOR.border}`,
+        borderTopColor: CSS_COLOR.amber,
         animation: "tradeChainSpin 900ms linear infinite",
         flexShrink: 0,
       }}
@@ -339,8 +324,8 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
           gridTemplateColumns,
           height: dim(HEADER_HEIGHT),
           alignItems: "center",
-          background: T.bg1,
-          borderBottom: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
         }}
       >
         {columns.map((column) => (
@@ -348,7 +333,7 @@ const ChainSideHeader = forwardRef(function ChainSideHeader({
             key={column.key}
             style={{
               padding: sp("0 6px"),
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontSize: fs(8),
               fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
@@ -380,7 +365,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
   topPadding = 0,
   bottomPadding = 0,
 }, scrollRef) {
-  const sideColor = side === "C" ? T.green : T.red;
+  const sideColor = side === "C" ? CSS_COLOR.green : CSS_COLOR.red;
   const gridTemplateColumns = buildColumnGrid(columns);
   const sideMinWidth = getSideMinWidth(columns);
 
@@ -406,7 +391,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
           const rowBackground = selectedSide
             ? rgba(sideColor, 0.22)
             : isAtmRow
-                ? rgba(T.amber, 0.08)
+                ? rgba(CSS_COLOR.amber, 0.08)
                 : "transparent";
           const sideFreshness = getRowSideFreshness(row, side);
           const staleSide =
@@ -417,7 +402,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
             selectedSide
               ? `inset ${side === "C" ? -2 : 2}px 0 0 ${sideColor}`
               : null,
-            held ? `inset 0 0 0 1px ${T.amber}55` : null,
+            held ? `inset 0 0 0 1px ${cssColorMix(CSS_COLOR.amber, 33)}` : null,
           ].filter(Boolean);
 
           return (
@@ -432,7 +417,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
               style={{
                 ...motionRowStyle(rowIndex, 5, 90),
                 ...motionVars({
-                  accent: selectedSide ? sideColor : isAtmRow ? T.amber : sideColor,
+                  accent: selectedSide ? sideColor : isAtmRow ? CSS_COLOR.amber : sideColor,
                 }),
                 display: "grid",
                 gridTemplateColumns,
@@ -440,7 +425,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                 alignItems: "center",
                 cursor: "pointer",
                 background: rowBackground,
-                borderBottom: `1px solid ${T.border}12`,
+                borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 7)}`,
                 boxShadow: rowShadows.length ? rowShadows.join(", ") : "none",
               }}
             >
@@ -466,14 +451,14 @@ const ChainSideRows = forwardRef(function ChainSideRows({
                       cellHeatAlpha > 0 ? rgba(sideColor, cellHeatAlpha) : "transparent",
                     color:
                       staleSide
-                        ? T.textDim
+                        ? CSS_COLOR.textDim
                         : column.type === "volume"
-                          ? T.textSec
+                          ? CSS_COLOR.textSec
                           : column.type === "price"
                             ? sideColor
                             : held && column.heldAware
-                              ? T.amber
-                              : T.textSec,
+                              ? CSS_COLOR.amber
+                              : CSS_COLOR.textSec,
                     opacity: staleSide ? 0.72 : 1,
                     fontSize: textSize("caption"),
                     fontWeight: FONT_WEIGHTS.regular,
@@ -505,11 +490,11 @@ const StrikeHeader = () => (
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      borderLeft: `1px solid ${T.borderLight}`,
-      borderRight: `1px solid ${T.borderLight}`,
-      borderBottom: `1px solid ${T.border}`,
-      background: T.bg1,
-      color: T.textSec,
+      borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
+      borderRight: `1px solid ${CSS_COLOR.borderLight}`,
+      borderBottom: `1px solid ${CSS_COLOR.border}`,
+      background: CSS_COLOR.bg1,
+      color: CSS_COLOR.textSec,
       fontSize: fs(8),
       fontFamily: T.sans,
       fontWeight: FONT_WEIGHTS.regular,
@@ -528,9 +513,9 @@ const StrikeRows = ({
   <div
     style={{
       width: dim(STRIKE_WIDTH),
-      borderLeft: `1px solid ${T.borderLight}`,
-      borderRight: `1px solid ${T.borderLight}`,
-      background: T.bg1,
+      borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
+      borderRight: `1px solid ${CSS_COLOR.borderLight}`,
+      background: CSS_COLOR.bg1,
       flexShrink: 0,
     }}
   >
@@ -549,9 +534,9 @@ const StrikeRows = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            borderBottom: `1px solid ${T.border}12`,
-            background: isAtmRow ? rgba(T.amber, 0.16) : "transparent",
-            color: isAtmRow ? T.amber : T.text,
+            borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 7)}`,
+            background: isAtmRow ? rgba(CSS_COLOR.amber, 0.16) : "transparent",
+            color: isAtmRow ? CSS_COLOR.amber : CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(10),
             fontWeight: FONT_WEIGHTS.regular,
@@ -828,16 +813,16 @@ export const TradeChainPanel = ({
         resolvedChainStatus === "loading" &&
         completedExpirationCount === 0));
   let statusLabel = progressDetail;
-  let statusColor = T.textDim;
+  let statusColor = CSS_COLOR.textDim;
   if (isResolvedExpirationRefreshing && isResolvedExpirationStale) {
     statusLabel = "refreshing stale";
-    statusColor = T.amber;
+    statusColor = CSS_COLOR.amber;
   } else if (isResolvedExpirationRefreshing) {
     statusLabel = "refreshing";
-    statusColor = T.amber;
+    statusColor = CSS_COLOR.amber;
   } else if (isResolvedExpirationStale) {
     statusLabel = "stale chain";
-    statusColor = T.amber;
+    statusColor = CSS_COLOR.amber;
   } else if (
     chain.length &&
     selectedDataFreshness &&
@@ -847,22 +832,22 @@ export const TradeChainPanel = ({
     statusColor =
       selectedDataFreshness === "metadata" ||
       selectedDataFreshness === "unavailable"
-        ? T.textDim
-        : T.amber;
+        ? CSS_COLOR.textDim
+        : CSS_COLOR.amber;
   } else if (resolvedChainStatus === "live") {
     statusLabel = "live";
-    statusColor = T.accent;
+    statusColor = CSS_COLOR.accent;
   } else if (selectedExpirationStatus === "failed") {
     statusLabel = "selected failed";
-    statusColor = T.red;
+    statusColor = CSS_COLOR.red;
   } else if (showLoading) {
     statusLabel = "loading selected";
-    statusColor = T.amber;
+    statusColor = CSS_COLOR.amber;
   } else if (selectedExpirationStatus === "empty") {
     statusLabel = "selected empty";
   } else if (selectedExpirationStatus === "queued") {
     statusLabel = "queued selected";
-    statusColor = T.amber;
+    statusColor = CSS_COLOR.amber;
   }
   const emptyChainState = (() => {
     if (showLoading) {
@@ -872,7 +857,7 @@ export const TradeChainPanel = ({
           ? "selected expiration"
           : progressDetail,
         loading: true,
-        tone: T.amber,
+        tone: CSS_COLOR.amber,
       };
     }
     if (selectedExpirationStatus === "queued") {
@@ -880,7 +865,7 @@ export const TradeChainPanel = ({
         title: "Queued option chain",
         detail: progressDetail,
         loading: true,
-        tone: T.amber,
+        tone: CSS_COLOR.amber,
       };
     }
     if (selectedExpirationStatus === "failed") {
@@ -889,7 +874,7 @@ export const TradeChainPanel = ({
         detail: "Retry this expiration or choose another expiration.",
         actionLabel: onRetryExpiration ? "Retry" : null,
         onAction: onRetryExpiration ? () => onRetryExpiration(expInfo) : null,
-        tone: T.red,
+        tone: CSS_COLOR.red,
       };
     }
     if (selectedExpirationStatus === "empty") {
@@ -898,13 +883,13 @@ export const TradeChainPanel = ({
         detail: "The provider returned no contracts for this expiration.",
         actionLabel: onRetryExpiration ? "Retry" : null,
         onAction: onRetryExpiration ? () => onRetryExpiration(expInfo) : null,
-        tone: T.textSec,
+        tone: CSS_COLOR.textSec,
       };
     }
     return {
       title: "No live option chain",
       detail: `The ${ticker} chain is waiting for quotes and greeks.`,
-      tone: T.textSec,
+      tone: CSS_COLOR.textSec,
     };
   })();
 
@@ -913,8 +898,8 @@ export const TradeChainPanel = ({
       data-testid="trade-options-chain-panel"
       className="ra-panel-enter"
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         display: "flex",
         flexDirection: "column",
@@ -928,7 +913,7 @@ export const TradeChainPanel = ({
           display: "flex",
           alignItems: "center",
           padding: sp("6px 10px"),
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           gap: sp(8),
           flexShrink: 0,
         }}
@@ -944,7 +929,7 @@ export const TradeChainPanel = ({
             fontSize: fs(10),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
           }}
         >
           OPTIONS CHAIN
@@ -958,9 +943,9 @@ export const TradeChainPanel = ({
           }}
           disabled={!hasExpirationOptions}
           style={{
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
-            color: hasExpirationOptions ? T.text : T.textDim,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            color: hasExpirationOptions ? CSS_COLOR.text : CSS_COLOR.textDim,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
@@ -982,7 +967,7 @@ export const TradeChainPanel = ({
             alignItems: "center",
             gap: sp(4),
             fontSize: textSize("caption"),
-            color: heatmapEnabled ? T.amber : T.textDim,
+            color: heatmapEnabled ? CSS_COLOR.amber : CSS_COLOR.textDim,
             fontFamily: T.sans,
             cursor: "pointer",
           }}
@@ -1000,9 +985,9 @@ export const TradeChainPanel = ({
           value={String(chainCoverageValue)}
           onChange={(event) => onChangeChainCoverage?.(event.target.value)}
           style={{
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
-            color: T.textSec,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            color: CSS_COLOR.textSec,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
@@ -1020,16 +1005,16 @@ export const TradeChainPanel = ({
         </select>
         <span style={{ flex: 1 }} />
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
-        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: T.textDim }}>
+        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
           IMP{" "}
-          <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: impMove != null ? CSS_COLOR.cyan : CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
             {impMove != null ? `+/-$${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
           {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
         </span>
-        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: T.textDim }}>
+        <span style={{ fontSize: textSize("caption"), fontFamily: T.sans, color: CSS_COLOR.textDim }}>
           ATM{" "}
-          <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
             {atmStrike ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </span>

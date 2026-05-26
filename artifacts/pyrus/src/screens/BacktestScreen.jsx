@@ -1,5 +1,10 @@
-import { Suspense, lazy, useEffect } from "react";
 import {
+  Suspense,
+  lazy,
+  useEffect,
+} from "react";
+import {
+  CSS_COLOR,
   T,
   dim,
   fs,
@@ -24,7 +29,7 @@ const BacktestWorkspaceFallback = () => (
     style={{
       minHeight: dim(360),
       borderRadius: dim(8),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
     }}
   />
 );

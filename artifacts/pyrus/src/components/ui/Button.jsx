@@ -87,8 +87,15 @@ const BUTTON_CSS = `
 @media (prefers-reduced-motion: reduce) {
   .ra-btn { transition: none; }
   .ra-btn:active:not(:disabled) { transform: none; }
-}
-`;
+	}
+	`;
+
+const renderButtonIcon = (IconSlot, size) => {
+  if (!IconSlot) return null;
+  if (React.isValidElement(IconSlot)) return IconSlot;
+  const IconComponent = IconSlot;
+  return <IconComponent size={size} />;
+};
 
 export const Button = forwardRef(function Button(
   {
@@ -162,11 +169,11 @@ export const Button = forwardRef(function Button(
       >
         {loading ? (
           <SpinnerIcon size={dims.icon} color={v.color} />
-        ) : LeftIcon ? (
-          <LeftIcon size={dims.icon} />
-        ) : null}
+        ) : (
+          renderButtonIcon(LeftIcon, dims.icon)
+        )}
         {children}
-        {!loading && RightIcon ? <RightIcon size={dims.icon} /> : null}
+        {!loading ? renderButtonIcon(RightIcon, dims.icon) : null}
       </button>
     </>
   );

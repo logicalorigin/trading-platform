@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 export const KpiTile = ({
   label,
@@ -8,14 +8,14 @@ export const KpiTile = ({
   trend,
   dataTestId,
 }) => {
-  const accent = tone || T.text;
+  const accent = tone || CSS_COLOR.text;
   return (
     <div
       data-testid={dataTestId}
       style={{
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.xs),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         padding: sp("7px 9px"),
         minWidth: 0,
         display: "flex",
@@ -25,7 +25,7 @@ export const KpiTile = ({
     >
       <div
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -74,7 +74,7 @@ export const KpiTile = ({
       {detail ? (
         <div
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",

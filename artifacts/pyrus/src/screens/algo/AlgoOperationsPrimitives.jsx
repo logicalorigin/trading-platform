@@ -1,9 +1,9 @@
 import React from "react";
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const overviewSeverityBackground = (severity) => {
-  if (severity === "critical") return T.redBg;
-  if (severity === "warning") return T.amberBg;
+  if (severity === "critical") return CSS_COLOR.redBg;
+  if (severity === "warning") return CSS_COLOR.amberBg;
   return "transparent";
 };
 
@@ -17,10 +17,10 @@ export const AlgoOverviewMetric = ({
 }) => {
   const iconTone =
     severity === "critical"
-      ? T.red
+      ? CSS_COLOR.red
       : severity === "warning"
-        ? T.amber
-        : tone || T.textSec;
+        ? CSS_COLOR.amber
+        : tone || CSS_COLOR.textSec;
   return (
     <div
       title={`${label}: ${value}${detail ? ` · ${detail}` : ""}`}
@@ -49,7 +49,7 @@ export const AlgoOverviewMetric = ({
       <div style={{ minWidth: 0, display: "grid", gap: sp(1) }}>
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
@@ -63,7 +63,7 @@ export const AlgoOverviewMetric = ({
         </span>
         <span
           style={{
-            color: tone || T.text,
+            color: tone || CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(12),
             fontWeight: 600,
@@ -78,7 +78,7 @@ export const AlgoOverviewMetric = ({
         {detail ? (
           <span
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               overflow: "hidden",
@@ -95,11 +95,11 @@ export const AlgoOverviewMetric = ({
 };
 
 export const algoPipelineTone = (status) => {
-  if (status === "healthy") return T.green;
-  if (status === "running") return T.cyan;
-  if (status === "attention" || status === "stale") return T.amber;
-  if (status === "blocked") return T.red;
-  return T.textDim;
+  if (status === "healthy") return CSS_COLOR.green;
+  if (status === "running") return CSS_COLOR.cyan;
+  if (status === "attention" || status === "stale") return CSS_COLOR.amber;
+  if (status === "blocked") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
 };
 
 const PIPELINE_LABEL_OVERRIDES = {
@@ -175,16 +175,16 @@ export const AlgoPipelineOverview = ({
               minWidth: 0,
               minHeight: dim(dense ? 30 : 34),
               padding: sp(dense ? "5px 7px" : "6px 8px"),
-              border: `1px solid ${selected ? tone : T.border}`,
+              border: `1px solid ${selected ? tone : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
-              background: selected ? `${tone}18` : T.bg1,
+              background: selected ? cssColorAlpha(tone, "18") : CSS_COLOR.bg1,
               cursor: onSelectStage ? "pointer" : "default",
               textAlign: "left",
             }}
           >
             <span
               style={{
-                color: selected || alarmStatus ? tone : T.textMuted,
+                color: selected || alarmStatus ? tone : CSS_COLOR.textMuted,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 letterSpacing: "0.04em",
@@ -198,7 +198,7 @@ export const AlgoPipelineOverview = ({
             </span>
             <span
               style={{
-                color: alarmStatus ? tone : T.text,
+                color: alarmStatus ? tone : CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: fs(12),
                 fontWeight: 600,

@@ -1,8 +1,16 @@
-import { Check, Minus, MoveHorizontal, MoveVertical, Square, Star, Trash2 } from "lucide-react";
+import {
+  Check,
+  Minus,
+  MoveHorizontal,
+  MoveVertical,
+  Square,
+  Star,
+  Trash2,
+} from "lucide-react";
 // @ts-expect-error JSX import from a .jsx module
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 // @ts-expect-error JSX import from a .jsx module
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export type TimeframeSheetOption = {
   value: string;
@@ -128,10 +136,10 @@ export const IndicatorPickerSheet = ({
                   gap: sp(8),
                   minHeight: dim(48),
                   padding: sp("0 12px"),
-                  border: `1px solid ${isOn ? T.accent : T.border}`,
-                  background: isOn ? `${T.accent}1a` : T.bg1,
+                  border: `1px solid ${isOn ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                  background: isOn ? `${cssColorMix(CSS_COLOR.accent, 10)}` : CSS_COLOR.bg1,
                   borderRadius: dim(RADII.sm),
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: fs(12),
                   fontWeight: isOn ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
@@ -146,9 +154,9 @@ export const IndicatorPickerSheet = ({
                     width: dim(20),
                     height: dim(20),
                     borderRadius: dim(RADII.xs),
-                    border: `1px solid ${isOn ? T.accent : T.border}`,
-                    background: isOn ? T.accent : "transparent",
-                    color: T.onAccent,
+                    border: `1px solid ${isOn ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                    background: isOn ? CSS_COLOR.accent : "transparent",
+                    color: CSS_COLOR.onAccent,
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -164,7 +172,7 @@ export const IndicatorPickerSheet = ({
             );
           })
         ) : (
-          <div style={{ color: T.textSec, fontSize: fs(12), padding: sp(8) }}>
+          <div style={{ color: CSS_COLOR.textSec, fontSize: fs(12), padding: sp(8) }}>
             No indicators available for this chart.
           </div>
         )}
@@ -231,22 +239,22 @@ export const DrawingToolsSheet = ({
                 gap: sp(3),
                 minHeight: dim(76),
                 padding: sp("10px 12px"),
-                border: `1px solid ${isActive ? T.accent : T.border}`,
-                background: isActive ? `${T.accent}1a` : T.bg1,
+                border: `1px solid ${isActive ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                background: isActive ? `${cssColorMix(CSS_COLOR.accent, 10)}` : CSS_COLOR.bg1,
                 borderRadius: dim(RADII.sm),
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 cursor: "pointer",
                 textAlign: "left",
               }}
             >
-              <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5), color: isActive ? T.accent : T.textSec }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: sp(5), color: isActive ? CSS_COLOR.accent : CSS_COLOR.textSec }}>
                 <Icon size={16} strokeWidth={1.6} />
-                <span style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.medium, color: T.text }}>
+                <span style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.medium, color: CSS_COLOR.text }}>
                   {tool.label}
                 </span>
               </span>
-              <span style={{ fontSize: fs(10), color: T.textSec, lineHeight: 1.3 }}>{tool.description}</span>
+              <span style={{ fontSize: fs(10), color: CSS_COLOR.textSec, lineHeight: 1.3 }}>{tool.description}</span>
             </button>
           );
         })}
@@ -266,9 +274,9 @@ export const DrawingToolsSheet = ({
             gap: sp(5),
             minHeight: dim(40),
             padding: sp("0 14px"),
-            border: `1px solid ${T.border}`,
-            background: T.bg1,
-            color: T.red,
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
+            color: CSS_COLOR.red,
             borderRadius: dim(RADII.sm),
             fontFamily: T.sans,
             fontSize: fs(12),
@@ -288,7 +296,7 @@ const SheetSection = ({ title, children }: { title: string; children: React.Reac
   <section style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
     <div
       style={{
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontSize: fs(9),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.medium,
@@ -337,8 +345,8 @@ const TimeframeGrid = ({
             alignItems: "stretch",
             minHeight: dim(44),
             borderRadius: dim(RADII.sm),
-            border: `1px solid ${isActive ? T.accent : T.border}`,
-            background: isActive ? `${T.accent}1f` : T.bg1,
+            border: `1px solid ${isActive ? CSS_COLOR.accent : CSS_COLOR.border}`,
+            background: isActive ? `${cssColorMix(CSS_COLOR.accent, 12)}` : CSS_COLOR.bg1,
             overflow: "hidden",
           }}
         >
@@ -353,7 +361,7 @@ const TimeframeGrid = ({
               minWidth: 0,
               border: "none",
               background: "transparent",
-              color: isActive ? T.text : T.textSec,
+              color: isActive ? CSS_COLOR.text : CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: fs(12),
               fontWeight: isActive ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
@@ -379,7 +387,7 @@ const TimeframeGrid = ({
                 width: dim(36),
                 border: "none",
                 background: "transparent",
-                color: isFavorite ? T.amber : T.textMuted,
+                color: isFavorite ? CSS_COLOR.amber : CSS_COLOR.textMuted,
                 cursor: "pointer",
                 display: "inline-flex",
                 alignItems: "center",

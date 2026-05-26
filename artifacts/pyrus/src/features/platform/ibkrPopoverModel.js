@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, MISSING_VALUE, T } from "../../lib/uiTokens.jsx";
 import {
   formatIbkrPingMs,
   getIbkrGatewayBadges,
@@ -96,10 +96,10 @@ const STREAM_PRIORITY_ISSUES = new Set([
 ]);
 
 const POLYGON_STATUS_META = {
-  ok: { label: "OK", tone: T.green },
-  degraded: { label: "Degraded", tone: T.amber },
-  unconfigured: { label: "Not configured", tone: T.textDim },
-  unknown: { label: "No checks yet", tone: T.textSec },
+  ok: { label: "OK", tone: CSS_COLOR.green },
+  degraded: { label: "Degraded", tone: CSS_COLOR.amber },
+  unconfigured: { label: "Not configured", tone: CSS_COLOR.textDim },
+  unknown: { label: "No checks yet", tone: CSS_COLOR.textSec },
 };
 
 const formatHeaderTimeAgo = (value) => {
@@ -487,7 +487,7 @@ export const buildHeaderIbkrPopoverModel = ({
     label: canonicalizeStreamState(health.status, "offline") === "healthy"
       ? "Gateway ready for live data."
       : health.detail,
-    tone: healthyStatus ? T.textSec : health.color,
+    tone: healthyStatus ? CSS_COLOR.textSec : health.color,
     iconKey: healthyStatus ? "activity" : "alert",
     autoOpenDetails: false,
   };
@@ -506,7 +506,7 @@ export const buildHeaderIbkrPopoverModel = ({
       label: `${Math.round(recentStreamGapCount)} quote data gap${
         Math.round(recentStreamGapCount) === 1 ? "" : "s"
       } detected recently. Open Diagnostics for the full stream trace.`,
-      tone: T.amber,
+      tone: CSS_COLOR.amber,
       iconKey: "alert",
       autoOpenDetails: false,
     };
@@ -514,7 +514,7 @@ export const buildHeaderIbkrPopoverModel = ({
     issue = {
       key: "quote-stream-reconnecting",
       label: "Gateway is connected, but the quote stream is reconnecting and has not delivered fresh quotes.",
-      tone: T.amber,
+      tone: CSS_COLOR.amber,
       iconKey: "alert",
       autoOpenDetails: false,
     };
@@ -522,7 +522,7 @@ export const buildHeaderIbkrPopoverModel = ({
     issue = {
       key: "legacy-env",
       label: "Legacy IBKR env vars are present; review details or Diagnostics.",
-      tone: T.amber,
+      tone: CSS_COLOR.amber,
       iconKey: "alert",
       autoOpenDetails: true,
     };
@@ -550,12 +550,12 @@ export const buildHeaderIbkrPopoverModel = ({
             : "Offline",
       tone:
         gatewayConnected
-          ? T.green
+          ? CSS_COLOR.green
           : gatewaySocket === false
-            ? T.red
+            ? CSS_COLOR.red
             : brokerServerConnected === false
-              ? T.amber
-              : T.textDim,
+              ? CSS_COLOR.amber
+              : CSS_COLOR.textDim,
       iconKey: "radioTower",
     },
     {
@@ -566,7 +566,7 @@ export const buildHeaderIbkrPopoverModel = ({
           : authenticatedReady
             ? "Yes"
             : "No",
-      tone: authenticatedReady ? T.green : authenticated === false ? T.amber : T.textDim,
+      tone: authenticatedReady ? CSS_COLOR.green : authenticated === false ? CSS_COLOR.amber : CSS_COLOR.textDim,
       iconKey: "shieldCheck",
     },
     {
@@ -586,7 +586,7 @@ export const buildHeaderIbkrPopoverModel = ({
               marketDataMode === "live" ||
               strictReady === true
             ? streamStateTokenVar("healthy")
-            : T.textDim,
+            : CSS_COLOR.textDim,
       iconKey: "activity",
     },
     {
@@ -624,7 +624,7 @@ export const buildHeaderIbkrPopoverModel = ({
             ? streamStateTokenVar("checking")
           : streamConfirmedFresh
             ? streamStateTokenVar("healthy")
-            : T.textDim,
+            : CSS_COLOR.textDim,
       iconKey: "gauge",
     },
   ];
@@ -652,23 +652,23 @@ export const buildHeaderIbkrPopoverModel = ({
               : bridgeReachable
                 ? "reachable"
                 : "offline",
-          tone: bridgeReachable ? T.green : bridgeReachable === false ? T.red : T.textDim,
+          tone: bridgeReachable ? CSS_COLOR.green : bridgeReachable === false ? CSS_COLOR.red : CSS_COLOR.textDim,
         },
         {
           label: "Diagnostics",
           value: runtimeState,
           tone: diagnosticsErrorText
-            ? T.amber
+            ? CSS_COLOR.amber
             : runtimeDiagnostics
-              ? T.green
-              : T.textDim,
+              ? CSS_COLOR.green
+              : CSS_COLOR.textDim,
         },
         ...(lastErrorRow
           ? [
               {
                 label: "Last error",
                 value: lastErrorRow,
-                tone: T.red,
+                tone: CSS_COLOR.red,
                 wrap: true,
               },
             ]
@@ -678,7 +678,7 @@ export const buildHeaderIbkrPopoverModel = ({
               {
                 label: "Health status",
                 value: healthStatusRow,
-                tone: T.amber,
+                tone: CSS_COLOR.amber,
                 wrap: true,
               },
             ]
@@ -686,26 +686,26 @@ export const buildHeaderIbkrPopoverModel = ({
         {
           label: "Health current",
           value: formatHeaderBool(healthFresh),
-          tone: healthFresh ? T.green : healthFresh === false ? T.amber : T.textDim,
+          tone: healthFresh ? CSS_COLOR.green : healthFresh === false ? CSS_COLOR.amber : CSS_COLOR.textDim,
         },
         {
           label: "Strict ready",
           value: formatHeaderBool(strictReady),
-          tone: strictReady ? T.green : strictReady === false ? T.amber : T.textDim,
+          tone: strictReady ? CSS_COLOR.green : strictReady === false ? CSS_COLOR.amber : CSS_COLOR.textDim,
         },
         ...(strictReason
           ? [
               {
                 label: "Ready reason",
                 value: strictReason,
-                tone: T.amber,
+                tone: CSS_COLOR.amber,
               },
             ]
           : []),
         {
           label: "Gateway",
           value: formatHeaderBool(gatewaySocket, "connected", "disconnected"),
-          tone: gatewayConnected ? T.green : gatewaySocket === false ? T.red : T.textDim,
+          tone: gatewayConnected ? CSS_COLOR.green : gatewaySocket === false ? CSS_COLOR.red : CSS_COLOR.textDim,
         },
         {
           label: "IBKR server",
@@ -716,20 +716,20 @@ export const buildHeaderIbkrPopoverModel = ({
           ),
           tone:
             brokerServerConnected
-              ? T.green
+              ? CSS_COLOR.green
               : brokerServerConnected === false
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
         },
         {
           label: "Auth",
           value: formatHeaderBool(authenticated),
-          tone: authenticatedReady ? T.green : authenticated === false ? T.amber : T.textDim,
+          tone: authenticatedReady ? CSS_COLOR.green : authenticated === false ? CSS_COLOR.amber : CSS_COLOR.textDim,
         },
         {
           label: "Competing",
           value: formatHeaderBool(competing),
-          tone: competing ? T.red : competing === false ? T.green : T.textDim,
+          tone: competing ? CSS_COLOR.red : competing === false ? CSS_COLOR.green : CSS_COLOR.textDim,
         },
         { label: "Target", value: target },
         { label: "Client ID", value: clientId },
@@ -749,15 +749,15 @@ export const buildHeaderIbkrPopoverModel = ({
           value: formatHeaderBool(liveMarketDataAvailable),
           tone:
             liveMarketDataAvailable === true
-              ? T.green
+              ? CSS_COLOR.green
               : liveMarketDataAvailable === false
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
         },
         {
           label: "Orders",
           value: orderDiagnostics,
-          tone: orderDiagnostics === "read-only" ? T.green : T.textSec,
+          tone: orderDiagnostics === "read-only" ? CSS_COLOR.green : CSS_COLOR.textSec,
         },
         {
           label: "Bridge token",
@@ -768,10 +768,10 @@ export const buildHeaderIbkrPopoverModel = ({
           ),
           tone:
             runtime?.bridgeTokenConfigured === true
-              ? T.green
+              ? CSS_COLOR.green
               : runtime?.bridgeTokenConfigured === false
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
         },
         {
           label: "Legacy env",
@@ -783,10 +783,10 @@ export const buildHeaderIbkrPopoverModel = ({
                 : "clear",
           tone:
             runtime?.legacyIbkrEnvPresent
-              ? T.amber
+              ? CSS_COLOR.amber
               : runtime?.legacyIbkrEnvPresent === false
-                ? T.green
-                : T.textDim,
+                ? CSS_COLOR.green
+                : CSS_COLOR.textDim,
         },
       ],
     },
@@ -813,14 +813,14 @@ export const buildHeaderIbkrPopoverModel = ({
               {
                 label: "State reason",
                 value: streamStateReason,
-                tone: T.textSec,
+                tone: CSS_COLOR.textSec,
               },
             ]
           : []),
         {
           label: "Current",
           value: formatHeaderBool(streamFresh),
-          tone: streamFresh ? T.green : streamFresh === false ? T.amber : T.textDim,
+          tone: streamFresh ? CSS_COLOR.green : streamFresh === false ? CSS_COLOR.amber : CSS_COLOR.textDim,
         },
         {
           label: "Strict age",
@@ -830,8 +830,8 @@ export const buildHeaderIbkrPopoverModel = ({
           tone:
             Number.isFinite(runtime?.lastStreamEventAgeMs) &&
             runtime.lastStreamEventAgeMs <= 10_000
-              ? T.green
-              : T.textDim,
+              ? CSS_COLOR.green
+              : CSS_COLOR.textDim,
         },
         {
           label: "Last quote event",
@@ -845,17 +845,17 @@ export const buildHeaderIbkrPopoverModel = ({
           value: formatHeaderCount(streamGapCount),
           tone: Number.isFinite(streamGapCount)
             ? recentStreamGapCount > 0
-              ? T.amber
-              : T.green
-            : T.textDim,
+              ? CSS_COLOR.amber
+              : CSS_COLOR.green
+            : CSS_COLOR.textDim,
         },
         {
           label: "Max data gap",
           value: formatIbkrPingMs(stream.maxDataGapMs ?? stream.maxGapMs),
           tone:
             (stream.maxDataGapMs ?? stream.maxGapMs) > 5_000
-              ? T.amber
-              : T.textSec,
+              ? CSS_COLOR.amber
+              : CSS_COLOR.textSec,
         },
         {
           label: "Bridge p95",

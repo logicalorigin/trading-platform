@@ -6,7 +6,7 @@ import {
   ALGO_POSITION_DEFAULT_COLUMN_IDS,
   getPositionTableColumns,
 } from "../../features/account/positionTableColumns.js";
-import { T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 import {
   __positionsPanelInternalsForTests,
   buildPositionOptionQuoteGroups,
@@ -180,9 +180,9 @@ test("positions automation metrics distinguish stop distance and breached stops"
 
   assert.equal(formatAutomationStopDistanceLabel(22.34, false), "22.3% from stop");
   assert.equal(formatAutomationStopDistanceLabel(-1.26, false), "1.3% past stop");
-  assert.equal(automationStopTone(-0.1), T.red);
-  assert.equal(automationStopTone(18), T.amber);
-  assert.equal(automationStopTone(21), T.textSec);
+  assert.equal(automationStopTone(-0.1), CSS_COLOR.red);
+  assert.equal(automationStopTone(18), CSS_COLOR.amber);
+  assert.equal(automationStopTone(21), CSS_COLOR.textSec);
 
   const nearStop = automationPositionMetrics(
     {
@@ -203,7 +203,7 @@ test("positions automation metrics distinguish stop distance and breached stops"
   assert.match(nearStop.riskMain, /18\.0% from stop/);
   assert.match(nearStop.riskDetail, /return 25\.0%/);
   assert.match(nearStop.mobileSummary, /82\.0 score · 3 bars since signal · 18\.0% from stop/);
-  assert.equal(nearStop.stopTone, T.amber);
+  assert.equal(nearStop.stopTone, CSS_COLOR.amber);
 
   const breachedStop = automationPositionMetrics(
     {
@@ -221,7 +221,7 @@ test("positions automation metrics distinguish stop distance and breached stops"
   );
   assert.match(breachedStop.riskMain, /1\.3% past stop/);
   assert.match(breachedStop.mobileSummary, /74\.0 score · 4 bars since signal · 1\.3% past stop/);
-  assert.equal(breachedStop.stopTone, T.red);
+  assert.equal(breachedStop.stopTone, CSS_COLOR.red);
 });
 
 test("positions panel overlays live option quotes onto displayed rows and totals", () => {
@@ -448,4 +448,47 @@ test("positions panel live quote overlay replaces stale provider source labels",
   assert.equal(patched.optionQuote.source, "option_quote");
   assert.equal(patched.optionQuote.bid, 1.05);
   assert.equal(patched.optionQuote.ask, 1.15);
+});
+
+test("positions panel preserves shadow ledger day percent over live quote overlay", () => {
+  const patched =
+    __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(
+      {
+        id: "shadow-opt",
+        accountId: "shadow",
+        source: "SHADOW_LEDGER",
+        symbol: "HOOD",
+        quantity: 2,
+        averageCost: 1,
+        mark: 1.1,
+        dayChange: 14,
+        dayChangePercent: 7,
+        marketValue: 220,
+        optionContract: {
+          providerContractId: "123456789",
+          multiplier: 100,
+        },
+        optionQuote: {
+          bid: 1.05,
+          ask: 1.15,
+          mark: 1.1,
+          dayChangePercent: 7,
+          source: "shadow_ledger",
+        },
+      },
+      {
+        providerContractId: "123456789",
+        bid: 1.2,
+        ask: 1.4,
+        price: 1.3,
+        change: 0.3,
+        changePercent: 30,
+      },
+    );
+
+  assert.equal(Number(patched.mark.toFixed(2)), 1.3);
+  assert.equal(Number(patched.marketValue.toFixed(2)), 260);
+  assert.equal(patched.dayChange, 14);
+  assert.equal(patched.dayChangePercent, 7);
+  assert.equal(patched.optionQuote.source, "option_quote");
 });

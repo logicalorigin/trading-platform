@@ -7,15 +7,15 @@ import {
   SlidersHorizontal,
   Target,
 } from "lucide-react";
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const stageColor = (status) => {
-  if (status === "healthy") return T.green;
-  if (status === "running") return T.cyan;
-  if (status === "attention" || status === "stale") return T.amber;
-  if (status === "blocked") return T.red;
-  return T.textDim;
+  if (status === "healthy") return CSS_COLOR.green;
+  if (status === "running") return CSS_COLOR.cyan;
+  if (status === "attention" || status === "stale") return CSS_COLOR.amber;
+  if (status === "blocked") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
 };
 
 const STAGE_ICONS = {
@@ -107,11 +107,11 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
         gap: sp(7),
         padding: sp(narrow ? "8px 9px" : "10px 12px"),
         minWidth: dim(narrow ? 110 : 132),
-        border: `1px solid ${selected ? color : T.border}`,
+        border: `1px solid ${selected ? color : CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         background: selected
-          ? `${color}28`
-          : `linear-gradient(180deg, ${T.bg2} 0%, ${T.bg1} 100%)`,
+          ? cssColorAlpha(color, "28")
+          : `linear-gradient(180deg, ${CSS_COLOR.bg2} 0%, ${CSS_COLOR.bg1} 100%)`,
         cursor: "pointer",
         transition: "all 0.18s",
       }}
@@ -121,7 +121,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
           width: dim(narrow ? 26 : 32),
           height: dim(narrow ? 26 : 32),
           borderRadius: dim(RADII.pill),
-          background: alarmStatus ? `${color}24` : `${color}14`,
+          background: alarmStatus ? cssColorAlpha(color, "24") : cssColorAlpha(color, "14"),
           color,
           display: "flex",
           alignItems: "center",
@@ -134,7 +134,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
@@ -156,7 +156,7 @@ const StageNode = ({ stage, selected, onSelect, narrow }) => {
         >
           <span
             style={{
-              color: alarmStatus ? color : T.text,
+              color: alarmStatus ? color : CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: fs(narrow ? 14 : 16),
               fontVariantNumeric: "tabular-nums",
@@ -203,9 +203,9 @@ export const PipelineStrip = ({
           alignItems: "stretch",
           gap: 0,
           overflowX: "auto",
-          border: `1px solid ${T.border}`,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.sm),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
         }}
       >
         {stages.map((stage, index) => {
@@ -229,9 +229,9 @@ export const PipelineStrip = ({
                 gap: sp(4),
                 padding: sp("6px 9px"),
                 border: "none",
-                borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
-                background: selected ? `${color}28` : "transparent",
-                color: alarmStatus ? color : T.textSec,
+                borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
+                background: selected ? cssColorAlpha(color, "28") : "transparent",
+                color: alarmStatus ? color : CSS_COLOR.textSec,
                 cursor: "pointer",
                 fontFamily: T.sans,
                 fontSize: fs(11),
@@ -242,7 +242,7 @@ export const PipelineStrip = ({
               <Icon size={11} color={color} />
               <span
                 style={{
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontSize: textSize("caption"),
                   letterSpacing: "0.04em",
                   textTransform: "uppercase",
@@ -252,7 +252,7 @@ export const PipelineStrip = ({
               </span>
               <span
                 style={{
-                  color: alarmStatus ? color : T.text,
+                  color: alarmStatus ? color : CSS_COLOR.text,
                   fontVariantNumeric: "tabular-nums",
                   fontWeight: 600,
                 }}

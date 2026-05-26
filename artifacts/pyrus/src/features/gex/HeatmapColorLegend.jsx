@@ -1,4 +1,4 @@
-import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const Swatch = ({ color, label }) => (
   <span
@@ -6,7 +6,7 @@ const Swatch = ({ color, label }) => (
       display: "inline-flex",
       alignItems: "center",
       gap: sp(3),
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
     }}
@@ -17,7 +17,7 @@ const Swatch = ({ color, label }) => (
         width: dim(10),
         height: dim(10),
         background: color,
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         display: "inline-block",
       }}
     />
@@ -32,7 +32,7 @@ const GradientStrip = ({ from, via, to }) => (
       width: dim(48),
       height: dim(8),
       background: `linear-gradient(90deg, ${from} 0%, ${via} 50%, ${to} 100%)`,
-      border: `1px solid ${T.border}`,
+      border: `1px solid ${CSS_COLOR.border}`,
       display: "inline-block",
       borderRadius: dim(2),
     }}
@@ -48,24 +48,24 @@ export const HeatmapColorLegend = () => (
       alignItems: "center",
       gap: sp(8),
       padding: sp("4px 8px"),
-      borderTop: `1px dashed ${T.border}`,
+      borderTop: `1px dashed ${CSS_COLOR.border}`,
     }}
   >
-    <Swatch color={T.red} label="Put-heavy" />
-    <Swatch color={T.bg2} label="Neutral" />
-    <Swatch color={T.green} label="Call-heavy" />
+    <Swatch color={CSS_COLOR.red} label="Put-heavy" />
+    <Swatch color={CSS_COLOR.bg2} label="Neutral" />
+    <Swatch color={CSS_COLOR.green} label="Call-heavy" />
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: sp(3),
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
       }}
     >
       Magnitude
-      <GradientStrip from={`${T.red}33`} via={T.bg2} to={`${T.green}cc`} />
+      <GradientStrip from={`${cssColorMix(CSS_COLOR.red, 20)}`} via={CSS_COLOR.bg2} to={`${cssColorMix(CSS_COLOR.green, 80)}`} />
     </span>
   </div>
 );

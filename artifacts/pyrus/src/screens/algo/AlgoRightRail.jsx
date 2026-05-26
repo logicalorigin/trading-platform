@@ -1,5 +1,8 @@
-import { useEffect } from "react";
 import {
+  useEffect,
+} from "react";
+import {
+  CSS_COLOR,
   T,
   sp,
 } from "../../lib/uiTokens.jsx";
@@ -110,8 +113,8 @@ export const AlgoRightRail = ({
         height: "100%",
         minWidth: 0,
         position: "relative",
-        background: T.bg0,
-        borderLeft: algoIsPhone ? "none" : `1px solid ${T.border}`,
+        background: CSS_COLOR.bg0,
+        borderLeft: algoIsPhone ? "none" : `1px solid ${CSS_COLOR.border}`,
       }}
     >
       <div
@@ -121,7 +124,7 @@ export const AlgoRightRail = ({
           display: "flex",
           flexDirection: "column",
           gap: sp(8),
-          background: T.bg3,
+          background: CSS_COLOR.bg3,
           overflow: "hidden",
           overflowX: "hidden",
           minHeight: 0,
@@ -136,9 +139,9 @@ export const AlgoRightRail = ({
             overflowY: "auto",
             overflowX: "hidden",
             scrollPaddingTop: "56px",
-            background: T.bg2,
-            borderBottom: `2px solid ${T.border}`,
-            boxShadow: `0 1px 0 ${T.borderLight}`,
+            background: CSS_COLOR.bg2,
+            borderBottom: `2px solid ${CSS_COLOR.border}`,
+            boxShadow: `0 1px 0 ${CSS_COLOR.borderLight}`,
             paddingBottom: sp(6),
             minHeight: 0,
             minWidth: 0,
@@ -184,10 +187,10 @@ export const AlgoRightRail = ({
             overflowY: "auto",
             overflowX: "hidden",
             minWidth: 0,
-            borderTop: `2px solid ${T.border}`,
-            borderBottom: `1px solid ${T.border}`,
-            background: T.bg1,
-            boxShadow: `0 -1px 0 ${T.borderLight}`,
+            borderTop: `2px solid ${CSS_COLOR.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
+            boxShadow: `0 -1px 0 ${CSS_COLOR.borderLight}`,
           }}
         >
           <AlgoDiagnosticsFooter

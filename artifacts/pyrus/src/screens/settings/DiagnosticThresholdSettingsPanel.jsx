@@ -1,19 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   useGetDiagnosticThresholds,
   useUpdateDiagnosticThresholds,
 } from "@workspace/api-client-react";
 import { useToast } from "../../features/platform/platformContexts.jsx";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 
 const THRESHOLD_EVENT = "pyrus:diagnostic-thresholds-updated";
 const LEGACY_THRESHOLD_EVENT = "pyrus:diagnostic-thresholds-updated";
 
 function smallButton({ active = false } = {}) {
   return {
-    border: `1px solid ${active ? T.green : T.border}`,
-    background: active ? T.greenBg : T.bg2,
-    color: active ? T.green : T.textSec,
+    border: `1px solid ${active ? CSS_COLOR.green : CSS_COLOR.border}`,
+    background: active ? CSS_COLOR.greenBg : CSS_COLOR.bg2,
+    color: active ? CSS_COLOR.green : CSS_COLOR.textSec,
     borderRadius: dim(RADII.xs),
     padding: sp("5px 8px"),
     fontFamily: T.sans,
@@ -28,7 +43,7 @@ function inputLabel() {
     display: "flex",
     flexDirection: "column",
     gap: sp(4),
-    color: T.textDim,
+    color: CSS_COLOR.textDim,
     fontFamily: T.sans,
     fontSize: textSize("caption"),
     fontWeight: FONT_WEIGHTS.regular,
@@ -38,8 +53,8 @@ function inputLabel() {
 function inputStyle() {
   return {
     border: "none",
-    background: T.bg0,
-    color: T.text,
+    background: CSS_COLOR.bg0,
+    color: CSS_COLOR.text,
     borderRadius: dim(RADII.xs),
     padding: sp("6px 7px"),
     fontFamily: T.sans,
@@ -191,7 +206,7 @@ export function DiagnosticThresholdSettingsPanel({
       className="ra-panel-enter"
       style={{
         border: "none",
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         borderRadius: dim(RADII.sm),
         padding: sp(compact ? 10 : 12),
         minWidth: 0,
@@ -210,7 +225,7 @@ export function DiagnosticThresholdSettingsPanel({
         <div>
           <div style={{ fontSize: fs(12), fontWeight: FONT_WEIGHTS.regular }}>{title}</div>
           {description && (
-            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(4) }}>
+            <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(4) }}>
               {description}
             </div>
           )}
@@ -236,12 +251,12 @@ export function DiagnosticThresholdSettingsPanel({
         </div>
       </div>
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
       {loading && drafts.length === 0 ? (
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
+        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           Loading diagnostic thresholds.
         </div>
       ) : (
@@ -261,13 +276,13 @@ export function DiagnosticThresholdSettingsPanel({
                 border: "none",
                 borderRadius: dim(RADII.sm),
                 padding: sp(compact ? 8 : 9),
-                background: T.bg0,
+                background: CSS_COLOR.bg0,
               }}
             >
-              <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11), marginBottom: sp(6) }}>
+              <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11), marginBottom: sp(6) }}>
                 {threshold.label || threshold.metricKey}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(8) }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(8) }}>
                 {threshold.metricKey} / {threshold.unit || MISSING_VALUE}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>

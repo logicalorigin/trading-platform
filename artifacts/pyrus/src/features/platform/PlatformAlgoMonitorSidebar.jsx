@@ -35,10 +35,12 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
   T,
+  cssColorAlpha,
   dim,
   fs,
   sp,
@@ -51,6 +53,7 @@ import {
   formatMoney,
   formatPct,
   candidateBlockerLabel,
+  findSignalOptionsCandidateForSignal,
   resolveSignalScoreBreakdown,
   signalActionLabel,
   signalOptionsActionColor,
@@ -89,10 +92,10 @@ const numberFrom = (...values) => {
   return null;
 };
 
-const toneForNumber = (value, fallback = T.text) => {
+const toneForNumber = (value, fallback = CSS_COLOR.text) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric === 0) return fallback;
-  return numeric > 0 ? T.green : T.red;
+  return numeric > 0 ? CSS_COLOR.green : CSS_COLOR.red;
 };
 
 const formatMoneyValue = (value, digits = 0) =>
@@ -107,7 +110,7 @@ const sectionHeaderStyle = {
   justifyContent: "space-between",
   gap: sp(5),
   minWidth: 0,
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
@@ -122,7 +125,7 @@ const Section = ({ title, meta, children }) => (
       gap: sp(4),
       minWidth: 0,
       paddingTop: sp(6),
-      borderTop: `1px solid ${T.borderLight}`,
+      borderTop: `1px solid ${CSS_COLOR.borderLight}`,
     }}
   >
     <div style={sectionHeaderStyle}>
@@ -130,7 +133,7 @@ const Section = ({ title, meta, children }) => (
         {title}
       </span>
       {meta ? (
-        <span style={{ color: T.textDim, whiteSpace: "nowrap" }}>{meta}</span>
+        <span style={{ color: CSS_COLOR.textDim, whiteSpace: "nowrap" }}>{meta}</span>
       ) : null}
     </div>
     {children}
@@ -148,10 +151,10 @@ const IconButton = ({ label, onClick, icon: Icon }) => (
         height: dim(32),
         display: "grid",
         placeItems: "center",
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
         background: "transparent",
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         cursor: "pointer",
       }}
       className="ra-interactive"
@@ -284,12 +287,12 @@ const candidateSpreadRatio = (candidate) => {
 };
 
 const signalFreshnessRailColor = (activityMs) => {
-  if (!Number.isFinite(activityMs) || activityMs <= 0) return T.textDim;
+  if (!Number.isFinite(activityMs) || activityMs <= 0) return CSS_COLOR.textDim;
   const ageMs = Math.max(0, Date.now() - activityMs);
-  if (ageMs < 60_000) return T.green;
-  if (ageMs < 5 * 60_000) return T.cyan;
-  if (ageMs < 30 * 60_000) return T.textSec;
-  return T.textDim;
+  if (ageMs < 60_000) return CSS_COLOR.green;
+  if (ageMs < 5 * 60_000) return CSS_COLOR.cyan;
+  if (ageMs < 30 * 60_000) return CSS_COLOR.textSec;
+  return CSS_COLOR.textDim;
 };
 
 const readSignalSymbol = (signal, candidate) =>
@@ -338,12 +341,12 @@ const readSignalActionLabel = (signal, candidate) => {
 const signalDirectionMeta = (direction) => {
   const value = String(direction || "").toLowerCase();
   if (value === "buy" || value === "long" || value === "bullish") {
-    return { label: "BUY", primitive: "buy", tone: T.green };
+    return { label: "BUY", primitive: "buy", tone: CSS_COLOR.green };
   }
   if (value === "sell" || value === "short" || value === "bearish") {
-    return { label: "SELL", primitive: "sell", tone: T.red };
+    return { label: "SELL", primitive: "sell", tone: CSS_COLOR.red };
   }
-  return { label: MISSING_VALUE, primitive: null, tone: T.textDim };
+  return { label: MISSING_VALUE, primitive: null, tone: CSS_COLOR.textDim };
 };
 
 const signalFreshnessRatio = (signal) => {
@@ -370,40 +373,40 @@ const signalFallbackState = (signal, directionPrimitive) => {
 
 const scoreTone = (score) => {
   const numeric = Number(score);
-  if (!Number.isFinite(numeric)) return T.textDim;
-  if (numeric >= 75) return T.green;
-  if (numeric < 50) return T.red;
-  return T.amber;
+  if (!Number.isFinite(numeric)) return CSS_COLOR.textDim;
+  if (numeric >= 75) return CSS_COLOR.green;
+  if (numeric < 50) return CSS_COLOR.red;
+  return CSS_COLOR.amber;
 };
 
 const signalActionStatusMeta = (signal, candidate, blocker) => {
   if (blocker !== MISSING_VALUE) {
-    return { label: blocker, tone: T.red, Icon: Ban };
+    return { label: blocker, tone: CSS_COLOR.red, Icon: Ban };
   }
   const actionStatus = candidate?.actionStatus || candidate?.status;
   if (actionStatus) {
     const label = signalOptionsActionLabel(actionStatus);
     const normalized = String(actionStatus).toLowerCase();
     if (normalized.includes("block") || normalized.includes("mismatch")) {
-      return { label, tone: T.red, Icon: Ban };
+      return { label, tone: CSS_COLOR.red, Icon: Ban };
     }
     if (
       normalized.includes("ready") ||
       normalized.includes("filled") ||
       normalized.includes("available")
     ) {
-      return { label, tone: T.green, Icon: CheckCircle2 };
+      return { label, tone: CSS_COLOR.green, Icon: CheckCircle2 };
     }
     return {
       label,
-      tone: signalOptionsActionColor(actionStatus) || T.textDim,
+      tone: signalOptionsActionColor(actionStatus) || CSS_COLOR.textDim,
       Icon: Radar,
     };
   }
   if (signal?.fresh === false) {
-    return { label: "Stale", tone: T.amber, Icon: Clock };
+    return { label: "Stale", tone: CSS_COLOR.amber, Icon: Clock };
   }
-  return { label: "Awaiting scan", tone: T.cyan, Icon: Radar };
+  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
 };
 
 const compactStatusLabel = (label) => {
@@ -427,8 +430,58 @@ const signalActionDetail = (row) => {
   ].filter(Boolean).join(" · ");
 };
 
+export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = [] } = {}) => {
+  const signalList = Array.isArray(signals) ? signals : [];
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+  const rows = signalList.length
+    ? signalList.map((signal, index) => {
+        const signalRecord = asRecord(signal);
+        const candidateRecord = asRecord(
+          findSignalOptionsCandidateForSignal(candidateList, signalRecord),
+        );
+        const symbol = readSignalSymbol(signalRecord, candidateRecord);
+        return {
+          id: firstText(
+            signalRecord.signalKey,
+            candidateRecord.id,
+            candidateRecord.candidateId,
+            candidateRecord.signalKey,
+            `${symbol || "signal"}-${index}`,
+          ),
+          signal: signalRecord,
+          candidate: candidateRecord,
+        };
+      })
+    : candidateList.map((candidate, index) => {
+        const candidateRecord = asRecord(candidate);
+        const signal = nonEmptyRecord(candidateRecord.signal) || candidateRecord;
+        const symbol = readSignalSymbol(signal, candidateRecord);
+        return {
+          id: firstText(
+            candidateRecord.id,
+            candidateRecord.candidateId,
+            candidateRecord.signalKey,
+            signal.signalKey,
+            `${symbol || "signal"}-${index}`,
+          ),
+          signal,
+          candidate: candidateRecord,
+        };
+      });
+
+  return rows.sort((a, b) => {
+    const signalDelta = signalTimestampMs(b.signal) - signalTimestampMs(a.signal);
+    if (signalDelta) return signalDelta;
+    const activityDelta = rowActivityTimestampMs(b) - rowActivityTimestampMs(a);
+    if (activityDelta) return activityDelta;
+    return readSignalSymbol(a.signal, a.candidate).localeCompare(
+      readSignalSymbol(b.signal, b.candidate),
+    );
+  });
+};
+
 const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
-  const tone = statusMeta.tone || T.textDim;
+  const tone = statusMeta.tone || CSS_COLOR.textDim;
   const label = statusMeta.label || signalOptionsActionLabel("candidate");
   return (
     <span
@@ -443,8 +496,8 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
         height: dim(22),
         padding: sp("0 7px 0 3px"),
         borderRadius: dim(RADII.pill),
-        border: `1px solid ${tone}44`,
-        background: `${tone}18`,
+        border: `1px solid ${cssColorAlpha(tone, "44")}`,
+        background: cssColorAlpha(tone, "18"),
         color: tone,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -513,11 +566,11 @@ const SignalActionRow = ({ row, onOpenAlgo }) => {
         minWidth: 0,
         minHeight: dim(58),
         padding: sp("6px 7px 6px 8px"),
-        border: `1px solid ${direction.tone}33`,
+        border: `1px solid ${cssColorAlpha(direction.tone, "33")}`,
         borderRadius: dim(RADII.xs),
-        background: `linear-gradient(90deg, ${direction.tone}14 0%, ${T.bg1} 42%)`,
+        background: `linear-gradient(90deg, ${cssColorAlpha(direction.tone, "14")} 0%, ${CSS_COLOR.bg1} 42%)`,
         boxShadow: `inset 3px 0 0 ${direction.tone}`,
-        color: T.text,
+        color: CSS_COLOR.text,
         textAlign: "left",
         cursor: "pointer",
         fontFamily: T.sans,
@@ -537,14 +590,14 @@ const SignalActionRow = ({ row, onOpenAlgo }) => {
             direction={direction.primitive}
             freshnessRatio={freshnessRatio}
             freshnessBars={signal.barsSinceSignal}
-            tone={T.textSec}
+            tone={CSS_COLOR.textSec}
             size={16}
             title={`${symbol || MISSING_VALUE} ${direction.label} signal`}
           />
           <StrategyTag candidate={candidate} signal={signal} />
           <span
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(12),
               fontWeight: FONT_WEIGHTS.medium,
               overflow: "hidden",
@@ -574,7 +627,7 @@ const SignalActionRow = ({ row, onOpenAlgo }) => {
             alignItems: "center",
             gap: sp(5),
             minWidth: 0,
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontSize: textSize("caption"),
             overflow: "hidden",
             whiteSpace: "nowrap",
@@ -632,7 +685,7 @@ const CompactMetric = ({
   label,
   value,
   detail,
-  tone = T.textSec,
+  tone = CSS_COLOR.textSec,
   icon: Icon,
 }) => (
   <div
@@ -645,9 +698,9 @@ const CompactMetric = ({
       minWidth: 0,
       minHeight: dim(34),
       padding: sp("5px 6px"),
-      border: `1px solid ${T.borderLight}`,
+      border: `1px solid ${CSS_COLOR.borderLight}`,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
     }}
   >
     {Icon ? (
@@ -661,7 +714,7 @@ const CompactMetric = ({
     <span style={{ display: "grid", gap: sp(1), minWidth: 0 }}>
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -690,7 +743,7 @@ const CompactMetric = ({
       {detail ? (
         <span
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             lineHeight: 1.1,
@@ -716,7 +769,7 @@ const OpsSummaryBand = ({ title, metrics }) => (
   >
     <span
       style={{
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: "0.04em",
@@ -741,11 +794,11 @@ const OpsSummaryBand = ({ title, metrics }) => (
 );
 
 const pipelineStageTone = (status) => {
-  if (status === "healthy") return T.green;
-  if (status === "running") return T.cyan;
-  if (status === "attention" || status === "stale") return T.amber;
-  if (status === "blocked") return T.red;
-  return T.textDim;
+  if (status === "healthy") return CSS_COLOR.green;
+  if (status === "running") return CSS_COLOR.cyan;
+  if (status === "attention" || status === "stale") return CSS_COLOR.amber;
+  if (status === "blocked") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
 };
 
 const shortPipelineLabel = (stage) =>
@@ -793,9 +846,9 @@ const IntakeMiniFunnel = ({ stages }) => {
               minWidth: dim(58),
               maxWidth: dim(72),
               padding: sp("5px 6px"),
-              border: `1px solid ${tone}44`,
+              border: `1px solid ${cssColorAlpha(tone, "44")}`,
               borderRadius: dim(RADII.xs),
-              background: `${tone}10`,
+              background: cssColorAlpha(tone, "10"),
               fontFamily: T.sans,
               flex: "1 0 0",
             }}
@@ -813,7 +866,7 @@ const IntakeMiniFunnel = ({ stages }) => {
             </span>
             <span
               style={{
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontSize: textSize("caption"),
                 lineHeight: 1.1,
                 overflow: "hidden",
@@ -847,10 +900,10 @@ const PositionTile = ({ position, onOpenTradeSymbol }) => {
         minWidth: 0,
         minHeight: dim(42),
         padding: sp("6px 7px"),
-        border: `1px solid ${T.borderLight}`,
+        border: `1px solid ${CSS_COLOR.borderLight}`,
         borderRadius: dim(RADII.xs),
-        background: T.bg1,
-        color: T.text,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.text,
         textAlign: "left",
         cursor: symbol ? "pointer" : "default",
         fontFamily: T.sans,
@@ -861,11 +914,11 @@ const PositionTile = ({ position, onOpenTradeSymbol }) => {
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
           {symbol || MISSING_VALUE}
         </span>
-        <span style={{ color: toneForNumber(pnl, T.textDim), fontSize: textSize("caption"), whiteSpace: "nowrap" }}>
+        <span style={{ color: toneForNumber(pnl, CSS_COLOR.textDim), fontSize: textSize("caption"), whiteSpace: "nowrap" }}>
           {pnl == null ? MISSING_VALUE : formatMoney(pnl, 0)}
         </span>
       </span>
-      <span style={{ minWidth: 0, color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption") }}>
+      <span style={{ minWidth: 0, color: CSS_COLOR.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption") }}>
         {quantity ?? MISSING_VALUE}x {contractLabel}
       </span>
     </button>
@@ -964,29 +1017,14 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   );
   const displayedPositions = activePositions.length ? activePositions : ledgerPositions;
   const events = eventsQuery.data?.events || cockpit?.events || automationState?.events || [];
+  const signalOptionsCandidates = cockpit?.candidates || automationState?.candidates || [];
+  const signalOptionsSignals = cockpit?.signals || automationState?.signals || [];
   const signalActionRows = useMemo(() => {
-    const candidates = Array.isArray(automationState?.candidates)
-      ? automationState.candidates
-      : [];
-    return candidates
-      .map((candidate, index) => {
-        const candidateRecord = asRecord(candidate);
-        const signal = nonEmptyRecord(candidateRecord.signal) || candidateRecord;
-        const symbol = readSignalSymbol(signal, candidateRecord);
-        return {
-          id: firstText(
-            candidateRecord.id,
-            candidateRecord.candidateId,
-            candidateRecord.signalKey,
-            signal.signalKey,
-            `${symbol || "signal"}-${index}`,
-          ),
-          signal,
-          candidate: candidateRecord,
-        };
-      })
-      .sort((a, b) => rowActivityTimestampMs(b) - rowActivityTimestampMs(a));
-  }, [automationState?.candidates]);
+    return buildAlgoMonitorSignalActionRows({
+      signals: signalOptionsSignals,
+      candidates: signalOptionsCandidates,
+    });
+  }, [signalOptionsCandidates, signalOptionsSignals]);
   const visibleSignalActionRows = signalActionRows.slice(0, 4);
   const latestEvent = events[0] || null;
   const pipelineStages = cockpit?.pipelineStages || [];
@@ -1037,14 +1075,14 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           detail: focusedDeployment?.lastEvaluatedAt
             ? formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)
             : "waiting",
-          tone: streamFreshness.algoFullFresh ? T.green : T.amber,
+          tone: streamFreshness.algoFullFresh ? CSS_COLOR.green : CSS_COLOR.amber,
           icon: Clock,
         },
         {
           label: "Event",
           value: latestEvent ? "latest" : "none",
           detail: latestEventTime,
-          tone: latestEvent ? T.cyan : T.textDim,
+          tone: latestEvent ? CSS_COLOR.cyan : CSS_COLOR.textDim,
           icon: Activity,
         },
       ],
@@ -1056,14 +1094,14 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           label: "Risk",
           value: dailyHaltActive ? "halt" : "clear",
           detail: `left ${formatMoneyValue(dailyLossRemaining, 0)}`,
-          tone: dailyHaltActive ? T.red : T.green,
+          tone: dailyHaltActive ? CSS_COLOR.red : CSS_COLOR.green,
           icon: dailyHaltActive ? ShieldAlert : ShieldCheck,
         },
         {
           label: "Exposure",
           value: formatMoneyValue(openPremium, 0),
           detail: `${openSymbols}/${maxOpenSymbols ?? "?"} symbols`,
-          tone: openPremium != null && openPremium > 0 ? T.amber : T.textSec,
+          tone: openPremium != null && openPremium > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec,
           icon: Wallet,
         },
       ],
@@ -1082,7 +1120,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           label: "Record",
           value: `${wins}W/${losses}L`,
           detail: recordDetail || "session",
-          tone: profitFactor != null && profitFactor >= 1 ? T.green : T.textSec,
+          tone: profitFactor != null && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
           icon: ShieldCheck,
         },
       ],
@@ -1099,13 +1137,13 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       label: "Win",
       value: formatPctValue(winRate, 0),
       detail: `PF ${profitFactor == null ? MISSING_VALUE : profitFactor.toFixed(2)}`,
-      tone: profitFactor != null && profitFactor >= 1 ? T.green : T.textSec,
+      tone: profitFactor != null && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
     },
     {
       label: "Expect",
       value: formatMoneyValue(performanceSummary.expectancy, 0),
       detail: `trades ${performanceSummary.tradeEvents ?? MISSING_VALUE}`,
-      tone: toneForNumber(performanceSummary.expectancy, T.textSec),
+      tone: toneForNumber(performanceSummary.expectancy, CSS_COLOR.textSec),
     },
   ];
   const loading =
@@ -1185,14 +1223,14 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
               gap: sp(6),
               minWidth: 0,
               padding: sp("4px 2px 6px"),
-              borderBottom: `1px solid ${T.border}`,
+              borderBottom: `1px solid ${CSS_COLOR.border}`,
             }}
           >
             <div style={{ minWidth: 0, display: "grid", gap: sp(1) }}>
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: T.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
                 {focusedDeployment.name || "Pyrus Signals Shadow"}
               </span>
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: T.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
                 {String(focusedDeployment.mode || mode).toUpperCase()} · {focusedDeployment.providerAccountId || "shadow"}
               </span>
             </div>

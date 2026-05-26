@@ -92,6 +92,45 @@ import { useSignalMonitorSnapshot } from "./signalMonitorStore";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
@@ -118,8 +157,8 @@ const providerSummaryHasFlowState = (providerSummary) => {
 const HeaderBroadcastSegment = ({
   item,
   duplicate = false,
-  tone = T.textSec,
-  accent = T.borderLight,
+  tone = CSS_COLOR.textSec,
+  accent = CSS_COLOR.borderLight,
   children,
   onClick,
   title,
@@ -153,9 +192,9 @@ const HeaderBroadcastSegment = ({
         boxSizing: "border-box",
         border: border ?? "none",
         borderRadius: dim(RADII.xs),
-        background: background ?? `${tone}0d`,
+        background: background ?? `${cssColorMix(tone, 5)}`,
         boxShadow,
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize(compact ? "caption" : "body"),
         fontWeight: FONT_WEIGHTS.medium,
@@ -215,7 +254,7 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
   selectedTimeframe = "5m",
 }) {
   const isSell = item.direction === "sell";
-  const tone = isSell ? T.red : T.green;
+  const tone = isSell ? CSS_COLOR.red : CSS_COLOR.green;
   const DirectionIcon = isSell ? ArrowDown : ArrowUp;
   const priceLabel =
     item.price != null && Number.isFinite(Number(item.price))
@@ -228,7 +267,7 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
       item={item}
       duplicate={duplicate}
       tone={tone}
-      accent={item.fresh ? tone : T.border}
+      accent={item.fresh ? tone : CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.symbol, selected.raw)}
       title={title}
       compact={compact}
@@ -239,13 +278,13 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
         color={tone}
         aria-hidden="true"
       />
-      <span style={{ color: T.text }}>{item.symbol}</span>
+      <span style={{ color: CSS_COLOR.text }}>{item.symbol}</span>
       {priceLabel ? (
-        <span style={{ color: T.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
           {priceLabel}
         </span>
       ) : null}
-      <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
       </span>
       <HeaderSignalIntervalContext
@@ -257,15 +296,8 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
   );
 }, headerSignalTapeItemPropsEqual);
 
-const colorWithAlpha = (color, alpha) => {
-  const match = /^#([0-9a-f]{6})$/i.exec(String(color || ""));
-  if (!match) return color;
-  const value = match[1];
-  const r = Number.parseInt(value.slice(0, 2), 16);
-  const g = Number.parseInt(value.slice(2, 4), 16);
-  const b = Number.parseInt(value.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
+const colorWithAlpha = (color, alpha) =>
+  cssColorMix(color, Math.round(alpha * 100));
 
 const normalizeSignalIntervalDirection = (state) => {
   const direction = String(
@@ -310,7 +342,7 @@ const HeaderSignalContextDivider = () => (
       y1="32"
       x2="7"
       y2="0"
-      stroke={colorWithAlpha(T.textSec, 0.36)}
+      stroke={colorWithAlpha(CSS_COLOR.textSec, 0.36)}
       strokeWidth="1"
       vectorEffect="non-scaling-stroke"
     />
@@ -344,7 +376,7 @@ const HeaderSignalPelletChrome = ({ fill, selected, timeframe }) => {
           data-testid="header-signal-context-selected-outline"
           points={points}
           fill="none"
-          stroke={T.amber}
+          stroke={CSS_COLOR.amber}
           strokeWidth="1.6"
           vectorEffect="non-scaling-stroke"
         />
@@ -378,7 +410,7 @@ const HeaderSignalIntervalContext = ({
       const hasDirection = Boolean(direction);
       const pending = !state;
       const color =
-        direction === "buy" ? T.green : direction === "sell" ? T.red : T.textMuted;
+        direction === "buy" ? CSS_COLOR.green : direction === "sell" ? CSS_COLOR.red : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
       const status = state?.status || "unknown";
       const selected = timeframe === resolveHeaderSignalTimeframe(selectedTimeframe);
@@ -390,9 +422,9 @@ const HeaderSignalIntervalContext = ({
       const pelletFill = hasDirection
         ? colorWithAlpha(color, fresh ? 0.24 : 0.18)
         : pending
-          ? colorWithAlpha(T.textMuted, 0.08)
-          : colorWithAlpha(T.textMuted, 0.1);
-      const labelColor = hasDirection ? color : pending ? T.textDim : T.textSec;
+          ? colorWithAlpha(CSS_COLOR.textMuted, 0.08)
+          : colorWithAlpha(CSS_COLOR.textMuted, 0.1);
+      const labelColor = hasDirection ? color : pending ? CSS_COLOR.textDim : CSS_COLOR.textSec;
       const width = timeframe === "15m" ? 54 : 44;
 
       return (
@@ -447,7 +479,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
   const isPut =
     item.right === "P" ||
     String(item.sentiment || "").toLowerCase() === "bearish";
-  const tone = isPut ? T.red : T.green;
+  const tone = isPut ? CSS_COLOR.red : CSS_COLOR.green;
   const SentimentIcon = isPut ? TrendingDown : TrendingUp;
   const formattedContractLabel = formatOptionContractLabel(item, {
     includeSymbol: false,
@@ -464,7 +496,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
       item={item}
       duplicate={duplicate}
       tone={tone}
-      accent={T.border}
+      accent={CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.raw)}
       title={title}
       compact={compact}
@@ -475,17 +507,17 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
         color={tone}
         aria-hidden="true"
       />
-      <span style={{ color: T.text }}>{item.symbol}</span>
+      <span style={{ color: CSS_COLOR.text }}>{item.symbol}</span>
       {contractLabel ? (
         <span style={{ color: tone, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>{contractLabel}</span>
       ) : null}
-      <span style={{ color: T.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {fmtCompactCurrency(item.premium)}
       </span>
       {scoreLabel ? (
-        <span style={{ color: T.amber, fontFamily: T.sans, fontVariantNumeric: "tabular-nums", fontWeight: FONT_WEIGHTS.medium }}>{scoreLabel}</span>
+        <span style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontVariantNumeric: "tabular-nums", fontWeight: FONT_WEIGHTS.medium }}>{scoreLabel}</span>
       ) : null}
-      <span style={{ color: T.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
         {formatRelativeTimeShort(item.time)}
       </span>
     </HeaderBroadcastSegment>
@@ -493,11 +525,11 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
 };
 
 const resolveAlgoTone = (toneKind) => {
-  if (toneKind === "success") return T.green;
-  if (toneKind === "danger") return T.red;
-  if (toneKind === "warning") return T.amber;
-  if (toneKind === "accent") return T.accent;
-  return T.textSec;
+  if (toneKind === "success") return CSS_COLOR.green;
+  if (toneKind === "danger") return CSS_COLOR.red;
+  if (toneKind === "warning") return CSS_COLOR.amber;
+  if (toneKind === "accent") return CSS_COLOR.accent;
+  return CSS_COLOR.textSec;
 };
 
 const ALGO_EVENT_ICONS = {
@@ -541,7 +573,7 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
           display: "inline-flex",
           alignItems: "center",
           flexShrink: 0,
-          color: context.kind === "dte" ? T.textMuted : T.textSec,
+          color: context.kind === "dte" ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -620,7 +652,7 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       item={item}
       duplicate={duplicate}
       tone={tone}
-      accent={T.border}
+      accent={CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.raw)}
       title={title}
       ariaLabel={title}
@@ -644,7 +676,7 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       </span>
       <span
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontWeight: FONT_WEIGHTS.medium,
           whiteSpace: "nowrap",
         }}
@@ -660,7 +692,7 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       ))}
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
@@ -679,14 +711,14 @@ const HeaderLaneSettingsPopover = ({ children, testId, sheet = false }) => (
       ? {
           padding: sp(10),
           overflowY: "auto",
-          background: T.bg0,
-          color: T.text,
+          background: CSS_COLOR.bg0,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
         }
       : {
           maxHeight: `calc(100vh - ${dim(24)}px)`,
           overflowY: "auto",
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
         }}
   >
@@ -725,7 +757,7 @@ const useDebouncedSave = (commit, delay = 300) => {
 const HeaderLaneSavedChip = ({ state }) => {
   if (state === "idle") return null;
   const label = state === "pending" ? "Saving…" : "Saved";
-  const tone = state === "pending" ? T.textDim : T.accent;
+  const tone = state === "pending" ? CSS_COLOR.textDim : CSS_COLOR.accent;
   return (
     <span
       data-testid="header-lane-saved-chip"
@@ -753,7 +785,7 @@ const HeaderLanePopoverSection = ({ title, saveState, testId, children }) => (
         alignItems: "baseline",
         justifyContent: "space-between",
         gap: sp(8),
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
@@ -785,7 +817,7 @@ const HeaderLaneAdvancedExpander = ({ open, onToggle, label, children, testId })
         border: "none",
         borderRadius: dim(RADII.xs ?? RADII.sm),
         background: "transparent",
-        color: open ? T.textSec : T.textMuted,
+        color: open ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
         cursor: "pointer",
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -825,12 +857,12 @@ const HeaderLaneChipRow = ({ value, options, onChange, ariaLabel, testId }) => (
           className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
           onClick={() => onChange(option.value)}
           style={{
-            ...motionVars({ accent: T.accent }),
+            ...motionVars({ accent: CSS_COLOR.accent }),
             minHeight: dim(22),
-            border: `1px solid ${active ? T.accent : T.border}`,
+            border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
             borderRadius: dim(RADII.sm),
-            background: active ? `${T.accent}18` : T.bg1,
-            color: active ? T.accent : T.textDim,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -870,12 +902,12 @@ const HeaderLaneMinPremiumChips = ({ value, onChange, testId }) => (
           className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
           onClick={() => onChange(preset)}
           style={{
-            ...motionVars({ accent: T.accent }),
+            ...motionVars({ accent: CSS_COLOR.accent }),
             minHeight: dim(22),
-            border: `1px solid ${active ? T.accent : T.border}`,
+            border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
             borderRadius: dim(RADII.sm),
-            background: active ? `${T.accent}18` : T.bg1,
-            color: active ? T.accent : T.textDim,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -891,7 +923,7 @@ const HeaderLaneMinPremiumChips = ({ value, onChange, testId }) => (
   </div>
 );
 
-const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
+const HeaderLaneSettingsTitle = ({ label, status, tone = CSS_COLOR.textDim }) => (
   <div
     style={{
       display: "flex",
@@ -903,7 +935,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
   >
     <span
       style={{
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.regular,
@@ -925,7 +957,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
   </div>
 );
 
-const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
+const HeaderLaneInfoRow = ({ label, value, tone = CSS_COLOR.textSec }) => (
   <div
     style={{
       display: "flex",
@@ -933,7 +965,7 @@ const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
       justifyContent: "space-between",
       gap: sp(8),
       minHeight: dim(20),
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
       fontSize: textSize("body"),
       fontWeight: FONT_WEIGHTS.regular,
@@ -949,7 +981,7 @@ const HeaderLaneSectionLabel = ({ children }) => (
     style={{
       marginTop: sp(10),
       marginBottom: sp(6),
-      color: T.textMuted,
+      color: CSS_COLOR.textMuted,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.medium,
@@ -982,11 +1014,11 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
           className={joinMotionClasses("ra-interactive", active && "ra-focus-rail")}
           onClick={() => onChange(preset)}
           style={{
-            ...motionVars({ accent: T.accent }),
+            ...motionVars({ accent: CSS_COLOR.accent }),
             minHeight: dim(24),
-            border: `1px solid ${active ? T.accent : T.border}`,
-            background: active ? `${T.accent}18` : T.bg1,
-            color: active ? T.accent : T.textDim,
+            border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("body"),
@@ -1006,7 +1038,7 @@ const HeaderLaneToggleButton = ({
   onClick,
   children,
   testId,
-  tone = T.accent,
+  tone = CSS_COLOR.accent,
 }) => (
   <button
     type="button"
@@ -1023,9 +1055,9 @@ const HeaderLaneToggleButton = ({
       alignItems: "center",
       justifyContent: "center",
       gap: sp(5),
-      border: `1px solid ${active ? tone : T.border}`,
-      background: active ? `${tone}18` : T.bg1,
-      color: disabled ? T.textMuted : active ? tone : T.textSec,
+      border: `1px solid ${active ? tone : CSS_COLOR.border}`,
+      background: active ? `${cssColorMix(tone, 9)}` : CSS_COLOR.bg1,
+      color: disabled ? CSS_COLOR.textMuted : active ? tone : CSS_COLOR.textSec,
       cursor: disabled ? "default" : "pointer",
       fontFamily: T.sans,
       fontSize: textSize("caption"),
@@ -1040,10 +1072,10 @@ const HeaderLaneToggleButton = ({
 const headerLaneControlInputStyle = {
   width: "100%",
   minHeight: dim(24),
-  background: T.bg1,
-  border: `1px solid ${T.border}`,
+  background: CSS_COLOR.bg1,
+  border: `1px solid ${CSS_COLOR.border}`,
   borderRadius: dim(RADII.sm),
-  color: T.text,
+  color: CSS_COLOR.text,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
@@ -1060,7 +1092,7 @@ const HeaderLaneControlRow = ({ label, children }) => (
       alignItems: "center",
       gap: sp(4),
       minHeight: dim(22),
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.regular,
@@ -1234,8 +1266,8 @@ const HeaderBroadcastLane = ({
         justifyContent: "center",
         padding: sp(compactSettings ? "0px 8px" : "0px 4px"),
         border: "none",
-        background: settingsOpen ? `${T.accent}14` : "transparent",
-        color: settingsOpen ? T.accent : T.textDim,
+        background: settingsOpen ? `${cssColorMix(CSS_COLOR.accent, 8)}` : "transparent",
+        color: settingsOpen ? CSS_COLOR.accent : CSS_COLOR.textDim,
         cursor: "pointer",
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -1259,9 +1291,9 @@ const HeaderBroadcastLane = ({
         alignItems: "center",
         minHeight: dim(compactSettings ? 22 : 20),
         minWidth: 0,
-        border: compactSettings ? `1px solid ${T.border}` : undefined,
+        border: compactSettings ? `1px solid ${CSS_COLOR.border}` : undefined,
         borderRadius: compactSettings ? dim(RADII.sm) : undefined,
-        background: compactSettings ? T.bg0 : undefined,
+        background: compactSettings ? CSS_COLOR.bg0 : undefined,
         overflow: compactSettings ? "hidden" : undefined,
       }}
     >
@@ -1271,7 +1303,7 @@ const HeaderBroadcastLane = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          borderRight: `1px solid ${T.border}`,
+          borderRight: `1px solid ${CSS_COLOR.border}`,
         }}
       >
         {labelTrigger ?? defaultTrigger}
@@ -1336,15 +1368,15 @@ const HeaderBroadcastLane = ({
                 width: dim(compactSettings ? 8 : 7),
                 height: dim(compactSettings ? 8 : 7),
                 borderRadius: dim(RADII.pill),
-                background: emptyTone || T.textMuted,
+                background: emptyTone || CSS_COLOR.textMuted,
                 boxShadow: emptyTone
-                  ? `0 0 0 3px ${emptyTone}24`
+                  ? `0 0 0 3px ${cssColorMix(emptyTone, 14)}`
                   : "none",
               }}
             />
             <span
               style={{
-                color: emptyTone || T.textMuted,
+                color: emptyTone || CSS_COLOR.textMuted,
                 fontSize: textSize("caption"),
                 fontWeight: FONT_WEIGHTS.medium,
                 fontFamily: T.sans,
@@ -1364,7 +1396,7 @@ const HeaderBroadcastLane = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          borderLeft: `1px solid ${T.border}`,
+          borderLeft: `1px solid ${CSS_COLOR.border}`,
         }}
       >
         {action}
@@ -1693,22 +1725,22 @@ export const HeaderBroadcastScrollerStack = memo(({
 
   // Status color semantics: green=active, accent=updating, amber=degraded, red=error.
   const flowScanTone = flowScanHasError
-    ? T.red
+    ? CSS_COLOR.red
     : flowScanDegraded
-      ? T.amber
+      ? CSS_COLOR.amber
     : flowScanBusy
-      ? T.accent
+      ? CSS_COLOR.accent
     : flowSessionQuietWithRetainedEvents
-      ? T.amber
+      ? CSS_COLOR.amber
     : flowScanStale
-      ? T.amber
+      ? CSS_COLOR.amber
       : flowScanPaused
-        ? T.amber
+        ? CSS_COLOR.amber
       : broadScanSnapshotActive
-        ? T.green
+        ? CSS_COLOR.green
         : broadScanEnabled
-          ? T.textMuted
-          : T.textMuted;
+          ? CSS_COLOR.textMuted
+          : CSS_COLOR.textMuted;
   const flowScanStatusLabel = flowScanHasError
     ? "SCAN ERROR"
     : flowScanDegraded
@@ -1748,16 +1780,16 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "Flow scan enabled"
       : "Start Flow scan";
   const signalScanTone = signalHasError
-    ? T.red
+    ? CSS_COLOR.red
     : signalDegraded
-      ? T.amber
+      ? CSS_COLOR.amber
     : signalNoTrackedSymbols || signalNoFreshSignals
-      ? T.amber
+      ? CSS_COLOR.amber
     : signalBusy
-      ? T.accent
+      ? CSS_COLOR.accent
       : signalScanEnabled
-        ? T.green
-        : T.textMuted;
+        ? CSS_COLOR.green
+        : CSS_COLOR.textMuted;
   const signalToggleTitle = signalHasError
     ? "Signal scan degraded"
     : signalDegraded
@@ -1881,8 +1913,8 @@ export const HeaderBroadcastScrollerStack = memo(({
           }
           tone={
             signalNoTrackedSymbols || signalNoFreshSignals
-              ? T.amber
-              : T.textSec
+              ? CSS_COLOR.amber
+              : CSS_COLOR.textSec
           }
         />
         <HeaderLaneInfoRow
@@ -1894,12 +1926,12 @@ export const HeaderBroadcastScrollerStack = memo(({
                 ? `${signalStatusSnapshot.resolvedSymbols} (+${signalStatusSnapshot.expansionSymbols} expanded)`
                 : `${signalStatusSnapshot.resolvedSymbols}`
           }
-          tone={signalStatusSnapshot.shortfall ? T.amber : T.textSec}
+          tone={signalStatusSnapshot.shortfall ? CSS_COLOR.amber : CSS_COLOR.textSec}
         />
         <HeaderLaneInfoRow
           label="Signal Source"
           value={signalUniverseLabel}
-          tone={signalStatusSnapshot.universeFallbackUsed ? T.amber : T.textSec}
+          tone={signalStatusSnapshot.universeFallbackUsed ? CSS_COLOR.amber : CSS_COLOR.textSec}
         />
         <HeaderLaneInfoRow
           label="Last"
@@ -2139,17 +2171,17 @@ export const HeaderBroadcastScrollerStack = memo(({
         <HeaderLaneInfoRow
           label="Events"
           value={unusualEventsLabel}
-          tone={flowEventsFilteredOut ? T.amber : T.textSec}
+          tone={flowEventsFilteredOut ? CSS_COLOR.amber : CSS_COLOR.textSec}
         />
         <HeaderLaneInfoRow
           label="Coverage"
           value={unusualCoverageLabel}
-          tone={unusualScannedCount > 0 ? T.textSec : T.amber}
+          tone={unusualScannedCount > 0 ? CSS_COLOR.textSec : CSS_COLOR.amber}
         />
         <HeaderLaneInfoRow
           label="Scanning"
           value={unusualScanningNow}
-          tone={unusualCurrentBatch.length ? T.accent : T.textDim}
+          tone={unusualCurrentBatch.length ? CSS_COLOR.accent : CSS_COLOR.textDim}
         />
         <HeaderLaneInfoRow
           label="Cycle"
@@ -2161,12 +2193,12 @@ export const HeaderBroadcastScrollerStack = memo(({
           value={flowStatus.toUpperCase()}
           tone={
             flowHasError
-              ? T.red
+              ? CSS_COLOR.red
               : flowDegraded
-                ? T.amber
+                ? CSS_COLOR.amber
                 : flowStatus === "loading"
-                  ? T.accent
-                  : T.textSec
+                  ? CSS_COLOR.accent
+                  : CSS_COLOR.textSec
           }
         />
       </HeaderLanePopoverSection>
@@ -2175,7 +2207,7 @@ export const HeaderBroadcastScrollerStack = memo(({
 
   const signalTriggerActive = openSettingsLane === "signals";
   const unusualTriggerActive = openSettingsLane === "unusual";
-  const algoLaneTone = algoItems.length ? T.accent : T.textMuted;
+  const algoLaneTone = algoItems.length ? CSS_COLOR.accent : CSS_COLOR.textMuted;
   const algoEmptyLabel = enabled ? "NO ALGO EVENTS" : "ALGO SYNCING";
   const buildLaneTriggerButton = ({ testId, ariaLabel, active, accentTone, content }) => (
     <button
@@ -2191,8 +2223,8 @@ export const HeaderBroadcastScrollerStack = memo(({
         justifyContent: "center",
         padding: sp("0px 8px"),
         border: "none",
-        background: active ? `${accentTone}14` : "transparent",
-        color: active ? accentTone : T.textDim,
+        background: active ? `${cssColorMix(accentTone, 8)}` : "transparent",
+        color: active ? accentTone : CSS_COLOR.textDim,
         cursor: "pointer",
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -2221,8 +2253,8 @@ export const HeaderBroadcastScrollerStack = memo(({
         gap: isPhone ? sp(3) : 0,
         minWidth: 0,
         padding: isPhone ? "0 7px 5px" : undefined,
-        background: isPhone ? T.bg1 : T.bg0,
-        boxShadow: isPhone ? `0 1px 0 ${T.border}` : undefined,
+        background: isPhone ? CSS_COLOR.bg1 : CSS_COLOR.bg0,
+        boxShadow: isPhone ? `0 1px 0 ${CSS_COLOR.border}` : undefined,
       }}
     >
       <Popover
@@ -2243,7 +2275,7 @@ export const HeaderBroadcastScrollerStack = memo(({
                 testId: "header-signal-tape-settings-trigger",
                 ariaLabel: "SIGNALS settings",
                 active: signalTriggerActive,
-                accentTone: T.accent,
+                accentTone: CSS_COLOR.accent,
                 content: isPhone ? <Settings size={14} strokeWidth={2} /> : "SIGNALS",
               })}
             </PopoverTrigger>
@@ -2265,7 +2297,7 @@ export const HeaderBroadcastScrollerStack = memo(({
                 justifyContent: "center",
                 border: "none",
                 borderRadius: dim(3),
-                background: signalScanEnabled ? `${signalScanTone}18` : "transparent",
+                background: signalScanEnabled ? `${cssColorMix(signalScanTone, 9)}` : "transparent",
                 color: signalScanTone,
                 cursor: signalBusy ? "wait" : onToggleSignalScan ? "pointer" : "default",
               }}
@@ -2315,7 +2347,7 @@ export const HeaderBroadcastScrollerStack = memo(({
                 testId: "header-unusual-tape-settings-trigger",
                 ariaLabel: "FLOW settings",
                 active: unusualTriggerActive,
-                accentTone: T.accent,
+                accentTone: CSS_COLOR.accent,
                 content: isPhone ? <Settings size={14} strokeWidth={2} /> : "FLOW",
               })}
             </PopoverTrigger>
@@ -2336,7 +2368,7 @@ export const HeaderBroadcastScrollerStack = memo(({
                 justifyContent: "center",
                 border: "none",
                 borderRadius: dim(3),
-                background: broadScanEnabled ? `${flowScanTone}18` : "transparent",
+                background: broadScanEnabled ? `${cssColorMix(flowScanTone, 9)}` : "transparent",
                 color: flowScanTone,
                 cursor: "pointer",
               }}
@@ -2391,7 +2423,7 @@ export const HeaderBroadcastScrollerStack = memo(({
               padding: sp("0px 8px"),
               border: "none",
               background: "transparent",
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               cursor: onAlgoAction ? "pointer" : "default",
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -2418,7 +2450,7 @@ export const HeaderBroadcastScrollerStack = memo(({
                 justifyContent: "center",
                 border: "none",
                 borderRadius: dim(3),
-                background: algoItems.length ? `${algoLaneTone}18` : "transparent",
+                background: algoItems.length ? `${cssColorMix(algoLaneTone, 9)}` : "transparent",
                 color: algoLaneTone,
                 cursor: onAlgoAction ? "pointer" : "default",
               }}

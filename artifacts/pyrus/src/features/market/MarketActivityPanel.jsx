@@ -23,6 +23,9 @@ import {
   formatRelativeTimeShort,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   ELEVATION,
   FONT_WEIGHTS,
   RADII,
@@ -64,16 +67,16 @@ const SIGNAL_TIMEFRAME_LABELS = {
   "1d": "1D",
 };
 
-const activityToneBackground = (tone) => `${tone}0d`;
-const activityToneHoverBackground = (tone) => `${tone}12`;
+const activityToneBackground = (tone) => cssColorAlpha(tone, "0d");
+const activityToneHoverBackground = (tone) => cssColorAlpha(tone, "12");
 const ACTIVITY_LANE_CHIP_MIN_WIDTH = 34;
 const ACTIVITY_COMPACT_CHIP_MIN_WIDTH = 20;
 
 const activityChipStyle = (tone, minWidth = 32) => ({
   minWidth: dim(minWidth),
   color: tone,
-  border: `1px solid ${tone}40`,
-  background: `${tone}0f`,
+  border: `1px solid ${cssColorAlpha(tone, "40")}`,
+  background: cssColorAlpha(tone, "0f"),
   borderRadius: dim(RADII.xs),
   fontFamily: T.sans,
   fontSize: textSize("caption"),
@@ -110,19 +113,19 @@ const activityRowStyle = (
   minWidth: 0,
   minHeight: dim(compactFrame ? 26 : 34),
   padding: sp(compactFrame ? "4px 4px" : "5px 6px"),
-  border: `1px solid ${T.borderLight}`,
+  border: `1px solid ${CSS_COLOR.borderLight}`,
   borderRadius: dim(RADII.xs),
-  background: T.bg1,
+  background: CSS_COLOR.bg1,
   textAlign: "left",
 });
 
 const compactControlStyle = (width = null, compactFrame = false) => ({
   minHeight: dim(compactFrame ? 22 : 26),
   width: width ? dim(width) : "100%",
-  background: T.bg1,
-  border: `1px solid ${T.borderLight}`,
+  background: CSS_COLOR.bg1,
+  border: `1px solid ${CSS_COLOR.borderLight}`,
   borderRadius: dim(RADII.xs),
-  color: T.textSec,
+  color: CSS_COLOR.textSec,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   fontWeight: FONT_WEIGHTS.medium,
@@ -148,7 +151,7 @@ const MarketActivityLaneSection = ({
       minHeight: 0,
       display: "flex",
       flexDirection: "column",
-      borderTop: `1px solid ${T.borderLight}`,
+      borderTop: `1px solid ${CSS_COLOR.borderLight}`,
       paddingTop: sp(compactFrame ? 4 : 6),
     }}
   >
@@ -166,7 +169,7 @@ const MarketActivityLaneSection = ({
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -182,7 +185,7 @@ const MarketActivityLaneSection = ({
           <div
             style={{
               marginTop: sp(1),
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("body"),
               fontWeight: FONT_WEIGHTS.medium,
@@ -327,9 +330,9 @@ const SignalTimeframeTypeahead = ({ value, onChange, compactFrame = false }) => 
         onKeyDown={handleKeyDown}
         style={{
           width: "100%",
-          background: T.bg1,
-          border: `1px solid ${T.borderLight}`,
-          color: T.textSec,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.borderLight}`,
+          color: CSS_COLOR.textSec,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -348,7 +351,7 @@ const SignalTimeframeTypeahead = ({ value, onChange, compactFrame = false }) => 
           right: compactFrame ? 3 : 5,
           top: "50%",
           transform: "translateY(-50%)",
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           pointerEvents: "none",
         }}
       />
@@ -362,8 +365,8 @@ const SignalTimeframeTypeahead = ({ value, onChange, compactFrame = false }) => 
             left: 0,
             right: 0,
             top: "calc(100% + 4px)",
-            background: T.bg1,
-            border: `1px solid ${T.borderLight}`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.borderLight}`,
             borderRadius: dim(RADII.xs),
             boxShadow: ELEVATION.md,
             maxHeight: dim(200),
@@ -388,13 +391,13 @@ const SignalTimeframeTypeahead = ({ value, onChange, compactFrame = false }) => 
                 style={{
                   width: "100%",
                   border: "none",
-                  borderBottom: `1px solid ${T.border}55`,
+                  borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
                   background: active
-                    ? T.accentHoverBg
+                    ? CSS_COLOR.accentHoverBg
                     : selectedOption
-                      ? `${T.accent}12`
+                      ? `${cssColorMix(CSS_COLOR.accent, 7)}`
                       : "transparent",
-                  color: selectedOption ? T.accent : T.textSec,
+                  color: selectedOption ? CSS_COLOR.accent : CSS_COLOR.textSec,
                   cursor: "pointer",
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
@@ -433,7 +436,7 @@ const MarketIconToolButton = ({
   Icon,
   active = false,
   disabled = false,
-  tone = T.accent,
+  tone = CSS_COLOR.accent,
   label,
   title,
   onClick,
@@ -452,8 +455,8 @@ const MarketIconToolButton = ({
       justifyContent: "center",
       flex: "0 0 auto",
       border: "none",
-      background: active ? `${tone}12` : "transparent",
-      color: active ? tone : T.textDim,
+      background: active ? cssColorAlpha(tone, "12") : "transparent",
+      color: active ? tone : CSS_COLOR.textDim,
       cursor: disabled ? "wait" : "pointer",
       opacity: disabled ? 0.78 : 1,
       borderRadius: dim(RADII.xs),
@@ -462,19 +465,19 @@ const MarketIconToolButton = ({
     }}
     onMouseEnter={(event) => {
       if (disabled) return;
-      event.currentTarget.style.background = active ? `${tone}18` : T.accentHoverBg;
-      event.currentTarget.style.color = active ? tone : T.text;
+      event.currentTarget.style.background = active ? cssColorAlpha(tone, "18") : CSS_COLOR.accentHoverBg;
+      event.currentTarget.style.color = active ? tone : CSS_COLOR.text;
     }}
     onMouseLeave={(event) => {
-      event.currentTarget.style.background = active ? `${tone}12` : "transparent";
-      event.currentTarget.style.color = active ? tone : T.textDim;
+      event.currentTarget.style.background = active ? cssColorAlpha(tone, "12") : "transparent";
+      event.currentTarget.style.color = active ? tone : CSS_COLOR.textDim;
     }}
   >
     <Icon size={dim(compactFrame ? 11 : 13)} strokeWidth={2.4} />
   </button></AppTooltip>
 );
 
-const MarketToolbarLabel = ({ Icon, label, tone = T.textDim, compactFrame = false }) => (
+const MarketToolbarLabel = ({ Icon, label, tone = CSS_COLOR.textDim, compactFrame = false }) => (
   <AppTooltip content={label}><span
     style={{
       display: "inline-flex",
@@ -485,7 +488,7 @@ const MarketToolbarLabel = ({ Icon, label, tone = T.textDim, compactFrame = fals
       flex: "0 0 auto",
       border: "none",
       borderRadius: dim(RADII.xs),
-      background: `${tone}0f`,
+      background: cssColorAlpha(tone, "0f"),
       color: tone,
     }}
   >
@@ -496,19 +499,19 @@ const MarketToolbarLabel = ({ Icon, label, tone = T.textDim, compactFrame = fals
 const getNotificationLaneTone = (item) => {
   if (item.kind === "alert") {
     return item.tone === "profit"
-      ? { label: "ALERT", color: T.green, background: activityToneBackground(T.green) }
-      : { label: "RISK", color: T.red, background: activityToneBackground(T.red) };
+      ? { label: "ALERT", color: CSS_COLOR.green, background: activityToneBackground(CSS_COLOR.green) }
+      : { label: "RISK", color: CSS_COLOR.red, background: activityToneBackground(CSS_COLOR.red) };
   }
   if (item.kind === "calendar") {
-    return { label: "CAL", color: T.amber, background: activityToneBackground(T.amber) };
+    return { label: "CAL", color: CSS_COLOR.amber, background: activityToneBackground(CSS_COLOR.amber) };
   }
-  return { label: "NEWS", color: T.accent, background: activityToneBackground(T.accent) };
+  return { label: "NEWS", color: CSS_COLOR.accent, background: activityToneBackground(CSS_COLOR.accent) };
 };
 
 const getSignalLaneTone = (item) =>
   item.direction === "sell"
-    ? { label: "SELL", color: T.red, background: activityToneBackground(T.red) }
-    : { label: "BUY", color: T.green, background: activityToneBackground(T.green) };
+    ? { label: "SELL", color: CSS_COLOR.red, background: activityToneBackground(CSS_COLOR.red) }
+    : { label: "BUY", color: CSS_COLOR.green, background: activityToneBackground(CSS_COLOR.green) };
 
 const CompactRowText = ({ children }) => (
   <span
@@ -517,7 +520,7 @@ const CompactRowText = ({ children }) => (
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
-      color: T.text,
+      color: CSS_COLOR.text,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.medium,
@@ -547,11 +550,11 @@ const MarketSignalRow = ({ item, index, maxItems, onClick, compactFrame = false 
       }}
       onMouseEnter={(event) => {
         event.currentTarget.style.background = activityToneHoverBackground(tone.color);
-        event.currentTarget.style.borderColor = `${tone.color}40`;
+        event.currentTarget.style.borderColor = cssColorAlpha(tone.color, "40");
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
-        event.currentTarget.style.borderColor = T.borderLight;
+        event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
       }}
     >
       {compactFrame ? null : <SeverityRail tone={tone.color} />}
@@ -571,7 +574,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick, compactFrame = false 
         <span
           style={{
             display: "block",
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -586,7 +589,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick, compactFrame = false 
         <span
           style={{
             display: "block",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             lineHeight: 1.2,
@@ -603,7 +606,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick, compactFrame = false 
       {compactFrame ? null : (
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -637,14 +640,14 @@ const getUnusualLaneTone = (item) => {
   const isCall = right === "c" || right === "call" || /call/.test(right);
   const color =
     isBearish && !isBullish
-      ? T.red
+      ? CSS_COLOR.red
       : isBullish && !isBearish
-        ? T.green
+        ? CSS_COLOR.green
         : isPut
-          ? T.red
+          ? CSS_COLOR.red
           : isCall
-            ? T.green
-            : T.amber;
+            ? CSS_COLOR.green
+            : CSS_COLOR.amber;
   return {
     label: isPut ? "PUT" : isCall ? "CALL" : "FLOW",
     color,
@@ -669,11 +672,11 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick, compactFrame = false
       }}
       onMouseEnter={(event) => {
         event.currentTarget.style.background = activityToneHoverBackground(tone.color);
-        event.currentTarget.style.borderColor = `${tone.color}40`;
+        event.currentTarget.style.borderColor = cssColorAlpha(tone.color, "40");
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
-        event.currentTarget.style.borderColor = T.borderLight;
+        event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
       }}
     >
       {compactFrame ? null : <SeverityRail tone={tone.color} />}
@@ -693,7 +696,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick, compactFrame = false
         <span
           style={{
             display: "block",
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -708,7 +711,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick, compactFrame = false
         <span
           style={{
             display: "block",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             lineHeight: 1.2,
@@ -725,7 +728,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick, compactFrame = false
       {compactFrame ? null : (
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -763,11 +766,11 @@ const MarketNotificationRow = ({
       }}
       onMouseEnter={(event) => {
         event.currentTarget.style.background = activityToneHoverBackground(tone.color);
-        event.currentTarget.style.borderColor = `${tone.color}40`;
+        event.currentTarget.style.borderColor = cssColorAlpha(tone.color, "40");
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = tone.background;
-        event.currentTarget.style.borderColor = T.borderLight;
+        event.currentTarget.style.borderColor = CSS_COLOR.borderLight;
       }}
     >
       {compactFrame ? null : <SeverityRail tone={tone.color} />}
@@ -787,7 +790,7 @@ const MarketNotificationRow = ({
         <span
           style={{
             display: "block",
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.medium,
@@ -802,7 +805,7 @@ const MarketNotificationRow = ({
         <span
           style={{
             display: "block",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             lineHeight: 1.2,
@@ -819,7 +822,7 @@ const MarketNotificationRow = ({
       {compactFrame ? null : (
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -951,7 +954,7 @@ export const MarketActivityPanel = ({
     title: `${row.directionLabel} · ${row.symbol}`,
     detail: `${row.timeframe} · ${formatQuotePrice(row.price)}`,
     meta: row.time ? formatRelativeTimeShort(row.time) : row.source.toUpperCase(),
-    color: row.direction === "buy" ? T.green : T.red,
+    color: row.direction === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
   }));
   const unusualRows = lanes.unusual.map((row) => {
     const scoreLabel =
@@ -963,7 +966,7 @@ export const MarketActivityPanel = ({
       title: `${row.symbol}${row.contract ? ` ${row.contract}` : ""}`,
       detail: `${row.side || "FLOW"} ${row.type || ""} · ${fmtM(row.premium)}${scoreLabel}`,
       meta: row.time ? formatRelativeTimeShort(row.time) : "now",
-      color: T.amber,
+      color: CSS_COLOR.amber,
     };
   });
   const notificationRows = lanes.notifications.map((row) => ({
@@ -971,11 +974,11 @@ export const MarketActivityPanel = ({
     color:
       row.kind === "alert"
         ? row.tone === "profit"
-          ? T.green
-          : T.red
+          ? CSS_COLOR.green
+          : CSS_COLOR.red
         : row.kind === "calendar"
-          ? T.green
-          : T.accent,
+          ? CSS_COLOR.green
+          : CSS_COLOR.accent,
   }));
   const notificationTypeCounts = notificationRows.reduce(
     (counts, row) => {
@@ -1013,7 +1016,7 @@ export const MarketActivityPanel = ({
             <span
               style={{
                 fontSize: textSize("body"),
-                color: signalMonitorPending ? T.amber : T.textDim,
+                color: signalMonitorPending ? CSS_COLOR.amber : CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.medium,
                 letterSpacing: 0,
@@ -1066,12 +1069,12 @@ export const MarketActivityPanel = ({
                 active={Boolean(signalMonitorProfile?.enabled && !monitorDegraded)}
                 tone={
                   monitorRuntimeFallback
-                    ? T.amber
+                    ? CSS_COLOR.amber
                     : monitorDegraded
-                    ? T.red
+                    ? CSS_COLOR.red
                     : signalMonitorProfile?.enabled
-                      ? T.green
-                      : T.textDim
+                      ? CSS_COLOR.green
+                      : CSS_COLOR.textDim
                 }
                 label={
                   monitorRuntimeFallback
@@ -1092,7 +1095,7 @@ export const MarketActivityPanel = ({
                 Icon={RefreshCw}
                 active={Boolean(signalMonitorPending)}
                 disabled={signalMonitorPending}
-                tone={signalMonitorPending ? T.amber : T.accent}
+                tone={signalMonitorPending ? CSS_COLOR.amber : CSS_COLOR.accent}
                 label="Scan signal monitor now"
                 onClick={onScanNow}
                 compactFrame={compactFrame}
@@ -1200,7 +1203,7 @@ export const MarketActivityPanel = ({
               <MarketToolbarLabel
                 Icon={Gauge}
                 label="Flow threshold"
-                tone={T.amber}
+                tone={CSS_COLOR.amber}
                 compactFrame={compactFrame}
               />
               <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual."><select
@@ -1234,12 +1237,12 @@ export const MarketActivityPanel = ({
                     flex: "1 1 auto",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
-                    color: thresholdMatches ? T.textDim : T.amber,
+                    color: thresholdMatches ? CSS_COLOR.textDim : CSS_COLOR.amber,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.medium,
-                    border: `1px solid ${(thresholdMatches ? T.textDim : T.amber)}33`,
-                    background: `${thresholdMatches ? T.textDim : T.amber}0f`,
+                    border: `1px solid ${cssColorAlpha(thresholdMatches ? CSS_COLOR.textDim : CSS_COLOR.amber, "33")}`,
+                    background: cssColorAlpha(thresholdMatches ? CSS_COLOR.textDim : CSS_COLOR.amber, "0f"),
                     padding: sp("4px 5px"),
                     borderRadius: dim(RADII.xs),
                     whiteSpace: "nowrap",
@@ -1296,16 +1299,16 @@ export const MarketActivityPanel = ({
           controls={
             <>
               {[
-                [compactFrame ? "A" : "ALERT", notificationTypeCounts.alerts, T.red],
-                [compactFrame ? "N" : "NEWS", notificationTypeCounts.news, T.accent],
-                [compactFrame ? "C" : "CAL", notificationTypeCounts.calendar, T.amber],
+                [compactFrame ? "A" : "ALERT", notificationTypeCounts.alerts, CSS_COLOR.red],
+                [compactFrame ? "N" : "NEWS", notificationTypeCounts.news, CSS_COLOR.accent],
+                [compactFrame ? "C" : "CAL", notificationTypeCounts.calendar, CSS_COLOR.amber],
               ].map(([label, count, color]) => (
                 <span
                   key={label}
                   style={{
                     color,
-                    border: `1px solid ${color}33`,
-                    background: `${color}0f`,
+                    border: `1px solid ${cssColorAlpha(color, "33")}`,
+                    background: cssColorAlpha(color, "0f"),
                     borderRadius: dim(RADII.xs),
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),

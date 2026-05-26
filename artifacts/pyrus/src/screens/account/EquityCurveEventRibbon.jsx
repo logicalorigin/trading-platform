@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -6,24 +13,24 @@ import {
   Minus,
   Plus,
 } from "lucide-react";
-import { RADII, T, dim } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, RADII, T, dim } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const RIBBON_HEIGHT = 22;
 const GLYPH_SIZE = 14;
 
 const toneColor = (value) => {
-  if (value == null || Number.isNaN(Number(value))) return T.textDim;
-  return Number(value) >= 0 ? T.green : T.red;
+  if (value == null || Number.isNaN(Number(value))) return CSS_COLOR.textDim;
+  return Number(value) >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
 };
 
 export const equityEventColor = (event) => {
-  if (event?.type === "withdrawal") return T.red;
-  if (event?.type === "dividend") return T.accent;
-  if (event?.type === "trade_buy") return T.cyan;
+  if (event?.type === "withdrawal") return CSS_COLOR.red;
+  if (event?.type === "dividend") return CSS_COLOR.accent;
+  if (event?.type === "trade_buy") return CSS_COLOR.cyan;
   if (event?.type === "trade_sell") return toneColor(event?.realizedPnl ?? event?.amount);
-  if (event?.type === "deposit") return T.green;
-  return T.textSec;
+  if (event?.type === "deposit") return CSS_COLOR.green;
+  return CSS_COLOR.textSec;
 };
 
 export const equityEventTitle = (event) => {
@@ -134,7 +141,7 @@ const EquityCurveEventRibbonInner = ({
         position: "relative",
         width: "100%",
         height: dim(compact ? RIBBON_HEIGHT - 4 : RIBBON_HEIGHT),
-        borderTop: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
       }}
     >
       {visiblePositions.map(({ key, event, left }) => {

@@ -6,7 +6,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const WL_DOTS = 16;
 
@@ -28,7 +28,7 @@ const renderDots = (winCount, lossCount) => {
 };
 
 const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
-  const accent = tone || T.text;
+  const accent = tone || CSS_COLOR.text;
   return (
     <div
       data-testid={`algo-hero-side-${String(label).toLowerCase()}`}
@@ -38,7 +38,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
         alignItems: "center",
         gap: sp(10),
         padding: sp("11px 13px"),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         border: "none",
         borderRadius: dim(RADII.md),
         minWidth: 0,
@@ -49,7 +49,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
           width: dim(30),
           height: dim(30),
           borderRadius: dim(RADII.pill),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
           color: accent,
           display: "flex",
           alignItems: "center",
@@ -62,7 +62,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
       <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
         <div
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
@@ -96,7 +96,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
           {detail ? (
             <span
               style={{
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: fs(8),
                 overflow: "hidden",
@@ -114,7 +114,7 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
 };
 
 const InlineIndicator = ({ icon: Icon, label, value, tone }) => {
-  const accent = tone || T.text;
+  const accent = tone || CSS_COLOR.text;
   return (
     <div
       data-testid={`algo-hero-inline-${String(label).toLowerCase()}`}
@@ -124,7 +124,7 @@ const InlineIndicator = ({ icon: Icon, label, value, tone }) => {
         alignItems: "baseline",
         gap: sp(3),
         padding: sp("4px 8px"),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         borderRadius: dim(RADII.pill),
         flexShrink: 0,
         minWidth: 0,
@@ -167,10 +167,10 @@ export const HeroKpi = ({
 }) => {
   const pnlTone =
     Number(pnlValue) < 0
-      ? T.red
+      ? CSS_COLOR.red
       : Number(pnlValue) > 0
-        ? T.green
-        : T.text;
+        ? CSS_COLOR.green
+        : CSS_COLOR.text;
   const TrendIcon =
     Number(pnlValue) < 0
       ? TrendingDown
@@ -179,10 +179,10 @@ export const HeroKpi = ({
         : Activity;
   const rulesTone =
     rulesState === "FAIL"
-      ? T.red
+      ? CSS_COLOR.red
       : rulesState === "REVIEW"
-        ? T.amber
-        : T.green;
+        ? CSS_COLOR.amber
+        : CSS_COLOR.green;
   const RulesIcon = rulesState === "FAIL" ? CircleAlert : ShieldCheck;
   const dots = renderDots(wins, losses);
 
@@ -201,7 +201,7 @@ export const HeroKpi = ({
       <div
         style={{
           position: "relative",
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
           border: "none",
           borderRadius: dim(RADII.md),
           padding: sp(narrow ? "16px 18px" : "22px 26px"),
@@ -223,7 +223,7 @@ export const HeroKpi = ({
         >
           <span
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               fontSize: fs(10),
               letterSpacing: "0.04em",
@@ -287,13 +287,13 @@ export const HeroKpi = ({
                   borderRadius: dim(RADII.pill),
                   background:
                     kind === "win"
-                      ? T.green
+                      ? CSS_COLOR.green
                       : kind === "loss"
-                        ? T.red
+                        ? CSS_COLOR.red
                         : "transparent",
                   border:
                     kind === "empty"
-                      ? `1px solid ${T.border}`
+                      ? `1px solid ${CSS_COLOR.border}`
                       : `1px solid transparent`,
                   flexShrink: 0,
                 }}
@@ -302,7 +302,7 @@ export const HeroKpi = ({
           </div>
           <div
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: fs(8),
               letterSpacing: "0.04em",
@@ -329,13 +329,13 @@ export const HeroKpi = ({
             icon={Activity}
             label="Active"
             value={activePositions ?? 0}
-            tone={activePositions > 0 ? T.cyan : T.textDim}
+            tone={activePositions > 0 ? CSS_COLOR.cyan : CSS_COLOR.textDim}
           />
           <InlineIndicator
             icon={Sparkles}
             label="Fresh"
             value={freshSignals ?? 0}
-            tone={freshSignals > 0 ? T.green : T.textDim}
+            tone={freshSignals > 0 ? CSS_COLOR.green : CSS_COLOR.textDim}
           />
           <InlineIndicator
             icon={RulesIcon}
@@ -347,7 +347,7 @@ export const HeroKpi = ({
             icon={Activity}
             label="Candidates"
             value={candidates ?? 0}
-            tone={candidates > 0 ? T.cyan : T.textDim}
+            tone={candidates > 0 ? CSS_COLOR.cyan : CSS_COLOR.textDim}
           />
         </div>
       ) : (
@@ -365,14 +365,14 @@ export const HeroKpi = ({
             label="Active"
             value={activePositions ?? 0}
             detail={unrealizedDisplay ? unrealizedDisplay : null}
-            tone={activePositions > 0 ? T.cyan : T.textDim}
+            tone={activePositions > 0 ? CSS_COLOR.cyan : CSS_COLOR.textDim}
           />
           <SidebarTile
             icon={Sparkles}
             label="Fresh"
             value={freshSignals ?? 0}
             detail={freshSignalsDetail}
-            tone={freshSignals > 0 ? T.green : T.textDim}
+            tone={freshSignals > 0 ? CSS_COLOR.green : CSS_COLOR.textDim}
           />
           <SidebarTile
             icon={RulesIcon}
@@ -386,7 +386,7 @@ export const HeroKpi = ({
             label="Candidates"
             value={candidates ?? 0}
             detail={candidatesDetail}
-            tone={candidates > 0 ? T.cyan : T.textDim}
+            tone={candidates > 0 ? CSS_COLOR.cyan : CSS_COLOR.textDim}
           />
         </div>
       )}

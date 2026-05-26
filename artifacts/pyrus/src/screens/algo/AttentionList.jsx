@@ -1,4 +1,4 @@
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const severityWeight = (severity) => {
   if (severity === "critical") return 0;
@@ -13,9 +13,9 @@ const severityIcon = (severity) => {
 };
 
 const severityColor = (severity) => {
-  if (severity === "critical") return T.red;
-  if (severity === "warning") return T.amber;
-  return T.cyan;
+  if (severity === "critical") return CSS_COLOR.red;
+  if (severity === "warning") return CSS_COLOR.amber;
+  return CSS_COLOR.cyan;
 };
 
 export const AttentionList = ({ items, emptyMessage }) => {
@@ -27,7 +27,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
     return (
       <div
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           lineHeight: 1.45,
@@ -62,7 +62,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
               padding: sp("8px 10px"),
               border: "none",
               borderRadius: dim(RADII.md),
-              background: `${tone}10`,
+              background: cssColorAlpha(tone, "10"),
               minWidth: 0,
             }}
           >
@@ -101,7 +101,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
                 {item?.kindLabel ? (
                   <span
                     style={{
-                      color: T.textMuted,
+                      color: CSS_COLOR.textMuted,
                       fontFamily: T.sans,
                       fontSize: fs(7),
                       letterSpacing: "0.04em",
@@ -115,7 +115,7 @@ export const AttentionList = ({ items, emptyMessage }) => {
               {item?.summary ? (
                 <div
                   style={{
-                    color: T.textDim,
+                    color: CSS_COLOR.textDim,
                     fontFamily: T.sans,
                     fontSize: fs(8),
                     lineHeight: 1.35,

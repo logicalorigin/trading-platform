@@ -2,6 +2,42 @@ import { FONT_WEIGHTS, MISSING_VALUE, T, dim, sp, textSize } from "../../lib/uiT
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
@@ -26,25 +62,25 @@ export const HeaderAccountStrip = ({
       label: "Net Liq",
       shortLabel: "NLV",
       value: maskAccountValue(primaryAccount?.netLiquidation),
-      color: T.text,
+      color: CSS_COLOR.text,
     },
     {
       label: "Buying Power",
       shortLabel: "BP",
       value: maskAccountValue(primaryAccount?.buyingPower),
-      color: T.green,
+      color: CSS_COLOR.green,
     },
     {
       label: "Cash",
       shortLabel: "Cash",
       value: maskAccountValue(primaryAccount?.cash),
-      color: T.textSec,
+      color: CSS_COLOR.textSec,
     },
   ].filter((metric) => !minimal && !(compact && metric.shortLabel === "Cash"));
   const accountLabel = minimal || compact ? "" : dense ? "Acct" : "Account";
   const labelStyle = {
     fontSize: textSize(dense || compact || minimal ? "micro" : "caption"),
-    color: T.textMuted,
+    color: CSS_COLOR.textMuted,
     fontWeight: FONT_WEIGHTS.medium,
     letterSpacing: dense || compact || minimal ? 0 : "0.04em",
     textTransform: "uppercase",
@@ -85,7 +121,7 @@ export const HeaderAccountStrip = ({
         ...surfaceStyle,
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = T.accentHoverBg;
+        event.currentTarget.style.background = CSS_COLOR.accentHoverBg;
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = "transparent";
@@ -113,7 +149,7 @@ export const HeaderAccountStrip = ({
               minWidth: minimal ? 0 : "max-content",
               background: "transparent",
               border: "none",
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: textSize(dense || compact || minimal ? "body" : "bodyStrong"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.medium,
@@ -130,7 +166,7 @@ export const HeaderAccountStrip = ({
             ))}
           </select>
         ) : (
-          <span style={{ ...valueStyle, color: T.textDim }}>
+          <span style={{ ...valueStyle, color: CSS_COLOR.textDim }}>
             {primaryAccountId || MISSING_VALUE}
           </span>
         )}
@@ -147,7 +183,7 @@ export const HeaderAccountStrip = ({
             minWidth: "max-content",
             flex: "0 0 max-content",
             paddingLeft: sp(dense || compact ? 5 : 8),
-            borderLeft: `1px solid ${T.borderLight}`,
+            borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
           }}
         >
           <span style={labelStyle}>{dense || compact ? metric.shortLabel : metric.label}</span>

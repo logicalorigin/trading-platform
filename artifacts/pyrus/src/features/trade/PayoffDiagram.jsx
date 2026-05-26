@@ -1,5 +1,8 @@
-import { isFiniteNumber } from "../../lib/formatters";
 import {
+  isFiniteNumber,
+} from "../../lib/formatters";
+import {
+  CSS_COLOR,
   MISSING_VALUE,
   RADII,
   T,
@@ -111,7 +114,7 @@ export const PayoffDiagram = ({
     v >= 1000 ? `$${(v / 1000).toFixed(1)}K` : `$${Math.round(v)}`;
 
   return (
-    <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: dim(RADII.sm), padding: sp(8) }}>
+    <div style={{ background: CSS_COLOR.bg1, border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.sm), padding: sp(8) }}>
       <div
         style={{
           display: "flex",
@@ -120,20 +123,20 @@ export const PayoffDiagram = ({
           padding: sp("0 4px 2px"),
           fontSize: fs(7),
           fontFamily: T.sans,
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           letterSpacing: "0.04em",
         }}
       >
         <span>P&L AT EXPIRATION</span>
         <span style={{ display: "flex", gap: sp(6) }}>
           <span>
-            <span style={{ color: T.accent }}>━</span> now{" "}
+            <span style={{ color: CSS_COLOR.accent }}>━</span> now{" "}
             {isFiniteNumber(currentPrice)
               ? currentPrice.toFixed(2)
               : MISSING_VALUE}
           </span>
           <span>
-            <span style={{ color: T.amber }}>┃</span> strike {strike}
+            <span style={{ color: CSS_COLOR.amber }}>┃</span> strike {strike}
           </span>
         </span>
       </div>
@@ -149,7 +152,7 @@ export const PayoffDiagram = ({
           x2={padL + innerW}
           y1={y0}
           y2={y0}
-          stroke={T.textMuted}
+          stroke={CSS_COLOR.textMuted}
           strokeWidth={0.5}
           strokeDasharray="2 2"
           opacity={0.5}
@@ -158,7 +161,7 @@ export const PayoffDiagram = ({
         {/* Filled areas under each segment */}
         {segments.map((seg, i) => {
           if (seg.points.length < 2) return null;
-          const fillColor = seg.sign === "+" ? T.green : T.red;
+          const fillColor = seg.sign === "+" ? CSS_COLOR.green : CSS_COLOR.red;
           const linePath = seg.points
             .map((p) => `${xOf(p.s).toFixed(1)},${yOf(p.p).toFixed(1)}`)
             .join(" L ");
@@ -182,7 +185,7 @@ export const PayoffDiagram = ({
             x2={xOf(strike)}
             y1={padT}
             y2={padT + innerH}
-            stroke={T.amber}
+            stroke={CSS_COLOR.amber}
             strokeWidth={0.8}
             strokeDasharray="2 2"
             opacity={0.7}
@@ -197,7 +200,7 @@ export const PayoffDiagram = ({
               x2={xOf(breakeven)}
               y1={padT}
               y2={padT + innerH}
-              stroke={T.textDim}
+              stroke={CSS_COLOR.textDim}
               strokeWidth={0.6}
               strokeDasharray="3 2"
             />
@@ -206,7 +209,7 @@ export const PayoffDiagram = ({
               y={padT - 4}
               fontSize={fs(8)}
               fontFamily={T.sans}
-              fill={T.textDim}
+              fill={CSS_COLOR.textDim}
               textAnchor="middle"
               fontWeight={400}
             >
@@ -222,7 +225,7 @@ export const PayoffDiagram = ({
             x2={xOf(currentPrice)}
             y1={padT}
             y2={padT + innerH}
-            stroke={T.accent}
+            stroke={CSS_COLOR.accent}
             strokeWidth={1.2}
             opacity={0.9}
           />
@@ -231,7 +234,7 @@ export const PayoffDiagram = ({
         {/* Curve segments */}
         {segments.map((seg, i) => {
           if (seg.points.length < 2) return null;
-          const lineColor = seg.sign === "+" ? T.green : T.red;
+          const lineColor = seg.sign === "+" ? CSS_COLOR.green : CSS_COLOR.red;
           const lineD =
             "M " +
             seg.points
@@ -255,7 +258,7 @@ export const PayoffDiagram = ({
           y={padT - 2}
           fontSize={fs(8)}
           fontFamily={T.sans}
-          fill={T.green}
+          fill={CSS_COLOR.green}
           textAnchor="end"
           fontWeight={400}
         >
@@ -267,7 +270,7 @@ export const PayoffDiagram = ({
           y={H - 4}
           fontSize={fs(8)}
           fontFamily={T.sans}
-          fill={T.red}
+          fill={CSS_COLOR.red}
           textAnchor="end"
           fontWeight={400}
         >
@@ -280,7 +283,7 @@ export const PayoffDiagram = ({
           x2={padL + innerW}
           y1={padT + innerH}
           y2={padT + innerH}
-          stroke={T.border}
+          stroke={CSS_COLOR.border}
           strokeWidth={0.5}
         />
         {/* X axis ticks */}
@@ -289,7 +292,7 @@ export const PayoffDiagram = ({
           y={H - 4}
           fontSize={fs(7)}
           fontFamily={T.sans}
-          fill={T.textMuted}
+          fill={CSS_COLOR.textMuted}
         >
           {xMin.toFixed(0)}
         </text>
@@ -298,7 +301,7 @@ export const PayoffDiagram = ({
           y={H - 4}
           fontSize={fs(7)}
           fontFamily={T.sans}
-          fill={T.textMuted}
+          fill={CSS_COLOR.textMuted}
           textAnchor="end"
         >
           {xMax.toFixed(0)}

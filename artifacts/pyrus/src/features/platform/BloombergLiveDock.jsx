@@ -35,6 +35,45 @@ import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 const BLOOMBERG_LIVE_URL = "https://www.bloomberg.com/live/us";
 const BLOOMBERG_HLS_SOURCES = [
   {
@@ -297,7 +336,7 @@ const RoundIconButton = ({
             : prominent
               ? "color-mix(in srgb, var(--ra-surface-0) 82%, transparent)"
               : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
-        color: T.onAccent,
+        color: CSS_COLOR.onAccent,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.45 : 1,
         backdropFilter: "blur(18px)",
@@ -400,7 +439,7 @@ const AudioControlButton = ({
           background: hovered
             ? "color-mix(in srgb, var(--ra-surface-1) 78%, transparent)"
             : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
-          color: T.onAccent,
+          color: CSS_COLOR.onAccent,
           cursor: "pointer",
           opacity: 1,
           backdropFilter: "blur(18px)",
@@ -466,7 +505,7 @@ const AudioControlButton = ({
             fontSize: fs(7),
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
-            color: muted ? T.amber : T.onAccent,
+            color: muted ? CSS_COLOR.amber : CSS_COLOR.onAccent,
             minWidth: dim(24),
             textAlign: "center",
           }}
@@ -488,7 +527,7 @@ const AudioControlButton = ({
             direction: "rtl",
             width: dim(18),
             height: dim(92),
-            accentColor: muted ? T.amber : T.green,
+            accentColor: muted ? CSS_COLOR.amber : CSS_COLOR.green,
             cursor: "pointer",
             margin: 0,
           }}
@@ -536,7 +575,7 @@ const MenuSectionLabel = ({ children }) => (
     style={{
       fontSize: fs(6.5),
       fontFamily: T.sans,
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       letterSpacing: "0.12em",
       textTransform: "uppercase",
       padding: sp("6px 10px 2px"),
@@ -567,8 +606,8 @@ const MenuActionButton = ({
 }) => {
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
-  const activeColor = accent ? T.accent : T.onAccent;
-  const idleColor = disabled ? T.textMuted : accent ? T.accent : T.textSec;
+  const activeColor = accent ? CSS_COLOR.accent : CSS_COLOR.onAccent;
+  const idleColor = disabled ? CSS_COLOR.textMuted : accent ? CSS_COLOR.accent : CSS_COLOR.textSec;
   const foregroundColor = active || hovered ? activeColor : idleColor;
 
   return (
@@ -602,7 +641,7 @@ const MenuActionButton = ({
         borderRadius: dim(RADII.lg),
         background: active
           ? accent
-            ? `${T.accent}1c`
+            ? `${cssColorMix(CSS_COLOR.accent, 11)}`
             : "color-mix(in srgb, var(--ra-text-primary) 12%, transparent)"
           : hovered
             ? "color-mix(in srgb, var(--ra-text-primary) 8%, transparent)"
@@ -640,7 +679,7 @@ const MenuActionButton = ({
               justifyContent: "center",
               background: active
                 ? accent
-                  ? `${T.accent}24`
+                  ? `${cssColorMix(CSS_COLOR.accent, 14)}`
                   : "color-mix(in srgb, var(--ra-text-primary) 16%, transparent)"
                 : hovered
                   ? "color-mix(in srgb, var(--ra-text-primary) 12%, transparent)"
@@ -696,11 +735,11 @@ const MenuSpeedButton = ({
         border: "none",
         borderRadius: dim(RADII.md),
         background: active
-          ? `${T.green}22`
+          ? `${cssColorMix(CSS_COLOR.green, 13)}`
           : hovered
             ? "color-mix(in srgb, var(--ra-text-primary) 5%, transparent)"
             : "color-mix(in srgb, var(--ra-text-primary) 3%, transparent)",
-        color: disabled ? T.textMuted : active ? T.green : T.textSec,
+        color: disabled ? CSS_COLOR.textMuted : active ? CSS_COLOR.green : CSS_COLOR.textSec,
         fontSize: fs(8),
         fontFamily: T.sans,
         fontWeight: FONT_WEIGHTS.regular,
@@ -720,7 +759,7 @@ const MenuSpeedButton = ({
   );
 };
 
-const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
+const MenuInfoRow = ({ label, value, tone = CSS_COLOR.textSec }) => (
   <div
     style={{
       display: "flex",
@@ -733,7 +772,7 @@ const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
       fontSize: fs(7),
     }}
   >
-    <span style={{ color: T.textDim }}>{label}</span>
+    <span style={{ color: CSS_COLOR.textDim }}>{label}</span>
     <span
       style={{
         color: tone,
@@ -2391,28 +2430,28 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   : `+${liveLagSeconds.toFixed(liveLagSeconds >= 10 ? 0 : 1)}s`;
   const topStatusColor =
     !playbackSessionEnabled
-      ? T.textSec
+      ? CSS_COLOR.textSec
       : playerStatus === "error"
-        ? T.red
+        ? CSS_COLOR.red
         : playerStatus !== "live"
-          ? T.amber
+          ? CSS_COLOR.amber
           : audioBlocked
-            ? T.amber
+            ? CSS_COLOR.amber
             : atLiveEdge && !playbackState.paused
-              ? T.green
-              : T.textSec;
+              ? CSS_COLOR.green
+              : CSS_COLOR.textSec;
   const topStatusBackground =
     !playbackSessionEnabled
-      ? `${T.bg2}f0`
+      ? `${cssColorMix(CSS_COLOR.bg2, 94)}`
       : playerStatus === "error"
-        ? T.redBg
+        ? CSS_COLOR.redBg
         : playerStatus !== "live"
-          ? T.amberBg
+          ? CSS_COLOR.amberBg
           : audioBlocked
-            ? T.amberBg
+            ? CSS_COLOR.amberBg
             : atLiveEdge && !playbackState.paused
-              ? T.greenBg
-              : `${T.bg2}f0`;
+              ? CSS_COLOR.greenBg
+              : `${cssColorMix(CSS_COLOR.bg2, 94)}`;
   const scrubberValue =
     hasBufferedWindow && bufferedWindowSeconds > 0
       ? clampNumber(
@@ -2426,7 +2465,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
   const expandedChromeVisible = controlsVisible || shouldForceControlsVisible;
   const activeStreamSource = getBloombergSourceAt(streamSourceIndex);
   const streamErrorTone =
-    streamDiagnostics.lastErrorKind || playerStatus === "error" ? T.red : T.textSec;
+    streamDiagnostics.lastErrorKind || playerStatus === "error" ? CSS_COLOR.red : CSS_COLOR.textSec;
   const streamHealthLabel =
     playerStatus === "live"
       ? playbackState.paused
@@ -2457,9 +2496,9 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             padding: sp("8px 12px"),
             border: "none",
             borderRadius: dim(RADII.pill),
-            background: T.accent,
+            background: CSS_COLOR.accent,
             boxShadow: ELEVATION.lg,
-            color: T.onAccent,
+            color: CSS_COLOR.onAccent,
             cursor: "pointer",
           }}
         >
@@ -2536,7 +2575,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 }
               : {
                   position: "relative",
-                  background: T.bg0,
+                  background: CSS_COLOR.bg0,
                   aspectRatio: "16 / 9",
                   minHeight: dim(190),
                   borderRadius: dim(RADII.xl),
@@ -2555,13 +2594,13 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     width: 1,
                     height: 1,
                     display: "block",
-                    background: T.bg0,
+                    background: CSS_COLOR.bg0,
                   }
                 : {
                     width: "100%",
                     height: "100%",
                     display: "block",
-                    background: T.bg0,
+                    background: CSS_COLOR.bg0,
                   }
             }
           />
@@ -2609,13 +2648,13 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                       backdropFilter: "blur(10px)",
                     }}
                   >
-                    <Tv size={dim(12)} color={T.onAccent} />
+                    <Tv size={dim(12)} color={CSS_COLOR.onAccent} />
                     <span
                       style={{
                         fontSize: fs(8),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
-                        color: T.onAccent,
+                        color: CSS_COLOR.onAccent,
                       }}
                     >
                       Bloomberg
@@ -2641,7 +2680,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         padding: sp("3px 6px"),
                         border: `1px solid color-mix(in srgb, var(--ra-color-pnl-positive) 30%, transparent)`,
                         background: "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
-                        color: T.green,
+                        color: CSS_COLOR.green,
                         fontSize: fs(7),
                         fontFamily: T.sans,
                         backdropFilter: "blur(10px)",
@@ -2754,7 +2793,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                           padding: sp("4px 9px"),
                           borderRadius: dim(RADII.pill),
                           background: "color-mix(in srgb, var(--ra-surface-0) 72%, transparent)",
-                          color: audioBlocked ? T.amber : T.red,
+                          color: audioBlocked ? CSS_COLOR.amber : CSS_COLOR.red,
                           fontSize: fs(8),
                           fontFamily: T.sans,
                           fontWeight: FONT_WEIGHTS.regular,
@@ -2811,7 +2850,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                   onChange={(event) => handleScrubToValue(Number(event.target.value))}
                   style={{
                     width: "100%",
-                    accentColor: T.onAccent,
+                    accentColor: CSS_COLOR.onAccent,
                     cursor: hasBufferedWindow ? "pointer" : "default",
                   }}
                 />
@@ -2845,7 +2884,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                           whiteSpace: "nowrap",
                           fontSize: fs(7),
                           fontFamily: T.sans,
-                          color: T.textDim,
+                          color: CSS_COLOR.textDim,
                         }}
                       >
                         {errorDetail}
@@ -2872,7 +2911,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                         background: atLiveEdge
                           ? "color-mix(in srgb, var(--ra-color-pnl-positive) 22%, transparent)"
                           : "color-mix(in srgb, var(--ra-surface-0) 62%, transparent)",
-                        color: atLiveEdge ? T.green : T.onAccent,
+                        color: atLiveEdge ? CSS_COLOR.green : CSS_COLOR.onAccent,
                         fontSize: fs(7),
                         fontFamily: T.sans,
                         fontWeight: FONT_WEIGHTS.regular,
@@ -3077,9 +3116,9 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
               <div
                 style={{
                   padding: sp("8px 10px"),
-                  border: `1px solid ${playerStatus === "error" ? T.red : T.border}`,
-                  background: `${T.bg1}ee`,
-                  color: T.textSec,
+                  border: `1px solid ${playerStatus === "error" ? CSS_COLOR.red : CSS_COLOR.border}`,
+                  background: `${cssColorMix(CSS_COLOR.bg1, 93)}`,
+                  color: CSS_COLOR.textSec,
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   textAlign: "center",
@@ -3093,7 +3132,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                     ? "Audio autoplay was blocked. Click anywhere in the app or use Play With Audio to restore sound."
                     : "Connecting to Bloomberg live stream..."}
                 {errorDetail ? (
-                  <div style={{ marginTop: sp(6), color: T.textDim }}>{errorDetail}</div>
+                  <div style={{ marginTop: sp(6), color: CSS_COLOR.textDim }}>{errorDetail}</div>
                 ) : null}
               </div>
             </div>
@@ -3110,8 +3149,8 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
             gap: sp(8),
             padding: sp("8px 12px"),
             borderRadius: dim(RADII.pill),
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
             boxShadow: ELEVATION.lg,
             flexWrap: "wrap",
           }}
@@ -3124,7 +3163,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
               flexWrap: "wrap",
               fontSize: fs(8),
               fontFamily: T.sans,
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               minWidth: 0,
             }}
           >
@@ -3133,7 +3172,7 @@ export default function BloombergLiveDock({ initialOpen = false } = {}) {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: sp(5),
-                color: T.onAccent,
+                color: CSS_COLOR.onAccent,
                 fontWeight: FONT_WEIGHTS.regular,
               }}
             >

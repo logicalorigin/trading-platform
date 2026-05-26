@@ -1,5 +1,5 @@
 import React from "react";
-import { T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, T } from "../../lib/uiTokens.jsx";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog.jsx";
 
 export const formatLiveBrokerActionError = (error) => {
@@ -18,7 +18,7 @@ export const BrokerActionConfirmDialog = ({
   detail,
   lines = [],
   confirmLabel = "CONFIRM LIVE ACTION",
-  confirmTone = T.red,
+  confirmTone = CSS_COLOR.red,
   pending = false,
   error = null,
   onConfirm,

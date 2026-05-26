@@ -1,5 +1,17 @@
-import { useMemo } from "react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  useMemo,
+} from "react";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { formatAccountMoney, mutedLabelStyle } from "./accountUtils";
 
 const TRADING_DAYS_FORWARD = 45;
@@ -120,7 +132,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
     <div
       style={{
         padding: sp(8),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         border: "none",
         borderRadius: dim(RADII.xs),
         display: "grid",
@@ -129,16 +141,16 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: sp(8) }}>
         <span style={mutedLabelStyle}>Options Expiry · Next 45 Trading Days</span>
-        <span style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}>
+        <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}>
           {activeCount} expiry day{activeCount === 1 ? "" : "s"} ·{" "}
-          <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
             {formatAccountMoney(total, currency, true, maskValues)}
           </span>{" "}
           notional
         </span>
       </div>
       {activeCount === 0 ? (
-        <div style={{ color: T.textMuted, fontSize: textSize("body"), padding: sp(6) }}>
+        <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body"), padding: sp(6) }}>
           No option positions in book.
         </div>
       ) : (
@@ -157,7 +169,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 key={`${label}-${idx}`}
                 style={{
                   fontSize: textSize("label"),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
                   height: dim(14),
@@ -183,7 +195,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 <div
                   style={{
                     fontSize: textSize("micro"),
-                    color: T.textDim,
+                    color: CSS_COLOR.textDim,
                     fontFamily: T.sans,
                     height: dim(10),
                     lineHeight: `${dim(10)}px`,
@@ -199,7 +211,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                         key={di}
                         style={{
                           height: dim(14),
-                          background: T.bg1,
+                          background: CSS_COLOR.bg1,
                           borderRadius: dim(RADII.xs),
                           opacity: 0.25,
                         }}
@@ -207,7 +219,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                     );
                   }
                   const intensity = day.notional / max;
-                  const baseColor = day.isThirdFri ? T.red : day.isFri ? T.amber : T.accent;
+                  const baseColor = day.isThirdFri ? CSS_COLOR.red : day.isFri ? CSS_COLOR.amber : CSS_COLOR.accent;
                   const opacity = day.notional > 0 ? 0.3 + intensity * 0.7 : 0.3;
                   return (
                     <div
@@ -231,9 +243,9 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                       style={{
                         height: dim(14),
                         borderRadius: dim(RADII.xs),
-                        background: day.notional > 0 ? baseColor : `${T.border}44`,
+                        background: day.notional > 0 ? baseColor : `${cssColorMix(CSS_COLOR.border, 27)}`,
                         opacity,
-                        border: day.isThirdFri ? `1px solid ${T.red}` : "none",
+                        border: day.isThirdFri ? `1px solid ${CSS_COLOR.red}` : "none",
                         boxSizing: "border-box",
                         cursor: day.notional > 0 ? "pointer" : "default",
                       }}
@@ -251,7 +263,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
           justifyContent: "space-between",
           fontSize: textSize("caption"),
           fontFamily: T.sans,
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           gap: sp(8),
           flexWrap: "wrap",
         }}
@@ -263,7 +275,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 display: "inline-block",
                 width: dim(9),
                 height: dim(9),
-                background: T.accent,
+                background: CSS_COLOR.accent,
                 borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
@@ -278,7 +290,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 display: "inline-block",
                 width: dim(9),
                 height: dim(9),
-                background: T.amber,
+                background: CSS_COLOR.amber,
                 borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
@@ -293,11 +305,11 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                 display: "inline-block",
                 width: dim(9),
                 height: dim(9),
-                background: T.red,
+                background: CSS_COLOR.red,
                 borderRadius: dim(RADII.xs),
                 marginRight: sp(4),
                 verticalAlign: "middle",
-                border: `1px solid ${T.red}`,
+                border: `1px solid ${CSS_COLOR.red}`,
               }}
             />
             monthly (3rd Fri)
@@ -306,8 +318,8 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         {peak ? (
           <span>
             next peak:{" "}
-            <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{peak.iso}</span> ·{" "}
-            <span style={{ color: T.amber, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{peak.iso}</span> ·{" "}
+            <span style={{ color: CSS_COLOR.amber, fontWeight: FONT_WEIGHTS.regular }}>
               {formatAccountMoney(peak.notional, currency, true, maskValues)}
             </span>
           </span>

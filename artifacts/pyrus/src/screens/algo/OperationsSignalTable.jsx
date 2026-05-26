@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -13,6 +17,9 @@ import {
   X,
 } from "lucide-react";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   RADII,
   T,
   dim,
@@ -53,10 +60,10 @@ import {
 } from "./OperationsSignalRow";
 
 const FILTER_OPTIONS = [
-  { id: "all", label: "All", icon: List, tone: T.accent },
-  { id: "ready", label: "Ready", icon: CheckCircle2, tone: T.green },
-  { id: "blocked", label: "Blocked", icon: Ban, tone: T.red },
-  { id: "unavailable", label: "Unavailable", icon: MinusCircle, tone: T.textDim },
+  { id: "all", label: "All", icon: List, tone: CSS_COLOR.accent },
+  { id: "ready", label: "Ready", icon: CheckCircle2, tone: CSS_COLOR.green },
+  { id: "blocked", label: "Blocked", icon: Ban, tone: CSS_COLOR.red },
+  { id: "unavailable", label: "Unavailable", icon: MinusCircle, tone: CSS_COLOR.textDim },
 ];
 
 const SIGNALS_PAGE_SIZE = 30;
@@ -338,7 +345,7 @@ export const sortRows = (
   return copy;
 };
 
-const columnControlButtonStyle = (active = false, tone = T.textDim) => ({
+const columnControlButtonStyle = (active = false, tone = CSS_COLOR.textDim) => ({
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
@@ -347,9 +354,9 @@ const columnControlButtonStyle = (active = false, tone = T.textDim) => ({
   height: dim(26),
   padding: sp("0 7px"),
   borderRadius: dim(RADII.sm),
-  border: `1px solid ${active ? tone : T.border}`,
-  background: active ? `${tone}1c` : T.bg2,
-  color: active ? T.text : T.textDim,
+  border: `1px solid ${active ? tone : CSS_COLOR.border}`,
+  background: active ? cssColorAlpha(tone, "1c") : CSS_COLOR.bg2,
+  color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   cursor: "pointer",
@@ -362,9 +369,9 @@ const iconOnlyButtonStyle = (disabled = false) => ({
   width: dim(24),
   height: dim(24),
   borderRadius: dim(RADII.sm),
-  border: `1px solid ${T.border}`,
-  background: T.bg2,
-  color: disabled ? T.textMuted : T.textDim,
+  border: `1px solid ${CSS_COLOR.border}`,
+  background: CSS_COLOR.bg2,
+  color: disabled ? CSS_COLOR.textMuted : CSS_COLOR.textDim,
   cursor: disabled ? "default" : "pointer",
   opacity: disabled ? 0.45 : 1,
 });
@@ -387,10 +394,10 @@ const OperationsSignalColumnDrawer = ({
         width: "min(100%, 360px)",
         marginTop: sp(2),
         padding: sp("8px 10px"),
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
-        background: T.bg2,
-        boxShadow: `0 18px 48px ${T.bg0}99`,
+        background: CSS_COLOR.bg2,
+        boxShadow: `0 18px 48px ${cssColorMix(CSS_COLOR.bg0, 60)}`,
         display: "grid",
         gap: sp(7),
         justifySelf: "end",
@@ -407,7 +414,7 @@ const OperationsSignalColumnDrawer = ({
         <div style={{ display: "grid", gap: sp(1), minWidth: 0 }}>
           <span
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: fs(11),
               fontWeight: 600,
@@ -417,7 +424,7 @@ const OperationsSignalColumnDrawer = ({
           </span>
           <span
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
             }}
@@ -452,8 +459,8 @@ const OperationsSignalColumnDrawer = ({
                 alignItems: "center",
                 gap: sp(4),
                 padding: sp("5px 6px"),
-                border: `1px solid ${checked ? T.borderLight : T.border}`,
-                background: checked ? T.bg1 : T.bg0,
+                border: `1px solid ${checked ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
+                background: checked ? CSS_COLOR.bg1 : CSS_COLOR.bg0,
               }}
             >
               <label
@@ -462,7 +469,7 @@ const OperationsSignalColumnDrawer = ({
                   alignItems: "center",
                   gap: sp(6),
                   minWidth: 0,
-                  color: checked ? T.text : T.textDim,
+                  color: checked ? CSS_COLOR.text : CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                   cursor: locked ? "default" : "pointer",
@@ -737,8 +744,8 @@ export const OperationsSignalTable = ({
     <div
       data-testid="algo-operations-signal-table"
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         overflowX: "auto",
         overflowY: "hidden",
@@ -750,7 +757,7 @@ export const OperationsSignalTable = ({
           display: "grid",
           gap: sp(algoIsPhone ? 3 : 6),
           padding: algoIsPhone ? sp("4px 6px") : sp("6px 10px"),
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           minWidth: 0,
         }}
       >
@@ -773,7 +780,7 @@ export const OperationsSignalTable = ({
               .filter(Boolean)
               .join(" · ")}
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: fs(algoIsPhone ? 10 : 12),
               fontWeight: 600,
@@ -792,7 +799,7 @@ export const OperationsSignalTable = ({
             gap: sp(algoIsPhone ? 4 : 6),
             alignItems: "center",
             flexWrap: "nowrap",
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             minWidth: 0,
@@ -809,9 +816,9 @@ export const OperationsSignalTable = ({
               height: dim(algoIsPhone ? 24 : 26),
               padding: algoIsPhone ? sp("0 6px") : sp("0 8px"),
               borderRadius: dim(RADII.sm),
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textMuted,
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg2,
+              color: CSS_COLOR.textMuted,
             }}
           >
             <Search size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -826,7 +833,7 @@ export const OperationsSignalTable = ({
                 border: 0,
                 outline: 0,
                 background: "transparent",
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
               }}
@@ -841,9 +848,9 @@ export const OperationsSignalTable = ({
                 height: dim(algoIsPhone ? 24 : 26),
                 maxWidth: dim(algoIsPhone ? 104 : 132),
                 borderRadius: dim(RADII.sm),
-                border: `1px solid ${T.border}`,
-                background: T.bg2,
-                color: T.text,
+                border: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg2,
+                color: CSS_COLOR.text,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
               }}
@@ -870,9 +877,9 @@ export const OperationsSignalTable = ({
                     flex: "0 0 auto",
                     padding: sp("2px 8px"),
                     borderRadius: dim(RADII.pill),
-                    border: `1px solid ${active ? option.tone : T.border}`,
-                    background: active ? `${option.tone}1c` : "transparent",
-                    color: active ? T.text : T.textDim,
+                    border: `1px solid ${active ? option.tone : CSS_COLOR.border}`,
+                    background: active ? cssColorAlpha(option.tone, "1c") : "transparent",
+                    color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
                     fontFamily: T.sans,
                     fontSize: textSize("caption"),
                     cursor: "pointer",
@@ -883,11 +890,11 @@ export const OperationsSignalTable = ({
                       size={12}
                       strokeWidth={1.8}
                       aria-hidden="true"
-                      style={{ color: active ? option.tone : T.textMuted }}
+                      style={{ color: active ? option.tone : CSS_COLOR.textMuted }}
                     />
                   ) : null}
                   <span>{option.label}</span>
-                  <span style={{ color: active ? option.tone : T.textMuted }}>
+                  <span style={{ color: active ? option.tone : CSS_COLOR.textMuted }}>
                     {counts[option.id] ?? 0}
                   </span>
                 </button>
@@ -901,11 +908,11 @@ export const OperationsSignalTable = ({
               aria-controls="algo-signal-column-drawer"
               title="Choose signal table columns"
               onClick={() => setColumnsOpen((value) => !value)}
-              style={columnControlButtonStyle(columnsOpen, T.accent)}
+              style={columnControlButtonStyle(columnsOpen, CSS_COLOR.accent)}
             >
               <Columns3 size={13} strokeWidth={1.8} aria-hidden="true" />
               <span>Columns</span>
-              <span style={{ color: columnsOpen ? T.accent : T.textMuted }}>
+              <span style={{ color: columnsOpen ? CSS_COLOR.accent : CSS_COLOR.textMuted }}>
                 {visibleColumns.length}
               </span>
             </button>
@@ -914,7 +921,7 @@ export const OperationsSignalTable = ({
             <span
               style={{
                 flex: "0 0 auto",
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 whiteSpace: "nowrap",
               }}
             >
@@ -1012,7 +1019,7 @@ export const OperationsSignalTable = ({
         total={paginatedRows.total}
         style={{
           padding: algoIsPhone ? sp("4px 6px") : sp("6px 10px"),
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
         }}
       />
       {algoIsPhone && focus.focusedSymbol ? (

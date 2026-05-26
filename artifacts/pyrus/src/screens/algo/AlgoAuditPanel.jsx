@@ -1,6 +1,14 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -41,12 +49,12 @@ const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
 const stageColor = (stageId) => {
-  if (stageId === "blocked") return T.amber;
-  if (stageId === "submitted" || stageId === "filled") return T.green;
-  if (stageId === "closed") return T.cyan;
-  if (stageId === "candidate") return T.accent;
-  if (stageId === "config") return T.textDim;
-  return T.textSec;
+  if (stageId === "blocked") return CSS_COLOR.amber;
+  if (stageId === "submitted" || stageId === "filled") return CSS_COLOR.green;
+  if (stageId === "closed") return CSS_COLOR.cyan;
+  if (stageId === "candidate") return CSS_COLOR.accent;
+  if (stageId === "config") return CSS_COLOR.textDim;
+  return CSS_COLOR.textSec;
 };
 
 const formatPrice = (value) =>
@@ -106,10 +114,10 @@ const AuditStageChip = ({ row }) => {
         justifyContent: "center",
         width: "fit-content",
         maxWidth: "100%",
-        border: `1px solid ${color}55`,
+        border: `1px solid ${cssColorAlpha(color, "55")}`,
         borderRadius: dim(RADII.xs),
         color,
-        background: `${color}10`,
+        background: cssColorAlpha(color, "10"),
         fontFamily: T.sans,
         fontSize: fs(9),
         fontWeight: FONT_WEIGHTS.medium,
@@ -128,7 +136,7 @@ const Cell = ({ align = "left", children, dimmed = false }) => (
   <div
     style={{
       minWidth: 0,
-      color: dimmed ? T.textDim : T.textSec,
+      color: dimmed ? CSS_COLOR.textDim : CSS_COLOR.textSec,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       lineHeight: 1.28,
@@ -143,7 +151,7 @@ const Cell = ({ align = "left", children, dimmed = false }) => (
 const HeaderCell = ({ children, align = "left" }) => (
   <div
     style={{
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
       fontSize: fs(9),
       fontWeight: FONT_WEIGHTS.medium,
@@ -158,14 +166,14 @@ const HeaderCell = ({ children, align = "left" }) => (
   </div>
 );
 
-const SummaryStat = ({ label, value, color = T.textSec }) => (
+const SummaryStat = ({ label, value, color = CSS_COLOR.textSec }) => (
   <span
     style={{
       display: "inline-flex",
       alignItems: "baseline",
       gap: sp(3),
       minWidth: 0,
-      color: T.textDim,
+      color: CSS_COLOR.textDim,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       whiteSpace: "nowrap",
@@ -215,15 +223,15 @@ const AuditDetailPanel = ({ row }) => {
         gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
         gap: sp(5),
         padding: sp("7px 8px 8px 28px"),
-        borderBottom: `1px solid ${T.border}22`,
-        background: `${T.bg0}66`,
+        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
+        background: `${cssColorMix(CSS_COLOR.bg0, 40)}`,
       }}
     >
       {details.map(([label, value]) => (
         <div key={label} style={{ minWidth: 0 }}>
           <div
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: fs(9),
               letterSpacing: "0.04em",
@@ -234,7 +242,7 @@ const AuditDetailPanel = ({ row }) => {
           </div>
           <div
             style={{
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               lineHeight: 1.35,
@@ -317,8 +325,8 @@ export const AlgoAuditPanel = ({
         display: "flex",
         flexDirection: "column",
         gap: sp(5),
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         padding: sp("8px 10px"),
         flex: "0 1 auto",
@@ -339,14 +347,14 @@ export const AlgoAuditPanel = ({
               fontSize: textSize("bodyStrong"),
               fontWeight: FONT_WEIGHTS.label,
               fontFamily: T.sans,
-              color: T.text,
+              color: CSS_COLOR.text,
               letterSpacing: 0,
             }}
           >
             Audit
           </div>
           <div
-            style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}
+            style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
           >
             {focusedDeployment
               ? `filtered to ${focusedDeployment.name}`
@@ -361,10 +369,10 @@ export const AlgoAuditPanel = ({
               display: "inline-flex",
               alignItems: "center",
               gap: sp(3),
-              background: `${T.accent}12`,
-              border: `1px solid ${T.accent}55`,
+              background: `${cssColorMix(CSS_COLOR.accent, 7)}`,
+              border: `1px solid ${cssColorMix(CSS_COLOR.accent, 33)}`,
               borderRadius: dim(RADII.xs),
-              color: T.accent,
+              color: CSS_COLOR.accent,
               cursor: "pointer",
               fontFamily: T.sans,
               fontSize: textSize("caption"),
@@ -377,7 +385,7 @@ export const AlgoAuditPanel = ({
           </button>
         ) : (
           <span
-            style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}
+            style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
           >
             {filteredEvents.length} / {events.length} rows
           </span>
@@ -407,14 +415,14 @@ export const AlgoAuditPanel = ({
           gap: sp(8),
           minWidth: 0,
           overflowX: "auto",
-          borderTop: `1px solid ${T.border}44`,
-          borderBottom: `1px solid ${T.border}44`,
+          borderTop: `1px solid ${cssColorMix(CSS_COLOR.border, 27)}`,
+          borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 27)}`,
           padding: sp("5px 1px"),
         }}
       >
         <SummaryStat label="visible" value={`${filteredEvents.length}/${auditRows.length}`} />
-        <SummaryStat label="blocked" value={auditSummary.blocked} color={auditSummary.blocked ? T.amber : T.textSec} />
-        <SummaryStat label="trade" value={auditSummary.trades} color={auditSummary.trades ? T.green : T.textSec} />
+        <SummaryStat label="blocked" value={auditSummary.blocked} color={auditSummary.blocked ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+        <SummaryStat label="trade" value={auditSummary.trades} color={auditSummary.trades ? CSS_COLOR.green : CSS_COLOR.textSec} />
         <SummaryStat label="config" value={auditSummary.config} />
         <SummaryStat
           label="latest"
@@ -423,7 +431,7 @@ export const AlgoAuditPanel = ({
               ? formatRelativeTimeShort(new Date(auditSummary.latestOccurredAt))
               : MISSING_VALUE
           }
-          color={auditSummary.latestOccurredAt ? T.cyan : T.textDim}
+          color={auditSummary.latestOccurredAt ? CSS_COLOR.cyan : CSS_COLOR.textDim}
         />
       </div>
 
@@ -431,10 +439,10 @@ export const AlgoAuditPanel = ({
         <div
           style={{
             padding: sp("18px 10px"),
-            border: `1px dashed ${T.border}`,
+            border: `1px dashed ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.sm),
             fontSize: fs(10),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             lineHeight: 1.5,
           }}
@@ -448,7 +456,7 @@ export const AlgoAuditPanel = ({
           <div
             data-testid="algo-audit-table"
             style={{
-              border: `1px solid ${T.border}55`,
+              border: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
               borderRadius: dim(RADII.sm),
               maxHeight: algoIsPhone ? "none" : dim(560),
               overflow: "auto",
@@ -466,8 +474,8 @@ export const AlgoAuditPanel = ({
                   position: "sticky",
                   top: 0,
                   zIndex: 1,
-                  background: T.bg1,
-                  borderBottom: `1px solid ${T.border}`,
+                  background: CSS_COLOR.bg1,
+                  borderBottom: `1px solid ${CSS_COLOR.border}`,
                   padding: sp("6px 8px"),
                 }}
               >
@@ -503,10 +511,10 @@ export const AlgoAuditPanel = ({
                     gap: sp(5),
                     padding: sp("8px 8px"),
                     borderLeft: isFocused
-                      ? `3px solid ${T.accent}`
-                      : `3px solid ${stageAccent}55`,
-                    borderBottom: `1px solid ${T.border}22`,
-                    background: isFocused ? `${T.accent}10` : "transparent",
+                      ? `3px solid ${CSS_COLOR.accent}`
+                      : `3px solid ${cssColorAlpha(stageAccent, "55")}`,
+                    borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
+                    background: isFocused ? `${cssColorMix(CSS_COLOR.accent, 6)}` : "transparent",
                     minWidth: 0,
                   }}
                 >
@@ -519,7 +527,7 @@ export const AlgoAuditPanel = ({
                       minWidth: 0,
                     }}
                   >
-                    <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+                    <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
                       {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
                     </span>
                     <AuditStageChip row={event} />
@@ -530,14 +538,14 @@ export const AlgoAuditPanel = ({
                         style={{
                           background: "transparent",
                           border: "none",
-                          color: T.text,
+                          color: CSS_COLOR.text,
                           cursor: "pointer",
                           fontFamily: T.sans,
                           fontSize: textSize("caption"),
                           fontWeight: FONT_WEIGHTS.medium,
                           padding: 0,
                           textDecoration: "underline dotted",
-                          textDecorationColor: T.textDim,
+                          textDecorationColor: CSS_COLOR.textDim,
                         }}
                       >
                         {event.symbol}
@@ -554,7 +562,7 @@ export const AlgoAuditPanel = ({
                       minWidth: 0,
                       background: "transparent",
                       border: "none",
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       cursor: "pointer",
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
@@ -589,12 +597,12 @@ export const AlgoAuditPanel = ({
                       ["Acct / Source", [event.account || "system", event.source].filter(Boolean).join(" · ")],
                     ].map(([label, value]) => (
                       <div key={label} style={{ minWidth: 0 }}>
-                        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(9), textTransform: "uppercase" }}>
+                        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(9), textTransform: "uppercase" }}>
                           {label}
                         </div>
                         <div
                           style={{
-                            color: T.textSec,
+                            color: CSS_COLOR.textSec,
                             fontFamily: T.sans,
                             fontSize: textSize("caption"),
                             overflow: "hidden",
@@ -627,15 +635,15 @@ export const AlgoAuditPanel = ({
                   minWidth: dim(910),
                   padding: sp("6px 8px"),
                   borderLeft: isFocused
-                    ? `3px solid ${T.accent}`
-                    : `3px solid ${stageAccent}55`,
-                  background: isFocused ? `${T.accent}10` : "transparent",
-                  borderBottom: `1px solid ${T.border}22`,
+                    ? `3px solid ${CSS_COLOR.accent}`
+                    : `3px solid ${cssColorAlpha(stageAccent, "55")}`,
+                  background: isFocused ? `${cssColorMix(CSS_COLOR.accent, 6)}` : "transparent",
+                  borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 13)}`,
                 }}
               >
                 <Cell dimmed>
                   <div>{formatAppTimeForPreferences(event.occurredAt, userPreferences)}</div>
-                  <div style={{ color: T.textMuted }}>
+                  <div style={{ color: CSS_COLOR.textMuted }}>
                     {formatRelativeTimeShort(event.occurredAt)}
                   </div>
                 </Cell>
@@ -651,20 +659,20 @@ export const AlgoAuditPanel = ({
                         background: "transparent",
                         border: "none",
                         padding: 0,
-                        color: T.text,
+                        color: CSS_COLOR.text,
                         fontFamily: T.sans,
                         fontSize: textSize("caption"),
                         fontWeight: FONT_WEIGHTS.medium,
                         textAlign: "left",
                         textDecoration: "underline dotted",
-                        textDecorationColor: T.textDim,
+                        textDecorationColor: CSS_COLOR.textDim,
                         cursor: "pointer",
                       }}
                     >
                       {event.symbol}
                     </button>
                   ) : (
-                    <span style={{ color: T.textDim }}>system</span>
+                    <span style={{ color: CSS_COLOR.textDim }}>system</span>
                   )}
                 </Cell>
                 <Cell>
@@ -679,7 +687,7 @@ export const AlgoAuditPanel = ({
                       width: "100%",
                       background: "transparent",
                       border: "none",
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       cursor: "pointer",
                       fontFamily: T.sans,
                       fontSize: textSize("caption"),
@@ -698,16 +706,16 @@ export const AlgoAuditPanel = ({
                       }}
                       title={`${formatEnumLabel(event.eventType)} · ${event.summary}`}
                     >
-                      <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.medium }}>
+                      <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.medium }}>
                         {formatEnumLabel(event.eventType)}
                       </span>
-                      <span style={{ color: T.textDim }}> · </span>
+                      <span style={{ color: CSS_COLOR.textDim }}> · </span>
                       {event.detailText || event.summary}
                     </span>
                   </button>
                   <div
                     style={{
-                      color: T.textDim,
+                      color: CSS_COLOR.textDim,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -721,19 +729,19 @@ export const AlgoAuditPanel = ({
                   <div title={event.contract.label || undefined}>
                     {event.contract.label || MISSING_VALUE}
                   </div>
-                  <div style={{ color: T.textDim }} title={event.contract.providerContractId || event.contract.ticker}>
+                  <div style={{ color: CSS_COLOR.textDim }} title={event.contract.providerContractId || event.contract.ticker}>
                     {shortId(event.contract.providerContractId || event.contract.ticker)}
                   </div>
                 </Cell>
                 <Cell align="right">
                   <div>{formatBidAsk(event)}</div>
-                  <div style={{ color: T.textDim, fontFamily: T.sans }}>
+                  <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                     {formatSecondaryQuote(event)}
                   </div>
                 </Cell>
                 <Cell align="right">
                   <div>{formatQtyRisk(event)}</div>
-                  <div style={{ color: T.textDim }}>
+                  <div style={{ color: CSS_COLOR.textDim }}>
                     {formatRiskDetail(event)}
                   </div>
                 </Cell>
@@ -741,7 +749,7 @@ export const AlgoAuditPanel = ({
                   <div title={event.account || "system"}>
                     {renderMeta(event.account, "system")}
                   </div>
-                  <div style={{ color: T.textDim }} title={event.source || event.metadata.deploymentName}>
+                  <div style={{ color: CSS_COLOR.textDim }} title={event.source || event.metadata.deploymentName}>
                     {renderMeta(event.source || event.metadata.deploymentName)}
                   </div>
                 </Cell>
@@ -759,7 +767,7 @@ export const AlgoAuditPanel = ({
             pageCount={paginatedEvents.pageCount}
             pageSize={AUDIT_PAGE_SIZE}
             total={paginatedEvents.total}
-            style={{ paddingTop: sp(2), borderTop: `1px solid ${T.border}` }}
+            style={{ paddingTop: sp(2), borderTop: `1px solid ${CSS_COLOR.border}` }}
           />
         </>
       )}

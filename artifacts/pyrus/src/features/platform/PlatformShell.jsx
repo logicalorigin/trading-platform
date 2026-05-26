@@ -30,7 +30,17 @@ import {
   WalletCards,
   XCircle,
 } from "lucide-react";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  ELEVATION,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppHeader } from "./AppHeader.jsx";
 import { MobileActivitySheet } from "./MobileActivitySheet.jsx";
@@ -56,6 +66,45 @@ import {
   markScreenSwitchStart,
 } from "./performanceMetrics";
 
+
+const CSS_COLOR = Object.freeze({
+  bg0: "var(--ra-surface-0)",
+  bg1: "var(--ra-surface-1)",
+  bg2: "var(--ra-surface-2)",
+  bg3: "var(--ra-surface-3)",
+  bg4: "var(--ra-surface-4)",
+  border: "var(--ra-border-default)",
+  borderLight: "var(--ra-border-light)",
+  borderFocus: "var(--ra-border-focus)",
+  text: "var(--ra-text-primary)",
+  textSec: "var(--ra-text-secondary)",
+  textDim: "var(--ra-text-dim)",
+  textMuted: "var(--ra-text-muted)",
+  accent: "var(--ra-color-accent)",
+  accentDim: "var(--ra-accent-dim)",
+  accentHoverBg: "var(--ra-accent-hover-bg)",
+  accentActiveBg: "var(--ra-accent-active-bg)",
+  blue: "var(--ra-blue-500)",
+  purple: "var(--ra-purple-500)",
+  cyan: "var(--ra-cyan-500)",
+  pink: "var(--ra-pink-500)",
+  green: "var(--ra-green-500)",
+  greenDim: "var(--ra-green-dim)",
+  greenBg: "var(--ra-green-bg)",
+  red: "var(--ra-red-500)",
+  redDim: "var(--ra-red-dim)",
+  redBg: "var(--ra-red-bg)",
+  amber: "var(--ra-amber-500)",
+  amberDim: "var(--ra-amber-dim)",
+  amberBg: "var(--ra-amber-bg)",
+  pulseLive: "var(--ra-green-500)",
+  pulseAlert: "var(--ra-amber-500)",
+  pulseLoss: "var(--ra-red-500)",
+  onAccent: "var(--ra-on-accent)",
+});
+
+const cssColorMix = (color, percent) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 const MOBILE_PRIMARY_SCREEN_IDS = ["market", "flow", "trade", "account"];
@@ -300,9 +349,9 @@ const BloombergLiveDockLauncher = () => {
             justifyContent: "center",
             border: "none",
             borderRadius: dim(RADII.pill),
-            background: T.accent,
+            background: CSS_COLOR.accent,
             boxShadow: ELEVATION.lg,
-            color: T.onAccent,
+            color: CSS_COLOR.onAccent,
             cursor: "pointer",
           }}
         >
@@ -333,7 +382,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
       gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
       gap: sp(3),
       padding: "6px 8px max(8px, env(safe-area-inset-bottom))",
-      borderTop: `1px solid ${T.border}`,
+      borderTop: `1px solid ${CSS_COLOR.border}`,
       minHeight: `calc(${dim(58)}px + env(safe-area-inset-bottom))`,
     }}
   >
@@ -354,7 +403,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
             active && "ra-focus-rail",
           )}
           style={{
-            ...motionVars({ accent: T.accent }),
+            ...motionVars({ accent: CSS_COLOR.accent }),
             minWidth: 0,
             minHeight: dim(48),
             display: "flex",
@@ -364,8 +413,8 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
             gap: sp(2),
             border: "1px solid transparent",
             borderRadius: dim(RADII.sm),
-            background: active ? `${T.accent}12` : "transparent",
-            color: active ? T.accent : T.textDim,
+            background: active ? `${cssColorMix(CSS_COLOR.accent, 7)}` : "transparent",
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textDim,
             cursor: "pointer",
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -397,7 +446,7 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
         !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) && "ra-focus-rail",
       )}
       style={{
-        ...motionVars({ accent: T.accent }),
+        ...motionVars({ accent: CSS_COLOR.accent }),
         minWidth: 0,
         minHeight: dim(48),
         display: "flex",
@@ -408,9 +457,9 @@ const MobileBottomNav = ({ activeScreen, setScreen, onOpenMore, watchlistsBusy }
         border: "1px solid transparent",
         borderRadius: dim(RADII.sm),
         background: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen)
-          ? `${T.accent}12`
+          ? `${cssColorMix(CSS_COLOR.accent, 7)}`
           : "transparent",
-        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? T.accent : T.textDim,
+        color: !MOBILE_PRIMARY_SCREEN_SET.has(activeScreen) ? CSS_COLOR.accent : CSS_COLOR.textDim,
         cursor: "pointer",
         fontFamily: T.sans,
         fontSize: textSize("caption"),
@@ -436,7 +485,7 @@ const FooterField = ({ label, value, valueColor }) => (
   <span style={{ display: "inline-flex", alignItems: "baseline", gap: sp(6), minWidth: 0 }}>
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.04em",
@@ -447,7 +496,7 @@ const FooterField = ({ label, value, valueColor }) => (
     </span>
     <span
       style={{
-        color: valueColor || T.textSec,
+        color: valueColor || CSS_COLOR.textSec,
         fontSize: textSize("body"),
         fontWeight: FONT_WEIGHTS.medium,
         fontVariantNumeric: "tabular-nums",
@@ -466,13 +515,13 @@ const FooterStatusField = ({ label, value, ok }) => (
         width: dim(6),
         height: dim(6),
         borderRadius: dim(RADII.pill),
-        background: ok ? T.green : T.red,
+        background: ok ? CSS_COLOR.green : CSS_COLOR.red,
         flexShrink: 0,
       }}
     />
     <span
       style={{
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.04em",
@@ -483,7 +532,7 @@ const FooterStatusField = ({ label, value, ok }) => (
     </span>
     <span
       style={{
-        color: T.text,
+        color: CSS_COLOR.text,
         fontSize: textSize("body"),
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: 0,
@@ -500,7 +549,7 @@ const FooterDivider = () => (
     style={{
       width: 1,
       height: dim(14),
-      background: T.border,
+      background: CSS_COLOR.border,
       flexShrink: 0,
     }}
   />
@@ -530,8 +579,8 @@ const FrameSidebar = ({
           width: dim(collapsedWidth),
           flexShrink: 0,
           overflow: "hidden",
-          background: T.bg1,
-          boxShadow: isLeft ? `1px 0 0 ${T.border}` : `-1px 0 0 ${T.border}`,
+          background: CSS_COLOR.bg1,
+          boxShadow: isLeft ? `1px 0 0 ${CSS_COLOR.border}` : `-1px 0 0 ${CSS_COLOR.border}`,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -549,10 +598,10 @@ const FrameSidebar = ({
               height: dim(28),
               display: "grid",
               placeItems: "center",
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
-              background: T.bg1,
-              color: T.textSec,
+              background: CSS_COLOR.bg1,
+              color: CSS_COLOR.textSec,
               cursor: "pointer",
               padding: 0,
             }}
@@ -574,8 +623,8 @@ const FrameSidebar = ({
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
-        background: T.bg0,
-        boxShadow: isLeft ? `1px 0 0 ${T.border}` : `-1px 0 0 ${T.border}`,
+        background: CSS_COLOR.bg0,
+        boxShadow: isLeft ? `1px 0 0 ${CSS_COLOR.border}` : `-1px 0 0 ${CSS_COLOR.border}`,
       }}
     >
       {children}
@@ -925,8 +974,8 @@ export const PlatformShell = ({
       height: isPhone ? "100dvh" : "100vh",
       display: "flex",
       flexDirection: "column",
-      background: T.bg0,
-      color: T.text,
+      background: CSS_COLOR.bg0,
+      color: CSS_COLOR.text,
       fontFamily: T.sans,
       minWidth: 0,
       overflow: "hidden",
@@ -1135,10 +1184,10 @@ export const PlatformShell = ({
                       height: dim(32),
                       display: "grid",
                       placeItems: "center",
-                      border: `1px solid ${T.border}`,
+                      border: `1px solid ${CSS_COLOR.border}`,
                       borderRadius: dim(RADII.sm),
                       background: "transparent",
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       cursor: "pointer",
                       fontFamily: T.sans,
                       fontSize: fs(11),
@@ -1199,10 +1248,10 @@ export const PlatformShell = ({
                     height: dim(32),
                     display: "grid",
                     placeItems: "center",
-                    border: `1px solid ${T.border}`,
+                    border: `1px solid ${CSS_COLOR.border}`,
                     borderRadius: dim(RADII.sm),
                     background: "transparent",
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     cursor: "pointer",
                     fontFamily: T.sans,
                     fontSize: fs(11),
@@ -1235,9 +1284,9 @@ export const PlatformShell = ({
           alignItems: "center",
           height: dim(34),
           padding: sp("0 16px"),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
           borderTop: "none",
-          boxShadow: `0 -1px 0 ${T.border}`,
+          boxShadow: `0 -1px 0 ${CSS_COLOR.border}`,
           flexShrink: 0,
           fontFamily: T.sans,
           gap: sp(14),
@@ -1248,7 +1297,7 @@ export const PlatformShell = ({
       >
         <FooterField label="Watchlist" value={activeWatchlist?.name || "Core"} />
         <FooterDivider />
-        <FooterField label="Symbol" value={selectedSymbol} valueColor={T.text} />
+        <FooterField label="Symbol" value={selectedSymbol} valueColor={CSS_COLOR.text} />
         <FooterDivider />
         <FooterStatusField
           label="Historical"
@@ -1264,7 +1313,7 @@ export const PlatformShell = ({
         <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: sp(12) }}>
           <span
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontSize: textSize("caption"),
               fontWeight: FONT_WEIGHTS.medium,
               letterSpacing: "0.04em",
@@ -1299,12 +1348,12 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
       {toasts.map((toast) => {
         const color =
           toast.kind === "success"
-            ? T.green
+            ? CSS_COLOR.green
             : toast.kind === "error"
-              ? T.red
+              ? CSS_COLOR.red
               : toast.kind === "warn"
-                ? T.amber
-                : T.accent;
+                ? CSS_COLOR.amber
+                : CSS_COLOR.accent;
         const ToastIcon =
           toast.kind === "success"
             ? CheckCircle2
@@ -1318,8 +1367,8 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
           key={toast.id}
           onClick={() => onDismiss?.(toast.id)}
           style={{
-            background: T.bg1,
-            border: `1px solid ${color}33`,
+            background: CSS_COLOR.bg1,
+            border: `1px solid ${cssColorMix(color, 20)}`,
             borderRadius: dim(RADII.xs),
             padding: sp("8px 10px"),
             minWidth: dim(244),
@@ -1333,13 +1382,13 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
             transition: "background 0.12s ease, transform 0.12s ease, border-color 0.12s ease",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.background = `${color}0f`;
-            event.currentTarget.style.borderColor = `${color}55`;
+            event.currentTarget.style.background = `${cssColorMix(color, 6)}`;
+            event.currentTarget.style.borderColor = `${cssColorMix(color, 33)}`;
             event.currentTarget.style.transform = "translateX(-2px)";
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.background = T.bg1;
-            event.currentTarget.style.borderColor = `${color}33`;
+            event.currentTarget.style.background = CSS_COLOR.bg1;
+            event.currentTarget.style.borderColor = `${cssColorMix(color, 20)}`;
             event.currentTarget.style.transform = "translateX(0)";
           }}
         >
@@ -1358,7 +1407,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                 width: dim(20),
                 height: dim(20),
                 borderRadius: dim(RADII.xs),
-                background: `${color}12`,
+                background: `${cssColorMix(color, 7)}`,
                 color,
                 lineHeight: 1,
                 flexShrink: 0,
@@ -1372,7 +1421,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                   fontSize: textSize("paragraphMuted"),
                   fontWeight: FONT_WEIGHTS.medium,
                   letterSpacing: 0,
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   marginBottom: toast.body ? sp(2) : 0,
                 }}
               >
@@ -1382,7 +1431,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
                 <div
                   style={{
                     fontSize: textSize("body"),
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     fontFamily: T.sans,
                     lineHeight: 1.35,
                   }}
@@ -1394,7 +1443,7 @@ const ToastStack = ({ toasts, onDismiss, bottomOffset = 20 }) => (
             <span
               style={{
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontWeight: FONT_WEIGHTS.medium,
                 opacity: 0.6,
                 marginLeft: sp(4),

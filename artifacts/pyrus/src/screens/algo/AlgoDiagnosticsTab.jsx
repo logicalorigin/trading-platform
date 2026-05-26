@@ -1,4 +1,5 @@
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -31,13 +32,13 @@ export const AlgoDiagnosticsTab = ({
   readOnly = false,
 }) => {
   const diagPanels = [
-    { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: T.red },
-    { key: "skip-reasons", title: "Skip Reasons", rows: cockpitSkipReasonRows, color: T.red },
-    { key: "readiness", title: "Readiness", rows: cockpitReadinessRows, color: T.amber },
-    { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: T.cyan },
-    { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: T.green },
-    { key: "entry-gate", title: "Entry Gate", rows: cockpitEntryGateRows, color: T.amber },
-    { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: T.cyan },
+    { key: "skip-categories", title: "Skip Categories", rows: cockpitSkipCategoryRows, color: CSS_COLOR.red },
+    { key: "skip-reasons", title: "Skip Reasons", rows: cockpitSkipReasonRows, color: CSS_COLOR.red },
+    { key: "readiness", title: "Readiness", rows: cockpitReadinessRows, color: CSS_COLOR.amber },
+    { key: "mark-health", title: "Mark Health", rows: cockpitMarkHealthRows, color: CSS_COLOR.cyan },
+    { key: "lifecycle", title: "Lifecycle", rows: cockpitLifecycleRows, color: CSS_COLOR.green },
+    { key: "entry-gate", title: "Entry Gate", rows: cockpitEntryGateRows, color: CSS_COLOR.amber },
+    { key: "option-chain", title: "Option Chain", rows: cockpitOptionChainRows, color: CSS_COLOR.cyan },
   ];
   const gateHealthy = isGateSummaryHealthy(cockpitTradePath);
   const resolveExpanded = (panel) => {
@@ -78,9 +79,9 @@ export const AlgoDiagnosticsTab = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.medium,
-                  color: T.textSec,
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
+                  color: CSS_COLOR.textSec,
+                  background: CSS_COLOR.bg1,
+                  border: `1px solid ${CSS_COLOR.border}`,
                   borderRadius: dim(RADII.pill),
                   cursor: "pointer",
                   letterSpacing: "0.02em",
@@ -101,9 +102,9 @@ export const AlgoDiagnosticsTab = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.medium,
-                  color: T.textSec,
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
+                  color: CSS_COLOR.textSec,
+                  background: CSS_COLOR.bg1,
+                  border: `1px solid ${CSS_COLOR.border}`,
                   borderRadius: dim(RADII.pill),
                   cursor: "pointer",
                   letterSpacing: "0.02em",
@@ -121,7 +122,7 @@ export const AlgoDiagnosticsTab = ({
         style={{
           border: "none",
           borderRadius: dim(RADII.md),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
           padding: sp("8px 10px"),
           display: "grid",
           gridTemplateColumns: algoIsPhone
@@ -131,12 +132,12 @@ export const AlgoDiagnosticsTab = ({
         }}
       >
         {[
-          ["Fresh", cockpitSignalFreshness.fresh ?? 0, T.green],
-          ["Stale", cockpitSignalFreshness.notFresh ?? 0, T.amber],
-          ["Blocked", cockpitTradePath.blockedCandidates ?? 0, T.red],
-          ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, T.green],
-          ["Marks", cockpitTradePath.markEvents ?? 0, T.cyan],
-          ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, T.amber],
+          ["Fresh", cockpitSignalFreshness.fresh ?? 0, CSS_COLOR.green],
+          ["Stale", cockpitSignalFreshness.notFresh ?? 0, CSS_COLOR.amber],
+          ["Blocked", cockpitTradePath.blockedCandidates ?? 0, CSS_COLOR.red],
+          ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, CSS_COLOR.green],
+          ["Marks", cockpitTradePath.markEvents ?? 0, CSS_COLOR.cyan],
+          ["Gateway", cockpitTradePath.gatewayBlocks ?? 0, CSS_COLOR.amber],
         ].map(([label, value, color]) => {
           const isAlarm =
             (label === "Blocked" || label === "Gateway") &&
@@ -145,7 +146,7 @@ export const AlgoDiagnosticsTab = ({
             <div key={label} style={{ minWidth: 0 }}>
               <div
                 style={{
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                   letterSpacing: "0.04em",
@@ -159,7 +160,7 @@ export const AlgoDiagnosticsTab = ({
                     ? color
                     : Number(value) > 0 && label !== "Stale"
                       ? color
-                      : T.text,
+                      : CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: fs(11),
                   marginTop: sp(2),
@@ -218,7 +219,7 @@ export const AlgoDiagnosticsTab = ({
             style={{
               fontFamily: T.sans,
               fontSize: textSize("caption"),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               letterSpacing: "0.04em",
               alignSelf: "center",
               marginRight: sp(2),

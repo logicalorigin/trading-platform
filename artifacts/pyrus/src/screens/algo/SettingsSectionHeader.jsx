@@ -1,4 +1,5 @@
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   T,
   sp,
@@ -13,14 +14,14 @@ export const SettingsSectionHeader = ({ label, helper }) => (
       justifyContent: "space-between",
       gap: sp(4),
       padding: sp("0 0 4px 0"),
-      borderBottom: `1px solid ${T.borderLight}`,
+      borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
       marginBottom: sp(3),
       minWidth: 0,
     }}
   >
     <span
       style={{
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.emphasis,
@@ -33,7 +34,7 @@ export const SettingsSectionHeader = ({ label, helper }) => (
     {helper ? (
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("micro"),
           whiteSpace: "nowrap",

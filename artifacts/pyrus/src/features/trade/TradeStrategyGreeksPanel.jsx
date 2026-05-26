@@ -5,9 +5,11 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { isFiniteNumber } from "../../lib/formatters";
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   RADII,
   T,
+  cssColorAlpha,
   dim,
   fs,
   sp,
@@ -24,7 +26,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: T.green,
+    color: CSS_COLOR.green,
   },
   {
     id: "long_put_atm",
@@ -34,7 +36,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.5,
     qty: 3,
     dte: 7,
-    color: T.red,
+    color: CSS_COLOR.red,
   },
   {
     id: "long_call_otm",
@@ -44,7 +46,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.3,
     qty: 5,
     dte: 7,
-    color: T.green,
+    color: CSS_COLOR.green,
   },
   {
     id: "0dte_lotto",
@@ -54,7 +56,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.2,
     qty: 10,
     dte: 0,
-    color: T.amber,
+    color: CSS_COLOR.amber,
   },
   {
     id: "itm_call",
@@ -64,7 +66,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.7,
     qty: 2,
     dte: 14,
-    color: T.green,
+    color: CSS_COLOR.green,
   },
   {
     id: "long_put_otm",
@@ -74,7 +76,7 @@ const TRADE_STRATEGIES = [
     deltaTarget: 0.25,
     qty: 5,
     dte: 7,
-    color: T.red,
+    color: CSS_COLOR.red,
   },
 ];
 
@@ -94,8 +96,8 @@ export const TradeStrategyGreeksPanel = ({
     return (
       <div
         style={{
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
@@ -108,10 +110,10 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
           }}
         >
@@ -137,8 +139,8 @@ export const TradeStrategyGreeksPanel = ({
     return (
       <div
         style={{
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.sm),
           padding: sp("8px 10px"),
           display: "flex",
@@ -151,10 +153,10 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
           }}
         >
@@ -185,7 +187,7 @@ export const TradeStrategyGreeksPanel = ({
         <span
           style={{
             fontSize: textSize("caption"),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontWeight: FONT_WEIGHTS.regular,
           }}
@@ -196,7 +198,7 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             position: "relative",
             height: dim(12),
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(2),
             overflow: "hidden",
           }}
@@ -219,7 +221,7 @@ export const TradeStrategyGreeksPanel = ({
               top: 0,
               bottom: 0,
               width: dim(1),
-              background: T.border,
+              background: CSS_COLOR.border,
             }}
           />
           <span
@@ -235,7 +237,7 @@ export const TradeStrategyGreeksPanel = ({
               fontSize: textSize("body"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
-              color: T.text,
+              color: CSS_COLOR.text,
               display: "flex",
               alignItems: "center",
               paddingLeft: value < 0 ? 0 : 3,
@@ -248,7 +250,7 @@ export const TradeStrategyGreeksPanel = ({
         <span
           style={{
             fontSize: textSize("caption"),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontStyle: "italic",
             textAlign: "right",
@@ -263,8 +265,8 @@ export const TradeStrategyGreeksPanel = ({
   return (
     <div
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
         padding: sp("8px 10px"),
         display: "flex",
@@ -278,10 +280,10 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
           }}
@@ -304,10 +306,10 @@ export const TradeStrategyGreeksPanel = ({
               }}
               style={{
                 padding: sp("6px 10px"),
-                background: `${strategy.color}1a`,
-                border: `1px solid ${strategy.color}66`,
+                background: cssColorAlpha(strategy.color, "1a"),
+                border: `1px solid ${cssColorAlpha(strategy.color, "66")}`,
                 borderRadius: dim(RADII.sm),
-                color: T.text,
+                color: CSS_COLOR.text,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.medium,
@@ -321,7 +323,7 @@ export const TradeStrategyGreeksPanel = ({
               </div>
               <div
                 style={{
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontSize: textSize("body"),
                   marginTop: sp(1),
                   fontStyle: "italic",
@@ -338,10 +340,10 @@ export const TradeStrategyGreeksPanel = ({
           style={{
             fontSize: textSize("caption"),
             fontWeight: FONT_WEIGHTS.regular,
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             paddingBottom: sp(4),
             marginBottom: sp(5),
             display: "flex",
@@ -349,14 +351,14 @@ export const TradeStrategyGreeksPanel = ({
           }}
         >
           <span>GREEKS</span>
-          <span style={{ fontSize: textSize("caption"), color: T.textDim, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
             PER CONTRACT
           </span>
         </div>
         <GreekBar
           label="Δ"
           value={delta}
-          color={T.accent}
+          color={CSS_COLOR.accent}
           max={1.0}
           desc={
             absDelta >= 0.5 ? "Strong" : absDelta >= 0.3 ? "Moderate" : "Weak"
@@ -365,32 +367,32 @@ export const TradeStrategyGreeksPanel = ({
         <GreekBar
           label="Γ"
           value={gamma}
-          color={T.purple}
+          color={CSS_COLOR.purple}
           max={0.1}
           desc={gamma > 0.05 ? "High γ-risk" : "Moderate γ"}
         />
         <GreekBar
           label="Θ"
           value={theta}
-          color={T.red}
+          color={CSS_COLOR.red}
           max={0.15}
           desc={`$${Math.abs(theta * 100).toFixed(0)}/day`}
         />
         <GreekBar
           label="V"
           value={vega}
-          color={T.cyan}
+          color={CSS_COLOR.cyan}
           max={0.2}
           desc={`$${(vega * 100).toFixed(0)}/1% IV`}
         />
       </div>
       <div
-        style={{ padding: sp("4px 6px"), background: T.bg1, borderRadius: RADII.xs }}
+        style={{ padding: sp("4px 6px"), background: CSS_COLOR.bg1, borderRadius: RADII.xs }}
       >
         <div
           style={{
             fontSize: fs(6),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             letterSpacing: "0.04em",
             marginBottom: sp(2),
           }}
@@ -407,26 +409,26 @@ export const TradeStrategyGreeksPanel = ({
           }}
         >
           <div>
-            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Δ </span>
-            <span style={{ color: T.accent, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Δ </span>
+            <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
               {(delta * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Γ </span>
-            <span style={{ color: T.purple, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Γ </span>
+            <span style={{ color: CSS_COLOR.purple, fontWeight: FONT_WEIGHTS.regular }}>
               {(gamma * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>Θ </span>
-            <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>Θ </span>
+            <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
               {(theta * qty).toFixed(2)}
             </span>
           </div>
           <div>
-            <span style={{ color: T.textDim, fontSize: textSize("caption") }}>V </span>
-            <span style={{ color: T.cyan, fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>V </span>
+            <span style={{ color: CSS_COLOR.cyan, fontWeight: FONT_WEIGHTS.regular }}>
               {(vega * qty).toFixed(2)}
             </span>
           </div>

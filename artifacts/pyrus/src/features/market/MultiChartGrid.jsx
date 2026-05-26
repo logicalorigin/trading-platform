@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQueries } from "@tanstack/react-query";
 import { listFlowEvents as listFlowEventsRequest } from "@workspace/api-client-react";
 import {
@@ -59,6 +65,7 @@ import {
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   RADII,
@@ -1266,7 +1273,7 @@ export const MultiChartGrid = ({
       <div
         style={{
           padding: sp(denseGrid ? "5px 8px" : "6px 10px"),
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "space-between",
@@ -1288,7 +1295,7 @@ export const MultiChartGrid = ({
               fontSize: fs(10),
               fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               letterSpacing: "0.04em",
             }}
           >
@@ -1297,7 +1304,7 @@ export const MultiChartGrid = ({
           <span
             style={{
               fontSize: textSize("caption"),
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontFamily: T.sans,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -1329,8 +1336,8 @@ export const MultiChartGrid = ({
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 fontWeight: FONT_WEIGHTS.regular,
-                background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
-                color: gridScaleResetDisabled ? T.textMuted : T.text,
+                background: gridScaleResetDisabled ? CSS_COLOR.bg3 : "rgba(255,255,255,0.08)",
+                color: gridScaleResetDisabled ? CSS_COLOR.textMuted : CSS_COLOR.text,
                 border: "none",
                 borderRadius: dim(RADII.xs),
                 cursor: gridScaleResetDisabled ? "default" : "pointer",
@@ -1351,7 +1358,7 @@ export const MultiChartGrid = ({
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
               background: "rgba(255,255,255,0.08)",
-              color: T.text,
+              color: CSS_COLOR.text,
               border: "none",
               borderRadius: dim(RADII.xs),
               cursor: "pointer",
@@ -1389,8 +1396,8 @@ export const MultiChartGrid = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
-                  background: syncTimeframes ? T.accent : T.bg3,
-                  color: syncTimeframes ? T.onAccent : T.textDim,
+                  background: syncTimeframes ? CSS_COLOR.accent : CSS_COLOR.bg3,
+                  color: syncTimeframes ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
                   border: "none",
                   borderRadius: dim(RADII.xs),
                   cursor: "pointer",
@@ -1408,8 +1415,8 @@ export const MultiChartGrid = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
-                  background: syncCrosshair ? T.accent : T.bg3,
-                  color: syncCrosshair ? T.onAccent : T.textDim,
+                  background: syncCrosshair ? CSS_COLOR.accent : CSS_COLOR.bg3,
+                  color: syncCrosshair ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
                   border: "none",
                   borderRadius: dim(RADII.xs),
                   cursor: "pointer",
@@ -1425,7 +1432,7 @@ export const MultiChartGrid = ({
               display: "flex",
               gap: sp(2),
               padding: sp(denseGrid ? 1 : 2),
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               borderRadius: dim(RADII.xs),
             }}
           >
@@ -1438,8 +1445,8 @@ export const MultiChartGrid = ({
                   fontSize: textSize("caption"),
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
-                  background: layout === key ? T.accent : "transparent",
-                  color: layout === key ? T.onAccent : T.textDim,
+                  background: layout === key ? CSS_COLOR.accent : "transparent",
+                  color: layout === key ? CSS_COLOR.onAccent : CSS_COLOR.textDim,
                   border: "none",
                   borderRadius: dim(RADII.xs),
                   cursor: "pointer",
@@ -1578,7 +1585,7 @@ export const MultiChartGrid = ({
               const isActive = gridResizeActiveHandle === handleKey;
               const isHovered = gridResizeHoverHandle === handleKey;
               const dividerColor = isActive
-                ? T.accent
+                ? CSS_COLOR.accent
                 : isHovered
                   ? gridResizeHoverColor
                   : gridResizeIdleColor;
@@ -1635,7 +1642,7 @@ export const MultiChartGrid = ({
                       height: "100%",
                       background: dividerColor,
                       boxShadow: isActive
-                        ? `0 0 0 1px ${T.bg}, 0 0 12px rgba(91,140,255,0.35)`
+                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px rgba(91,140,255,0.35)`
                         : isHovered
                           ? `0 0 0 1px rgba(0,0,0,0.18)`
                           : "none",
@@ -1656,7 +1663,7 @@ export const MultiChartGrid = ({
               const isActive = gridResizeActiveHandle === handleKey;
               const isHovered = gridResizeHoverHandle === handleKey;
               const dividerColor = isActive
-                ? T.accent
+                ? CSS_COLOR.accent
                 : isHovered
                   ? gridResizeHoverColor
                   : gridResizeIdleColor;
@@ -1713,7 +1720,7 @@ export const MultiChartGrid = ({
                       height: crosshairStroke,
                       background: dividerColor,
                       boxShadow: isActive
-                        ? `0 0 0 1px ${T.bg}, 0 0 12px rgba(91,140,255,0.35)`
+                        ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 12px rgba(91,140,255,0.35)`
                         : isHovered
                           ? `0 0 0 1px rgba(0,0,0,0.18)`
                           : "none",
@@ -1785,14 +1792,14 @@ export const MultiChartGrid = ({
                         inset: 0,
                         borderRadius: RADII.pill,
                         background: isActive
-                          ? T.accent
+                          ? CSS_COLOR.accent
                           : isHovered
                             ? gridResizeHoverColor
                             : "rgba(166, 174, 182, 0.48)",
                         boxShadow: isActive
-                          ? `0 0 0 1px ${T.bg}, 0 0 14px rgba(91,140,255,0.4)`
+                          ? `0 0 0 1px ${CSS_COLOR.bg0}, 0 0 14px rgba(91,140,255,0.4)`
                           : isHovered
-                            ? `0 0 0 1px ${T.bg}`
+                            ? `0 0 0 1px ${CSS_COLOR.bg0}`
                             : `0 0 0 1px rgba(0,0,0,0.28)`,
                         opacity: isActive ? 1 : isHovered ? 0.92 : 0.8,
                         transition:

@@ -1,7 +1,23 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ThemeContext } from "../../features/platform/platformContexts";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   Panel,
   ToggleGroup,
@@ -57,22 +73,22 @@ const useLocalToday = () => {
 
 const calendarThemeStyle = () => {
   return {
-    gridLine: T.borderLight,
-    neutralBg: T.bg1,
-    mutedNeutralBg: `${T.border}44`,
-    dayText: T.textSec,
-    mutedDayText: T.textMuted,
+    gridLine: CSS_COLOR.borderLight,
+    neutralBg: CSS_COLOR.bg1,
+    mutedNeutralBg: `${cssColorMix(CSS_COLOR.border, 27)}`,
+    dayText: CSS_COLOR.textSec,
+    mutedDayText: CSS_COLOR.textMuted,
     zeroValueText: "transparent",
-    positive: `${T.green}24`,
-    negative: `${T.red}24`,
-    positiveText: T.green,
-    negativeText: T.red,
-    activeText: T.text,
-    activeDayText: T.text,
+    positive: `${cssColorMix(CSS_COLOR.green, 14)}`,
+    negative: `${cssColorMix(CSS_COLOR.red, 14)}`,
+    positiveText: CSS_COLOR.green,
+    negativeText: CSS_COLOR.red,
+    activeText: CSS_COLOR.text,
+    activeDayText: CSS_COLOR.text,
     shadow: "none",
-    border: T.border,
-    navBg: T.bg2,
-    navText: T.textSec,
+    border: CSS_COLOR.border,
+    navBg: CSS_COLOR.bg2,
+    navText: CSS_COLOR.textSec,
   };
 };
 
@@ -178,7 +194,7 @@ const CalendarViewToggle = ({ value, onChange, calendarStyle, compact = false })
         gap: sp(1),
         padding: sp(1),
         borderRadius: dim(RADII.pill),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         minWidth: 0,
       }}
     >
@@ -199,8 +215,8 @@ const CalendarViewToggle = ({ value, onChange, calendarStyle, compact = false })
                 padding: sp("0 5px"),
                 border: "none",
                 borderRadius: dim(RADII.pill),
-                background: active ? T.bg3 : "transparent",
-                color: active ? T.text : T.textDim,
+                background: active ? CSS_COLOR.bg3 : "transparent",
+                color: active ? CSS_COLOR.text : CSS_COLOR.textDim,
                 fontSize: textSize("micro"),
                 fontFamily: T.sans,
                 fontWeight: active ? FONT_WEIGHTS.label : FONT_WEIGHTS.medium,
@@ -263,7 +279,7 @@ const MonthCalendarGrid = ({
           <div
             key={day}
             style={{
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               fontSize: compact ? dim(7) : fs(isPhone ? 7 : 8),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.medium,
@@ -330,15 +346,15 @@ const MonthCalendarGrid = ({
                 alignItems: "stretch",
                 gap: sp(compact ? 0 : isPhone ? 1 : 3),
                 padding: sp(compact ? "2px 0 1px" : isPhone ? "4px 2px 3px" : "5px 4px 4px"),
-                border: `1px solid ${isActive ? T.accent : tone.borderColor}`,
+                border: `1px solid ${isActive ? CSS_COLOR.accent : tone.borderColor}`,
                 borderRadius: dim(RADII.xs),
                 background: isActive
-                  ? `linear-gradient(0deg, ${T.accent}12, ${T.accent}12), ${tone.background}`
+                  ? `linear-gradient(0deg, ${cssColorMix(CSS_COLOR.accent, 7)}, ${cssColorMix(CSS_COLOR.accent, 7)}), ${tone.background}`
                   : tone.background,
                 boxShadow: isPinned
-                  ? `inset 0 0 0 1px ${T.accent}88`
+                  ? `inset 0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 53)}`
                   : isActive
-                    ? `inset 0 0 0 1px ${T.accent}55`
+                    ? `inset 0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 33)}`
                     : tone.boxShadow,
                 overflow: "hidden",
                 cursor: "pointer",
@@ -405,12 +421,12 @@ const MonthCalendarGrid = ({
 
 const CalendarDayDetail = ({ day, currency, maskValues, calendarStyle }) => {
   const pnlTone = !day
-    ? T.textDim
+    ? CSS_COLOR.textDim
     : day.pnl > 0
       ? calendarStyle.positiveText
       : day.pnl < 0
         ? calendarStyle.negativeText
-        : T.textDim;
+        : CSS_COLOR.textDim;
   const source = day?.pnlSource === "total" ? "NAV total" : day ? "Realized fallback" : "—";
   const detailItemStyle = {
     display: "inline-flex",
@@ -420,13 +436,13 @@ const CalendarDayDetail = ({ day, currency, maskValues, calendarStyle }) => {
     whiteSpace: "nowrap",
   };
   const labelStyle = {
-    color: T.textMuted,
+    color: CSS_COLOR.textMuted,
     fontSize: textSize("micro"),
     fontFamily: T.sans,
     lineHeight: 1,
   };
   const valueStyle = {
-    color: T.textSec,
+    color: CSS_COLOR.textSec,
     fontSize: textSize("caption"),
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.regular,
@@ -445,14 +461,14 @@ const CalendarDayDetail = ({ day, currency, maskValues, calendarStyle }) => {
         padding: sp("5px 6px"),
         border: `1px solid ${calendarStyle.gridLine}`,
         borderRadius: dim(RADII.xs),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         minWidth: 0,
       }}
     >
       <span
         data-testid="account-pnl-calendar-active-date"
         style={{
-          color: day ? T.text : T.textMuted,
+          color: day ? CSS_COLOR.text : CSS_COLOR.textMuted,
           fontSize: textSize("caption"),
           fontFamily: T.sans,
           fontWeight: FONT_WEIGHTS.medium,
@@ -560,7 +576,7 @@ const YearCalendarGrid = ({
               }`,
               borderRadius: dim(RADII.xs),
               background: tone.background,
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               boxShadow: tone.boxShadow,
               overflow: "hidden",
               cursor: "pointer",
@@ -573,8 +589,8 @@ const YearCalendarGrid = ({
                   summary.pnl !== 0
                     ? tone.dayColor
                     : month.isCurrentMonth
-                      ? T.text
-                      : T.textSec,
+                      ? CSS_COLOR.text
+                      : CSS_COLOR.textSec,
                 fontSize: fs(compact ? 7 : isPhone ? 8 : 9),
                 fontFamily: T.sans,
                 fontWeight: month.isCurrentMonth ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
@@ -605,7 +621,7 @@ const YearCalendarGrid = ({
             <span
               style={{
                 minWidth: 0,
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontSize: compact ? textSize("micro") : textSize("caption"),
                 fontFamily: T.sans,
                 lineHeight: 1,
@@ -633,7 +649,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle, compact
       ? summary.pnl >= 0
         ? calendarStyle.positiveText
         : calendarStyle.negativeText
-      : T.textDim;
+      : CSS_COLOR.textDim;
   return (
     <div
       style={{
@@ -656,7 +672,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle, compact
       </span>
       <span>
         <span style={{ color: calendarStyle.positiveText, fontWeight: FONT_WEIGHTS.regular }}>{summary.wins}W</span>
-        <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
+        <span style={{ margin: "0 3px", color: CSS_COLOR.textDim }}>/</span>
         <span style={{ color: calendarStyle.negativeText, fontWeight: FONT_WEIGHTS.regular }}>
           {summary.losses}L
         </span>

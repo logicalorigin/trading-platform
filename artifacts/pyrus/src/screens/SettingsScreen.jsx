@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetSignalMonitorProfileQueryKey,
@@ -63,6 +69,9 @@ import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   ELEVATION,
   FONT_WEIGHTS,
   PYRUS_STORAGE_KEY,
@@ -285,8 +294,8 @@ function writeWorkspaceState(patch) {
 function smallButton({ active = false, danger = false } = {}) {
   return {
     border: "none",
-    background: danger ? `${T.red}18` : active ? T.greenBg : T.bg2,
-    color: danger ? T.red : active ? T.green : T.text,
+    background: danger ? `${cssColorMix(CSS_COLOR.red, 9)}` : active ? CSS_COLOR.greenBg : CSS_COLOR.bg2,
+    color: danger ? CSS_COLOR.red : active ? CSS_COLOR.green : CSS_COLOR.text,
     borderRadius: dim(RADII.pill),
     padding: sp("6px 12px"),
     fontFamily: T.sans,
@@ -300,9 +309,9 @@ function smallButton({ active = false, danger = false } = {}) {
 function inputStyle() {
   return {
     minHeight: dim(30),
-    border: `1px solid ${T.borderLight}`,
-    background: T.bg1,
-    color: T.text,
+    border: `1px solid ${CSS_COLOR.borderLight}`,
+    background: CSS_COLOR.bg1,
+    color: CSS_COLOR.text,
     borderRadius: dim(RADII.xs),
     padding: sp("5px 7px"),
     fontFamily: T.sans,
@@ -319,7 +328,7 @@ function labelStyle() {
     display: "flex",
     flexDirection: "column",
     gap: sp(4),
-    color: T.textDim,
+    color: CSS_COLOR.textDim,
     fontFamily: T.sans,
     fontSize: textSize("caption"),
     fontWeight: FONT_WEIGHTS.medium,
@@ -350,16 +359,16 @@ function AboutPanel({ summary, providers }) {
       : "—";
   const sourceTreeTone =
     fingerprint.sourceTreeStatus === "dirty"
-      ? T.amber
+      ? CSS_COLOR.amber
       : fingerprint.sourceTreeStatus === "clean"
-        ? T.green
-        : T.textDim;
+        ? CSS_COLOR.green
+        : CSS_COLOR.textDim;
   const tradingTone =
     summary?.tradingMode === "live"
-      ? T.red
+      ? CSS_COLOR.red
       : summary?.tradingMode === "paper"
-        ? T.green
-        : T.textDim;
+        ? CSS_COLOR.green
+        : CSS_COLOR.textDim;
   const providerOk = Boolean(
     providers?.polygon && providers?.research && providers?.ibkr,
   );
@@ -370,7 +379,7 @@ function AboutPanel({ summary, providers }) {
       <StateRow
         label="Build SHA"
         value={shortSha}
-        tone={shortSha === "—" ? T.textDim : T.text}
+        tone={shortSha === "—" ? CSS_COLOR.textDim : CSS_COLOR.text}
       />
       <StateRow
         label="Source tree"
@@ -382,7 +391,7 @@ function AboutPanel({ summary, providers }) {
       <StateRow
         label="Node env"
         value={fingerprint.nodeEnv || "—"}
-        tone={T.textDim}
+        tone={CSS_COLOR.textDim}
       />
       <StateRow
         label="Trading mode"
@@ -392,7 +401,7 @@ function AboutPanel({ summary, providers }) {
       <StateRow
         label="Providers"
         value={providerOk ? "all configured" : "incomplete"}
-        tone={providerOk ? T.green : T.amber}
+        tone={providerOk ? CSS_COLOR.green : CSS_COLOR.amber}
       />
     </Panel>
   );
@@ -406,7 +415,7 @@ function Panel({ title, action, children }) {
   );
 }
 
-function StateRow({ label, value, tone = T.textSec }) {
+function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
   return (
     <div
       style={{
@@ -414,13 +423,13 @@ function StateRow({ label, value, tone = T.textSec }) {
         alignItems: "center",
         justifyContent: "space-between",
         gap: sp(10),
-        borderBottom: `1px solid ${T.border}55`,
+        borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
         padding: sp("7px 0"),
         fontFamily: T.sans,
         fontSize: fs(10),
       }}
     >
-      <span style={{ color: T.textDim, minWidth: 0 }}>{label}</span>
+      <span style={{ color: CSS_COLOR.textDim, minWidth: 0 }}>{label}</span>
       <span
         style={{
           color: tone,
@@ -493,17 +502,17 @@ function CheckboxField({ label, checked, onChange }) {
         alignItems: "center",
         gap: sp(7),
         padding: sp("5px 7px"),
-        border: `1px solid ${T.borderLight}`,
+        border: `1px solid ${CSS_COLOR.borderLight}`,
         borderRadius: dim(RADII.xs),
-        background: T.bg1,
-        color: T.textSec,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textSec,
       }}
     >
       <input
         type="checkbox"
         checked={Boolean(checked)}
         onChange={(event) => onChange(event.target.checked)}
-        style={{ accentColor: T.accent }}
+        style={{ accentColor: CSS_COLOR.accent }}
       />
       {label}
     </label>
@@ -519,7 +528,7 @@ function JsonBlock({ value }) {
         overflow: "auto",
         fontFamily: T.sans,
         fontSize: textSize("caption"),
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         whiteSpace: "pre-wrap",
         lineHeight: 1.45,
       }}
@@ -533,18 +542,18 @@ function SourceBadge({ setting }) {
   const source = setting?.source || "default";
   const color =
     source === "pending_restart"
-      ? T.amber
+      ? CSS_COLOR.amber
       : source === "override"
-        ? T.green
+        ? CSS_COLOR.green
         : source === "env"
-          ? T.accent
-          : T.textDim;
+          ? CSS_COLOR.accent
+          : CSS_COLOR.textDim;
   return (
     <span
       style={{
-        border: `1px solid ${color}66`,
+        border: `1px solid ${cssColorAlpha(color, "66")}`,
         color,
-        background: `${color}10`,
+        background: cssColorAlpha(color, "10"),
         borderRadius: dim(RADII.pill),
         padding: sp("2px 8px"),
         fontFamily: T.sans,
@@ -566,9 +575,9 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
   return (
     <div
       style={{
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         padding: sp("10px 12px"),
         display: "grid",
         gap: sp(6),
@@ -576,12 +585,12 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(8) }}>
-        <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11) }}>
+        <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular, fontSize: fs(11) }}>
           {setting.label}
         </div>
         <SourceBadge setting={setting} />
       </div>
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), lineHeight: 1.45 }}>
+      <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), lineHeight: 1.45 }}>
         {setting.description}
       </div>
       {editable ? (
@@ -597,17 +606,17 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
           ))}
         </select>
       ) : (
-        <div style={{ color: T.textSec, fontFamily: T.sans, fontSize: fs(10), overflowWrap: "anywhere" }}>
+        <div style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10), overflowWrap: "anywhere" }}>
           {displayValue ?? MISSING_VALUE}
         </div>
       )}
       {setting.pendingValue !== undefined && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption") }}>
+        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption") }}>
           Pending restart: {String(setting.pendingValue)}
         </div>
       )}
       {setting.requiresRestart && (
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), textTransform: "uppercase" }}>
+        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), textTransform: "uppercase" }}>
           restart required
         </div>
       )}
@@ -1344,7 +1353,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       }
     >
       {error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {error}
         </div>
       )}
@@ -1360,22 +1369,22 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Remaining to target"
             value={formatCount(allocation.remainingToTargetLineCount)}
-            tone={Number(allocation.remainingToTargetLineCount) > 0 ? T.amber : T.green}
+            tone={Number(allocation.remainingToTargetLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
             label="Line pressure"
             value={String(pressure.state || "unknown").toUpperCase()}
             tone={
               pressure.state === "protected"
-                ? T.red
+                ? CSS_COLOR.red
                 : pressure.state === "constrained"
-                  ? T.amber
-                  : T.green
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.green
             }
           />
           <StateRow label="Budget source" value={String(pressure.budgetSource || MISSING_VALUE)} />
           <StateRow label="Reserve" value={formatCount(budget.reserveLines)} />
-          <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? T.amber : T.green} />
+          <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? CSS_COLOR.amber : CSS_COLOR.green} />
           <StateRow label="Bridge line budget" value={formatCount(bridge.lineBudget)} />
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
           <StateRow label="Bridge equity lines" value={formatCount(lineUsage.bridge.activeEquity)} />
@@ -1385,11 +1394,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={String(bridgeDiagnostics.pressure || MISSING_VALUE)}
             tone={
               bridgeDiagnostics.pressure === "stalled"
-                ? T.red
+                ? CSS_COLOR.red
                 : bridgeDiagnostics.pressure === "degraded" ||
                     bridgeDiagnostics.pressure === "backoff"
-                  ? T.amber
-                  : T.green
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.green
             }
           />
         </div>
@@ -1409,7 +1418,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Algo quote health"
             value={signalOptions.detail || MISSING_VALUE}
-            tone={Number(signalOptions.rejectedCount) > 0 ? T.amber : T.green}
+            tone={Number(signalOptions.rejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow label="Scanner available lines" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow
@@ -1419,7 +1428,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Account deferred"
             value={formatCount(accountMonitor.deferred ?? accountMonitorDetails.deferredLineCount ?? accountMonitorDetails.recentRejectedCount)}
-            tone={Number(accountMonitor.deferred ?? accountMonitorDetails.recentRejectedCount) > 0 ? T.amber : T.green}
+            tone={Number(accountMonitor.deferred ?? accountMonitorDetails.recentRejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow label="Algo & Execution" value={formatCount(automation.used)} />
           <StateRow label="Elastic active" value={formatCount(allocation.elasticLineCount ?? allocation.convenienceLineCount ?? admission.convenienceLineCount)} />
@@ -1433,42 +1442,42 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={warmup.available ? String(warmup.label || "unknown") : MISSING_VALUE}
             tone={
               warmup.state === "covered"
-                ? T.green
+                ? CSS_COLOR.green
                 : warmup.state === "pending"
-                  ? T.amber
-                  : T.textDim
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.textDim
             }
           />
           <StateRow
             label="Warm-up pending"
             value={`${formatCount(warmup.pendingLineCount)} / ${formatCount(warmup.targetLineCount)}`}
-            tone={Number(warmup.pendingLineCount) > 0 ? T.amber : T.green}
+            tone={Number(warmup.pendingLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
             label="Account pending"
             value={`${formatCount(warmup.accountPendingLineCount)} / ${formatCount(warmup.accountTargetLineCount)}`}
-            tone={Number(warmup.accountPendingLineCount) > 0 ? T.amber : T.green}
+            tone={Number(warmup.accountPendingLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
             label="Watchlist pending"
             value={`${formatCount(warmup.watchlistPendingLineCount)} / ${formatCount(warmup.watchlistTargetLineCount)}`}
-            tone={Number(warmup.watchlistPendingLineCount) > 0 ? T.amber : T.green}
+            tone={Number(warmup.watchlistPendingLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
             label="Drift status"
             value={String(driftReconciliation.status || MISSING_VALUE).replace(/_/g, " ")}
             tone={
               driftReconciliation.status === "matched"
-                ? T.green
+                ? CSS_COLOR.green
                 : driftReconciliation.status
-                  ? T.amber
-                  : T.textDim
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.textDim
             }
           />
           <StateRow
             label="Account stream"
             value={brokerStreamFreshness.account.fresh ? "fresh" : "pending"}
-            tone={brokerStreamFreshness.account.fresh ? T.green : T.amber}
+            tone={brokerStreamFreshness.account.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
           />
           <StateRow
             label="Account age"
@@ -1477,7 +1486,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Order stream"
             value={brokerStreamFreshness.order.fresh ? "fresh" : "pending"}
-            tone={brokerStreamFreshness.order.fresh ? T.green : T.amber}
+            tone={brokerStreamFreshness.order.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
           />
           <StateRow
             label="Order age"
@@ -1488,18 +1497,18 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {lineUsage.rows.length > 0 && (
         <div
           className="ra-hide-scrollbar"
-          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), background: T.bg1, marginTop: sp(12), minWidth: 0 }}
+          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.md), background: CSS_COLOR.bg1, marginTop: sp(12), minWidth: 0 }}
         >
           {lineUsage.rows.map((pool, index) => (
             <div
               key={pool.id}
-              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${T.border}` }}
+              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}` }}
             >
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{pool.label}</div>
-              <div style={{ color: Number(pool.used) > Number(pool.effectiveCap ?? pool.cap) ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
+              <div style={{ color: CSS_COLOR.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{pool.label}</div>
+              <div style={{ color: Number(pool.used) > Number(pool.effectiveCap ?? pool.cap) ? CSS_COLOR.amber : CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
                 {formatCount(pool.used)} of {formatCount(pool.effectiveCap ?? pool.cap)}
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
                 {pool.elastic ? "elastic slack" : pool.strict ? "reserved pool" : pool.dynamic ? "dynamic expansion" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
@@ -1510,18 +1519,18 @@ function IbkrLineUsagePanel({ runtimeControl }) {
       {governorRows.length > 0 && (
         <div
           className="ra-hide-scrollbar"
-          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), background: T.bg1, marginTop: sp(12), minWidth: 0 }}
+          style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.md), background: CSS_COLOR.bg1, marginTop: sp(12), minWidth: 0 }}
         >
           {governorRows.map(([id, lane], index) => (
             <div
               key={id}
-              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${T.border}` }}
+              style={{ flex: "1 1 auto", minWidth: dim(150), padding: sp(10), borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}` }}
             >
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{id}</div>
-              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
+              <div style={{ color: CSS_COLOR.text, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>{id}</div>
+              <div style={{ color: lane.circuitOpen ? CSS_COLOR.amber : CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
                 {lane.circuitOpen ? `backoff ${formatCount(lane.backoffRemainingMs)}ms` : lane.lastFailure || "ready"}
               </div>
             </div>
@@ -1596,7 +1605,7 @@ function StoragePrunePanel() {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(160)}px, ${dim(220)}px) 1fr`, gap: sp(10), alignItems: "end" }}>
-        <label style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
+        <label style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular }}>
           Older Than Days
           <input
             type="number"
@@ -1606,7 +1615,7 @@ function StoragePrunePanel() {
             style={{ ...inputStyle(), marginTop: sp(4) }}
           />
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: sp(7), color: T.textSec, fontFamily: T.sans, fontSize: fs(10) }}>
+        <label style={{ display: "flex", alignItems: "center", gap: sp(7), color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: fs(10) }}>
           <input
             type="checkbox"
             checked={dryRun}
@@ -1615,7 +1624,7 @@ function StoragePrunePanel() {
           Dry-run only
         </label>
       </div>
-      {error && <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(10) }}>{error}</div>}
+      {error && <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginTop: sp(10) }}>{error}</div>}
       {result && (
         <div style={{ marginTop: sp(12) }}>
           <JsonBlock value={result} />
@@ -1643,17 +1652,17 @@ function BrowserStorageFootprintPanel() {
         <StateRow
           label="Local storage"
           value={`${formatBytes(storage.snapshot.local.totalBytes)} / ${storage.snapshot.local.count} keys`}
-          tone={storage.snapshot.local.totalBytes > 2 * 1024 * 1024 ? T.amber : T.textSec}
+          tone={storage.snapshot.local.totalBytes > 2 * 1024 * 1024 ? CSS_COLOR.amber : CSS_COLOR.textSec}
         />
         <StateRow
           label="Session storage"
           value={`${formatBytes(storage.snapshot.session.totalBytes)} / ${storage.snapshot.session.count} keys`}
-          tone={T.textSec}
+          tone={CSS_COLOR.textSec}
         />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(260)}px, 1fr))`, gap: sp(8) }}>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
+          <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
             Largest Local Keys
           </div>
           {localEntries.map((entry) => (
@@ -1662,7 +1671,7 @@ function BrowserStorageFootprintPanel() {
           {!localEntries.length && <StateRow label="No local storage keys" value="empty" />}
         </div>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
+          <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.regular, marginBottom: sp(6) }}>
             Largest Session Keys
           </div>
           {sessionEntries.map((entry) => (
@@ -1726,19 +1735,19 @@ function AppPreferencesPanel({
   return (
     <Panel title="App Preferences">
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(220)}px, 1fr))`, gap: sp(8) }}>
-        <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
+        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Theme" value={theme} />
           <button type="button" onClick={onToggleTheme} style={smallButton({ active: true })}>
             Switch to {theme === "dark" ? "light" : "dark"}
           </button>
         </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
+        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Watchlist sidebar" value={sidebarCollapsed ? "collapsed" : "expanded"} />
           <button type="button" onClick={onToggleSidebar} style={smallButton()}>
             {sidebarCollapsed ? "Expand watchlist" : "Collapse watchlist"}
           </button>
         </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
+        <div style={{ border: `1px solid ${CSS_COLOR.border}`, background: CSS_COLOR.bg1, borderRadius: dim(RADII.md), padding: sp(12) }}>
           <StateRow label="Algo monitor sidebar" value={activitySidebarCollapsed ? "collapsed" : "expanded"} />
           <button type="button" onClick={onToggleActivitySidebar} style={smallButton()}>
             {activitySidebarCollapsed ? "Expand algo monitor" : "Collapse algo monitor"}
@@ -1782,13 +1791,13 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         }
       >
         {userPreferences.error && (
-          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+          <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {userPreferences.error}
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
-          <StateRow label="Source" value={userPreferences.snapshot?.source || "local"} tone={userPreferences.snapshot?.source === "database" ? T.green : T.amber} />
-          <StateRow label="Status" value={userPreferences.saving ? "saving" : userPreferences.loading ? "loading" : "synced"} tone={userPreferences.saving || userPreferences.loading ? T.amber : T.green} />
+          <StateRow label="Source" value={userPreferences.snapshot?.source || "local"} tone={userPreferences.snapshot?.source === "database" ? CSS_COLOR.green : CSS_COLOR.amber} />
+          <StateRow label="Status" value={userPreferences.saving ? "saving" : userPreferences.loading ? "loading" : "synced"} tone={userPreferences.saving || userPreferences.loading ? CSS_COLOR.amber : CSS_COLOR.green} />
           <StateRow label="App time" value={formatPreferenceTimeZoneLabel(prefs, "app")} />
           <StateRow label="Chart time" value={formatPreferenceTimeZoneLabel(prefs, "chart")} />
         </div>
@@ -1854,7 +1863,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
             }}
           />
           <div style={{ display: "flex", gap: sp(4), alignItems: "center" }}>
-            <span style={{ color: T.textMuted, fontSize: fs(10), fontFamily: T.sans }}>
+            <span style={{ color: CSS_COLOR.textMuted, fontSize: fs(10), fontFamily: T.sans }}>
               Up to 10 symbols. Invalid entries are dropped on save.
             </span>
             <button
@@ -1863,7 +1872,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
               style={{
                 background: "transparent",
                 border: "none",
-                color: T.accent,
+                color: CSS_COLOR.accent,
                 cursor: "pointer",
                 fontFamily: T.sans,
                 fontSize: fs(10),
@@ -2187,7 +2196,7 @@ function ChartTimeframeFavoritesPanel() {
 
   return (
     <Panel title="Chart Timeframe Favorites">
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+      <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the quick-pick timeframe buttons used by the primary chart, market grid charts, and option charts.
       </div>
       <div style={{ display: "grid", gap: sp(12) }}>
@@ -2198,8 +2207,8 @@ function ChartTimeframeFavoritesPanel() {
             <div
               key={role.value}
               style={{
-                border: `1px solid ${T.border}`,
-                background: T.bg1,
+                border: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg1,
                 borderRadius: dim(RADII.md),
                 padding: sp(12),
                 display: "grid",
@@ -2207,7 +2216,7 @@ function ChartTimeframeFavoritesPanel() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(10) }}>
-                <div style={{ color: T.text, fontWeight: FONT_WEIGHTS.medium, fontSize: textSize("paragraphMuted") }}>{role.label}</div>
+                <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.medium, fontSize: textSize("paragraphMuted") }}>{role.label}</div>
                 <button type="button" onClick={() => resetRole(role.value)} style={smallButton()}>
                   Reset
                 </button>
@@ -2255,7 +2264,7 @@ function DiagnosticAlertPreferencesPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+      <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Controls the local browser alert state used by Diagnostics for crash-risk, cache, and memory warnings.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
@@ -2274,9 +2283,9 @@ function DiagnosticAlertPreferencesPanel() {
               ? formatAppTimeForPreferences(mutedUntil, userPreferences)
               : "not snoozed"
           }
-          tone={mutedActive ? T.amber : T.green}
+          tone={mutedActive ? CSS_COLOR.amber : CSS_COLOR.green}
         />
-        <StateRow label="Dismissed alerts" value={dismissedCount} tone={dismissedCount > 0 ? T.amber : T.textSec} />
+        <StateRow label="Dismissed alerts" value={dismissedCount} tone={dismissedCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
       </div>
       <div style={{ display: "flex", gap: sp(8), flexWrap: "wrap", marginTop: sp(12) }}>
         <button type="button" onClick={() => alerts.snooze(15)} style={smallButton()}>
@@ -2355,7 +2364,7 @@ function WorkspaceDefaultsPanel() {
           </button>
         }
       >
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           These settings update the same workspace state read by the app. Mounted screens may need a revisit or reload to pick up default-only values.
         </div>
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(190)}px, 1fr))`, gap: sp(8) }}>
@@ -2574,7 +2583,7 @@ function FlowScannerSettingsPanel() {
         </button>
       }
     >
-      <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+      <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
         Shared with the header flow scan controls and Flow page scanner.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(170)}px, 1fr))`, gap: sp(8) }}>
@@ -2647,12 +2656,12 @@ function SignalMonitorSettingsPanel({ watchlists }) {
         }
       >
         {monitor.error && (
-          <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+          <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
             {monitor.error}
           </div>
         )}
         {!draft ? (
-          <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
+          <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
             Loading signal monitor profile.
           </div>
         ) : (
@@ -2677,16 +2686,16 @@ function SignalMonitorSettingsPanel({ watchlists }) {
       <Panel title="Signal Monitor Status">
         <StateRow label="Environment" value={liveProfile?.environment || SIGNAL_MONITOR_ENVIRONMENT} />
         <StateRow label="Configured symbols" value={statusSnapshot.configuredMaxSymbols ?? MISSING_VALUE} />
-        <StateRow label="Resolved symbols" value={statusSnapshot.resolvedSymbols ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? T.amber : T.textSec} />
+        <StateRow label="Resolved symbols" value={statusSnapshot.resolvedSymbols ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? CSS_COLOR.amber : CSS_COLOR.textSec} />
         <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.total} />
         <StateRow label="Pinned symbols" value={statusSnapshot.pinnedSymbols ?? MISSING_VALUE} />
         <StateRow label="Expanded symbols" value={statusSnapshot.expansionSymbols ?? MISSING_VALUE} />
         <StateRow label="Fresh signals" value={statusSnapshot.stateSummary.fresh} />
         <StateRow label="Recent events" value={monitor.events.length} />
-        <StateRow label="Signal Source" value={statusSnapshot.universeSource || MISSING_VALUE} tone={statusSnapshot.universeFallbackUsed ? T.amber : T.textSec} />
-        <StateRow label="Shortfall" value={statusSnapshot.shortfall ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? T.amber : T.textSec} />
+        <StateRow label="Signal Source" value={statusSnapshot.universeSource || MISSING_VALUE} tone={statusSnapshot.universeFallbackUsed ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+        <StateRow label="Shortfall" value={statusSnapshot.shortfall ?? MISSING_VALUE} tone={statusSnapshot.shortfall ? CSS_COLOR.amber : CSS_COLOR.textSec} />
         <StateRow label="Last evaluated" value={statusSnapshot.lastEvaluatedAt || MISSING_VALUE} />
-        <StateRow label="Last error" value={liveProfile?.lastError || statusSnapshot.universeDegradedReason || MISSING_VALUE} tone={liveProfile?.lastError || statusSnapshot.universeDegradedReason ? T.red : T.textSec} />
+        <StateRow label="Last error" value={liveProfile?.lastError || statusSnapshot.universeDegradedReason || MISSING_VALUE} tone={liveProfile?.lastError || statusSnapshot.universeDegradedReason ? CSS_COLOR.red : CSS_COLOR.textSec} />
       </Panel>
     </div>
   );
@@ -2698,27 +2707,27 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
     {
       label: "Restart",
       value: `${summary.pendingRestartCount || 0} pending`,
-      tone: summary.pendingRestartCount > 0 ? T.amber : T.green,
+      tone: summary.pendingRestartCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green,
     },
     {
       label: "Diagnostics",
       value: summary.diagnosticsSeverity || summary.diagnosticsStatus || "unknown",
-      tone: summary.diagnosticsSeverity === "critical" ? T.red : summary.diagnosticsSeverity === "warning" ? T.amber : T.green,
+      tone: summary.diagnosticsSeverity === "critical" ? CSS_COLOR.red : summary.diagnosticsSeverity === "warning" ? CSS_COLOR.amber : CSS_COLOR.green,
     },
     {
       label: "Trading",
       value: summary.tradingMode || "paper",
-      tone: summary.tradingMode === "live" ? T.red : T.green,
+      tone: summary.tradingMode === "live" ? CSS_COLOR.red : CSS_COLOR.green,
     },
     {
       label: "Providers",
       value: `${providers.polygon ? "P" : "-"} ${providers.research ? "R" : "-"} ${providers.ibkr ? "I" : "-"}`,
-      tone: providers.polygon && providers.research && providers.ibkr ? T.green : T.amber,
+      tone: providers.polygon && providers.research && providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber,
     },
     {
       label: "Unsaved",
       value: dirtyCount || 0,
-      tone: dirtyCount > 0 ? T.amber : T.textSec,
+      tone: dirtyCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec,
     },
   ];
 
@@ -2740,7 +2749,7 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
           key={item.label}
           style={{
             border: "none",
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(compact ? RADII.sm : RADII.md),
             padding: sp(compact ? "6px 10px" : "10px 12px"),
             display: "grid",
@@ -2749,7 +2758,7 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
             flex: compact ? "0 0 auto" : undefined,
           }}
         >
-          <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular }}>
             {item.label}
           </span>
           <span style={{ color: item.tone, fontFamily: T.sans, fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular }}>
@@ -2767,14 +2776,14 @@ function ResearchProviderPanel({ backendSnapshot }) {
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {research.error}
         </div>
       )}
-      <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? T.green : T.amber} />
-      <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? T.green : T.amber} />
-      <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
-      <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
+      <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber} />
     </Panel>
   );
 }
@@ -2838,7 +2847,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
-        <StateRow label="Override" value={active ? "active" : "inactive"} tone={active ? T.amber : T.green} />
+        <StateRow label="Override" value={active ? "active" : "inactive"} tone={active ? CSS_COLOR.amber : CSS_COLOR.green} />
         <StateRow
           label="Last clear"
           value={
@@ -2848,11 +2857,11 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
                 ? "no override"
                 : MISSING_VALUE
           }
-          tone={result?.cleared || result?.reason === "no_override" ? T.green : T.textSec}
+          tone={result?.cleared || result?.reason === "no_override" ? CSS_COLOR.green : CSS_COLOR.textSec}
         />
       </div>
       {error ? (
-        <div style={{ marginTop: sp(8), color: T.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
+        <div style={{ marginTop: sp(8), color: CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("caption") }}>
           {error}
         </div>
       ) : null}
@@ -2885,16 +2894,16 @@ function SettingsInventoryPanel() {
               display: "grid",
               gridTemplateColumns: `repeat(auto-fit, minmax(${dim(150)}px, 1fr))`,
               gap: sp(10),
-              borderBottom: `1px solid ${T.border}55`,
+              borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
               padding: sp("8px 0"),
               fontFamily: T.sans,
               fontSize: textSize("caption"),
             }}
           >
-            <strong style={{ color: T.text }}>{area}</strong>
-            <span style={{ color: T.textSec }}>{controls}</span>
-            <span style={{ color: T.accent }}>{source}</span>
-            <span style={{ color: T.textDim }}>{placement}</span>
+            <strong style={{ color: CSS_COLOR.text }}>{area}</strong>
+            <span style={{ color: CSS_COLOR.textSec }}>{controls}</span>
+            <span style={{ color: CSS_COLOR.accent }}>{source}</span>
+            <span style={{ color: CSS_COLOR.textDim }}>{placement}</span>
           </div>
         ))}
       </div>
@@ -2923,11 +2932,11 @@ function FooterMemorySignalSettingsPanel() {
             value={String(memoryPressure.level || "normal").toUpperCase()}
             tone={
               memoryPressure.level === "critical"
-                ? T.red
+                ? CSS_COLOR.red
                 : memoryPressure.level === "high" ||
                     memoryPressure.level === "watch"
-                  ? T.amber
-                  : T.green
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.green
             }
           />
           <StateRow label="Trend" value={String(memoryPressure.trend || "steady").toUpperCase()} />
@@ -3073,8 +3082,8 @@ export default function SettingsScreen({
         height: "100%",
         width: "100%",
         overflow: "auto",
-        background: T.bg0,
-        color: T.text,
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
         padding: sp(settingsIsPhone ? "8px 10px 18px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
@@ -3092,7 +3101,7 @@ export default function SettingsScreen({
           marginBottom: sp(settingsIsPhone ? 8 : 0),
         }}
       >
-        <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
+        <span style={{ color: summary.pendingRestartCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green, fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
           {summary.pendingRestartCount || 0} pending restart
         </span>
         <Button
@@ -3123,7 +3132,7 @@ export default function SettingsScreen({
       </div>
 
       {backend.error && (
-        <div style={{ color: T.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
+        <div style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(10) }}>
           {backend.error}
         </div>
       )}
@@ -3146,7 +3155,7 @@ export default function SettingsScreen({
         <aside
           style={{
             border: "none",
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(RADII.md),
             padding: sp(settingsIsPhone ? 8 : 12),
             display: "grid",
@@ -3184,8 +3193,8 @@ export default function SettingsScreen({
                 onClick={() => setActiveTab(tab.id)}
                 style={{
                   border: "none",
-                  background: activeTab === tab.id ? T.bg2 : "transparent",
-                  color: activeTab === tab.id ? T.text : T.textSec,
+                  background: activeTab === tab.id ? CSS_COLOR.bg2 : "transparent",
+                  color: activeTab === tab.id ? CSS_COLOR.text : CSS_COLOR.textSec,
                   fontWeight: activeTab === tab.id ? 600 : 500,
                   borderRadius: dim(settingsIsPhone ? RADII.sm : RADII.pill),
                   padding: sp(settingsIsPhone ? "7px 10px" : "8px 12px"),
@@ -3201,7 +3210,7 @@ export default function SettingsScreen({
                   {tab.label}
                 </div>
                 {!settingsIsPhone ? (
-                  <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(2) }}>
+                  <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(2) }}>
                     {tab.description}
                   </div>
                 ) : null}
@@ -3209,7 +3218,7 @@ export default function SettingsScreen({
             ))}
           </div>
           {!visibleTabs.length && (
-            <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), padding: sp(8) }}>
+            <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), padding: sp(8) }}>
               No matching sections
             </div>
           )}
@@ -3292,14 +3301,14 @@ export default function SettingsScreen({
               <AboutPanel summary={summary} providers={providers} />
               <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(180)}px, 1fr))`, gap: sp(8) }}>
                 <Panel title="Runtime">
-                  <StateRow label="Trading mode" value={summary.tradingMode} tone={summary.tradingMode === "live" ? T.red : T.green} />
+                  <StateRow label="Trading mode" value={summary.tradingMode} tone={summary.tradingMode === "live" ? CSS_COLOR.red : CSS_COLOR.green} />
                   <StateRow label="Diagnostics" value={summary.diagnosticsStatus} />
                   <StateRow label="Severity" value={summary.diagnosticsSeverity} />
                 </Panel>
                 <Panel title="Providers">
-                  <StateRow label="Polygon" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
-                  <StateRow label="Research" value={providers.research ? "configured" : "missing"} tone={providers.research ? T.green : T.amber} />
-                  <StateRow label="IBKR" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
+                  <StateRow label="Polygon" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? CSS_COLOR.green : CSS_COLOR.amber} />
+                  <StateRow label="Research" value={providers.research ? "configured" : "missing"} tone={providers.research ? CSS_COLOR.green : CSS_COLOR.amber} />
+                  <StateRow label="IBKR" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber} />
                 </Panel>
                 <Panel title="Controls">
                   <StateRow label="Thresholds" value={summary.thresholdCount} />
@@ -3309,11 +3318,11 @@ export default function SettingsScreen({
                 <Panel title="Workspace">
                   <StateRow label="Watchlists" value={summary.watchlistCount} />
                   <StateRow label="Watchlist symbols" value={summary.watchlistSymbolCount} />
-                  <StateRow label="Signal monitor" value={summary.signalMonitor?.enabled ? "enabled" : "paused"} tone={summary.signalMonitor?.enabled ? T.green : T.textDim} />
+                  <StateRow label="Signal monitor" value={summary.signalMonitor?.enabled ? "enabled" : "paused"} tone={summary.signalMonitor?.enabled ? CSS_COLOR.green : CSS_COLOR.textDim} />
                 </Panel>
                 <Panel title="Automation / Charting">
                   <StateRow label="Algo deployments" value={summary.algoDeploymentCount} />
-                  <StateRow label="Enabled deployments" value={summary.enabledAlgoDeploymentCount} tone={summary.enabledAlgoDeploymentCount > 0 ? T.amber : T.textSec} />
+                  <StateRow label="Enabled deployments" value={summary.enabledAlgoDeploymentCount} tone={summary.enabledAlgoDeploymentCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
                   <StateRow label="Pine scripts" value={`${summary.chartEnabledPineScriptCount || 0}/${summary.pineScriptCount || 0} chart-enabled`} />
                 </Panel>
               </div>
@@ -3325,7 +3334,7 @@ export default function SettingsScreen({
               <StoragePrunePanel />
               <Panel title="COOP / COEP Isolation Settings">{renderSettingGrid("isolation")}</Panel>
               <Panel title="Isolation Apply Rules">
-                <StateRow label="Live apply" value="no" tone={T.amber} />
+                <StateRow label="Live apply" value="no" tone={CSS_COLOR.amber} />
                 <StateRow label="Persistence" value="server override file" />
                 <StateRow label="Header source" value="effective env at process start" />
               </Panel>
@@ -3333,7 +3342,7 @@ export default function SettingsScreen({
                 <details>
                   <summary
                     style={{
-                      color: T.textSec,
+                      color: CSS_COLOR.textSec,
                       cursor: "pointer",
                       fontFamily: T.sans,
                       fontSize: fs(10),

@@ -17,6 +17,7 @@ import {
   RESEARCH_CHART_SURFACE_MODULE_VERSION,
   readStoredChartViewportSnapshot,
   resolveAutoHydrationVisibleRange,
+  resolveCanvasColor,
   resolveChartPlotPanRange,
   resolveChartPlotPanStart,
   resolvePreferenceRightOffset,
@@ -109,6 +110,44 @@ test("ResearchChartSurface mounts the overlay layer for flow event overlays", ()
   assert.ok(overlayLayerGate, "overlay layer gate must be present");
   assert.match(overlayLayerGate, /flowVolumeOverlays\.length/);
   assert.match(overlayLayerGate, /chartEventOverlays\.length/);
+});
+
+test("ResearchChartSurface resolves CSS variable colors before chart canvas usage", () => {
+  assert.equal(
+    resolveCanvasColor("color-mix(in srgb, #ff0000 28%, transparent)", "#000000"),
+    "rgba(255, 0, 0, 0.28)",
+  );
+  assert.equal(
+    resolveCanvasColor(
+      "color-mix(in srgb, rgba(255, 0, 0, 0.5) 50%, transparent)",
+      "#000000",
+    ),
+    "rgba(255, 0, 0, 0.25)",
+  );
+  assert.equal(resolveCanvasColor("var(--missing-color)", "#123456"), "#123456");
+  assert.equal(
+    resolveCanvasColor(
+      "color-mix(in srgb, var(--missing-color) 50%, transparent)",
+      "#123456",
+    ),
+    "rgba(18, 52, 86, 0.5)",
+  );
+  assert.equal(resolveCanvasColor("#00ff0080", "#000000"), "rgba(0, 255, 0, 0.502)");
+});
+
+test("ResearchChartSurface sanitizes dynamic chart color payloads", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /resolveChartColorOptions\(spec\.options\)/);
+  assert.match(source, /bg2: resolveCanvasColor\(theme\.bg2, THEMES\.dark\.bg2\)/);
+  assert.match(source, /const withCanvasAlpha = \(color: string, alpha: string\): string =>\s*resolveCanvasAlphaColor\(color, alpha, color\)/);
+  assert.match(source, /resolveCanvasColor\(point\.color\)/);
+  assert.match(source, /resolveCanvasColorMaybe\(bar\.color, chartTheme\.textMuted\)/);
+  assert.match(source, /borderColor: resolveCanvasColorMaybe\(bar\.borderColor, chartTheme\.textMuted\)/);
+  assert.match(source, /resolveCanvasColor\(marker\.color, chartTheme\.accent \|\| chartTheme\.text\)/);
+  assert.match(source, /resolveCanvasColor\(line\.color \|\| chartTheme\.amber, chartTheme\.amber\)/);
+  assert.doesNotMatch(source, /color:\s*marker\.color/);
+  assert.doesNotMatch(source, /color:\s*line\.color \|\| theme\.amber/);
 });
 
 test("ResearchChartSurface mounts position bubbles and mini off-pane indicators", () => {
@@ -242,7 +281,20 @@ test("ResearchChartFrame exposes shared placement policies without visible pan o
   assert.doesNotMatch(frameSource, /controls\.panRight/);
   assert.match(frameSource, /controls\.realtime/);
   assert.match(frameSource, /disabled: !controls\.canFollowRealtime/);
+  assert.equal(
+    frameSource.match(/data-testid="chart-indicators-menu-trigger"/g)?.length,
+    2,
+  );
+  assert.equal(
+    frameSource.match(/\? `Indicators \$\{selectedStudies\.length\}`/g)?.length,
+    2,
+  );
   assert.match(tooltipSource, /isInteractiveTooltipTrigger/);
+  assert.match(tooltipSource, /hasInteractiveTooltipDescendant/);
+  assert.match(
+    tooltipSource,
+    /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
+  );
   assert.match(tooltipSource, /&& !isInteractiveTooltipTrigger\(trigger\)/);
 });
 
@@ -613,11 +665,12 @@ test("ResearchChartSurface exposes flow events as a display control", () => {
 test("ResearchChartSurface colors flat candles and volume neutral", () => {
   const source = readResearchChartSurfaceSource();
 
-  assert.match(source, /bar\.color \?\? \(bar\.c === bar\.o \? theme\.textMuted : undefined\)/);
-  assert.match(source, /bar\.wickColor \?\? \(bar\.c === bar\.o \? theme\.textMuted : undefined\)/);
+  assert.match(source, /resolveCanvasColorMaybe\(bar\.color, chartTheme\.textMuted\) \?\?/);
+  assert.match(source, /bar\.c === bar\.o \? chartTheme\.textMuted : undefined/);
+  assert.match(source, /resolveCanvasColorMaybe\(bar\.wickColor, chartTheme\.textMuted\) \?\?/);
   assert.match(source, /bar\.c > bar\.o/);
   assert.match(source, /bar\.c < bar\.o/);
-  assert.match(source, /withAlpha\(theme\.textMuted, "55"\)/);
+  assert.match(source, /withCanvasAlpha\(chartTheme\.textMuted, "55"\)/);
 });
 
 test("ResearchChartSurface renders compact enriched flow tooltips", () => {

@@ -1,4 +1,11 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import {
@@ -9,7 +16,17 @@ import {
   PositionOptionQuoteStreams,
   buildPositionOptionQuoteGroups,
 } from "./PositionOptionQuoteStreams.jsx";
-import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
@@ -115,7 +132,7 @@ const positionSourceAttributionKey = (rowId, source, index) =>
 const headerCellStyle = (active) => ({
   ...tableCellStyle,
   ...tableHeaderStyle,
-  color: active ? T.accent : T.textSec,
+  color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
 });
 
 const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
@@ -374,6 +391,10 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
   };
 };
 
+const isShadowLedgerPositionRow = (row) =>
+  String(row?.accountId || "").toLowerCase() === "shadow" ||
+  String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
+
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   if (!liveQuote) return row;
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
@@ -409,14 +430,21 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     perContractDayChange != null && quantity != null && multiplier != null
       ? perContractDayChange * quantity * multiplier
       : row.dayChange;
+  const preserveBackendDayChange = Boolean(
+    isShadowLedgerPositionRow(row) &&
+      (firstFiniteNumber(row.dayChange) != null ||
+        firstFiniteNumber(row.dayChangePercent) != null),
+  );
   const delta = firstFiniteNumber(optionQuote?.delta);
 
   return {
     ...row,
     optionQuote,
     mark,
-    dayChange,
-    dayChangePercent: firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent),
+    dayChange: preserveBackendDayChange ? row.dayChange : dayChange,
+    dayChangePercent: preserveBackendDayChange
+      ? row.dayChangePercent
+      : firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent),
     unrealizedPnl,
     unrealizedPnlPercent:
       unrealizedPnl != null && costBasis
@@ -522,9 +550,9 @@ const formatAutomationStopDistanceLabel = (stopDistancePct, maskValues) => {
 
 const automationStopTone = (stopDistancePct) => {
   const distance = firstFiniteNumber(stopDistancePct);
-  if (distance == null) return T.textSec;
-  if (distance <= 0) return T.red;
-  return distance <= 20 ? T.amber : T.textSec;
+  if (distance == null) return CSS_COLOR.textSec;
+  if (distance <= 0) return CSS_COLOR.red;
+  return distance <= 20 ? CSS_COLOR.amber : CSS_COLOR.textSec;
 };
 
 const automationPositionMetrics = (row, currency, maskValues) => {
@@ -959,7 +987,7 @@ const mobileHeaderStyle = {
   gridTemplateColumns: mobilePositionGrid,
   gap: sp(3),
   padding: sp("0 5px"),
-  color: T.textDim,
+  color: CSS_COLOR.textDim,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   letterSpacing: "0.04em",
@@ -982,7 +1010,7 @@ const mobileTaxLotRowStyle = {
   display: "grid",
   gridTemplateColumns: "minmax(0, 1fr) auto",
   gap: sp(5),
-  color: T.textSec,
+  color: CSS_COLOR.textSec,
   fontFamily: T.data,
   fontSize: textSize("body"),
 };
@@ -996,8 +1024,8 @@ const mobileContextGridStyle = {
 const mobileScanShellStyle = (active = false) => ({
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: active ? `${T.cyan}10` : T.bg1,
-  boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
+  background: active ? `${cssColorMix(CSS_COLOR.cyan, 6)}` : CSS_COLOR.bg1,
+  boxShadow: active ? `inset 2px 0 0 ${CSS_COLOR.cyan}` : "none",
   minWidth: 0,
   overflow: "hidden",
 });
@@ -1017,7 +1045,7 @@ const mobileScanRowStyle = {
   minWidth: 0,
 };
 
-const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
+const mobileCellTextStyle = (tone = CSS_COLOR.textSec, align = "right") => ({
   color: tone,
   fontFamily: T.data,
   fontSize: textSize("body"),
@@ -1031,7 +1059,7 @@ const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
 });
 
 const mobileDetailStyle = {
-  borderTop: `1px solid ${T.border}`,
+  borderTop: `1px solid ${CSS_COLOR.border}`,
   padding: sp("6px 7px 7px"),
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
@@ -1044,8 +1072,8 @@ const mobileIconButtonStyle = {
   padding: 0,
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: T.bg1,
-  color: T.textSec,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.textSec,
   display: "inline-grid",
   placeItems: "center",
   cursor: "pointer",
@@ -1107,7 +1135,7 @@ const PositionTrendSparkline = ({
   );
 };
 
-const MobileMetric = ({ label, value, tone = T.text }) => (
+const MobileMetric = ({ label, value, tone = CSS_COLOR.text }) => (
   <div style={{ minWidth: 0 }}>
     <div style={mutedLabelStyle}>{label}</div>
     <div
@@ -1125,7 +1153,7 @@ const MobileMetric = ({ label, value, tone = T.text }) => (
   </div>
 );
 
-const MobileDetailMetric = ({ label, value, tone = T.textSec }) => (
+const MobileDetailMetric = ({ label, value, tone = CSS_COLOR.textSec }) => (
   <div style={{ minWidth: 0 }}>
     <div style={mutedLabelStyle}>{label}</div>
     <div style={mobileCellTextStyle(tone, "left")}>{value}</div>
@@ -1136,8 +1164,8 @@ const MobileContextMetric = ({
   label,
   value,
   detail,
-  tone = T.textSec,
-  detailTone = T.textDim,
+  tone = CSS_COLOR.textSec,
+  detailTone = CSS_COLOR.textDim,
 }) => (
   <div style={{ minWidth: 0 }}>
     <div style={mutedLabelStyle}>{label}</div>
@@ -1177,10 +1205,10 @@ const PositionOpenedCell = ({ row }) => {
     .join(" · ");
   return (
     <td style={{ ...tableCellStyle, minWidth: dim(86) }}>
-      <div style={{ color: display.openedLabel ? T.text : T.textDim, fontFamily: T.data }}>
+      <div style={{ color: display.openedLabel ? CSS_COLOR.text : CSS_COLOR.textDim, fontFamily: T.data }}>
         {display.openedLabel || MISSING_VALUE}
       </div>
-      <div style={cellSubTextStyle(T.textDim)}>{detail || "open date unavailable"}</div>
+      <div style={cellSubTextStyle(CSS_COLOR.textDim)}>{detail || "open date unavailable"}</div>
     </td>
   );
 };
@@ -1196,10 +1224,10 @@ const PositionQuoteCell = ({ row, maskValues }) => {
   const detail = [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · ");
   return (
     <td style={{ ...tableCellStyle, textAlign: "right", minWidth: dim(104) }}>
-      <div style={{ color: quoteHasBidAsk ? T.text : T.textDim, fontFamily: T.data }}>
+      <div style={{ color: quoteHasBidAsk ? CSS_COLOR.text : CSS_COLOR.textDim, fontFamily: T.data }}>
         {bidAsk}
       </div>
-      <div style={cellSubTextStyle(T.textDim)}>
+      <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
         {detail || (quote?.mark != null ? "mark only" : "quote unavailable")}
       </div>
     </td>
@@ -1209,8 +1237,8 @@ const PositionQuoteCell = ({ row, maskValues }) => {
 const StackedMetricCell = ({
   primary,
   secondary,
-  primaryTone = T.text,
-  secondaryTone = T.textDim,
+  primaryTone = CSS_COLOR.text,
+  secondaryTone = CSS_COLOR.textDim,
   align = "right",
   minWidth = 88,
 }) => (
@@ -1224,7 +1252,7 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
   const metrics = automationPositionMetrics(row, currency, maskValues);
   if (!metrics) {
     return (
-      <td style={{ ...tableCellStyle, color: T.textDim, minWidth: dim(132) }}>
+      <td style={{ ...tableCellStyle, color: CSS_COLOR.textDim, minWidth: dim(132) }}>
         {MISSING_VALUE}
       </td>
     );
@@ -1233,7 +1261,7 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
     <td style={{ ...tableCellStyle, minWidth: dim(174), maxWidth: dim(224) }}>
       <div
         style={{
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontFamily: T.data,
           fontSize: textSize("body"),
           overflow: "hidden",
@@ -1266,11 +1294,11 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
   );
 };
 
-const denseTableBorder = () => `1px solid ${T.borderLight}`;
+const denseTableBorder = () => `1px solid ${CSS_COLOR.borderLight}`;
 
 const denseColumnTextStyle = ({
   align = "right",
-  color = T.textSec,
+  color = CSS_COLOR.textSec,
   fontFamily = T.data,
   fontSize = textSize("body"),
   fontWeight = FONT_WEIGHTS.regular,
@@ -1289,7 +1317,7 @@ const denseColumnTextStyle = ({
 
 const denseColumnSubTextStyle = ({
   align = "right",
-  color = T.textDim,
+  color = CSS_COLOR.textDim,
   fontFamily = T.sans,
 } = {}) => ({
   ...denseColumnTextStyle({
@@ -1305,8 +1333,8 @@ const denseColumnSubTextStyle = ({
 const DenseStackedValue = ({
   primary,
   secondary,
-  primaryTone = T.textSec,
-  secondaryTone = T.textDim,
+  primaryTone = CSS_COLOR.textSec,
+  secondaryTone = CSS_COLOR.textDim,
   align = "right",
   title,
 }) => (
@@ -1335,28 +1363,28 @@ const denseTableCellStyle = (column, expanded = false) => ({
   height: dim(46),
   verticalAlign: "middle",
   textAlign: column.align,
-  background: column.sticky ? T.bg1 : "transparent",
+  background: column.sticky ? CSS_COLOR.bg1 : "transparent",
   position: column.sticky ? "sticky" : undefined,
   left: column.sticky ? 0 : undefined,
   zIndex: column.sticky ? 2 : undefined,
   boxShadow: column.sticky
-    ? `${expanded ? `inset 1px 0 0 ${T.accent}, ` : ""}2px 0 0 ${T.borderLight}`
+    ? `${expanded ? `inset 1px 0 0 ${CSS_COLOR.accent}, ` : ""}2px 0 0 ${CSS_COLOR.borderLight}`
     : "none",
 });
 
 const denseHeaderCellStyle = (column, active) => ({
   ...tableHeaderStyle,
   padding: sp("5px 8px"),
-  color: active ? T.text : T.textMuted,
+  color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   letterSpacing: "0.04em",
   textAlign: column.align,
-  background: T.bg1,
+  background: CSS_COLOR.bg1,
   position: "sticky",
   top: 0,
   left: column.sticky ? 0 : undefined,
   zIndex: column.sticky ? 4 : 3,
-  boxShadow: column.sticky ? `2px 0 0 ${T.borderLight}` : undefined,
+  boxShadow: column.sticky ? `2px 0 0 ${CSS_COLOR.borderLight}` : undefined,
 });
 
 const denseActionButtonStyle = {
@@ -1364,8 +1392,8 @@ const denseActionButtonStyle = {
   height: dim(22),
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: T.bg0,
-  color: T.textSec,
+  background: CSS_COLOR.bg0,
+  color: CSS_COLOR.textSec,
   display: "inline-grid",
   placeItems: "center",
   cursor: "pointer",
@@ -1485,7 +1513,7 @@ const DensePositionSymbol = ({
           border: "none",
           padding: 0,
           background: "transparent",
-          color: T.text,
+          color: CSS_COLOR.text,
           cursor: "pointer",
           textAlign: "left",
           minWidth: 0,
@@ -1512,7 +1540,7 @@ const DensePositionSymbol = ({
           <div
             style={{
               marginTop: sp(1),
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
               overflow: "hidden",
@@ -1533,7 +1561,7 @@ const DenseSignalCell = ({ row, currency, maskValues }) => {
   const metrics = automationPositionMetrics(row, currency, maskValues);
   if (!metrics) {
     return (
-      <span style={denseColumnTextStyle({ align: "left", color: T.textDim, fontFamily: T.sans })}>
+      <span style={denseColumnTextStyle({ align: "left", color: CSS_COLOR.textDim, fontFamily: T.sans })}>
         {MISSING_VALUE}
       </span>
     );
@@ -1545,7 +1573,7 @@ const DenseSignalCell = ({ row, currency, maskValues }) => {
         .join(" · ")}
       style={{ display: "grid", gap: sp(1), minWidth: 0 }}
     >
-      <span style={denseColumnTextStyle({ align: "left", color: T.textSec, fontFamily: T.sans })}>
+      <span style={denseColumnTextStyle({ align: "left", color: CSS_COLOR.textSec, fontFamily: T.sans })}>
         {metrics.signalMain}
       </span>
       <span
@@ -1637,7 +1665,7 @@ const DensePositionCell = ({
       : null,
   ].filter(Boolean).join(" · ");
   let content = MISSING_VALUE;
-  let color = T.textSec;
+  let color = CSS_COLOR.textSec;
   let title = undefined;
 
   if (column.id === "symbol") {
@@ -1683,7 +1711,7 @@ const DensePositionCell = ({
         <DenseStackedValue
           primary={formatNumber(row.quantity, 4)}
           secondary={`Avg ${formatAccountPrice(row.averageCost, 2, maskValues)}`}
-          primaryTone={row.quantity < 0 ? T.red : T.textSec}
+          primaryTone={row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec}
           align={column.align}
         />
       </td>
@@ -1698,7 +1726,7 @@ const DensePositionCell = ({
               ? `Last ${formatAccountPrice(lastValue, 2, maskValues)}`
               : "Last —"
           }
-          primaryTone={T.text}
+          primaryTone={CSS_COLOR.text}
           align={column.align}
           title={formatQuoteMarkLast(quote, maskValues)}
         />
@@ -1710,7 +1738,7 @@ const DensePositionCell = ({
         <DenseStackedValue
           primary={bidAsk}
           secondary={quoteDetail || (quote?.mark != null ? "mark only" : "quote unavailable")}
-          primaryTone={quoteHasBidAsk ? T.textSec : T.textDim}
+          primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
           align={column.align}
           title={[bidAsk, quoteDetail].filter(Boolean).join(" · ")}
         />
@@ -1746,7 +1774,7 @@ const DensePositionCell = ({
         <DenseStackedValue
           primary={formatAccountMoney(row.marketValue, currency, false, maskValues)}
           secondary={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
-          primaryTone={T.text}
+          primaryTone={CSS_COLOR.text}
           align={column.align}
         />
       </td>
@@ -1757,7 +1785,7 @@ const DensePositionCell = ({
         <DenseStackedValue
           primary={greeksPrimary}
           secondary={greeksSecondary}
-          primaryTone={greeksPrimary === MISSING_VALUE ? T.textDim : T.textSec}
+          primaryTone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
           align={column.align}
           title={[greeksPrimary, greeksSecondary].filter(Boolean).join(" · ")}
         />
@@ -1790,7 +1818,7 @@ const DensePositionCell = ({
     color = toneForValue(row.unrealizedPnlPercent);
   } else if (column.id === "marketValue") {
     content = formatAccountMoney(row.marketValue, currency, false, maskValues);
-    color = T.text;
+    color = CSS_COLOR.text;
   } else if (column.id === "weightPercent") {
     content = formatAccountPercent(row.weightPercent, 2, maskValues);
   } else if (column.id === "delta") {
@@ -1818,11 +1846,11 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
     0,
   );
   return [
-    { label: "SUMMARY", value: `${formatNumber(rows.length, 0)} positions`, color: T.text },
+    { label: "SUMMARY", value: `${formatNumber(rows.length, 0)} positions`, color: CSS_COLOR.text },
     {
       label: "Net",
       value: formatAccountMoney(displayTotals.netExposure, currency, false, maskValues),
-      color: T.textSec,
+      color: CSS_COLOR.textSec,
     },
     {
       label: "Day",
@@ -1851,18 +1879,18 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
     {
       label: "Wt",
       value: formatAccountPercent(displayTotals.weightPercent, 2, maskValues),
-      color: T.textSec,
+      color: CSS_COLOR.textSec,
     },
     {
       label: "Net Delta",
       value: formatNumber(netDelta, 1),
-      color: T.textSec,
+      color: CSS_COLOR.textSec,
     },
     netTheta
       ? {
           label: "Net Theta",
           value: formatNumber(netTheta, 1),
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
         }
       : null,
   ].filter(Boolean);
@@ -1887,7 +1915,7 @@ const DenseSummaryRow = ({
     <tr
       data-testid="account-positions-summary-row"
       style={{
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         position: "sticky",
         bottom: 0,
         zIndex: 2,
@@ -1897,9 +1925,9 @@ const DenseSummaryRow = ({
         colSpan={columns.length}
         style={{
           padding: sp("6px 8px"),
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
           borderBottom: denseTableBorder(),
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontFamily: T.data,
           fontSize: textSize("body"),
           fontVariantNumeric: "tabular-nums",
@@ -1909,7 +1937,7 @@ const DenseSummaryRow = ({
         <span style={{ display: "inline-flex", gap: sp(8), alignItems: "center" }}>
           {segments.map((segment) => (
             <span key={segment.label} style={{ color: segment.color }}>
-              <span style={{ color: T.textDim }}>{segment.label}</span>{" "}
+              <span style={{ color: CSS_COLOR.textDim }}>{segment.label}</span>{" "}
               {segment.value}
               {segment.extra && segment.extra !== MISSING_VALUE ? ` (${segment.extra})` : ""}
             </span>
@@ -2024,15 +2052,15 @@ const MobilePositionRow = memo(({
             inline
           />
           <div style={mobileMinWidthStyle}>
-            <div style={mobileCellTextStyle(T.text, "left")}>{row.symbol}</div>
-            <div style={cellSubTextStyle(T.textDim)}>
+            <div style={mobileCellTextStyle(CSS_COLOR.text, "left")}>{row.symbol}</div>
+            <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
               {symbolDetail}
             </div>
           </div>
         </div>
         <div
           title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
-          style={mobileCellTextStyle(row.quantity < 0 ? T.red : T.textSec)}
+          style={mobileCellTextStyle(row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec)}
         >
           {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
         </div>
@@ -2042,7 +2070,7 @@ const MobilePositionRow = memo(({
         <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
           {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
         </div>
-        <div style={mobileCellTextStyle(T.textSec)}>
+        <div style={mobileCellTextStyle(CSS_COLOR.textSec)}>
           {formatAccountMoney(row.marketValue, currency, true, maskValues)}
         </div>
         <div style={mobileActionRailStyle}>
@@ -2077,7 +2105,7 @@ const MobilePositionRow = memo(({
           label="Bid / Ask"
           value={quoteBidAsk}
           detail={quoteDetail || (display.quote?.mark != null ? "mark only" : "quote unavailable")}
-          tone={quoteHasBidAsk ? T.textSec : T.textDim}
+          tone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
         />
         <MobileContextMetric
           label="Day / Unreal"
@@ -2089,13 +2117,13 @@ const MobilePositionRow = memo(({
           label="Greeks"
           value={greeksPrimary}
           detail={greeksDetail}
-          tone={greeksPrimary === MISSING_VALUE ? T.textDim : T.textSec}
+          tone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
         />
         <MobileContextMetric
           label="Signal / Risk"
           value={signalValue}
           detail={signalDetail}
-          tone={automationMetrics?.stopTone || T.textSec}
+          tone={automationMetrics?.stopTone || CSS_COLOR.textSec}
         />
       </div>
       {expanded && expandable ? (
@@ -2125,7 +2153,7 @@ const MobilePositionRow = memo(({
                 {row.sourceAttribution.slice(0, 3).map((source, index) => (
                   <div
                     key={positionSourceAttributionKey(row.id, source, index)}
-                    style={{ color: T.textSec, fontSize: textSize("body") }}
+                    style={{ color: CSS_COLOR.textSec, fontSize: textSize("body") }}
                   >
                     {source.strategyLabel || source.sourceType || "Source"} · Qty{" "}
                     {formatNumber(source.quantity, 3)}
@@ -2133,7 +2161,7 @@ const MobilePositionRow = memo(({
                 ))}
               </div>
             ) : (
-              <div style={{ color: T.textMuted, fontSize: textSize("caption") }}>
+              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>
                 Source attribution is unavailable.
               </div>
             )}
@@ -2152,7 +2180,7 @@ const MobilePositionRow = memo(({
                 ))}
               </div>
             ) : (
-              <div style={{ color: T.textMuted, fontSize: textSize("caption") }}>No working orders.</div>
+              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>No working orders.</div>
             )}
           </div>
           <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
@@ -2172,7 +2200,7 @@ const MobilePositionRow = memo(({
                 ))}
               </div>
             ) : (
-              <div style={{ color: T.textMuted, fontSize: textSize("body") }}>
+              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>
                 No tax-lot detail recorded yet.
               </div>
             )}
@@ -2301,17 +2329,17 @@ export const PositionsAtDateInspector = ({
               }}
             >
               {[
-                ["Net Liq", formatAccountMoney(balance.netLiquidation, currency, false, maskValues), T.text],
+                ["Net Liq", formatAccountMoney(balance.netLiquidation, currency, false, maskValues), CSS_COLOR.text],
                 ["Day P&L", formatAccountSignedMoney(balance.dayPnl, currency, false, maskValues), toneForValue(balance.dayPnl)],
-                ["Cash", formatAccountMoney(balance.cash, currency, false, maskValues), T.text],
-                ["Buying Power", formatAccountMoney(balance.buyingPower, currency, false, maskValues), T.text],
+                ["Cash", formatAccountMoney(balance.cash, currency, false, maskValues), CSS_COLOR.text],
+                ["Buying Power", formatAccountMoney(balance.buyingPower, currency, false, maskValues), CSS_COLOR.text],
               ].map(([label, value, color]) => (
                 <div
                   key={label}
                   style={{
                     border: "none",
                     borderRadius: dim(RADII.xs),
-                    background: T.bg0,
+                    background: CSS_COLOR.bg0,
                     padding: sp("5px 6px"),
                     minWidth: 0,
                   }}
@@ -2354,7 +2382,7 @@ export const PositionsAtDateInspector = ({
             ) : null}
           </div>
           {!positions.length && inspectorState.message ? (
-            <div style={{ color: T.textMuted, fontSize: textSize("caption"), lineHeight: 1.35 }}>
+            <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), lineHeight: 1.35 }}>
               {inspectorState.message}
             </div>
           ) : null}
@@ -2410,7 +2438,7 @@ export const PositionsAtDateInspector = ({
 
                     return (
                       <tr key={row.id} className="ra-table-row">
-                        <td style={{ ...tableCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+                        <td style={{ ...tableCellStyle, color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
                           <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
                             <PositionTrendSparkline
                               row={row}
@@ -2425,7 +2453,7 @@ export const PositionsAtDateInspector = ({
                                 border: "none",
                                 padding: 0,
                                 background: "transparent",
-                                color: T.text,
+                                color: CSS_COLOR.text,
                                 cursor: "pointer",
                                 textAlign: "left",
                                 minWidth: 0,
@@ -2442,7 +2470,7 @@ export const PositionsAtDateInspector = ({
                                 showChips={!isOptionPosition(row)}
                                 style={{ maxWidth: dim(150) }}
                               />
-                              <div style={cellSubTextStyle(T.textDim)}>
+                              <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
                                 {[
                                   optionInlineDetail(row, maskValues),
                                   display.openedLabel,
@@ -2455,7 +2483,7 @@ export const PositionsAtDateInspector = ({
                           <DenseStackedValue
                             primary={formatNumber(row.quantity, 3)}
                             secondary={`Avg ${formatAccountPrice(row.averageCost, 2, maskValues)}`}
-                            primaryTone={row.quantity < 0 ? T.red : T.textSec}
+                            primaryTone={row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec}
                           />
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
@@ -2466,14 +2494,14 @@ export const PositionsAtDateInspector = ({
                                 ? `Last ${formatAccountPrice(lastValue, 2, maskValues)}`
                                 : ""
                             }
-                            primaryTone={T.text}
+                            primaryTone={CSS_COLOR.text}
                           />
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
                           <DenseStackedValue
                             primary={bidAsk}
                             secondary={quoteDetail || (quote?.mark != null ? "mark only" : "quote unavailable")}
-                            primaryTone={quoteHasBidAsk ? T.textSec : T.textDim}
+                            primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
                           />
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
@@ -2496,14 +2524,14 @@ export const PositionsAtDateInspector = ({
                           <DenseStackedValue
                             primary={formatAccountMoney(row.marketValue, currency, false, maskValues)}
                             secondary={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
-                            primaryTone={T.text}
+                            primaryTone={CSS_COLOR.text}
                           />
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
                           <DenseStackedValue
                             primary={greeksPrimary}
                             secondary={greeksSecondary}
-                            primaryTone={greeksPrimary === MISSING_VALUE ? T.textDim : T.textSec}
+                            primaryTone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
                           />
                         </td>
                       </tr>
@@ -2512,7 +2540,7 @@ export const PositionsAtDateInspector = ({
                 </tbody>
               </table>
               {positions.length > 8 ? (
-                <div style={{ color: T.textDim, fontSize: textSize("body"), marginTop: sp(3) }}>
+                <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), marginTop: sp(3) }}>
                   Showing 8 of {formatNumber(positions.length, 0)} positions.
                 </div>
               ) : null}
@@ -2527,7 +2555,7 @@ export const PositionsAtDateInspector = ({
                     style={{
                       border: "none",
                       borderRadius: dim(RADII.xs),
-                      background: T.bg0,
+                      background: CSS_COLOR.bg0,
                       padding: sp("4px 5px"),
                       display: "grid",
                       gap: sp(3),
@@ -2535,7 +2563,7 @@ export const PositionsAtDateInspector = ({
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: sp(5) }}>
                       <ActivityTone activity={row} />
-                      <span style={{ color: T.textDim, fontFamily: T.data, fontSize: textSize("body") }}>
+                      <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data, fontSize: textSize("body") }}>
                         {formatAppDateTime(row.timestamp)}
                       </span>
                     </div>
@@ -2544,7 +2572,7 @@ export const PositionsAtDateInspector = ({
                         display: "flex",
                         justifyContent: "space-between",
                         gap: sp(5),
-                        color: T.textSec,
+                        color: CSS_COLOR.textSec,
                         fontFamily: T.data,
                         fontSize: textSize("body"),
                       }}
@@ -2559,7 +2587,7 @@ export const PositionsAtDateInspector = ({
                   </div>
                 ))
               ) : (
-                <div style={{ color: T.textDim, fontSize: textSize("caption") }}>
+                <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
                   No account activity is recorded for this date.
                 </div>
               )}
@@ -2754,10 +2782,10 @@ export const PositionsPanel = ({
             style={{
               width: isPhone ? dim(118) : dim(138),
               height: dim(24),
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
-              background: T.bg0,
-              color: T.text,
+              background: CSS_COLOR.bg0,
+              color: CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: textSize("body"),
               outline: "none",
@@ -2809,7 +2837,7 @@ export const PositionsPanel = ({
             data-testid="account-positions-summary-row"
             className="ra-hide-scrollbar"
             style={{
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               borderRadius: dim(RADII.sm),
               display: "flex",
               flexWrap: "nowrap",
@@ -2829,7 +2857,7 @@ export const PositionsPanel = ({
                   flex: "1 1 auto",
                   minWidth: dim(72),
                   padding: sp("4px 10px"),
-                  borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                  borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                 }}
               >
                 <MobileMetric label={label} value={value} tone={tone} />
@@ -2906,7 +2934,7 @@ export const PositionsPanel = ({
                           ...tableCellStyle,
                           padding: sp("6px 8px 7px 24px"),
                           whiteSpace: "normal",
-                          background: T.bg0,
+                          background: CSS_COLOR.bg0,
                         }}
                       >
                           <div style={{ display: "grid", gap: sp(6) }}>
@@ -2987,7 +3015,7 @@ export const PositionsPanel = ({
                                   </table>
                                 </div>
                               ) : (
-                                <div style={{ color: T.textMuted, fontSize: textSize("body") }}>
+                                <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>
                                   No tax-lot detail recorded yet.
                                 </div>
                               )}
@@ -3001,7 +3029,7 @@ export const PositionsPanel = ({
                                     <div
                                       key={positionSourceAttributionKey(row.id, source, index)}
                                       style={{
-                                        borderBottom: `1px solid ${T.border}`,
+                                        borderBottom: `1px solid ${CSS_COLOR.border}`,
                                         padding: sp("3px 0"),
                                         display: "grid",
                                         gap: sp(3),
@@ -3017,7 +3045,7 @@ export const PositionsPanel = ({
                                       </div>
                                       <div
                                         style={{
-                                          color: T.textDim,
+                                          color: CSS_COLOR.textDim,
                                           fontSize: textSize("caption"),
                                           fontFamily: T.sans,
                                         }}
@@ -3028,7 +3056,7 @@ export const PositionsPanel = ({
                                   ))}
                                 </div>
                               ) : (
-                                  <div style={{ color: T.textMuted, fontSize: textSize("body"), marginBottom: sp(8) }}>
+                                  <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body"), marginBottom: sp(8) }}>
                                   Source attribution is unavailable for this position.
                                 </div>
                               )}
@@ -3039,7 +3067,7 @@ export const PositionsPanel = ({
                                     <div
                                       key={positionOpenOrderKey(row.id, order, index)}
                                       style={{
-                                        borderBottom: `1px solid ${T.border}`,
+                                        borderBottom: `1px solid ${CSS_COLOR.border}`,
                                         padding: sp("3px 0"),
                                         display: "grid",
                                         gap: sp(3),
@@ -3054,7 +3082,7 @@ export const PositionsPanel = ({
                                       </div>
                                       <div
                                         style={{
-                                          color: T.textSec,
+                                          color: CSS_COLOR.textSec,
                                           fontSize: textSize("body"),
                                           fontFamily: T.sans,
                                           lineHeight: 1.4,
@@ -3069,7 +3097,7 @@ export const PositionsPanel = ({
                                       </div>
                                       <div
                                         style={{
-                                          color: T.textDim,
+                                          color: CSS_COLOR.textDim,
                                           fontSize: textSize("caption"),
                                           fontFamily: T.sans,
                                         }}
@@ -3080,7 +3108,7 @@ export const PositionsPanel = ({
                                   ))}
                                 </div>
                               ) : (
-                                <div style={{ color: T.textMuted, fontSize: textSize("body") }}>
+                                <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>
                                   No working orders tied to this position.
                                 </div>
                               )}
@@ -3124,7 +3152,7 @@ export const PositionsPanel = ({
         pageCount={paginatedPositions.pageCount}
         pageSize={POSITIONS_PAGE_SIZE}
         total={paginatedPositions.total}
-        style={{ padding: sp("6px 10px 8px"), borderTop: `1px solid ${T.border}` }}
+        style={{ padding: sp("6px 10px 8px"), borderTop: `1px solid ${CSS_COLOR.border}` }}
       />
 	    </Panel>
   );

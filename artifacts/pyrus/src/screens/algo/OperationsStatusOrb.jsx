@@ -1,6 +1,8 @@
 import React, { useMemo } from "react";
 import {
+  CSS_COLOR,
   T,
+  cssColorAlpha,
   dim,
   fs,
   sp,
@@ -13,11 +15,11 @@ import {
 } from "../../components/ui/popover";
 
 const STATUS_TONE = {
-  healthy: T.green,
-  attention: T.amber,
-  critical: T.red,
-  paused: T.textDim,
-  scanning: T.cyan,
+  healthy: CSS_COLOR.green,
+  attention: CSS_COLOR.amber,
+  critical: CSS_COLOR.red,
+  paused: CSS_COLOR.textDim,
+  scanning: CSS_COLOR.cyan,
 };
 
 const STATUS_LABEL = {
@@ -53,10 +55,10 @@ const StatusRow = ({ label, value, tone }) => (
       fontSize: textSize("caption"),
     }}
   >
-    <span style={{ color: T.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+    <span style={{ color: CSS_COLOR.textMuted, letterSpacing: "0.04em", textTransform: "uppercase" }}>
       {label}
     </span>
-    <span style={{ color: tone || T.text }}>{value}</span>
+    <span style={{ color: tone || CSS_COLOR.text }}>{value}</span>
   </div>
 );
 
@@ -95,11 +97,11 @@ export const OperationsStatusOrb = ({
             alignItems: "center",
             gap: sp(4),
             padding: sp("2px 6px"),
-            border: `1px solid ${T.border}`,
-            background: T.bg1,
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg1,
             borderRadius: dim(999),
             cursor: "pointer",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
@@ -114,7 +116,7 @@ export const OperationsStatusOrb = ({
               height: dim(10),
               borderRadius: "50%",
               background: tone,
-              boxShadow: shouldPulse ? `0 0 6px ${tone}88` : "none",
+              boxShadow: shouldPulse ? `0 0 6px ${cssColorAlpha(tone, "88")}` : "none",
             }}
           />
           <span>{STATUS_LABEL[status]}</span>
@@ -131,7 +133,7 @@ export const OperationsStatusOrb = ({
         >
           <div
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: fs(11),
               fontWeight: 600,
               marginBottom: sp(4),
@@ -143,17 +145,17 @@ export const OperationsStatusOrb = ({
           <StatusRow
             label="Gateway"
             value={gatewayReady ? "ready" : "pending"}
-            tone={gatewayReady ? T.green : T.red}
+            tone={gatewayReady ? CSS_COLOR.green : CSS_COLOR.red}
           />
           <StatusRow
             label="Scan"
             value={scanOn ? "running" : "paused"}
-            tone={scanOn ? T.green : T.amber}
+            tone={scanOn ? CSS_COLOR.green : CSS_COLOR.amber}
           />
           <StatusRow
             label="Deployment"
             value={deploymentEnabled === false ? "paused" : "enabled"}
-            tone={deploymentEnabled === false ? T.textDim : T.green}
+            tone={deploymentEnabled === false ? CSS_COLOR.textDim : CSS_COLOR.green}
           />
           <StatusRow
             label="Attention"
@@ -168,10 +170,10 @@ export const OperationsStatusOrb = ({
             }
             tone={
               attentionSeverity === "critical"
-                ? T.red
+                ? CSS_COLOR.red
                 : attentionSeverity === "warning"
-                  ? T.amber
-                  : T.green
+                  ? CSS_COLOR.amber
+                  : CSS_COLOR.green
             }
           />
         </div>

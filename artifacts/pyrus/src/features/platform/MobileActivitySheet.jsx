@@ -1,5 +1,7 @@
-import { Drawer } from "../../components/platform/Drawer.jsx";
-import { T, sp } from "../../lib/uiTokens.jsx";
+import {
+  Drawer,
+} from "../../components/platform/Drawer.jsx";
+import { CSS_COLOR, T, sp } from "../../lib/uiTokens.jsx";
 import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
 
 export const MobileActivitySheet = ({
@@ -24,7 +26,7 @@ export const MobileActivitySheet = ({
         minHeight: "100%",
         boxSizing: "border-box",
         padding: sp("8px 8px max(12px, env(safe-area-inset-bottom))"),
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
       }}
     >
       <PlatformAlgoMonitorSidebar

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ActionButton } from "./ActionButton.jsx";
+import { Button } from "./Button.jsx";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.jsx";
 import { ConfirmDialog } from "./ConfirmDialog.jsx";
 import { BrokerActionConfirmDialog } from "../../features/trade/BrokerActionConfirmDialog.jsx";
@@ -58,6 +59,25 @@ test("ConnectionStatusPill maps status and renders update metadata", () => {
   assert.match(markup, /data-status="connected"/);
   assert.match(markup, /Connected/);
   assert.match(markup, /Updated/);
+});
+
+test("Button accepts rendered icon nodes as well as icon component types", () => {
+  const IconComponent = ({ size }) =>
+    React.createElement("span", { "data-size": size, "data-testid": "component-icon" });
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      Button,
+      {
+        leftIcon: React.createElement("span", { "data-testid": "node-icon" }),
+        rightIcon: IconComponent,
+      },
+      "Filters",
+    ),
+  );
+
+  assert.match(markup, /data-testid="node-icon"/);
+  assert.match(markup, /data-testid="component-icon"/);
+  assert.match(markup, /data-size="14"/);
 });
 
 test("ConfirmDialog renders shared modal controls and cancel affordances", () => {

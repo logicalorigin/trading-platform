@@ -1,9 +1,12 @@
-import { useId } from "react";
+import {
+  useId,
+} from "react";
 import { ThresholdHistogram } from "../../components/platform/primitives.jsx";
 import { NumberStepper } from "../../components/ui/NumberStepper.jsx";
 import { PillStrip } from "../../components/ui/PillStrip.jsx";
 import { Slider } from "../../components/ui/Slider.jsx";
 import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -33,10 +36,10 @@ const formatPillLabel = (field, value) => {
 const INPUT_STYLE = {
   height: dim(28),
   padding: sp("0 8px"),
-  border: `1px solid ${T.border}`,
-  background: T.bg1,
+  border: `1px solid ${CSS_COLOR.border}`,
+  background: CSS_COLOR.bg1,
   borderRadius: dim(RADII.xs),
-  color: T.text,
+  color: CSS_COLOR.text,
   fontFamily: T.data,
   fontSize: textSize("body"),
   width: "100%",
@@ -57,9 +60,9 @@ export const SettingsToggle = ({ checked, disabled, onChange, ariaLabel }) => (
       height: dim(18),
       minWidth: dim(30),
       minHeight: dim(18),
-      border: `1px solid ${checked ? T.accent : T.border}`,
+      border: `1px solid ${checked ? CSS_COLOR.accent : CSS_COLOR.border}`,
       borderRadius: dim(9),
-      background: checked ? T.accent : T.bg2,
+      background: checked ? CSS_COLOR.accent : CSS_COLOR.bg2,
       padding: dim(1),
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.55 : 1,
@@ -76,7 +79,7 @@ export const SettingsToggle = ({ checked, disabled, onChange, ariaLabel }) => (
         width: dim(14),
         height: dim(14),
         borderRadius: dim(7),
-        background: checked ? T.onAccent : T.textMuted,
+        background: checked ? CSS_COLOR.onAccent : CSS_COLOR.textMuted,
         display: "block",
       }}
     />
@@ -87,7 +90,7 @@ const renderImpact = (field, impact) => {
   if (!field.impact || !impact) return null;
   const count = Number(impact.count || 0);
   const hasImpact = count > 0;
-  const color = hasImpact && field.warningWhenNonZero !== false ? T.amber : T.textMuted;
+  const color = hasImpact && field.warningWhenNonZero !== false ? CSS_COLOR.amber : CSS_COLOR.textMuted;
   const summary =
     impact.total != null
       ? `${count} / ${impact.total}`
@@ -113,7 +116,7 @@ const renderImpact = (field, impact) => {
       }}
     >
       <span>{summary}</span>
-      {symbols ? <span style={{ color: T.textMuted }}>{symbols}</span> : null}
+      {symbols ? <span style={{ color: CSS_COLOR.textMuted }}>{symbols}</span> : null}
       {impact.histogram?.buckets?.length >= 3 ? (
         <ThresholdHistogram
           buckets={impact.histogram.buckets}
@@ -145,7 +148,7 @@ export const SettingsFormRow = ({
       (field.max != null && numericValue > field.max));
   const inputStyle = {
     ...INPUT_STYLE,
-    borderColor: invalid ? T.red : T.border,
+    borderColor: invalid ? CSS_COLOR.red : CSS_COLOR.border,
     opacity: disabled ? 0.55 : 1,
     cursor: disabled ? "not-allowed" : undefined,
   };
@@ -315,7 +318,7 @@ export const SettingsFormRow = ({
       >
         <span
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
             fontWeight: 600,
@@ -337,7 +340,7 @@ export const SettingsFormRow = ({
               width: dim(6),
               height: dim(6),
               borderRadius: dim(3),
-              background: T.accent,
+              background: CSS_COLOR.accent,
               flex: "0 0 auto",
               transition: "opacity 120ms ease-out",
             }}
@@ -348,7 +351,7 @@ export const SettingsFormRow = ({
       {invalid ? (
         <span
           style={{
-            color: T.red,
+            color: CSS_COLOR.red,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
           }}
@@ -360,7 +363,7 @@ export const SettingsFormRow = ({
       ) : field.unit ? (
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
           }}

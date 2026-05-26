@@ -93,6 +93,8 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\(range\)/);
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\("1Y"\)/);
+  assert.match(source, /getAccountPerformanceCalendarEquityQueryKey/);
+  assert.match(source, /queryKey:\s*getAccountPerformanceCalendarEquityQueryKey\(/);
   assert.match(source, /placeholderData:\s*retainPreviousData/);
   assert.match(source, /shadowMode &&\s*\(range === "1D" \|\| range === "1W"\)/);
   assert.match(source, /performanceCalendarEquityQuery\.data\?\.range === "1Y"/);
@@ -205,6 +207,16 @@ test("equity curve main response and viewport are independent from benchmark rea
   assert.doesNotMatch(panelSource, /benchmarkRangeReady/);
   assert.match(chartSource, /mainSeriesRef\.current\.setData\(seriesData\)/);
   assert.match(chartSource, /if \(seriesData\.length\) \{[\s\S]*chart\.timeScale\(\)\.fitContent\(\);/);
+});
+
+test("equity curve chart resolves token alpha colors before chart canvas usage", () => {
+  const chartSource = readFileSync(new URL("./EquityCurveChart.jsx", import.meta.url), "utf8");
+
+  assert.match(chartSource, /resolveCanvasAlphaColor/);
+  assert.match(chartSource, /resolveCanvasColor/);
+  assert.match(chartSource, /const chartColor = resolveCanvasColor/);
+  assert.match(chartSource, /const chartColorAlpha = resolveCanvasAlphaColor/);
+  assert.doesNotMatch(chartSource, /cssColorAlpha\(chartColor/);
 });
 
 test("shadow account treemap empty state does not mention bridge streaming", () => {

@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   ChartCandlestick,
@@ -15,7 +22,17 @@ import {
   WalletCards,
   Zap,
 } from "lucide-react";
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  ELEVATION,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
 const SCREEN_ICONS = {
@@ -211,8 +228,8 @@ const CommandPaletteInner = ({
         style={{
           width: "min(520px, 92vw)",
           maxHeight: "70vh",
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.md),
           boxShadow: ELEVATION?.lg || "0 16px 40px rgba(0,0,0,0.4)",
           display: "flex",
@@ -227,10 +244,10 @@ const CommandPaletteInner = ({
             alignItems: "center",
             gap: sp(4),
             padding: sp("8px 12px"),
-            borderBottom: `1px solid ${T.borderLight}`,
+            borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
           }}
         >
-          <SearchIcon size={dim(16)} strokeWidth={2.2} color={T.textSec} aria-hidden="true" />
+          <SearchIcon size={dim(16)} strokeWidth={2.2} color={CSS_COLOR.textSec} aria-hidden="true" />
           <input
             ref={inputRef}
             type="text"
@@ -248,7 +265,7 @@ const CommandPaletteInner = ({
               background: "transparent",
               border: "none",
               outline: "none",
-              color: T.text,
+              color: CSS_COLOR.text,
               fontSize: textSize("body"),
               fontWeight: FONT_WEIGHTS.medium,
               fontFamily: T.sans,
@@ -259,11 +276,11 @@ const CommandPaletteInner = ({
             style={{
               fontSize: fs(9),
               fontFamily: T.mono,
-              color: T.textMuted,
+              color: CSS_COLOR.textMuted,
               padding: sp("1px 5px"),
-              border: `1px solid ${T.borderLight}`,
+              border: `1px solid ${CSS_COLOR.borderLight}`,
               borderRadius: dim(RADII.xs),
-              background: T.bg0,
+              background: CSS_COLOR.bg0,
             }}
           >
             esc
@@ -283,7 +300,7 @@ const CommandPaletteInner = ({
             <div
               style={{
                 padding: sp("12px 16px"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 fontSize: textSize("body"),
                 textAlign: "center",
               }}
@@ -308,10 +325,10 @@ const CommandPaletteInner = ({
                     gap: sp(4),
                     width: "100%",
                     padding: sp("8px 10px"),
-                    background: isActive ? T.accentHoverBg : "transparent",
+                    background: isActive ? CSS_COLOR.accentHoverBg : "transparent",
                     border: "none",
                     borderRadius: dim(RADII.xs),
-                    color: isActive ? T.text : T.textSec,
+                    color: isActive ? CSS_COLOR.text : CSS_COLOR.textSec,
                     fontFamily: T.sans,
                     fontSize: textSize("body"),
                     fontWeight: FONT_WEIGHTS.medium,
@@ -323,7 +340,7 @@ const CommandPaletteInner = ({
                   <Icon
                     size={dim(14)}
                     strokeWidth={2.2}
-                    color={isActive ? T.accent : T.textSec}
+                    color={isActive ? CSS_COLOR.accent : CSS_COLOR.textSec}
                     aria-hidden="true"
                     style={{ flex: "0 0 auto" }}
                   />
@@ -334,7 +351,7 @@ const CommandPaletteInner = ({
                     style={{
                       flex: "0 0 auto",
                       fontSize: fs(9),
-                      color: T.textMuted,
+                      color: CSS_COLOR.textMuted,
                       textTransform: "uppercase",
                       letterSpacing: "0.06em",
                     }}
@@ -353,10 +370,10 @@ const CommandPaletteInner = ({
             justifyContent: "space-between",
             gap: sp(4),
             padding: sp("6px 12px"),
-            borderTop: `1px solid ${T.borderLight}`,
-            background: T.bg0,
+            borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+            background: CSS_COLOR.bg0,
             fontSize: fs(9),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
           }}
         >

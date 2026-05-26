@@ -1,6 +1,12 @@
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   formatAccountMoney,
   formatAccountPercent,
@@ -8,7 +14,7 @@ import {
   sectionTitleStyle,
 } from "./accountUtils";
 
-const getColors = () => [T.blue, T.cyan, T.purple, T.amber, T.green, T.pink, T.textDim];
+const getColors = () => [CSS_COLOR.blue, CSS_COLOR.cyan, CSS_COLOR.purple, CSS_COLOR.amber, CSS_COLOR.green, CSS_COLOR.pink, CSS_COLOR.textDim];
 const EPSILON = 1e-9;
 
 const nonZeroBuckets = (rows = []) =>
@@ -23,7 +29,7 @@ const DonutLegend = ({ data, maskValues = false }) => (
           display: "grid",
           gridTemplateColumns: "1fr auto",
           gap: sp(4),
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontSize: textSize("body"),
           fontFamily: T.sans,
         }}
@@ -40,7 +46,7 @@ const DonutLegend = ({ data, maskValues = false }) => (
           />
           <span
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -49,7 +55,7 @@ const DonutLegend = ({ data, maskValues = false }) => (
             {item.label}
           </span>
         </span>
-        <span style={{ color: T.textSec, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
           {formatAccountPercent(item.weightPercent, 1, maskValues)}
         </span>
       </div>
@@ -70,7 +76,7 @@ const Donut = ({ title, data, currency, maskValues = false }) => (
             innerRadius="62%"
             outerRadius="86%"
             paddingAngle={0.5}
-            stroke={T.bg1}
+            stroke={CSS_COLOR.bg1}
             strokeWidth={1}
             isAnimationActive={false}
           >
@@ -92,13 +98,13 @@ const Donut = ({ title, data, currency, maskValues = false }) => (
   </div>
 );
 
-const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false, isFirst = false }) => (
+const ExposureMetric = ({ label, value, currency, tone = CSS_COLOR.text, maskValues = false, isFirst = false }) => (
   <div
     style={{
       flex: "1 1 auto",
       minWidth: dim(72),
       padding: sp("3px 10px"),
-      borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
+      borderLeft: isFirst ? "none" : `1px solid ${CSS_COLOR.border}`,
     }}
   >
     <div style={{ ...mutedLabelStyle, fontSize: textSize("caption"), lineHeight: 1 }}>
@@ -137,7 +143,7 @@ export const AllocationCompactContent = ({
 
   if (!assetRows.length) {
     return (
-      <div style={{ color: T.textMuted, fontSize: textSize("body"), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body"), fontFamily: T.sans }}>
         No current allocation. Open positions and cash balances will populate these charts.
       </div>
     );
@@ -167,7 +173,7 @@ export const AllocationCompactContent = ({
               display: "flex",
               flexWrap: "nowrap",
               overflowX: "auto",
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               borderRadius: dim(RADII.sm),
               minWidth: 0,
             }}
@@ -183,28 +189,28 @@ export const AllocationCompactContent = ({
               label="Net"
               value={netExposure}
               currency={currency}
-              tone={netExposure >= 0 ? T.green : T.red}
+              tone={netExposure >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
               maskValues={maskValues}
             />
             <ExposureMetric
               label="Long"
               value={grossLong}
               currency={currency}
-              tone={T.green}
+              tone={CSS_COLOR.green}
               maskValues={maskValues}
             />
             <ExposureMetric
               label="Short"
               value={grossShort}
               currency={currency}
-              tone={T.red}
+              tone={CSS_COLOR.red}
               maskValues={maskValues}
             />
           </div>
           {sectorRows.length ? (
             <div
               style={{
-                borderTop: `1px solid ${T.border}`,
+                borderTop: `1px solid ${CSS_COLOR.border}`,
                 paddingTop: sp(4),
                 display: "grid",
                 gap: sp(2),
@@ -218,7 +224,7 @@ export const AllocationCompactContent = ({
                     display: "grid",
                     gridTemplateColumns: "minmax(0, 1fr) auto",
                     gap: sp(5),
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     fontSize: textSize("body"),
                     fontFamily: T.sans,
                   }}
@@ -232,7 +238,7 @@ export const AllocationCompactContent = ({
                   >
                     {sector.label}
                   </span>
-                  <span style={{ color: T.textDim }}>
+                  <span style={{ color: CSS_COLOR.textDim }}>
                     {formatAccountPercent(sector.weightPercent, 1, maskValues)}
                   </span>
                 </div>
@@ -244,7 +250,7 @@ export const AllocationCompactContent = ({
 
       <div
         style={{
-          borderTop: `1px solid ${T.border}`,
+          borderTop: `1px solid ${CSS_COLOR.border}`,
           paddingTop: sp(4),
           display: "grid",
           gap: sp(4),
@@ -257,17 +263,17 @@ export const AllocationCompactContent = ({
             borderRadius: dim(RADII.xs),
             overflow: "hidden",
             display: "flex",
-            background: T.bg1,
+            background: CSS_COLOR.bg1,
           }}
         >
           <div
             style={{
               width: grossTotal ? `${(grossLong / grossTotal) * 100}%` : "50%",
-              background: T.green,
+              background: CSS_COLOR.green,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: T.onAccent,
+              color: CSS_COLOR.onAccent,
               fontSize: textSize("micro"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -278,11 +284,11 @@ export const AllocationCompactContent = ({
           <div
             style={{
               width: grossTotal ? `${(grossShort / grossTotal) * 100}%` : "50%",
-              background: T.red,
+              background: CSS_COLOR.red,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: T.onAccent,
+              color: CSS_COLOR.onAccent,
               fontSize: textSize("micro"),
               fontFamily: T.sans,
               fontWeight: FONT_WEIGHTS.regular,
@@ -297,13 +303,13 @@ export const AllocationCompactContent = ({
             justifyContent: "space-between",
             gap: sp(6),
             flexWrap: "wrap",
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontSize: textSize("micro"),
             fontFamily: T.sans,
           }}
         >
           <span>Gross {formatAccountMoney(grossTotal, currency, true, maskValues)}</span>
-          <span style={{ color: netExposure >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
+          <span style={{ color: netExposure >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
             Net {formatAccountMoney(netExposure, currency, true, maskValues)}
           </span>
         </div>

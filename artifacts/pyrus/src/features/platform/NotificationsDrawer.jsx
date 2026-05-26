@@ -1,7 +1,22 @@
-import { memo, useEffect, useMemo } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+} from "react";
 import { createPortal } from "react-dom";
 import { Bell, Info, RadioTower, Sparkles, X } from "lucide-react";
-import { ELEVATION, FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  ELEVATION,
+  FONT_WEIGHTS,
+  MISSING_VALUE,
+  RADII,
+  T,
+  dim,
+  fs,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import {
   markNotificationsRead,
   useNotificationSnapshot,
@@ -16,11 +31,11 @@ const KIND_ICONS = {
 };
 
 const KIND_TONES = {
-  info: T.textSec,
-  success: T.green,
-  warning: T.amber,
-  error: T.red,
-  algo: T.accent,
+  info: CSS_COLOR.textSec,
+  success: CSS_COLOR.green,
+  warning: CSS_COLOR.amber,
+  error: CSS_COLOR.red,
+  algo: CSS_COLOR.accent,
 };
 
 const formatRelative = (timestamp) => {
@@ -40,8 +55,8 @@ const SectionHeader = ({ title, count }) => (
       alignItems: "baseline",
       justifyContent: "space-between",
       padding: sp("8px 12px 4px"),
-      borderTop: `1px solid ${T.borderLight}`,
-      background: T.bg0,
+      borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+      background: CSS_COLOR.bg0,
     }}
   >
     <span
@@ -51,7 +66,7 @@ const SectionHeader = ({ title, count }) => (
         fontWeight: FONT_WEIGHTS.medium,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
       }}
     >
       {title}
@@ -60,7 +75,7 @@ const SectionHeader = ({ title, count }) => (
       style={{
         fontSize: fs(9),
         fontFamily: T.sans,
-        color: T.textMuted,
+        color: CSS_COLOR.textMuted,
         fontVariantNumeric: "tabular-nums",
       }}
     >
@@ -77,10 +92,10 @@ const NotificationRow = ({ icon: Icon, tone, title, body, timestamp, onAction, a
       gap: sp(3),
       alignItems: "start",
       padding: sp("8px 12px"),
-      borderBottom: `1px solid ${T.borderLight}`,
+      borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
     }}
   >
-    <Icon size={dim(13)} strokeWidth={2.2} color={tone || T.textSec} aria-hidden="true" />
+    <Icon size={dim(13)} strokeWidth={2.2} color={tone || CSS_COLOR.textSec} aria-hidden="true" />
     <div style={{ minWidth: 0 }}>
       {title ? (
         <div
@@ -88,7 +103,7 @@ const NotificationRow = ({ icon: Icon, tone, title, body, timestamp, onAction, a
             fontSize: textSize("body"),
             fontWeight: FONT_WEIGHTS.medium,
             fontFamily: T.sans,
-            color: T.text,
+            color: CSS_COLOR.text,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -101,7 +116,7 @@ const NotificationRow = ({ icon: Icon, tone, title, body, timestamp, onAction, a
         <div
           style={{
             fontSize: textSize("caption"),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             marginTop: 1,
             wordBreak: "break-word",
@@ -113,7 +128,7 @@ const NotificationRow = ({ icon: Icon, tone, title, body, timestamp, onAction, a
       <div
         style={{
           fontSize: fs(9),
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           marginTop: 2,
           fontVariantNumeric: "tabular-nums",
@@ -130,9 +145,9 @@ const NotificationRow = ({ icon: Icon, tone, title, body, timestamp, onAction, a
           alignSelf: "center",
           padding: sp("2px 6px"),
           background: "transparent",
-          border: `1px solid ${T.borderLight}`,
+          border: `1px solid ${CSS_COLOR.borderLight}`,
           borderRadius: dim(RADII.xs),
-          color: T.accent,
+          color: CSS_COLOR.accent,
           cursor: "pointer",
           fontFamily: T.sans,
           fontSize: fs(10),
@@ -194,8 +209,8 @@ const NotificationsDrawerInner = ({
         style={{
           width: "min(360px, 92vw)",
           maxHeight: "100vh",
-          background: T.bg1,
-          borderLeft: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          borderLeft: `1px solid ${CSS_COLOR.border}`,
           boxShadow: ELEVATION?.lg || "-16px 0 40px rgba(0,0,0,0.4)",
           display: "flex",
           flexDirection: "column",
@@ -209,16 +224,16 @@ const NotificationsDrawerInner = ({
             alignItems: "center",
             justifyContent: "space-between",
             padding: sp("10px 12px"),
-            borderBottom: `1px solid ${T.borderLight}`,
+            borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
           }}
         >
           <div style={{ display: "inline-flex", alignItems: "center", gap: sp(3) }}>
-            <Bell size={dim(15)} strokeWidth={2.2} color={T.text} aria-hidden="true" />
+            <Bell size={dim(15)} strokeWidth={2.2} color={CSS_COLOR.text} aria-hidden="true" />
             <span
               style={{
                 fontSize: textSize("body"),
                 fontWeight: FONT_WEIGHTS.medium,
-                color: T.text,
+                color: CSS_COLOR.text,
               }}
             >
               Notifications
@@ -232,7 +247,7 @@ const NotificationsDrawerInner = ({
               padding: sp(2),
               background: "transparent",
               border: "none",
-              color: T.textSec,
+              color: CSS_COLOR.textSec,
               cursor: "pointer",
             }}
           >
@@ -246,7 +261,7 @@ const NotificationsDrawerInner = ({
               style={{
                 padding: sp("12px 16px"),
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
               }}
             >
               No recent toasts.
@@ -256,7 +271,7 @@ const NotificationsDrawerInner = ({
               <NotificationRow
                 key={toast.id}
                 icon={KIND_ICONS[toast.kind] || Info}
-                tone={KIND_TONES[toast.kind] || T.textSec}
+                tone={KIND_TONES[toast.kind] || CSS_COLOR.textSec}
                 title={toast.title}
                 body={toast.body}
                 timestamp={toast.timestamp}
@@ -269,7 +284,7 @@ const NotificationsDrawerInner = ({
               style={{
                 padding: sp("12px 16px"),
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
               }}
             >
               No recent algo events.
@@ -291,7 +306,7 @@ const NotificationsDrawerInner = ({
                 <NotificationRow
                   key={event?.id || `algo-${index}-${timestamp}`}
                   icon={RadioTower}
-                  tone={T.accent}
+                  tone={CSS_COLOR.accent}
                   title={title}
                   body={event?.message || event?.reason || ""}
                   timestamp={timestamp}

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 // @ts-expect-error JSX module imported into TypeScript context
-import { FONT_WEIGHTS, RADII, T, dim } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartSurface,
   type ChartViewportSnapshot,
@@ -429,7 +429,7 @@ export const ResearchChartFrame = ({
         height: "100%",
         minHeight: 0,
         boxShadow: signalActive
-          ? `0 0 0 1px ${frameSignalState?.color}66, 0 0 18px ${frameSignalState?.color}22`
+          ? `0 0 0 1px ${cssColorAlpha(frameSignalState?.color || frameBorderColor, "66")}, 0 0 18px ${cssColorAlpha(frameSignalState?.color || frameBorderColor, "22")}`
           : style?.boxShadow,
         ...style,
         border: signalActive
@@ -628,7 +628,7 @@ type PanelPalette = {
 };
 
 const withAlpha = (color: string, alpha: string): string =>
-  /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
+  cssColorAlpha(color, alpha);
 
 const colorLuminance = (color: string): number | null => {
   const match = /^#([0-9a-fA-F]{6})$/.exec(color);
@@ -1579,6 +1579,11 @@ export const ResearchChartWidgetHeader = ({
                 <button
                   type="button"
                   data-testid="chart-indicators-menu-trigger"
+                  aria-label={
+                    selectedStudies.length > 0
+                      ? `Indicators ${selectedStudies.length}`
+                      : "Indicators"
+                  }
                   style={barButtonStyle({ theme, palette, dense: chromeDense })}
                   onClick={() => setIndicatorSheetOpen(true)}
                 >
@@ -1610,68 +1615,74 @@ export const ResearchChartWidgetHeader = ({
               />
             </>
           ) : (
-          <DropdownMenu>
-            <AppTooltip content="Indicators">
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  style={barButtonStyle({ theme, palette, dense: chromeDense })}
-                >
-                  <Plus style={iconStyle(chromeDense)} />
-                  {iconOnlyChrome ? (
-                    selectedStudies.length > 0 ? (
-                      <span>{selectedStudies.length}</span>
-                    ) : null
-                  ) : (
-                    <span>
-                      {chromeDense
-                        ? selectedStudies.length > 0
-                          ? `Ind ${selectedStudies.length}`
-                          : "Ind"
-                        : `Indicators ${
-                            selectedStudies.length > 0 ? selectedStudies.length : ""
-                          }`.trim()}
-                    </span>
-                  )}
-                  <ChevronDown style={iconStyle(chromeDense)} />
-                </button>
-              </DropdownMenuTrigger>
-            </AppTooltip>
-            <DropdownMenuContent
-              align="start"
-              className={chartMenuContentClassName}
-              sideOffset={6}
-              style={menuContentStyle(theme, palette, 220)}
-            >
-              <DropdownMenuLabel
-                className={chartMenuLabelClassName}
-                style={menuLabelStyle(theme)}
+            <DropdownMenu>
+              <AppTooltip content="Indicators">
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="chart-indicators-menu-trigger"
+                    aria-label={
+                      selectedStudies.length > 0
+                        ? `Indicators ${selectedStudies.length}`
+                        : "Indicators"
+                    }
+                    style={barButtonStyle({ theme, palette, dense: chromeDense })}
+                  >
+                    <Plus style={iconStyle(chromeDense)} />
+                    {iconOnlyChrome ? (
+                      selectedStudies.length > 0 ? (
+                        <span>{selectedStudies.length}</span>
+                      ) : null
+                    ) : (
+                      <span>
+                        {chromeDense
+                          ? selectedStudies.length > 0
+                            ? `Ind ${selectedStudies.length}`
+                            : "Ind"
+                          : `Indicators ${
+                              selectedStudies.length > 0 ? selectedStudies.length : ""
+                            }`.trim()}
+                      </span>
+                    )}
+                    <ChevronDown style={iconStyle(chromeDense)} />
+                  </button>
+                </DropdownMenuTrigger>
+              </AppTooltip>
+              <DropdownMenuContent
+                align="start"
+                className={chartMenuContentClassName}
+                sideOffset={6}
+                style={menuContentStyle(theme, palette, 220)}
               >
-                Indicators
-              </DropdownMenuLabel>
-              {studies.length ? (
-                studies.map((study) => (
-                  <DropdownMenuCheckboxItem
+                <DropdownMenuLabel
+                  className={chartMenuLabelClassName}
+                  style={menuLabelStyle(theme)}
+                >
+                  Indicators
+                </DropdownMenuLabel>
+                {studies.length ? (
+                  studies.map((study) => (
+                    <DropdownMenuCheckboxItem
+                      className={chartMenuItemClassName}
+                      key={study.id}
+                      checked={selectedStudies.includes(study.id)}
+                      onCheckedChange={() => onToggleStudy?.(study.id)}
+                      style={menuItemStyle(theme)}
+                    >
+                      {study.label}
+                    </DropdownMenuCheckboxItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem
                     className={chartMenuItemClassName}
-                    key={study.id}
-                    checked={selectedStudies.includes(study.id)}
-                    onCheckedChange={() => onToggleStudy?.(study.id)}
+                    disabled
                     style={menuItemStyle(theme)}
                   >
-                    {study.label}
-                  </DropdownMenuCheckboxItem>
-                ))
-              ) : (
-                <DropdownMenuItem
-                  className={chartMenuItemClassName}
-                  disabled
-                  style={menuItemStyle(theme)}
-                >
-                  No indicators available
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                    No indicators available
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )
         ) : null}
 
@@ -1993,7 +2004,7 @@ export const ResearchChartWidgetFooter = ({
     width: wide ? (chromeDense ? 22 : 26) : chromeDense ? 16 : 20,
     height: scaleButtonHeight,
     background: active ? theme.accent || theme.text : "transparent",
-    color: active ? T.onAccent : theme.textDim || theme.textMuted,
+    color: active ? CSS_COLOR.onAccent : theme.textDim || theme.textMuted,
     border: "none",
     borderRadius: RADII.none,
     cursor: "pointer",

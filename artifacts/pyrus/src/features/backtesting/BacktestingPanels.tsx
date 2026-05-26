@@ -100,6 +100,8 @@ import {
 } from "../../lib/timeZone";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
+// @ts-expect-error JSX module imported into TypeScript context
+import { cssColorAlpha } from "../../lib/uiTokens.jsx";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
@@ -1049,8 +1051,8 @@ function StatusBadge({
         gap: scale.sp(4),
         padding: scale.sp("2px 8px"),
         borderRadius: scale.dim(999),
-        border: `1px solid ${color}33`,
-        background: `${color}18`,
+        border: `1px solid ${cssColorAlpha(color, "33")}`,
+        background: cssColorAlpha(color, "18"),
         color,
         fontSize: scale.fs(9),
         fontWeight: 400,
@@ -2831,7 +2833,7 @@ export function BacktestWorkspace({
           style={{
             ...cardStyle(theme, scale),
             border: "none",
-            background: `${getBannerColor(banner.kind, theme)}12`,
+            background: cssColorAlpha(getBannerColor(banner.kind, theme), "12"),
             cursor: "pointer",
           }}
         >
@@ -2862,7 +2864,7 @@ export function BacktestWorkspace({
           top: 0,
           zIndex: 8,
           paddingTop: scale.sp(4),
-          background: `${theme.bg1}f2`,
+          background: cssColorAlpha(theme.bg1, "f2"),
           backdropFilter: "blur(10px)",
         }}
       >
@@ -2870,7 +2872,7 @@ export function BacktestWorkspace({
           style={{
             ...cardStyle(theme, scale),
             background: theme.bg2,
-            boxShadow: `0 10px 24px ${theme.bg0}33`,
+            boxShadow: `0 10px 24px ${cssColorAlpha(theme.bg0, "33")}`,
           }}
         >
           <div
@@ -3568,7 +3570,7 @@ export function BacktestWorkspace({
                             alignItems: "center",
                             gap: scale.sp(8),
                             padding: scale.sp("8px 10px"),
-                            background: `${theme.bg2}e6`,
+                            background: cssColorAlpha(theme.bg2, "e6"),
                             borderTop: `1px solid ${theme.border}`,
                             flexWrap: "wrap",
                           }}
@@ -6602,12 +6604,12 @@ export function BacktestWorkspace({
                             borderRadius: scale.dim(999),
                             border: `1px solid ${
                               chartState.chartReady
-                                ? `${theme.green}33`
-                                : `${theme.amber}33`
+                                ? cssColorAlpha(theme.green, "33")
+                                : cssColorAlpha(theme.amber, "33")
                             }`,
                             background: chartState.chartReady
-                              ? `${theme.green}14`
-                              : `${theme.amber}14`,
+                              ? cssColorAlpha(theme.green, "14")
+                              : cssColorAlpha(theme.amber, "14"),
                             color: chartState.chartReady
                               ? theme.green
                               : theme.amber,
@@ -6697,9 +6699,9 @@ export function BacktestWorkspace({
                       <div
                         style={{
                           marginBottom: scale.sp(8),
-                          border: `1px solid ${theme.red}33`,
+                          border: `1px solid ${cssColorAlpha(theme.red, "33")}`,
                           borderRadius: scale.dim(5),
-                          background: `${theme.redBg}66`,
+                          background: cssColorAlpha(theme.redBg, "66"),
                           padding: scale.sp("8px 10px"),
                         }}
                       >
@@ -6975,8 +6977,8 @@ export function BacktestWorkspace({
                       marginTop: scale.sp(8),
                       padding: scale.sp("8px 10px"),
                       borderRadius: scale.dim(5),
-                      border: `1px solid ${theme.red}33`,
-                      background: `${theme.redBg}66`,
+                      border: `1px solid ${cssColorAlpha(theme.red, "33")}`,
+                      background: cssColorAlpha(theme.redBg, "66"),
                     }}
                   >
                     <div style={fieldLabelStyle(theme, scale)}>

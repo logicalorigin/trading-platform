@@ -1,5 +1,8 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
+import { CSS_COLOR, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
 
 const totalCount = (rows) => {
@@ -37,8 +40,8 @@ export const DiagPanel = ({
           padding: sp("3px 8px"),
           border: "none",
           borderRadius: dim(RADII.xs),
-          background: T.bg1,
-          color: healthy ? T.textMuted : color,
+          background: CSS_COLOR.bg1,
+          color: healthy ? CSS_COLOR.textMuted : color,
           fontFamily: T.sans,
           fontSize: textSize("body"),
           letterSpacing: "0.04em",
@@ -49,7 +52,7 @@ export const DiagPanel = ({
         <span>{title.toUpperCase()}</span>
         <span
           style={{
-            color: healthy ? T.textMuted : color,
+            color: healthy ? CSS_COLOR.textMuted : color,
             opacity: 0.85,
           }}
         >
@@ -90,7 +93,7 @@ export const DiagPanel = ({
       style={{
         border: "none",
         borderRadius: dim(RADII.xs),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         padding: sp("7px 9px"),
         minWidth: 0,
       }}
@@ -122,7 +125,7 @@ export const DiagPanel = ({
             >
               <span
                 style={{
-                  color: T.textSec,
+                  color: CSS_COLOR.textSec,
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
                   overflow: "hidden",
@@ -135,7 +138,7 @@ export const DiagPanel = ({
               <span
                 style={{
                   color:
-                    Number(count) > 0 && !healthy ? color : T.text,
+                    Number(count) > 0 && !healthy ? color : CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: textSize("body"),
                 }}
@@ -148,7 +151,7 @@ export const DiagPanel = ({
       ) : (
         <div
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("body"),
           }}

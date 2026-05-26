@@ -1,7 +1,23 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChevronDown, ChevronRight, XCircle } from "lucide-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  CSS_COLOR,
+  cssColorMix,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  sp,
+  textSize,
+} from "../../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
@@ -54,7 +70,7 @@ const mobileHeaderStyle = (gridTemplateColumns) => ({
   gridTemplateColumns,
   gap: sp(3),
   padding: sp("0 5px"),
-  color: T.textDim,
+  color: CSS_COLOR.textDim,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   letterSpacing: 0,
@@ -77,8 +93,8 @@ const mobileDetailWideFlexStyle = {
 const mobileScanShellStyle = (active = false) => ({
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: active ? `${T.cyan}10` : T.bg1,
-  boxShadow: active ? `inset 2px 0 0 ${T.cyan}` : "none",
+  background: active ? `${cssColorMix(CSS_COLOR.cyan, 6)}` : CSS_COLOR.bg1,
+  boxShadow: active ? `inset 2px 0 0 ${CSS_COLOR.cyan}` : "none",
   minWidth: 0,
   overflow: "hidden",
 });
@@ -98,7 +114,7 @@ const mobileScanRowStyle = (gridTemplateColumns) => ({
   minWidth: 0,
 });
 
-const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
+const mobileCellTextStyle = (tone = CSS_COLOR.textSec, align = "right") => ({
   color: tone,
   fontFamily: T.data,
   fontSize: textSize("body"),
@@ -112,7 +128,7 @@ const mobileCellTextStyle = (tone = T.textSec, align = "right") => ({
 });
 
 const mobileDetailStyle = {
-  borderTop: `1px solid ${T.border}`,
+  borderTop: `1px solid ${CSS_COLOR.border}`,
   padding: sp("6px 7px 7px"),
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
@@ -125,15 +141,15 @@ const mobileIconButtonStyle = {
   padding: 0,
   border: "none",
   borderRadius: dim(RADII.xs),
-  background: T.bg1,
-  color: T.textSec,
+  background: CSS_COLOR.bg1,
+  color: CSS_COLOR.textSec,
   display: "inline-grid",
   placeItems: "center",
   cursor: "pointer",
   flexShrink: 0,
 };
 
-const MobileIconButton = ({ label, onClick, children, expanded = null, disabled = false, tone = T.textSec, ...buttonProps }) => (
+const MobileIconButton = ({ label, onClick, children, expanded = null, disabled = false, tone = CSS_COLOR.textSec, ...buttonProps }) => (
   <AppTooltip content={label}>
     <button
       type="button"
@@ -154,7 +170,7 @@ const MobileIconButton = ({ label, onClick, children, expanded = null, disabled 
   </AppTooltip>
 );
 
-const MobileDetailMetric = ({ label, value, tone = T.textSec }) => (
+const MobileDetailMetric = ({ label, value, tone = CSS_COLOR.textSec }) => (
   <div style={{ minWidth: 0 }}>
     <div style={mutedLabelStyle}>{label}</div>
     <div style={mobileCellTextStyle(tone, "left")}>{value}</div>
@@ -234,16 +250,16 @@ const MobileOrderRow = memo(({
         style={mobileScanRowStyle(mobileOrdersGrid)}
       >
         <div style={mobileMinWidthStyle}>
-          <div style={mobileCellTextStyle(T.text, "left")}>{order.symbol}</div>
+          <div style={mobileCellTextStyle(CSS_COLOR.text, "left")}>{order.symbol}</div>
           <div style={cellSubTextStyle(/buy|long/i.test(order.side) ? "var(--ra-side-buy)" : "var(--ra-side-sell)")}>
             {order.side} · {order.type}
           </div>
         </div>
-        <div style={mobileCellTextStyle(T.textSec)}>
+        <div style={mobileCellTextStyle(CSS_COLOR.textSec)}>
           {formatNumber(order.filledQuantity, 1)} / {formatNumber(order.quantity, 1)}
         </div>
-        <div style={mobileCellTextStyle(T.textSec)}>{priceLabel}</div>
-        <div style={mobileCellTextStyle(order.status === "filled" ? "var(--ra-status-filled)" : T.textSec)}>
+        <div style={mobileCellTextStyle(CSS_COLOR.textSec)}>{priceLabel}</div>
+        <div style={mobileCellTextStyle(order.status === "filled" ? "var(--ra-status-filled)" : CSS_COLOR.textSec)}>
           {order.status}
         </div>
         <MobileIconButton
@@ -288,7 +304,7 @@ const MobileOrderRow = memo(({
                 data-action="cancel"
                 data-row-id={orderId}
                 disabled={cancelPending || cancelDisabled}
-                tone={T.red}
+                tone={CSS_COLOR.red}
                 onClick={onRowAction}
               >
                 <XCircle size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -519,7 +535,7 @@ export const OrdersPanel = ({
                 tabIndex={0}
                 onKeyDown={moveTableFocus}
               >
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: FONT_WEIGHTS.regular }}>
+                <td style={{ ...tableCellStyle, color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
                   <MarketIdentityInline
                     item={{
                       ticker: order.symbol,
@@ -571,7 +587,7 @@ export const OrdersPanel = ({
                         onClick={() => onCancelOrder(order)}
                         style={{
                           ...secondaryButtonStyle,
-                          color: T.red,
+                          color: CSS_COLOR.red,
                           height: dim(20),
                           padding: sp("0 7px"),
                           opacity: cancelPending || cancelDisabled ? 0.55 : 1,
@@ -616,7 +632,7 @@ export const OrdersPanel = ({
                     <td style={tableCellStyle}>
                       {order.strategyLabel || order.source}
                       {order.candidateId ? (
-                        <div style={{ color: T.textDim, fontSize: textSize("body"), marginTop: sp(2) }}>
+                        <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), marginTop: sp(2) }}>
                           {order.deploymentName || order.candidateId}
                         </div>
                       ) : null}
@@ -638,7 +654,7 @@ export const OrdersPanel = ({
         pageCount={paginatedOrders.pageCount}
         pageSize={ORDERS_PAGE_SIZE}
         total={paginatedOrders.total}
-        style={{ padding: sp("6px 10px 8px"), borderTop: `1px solid ${T.border}` }}
+        style={{ padding: sp("6px 10px 8px"), borderTop: `1px solid ${CSS_COLOR.border}` }}
       />
 	  </Panel>
   );

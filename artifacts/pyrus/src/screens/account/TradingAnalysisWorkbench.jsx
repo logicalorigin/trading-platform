@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -26,6 +30,8 @@ import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { useNumberTick } from "../../lib/numberTick";
 import { useValueFlash } from "../../lib/motion.jsx";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   PYRUS_STORAGE_KEY,
   RADII,
@@ -145,9 +151,9 @@ const marketForAssetClass = (assetClass) => {
 };
 
 const sectionCardStyle = (style = {}) => ({
-  border: `1px solid ${T.border}`,
+  border: `1px solid ${CSS_COLOR.border}`,
   borderRadius: dim(RADII.md),
-  background: T.bg1,
+  background: CSS_COLOR.bg1,
   minWidth: 0,
   overflow: "hidden",
   ...style,
@@ -172,12 +178,12 @@ const SectionCard = ({
         justifyContent: "space-between",
         gap: sp(4),
         padding: sp("8px 10px"),
-        borderBottom: `1px solid ${T.borderLight}`,
+        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
       }}
     >
       <div
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: textSize("bodyStrong"),
           fontWeight: FONT_WEIGHTS.label,
@@ -227,14 +233,14 @@ const MetricCard = ({ label, value, kind = "number", tone, currency, maskValues,
   const ticked = useNumberTick(typeof value === "number" ? value : null, 600);
   const flashClass = useValueFlash(typeof value === "number" ? value : null);
   const displayValue = typeof value === "number" ? ticked : value;
-  const color = tone || (kind === "money" || kind === "signedMoney" ? toneForValue(value) : T.text);
+  const color = tone || (kind === "money" || kind === "signedMoney" ? toneForValue(value) : CSS_COLOR.text);
   return (
     <div
       className={["ra-panel-enter", flashClass].filter(Boolean).join(" ")}
       style={{
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         padding: sp("8px 10px"),
         minWidth: 0,
         display: "grid",
@@ -243,7 +249,7 @@ const MetricCard = ({ label, value, kind = "number", tone, currency, maskValues,
     >
       <div
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           fontWeight: FONT_WEIGHTS.medium,
@@ -293,8 +299,8 @@ const KpiStrip = ({ trades, currency, maskValues, loading }) => {
     { label: "Expectancy", value: metrics.expectancy, kind: "money" },
     { label: "Profit Factor", value: metrics.profitFactor, kind: "ratio" },
     { label: "Avg Hold", value: metrics.averageHoldMinutes, kind: "duration" },
-    { label: "Commissions", value: metrics.commissions, kind: "money", tone: T.textSec },
-    { label: "Max DD", value: metrics.maxDrawdown, kind: "money", tone: T.amber },
+    { label: "Commissions", value: metrics.commissions, kind: "money", tone: CSS_COLOR.textSec },
+    { label: "Max DD", value: metrics.maxDrawdown, kind: "money", tone: CSS_COLOR.amber },
     { label: "Sharpe", value: metrics.sharpeRatio, kind: "ratio" },
     { label: "Sortino", value: metrics.sortinoRatio, kind: "ratio" },
     { label: "Calmar", value: metrics.calmarRatio, kind: "ratio" },
@@ -330,14 +336,14 @@ const KpiStrip = ({ trades, currency, maskValues, loading }) => {
 
 const toneColor = (tone) =>
   tone === "green"
-    ? T.green
+    ? CSS_COLOR.green
     : tone === "red"
-      ? T.red
+      ? CSS_COLOR.red
       : tone === "amber"
-        ? T.amber
+        ? CSS_COLOR.amber
         : tone === "cyan"
-          ? T.cyan
-          : T.accent;
+          ? CSS_COLOR.cyan
+          : CSS_COLOR.accent;
 
 const insightIcon = (card) => {
   if (card?.key?.includes("best")) return Trophy;
@@ -376,10 +382,10 @@ const InsightsRow = ({ analysis, currency, maskValues, onLensActivate, onTradeSe
             style={{
               flex: `0 0 ${dim(280)}px`,
               minHeight: dim(96),
-              border: `1px solid ${T.border}`,
+              border: `1px solid ${CSS_COLOR.border}`,
               borderLeft: `2px solid ${color}`,
               borderRadius: dim(RADII.md),
-              background: T.bg2,
+              background: CSS_COLOR.bg2,
               padding: sp("8px 10px"),
               display: "grid",
               gap: sp(5),
@@ -390,7 +396,7 @@ const InsightsRow = ({ analysis, currency, maskValues, onLensActivate, onTradeSe
               <Icon as={IconComponent} size={16} color={color} aria-hidden="true" />
               <div
                 style={{
-                  color: T.text,
+                  color: CSS_COLOR.text,
                   fontFamily: T.sans,
                   fontSize: textSize("bodyStrong"),
                   fontWeight: FONT_WEIGHTS.label,
@@ -415,7 +421,7 @@ const InsightsRow = ({ analysis, currency, maskValues, onLensActivate, onTradeSe
             </div>
             <div
               style={{
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 lineHeight: 1.25,
@@ -466,10 +472,10 @@ const ChipButton = ({ active, children, onClick }) => (
     style={{
       minHeight: dim(24),
       padding: sp("0 9px"),
-      border: `1px solid ${active ? T.accent : T.border}`,
+      border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
       borderRadius: dim(RADII.pill),
-      background: active ? `${T.accent}18` : T.bg2,
-      color: active ? T.accent : T.textSec,
+      background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg2,
+      color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
       fontFamily: T.sans,
       fontSize: textSize("caption"),
       fontWeight: FONT_WEIGHTS.medium,
@@ -502,8 +508,8 @@ const FilterRail = ({
         alignSelf: "start",
         maxHeight: compact ? undefined : `calc(100vh - ${dim(80)})`,
         overflowY: "auto",
-        borderRight: compact ? "none" : `1px solid ${T.border}`,
-        background: T.bg1,
+        borderRight: compact ? "none" : `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
         padding: sp(4),
         display: "grid",
         gap: sp(5),
@@ -677,10 +683,10 @@ const FilterRail = ({
 const selectStyle = {
   width: "100%",
   height: dim(26),
-  border: `1px solid ${T.border}`,
+  border: `1px solid ${CSS_COLOR.border}`,
   borderRadius: dim(RADII.sm),
-  background: T.bg2,
-  color: T.text,
+  background: CSS_COLOR.bg2,
+  color: CSS_COLOR.text,
   fontFamily: T.sans,
   fontSize: textSize("caption"),
   padding: sp("0 8px"),
@@ -693,7 +699,7 @@ const FilterSection = ({ title, children }) => (
       display: "grid",
       gap: sp(3),
       paddingBottom: sp(4),
-      borderBottom: `1px solid ${T.borderLight}`,
+      borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
       minWidth: 0,
     }}
   >
@@ -714,9 +720,9 @@ const ActiveChips = ({ filters, dispatch, onClearAll }) => {
         gap: sp(3),
         flexWrap: "wrap",
         padding: sp("6px 10px"),
-        background: T.bg1,
-        borderTop: `1px solid ${T.borderLight}`,
-        borderBottom: `1px solid ${T.borderLight}`,
+        background: CSS_COLOR.bg1,
+        borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+        borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
       }}
     >
       {chips.map((chip) => (
@@ -729,10 +735,10 @@ const ActiveChips = ({ filters, dispatch, onClearAll }) => {
             display: "inline-flex",
             alignItems: "center",
             gap: sp(4),
-            border: `1px solid ${T.accent}55`,
+            border: `1px solid ${cssColorMix(CSS_COLOR.accent, 33)}`,
             borderRadius: dim(RADII.pill),
-            background: `${T.accent}14`,
-            color: T.accent,
+            background: `${cssColorMix(CSS_COLOR.accent, 8)}`,
+            color: CSS_COLOR.accent,
             minHeight: dim(22),
             padding: sp("0 8px"),
             fontFamily: T.sans,
@@ -810,22 +816,22 @@ const PnlBarChart = ({ data, currency, layout = "horizontal", height = 180 }) =>
         layout={layout}
         margin={{ top: 8, right: 8, bottom: 8, left: layout === "vertical" ? 58 : 0 }}
       >
-        <CartesianGrid stroke={T.borderLight} vertical={false} />
+        <CartesianGrid stroke={CSS_COLOR.borderLight} vertical={false} />
         {layout === "vertical" ? (
           <>
             <XAxis type="number" hide />
-            <YAxis type="category" dataKey="label" tick={{ fill: T.textDim, fontSize: 10 }} width={56} />
+            <YAxis type="category" dataKey="label" tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} width={56} />
           </>
         ) : (
           <>
-            <XAxis dataKey="label" tick={{ fill: T.textDim, fontSize: 10 }} />
-            <YAxis tick={{ fill: T.textDim, fontSize: 10 }} width={44} />
+            <XAxis dataKey="label" tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} />
+            <YAxis tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} width={44} />
           </>
         )}
         <Tooltip content={(props) => <ChartTooltip {...props} currency={currency} />} />
         <Bar dataKey="pnl" name="P&L" radius={[2, 2, 0, 0]}>
           {data.map((row) => (
-            <Cell key={row.key || row.label} fill={(row.pnl || 0) >= 0 ? T.green : T.red} />
+            <Cell key={row.key || row.label} fill={(row.pnl || 0) >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
           ))}
         </Bar>
       </BarChart>
@@ -846,9 +852,9 @@ const WaterfallChart = ({ rows, currency, onTradeSelect }) => {
     <div style={{ width: "100%", height: dim(220) }}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 8, left: 0 }}>
-          <CartesianGrid stroke={T.borderLight} vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: T.textDim, fontSize: 10 }} />
-          <YAxis tick={{ fill: T.textDim, fontSize: 10 }} width={48} />
+          <CartesianGrid stroke={CSS_COLOR.borderLight} vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} />
+          <YAxis tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} width={48} />
           <Tooltip content={(props) => <ChartTooltip {...props} currency={currency} />} />
           <Bar
             dataKey="pnl"
@@ -857,14 +863,14 @@ const WaterfallChart = ({ rows, currency, onTradeSelect }) => {
             onClick={(entry) => onTradeSelect?.(entry?.key)}
           >
             {data.map((row) => (
-              <Cell key={row.key} fill={(row.pnl || 0) >= 0 ? T.green : T.red} />
+              <Cell key={row.key} fill={(row.pnl || 0) >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
             ))}
           </Bar>
           <Line
             type="monotone"
             dataKey="cumulative"
             name="Cumulative"
-            stroke={T.cyan}
+            stroke={CSS_COLOR.cyan}
             dot={false}
             strokeWidth={1.5}
           />
@@ -892,9 +898,9 @@ const SymbolTable = ({ rows, sparklineMap, currency, maskValues, onSymbolSelect 
       <div className="ra-hide-scrollbar" style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", minWidth: dim(520), borderCollapse: "collapse" }}>
           <thead>
-            <tr style={{ color: T.textMuted, fontSize: textSize("caption"), textTransform: "uppercase" }}>
+            <tr style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), textTransform: "uppercase" }}>
               {["Symbol", "Trades", "Win", "Net P&L", "Trend"].map((column) => (
-                <th key={column} style={{ textAlign: "left", padding: sp("4px 5px"), borderBottom: `1px solid ${T.border}` }}>
+                <th key={column} style={{ textAlign: "left", padding: sp("4px 5px"), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
                   {column}
                 </th>
               ))}
@@ -903,12 +909,12 @@ const SymbolTable = ({ rows, sparklineMap, currency, maskValues, onSymbolSelect 
           <tbody>
             {visibleRows.map((row) => (
               <tr key={row.key} className="ra-table-row">
-                <td style={{ padding: sp("5px"), color: T.cyan, fontFamily: T.data }}>
+                <td style={{ padding: sp("5px"), color: CSS_COLOR.cyan, fontFamily: T.data }}>
                   <button
                     type="button"
                     className="ra-interactive"
                     onClick={() => onSymbolSelect?.(row.key)}
-                    style={{ border: "none", background: "transparent", padding: 0, color: T.cyan, cursor: "pointer" }}
+                    style={{ border: "none", background: "transparent", padding: 0, color: CSS_COLOR.cyan, cursor: "pointer" }}
                   >
                     {row.key}
                   </button>
@@ -941,7 +947,7 @@ const SymbolTable = ({ rows, sparklineMap, currency, maskValues, onSymbolSelect 
 
 const symbolCellStyle = {
   padding: sp("5px"),
-  color: T.textSec,
+  color: CSS_COLOR.textSec,
   fontFamily: T.data,
   fontSize: textSize("caption"),
 };
@@ -958,14 +964,14 @@ const AttributionTable = ({ rows, currency, maskValues }) => {
             gridTemplateColumns: "minmax(0, 1fr) auto auto",
             gap: sp(5),
             alignItems: "center",
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
-            borderBottom: `1px solid ${T.borderLight}`,
+            borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
             paddingBottom: sp(3),
           }}
         >
-          <span style={{ color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ color: CSS_COLOR.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {row.label}
           </span>
           <span>{formatNumber(row.count, 0)} trades</span>
@@ -996,7 +1002,7 @@ const OutcomeDistribution = ({ trades, currency, maskValues }) => {
   return (
     <div style={{ display: "grid", gap: sp(6), placeItems: "center" }}>
       <ThresholdHistogram buckets={buckets} thresholdPosition={thresholdPosition} width={220} height={54} />
-      <div style={{ display: "flex", justifyContent: "space-between", width: "100%", color: T.textDim, fontSize: textSize("caption"), fontFamily: T.data }}>
+      <div style={{ display: "flex", justifyContent: "space-between", width: "100%", color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.data }}>
         <span>{formatAccountMoney(min, currency, true, maskValues)}</span>
         <span>0</span>
         <span>{formatAccountMoney(max, currency, true, maskValues)}</span>
@@ -1059,13 +1065,13 @@ const PatternsView = ({
           <div style={{ width: "100%", height: dim(180) }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={holdRows} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                <CartesianGrid stroke={T.borderLight} vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: T.textDim, fontSize: 10 }} />
-                <YAxis yAxisId="left" tick={{ fill: T.textDim, fontSize: 10 }} width={32} />
+                <CartesianGrid stroke={CSS_COLOR.borderLight} vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} />
+                <YAxis yAxisId="left" tick={{ fill: CSS_COLOR.textDim, fontSize: 10 }} width={32} />
                 <YAxis yAxisId="right" orientation="right" hide />
                 <Tooltip content={(props) => <ChartTooltip {...props} currency={currency} />} />
-                <Bar yAxisId="left" dataKey="count" name="Trades" fill={T.cyan} radius={[2, 2, 0, 0]} />
-                <Line yAxisId="right" dataKey="pnl" name="P&L" stroke={T.accent} dot={false} />
+                <Bar yAxisId="left" dataKey="count" name="Trades" fill={CSS_COLOR.cyan} radius={[2, 2, 0, 0]} />
+                <Line yAxisId="right" dataKey="pnl" name="P&L" stroke={CSS_COLOR.accent} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -1160,7 +1166,7 @@ const TradeRow = ({
         width: "100%",
         minWidth: 0,
         padding: sp(isPhone ? "0 8px" : "0 10px"),
-        color: T.textSec,
+        color: CSS_COLOR.textSec,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
       }}
@@ -1174,7 +1180,7 @@ const TradeRow = ({
           style={{ maxWidth: dim(isPhone ? 140 : 150) }}
         />
         {isPhone ? (
-          <div style={{ color: T.textDim, fontSize: textSize("label") }}>
+          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("label") }}>
             {trade.side || "—"} · {formatHold(trade.holdDurationMinutes)}
           </div>
         ) : null}
@@ -1189,7 +1195,7 @@ const TradeRow = ({
           <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {trade.strategyLabel || trade.sourceType || trade.source || "—"}
           </div>
-          <div style={{ color: T.textDim }}>
+          <div style={{ color: CSS_COLOR.textDim }}>
             {formatAppDate(trade.openDate)} {"->"} {formatAppDate(trade.closeDate)}
           </div>
           <div style={{ fontFamily: T.data }}>{formatNumber(trade.quantity, 2)}</div>
@@ -1215,7 +1221,7 @@ const TradeRow = ({
       onToggle={onToggle}
       rowHeight={isPhone ? 54 : 38}
       expandedHeight={isPhone ? 900 : 760}
-      selectionAccent={T.cyan}
+      selectionAccent={CSS_COLOR.cyan}
       rowClassName="ra-table-row"
       row={row}
       expandedContent={
@@ -1232,11 +1238,11 @@ const TradeRow = ({
   );
 };
 
-const DetailMetric = ({ label, value, tone = T.text }) => (
+const DetailMetric = ({ label, value, tone = CSS_COLOR.text }) => (
   <div style={{ minWidth: 0 }}>
     <div
       style={{
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         fontFamily: T.sans,
         fontSize: textSize("micro"),
         textTransform: "uppercase",
@@ -1281,21 +1287,21 @@ const ReasonTrace = ({ lifecycleRows, currency, maskValues }) => {
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) auto",
             gap: sp(6),
-            border: `1px solid ${T.borderLight}`,
+            border: `1px solid ${CSS_COLOR.borderLight}`,
             borderRadius: dim(RADII.sm),
-            background: T.bg0,
+            background: CSS_COLOR.bg0,
             padding: sp("6px 8px"),
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={{ color: T.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+            <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
               {row.label}
             </div>
-            <div style={{ color: T.textDim, fontSize: textSize("label"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("label"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.detail}
             </div>
           </div>
-          <div style={{ color: row.tone === "green" ? T.green : row.tone === "red" ? T.red : T.textSec, fontFamily: T.data, textAlign: "right", fontSize: textSize("caption") }}>
+          <div style={{ color: row.tone === "green" ? CSS_COLOR.green : row.tone === "red" ? CSS_COLOR.red : CSS_COLOR.textSec, fontFamily: T.data, textAlign: "right", fontSize: textSize("caption") }}>
             {typeof row.value === "number"
               ? row.key === "result"
                 ? formatAccountMoney(row.value, currency, true, maskValues)
@@ -1327,24 +1333,24 @@ const ExitConsequences = ({ trade, currency, maskValues }) => {
       <DetailMetric
         label="Max Favorable"
         value={mfe == null ? "—" : formatAccountPercent(mfe, 0, maskValues)}
-        tone={mfe == null ? T.textSec : T.green}
+        tone={mfe == null ? CSS_COLOR.textSec : CSS_COLOR.green}
       />
       <DetailMetric
         label="Giveback"
         value={giveback == null ? "—" : formatAccountPercent(giveback, 0, maskValues)}
-        tone={giveback == null ? T.textSec : T.amber}
+        tone={giveback == null ? CSS_COLOR.textSec : CSS_COLOR.amber}
       />
       <DetailMetric
         label="Peak Price"
         value={peak == null ? "—" : formatAccountPrice(peak, 2, maskValues)}
-        tone={T.textSec}
+        tone={CSS_COLOR.textSec}
       />
       <DetailMetric
         label="Exit"
         value={formatAccountPrice(trade?.avgClose, 2, maskValues)}
         tone={toneForValue(trade?.realizedPnl)}
       />
-      <div style={{ color: T.textDim, fontSize: textSize("caption"), lineHeight: 1.35 }}>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), lineHeight: 1.35 }}>
         Best continuation and worst follow-through require post-exit bar windows. This account view uses the
         trade-level MFE/giveback fields when continuation bars are unavailable.
       </div>
@@ -1364,15 +1370,15 @@ const TradeExpandedDetail = ({
     data-testid="account-analysis-trade-expanded"
     style={{
       padding: sp("10px 12px 14px"),
-      background: T.bg2,
-      borderLeft: `2px solid ${T.cyan}`,
+      background: CSS_COLOR.bg2,
+      borderLeft: `2px solid ${CSS_COLOR.cyan}`,
       display: "grid",
       gap: sp(8),
       minWidth: 0,
     }}
   >
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: sp(6), flexWrap: "wrap" }}>
-      <div style={{ color: T.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>
+      <div style={{ color: CSS_COLOR.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>
         {trade.symbol || "Trade"} · {tradeId}
       </div>
       {trade.symbol && onJumpToChart ? (
@@ -1500,9 +1506,9 @@ const TradesView = ({
             position: "sticky",
             top: 0,
             zIndex: 1,
-            background: T.bg1,
-            borderBottom: `1px solid ${T.border}`,
-            color: T.textDim,
+            background: CSS_COLOR.bg1,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             textTransform: "uppercase",
@@ -1518,7 +1524,7 @@ const TradesView = ({
               style={{
                 border: "none",
                 background: "transparent",
-                color: sort.key === column.key ? T.text : T.textDim,
+                color: sort.key === column.key ? CSS_COLOR.text : CSS_COLOR.textDim,
                 textAlign: "left",
                 padding: 0,
                 cursor: "pointer",
@@ -1534,7 +1540,7 @@ const TradesView = ({
           <span />
         </div>
       ) : null}
-      <div style={{ border: `1px solid ${T.border}`, borderRadius: dim(RADII.md), overflow: "hidden", background: T.bg1 }}>
+      <div style={{ border: `1px solid ${CSS_COLOR.border}`, borderRadius: dim(RADII.md), overflow: "hidden", background: CSS_COLOR.bg1 }}>
         {pageRows.map((trade) => {
           const tradeId = getAccountTradeId(trade);
           const expanded = Boolean(selectedTradeId && selectedTradeId === tradeId);
@@ -1557,7 +1563,7 @@ const TradesView = ({
         <Button size="xs" variant="ghost" disabled={safePage <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
           Previous
         </Button>
-        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
           Page {safePage + 1} of {pageCount}
         </span>
         <Button size="xs" variant="ghost" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>
@@ -1600,14 +1606,14 @@ const HeaderStrip = ({
       justifyContent: "space-between",
       gap: sp(6),
       padding: sp("8px 10px"),
-      borderBottom: `1px solid ${T.border}`,
+      borderBottom: `1px solid ${CSS_COLOR.border}`,
       minWidth: 0,
     }}
   >
     <div style={{ minWidth: 0 }}>
       <div
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: textSize("displaySmall"),
           fontWeight: FONT_WEIGHTS.label,
@@ -1620,7 +1626,7 @@ const HeaderStrip = ({
       </div>
       <div
         style={{
-          color: T.textDim,
+          color: CSS_COLOR.textDim,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           overflow: "hidden",
@@ -1653,10 +1659,10 @@ const HeaderStrip = ({
       ) : (
         <span
           style={{
-            border: `1px solid ${T.border}`,
+            border: `1px solid ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.pill),
-            background: T.bg2,
-            color: T.textSec,
+            background: CSS_COLOR.bg2,
+            color: CSS_COLOR.textSec,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             padding: sp("3px 8px"),
@@ -1692,9 +1698,9 @@ const MobileFilterDrawer = ({ open, onClose, children }) => {
         gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)",
       }}
     >
-      <div style={{ background: T.bg1, boxShadow: `0 0 0 1px ${T.border}, 0 24px 64px rgba(0,0,0,0.35)`, overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp(4), borderBottom: `1px solid ${T.border}` }}>
-          <div style={{ color: T.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>Filters</div>
+      <div style={{ background: CSS_COLOR.bg1, boxShadow: `0 0 0 1px ${CSS_COLOR.border}, 0 24px 64px rgba(0,0,0,0.35)`, overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp(4), borderBottom: `1px solid ${CSS_COLOR.border}` }}>
+          <div style={{ color: CSS_COLOR.text, fontFamily: T.sans, fontWeight: FONT_WEIGHTS.label }}>Filters</div>
           <Button size="xs" variant="ghost" onClick={onClose}>Close</Button>
         </div>
         {children}
@@ -1827,9 +1833,9 @@ export const TradingAnalysisWorkbench = ({
             position: "sticky",
             top: 0,
             zIndex: 2,
-            background: T.bg0,
-            borderTop: `1px solid ${T.borderLight}`,
-            borderBottom: `1px solid ${T.border}`,
+            background: CSS_COLOR.bg0,
+            borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             padding: sp("6px 10px"),
           }}
         >
@@ -1857,7 +1863,7 @@ export const TradingAnalysisWorkbench = ({
               onReset={clearAll}
             />
           ) : null}
-          <main style={{ minWidth: 0, background: T.bg0 }}>
+          <main style={{ minWidth: 0, background: CSS_COLOR.bg0 }}>
             {activeView === "patterns" ? (
               <PatternsView
                 trades={visibleTrades}

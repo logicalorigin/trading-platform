@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import {
+  useMemo,
+} from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { RadialStrokeGauge } from "../../components/platform/primitives.jsx";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   EmptyState,
   InlineError,
@@ -20,20 +22,20 @@ import {
 
 const EPSILON = 1e-9;
 
-const getColors = () => [T.blue, T.cyan, T.purple, T.amber, T.green, T.pink, T.textDim];
+const getColors = () => [CSS_COLOR.blue, CSS_COLOR.cyan, CSS_COLOR.purple, CSS_COLOR.amber, CSS_COLOR.green, CSS_COLOR.pink, CSS_COLOR.textDim];
 
 const RISK_USED_GAUGE_COLOR_STOPS = [
-  { offset: 0, color: T.green },
-  { offset: 0.49, color: T.green },
-  { offset: 0.5, color: T.amber },
-  { offset: 0.74, color: T.amber },
-  { offset: 0.75, color: T.red },
-  { offset: 1, color: T.red },
+  { offset: 0, color: CSS_COLOR.green },
+  { offset: 0.49, color: CSS_COLOR.green },
+  { offset: 0.5, color: CSS_COLOR.amber },
+  { offset: 0.74, color: CSS_COLOR.amber },
+  { offset: 0.75, color: CSS_COLOR.red },
+  { offset: 1, color: CSS_COLOR.red },
 ];
 
 const CASH_GAUGE_COLOR_STOPS = [
-  { offset: 0, color: T.cyan },
-  { offset: 1, color: T.cyan },
+  { offset: 0, color: CSS_COLOR.cyan },
+  { offset: 1, color: CSS_COLOR.cyan },
 ];
 
 export const getRiskGaugeColorStops = (display) =>
@@ -94,7 +96,7 @@ const getSectionLabelStyle = () => ({
 });
 
 const getCompactTextStyle = () => ({
-  color: T.textDim,
+  color: CSS_COLOR.textDim,
   fontSize: textSize("body"),
   fontFamily: T.sans,
 });
@@ -117,7 +119,7 @@ const ExposureMetric = ({
   label,
   value,
   formattedValue,
-  tone = T.text,
+  tone = CSS_COLOR.text,
   currency,
   maskValues,
   isFirst = false,
@@ -128,7 +130,7 @@ const ExposureMetric = ({
       flex: "1 1 auto",
       minWidth: dim(compact ? 48 : 78),
       padding: sp(compact ? "2px 5px" : "3px 10px"),
-      borderLeft: isFirst ? "none" : `1px solid ${T.border}`,
+      borderLeft: isFirst ? "none" : `1px solid ${CSS_COLOR.border}`,
       display: "grid",
       gap: sp(2),
     }}
@@ -172,8 +174,8 @@ const ExposureMetricRail = ({ exposure, riskModel, currency, maskValues, compact
         display: "flex",
         flexWrap: "nowrap",
         overflowX: "auto",
-        borderTop: `1px solid ${T.border}`,
-        borderBottom: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
         minWidth: 0,
       }}
     >
@@ -204,7 +206,7 @@ const ExposureMetricRail = ({ exposure, riskModel, currency, maskValues, compact
       <ExposureMetric
         label="Long"
         value={grossLong}
-        tone={T.green}
+        tone={CSS_COLOR.green}
         currency={currency}
         maskValues={maskValues}
         compact={compact}
@@ -212,7 +214,7 @@ const ExposureMetricRail = ({ exposure, riskModel, currency, maskValues, compact
       <ExposureMetric
         label="Short"
         value={grossShort}
-        tone={T.red}
+        tone={CSS_COLOR.red}
         currency={currency}
         maskValues={maskValues}
         compact={compact}
@@ -257,7 +259,7 @@ const DonutLegend = ({ data, maskValues, valueFormatter, compact = false, maxIte
           />
           <span
             style={{
-              color: T.text,
+              color: CSS_COLOR.text,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -266,7 +268,7 @@ const DonutLegend = ({ data, maskValues, valueFormatter, compact = false, maxIte
             {item.label}
           </span>
         </span>
-        <span style={{ color: T.textDim, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
           {valueFormatter
             ? valueFormatter(item)
             : formatAccountPercent(item.weightPercent, 1, maskValues)}
@@ -288,7 +290,7 @@ const AllocationDonut = ({ rows, currency, maskValues, compact = false }) => (
             innerRadius="62%"
             outerRadius="86%"
             paddingAngle={0.5}
-            stroke={T.bg1}
+            stroke={CSS_COLOR.bg1}
             strokeWidth={1}
             isAnimationActive={false}
           >
@@ -321,18 +323,18 @@ const riskPercentFromBuffer = (bufferPercent) => {
 };
 
 const riskConsumedStatus = (riskPercent, { cashOnly = false } = {}) => {
-  if (cashOnly) return { label: "Cash", tone: T.cyan };
+  if (cashOnly) return { label: "Cash", tone: CSS_COLOR.cyan };
   const value = clampPercent(riskPercent);
-  if (value == null) return { label: "—", tone: T.textDim };
-  if (value >= 75) return { label: "Risk", tone: T.red };
-  if (value >= 50) return { label: "Watch", tone: T.amber };
-  return { label: "Safe", tone: T.green };
+  if (value == null) return { label: "—", tone: CSS_COLOR.textDim };
+  if (value >= 75) return { label: "Risk", tone: CSS_COLOR.red };
+  if (value >= 50) return { label: "Watch", tone: CSS_COLOR.amber };
+  return { label: "Safe", tone: CSS_COLOR.green };
 };
 
 const capitalRiskStatus = (bufferPercent, deployedValue) => {
   const riskPercent = riskPercentFromBuffer(bufferPercent);
   const deployed = finiteMetric(deployedValue) ?? 0;
-  if (riskPercent == null) return { label: "—", tone: T.textDim };
+  if (riskPercent == null) return { label: "—", tone: CSS_COLOR.textDim };
   if (deployed <= EPSILON) return riskConsumedStatus(0, { cashOnly: true });
   return riskConsumedStatus(riskPercent);
 };
@@ -348,7 +350,7 @@ const buildMarginRiskRows = (margin, status) => {
   if (!hasData || total <= EPSILON) {
     return {
       hasData: false,
-      rows: [{ label: "Pending", value: 1, color: T.bg3, weightPercent: 100 }],
+      rows: [{ label: "Pending", value: 1, color: CSS_COLOR.bg3, weightPercent: 100 }],
     };
   }
 
@@ -364,7 +366,7 @@ const buildMarginRiskRows = (margin, status) => {
       {
         label: "Maintenance",
         value: maintenanceValue,
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
         weightPercent: (maintenanceValue / total) * 100,
       },
     ],
@@ -386,7 +388,7 @@ const buildCapitalRiskRows = (margin, exposure, allocationRows = []) => {
       riskPercent: null,
       cashValue: cashRaw,
       deployedValue: deployedRaw,
-      rows: [{ label: "Pending", value: 1, color: T.bg3, weightPercent: 100 }],
+      rows: [{ label: "Pending", value: 1, color: CSS_COLOR.bg3, weightPercent: 100 }],
     };
   }
 
@@ -404,7 +406,7 @@ const buildCapitalRiskRows = (margin, exposure, allocationRows = []) => {
       {
         label: "Deployed",
         value: deployedValue,
-        color: T.blue,
+        color: CSS_COLOR.blue,
         weightPercent: (deployedValue / total) * 100,
       },
       {
@@ -449,7 +451,7 @@ export const buildRiskLevelDisplayModel = ({
   };
 };
 
-const CompactFact = ({ label, value, tone = T.text, compact = false }) => (
+const CompactFact = ({ label, value, tone = CSS_COLOR.text, compact = false }) => (
   <div
     style={{
       display: "grid",
@@ -517,7 +519,7 @@ const RiskLevelGauge = ({ margin, exposure, allocationRows, currency, maskValues
           innerRadiusRatio={compact ? 0.66 : 0.68}
           outerRadiusRatio={0.95}
           tone={display.status.tone}
-          trackColor={T.borderLight}
+          trackColor={CSS_COLOR.borderLight}
           trackOpacity={0.5}
           activeOpacity={0.98}
           colorStops={gaugeColorStops}
@@ -546,7 +548,7 @@ const RiskLevelGauge = ({ margin, exposure, allocationRows, currency, maskValues
             display: "grid",
             gap: sp(compact ? 1 : 2),
             paddingTop: sp(compact ? 1 : 2),
-            borderTop: `1px solid ${T.border}`,
+            borderTop: `1px solid ${CSS_COLOR.border}`,
           }}
         >
           <CompactFact
@@ -558,7 +560,7 @@ const RiskLevelGauge = ({ margin, exposure, allocationRows, currency, maskValues
                   ? "—"
                   : `${formatNumber(margin.leverageRatio, 2)}x`
             }
-            tone={display.mode === "capital" ? display.status.tone : T.text}
+            tone={display.mode === "capital" ? display.status.tone : CSS_COLOR.text}
             compact={compact}
           />
           <CompactFact
@@ -568,7 +570,7 @@ const RiskLevelGauge = ({ margin, exposure, allocationRows, currency, maskValues
                 ? formatAccountMoney(display.cashValue, currency, true, maskValues)
                 : formatAccountMoney(margin?.marginUsed, currency, true, maskValues)
             }
-            tone={display.mode === "capital" ? T.text : toneForValue(margin?.marginUsed)}
+            tone={display.mode === "capital" ? CSS_COLOR.text : toneForValue(margin?.marginUsed)}
             compact={compact}
           />
         </div>
@@ -585,7 +587,7 @@ const SectorList = ({ rows, maskValues }) => {
         display: "grid",
         gap: sp(2),
         paddingTop: sp(4),
-        borderTop: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
       }}
     >
       <div style={mutedLabelStyle}>Top Sectors</div>
@@ -596,7 +598,7 @@ const SectorList = ({ rows, maskValues }) => {
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) auto",
             gap: sp(5),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontSize: textSize("body"),
             fontFamily: T.sans,
           }}
@@ -604,7 +606,7 @@ const SectorList = ({ rows, maskValues }) => {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {sector.label || sector.sector}
           </span>
-          <span style={{ color: T.textDim }}>
+          <span style={{ color: CSS_COLOR.textDim }}>
             {formatAccountPercent(sector.weightPercent, 1, maskValues)}
           </span>
         </div>
@@ -635,12 +637,12 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
             display: "grid",
             gap: sp(1),
             paddingBottom: sp(1),
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             fontSize: textSize("caption"),
             fontFamily: T.sans,
           }}
         >
-          <span style={{ color: T.text, minWidth: 0 }}>
+          <span style={{ color: CSS_COLOR.text, minWidth: 0 }}>
             {row.symbol ? (
               <MarketIdentityInline
                 item={{ ticker: row.symbol, market: "stocks" }}
@@ -664,7 +666,7 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
             <span style={{ color: toneForValue(row.marketValue), fontVariantNumeric: "tabular-nums" }}>
               {formatAccountMoney(row.marketValue, currency, true, maskValues)}
             </span>
-            <span style={{ color: T.textDim, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: CSS_COLOR.textDim, fontVariantNumeric: "tabular-nums" }}>
               {row.weightPercent == null
                 ? "—"
                 : formatAccountPercent(row.weightPercent, 1, maskValues)}
@@ -676,7 +678,7 @@ const TopConcentrationList = ({ rows, currency, maskValues }) => {
   );
 };
 
-const RiskMetric = ({ label, value, tone = T.text }) => (
+const RiskMetric = ({ label, value, tone = CSS_COLOR.text }) => (
   <div
     style={{
       minWidth: 0,
@@ -727,7 +729,7 @@ const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
         display: "grid",
         gap: sp(3),
         paddingTop: sp(2),
-        borderTop: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
       }}
     >
       <div
@@ -740,7 +742,7 @@ const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
       >
         <div style={getSectionLabelStyle()}>Notional Exposure</div>
         {coverageLabel ? (
-          <div style={{ ...mutedLabelStyle, color: T.amber }}>{coverageLabel}</div>
+          <div style={{ ...mutedLabelStyle, color: CSS_COLOR.amber }}>{coverageLabel}</div>
         ) : null}
       </div>
       <div
@@ -774,10 +776,10 @@ const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
           }
           tone={
             notional.notionalToNavPercent == null
-              ? T.text
+              ? CSS_COLOR.text
               : notional.notionalToNavPercent > 100
-                ? T.amber
-                : T.text
+                ? CSS_COLOR.amber
+                : CSS_COLOR.text
           }
         />
       </div>
@@ -808,7 +810,7 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
         gridTemplateColumns: `repeat(auto-fit, minmax(${dim(44)}px, 1fr))`,
         gap: sp(3),
         paddingTop: sp(2),
-        borderTop: `1px solid ${T.border}`,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
         minWidth: 0,
       }}
     >
@@ -821,7 +823,7 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
           <RiskMetric
             label="Deployed"
             value={formatAccountMoney(display.deployedValue, currency, true, maskValues)}
-            tone={T.blue}
+            tone={CSS_COLOR.blue}
           />
           <RiskMetric
             label="Buffer"
@@ -857,7 +859,7 @@ const RiskStrip = ({ data, exposure, allocationRows, currency, maskValues }) => 
         tone={toneForValue(greeks.betaWeightedDelta)}
       />
       <RiskMetric label="Theta" value={formatNumber(greeks.theta, 2)} tone={toneForValue(greeks.theta)} />
-      <RiskMetric label="Greeks" value={coverageLabel} tone={greeks.warning ? T.amber : T.text} />
+      <RiskMetric label="Greeks" value={coverageLabel} tone={greeks.warning ? CSS_COLOR.amber : CSS_COLOR.text} />
     </div>
   );
 };

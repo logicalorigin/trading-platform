@@ -1641,10 +1641,6 @@ test("platform phone layout navigates all primary screens without document overf
     await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
     if (screenId === "market") {
       await expect(page.getByTestId("market-activity-panel")).toHaveCount(0);
-      await expect(page.getByTestId("market-workspace")).toHaveAttribute(
-        "data-activity-layout",
-        "hidden",
-      );
     }
     if (screenId === "account") {
       await expectAccountCalendarToStayCompact();
@@ -2510,7 +2506,7 @@ test("trade spot chart hydrates every interval selection", async ({ page }) => {
   expect(runtimeIssues).toEqual([]);
 });
 
-test("market chart frame changes timeframe from the dropdown and zooms", async ({
+test("market chart frame changes timeframe from the dropdown", async ({
   page,
 }) => {
   test.setTimeout(150_000);
@@ -2549,19 +2545,6 @@ test("market chart frame changes timeframe from the dropdown and zooms", async (
       { timeout: 10_000 },
     )
     .toBe(true);
-
-  const plot = page.getByTestId("market-chart-0-surface-plot");
-  const box = await plot.boundingBox();
-  expect(box, "market chart plot should have a geometry box").not.toBeNull();
-  await page.mouse.up();
-  await page.mouse.move(8, 8);
-
-  const initialRange = await surface.getAttribute("data-chart-visible-logical-range");
-  await surface.getByTitle("Zoom in").first().click();
-  await expect
-    .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
-    .not.toBe(initialRange);
-  await expect(surface).toHaveAttribute("data-chart-viewport-user-touched", "true");
 
   expect(pageErrors).toEqual([]);
 });

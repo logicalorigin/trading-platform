@@ -1,4 +1,5 @@
 import {
+  CSS_COLOR,
   FONT_WEIGHTS,
   RADII,
   T,
@@ -37,12 +38,12 @@ const Cell = ({
           padding: sp("3px 7px"),
           minWidth: 0,
           minHeight: dim(28),
-          background: T.bg1,
+          background: CSS_COLOR.bg1,
         }}
       >
         <span
           style={{
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             letterSpacing: "0.04em",
@@ -68,7 +69,7 @@ const Cell = ({
         >
           <span
             style={{
-              color: tone || T.text,
+              color: tone || CSS_COLOR.text,
               fontFamily: T.sans,
               fontSize: fs(12),
               fontWeight: FONT_WEIGHTS.medium,
@@ -84,7 +85,7 @@ const Cell = ({
           {visibleHint ? (
             <span
               style={{
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 fontFamily: T.sans,
                 fontSize: textSize("caption"),
                 whiteSpace: "nowrap",
@@ -114,7 +115,7 @@ const Cell = ({
     >
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -136,7 +137,7 @@ const Cell = ({
       >
         <span
           style={{
-            color: tone || T.text,
+            color: tone || CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(14),
             fontWeight: FONT_WEIGHTS.medium,
@@ -160,7 +161,7 @@ const Cell = ({
       {visibleHint ? (
         <span
           style={{
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
             whiteSpace: "nowrap",
@@ -235,8 +236,8 @@ export const OperationsKpiStrip = ({
             ? "repeat(auto-fit, minmax(145px, 1fr))"
             : "repeat(auto-fit, minmax(170px, 1fr))",
         gap: 1,
-        background: T.border,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.border,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
         padding: sp(1),
         minWidth: 0,
@@ -247,7 +248,7 @@ export const OperationsKpiStrip = ({
         label="Realized today"
         value={formatMoney(realized, 2)}
         hint={realized > 0 ? "session pnl" : realized < 0 ? "session loss" : null}
-        tone={realized > 0 ? T.green : realized < 0 ? T.red : T.text}
+        tone={realized > 0 ? CSS_COLOR.green : realized < 0 ? CSS_COLOR.red : CSS_COLOR.text}
         history={series.realized}
         sparkPositive={realized >= 0}
         hideHint={dense}
@@ -257,7 +258,7 @@ export const OperationsKpiStrip = ({
         label="Unrealized"
         value={formatMoney(unrealized, 2)}
         hint={`${openPositions} open`}
-        tone={unrealized > 0 ? T.green : unrealized < 0 ? T.red : T.text}
+        tone={unrealized > 0 ? CSS_COLOR.green : unrealized < 0 ? CSS_COLOR.red : CSS_COLOR.text}
         history={series.unrealized}
         sparkPositive={unrealized >= 0}
         hideHint={dense}
@@ -291,10 +292,10 @@ export const OperationsKpiStrip = ({
         }
         tone={
           Number.isFinite(Number(profitFactor)) && Number(profitFactor) >= 1
-            ? T.green
+            ? CSS_COLOR.green
             : Number.isFinite(Number(profitFactor))
-              ? T.amber
-              : T.text
+              ? CSS_COLOR.amber
+              : CSS_COLOR.text
         }
         history={series.profitFactor}
         sparkPositive={
@@ -323,7 +324,7 @@ export const OperationsKpiStrip = ({
             ? `${cockpitTradePath.blockedCandidates} blocked`
             : null
         }
-        tone={Number(cockpitTradePath?.blockedCandidates) > 0 ? T.amber : T.text}
+        tone={Number(cockpitTradePath?.blockedCandidates) > 0 ? CSS_COLOR.amber : CSS_COLOR.text}
         history={series.openPositions}
         hideHint={dense}
       />

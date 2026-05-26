@@ -96,8 +96,14 @@ import {
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, THEMES, cssColorAlpha, cssColorMix, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import {
+  resolveCanvasAlphaColor,
+  resolveCanvasColor,
+  resolveCanvasColorMaybe,
+  resolveChartColorOptions,
+} from "./chartCanvasColors";
 import {
   recordChartHydrationCounter,
   recordChartHydrationMetric,
@@ -135,6 +141,7 @@ export type {
   ScaleMode,
   VisibleLogicalRange,
 } from "./chartViewportStorage";
+export { resolveCanvasColor } from "./chartCanvasColors";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
   "ResearchChartSurface@20260518-basis-aware-flow-markers-v2";
@@ -2356,7 +2363,26 @@ export const expandStudySpecsForRender = (specs: StudySpec[]): StudySpec[] =>
   });
 
 const withAlpha = (color: string, alpha: string): string =>
-  /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
+  cssColorAlpha(color, alpha);
+
+const withCanvasAlpha = (color: string, alpha: string): string =>
+  resolveCanvasAlphaColor(color, alpha, color);
+
+const resolveChartTheme = (theme: ResearchChartTheme): ResearchChartTheme => ({
+  ...theme,
+  bg2: resolveCanvasColor(theme.bg2, THEMES.dark.bg2),
+  bg3: resolveCanvasColor(theme.bg3, THEMES.dark.bg3),
+  bg4: resolveCanvasColor(theme.bg4, THEMES.dark.bg4),
+  border: resolveCanvasColor(theme.border, THEMES.dark.border),
+  text: resolveCanvasColor(theme.text, THEMES.dark.text),
+  textMuted: resolveCanvasColor(theme.textMuted, THEMES.dark.textMuted),
+  green: resolveCanvasColor(theme.green, THEMES.dark.green),
+  red: resolveCanvasColor(theme.red, THEMES.dark.red),
+  amber: resolveCanvasColor(theme.amber, THEMES.dark.amber),
+  blue: theme.blue ? resolveCanvasColor(theme.blue, THEMES.dark.blue) : theme.blue,
+  cyan: theme.cyan ? resolveCanvasColor(theme.cyan, THEMES.dark.cyan) : theme.cyan,
+  accent: theme.accent ? resolveCanvasColor(theme.accent, THEMES.dark.accent) : theme.accent,
+});
 
 const resolvePriceScaleModeOption = (scaleMode: ScaleMode): PriceScaleMode =>
   scaleMode === "log"
@@ -2583,26 +2609,26 @@ const buildChartOptions = (
         formatChartAxisTimestamp(value, preferences, ""),
     },
     grid: {
-      vertLines: { color: withAlpha(theme.border, "20"), visible: showGrid, style: LineStyle.Solid },
-      horzLines: { color: withAlpha(theme.border, "28"), visible: showGrid, style: LineStyle.Solid },
+      vertLines: { color: withCanvasAlpha(theme.border, "20"), visible: showGrid, style: LineStyle.Solid },
+      horzLines: { color: withCanvasAlpha(theme.border, "28"), visible: showGrid, style: LineStyle.Solid },
     },
     crosshair: {
       mode: CrosshairMode.MagnetOHLC,
       vertLine: {
-        color: withAlpha(theme.textMuted, "70"),
+        color: withCanvasAlpha(theme.textMuted, "70"),
         width: 1,
         style: LineStyle.Solid,
         visible: true,
         labelVisible: true,
-        labelBackgroundColor: withAlpha(theme.bg2, "f5"),
+        labelBackgroundColor: withCanvasAlpha(theme.bg2, "f5"),
       },
       horzLine: {
-        color: withAlpha(theme.textMuted, "70"),
+        color: withCanvasAlpha(theme.textMuted, "70"),
         width: 1,
         style: LineStyle.Solid,
         visible: true,
         labelVisible: true,
-        labelBackgroundColor: withAlpha(theme.bg2, "f5"),
+        labelBackgroundColor: withCanvasAlpha(theme.bg2, "f5"),
       },
     },
     rightPriceScale: {
@@ -4904,9 +4930,10 @@ const syncStudySeries = (
       }
 
       return point.color
-        ? { time: point.time, value: point.value, color: point.color }
+        ? { time: point.time, value: point.value, color: resolveCanvasColor(point.color) }
         : { time: point.time, value: point.value };
     });
+    const seriesOptions = resolveChartColorOptions(spec.options) as Record<string, unknown>;
 
     if (
       !existing ||
@@ -4917,7 +4944,7 @@ const syncStudySeries = (
         chart.removeSeries(existing.series);
       }
 
-      const series = chart.addSeries(SeriesCtor, spec.options, spec.paneIndex);
+      const series = chart.addSeries(SeriesCtor, seriesOptions, spec.paneIndex);
       series.setData(seriesData);
 
       nextRegistry[spec.key] = {
@@ -4929,7 +4956,7 @@ const syncStudySeries = (
       return;
     }
 
-    existing.series.applyOptions(spec.options);
+    existing.series.applyOptions(seriesOptions);
     existing.data = syncSeriesData(
       existing.series,
       existing.data || [],
@@ -6948,10 +6975,11 @@ const ResearchChartSurfaceComponent = ({
     let handleClick: ((param: ChartMouseEvent) => void) | null = null;
 
     try {
+      const chartTheme = resolveChartTheme(theme);
       setChartError(null);
       chart = createResearchChart(
         containerRef.current,
-        buildChartOptions(theme, {
+        buildChartOptions(chartTheme, {
           compact,
           hideTimeScale,
           showTimeScale: showTimeScaleState,
@@ -6977,28 +7005,28 @@ const ResearchChartSurfaceComponent = ({
           vertLine: {
             visible: !hideCrosshair,
             labelVisible: !hideCrosshair,
-            labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+            labelBackgroundColor: withCanvasAlpha(chartTheme.bg3, "f0"),
           },
           horzLine: {
             visible: !hideCrosshair,
             labelVisible: !hideCrosshair,
-            labelBackgroundColor: withAlpha(theme.bg3, "f0"),
+            labelBackgroundColor: withCanvasAlpha(chartTheme.bg3, "f0"),
           },
         },
       });
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
-        upColor: theme.green,
-        downColor: theme.red,
-        wickUpColor: theme.green,
-        wickDownColor: theme.red,
+        upColor: chartTheme.green,
+        downColor: chartTheme.red,
+        wickUpColor: chartTheme.green,
+        wickDownColor: chartTheme.red,
         borderVisible: false,
         priceLineVisible: true,
         lastValueVisible: true,
       });
       const barSeries = chart.addSeries(BarSeries, {
-        upColor: theme.green,
-        downColor: theme.red,
+        upColor: chartTheme.green,
+        downColor: chartTheme.red,
         thinBars: false,
         openVisible: true,
         priceLineVisible: true,
@@ -7006,7 +7034,7 @@ const ResearchChartSurfaceComponent = ({
         visible: false,
       });
       const lineSeries = chart.addSeries(LineSeries, {
-        color: theme.accent || theme.text,
+        color: chartTheme.accent || chartTheme.text,
         lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
@@ -7014,9 +7042,9 @@ const ResearchChartSurfaceComponent = ({
         visible: false,
       });
       const areaSeries = chart.addSeries(AreaSeries, {
-        lineColor: theme.accent || theme.text,
-        topColor: withAlpha(theme.accent || theme.text, "1e"),
-        bottomColor: withAlpha(theme.accent || theme.text, "02"),
+        lineColor: chartTheme.accent || chartTheme.text,
+        topColor: withCanvasAlpha(chartTheme.accent || chartTheme.text, "1e"),
+        bottomColor: withCanvasAlpha(chartTheme.accent || chartTheme.text, "02"),
         lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
@@ -7025,12 +7053,12 @@ const ResearchChartSurfaceComponent = ({
       });
       const baselineSeries = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: model.chartBars[0]?.o ?? 0 },
-        topLineColor: theme.green,
-        topFillColor1: withAlpha(theme.green, "1e"),
-        topFillColor2: withAlpha(theme.green, "04"),
-        bottomLineColor: theme.red,
-        bottomFillColor1: withAlpha(theme.red, "04"),
-        bottomFillColor2: withAlpha(theme.red, "1e"),
+        topLineColor: chartTheme.green,
+        topFillColor1: withCanvasAlpha(chartTheme.green, "1e"),
+        topFillColor2: withCanvasAlpha(chartTheme.green, "04"),
+        bottomLineColor: chartTheme.red,
+        bottomFillColor1: withCanvasAlpha(chartTheme.red, "04"),
+        bottomFillColor2: withCanvasAlpha(chartTheme.red, "1e"),
         lineWidth: 1,
         priceLineVisible: true,
         lastValueVisible: true,
@@ -7435,15 +7463,20 @@ const ResearchChartSurfaceComponent = ({
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const seriesSyncStartedAt = nowMs();
+    const chartTheme = resolveChartTheme(theme);
     const candleSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
       open: bar.o,
       high: bar.h,
       low: bar.l,
       close: bar.c,
-      color: bar.color ?? (bar.c === bar.o ? theme.textMuted : undefined),
-      borderColor: bar.borderColor,
-      wickColor: bar.wickColor ?? (bar.c === bar.o ? theme.textMuted : undefined),
+      color:
+        resolveCanvasColorMaybe(bar.color, chartTheme.textMuted) ??
+        (bar.c === bar.o ? chartTheme.textMuted : undefined),
+      borderColor: resolveCanvasColorMaybe(bar.borderColor, chartTheme.textMuted),
+      wickColor:
+        resolveCanvasColorMaybe(bar.wickColor, chartTheme.textMuted) ??
+        (bar.c === bar.o ? chartTheme.textMuted : undefined),
     }));
     const barSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
@@ -7463,10 +7496,10 @@ const ResearchChartSurfaceComponent = ({
             value: bar.v,
             color:
               bar.c > bar.o
-                ? withAlpha(theme.green, "55")
+                ? withCanvasAlpha(chartTheme.green, "55")
                 : bar.c < bar.o
-                  ? withAlpha(theme.red, "55")
-                  : withAlpha(theme.textMuted, "55"),
+                  ? withCanvasAlpha(chartTheme.red, "55")
+                  : withCanvasAlpha(chartTheme.textMuted, "55"),
           }),
         )
       : [];
@@ -7732,7 +7765,8 @@ const ResearchChartSurfaceComponent = ({
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
-    const accent = theme.accent || theme.text;
+    const chartTheme = resolveChartTheme(theme);
+    const accent = chartTheme.accent || chartTheme.text;
 
     candleSeries.applyOptions({
       visible: baseSeriesType === "candles",
@@ -7756,8 +7790,8 @@ const ResearchChartSurfaceComponent = ({
     areaSeries.applyOptions({
       visible: baseSeriesType === "area",
       lineColor: accent,
-      topColor: withAlpha(accent, "1e"),
-      bottomColor: withAlpha(accent, "02"),
+      topColor: withCanvasAlpha(accent, "1e"),
+      bottomColor: withCanvasAlpha(accent, "02"),
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -7765,12 +7799,12 @@ const ResearchChartSurfaceComponent = ({
     baselineSeries.applyOptions({
       visible: baseSeriesType === "baseline",
       baseValue: baselineBaseValue,
-      topLineColor: theme.green,
-      topFillColor1: withAlpha(theme.green, "2f"),
-      topFillColor2: withAlpha(theme.green, "08"),
-      bottomLineColor: theme.red,
-      bottomFillColor1: withAlpha(theme.red, "08"),
-      bottomFillColor2: withAlpha(theme.red, "2f"),
+      topLineColor: chartTheme.green,
+      topFillColor1: withCanvasAlpha(chartTheme.green, "2f"),
+      topFillColor2: withCanvasAlpha(chartTheme.green, "08"),
+      bottomLineColor: chartTheme.red,
+      bottomFillColor1: withCanvasAlpha(chartTheme.red, "08"),
+      bottomFillColor2: withCanvasAlpha(chartTheme.red, "2f"),
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -7783,14 +7817,14 @@ const ResearchChartSurfaceComponent = ({
       borderVisible: false,
       ticksVisible: false,
       minimumWidth: compact ? 34 : 50,
-      textColor: theme.textMuted,
+      textColor: chartTheme.textMuted,
       mode: resolvePriceScaleModeOption(scaleMode),
     });
     chartRef.current.applyOptions({
       layout: {
-        background: { type: ColorType.Solid, color: theme.bg2 },
-        textColor: theme.textMuted,
-        fontFamily: theme.mono,
+        background: { type: ColorType.Solid, color: chartTheme.bg2 },
+        textColor: chartTheme.textMuted,
+        fontFamily: chartTheme.mono,
         fontSize: compact ? TYPE_PX.label : TYPE_PX.bodyStrong,
       },
       localization: {
@@ -7799,12 +7833,12 @@ const ResearchChartSurfaceComponent = ({
       },
       grid: {
         vertLines: {
-          color: withAlpha(theme.border, "20"),
+          color: withCanvasAlpha(chartTheme.border, "20"),
           visible: effectiveShowGrid,
           style: LineStyle.Solid,
         },
         horzLines: {
-          color: withAlpha(theme.border, "28"),
+          color: withCanvasAlpha(chartTheme.border, "28"),
           visible: effectiveShowGrid,
           style: LineStyle.Solid,
         },
@@ -7816,26 +7850,26 @@ const ResearchChartSurfaceComponent = ({
             ? CrosshairMode.Normal
             : CrosshairMode.MagnetOHLC,
         vertLine: {
-          color: withAlpha(theme.textMuted, "70"),
+          color: withCanvasAlpha(chartTheme.textMuted, "70"),
           width: 1,
           style: LineStyle.Solid,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
-          labelBackgroundColor: withAlpha(theme.bg2, "f5"),
+          labelBackgroundColor: withCanvasAlpha(chartTheme.bg2, "f5"),
         },
         horzLine: {
-          color: withAlpha(theme.textMuted, "70"),
+          color: withCanvasAlpha(chartTheme.textMuted, "70"),
           width: 1,
           style: LineStyle.Solid,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
-          labelBackgroundColor: withAlpha(theme.bg2, "f5"),
+          labelBackgroundColor: withCanvasAlpha(chartTheme.bg2, "f5"),
         },
       },
       handleScroll: chartInteractionConfig.handleScroll,
       handleScale: chartInteractionConfig.handleScale,
       timeScale: {
-        borderColor: theme.border,
+        borderColor: chartTheme.border,
         borderVisible: false,
         visible: !hideTimeScale && showTimeScaleState,
         timeVisible: !hideTimeScale && showTimeScaleState,
@@ -8049,6 +8083,7 @@ const ResearchChartSurfaceComponent = ({
 
     const visibleLogicalRange = visibleLogicalRangeRef.current;
     const chart = chartRef.current;
+    const chartTheme = resolveChartTheme(theme);
     const positionMarkers =
       positionOverlaysEnabled && resolvedPositionOverlays.density !== "mini"
         ? resolvedPositionOverlays.fillMarkers.map((marker: ChartPositionFillMarker) => ({
@@ -8056,14 +8091,14 @@ const ResearchChartSurfaceComponent = ({
             barIndex: marker.barIndex,
             position: marker.position,
             shape: marker.shape,
-            color: resolvePositionDirectionColor(marker.direction, theme),
+            color: resolvePositionDirectionColor(marker.direction, chartTheme),
             text: marker.text,
             size: marker.size,
           }))
         : [];
     const markers = [
       ...deferredModel.indicatorMarkerPayload.overviewMarkers,
-      ...buildTradeMarkers(deferredModel, theme),
+      ...buildTradeMarkers(deferredModel, chartTheme),
       ...positionMarkers,
     ]
       .filter((marker) =>
@@ -8095,7 +8130,7 @@ const ResearchChartSurfaceComponent = ({
         time: marker.time,
         position: marker.position,
         shape: marker.shape,
-        color: marker.color,
+        color: resolveCanvasColor(marker.color, chartTheme.accent || chartTheme.text),
         text: marker.text,
         size: marker.size,
       }));
@@ -8140,6 +8175,7 @@ const ResearchChartSurfaceComponent = ({
       baseline: baselineSeries,
     } satisfies Record<BaseSeriesType, ChartSeriesApi>;
     const activePriceSeries = priceSeriesByType[baseSeriesType] || candleSeries;
+    const chartTheme = resolveChartTheme(theme);
 
     (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach(
       (seriesType) => {
@@ -8168,7 +8204,7 @@ const ResearchChartSurfaceComponent = ({
       .forEach((drawing) => {
         const drawingLine = {
           price: Number(drawing.price),
-          color: theme.amber,
+          color: chartTheme.amber,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
@@ -8185,7 +8221,7 @@ const ResearchChartSurfaceComponent = ({
       .forEach((line) => {
         const referenceLine = {
           price: line.price,
-          color: line.color || theme.amber,
+          color: resolveCanvasColor(line.color || chartTheme.amber, chartTheme.amber),
           lineWidth: line.lineWidth ?? 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: line.axisLabelVisible ?? true,
@@ -8210,7 +8246,7 @@ const ResearchChartSurfaceComponent = ({
         .forEach((line) => {
           addPriceLine({
             price: line.price,
-            color: resolvePositionDirectionColor(line.direction, theme),
+            color: resolvePositionDirectionColor(line.direction, chartTheme),
             lineWidth: resolvedPositionOverlays.density === "mini" ? 1 : 2,
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
@@ -10164,16 +10200,16 @@ const ResearchChartSurfaceComponent = ({
                 borderRadius: "50%",
                 background:
                   lastPricePulse.tone === "up"
-                    ? T.green
+                    ? CSS_COLOR.green
                     : lastPricePulse.tone === "down"
-                      ? T.red
-                      : T.textMuted,
+                      ? CSS_COLOR.red
+                      : CSS_COLOR.textMuted,
                 boxShadow: `0 0 0 2px ${
                   lastPricePulse.tone === "up"
-                    ? `${T.green}33`
+                    ? `${cssColorMix(CSS_COLOR.green, 20)}`
                     : lastPricePulse.tone === "down"
-                      ? `${T.red}33`
-                      : `${T.textMuted}33`
+                      ? `${cssColorMix(CSS_COLOR.red, 20)}`
+                      : `${cssColorMix(CSS_COLOR.textMuted, 20)}`
                 }`,
                 animation:
                   "raStatusPulse 1450ms var(--ra-motion-ease) infinite",

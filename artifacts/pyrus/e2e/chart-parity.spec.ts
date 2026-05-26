@@ -121,14 +121,24 @@ test("keeps study toggles isolated to the targeted frame", async ({ page }) => {
   const primaryVwap = page.getByRole("menuitemcheckbox", { name: "vwap" });
   await expect(primaryVwap).toHaveAttribute("aria-checked", "true");
   await primaryVwap.click();
-  await expect(primary).toContainText("Indicators 2");
-  await expect(primary).not.toContainText("ema-21 · ema-55 · vwap");
+  await expect(primary.getByTestId("chart-indicators-menu-trigger")).toHaveAttribute(
+    "aria-label",
+    "Indicators 2",
+  );
+  await expect(primary).toContainText("ema-21");
+  await expect(primary).toContainText("ema-55");
+  await expect(primary).not.toContainText("vwap");
 
   await secondary.getByRole("button", { name: /Indicators/ }).click();
   const secondaryVwap = page.getByRole("menuitemcheckbox", { name: "vwap" });
   await expect(secondaryVwap).toHaveAttribute("aria-checked", "true");
-  await expect(secondary).toContainText("Indicators 3");
-  await expect(secondary).toContainText("ema-21 · ema-55 · vwap");
+  await expect(secondary.getByTestId("chart-indicators-menu-trigger")).toHaveAttribute(
+    "aria-label",
+    "Indicators 3",
+  );
+  await expect(secondary).toContainText("ema-21");
+  await expect(secondary).toContainText("ema-55");
+  await expect(secondary).toContainText("vwap");
 });
 
 test("keeps toolbar interactions isolated to the targeted frame", async ({ page }) => {

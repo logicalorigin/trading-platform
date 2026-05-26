@@ -1,7 +1,10 @@
-import { EMPTY_PREMIUM_FLOW_SUMMARY, resolvePremiumFlowDisplayState } from "../platform/premiumFlowIndicator";
+import {
+  EMPTY_PREMIUM_FLOW_SUMMARY,
+  resolvePremiumFlowDisplayState,
+} from "../platform/premiumFlowIndicator";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
 
@@ -20,7 +23,7 @@ const PremiumFlowSparkline = ({ timeline = [], color, dense = false }) => {
         style={{
           width: dense ? dim(56) : dim(76),
           height,
-          borderBottom: `1px solid ${T.borderLight}`,
+          borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
           opacity: 0.5,
         }}
       />
@@ -60,7 +63,7 @@ const PremiumFlowStatusGlyph = ({ state, dense = false, color }) => {
           width: size,
           height: size,
           flexShrink: 0,
-          border: `1px solid ${T.borderLight}`,
+          border: `1px solid ${CSS_COLOR.borderLight}`,
           borderTopColor: color,
           borderRightColor: color,
           borderRadius: dim(RADII.pill),
@@ -103,10 +106,10 @@ export const MarketChartPremiumFlowIndicator = ({
   const normalizedSymbol = normalizeTickerSymbol(symbol);
   const tone =
     resolvedSummary.direction === "call"
-      ? T.green
+      ? CSS_COLOR.green
       : resolvedSummary.direction === "put"
-        ? T.red
-        : T.textMuted;
+        ? CSS_COLOR.red
+        : CSS_COLOR.textMuted;
   const displayState = resolvePremiumFlowDisplayState({
     symbol: normalizedSymbol,
     summary: resolvedSummary,
@@ -119,14 +122,14 @@ export const MarketChartPremiumFlowIndicator = ({
   };
   const statusLabel = displayState.label;
   const statusTone = displayState.isError
-    ? T.red
+    ? CSS_COLOR.red
     : displayState.isStale
-      ? T.amber
+      ? CSS_COLOR.amber
       : displayState.isScanning
-        ? T.accent
+        ? CSS_COLOR.accent
         : displayState.isLiveSource
-          ? T.green
-        : T.textDim;
+          ? CSS_COLOR.green
+        : CSS_COLOR.textDim;
   const hasFlow = resolvedSummary.eventCount > 0;
   const callPct = !hasFlow
     ? 50
@@ -169,8 +172,8 @@ export const MarketChartPremiumFlowIndicator = ({
       style={{
         height,
         flexShrink: 0,
-        borderTop: `1px solid ${T.border}`,
-        background: T.bg1,
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
         display: "grid",
         gridTemplateColumns: compact ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
         gridTemplateRows: dense || compact ? "1fr 5px" : "1fr 6px 1fr",
@@ -187,7 +190,7 @@ export const MarketChartPremiumFlowIndicator = ({
           alignItems: "center",
           gap: sp(5),
           minWidth: 0,
-          color: T.textSec,
+          color: CSS_COLOR.textSec,
           fontSize: fs(dense ? 8 : 9),
           fontWeight: FONT_WEIGHTS.regular,
           letterSpacing: "0.04em",
@@ -195,7 +198,7 @@ export const MarketChartPremiumFlowIndicator = ({
           overflow: "hidden",
         }}
       >
-        <span style={{ color: T.textMuted }}>FLOW</span>
+        <span style={{ color: CSS_COLOR.textMuted }}>FLOW</span>
         <PremiumFlowStatusGlyph
           state={glyphState}
           dense={dense}
@@ -238,7 +241,7 @@ export const MarketChartPremiumFlowIndicator = ({
           gridColumn: "1 / -1",
           display: "flex",
           height: dense ? 5 : 6,
-          background: T.bg0,
+          background: CSS_COLOR.bg0,
           borderRadius: dim(RADII.xs),
           overflow: "hidden",
         }}
@@ -247,7 +250,7 @@ export const MarketChartPremiumFlowIndicator = ({
           aria-hidden="true"
           style={{
             width: `${callPct}%`,
-            background: hasFlow ? T.green : T.border,
+            background: hasFlow ? CSS_COLOR.green : CSS_COLOR.border,
             opacity: hasFlow ? 0.78 : 0.45,
           }}
         />
@@ -255,7 +258,7 @@ export const MarketChartPremiumFlowIndicator = ({
           aria-hidden="true"
           style={{
             width: `${putPct}%`,
-            background: hasFlow ? T.red : T.borderLight,
+            background: hasFlow ? CSS_COLOR.red : CSS_COLOR.borderLight,
             opacity: hasFlow ? 0.78 : 0.45,
           }}
         />
@@ -268,7 +271,7 @@ export const MarketChartPremiumFlowIndicator = ({
             justifyContent: "space-between",
             gap: sp(6),
             minWidth: 0,
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontSize: fs(8),
             lineHeight: 1.1,
             whiteSpace: "nowrap",

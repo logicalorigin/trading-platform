@@ -13,7 +13,7 @@ import {
 } from "./pyrusSignalsPineAdapter";
 import { TYPE_CSS_VAR } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, FONT_WEIGHTS, RADII } from "../../lib/uiTokens.jsx";
+import { ELEVATION, FONT_WEIGHTS, RADII, cssColorAlpha } from "../../lib/uiTokens.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -108,7 +108,7 @@ const triggerStyle = (
   height: dense ? 22 : 26,
   borderRadius: RADII.sm,
   border: `1px solid ${disabled ? theme.border : theme.accent || theme.border}`,
-  background: disabled ? theme.bg3 : `${theme.bg4}e6`,
+  background: disabled ? theme.bg3 : cssColorAlpha(theme.bg4, "e6"),
   color: disabled ? theme.textMuted : theme.text,
   fontFamily: theme.mono,
   fontSize: dense ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.bodyStrong,
@@ -141,7 +141,7 @@ const headerStyle = (theme: WidgetTheme): CSSProperties => ({
   gap: 12,
   padding: "12px 14px",
   borderBottom: `1px solid ${theme.border}`,
-  background: `${theme.bg3}dd`,
+  background: cssColorAlpha(theme.bg3, "dd"),
   position: "sticky",
   top: 0,
   zIndex: 1,
@@ -185,7 +185,7 @@ const tabButtonStyle = (
   active: boolean,
 ): CSSProperties => ({
   border: `1px solid ${active ? theme.accent || theme.text : theme.border}`,
-  background: active ? `${theme.accent || theme.text}22` : theme.bg3,
+  background: active ? cssColorAlpha(theme.accent || theme.text, "22") : theme.bg3,
   color: active ? theme.text : theme.textMuted,
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,

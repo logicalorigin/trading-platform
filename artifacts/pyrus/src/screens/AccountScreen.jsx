@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountAllocationQueryOptions,
   getGetAccountOrdersQueryOptions,
@@ -31,18 +31,23 @@ import {
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
+  getAccountPerformanceCalendarEquityQueryKey,
   useAccountPageSnapshotStream,
   useBrokerStreamFreshnessSnapshot,
 } from "../features/platform/live-streams";
 import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
-import { setAccountSectionTransitionSnapshot } from "../features/platform/accountSectionTransitionStore.js";
+import {
+  setAccountSectionTransitionSnapshot,
+} from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   PYRUS_WORKSPACE_SETTINGS_EVENT,
   PYRUS_STORAGE_KEY,
@@ -228,10 +233,10 @@ const ShadowWatchlistBacktestPanel = ({
   const runButtonStyle = {
     minHeight: dim(32),
     padding: sp("6px 14px"),
-    border: `1px solid ${running ? T.textMuted : T.pink}`,
+    border: `1px solid ${running ? CSS_COLOR.textMuted : CSS_COLOR.pink}`,
     borderRadius: dim(RADII.sm),
-    background: running ? T.bg1 : `${T.pink}22`,
-    color: running ? T.textMuted : T.pink,
+    background: running ? CSS_COLOR.bg1 : `${cssColorMix(CSS_COLOR.pink, 13)}`,
+    color: running ? CSS_COLOR.textMuted : CSS_COLOR.pink,
     fontSize: fs(10),
     fontFamily: T.sans,
     fontWeight: FONT_WEIGHTS.medium,
@@ -290,9 +295,9 @@ const ShadowWatchlistBacktestPanel = ({
             data-testid="shadow-watchlist-backtest-run-ytd-5m-sweep"
             style={{
               ...runButtonStyle,
-              borderColor: running ? T.textMuted : T.cyan,
-              background: running ? T.bg2 : `${T.cyan}22`,
-              color: running ? T.textMuted : T.cyan,
+              borderColor: running ? CSS_COLOR.textMuted : CSS_COLOR.cyan,
+              background: running ? CSS_COLOR.bg2 : `${cssColorMix(CSS_COLOR.cyan, 13)}`,
+              color: running ? CSS_COLOR.textMuted : CSS_COLOR.cyan,
             }}
           >
             5m Sweep
@@ -308,7 +313,7 @@ const ShadowWatchlistBacktestPanel = ({
           {run?.sweep ? <Pill tone="purple">Regime Sweep</Pill> : null}
           <Pill tone="purple">Ledger Synthetic</Pill>
         </div>
-        <div style={{ color: T.textSec, fontSize: textSize("caption"), lineHeight: 1.35 }}>
+        <div style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), lineHeight: 1.35 }}>
           Runs all saved watchlists from the New York regular-session open through
           the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
           activity, isolated from prior backtest rows, and sized around current Shadow exposure.
@@ -321,16 +326,16 @@ const ShadowWatchlistBacktestPanel = ({
                 display: "flex",
                 flexWrap: "nowrap",
                 overflowX: "auto",
-                background: T.bg0,
+                background: CSS_COLOR.bg0,
                 borderRadius: dim(RADII.xs),
                 minWidth: 0,
               }}
             >
               {[
-                ["Signals", summary.signals, T.cyan],
-                ["Orders", summary.ordersCreated, T.text],
-                ["Open", summary.openSyntheticPositions, T.purple],
-                ["Skipped", summary.skippedSignals, T.amber],
+                ["Signals", summary.signals, CSS_COLOR.cyan],
+                ["Orders", summary.ordersCreated, CSS_COLOR.text],
+                ["Open", summary.openSyntheticPositions, CSS_COLOR.purple],
+                ["Skipped", summary.skippedSignals, CSS_COLOR.amber],
               ].map(([label, value, color], index) => (
                 <div
                   key={label}
@@ -338,10 +343,10 @@ const ShadowWatchlistBacktestPanel = ({
                     flex: "1 1 auto",
                     minWidth: dim(64),
                     padding: sp("4px 9px"),
-                    borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                    borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                   }}
                 >
-                  <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                  <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
                     {label.toUpperCase()}
                   </div>
                   <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
@@ -357,7 +362,7 @@ const ShadowWatchlistBacktestPanel = ({
                 flexWrap: "nowrap",
                 overflowX: "auto",
                 gap: sp(8),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
                 minWidth: 0,
@@ -365,7 +370,7 @@ const ShadowWatchlistBacktestPanel = ({
             >
               <span style={{ flexShrink: 0 }}>
                 P&L{" "}
-                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: pnl >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
                 </span>
               </span>
@@ -384,7 +389,7 @@ const ShadowWatchlistBacktestPanel = ({
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 Exp{" "}
-                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
                 </span>
               </span>
@@ -393,14 +398,14 @@ const ShadowWatchlistBacktestPanel = ({
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 NAV{" "}
-                <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
                 </span>
               </span>
               <span style={{ flexShrink: 0 }}>·</span>
               <span style={{ flexShrink: 0 }}>
                 Max DD{" "}
-                <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                   {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
                 </span>
               </span>
@@ -412,13 +417,13 @@ const ShadowWatchlistBacktestPanel = ({
                 style={{
                   border: "none",
                   borderRadius: dim(RADII.xs),
-                  background: T.bg0,
+                  background: CSS_COLOR.bg0,
                   padding: sp(6),
                   display: "grid",
                   gap: sp(4),
                 }}
               >
-                <div style={{ color: T.text, fontSize: textSize("caption"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
+                <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>
                   Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
                 </div>
                 {(run.sweep.variants || []).slice(0, 3).map((variant) => (
@@ -428,7 +433,7 @@ const ShadowWatchlistBacktestPanel = ({
                       display: "grid",
                       gridTemplateColumns: "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
                       gap: sp(4),
-                      color: variant.rank === 1 ? T.green : T.textSec,
+                      color: variant.rank === 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
                       fontSize: textSize("body"),
                       fontFamily: T.sans,
                     }}
@@ -444,7 +449,7 @@ const ShadowWatchlistBacktestPanel = ({
                 ))}
               </div>
             ) : null}
-            <div style={{ color: T.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
+            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("body"), fontFamily: T.sans }}>
               {formatAppDateTime(run.window?.start)}
               {" -> "}
               {formatAppDateTime(run.window?.end)}
@@ -454,7 +459,7 @@ const ShadowWatchlistBacktestPanel = ({
             </div>
           </>
         ) : (
-          <div style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+          <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
             No run has been executed in this browser session.
           </div>
         )}
@@ -1104,21 +1109,27 @@ const AccountScreenInner = ({
       },
     },
   );
-  const performanceCalendarEquityQuery = useGetAccountEquityHistory(
-    accountRequestId,
-    {
-      ...accountDataParams,
-      range: "1Y",
-    },
-    {
-      query: {
-        ...equityHistoryQuerySettings,
-        refetchInterval: chartRefreshInterval,
-        enabled: performanceCalendarQueriesEnabled,
-        placeholderData: retainPreviousRangeData("1Y"),
+  const performanceCalendarEquityQuery = useQuery({
+    ...getGetAccountEquityHistoryQueryOptions(
+      accountRequestId,
+      {
+        ...accountDataParams,
+        range: "1Y",
       },
-    },
-  );
+      {
+        query: {
+          ...equityHistoryQuerySettings,
+          refetchInterval: chartRefreshInterval,
+          enabled: performanceCalendarQueriesEnabled,
+          placeholderData: retainPreviousRangeData("1Y"),
+        },
+      },
+    ),
+    queryKey: getAccountPerformanceCalendarEquityQueryKey(
+      accountRequestId,
+      accountDataParams,
+    ),
+  });
   useEffect(() => {
     const selectedPoints = equityQuery.data?.points || [];
     const fallbackPoints = performanceCalendarEquityQuery.data?.points || [];
@@ -1530,7 +1541,7 @@ const AccountScreenInner = ({
         maxWidth: "100%",
         overflowX: "hidden",
         overflowY: "auto",
-        background: T.bg0,
+        background: CSS_COLOR.bg0,
         minWidth: 0,
         WebkitOverflowScrolling: accountIsPhone ? "touch" : undefined,
       }}
@@ -1606,7 +1617,7 @@ const AccountScreenInner = ({
                 range={range}
                 onRangeChange={setRange}
                 currency={currency}
-                accentColor={shadowMode ? T.pink : T.green}
+                accentColor={shadowMode ? CSS_COLOR.pink : CSS_COLOR.green}
                 rightRail={shadowMode ? shadowSourceLabel : undefined}
                 sourceLabel={shadowSourceLabel}
                 maskValues={maskAccountValues}
@@ -1766,7 +1777,7 @@ const AccountScreenInner = ({
                 </div>
                 <div
                   style={{
-                    color: T.textSec,
+                    color: CSS_COLOR.textSec,
                     fontSize: textSize("caption"),
                     lineHeight: 1.35,
                   }}
@@ -1779,17 +1790,17 @@ const AccountScreenInner = ({
                     display: "flex",
                     flexWrap: "nowrap",
                     overflowX: "auto",
-                    background: T.bg0,
+                    background: CSS_COLOR.bg0,
                     borderRadius: dim(RADII.xs),
                     marginTop: sp(2),
                     minWidth: 0,
                   }}
                 >
                   {[
-                    ["Auto Pos", shadowAutomationAudit.automationPositions, T.pink],
-                    ["Backtest Pos", shadowAutomationAudit.backtestPositions, T.purple],
-                    ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
-                    ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
+                    ["Auto Pos", shadowAutomationAudit.automationPositions, CSS_COLOR.pink],
+                    ["Backtest Pos", shadowAutomationAudit.backtestPositions, CSS_COLOR.purple],
+                    ["Auto Orders", shadowAutomationAudit.automationOrders, CSS_COLOR.cyan],
+                    ["Backtest Orders", shadowAutomationAudit.backtestOrders, CSS_COLOR.pink],
                   ].map(([label, value, color], index) => (
                     <div
                       key={label}
@@ -1797,10 +1808,10 @@ const AccountScreenInner = ({
                         flex: "1 1 auto",
                         minWidth: dim(80),
                         padding: sp("4px 9px"),
-                        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+                        borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
                       }}
                     >
-                      <div style={{ color: T.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                      <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption"), fontFamily: T.sans }}>
                         {label.toUpperCase()}
                       </div>
                       <div style={{ color, fontSize: fs(12), fontFamily: T.sans, fontWeight: FONT_WEIGHTS.regular }}>

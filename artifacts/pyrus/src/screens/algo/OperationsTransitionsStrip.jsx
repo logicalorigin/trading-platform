@@ -1,6 +1,9 @@
 import React from "react";
-import { Clock } from "lucide-react";
 import {
+  Clock,
+} from "lucide-react";
+import {
+  CSS_COLOR,
   RADII,
   T,
   dim,
@@ -34,17 +37,17 @@ const transitionLabel = (transition) => {
 
 const transitionTone = (transition) => {
   if (transition?.kind === "signal") {
-    if (transition.nextState === "fresh") return T.green;
-    if (transition.nextState === "stale") return T.amber;
-    if (transition.nextState === "unavailable") return T.textDim;
-    if (transition.nextState === "error") return T.red;
-    return T.text;
+    if (transition.nextState === "fresh") return CSS_COLOR.green;
+    if (transition.nextState === "stale") return CSS_COLOR.amber;
+    if (transition.nextState === "unavailable") return CSS_COLOR.textDim;
+    if (transition.nextState === "error") return CSS_COLOR.red;
+    return CSS_COLOR.text;
   }
-  if (transition?.eventType?.endsWith("_blocked")) return T.amber;
-  if (transition?.eventType?.endsWith("_skipped")) return T.textDim;
-  if (transition?.eventType?.endsWith("_entry")) return T.green;
-  if (transition?.eventType?.endsWith("_exit")) return T.cyan;
-  return T.text;
+  if (transition?.eventType?.endsWith("_blocked")) return CSS_COLOR.amber;
+  if (transition?.eventType?.endsWith("_skipped")) return CSS_COLOR.textDim;
+  if (transition?.eventType?.endsWith("_entry")) return CSS_COLOR.green;
+  if (transition?.eventType?.endsWith("_exit")) return CSS_COLOR.cyan;
+  return CSS_COLOR.text;
 };
 
 export const OperationsTransitionsStrip = ({
@@ -62,8 +65,8 @@ export const OperationsTransitionsStrip = ({
         gap: sp(embedded ? 4 : 6),
         flexWrap: "wrap",
         rowGap: sp(2),
-        background: embedded ? "transparent" : T.bg1,
-        border: embedded ? "none" : `1px solid ${T.border}`,
+        background: embedded ? "transparent" : CSS_COLOR.bg1,
+        border: embedded ? "none" : `1px solid ${CSS_COLOR.border}`,
         borderRadius: embedded ? 0 : dim(RADII.md),
         padding: embedded ? sp("2px 6px") : sp("6px 10px"),
         minWidth: 0,
@@ -72,7 +75,7 @@ export const OperationsTransitionsStrip = ({
     >
       <span
         style={{
-          color: T.textMuted,
+          color: CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("caption"),
           letterSpacing: "0.04em",
@@ -88,7 +91,7 @@ export const OperationsTransitionsStrip = ({
             display: "inline-flex",
             alignItems: "center",
             gap: sp(3),
-            color: T.textDim,
+            color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: embedded ? textSize("caption") : textSize("body"),
             fontStyle: "italic",
@@ -107,7 +110,7 @@ export const OperationsTransitionsStrip = ({
                 display: "inline-flex",
                 alignItems: "baseline",
                 gap: sp(3),
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
                 fontSize: embedded ? textSize("caption") : textSize("body"),
                 lineHeight: 1.3,
@@ -116,7 +119,7 @@ export const OperationsTransitionsStrip = ({
             >
               <span
                 style={{
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   fontFamily: T.sans,
                   fontSize: textSize("caption"),
                 }}

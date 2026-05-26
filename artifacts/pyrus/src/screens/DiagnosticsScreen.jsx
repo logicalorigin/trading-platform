@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   getDiagnosticEventDetail,
   getLatestDiagnostics,
@@ -37,6 +43,9 @@ import {
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
 import {
+  CSS_COLOR,
+  cssColorAlpha,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -179,14 +188,14 @@ const severityTone = (severity) => {
 const severityBorder = (severity) =>
   `color-mix(in srgb, ${severityTone(severity)} 40%, transparent)`;
 
-const alertToneBackground = (severity) => `${severityTone(severity)}0d`;
-const alertToneHoverBackground = (severity) => `${severityTone(severity)}12`;
+const alertToneBackground = (severity) => cssColorAlpha(severityTone(severity), "0d");
+const alertToneHoverBackground = (severity) => cssColorAlpha(severityTone(severity), "12");
 
 const alertChipStyle = (severity, minWidth = 58) => ({
   minWidth: dim(minWidth),
   color: severityTone(severity),
   border: `1px solid ${severityBorder(severity)}`,
-  background: `${severityTone(severity)}0f`,
+  background: cssColorAlpha(severityTone(severity), "0f"),
   borderRadius: dim(RADII.xs),
   fontFamily: T.sans,
   fontSize: textSize("caption"),
@@ -243,7 +252,7 @@ const JsonBlock = ({ value }) => (
       overflow: "auto",
       fontFamily: T.sans,
       fontSize: textSize("caption"),
-      color: T.textSec,
+      color: CSS_COLOR.textSec,
       whiteSpace: "pre-wrap",
       lineHeight: 1.45,
     }}
@@ -258,7 +267,7 @@ const Panel = ({ title, action, children }) => (
   </SurfacePanel>
 );
 
-const StateRow = ({ label, value, tone = T.textSec, onClick }) => (
+const StateRow = ({ label, value, tone = CSS_COLOR.textSec, onClick }) => (
   <button
     type="button"
     className={onClick ? "ra-interactive" : undefined}
@@ -271,7 +280,7 @@ const StateRow = ({ label, value, tone = T.textSec, onClick }) => (
       justifyContent: "space-between",
       gap: sp(10),
       border: 0,
-      borderBottom: `1px solid ${T.border}55`,
+      borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`,
       background: "transparent",
       padding: sp("7px 0"),
       fontFamily: T.sans,
@@ -280,7 +289,7 @@ const StateRow = ({ label, value, tone = T.textSec, onClick }) => (
       textAlign: "left",
     }}
   >
-    <span style={{ color: T.textDim, minWidth: 0 }}>{label}</span>
+    <span style={{ color: CSS_COLOR.textDim, minWidth: 0 }}>{label}</span>
     <span
       style={{
         color: tone,
@@ -305,7 +314,7 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
       ...motionVars({ accent: severityTone(severity) }),
       border: `1px solid ${severityBorder(severity)}`,
       borderRadius: dim(RADII.sm),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       padding: sp("7px 8px"),
       display: "flex",
       flexDirection: "column",
@@ -317,13 +326,13 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
       textAlign: "left",
     }}
   >
-    <span style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+    <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
       {label}
     </span>
     <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: FONT_WEIGHTS.regular }}>
       {value ?? MISSING_VALUE}
     </span>
-    <span style={{ color: T.textSec, fontSize: textSize("caption"), fontFamily: T.sans }}>
+    <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontFamily: T.sans }}>
       {sub || MISSING_VALUE}
     </span>
   </button>
@@ -340,7 +349,7 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
     .filter((point) => Number.isFinite(point.value));
   if (!data.length) {
     return (
-      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         No samples in selected window.
       </div>
     );
@@ -350,16 +359,16 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
   const height = 78;
   if (values.length < 2) {
     return (
-      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         Waiting for more samples.
       </div>
     );
   }
   const tone = data.some((point) => point.severity === "critical")
-    ? T.red
+    ? CSS_COLOR.red
     : data.some((point) => point.severity === "warning")
-      ? T.amber
-      : T.green;
+      ? CSS_COLOR.amber
+      : CSS_COLOR.green;
   return (
     <MicroSparkline
       data={values}
@@ -385,7 +394,7 @@ const EventList = ({ events, onSelect }) => (
           style={{
             ...motionRowStyle(index, 16, 160),
             ...motionVars({ accent: severityTone(event.severity) }),
-            border: `1px solid ${T.borderLight}`,
+            border: `1px solid ${CSS_COLOR.borderLight}`,
             background: alertToneBackground(event.severity),
             borderRadius: dim(RADII.xs),
             padding: sp("5px 6px"),
@@ -403,7 +412,7 @@ const EventList = ({ events, onSelect }) => (
           }}
           onMouseLeave={(pointerEvent) => {
             pointerEvent.currentTarget.style.background = alertToneBackground(event.severity);
-            pointerEvent.currentTarget.style.borderColor = T.borderLight;
+            pointerEvent.currentTarget.style.borderColor = CSS_COLOR.borderLight;
           }}
         >
           <SeverityRail tone={severityTone(event.severity)} />
@@ -411,20 +420,20 @@ const EventList = ({ events, onSelect }) => (
             {event.severity.toUpperCase()}
           </span>
           <span style={{ minWidth: 0 }}>
-            <div style={{ color: T.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+            <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
               {event.message}
             </div>
-            <div style={{ color: T.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
               {event.subsystem} / {event.category} / {event.code || "no-code"}
             </div>
           </span>
-          <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
+          <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
             x{event.eventCount}
           </span>
         </button>
       ))
     ) : (
-      <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
+      <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         No diagnostic events in this window.
       </div>
     )}
@@ -440,7 +449,7 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
       gridTemplateColumns: "auto minmax(0, 1fr) auto",
       gap: sp(6),
       alignItems: "center",
-      border: `1px solid ${T.borderLight}`,
+      border: `1px solid ${CSS_COLOR.borderLight}`,
       background: alertToneBackground(alert.severity),
       borderRadius: dim(RADII.xs),
       padding: sp("5px 6px"),
@@ -453,7 +462,7 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
       style={{
         border: 0,
         background: "transparent",
-        color: T.text,
+        color: CSS_COLOR.text,
         display: "grid",
         gridTemplateColumns: `${dim(74)}px minmax(0, 1fr) ${dim(48)}px`,
         gap: sp(6),
@@ -468,19 +477,19 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         {alert.severity.toUpperCase()}
       </span>
       <span style={{ minWidth: 0 }}>
-        <div style={{ color: T.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+        <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
           {alert.message}
         </div>
-        <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {alert.subsystem || "diagnostics"} / {alert.category || alert.kind} / {alert.code || alert.incidentKey}
         </div>
       </span>
-      <span style={{ color: T.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
+      <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
         x{alert.repeatCount}
       </span>
     </button>
     <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
-      <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "nowrap" }}>
+      <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "nowrap" }}>
         {formatAgo(alert.lastSeenAt)}
       </span>
       <button type="button" onClick={() => onDismiss(alert)} style={smallButton()}>
@@ -524,7 +533,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
     : null;
   const health = ibkr
     ? resolveIbkrGatewayHealth({ connection, runtime: ibkr })
-    : { label: "Waiting", color: T.textDim };
+    : { label: "Waiting", color: CSS_COLOR.textDim };
 
   return (
     <Panel
@@ -537,8 +546,8 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
               : undefined
           }
           style={{
-            border: `1px solid ${health.color}66`,
-            background: T.bg1,
+            border: `1px solid ${cssColorAlpha(health.color, "66")}`,
+            background: CSS_COLOR.bg1,
             color: health.color,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -550,32 +559,32 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
         </span>
       }
     >
-      <StateRow label="Bridge URL" value={ibkr.bridgeUrlConfigured ? "configured" : "missing"} tone={ibkr.bridgeUrlConfigured ? T.green : T.amber} />
-      <StateRow label="Bridge token" value={ibkr.bridgeTokenConfigured ? "configured" : "missing"} tone={ibkr.bridgeTokenConfigured ? T.green : T.amber} />
-      <StateRow label="Runtime override" value={ibkr.runtimeOverrideActive ? "active" : "env"} tone={ibkr.runtimeOverrideActive ? T.green : T.textSec} />
-      <StateRow label="Legacy env" value={ibkr.legacyIbkrEnvPresent ? "present" : "clear"} tone={ibkr.legacyIbkrEnvPresent ? T.amber : T.green} />
-      <StateRow label="Bridge HTTP" value={metrics.reachable ? "reachable" : "offline"} tone={metrics.reachable ? T.green : T.red} />
-      <StateRow label="Health current" value={metrics.healthFresh == null ? MISSING_VALUE : metrics.healthFresh ? "yes" : "pending"} tone={metrics.healthFresh ? T.green : metrics.healthFresh === false ? T.amber : T.textDim} />
-      <StateRow label="Health age" value={formatMs(metrics.healthAgeMs)} tone={(metrics.healthAgeMs ?? 0) > 10_000 ? T.amber : T.textSec} />
-      <StateRow label="Gateway socket" value={metrics.connected ? "connected" : "disconnected"} tone={metrics.connected ? T.green : T.red} />
-      <StateRow label="Authenticated" value={metrics.authenticated ? "yes" : "no"} tone={metrics.authenticated ? T.green : T.red} />
-      <StateRow label="Competing client" value={metrics.competing ? "yes" : "no"} tone={metrics.competing ? T.red : T.green} />
+      <StateRow label="Bridge URL" value={ibkr.bridgeUrlConfigured ? "configured" : "missing"} tone={ibkr.bridgeUrlConfigured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Bridge token" value={ibkr.bridgeTokenConfigured ? "configured" : "missing"} tone={ibkr.bridgeTokenConfigured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Runtime override" value={ibkr.runtimeOverrideActive ? "active" : "env"} tone={ibkr.runtimeOverrideActive ? CSS_COLOR.green : CSS_COLOR.textSec} />
+      <StateRow label="Legacy env" value={ibkr.legacyIbkrEnvPresent ? "present" : "clear"} tone={ibkr.legacyIbkrEnvPresent ? CSS_COLOR.amber : CSS_COLOR.green} />
+      <StateRow label="Bridge HTTP" value={metrics.reachable ? "reachable" : "offline"} tone={metrics.reachable ? CSS_COLOR.green : CSS_COLOR.red} />
+      <StateRow label="Health current" value={metrics.healthFresh == null ? MISSING_VALUE : metrics.healthFresh ? "yes" : "pending"} tone={metrics.healthFresh ? CSS_COLOR.green : metrics.healthFresh === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
+      <StateRow label="Health age" value={formatMs(metrics.healthAgeMs)} tone={(metrics.healthAgeMs ?? 0) > 10_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+      <StateRow label="Gateway socket" value={metrics.connected ? "connected" : "disconnected"} tone={metrics.connected ? CSS_COLOR.green : CSS_COLOR.red} />
+      <StateRow label="Authenticated" value={metrics.authenticated ? "yes" : "no"} tone={metrics.authenticated ? CSS_COLOR.green : CSS_COLOR.red} />
+      <StateRow label="Competing client" value={metrics.competing ? "yes" : "no"} tone={metrics.competing ? CSS_COLOR.red : CSS_COLOR.green} />
       <StateRow label="Target" value={ibkr.connectionTarget} />
       <StateRow label="Client ID" value={ibkr.clientId} />
-      <StateRow label="Heartbeat age" value={formatMs(metrics.heartbeatAgeMs)} tone={(metrics.heartbeatAgeMs ?? 0) > 30_000 ? T.amber : T.textSec} onClick={() => onMetric("ibkr", "ibkr.heartbeat_age_ms")} />
+      <StateRow label="Heartbeat age" value={formatMs(metrics.heartbeatAgeMs)} tone={(metrics.heartbeatAgeMs ?? 0) > 30_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} onClick={() => onMetric("ibkr", "ibkr.heartbeat_age_ms")} />
       <StateRow label="Selected account" value={maskIbkrAccountId(ibkr.selectedAccountId)} />
       <StateRow label="Session mode" value={ibkr.sessionMode} />
       <StateRow label="Market data" value={ibkr.marketDataMode} />
-      <StateRow label="Live mode" value={metrics.liveMarketDataAvailable == null ? MISSING_VALUE : metrics.liveMarketDataAvailable ? "yes" : "no"} tone={metrics.liveMarketDataAvailable ? T.textSec : metrics.liveMarketDataAvailable === false ? T.amber : T.textDim} />
-      <StateRow label="Stream current" value={metrics.streamFresh == null ? MISSING_VALUE : metrics.streamFresh ? "yes" : "pending"} tone={metrics.streamFresh ? T.green : metrics.streamFresh === false ? T.amber : T.textDim} />
-      <StateRow label="Stream age" value={formatMs(metrics.lastStreamEventAgeMs)} tone={(metrics.lastStreamEventAgeMs ?? 0) > 10_000 ? T.amber : T.textSec} />
-      <StateRow label="Strict ready" value={metrics.strictReady == null ? MISSING_VALUE : metrics.strictReady ? "yes" : "no"} tone={metrics.strictReady ? T.green : metrics.strictReady === false ? T.amber : T.textDim} />
-      <StateRow label="Ready reason" value={metrics.strictReason} tone={metrics.strictReason ? T.amber : T.textSec} />
+      <StateRow label="Live mode" value={metrics.liveMarketDataAvailable == null ? MISSING_VALUE : metrics.liveMarketDataAvailable ? "yes" : "no"} tone={metrics.liveMarketDataAvailable ? CSS_COLOR.textSec : metrics.liveMarketDataAvailable === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
+      <StateRow label="Stream current" value={metrics.streamFresh == null ? MISSING_VALUE : metrics.streamFresh ? "yes" : "pending"} tone={metrics.streamFresh ? CSS_COLOR.green : metrics.streamFresh === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
+      <StateRow label="Stream age" value={formatMs(metrics.lastStreamEventAgeMs)} tone={(metrics.lastStreamEventAgeMs ?? 0) > 10_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+      <StateRow label="Strict ready" value={metrics.strictReady == null ? MISSING_VALUE : metrics.strictReady ? "yes" : "no"} tone={metrics.strictReady ? CSS_COLOR.green : metrics.strictReady === false ? CSS_COLOR.amber : CSS_COLOR.textDim} />
+      <StateRow label="Ready reason" value={metrics.strictReason} tone={metrics.strictReason ? CSS_COLOR.amber : CSS_COLOR.textSec} />
       <StateRow label="Bridge->API p95" value={formatMs(latencyStats.bridgeToApiMs?.p95)} />
       <StateRow label="API->React p95" value={formatMs(latencyStats.apiToReactMs?.p95)} />
       <StateRow label="Total p95" value={formatMs(latencyStats.totalMs?.p95)} />
-      <StateRow label="Last error" value={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError} tone={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError ? T.red : T.textSec} />
-      <StateRow label="Health detail" value={ibkr.healthErrorDetail} tone={ibkr.healthErrorDetail ? T.red : T.textSec} />
+      <StateRow label="Last error" value={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError} tone={ibkr.lastError || ibkr.healthError || ibkr.lastRecoveryError ? CSS_COLOR.red : CSS_COLOR.textSec} />
+      <StateRow label="Health detail" value={ibkr.healthErrorDetail} tone={ibkr.healthErrorDetail ? CSS_COLOR.red : CSS_COLOR.textSec} />
     </Panel>
   );
 }
@@ -1037,8 +1046,8 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         height: "100%",
         width: "100%",
         overflow: "auto",
-        background: T.bg0,
-        color: T.text,
+        background: CSS_COLOR.bg0,
+        color: CSS_COLOR.text,
         padding: sp(diagnosticsIsPhone ? "8px 10px 18px" : "20px 28px"),
         fontFamily: T.sans,
         minWidth: 0,
@@ -1059,7 +1068,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         <span style={{ color: severityTone(topSeverity), fontFamily: T.sans, fontSize: fs(10), fontWeight: FONT_WEIGHTS.regular }}>
           {statusLabel(latest?.status)}
         </span>
-        <span style={{ color: T.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
+        <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: fs(10) }}>
           {streamState.toUpperCase()} / {latest?.timestamp ? formatAgo(latest.timestamp) : "waiting"}
         </span>
         {WINDOW_OPTIONS.map((option) => {
@@ -1068,7 +1077,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <Button
               key={option.label}
               variant={active ? "primary" : "secondary"}
-              color={active ? T.green : undefined}
+              color={active ? CSS_COLOR.green : undefined}
               size="sm"
               onClick={() => setWindowMinutes(option.minutes)}
             >
@@ -1108,10 +1117,10 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             )}
             onClick={() => setActiveTab(tab)}
             style={{
-              ...motionVars({ accent: T.green }),
-              border: `1px solid ${activeTab === tab ? T.green : T.border}`,
-              background: activeTab === tab ? T.greenBg : T.bg1,
-              color: activeTab === tab ? T.green : T.textSec,
+              ...motionVars({ accent: CSS_COLOR.green }),
+              border: `1px solid ${activeTab === tab ? CSS_COLOR.green : CSS_COLOR.border}`,
+              background: activeTab === tab ? CSS_COLOR.greenBg : CSS_COLOR.bg1,
+              color: activeTab === tab ? CSS_COLOR.green : CSS_COLOR.textSec,
               borderRadius: dim(RADII.xs),
               padding: sp("7px 10px"),
               fontFamily: T.sans,
@@ -1178,12 +1187,12 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               />
             ))}
             {activeLocalAlerts.length > 8 && (
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
                 {activeLocalAlerts.length - 8} more grouped alerts
               </div>
             )}
             {dismissedLocalAlerts.length > 0 && (
-              <div style={{ color: T.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption") }}>
                 {dismissedLocalAlerts.length} dismissed active alert{dismissedLocalAlerts.length === 1 ? "" : "s"}
               </div>
             )}
@@ -1229,7 +1238,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                     key={id}
                     label={id}
                     value={`${formatCount(lane.active)} active / ${formatCount(lane.queued)} queued`}
-                    tone={lane.circuitOpen ? T.amber : T.textSec}
+                    tone={lane.circuitOpen ? CSS_COLOR.amber : CSS_COLOR.textSec}
                   />
                 ))
               ) : (
@@ -1240,7 +1249,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               <StateRow
                 label="Account stream"
                 value={runtimeControl.streams.account.fresh ? "fresh" : "pending"}
-                tone={runtimeControl.streams.account.fresh ? T.green : T.amber}
+                tone={runtimeControl.streams.account.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
               />
               <StateRow
                 label="Account age"
@@ -1249,7 +1258,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               <StateRow
                 label="Order stream"
                 value={runtimeControl.streams.order.fresh ? "fresh" : "pending"}
-                tone={runtimeControl.streams.order.fresh ? T.green : T.amber}
+                tone={runtimeControl.streams.order.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
               />
               <StateRow
                 label="Order age"
@@ -1264,8 +1273,8 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                 }
                 tone={
                   runtimeControl.streams.tradingFresh
-                    ? T.green
-                    : T.amber
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.amber
                 }
               />
             </Panel>
@@ -1284,14 +1293,14 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <StateRow label="Cached quotes" value={formatCount(marketDataMetrics.cachedQuoteCount)} />
             <StateRow label="Events" value={formatCount(marketDataMetrics.eventCount)} />
             <StateRow label="Last event" value={marketDataMetrics.lastEventAgeMs == null ? MISSING_VALUE : `${formatMs(marketDataMetrics.lastEventAgeMs)} ago`} />
-            <StateRow label="Freshness" value={formatMs(marketDataMetrics.freshnessAgeMs)} tone={marketDataMetrics.freshnessAgeMs > 2_000 ? T.amber : T.textSec} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
-            <StateRow label="Reconnects" value={formatCount(marketDataMetrics.reconnectCount)} tone={marketDataMetrics.reconnectCount > 0 ? T.amber : T.green} />
-            <StateRow label="Active gap alert" value={formatMs(marketDataMetrics.streamGapMs ?? marketDataMetrics.stream_gap_ms)} tone={(marketDataMetrics.streamGapMs ?? marketDataMetrics.stream_gap_ms) > 5_000 ? T.amber : T.green} onClick={() => selectMetric("market-data", "market_data.stream_gap_ms")} />
-            <StateRow label="Observed gaps" value={formatCount(marketDataMetrics.rawStreamGapCount ?? marketDataMetrics.streamGapCount)} tone={marketDataMetrics.recentGapCount > 0 ? T.amber : T.textSec} />
-            <StateRow label="Recent gaps" value={formatCount(marketDataMetrics.recentGapCount)} tone={marketDataMetrics.recentGapCount > 0 ? T.amber : T.green} />
-            <StateRow label="Last gap" value={marketDataMetrics.lastGapMs == null ? MISSING_VALUE : `${formatMs(marketDataMetrics.lastGapMs)} / ${formatMs(marketDataMetrics.lastGapAgeMs)} ago`} tone={marketDataMetrics.recentGapCount > 0 ? T.amber : T.textSec} />
-            <StateRow label="Worst observed gap" value={formatMs(marketDataMetrics.rawMaxGapMs ?? marketDataMetrics.maxGapMs)} tone={marketDataMetrics.recentGapCount > 0 ? T.amber : T.textSec} />
-            <StateRow label="Last error" value={marketDataMetrics.lastError} tone={marketDataMetrics.lastError ? T.red : T.textSec} />
+            <StateRow label="Freshness" value={formatMs(marketDataMetrics.freshnessAgeMs)} tone={marketDataMetrics.freshnessAgeMs > 2_000 ? CSS_COLOR.amber : CSS_COLOR.textSec} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
+            <StateRow label="Reconnects" value={formatCount(marketDataMetrics.reconnectCount)} tone={marketDataMetrics.reconnectCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Active gap alert" value={formatMs(marketDataMetrics.streamGapMs ?? marketDataMetrics.stream_gap_ms)} tone={(marketDataMetrics.streamGapMs ?? marketDataMetrics.stream_gap_ms) > 5_000 ? CSS_COLOR.amber : CSS_COLOR.green} onClick={() => selectMetric("market-data", "market_data.stream_gap_ms")} />
+            <StateRow label="Observed gaps" value={formatCount(marketDataMetrics.rawStreamGapCount ?? marketDataMetrics.streamGapCount)} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Recent gaps" value={formatCount(marketDataMetrics.recentGapCount)} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Last gap" value={marketDataMetrics.lastGapMs == null ? MISSING_VALUE : `${formatMs(marketDataMetrics.lastGapMs)} / ${formatMs(marketDataMetrics.lastGapAgeMs)} ago`} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Worst observed gap" value={formatMs(marketDataMetrics.rawMaxGapMs ?? marketDataMetrics.maxGapMs)} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Last error" value={marketDataMetrics.lastError} tone={marketDataMetrics.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Streaming">
             <StateRow label="Consumers" value={formatCount(stream.activeConsumerCount)} />
@@ -1299,10 +1308,10 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <StateRow label="Events" value={formatCount(stream.eventCount)} />
             <StateRow label="Last event" value={stream.lastEventAgeMs == null ? MISSING_VALUE : `${formatMs(stream.lastEventAgeMs)} ago`} />
             <StateRow label="Reconnects" value={formatCount(stream.reconnectCount)} />
-            <StateRow label="Observed gaps" value={formatCount(stream.streamGapCount)} tone={stream.recentGapCount > 0 ? T.amber : T.textSec} />
-            <StateRow label="Recent gaps" value={formatCount(stream.recentGapCount)} tone={stream.recentGapCount > 0 ? T.amber : T.green} />
-            <StateRow label="Last gap" value={stream.lastGapMs == null ? MISSING_VALUE : `${formatMs(stream.lastGapMs)} / ${formatMs(stream.lastGapAgeMs)} ago`} tone={stream.recentGapCount > 0 ? T.amber : T.textSec} />
-            <StateRow label="Worst observed gap" value={formatMs(stream.maxGapMs)} tone={stream.recentGapCount > 0 ? T.amber : T.textSec} />
+            <StateRow label="Observed gaps" value={formatCount(stream.streamGapCount)} tone={stream.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Recent gaps" value={formatCount(stream.recentGapCount)} tone={stream.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Last gap" value={stream.lastGapMs == null ? MISSING_VALUE : `${formatMs(stream.lastGapMs)} / ${formatMs(stream.lastGapAgeMs)} ago`} tone={stream.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Worst observed gap" value={formatMs(stream.maxGapMs)} tone={stream.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Latency">
             <StateRow label="Bridge->API p50" value={formatMs(latencyStats.bridgeToApiMs?.p50)} />
@@ -1349,11 +1358,11 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           <Panel title="API Golden Signals">
             <StateRow label="Requests / 5m" value={formatCount(apiMetrics.requestCount5m)} />
             <StateRow label="4xx / 5m" value={formatCount(apiMetrics.warningCount5m)} />
-            <StateRow label="5xx / 5m" value={formatCount(apiMetrics.errorCount5m)} tone={apiMetrics.errorCount5m > 0 ? T.red : T.green} />
+            <StateRow label="5xx / 5m" value={formatCount(apiMetrics.errorCount5m)} tone={apiMetrics.errorCount5m > 0 ? CSS_COLOR.red : CSS_COLOR.green} />
             <StateRow label="p50 latency" value={formatMs(apiMetrics.p50LatencyMs)} />
-            <StateRow label="p95 latency" value={formatMs(apiMetrics.p95LatencyMs)} tone={apiMetrics.p95LatencyMs > 1000 ? T.amber : T.textSec} />
+            <StateRow label="p95 latency" value={formatMs(apiMetrics.p95LatencyMs)} tone={apiMetrics.p95LatencyMs > 1000 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
             <StateRow label="p99 latency" value={formatMs(apiMetrics.p99LatencyMs)} />
-            <StateRow label="Slow requests / 5m" value={formatCount(apiMetrics.slowRouteCount5m)} tone={(apiMetrics.slowRouteCount5m ?? 0) > 0 ? T.amber : T.green} />
+            <StateRow label="Slow requests / 5m" value={formatCount(apiMetrics.slowRouteCount5m)} tone={(apiMetrics.slowRouteCount5m ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Dominant slow route" value={apiMetrics.dominantSlowRoute || MISSING_VALUE} />
             <StateRow label="Dominant route p95" value={formatMs(apiMetrics.dominantSlowRouteP95Ms)} />
           </Panel>
@@ -1384,37 +1393,37 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           <Panel title="Chart Hydration">
             <StateRow label="Status" value={statusLabel(chartHydrationSnapshot?.status)} tone={severityTone(chartHydrationSeverity)} />
             <StateRow label="Active scopes" value={formatCount(chartHydrationMetrics.activeScopeCount ?? chartStats.activeScopeCount ?? chartStats.scopes.length)} />
-            <StateRow label="Prepending scopes" value={formatCount(chartHydrationMetrics.prependingScopeCount ?? chartStats.prependingScopeCount)} tone={(chartHydrationMetrics.prependingScopeCount ?? chartStats.prependingScopeCount ?? 0) > 0 ? T.amber : T.textSec} />
-            <StateRow label="Exhausted scopes" value={formatCount(chartHydrationMetrics.exhaustedScopeCount ?? chartStats.exhaustedScopeCount)} tone={(chartHydrationMetrics.exhaustedScopeCount ?? chartStats.exhaustedScopeCount ?? 0) > 0 ? T.amber : T.green} />
-            <StateRow label="Prepend p95" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} tone={(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95 ?? 0) >= 1500 ? T.amber : T.textSec} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
-            <StateRow label="Payload shape errors" value={formatCount(chartHydrationMetrics.payloadShapeErrors ?? chartStats.counters?.payloadShapeError)} tone={(chartHydrationMetrics.payloadShapeErrors ?? chartStats.counters?.payloadShapeError ?? 0) > 0 ? T.red : T.green} onClick={() => selectMetric("chart-hydration", "chart_hydration.payload_shape_errors")} />
+            <StateRow label="Prepending scopes" value={formatCount(chartHydrationMetrics.prependingScopeCount ?? chartStats.prependingScopeCount)} tone={(chartHydrationMetrics.prependingScopeCount ?? chartStats.prependingScopeCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+            <StateRow label="Exhausted scopes" value={formatCount(chartHydrationMetrics.exhaustedScopeCount ?? chartStats.exhaustedScopeCount)} tone={(chartHydrationMetrics.exhaustedScopeCount ?? chartStats.exhaustedScopeCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Prepend p95" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} tone={(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95 ?? 0) >= 1500 ? CSS_COLOR.amber : CSS_COLOR.textSec} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
+            <StateRow label="Payload shape errors" value={formatCount(chartHydrationMetrics.payloadShapeErrors ?? chartStats.counters?.payloadShapeError)} tone={(chartHydrationMetrics.payloadShapeErrors ?? chartStats.counters?.payloadShapeError ?? 0) > 0 ? CSS_COLOR.red : CSS_COLOR.green} onClick={() => selectMetric("chart-hydration", "chart_hydration.payload_shape_errors")} />
             <StateRow label="Oldest loaded" value={(chartHydrationMetrics.oldestLoadedAtMin || chartStats.oldestLoadedAtMin) ? formatAgo(chartHydrationMetrics.oldestLoadedAtMin || chartStats.oldestLoadedAtMin) : MISSING_VALUE} />
           </Panel>
           <Panel title="Chart Backend">
             <StateRow label="Cache entries" value={`${formatCount(chartHydrationMetrics.cacheEntries)} / ${formatCount(chartHydrationMetrics.cacheMaxEntries)}`} />
-            <StateRow label="In-flight" value={formatCount(chartHydrationMetrics.inFlight)} tone={(chartHydrationMetrics.inFlight ?? 0) > 0 ? T.amber : T.textSec} />
+            <StateRow label="In-flight" value={formatCount(chartHydrationMetrics.inFlight)} tone={(chartHydrationMetrics.inFlight ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
             <StateRow label="Cursor entries" value={`${formatCount(chartHydrationMetrics.historyCursorEntries)} / ${formatCount(chartHydrationMetrics.historyCursorMaxEntries)}`} />
             <StateRow label="Cursor TTL" value={formatDuration(chartHydrationMetrics.historyCursorTtlMs)} />
-            <StateRow label="Cursor flag" value={chartHydrationMetrics.cursorEnabled == null ? MISSING_VALUE : chartHydrationMetrics.cursorEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.cursorEnabled === false ? T.amber : T.green} />
-            <StateRow label="Dedupe flag" value={chartHydrationMetrics.dedupeEnabled == null ? MISSING_VALUE : chartHydrationMetrics.dedupeEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.dedupeEnabled === false ? T.amber : T.green} />
-            <StateRow label="Background flag" value={chartHydrationMetrics.backgroundEnabled == null ? MISSING_VALUE : chartHydrationMetrics.backgroundEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.backgroundEnabled === false ? T.amber : T.green} />
+            <StateRow label="Cursor flag" value={chartHydrationMetrics.cursorEnabled == null ? MISSING_VALUE : chartHydrationMetrics.cursorEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.cursorEnabled === false ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Dedupe flag" value={chartHydrationMetrics.dedupeEnabled == null ? MISSING_VALUE : chartHydrationMetrics.dedupeEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.dedupeEnabled === false ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Background flag" value={chartHydrationMetrics.backgroundEnabled == null ? MISSING_VALUE : chartHydrationMetrics.backgroundEnabled ? "enabled" : "disabled"} tone={chartHydrationMetrics.backgroundEnabled === false ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Cache hit/miss" value={`${formatCount(chartHydrationMetrics.cacheHit)} / ${formatCount(chartHydrationMetrics.cacheMiss)}`} />
             <StateRow label="In-flight joins" value={formatCount(chartHydrationMetrics.inFlightJoin)} />
             <StateRow label="Provider fetch/pages" value={`${formatCount(chartHydrationMetrics.providerFetch)} / ${formatCount(chartHydrationMetrics.providerPage)}`} />
-            <StateRow label="Cursor continuations" value={formatCount(chartHydrationMetrics.cursorContinuation)} tone={(chartHydrationMetrics.cursorContinuation ?? 0) > 0 ? T.green : T.textSec} />
-            <StateRow label="Cursor fallbacks" value={formatCount(chartHydrationMetrics.cursorFallbackCount ?? chartHydrationMetrics.cursorFallback)} tone={(chartHydrationMetrics.cursorFallbackCount ?? chartHydrationMetrics.cursorFallback ?? 0) > 0 ? T.amber : T.green} onClick={() => selectMetric("chart-hydration", "chart_hydration.cursor_fallback_count")} />
+            <StateRow label="Cursor continuations" value={formatCount(chartHydrationMetrics.cursorContinuation)} tone={(chartHydrationMetrics.cursorContinuation ?? 0) > 0 ? CSS_COLOR.green : CSS_COLOR.textSec} />
+            <StateRow label="Cursor fallbacks" value={formatCount(chartHydrationMetrics.cursorFallbackCount ?? chartHydrationMetrics.cursorFallback)} tone={(chartHydrationMetrics.cursorFallbackCount ?? chartHydrationMetrics.cursorFallback ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} onClick={() => selectMetric("chart-hydration", "chart_hydration.cursor_fallback_count")} />
           </Panel>
           <Panel title="Chart Scopes">
             {chartHydrationScopes.length ? (
               chartHydrationScopes.slice(0, 8).map((scope) => (
-                <div key={scope.scope} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0") }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), fontFamily: T.sans, fontSize: fs(10), color: T.textSec }}>
+                <div key={scope.scope} style={{ borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`, padding: sp("7px 0") }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), fontFamily: T.sans, fontSize: fs(10), color: CSS_COLOR.textSec }}>
                     <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{scope.scope}</span>
-                    <span style={{ color: scope.hasExhaustedOlderHistory ? T.amber : scope.isPrependingOlder ? T.green : T.textDim }}>
+                    <span style={{ color: scope.hasExhaustedOlderHistory ? CSS_COLOR.amber : scope.isPrependingOlder ? CSS_COLOR.green : CSS_COLOR.textDim }}>
                       {scope.role || "chart"} / {scope.timeframe || MISSING_VALUE}
                     </span>
                   </div>
-                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(110)}px, 1fr))`, gap: sp(6), fontFamily: T.sans, fontSize: textSize("caption"), color: T.textDim }}>
+                  <div style={{ marginTop: sp(4), display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(110)}px, 1fr))`, gap: sp(6), fontFamily: T.sans, fontSize: textSize("caption"), color: CSS_COLOR.textDim }}>
                     <span>bars {formatCount(scope.hydratedBaseCount)} / {formatCount(scope.renderedBarCount)}</span>
                     <span>oldest {scope.oldestLoadedAt ? formatAgo(scope.oldestLoadedAt) : MISSING_VALUE}</span>
                     <span>pages {formatCount(scope.olderHistoryPageCount)}</span>
@@ -1425,7 +1434,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>No chart scopes observed.</div>
+              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>No chart scopes observed.</div>
             )}
           </Panel>
           <Panel title="Current Option Session">
@@ -1434,24 +1443,24 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <StateRow label="Provider mode" value={state.providerMode} />
             <StateRow label="WebSocket" value={state.wsState} />
             <StateRow label="Quote coverage" value={quoteCoverage} />
-            <StateRow label="Backpressure" value={state.degraded ? "degraded" : "normal"} tone={state.degraded ? T.amber : T.green} />
+            <StateRow label="Backpressure" value={state.degraded ? "degraded" : "normal"} tone={state.degraded ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Pause reason" value={state.pauseReason} />
           </Panel>
           <Panel title="Local Rollups" action={<button type="button" onClick={clearOptionHydrationDiagnosticsHistory} style={smallButton()}>Clear History</button>}>
             {history.length ? (
               history.slice(-8).reverse().map((entry) => (
-                <div key={entry.id} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0"), fontFamily: T.sans, fontSize: textSize("caption"), color: T.textSec }}>
+                <div key={entry.id} style={{ borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`, padding: sp("7px 0"), fontFamily: T.sans, fontSize: textSize("caption"), color: CSS_COLOR.textSec }}>
                   {formatAppDateTime(entry.updatedAt)} / failures {entry.failureCount} / {entry.transportStates.join(", ") || "no state"}
                 </div>
               ))
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>No local rollups yet.</div>
+              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>No local rollups yet.</div>
             )}
           </Panel>
           <Panel title="Browser Events">
             <StateRow label="Events / 5m" value={formatCount(browserMetrics.eventCount5m)} />
-            <StateRow label="Warnings / 5m" value={formatCount(browserMetrics.warningCount5m)} tone={browserMetrics.warningCount5m > 0 ? T.amber : T.green} />
-            <StateRow label="Critical / 5m" value={formatCount(browserMetrics.criticalCount5m)} tone={browserMetrics.criticalCount5m > 0 ? T.red : T.green} />
+            <StateRow label="Warnings / 5m" value={formatCount(browserMetrics.warningCount5m)} tone={browserMetrics.warningCount5m > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Critical / 5m" value={formatCount(browserMetrics.criticalCount5m)} tone={browserMetrics.criticalCount5m > 0 ? CSS_COLOR.red : CSS_COLOR.green} />
             <StateRow label="Last category" value={browserMetrics.lastCategory} />
             <StateRow label="Last event" value={browserMetrics.lastEventAt ? formatAgo(browserMetrics.lastEventAt) : MISSING_VALUE} />
           </Panel>
@@ -1462,7 +1471,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Pressure State">
             <StateRow label="Level" value={String(resourcePressureMetrics.pressureLevel || "normal").toUpperCase()} tone={severityTone(resourcePressureSnapshot?.severity)} />
-            <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "critical" ? T.red : footerSignal.level === "high" || footerSignal.level === "watch" ? T.amber : T.green} />
+            <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "critical" ? CSS_COLOR.red : footerSignal.level === "high" || footerSignal.level === "watch" ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Trend" value={String(footerSignal.trend || "steady").toUpperCase()} />
             <StateRow label="Recommended action" value={resourcePressureMetrics.recommendedAction} />
             <StateRow label="Diagnostics clients" value={formatCount(resourcePressureMetrics.activeDiagnosticsClients)} />
@@ -1477,7 +1486,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           <Panel title="API Memory">
             <StateRow label="Heap used" value={formatMb(resourcePressureMetrics.heapUsedMb)} />
             <StateRow label="Heap limit" value={formatMb(resourcePressureMetrics.heapLimitMb)} />
-            <StateRow label="Heap pressure" value={formatPercent(resourcePressureMetrics.heapUsedPercent)} tone={(resourcePressureMetrics.heapUsedPercent ?? 0) >= 70 ? T.amber : T.green} onClick={() => selectMetric("resource-pressure", "resource_pressure.heap_used_percent")} />
+            <StateRow label="Heap pressure" value={formatPercent(resourcePressureMetrics.heapUsedPercent)} tone={(resourcePressureMetrics.heapUsedPercent ?? 0) >= 70 ? CSS_COLOR.amber : CSS_COLOR.green} onClick={() => selectMetric("resource-pressure", "resource_pressure.heap_used_percent")} />
             <StateRow label="RSS" value={formatMb(resourcePressureMetrics.rssMb)} />
             <StateRow label="Event loop p95" value={formatMs(resourcePressureMetrics.eventLoopP95Ms)} />
           </Panel>
@@ -1489,7 +1498,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           </Panel>
           <Panel title="Isolation Readiness">
             <StateRow label="Mode" value={isolationMetrics.mode} />
-            <StateRow label="Cross-origin isolated" value={isolationMetrics.crossOriginIsolated ? "yes" : "no"} tone={isolationMetrics.crossOriginIsolated ? T.green : T.amber} />
+            <StateRow label="Cross-origin isolated" value={isolationMetrics.crossOriginIsolated ? "yes" : "no"} tone={isolationMetrics.crossOriginIsolated ? CSS_COLOR.green : CSS_COLOR.amber} />
             <StateRow label="Report-only" value={isolationMetrics.reportOnly ? "yes" : "no"} />
             <StateRow label="COOP target" value={isolationMetrics.coopMode} />
             <StateRow label="COEP target" value={isolationMetrics.coepMode} />
@@ -1498,8 +1507,8 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <StateRow label="Latest client sample" value={isolationMetrics.latestClientAt ? formatAgo(isolationMetrics.latestClientAt) : MISSING_VALUE} />
           </Panel>
           <Panel title="Isolation Reports">
-            <StateRow label="Actionable reports / 5m" value={formatCount(isolationMetrics.reportCount5m)} tone={(isolationMetrics.reportCount5m ?? 0) > 0 ? T.amber : T.green} onClick={() => selectMetric("isolation", "isolation.report_count_5m")} />
-            <StateRow label="Raw browser reports / 5m" value={formatCount(isolationMetrics.rawReportCount5m)} tone={(isolationMetrics.rawReportCount5m ?? 0) > 0 ? T.amber : T.green} />
+            <StateRow label="Actionable reports / 5m" value={formatCount(isolationMetrics.reportCount5m)} tone={(isolationMetrics.reportCount5m ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} onClick={() => selectMetric("isolation", "isolation.report_count_5m")} />
+            <StateRow label="Raw browser reports / 5m" value={formatCount(isolationMetrics.rawReportCount5m)} tone={(isolationMetrics.rawReportCount5m ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
             <JsonBlock value={{ actionableTypes: isolationMetrics.reportTypes, rawTypes: isolationMetrics.rawReportTypes, blockedOrigins: isolationMetrics.blockedOrigins }} />
           </Panel>
           <Panel title="Runtime Caches">
@@ -1507,7 +1516,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           </Panel>
           <Panel title="Cache Tables">
             {(Array.isArray(storageMetrics.monitoredTables) ? storageMetrics.monitoredTables : []).map((table) => (
-              <div key={table.table} style={{ borderBottom: `1px solid ${T.border}55`, padding: sp("7px 0") }}>
+              <div key={table.table} style={{ borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 33)}`, padding: sp("7px 0") }}>
                 <StateRow label={table.table} value={`${formatCount(table.rowEstimate)} rows / ${formatMb(table.totalMb)}`} />
                 <StateRow label="oldest/newest" value={`${table.oldestAt ? formatAgo(table.oldestAt) : MISSING_VALUE} / ${table.newestAt ? formatAgo(table.newestAt) : MISSING_VALUE}`} />
               </div>
@@ -1527,13 +1536,13 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
           <Panel title="Accounts Probe">
             <StateRow label="Accounts" value={formatCount(accountMetrics.accountCount)} />
             <StateRow label="Positions" value={formatCount(accountMetrics.positionCount)} />
-            <StateRow label="Visibility failures" value={formatCount(accountMetrics.visibilityFailures)} tone={accountMetrics.visibilityFailures > 0 ? T.red : T.green} />
-            <StateRow label="Last error" value={accountMetrics.lastError} tone={accountMetrics.lastError ? T.red : T.textSec} />
+            <StateRow label="Visibility failures" value={formatCount(accountMetrics.visibilityFailures)} tone={accountMetrics.visibilityFailures > 0 ? CSS_COLOR.red : CSS_COLOR.green} />
+            <StateRow label="Last error" value={accountMetrics.lastError} tone={accountMetrics.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Orders Probe">
             <StateRow label="Orders" value={formatCount(orderMetrics.orderCount)} />
-            <StateRow label="Visibility failures" value={formatCount(orderMetrics.visibilityFailures)} tone={orderMetrics.visibilityFailures > 0 ? T.red : T.green} />
-            <StateRow label="Last error" value={orderMetrics.lastError} tone={orderMetrics.lastError ? T.red : T.textSec} />
+            <StateRow label="Visibility failures" value={formatCount(orderMetrics.visibilityFailures)} tone={orderMetrics.visibilityFailures > 0 ? CSS_COLOR.red : CSS_COLOR.green} />
+            <StateRow label="Last error" value={orderMetrics.lastError} tone={orderMetrics.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Probe Raw">
             <JsonBlock value={{ accounts: accountSnapshot, orders: orderSnapshot }} />
@@ -1544,10 +1553,10 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       {activeTab === "Storage" && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: sp(14) }}>
           <Panel title="Storage Health">
-            <StateRow label="Reachable" value={storageMetrics.reachable ? "yes" : "no"} tone={storageMetrics.reachable ? T.green : T.red} />
+            <StateRow label="Reachable" value={storageMetrics.reachable ? "yes" : "no"} tone={storageMetrics.reachable ? CSS_COLOR.green : CSS_COLOR.red} />
             <StateRow label="Ping" value={formatMs(storageMetrics.pingMs)} />
             <StateRow label="Retention" value={`${storageMetrics.snapshotRetentionDays || 7} days`} />
-            <StateRow label="Error" value={storageMetrics.error} tone={storageMetrics.error ? T.red : T.textSec} />
+            <StateRow label="Error" value={storageMetrics.error} tone={storageMetrics.error ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Storage Raw Snapshot">
             <JsonBlock value={storageSnapshot} />
@@ -1564,7 +1573,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             {selectedEvent ? (
               <JsonBlock value={eventDetail || selectedEvent} />
             ) : (
-              <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.sans }}>
+              <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
                 Select an event or metric to inspect raw context.
               </div>
             )}
@@ -1581,9 +1590,9 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
 function smallButton() {
   return {
-    border: `1px solid ${T.borderLight}`,
+    border: `1px solid ${CSS_COLOR.borderLight}`,
     background: "transparent",
-    color: T.textSec,
+    color: CSS_COLOR.textSec,
     borderRadius: dim(RADII.xs),
     padding: sp("4px 7px"),
     fontFamily: T.sans,

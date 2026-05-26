@@ -15,7 +15,7 @@ import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { WATCHLIST } from "./marketReferenceData";
 import { MarketChartPremiumFlowIndicator } from "./MarketChartPremiumFlowIndicator.jsx";
-import { RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
+import { CSS_COLOR, cssColorMix, RADII, T, dim, sp } from "../../lib/uiTokens.jsx";
 import { lazyWithRetry, preloadDynamicImport } from "../../lib/dynamicImport";
 
 const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
@@ -82,7 +82,7 @@ const MarketChartPanelFallback = ({ dataTestId }) => (
       height: "100%",
       minHeight: 0,
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
       display: "grid",
       gridTemplateRows: "auto 1fr",
       gap: sp(6),
@@ -95,7 +95,7 @@ const MarketChartPanelFallback = ({ dataTestId }) => (
         height: dim(18),
         width: "42%",
         borderRadius: dim(RADII.xs),
-        background: T.bg3,
+        background: CSS_COLOR.bg3,
       }}
     />
     <div
@@ -115,7 +115,7 @@ const MarketChartTickerSearchFallback = () => (
     style={{
       minHeight: dim(220),
       borderRadius: dim(RADII.xs),
-      background: T.bg1,
+      background: CSS_COLOR.bg1,
     }}
   />
 );
@@ -310,13 +310,13 @@ export const MarketChartCell = ({
         position: "relative",
         height: "100%",
         boxSizing: "border-box",
-        border: `1px solid ${isActive ? T.accent : "transparent"}`,
+        border: `1px solid ${isActive ? CSS_COLOR.accent : "transparent"}`,
         cursor: "default",
         transition: "border-color 0.15s, box-shadow 0.15s",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
+        boxShadow: isActive ? `0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 20)}` : "none",
       }}
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>

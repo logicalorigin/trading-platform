@@ -1,5 +1,8 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import {
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 
 export const ProfileSection = ({
   id,
@@ -14,9 +17,9 @@ export const ProfileSection = ({
       data-testid={`algo-profile-section-${id}`}
       data-state={expanded ? "expanded" : "collapsed"}
       style={{
-        border: `1px solid ${T.border}`,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.sm),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         minWidth: 0,
       }}
     >
@@ -38,13 +41,13 @@ export const ProfileSection = ({
         }}
       >
         {expanded ? (
-          <ChevronDown size={13} color={T.textSec} />
+          <ChevronDown size={13} color={CSS_COLOR.textSec} />
         ) : (
-          <ChevronRight size={13} color={T.textDim} />
+          <ChevronRight size={13} color={CSS_COLOR.textDim} />
         )}
         <span
           style={{
-            color: T.text,
+            color: CSS_COLOR.text,
             fontFamily: T.sans,
             fontSize: fs(11),
             fontWeight: FONT_WEIGHTS.regular,
@@ -57,7 +60,7 @@ export const ProfileSection = ({
         {summary ? (
           <span
             style={{
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               fontFamily: T.sans,
               fontSize: fs(8),
               letterSpacing: "0.04em",

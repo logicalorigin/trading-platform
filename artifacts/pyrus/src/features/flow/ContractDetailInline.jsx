@@ -54,6 +54,8 @@ import {
   mapNewsSentimentToScore,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -474,9 +476,9 @@ export const ContractDetailInline = ({
   if (!evt) return null;
 
   const isCall = evt.cp === "C";
-  const cpColor = isCall ? T.green : T.red;
+  const cpColor = isCall ? CSS_COLOR.green : CSS_COLOR.red;
   const typeColor =
-    evt.type === "SWEEP" ? T.amber : evt.type === "BLOCK" ? T.accent : T.purple;
+    evt.type === "SWEEP" ? CSS_COLOR.amber : evt.type === "BLOCK" ? CSS_COLOR.accent : CSS_COLOR.purple;
   const isSnapshotFlow = evt.basis === "snapshot";
   const voi =
     isFiniteNumber(evt.vol) && isFiniteNumber(evt.oi) && evt.oi > 0
@@ -511,7 +513,7 @@ export const ContractDetailInline = ({
         shortLabel: "N/A",
         spread: null,
         spreadPct: null,
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
       };
     }
     if (askPrice < bidPrice) {
@@ -520,7 +522,7 @@ export const ContractDetailInline = ({
         shortLabel: "CROSSED",
         spread: askPrice - bidPrice,
         spreadPct: null,
-        color: T.amber,
+        color: CSS_COLOR.amber,
       };
     }
     const spread = askPrice - bidPrice;
@@ -532,32 +534,32 @@ export const ContractDetailInline = ({
         shortLabel: "LOCK",
         spread,
         spreadPct,
-        color: T.textDim,
+        color: CSS_COLOR.textDim,
       };
     }
     const position = (fillPrice - bidPrice) / spread;
     if (position < 0) {
-      return { label: "Below bid", shortLabel: "BID-", spread, spreadPct, color: T.red };
+      return { label: "Below bid", shortLabel: "BID-", spread, spreadPct, color: CSS_COLOR.red };
     }
     if (position <= 0.1) {
-      return { label: "At bid", shortLabel: "BID", spread, spreadPct, color: T.red };
+      return { label: "At bid", shortLabel: "BID", spread, spreadPct, color: CSS_COLOR.red };
     }
     if (position <= 0.4) {
-      return { label: "Bid side", shortLabel: "BID", spread, spreadPct, color: T.red };
+      return { label: "Bid side", shortLabel: "BID", spread, spreadPct, color: CSS_COLOR.red };
     }
     if (position <= 0.6) {
-      return { label: "Mid", shortLabel: "MID", spread, spreadPct, color: T.textDim };
+      return { label: "Mid", shortLabel: "MID", spread, spreadPct, color: CSS_COLOR.textDim };
     }
     if (position <= 0.9) {
-      return { label: "Ask side", shortLabel: "ASK", spread, spreadPct, color: isCall ? T.green : T.red };
+      return { label: "Ask side", shortLabel: "ASK", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
     }
     if (position <= 1) {
-      return { label: "At ask", shortLabel: "ASK", spread, spreadPct, color: isCall ? T.green : T.red };
+      return { label: "At ask", shortLabel: "ASK", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
     }
-    return { label: "Above ask", shortLabel: "ASK+", spread, spreadPct, color: isCall ? T.green : T.red };
+    return { label: "Above ask", shortLabel: "ASK+", spread, spreadPct, color: isCall ? CSS_COLOR.green : CSS_COLOR.red };
   })();
 
-  const Stat = ({ label, value, color = T.text, mono = true }) => (
+  const Stat = ({ label, value, color = CSS_COLOR.text, mono = true }) => (
     <div
       style={{
         display: "flex",
@@ -565,12 +567,12 @@ export const ContractDetailInline = ({
         justifyContent: "space-between",
         gap: sp(8),
         padding: sp("6px 8px"),
-        background: T.bg1,
+        background: CSS_COLOR.bg1,
         borderRadius: dim(3),
       }}
     >
       <span
-        style={{ fontSize: textSize("caption"), color: T.textMuted, fontFamily: T.sans }}
+        style={{ fontSize: textSize("caption"), color: CSS_COLOR.textMuted, fontFamily: T.sans }}
       >
         {label}
       </span>
@@ -597,8 +599,8 @@ export const ContractDetailInline = ({
           gap: sp(8),
           padding: sp("8px 12px"),
           marginBottom: sp(6),
-          background: T.bg1,
-          border: `1px solid ${T.border}`,
+          background: CSS_COLOR.bg1,
+          border: `1px solid ${CSS_COLOR.border}`,
           borderRadius: dim(RADII.sm),
           flexWrap: "wrap",
         }}
@@ -611,9 +613,9 @@ export const ContractDetailInline = ({
             gap: sp(4),
             padding: sp("5px 10px"),
             background: "transparent",
-            border: `1px solid ${T.border}`,
+            border: `1px solid ${CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
             fontSize: fs(10),
             fontWeight: FONT_WEIGHTS.regular,
             fontFamily: T.sans,
@@ -627,7 +629,7 @@ export const ContractDetailInline = ({
           style={{
             width: dim(1),
             height: dim(22),
-            background: T.border,
+            background: CSS_COLOR.border,
             flexShrink: 0,
           }}
         />
@@ -641,14 +643,14 @@ export const ContractDetailInline = ({
           }}
         >
           {evt.golden && (
-            <span style={{ color: T.amber, fontSize: fs(14) }}>★</span>
+            <span style={{ color: CSS_COLOR.amber, fontSize: fs(14) }}>★</span>
           )}
           <span
             style={{
               fontSize: fs(16),
               fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
-              color: T.text,
+              color: CSS_COLOR.text,
               letterSpacing: 0,
               whiteSpace: "nowrap",
             }}
@@ -659,7 +661,7 @@ export const ContractDetailInline = ({
             style={{
               fontSize: fs(10),
               fontFamily: T.sans,
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
               whiteSpace: "nowrap",
             }}
           >
@@ -669,7 +671,7 @@ export const ContractDetailInline = ({
             style={{
               fontSize: fs(10),
               fontFamily: T.sans,
-              color: evt.dte <= 1 ? T.red : evt.dte <= 7 ? T.amber : T.textDim,
+              color: evt.dte <= 1 ? CSS_COLOR.red : evt.dte <= 7 ? CSS_COLOR.amber : CSS_COLOR.textDim,
               fontWeight: FONT_WEIGHTS.regular,
             }}
           >
@@ -682,7 +684,7 @@ export const ContractDetailInline = ({
               color: typeColor,
               fontWeight: FONT_WEIGHTS.regular,
               padding: sp("1px 6px"),
-              background: T.bg1,
+              background: CSS_COLOR.bg1,
               borderRadius: dim(2),
             }}
           >
@@ -707,7 +709,7 @@ export const ContractDetailInline = ({
               fontSize: fs(18),
               fontWeight: FONT_WEIGHTS.regular,
               fontFamily: T.sans,
-              color: T.text,
+              color: CSS_COLOR.text,
             }}
           >
             {evt.premium >= 1e6
@@ -718,7 +720,7 @@ export const ContractDetailInline = ({
             style={{
               fontSize: textSize("caption"),
               fontFamily: T.sans,
-              color: T.textDim,
+              color: CSS_COLOR.textDim,
             }}
           >
             Flow premium • {evt.time} ET
@@ -728,7 +730,7 @@ export const ContractDetailInline = ({
           style={{
             width: dim(1),
             height: dim(22),
-            background: T.border,
+            background: CSS_COLOR.border,
             flexShrink: 0,
           }}
         />
@@ -736,8 +738,8 @@ export const ContractDetailInline = ({
           onClick={() => onJumpToTrade && onJumpToTrade(evt)}
           style={{
             padding: sp("5px 10px"),
-            background: T.accent,
-            color: T.onAccent,
+            background: CSS_COLOR.accent,
+            color: CSS_COLOR.onAccent,
             border: "none",
             borderRadius: dim(RADII.xs),
             cursor: "pointer",
@@ -763,9 +765,9 @@ export const ContractDetailInline = ({
           }}
           style={{
             padding: sp("5px 10px"),
-            background: alertSet ? `${T.amber}20` : "transparent",
-            color: alertSet ? T.amber : T.textSec,
-            border: `1px solid ${alertSet ? T.amber : T.border}`,
+            background: alertSet ? `${cssColorMix(CSS_COLOR.amber, 13)}` : "transparent",
+            color: alertSet ? CSS_COLOR.amber : CSS_COLOR.textSec,
+            border: `1px solid ${alertSet ? CSS_COLOR.amber : CSS_COLOR.border}`,
             borderRadius: dim(RADII.xs),
             cursor: "pointer",
             fontSize: fs(10),
@@ -797,12 +799,12 @@ export const ContractDetailInline = ({
           {
             label: "BID",
             value: formatQuotePrice(bidPrice),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
           },
           {
             label: "ASK",
             value: formatQuotePrice(askPrice),
-            color: T.textSec,
+            color: CSS_COLOR.textSec,
           },
           {
             label: "SPREAD",
@@ -816,8 +818,8 @@ export const ContractDetailInline = ({
             color:
               fillSpread.shortLabel === "CROSSED" ||
               (isFiniteNumber(fillSpread.spreadPct) && fillSpread.spreadPct > 10)
-                ? T.amber
-                : T.textDim,
+                ? CSS_COLOR.amber
+                : CSS_COLOR.textDim,
           },
           {
             label: "SOURCE",
@@ -833,8 +835,8 @@ export const ContractDetailInline = ({
               data-testid={item.testId}
               style={{
                 padding: sp("6px 8px"),
-                background: T.bg1,
-                border: `1px solid ${T.border}`,
+                background: CSS_COLOR.bg1,
+                border: `1px solid ${CSS_COLOR.border}`,
                 borderRadius: dim(3),
                 minWidth: 0,
               }}
@@ -842,7 +844,7 @@ export const ContractDetailInline = ({
               <div
                 style={{
                   fontSize: fs(8),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   fontFamily: T.sans,
                   fontWeight: FONT_WEIGHTS.regular,
                   marginBottom: sp(2),
@@ -889,7 +891,7 @@ export const ContractDetailInline = ({
                 fontSize: fs(10),
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 letterSpacing: "0.04em",
                 marginBottom: sp(4),
               }}
@@ -903,22 +905,22 @@ export const ContractDetailInline = ({
                 gap: sp(4),
               }}
             >
-              <Stat label="SIDE" value={evt.side} color={evt.side === "BUY" ? T.green : evt.side === "SELL" ? T.red : T.textDim} />
+              <Stat label="SIDE" value={evt.side} color={evt.side === "BUY" ? CSS_COLOR.green : evt.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim} />
               <Stat label="TYPE" value={evt.type} color={typeColor} />
               <Stat label="VOL" value={fmtCompactNumber(evt.vol)} />
               <Stat label="OI" value={fmtCompactNumber(evt.oi)} />
               <Stat
                 label="V/OI"
                 value={isFiniteNumber(voi) ? `${voi.toFixed(2)}x` : MISSING_VALUE}
-                color={isFiniteNumber(voi) && voi > 1 ? T.amber : T.text}
+                color={isFiniteNumber(voi) && voi > 1 ? CSS_COLOR.amber : CSS_COLOR.text}
               />
               <Stat
                 label="IV"
                 value={isFiniteNumber(evt.iv) ? `${(evt.iv * 100).toFixed(1)}%` : MISSING_VALUE}
-                color={isFiniteNumber(evt.iv) ? T.cyan : T.textDim}
+                color={isFiniteNumber(evt.iv) ? CSS_COLOR.cyan : CSS_COLOR.textDim}
               />
-              <Stat label="PREM" value={fmtM(evt.premium)} color={T.amber} />
-              <Stat label="SCORE" value={evt.score} color={evt.score >= 80 ? T.amber : evt.score >= 60 ? T.green : T.text} />
+              <Stat label="PREM" value={fmtM(evt.premium)} color={CSS_COLOR.amber} />
+              <Stat label="SCORE" value={evt.score} color={evt.score >= 80 ? CSS_COLOR.amber : evt.score >= 60 ? CSS_COLOR.green : CSS_COLOR.text} />
             </div>
           </Card>
 
@@ -928,7 +930,7 @@ export const ContractDetailInline = ({
                 fontSize: fs(10),
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 letterSpacing: "0.04em",
                 marginBottom: sp(4),
               }}
@@ -942,7 +944,7 @@ export const ContractDetailInline = ({
                 gap: sp(6),
                 fontSize: fs(10),
                 lineHeight: 1.45,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 fontFamily: T.sans,
               }}
             >
@@ -955,23 +957,23 @@ export const ContractDetailInline = ({
                 provider.
               </div>
               <div>
-                <span style={{ color: T.text, fontWeight: FONT_WEIGHTS.regular }}>{flowRead}</span>
+                <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>{flowRead}</span>
                 {" · "}
                 <span
                   style={{
                     color:
                       sentimentScore > 0
-                        ? T.green
+                        ? CSS_COLOR.green
                         : sentimentScore < 0
-                          ? T.red
-                          : T.textDim,
+                          ? CSS_COLOR.red
+                          : CSS_COLOR.textDim,
                     fontWeight: FONT_WEIGHTS.regular,
                   }}
                 >
                   {evt.sentiment || "sentiment unavailable"}
                 </span>
               </div>
-              <div style={{ color: T.textDim, fontFamily: T.sans }}>
+              <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans }}>
                 {sideRead}
                 {evt.tradeConditions?.length
                   ? ` • cond ${evt.tradeConditions.join(", ")}`
@@ -1003,14 +1005,14 @@ export const ContractDetailInline = ({
                 fontSize: fs(10),
                 fontWeight: FONT_WEIGHTS.regular,
                 fontFamily: T.sans,
-                color: T.textSec,
+                color: CSS_COLOR.textSec,
                 letterSpacing: "0.04em",
               }}
             >
               OPTION CHART
             </span>
             <span
-              style={{ fontSize: textSize("caption"), color: T.textDim, fontFamily: T.sans }}
+              style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
             >
               {optionChartStatusLabel}
             </span>

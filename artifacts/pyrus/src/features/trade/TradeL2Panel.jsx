@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   HEAVY_PAYLOAD_GC_MS,
@@ -27,6 +31,8 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
+  CSS_COLOR,
+  cssColorMix,
   FONT_WEIGHTS,
   MISSING_VALUE,
   RADII,
@@ -83,7 +89,7 @@ export const TradeL2Panel = ({
     () => buildMarketOrderFlowFromEvents(effectiveFlowEvents),
     [effectiveFlowEvents],
   );
-  const contractColor = slot.cp === "C" ? T.green : T.red;
+  const contractColor = slot.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
   const [tab, setTab] = useState("book");
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
@@ -248,12 +254,12 @@ export const TradeL2Panel = ({
         padding: 0,
         fontSize: textSize("caption"),
         fontWeight: FONT_WEIGHTS.regular,
-        color: tab === id ? T.text : T.textMuted,
+        color: tab === id ? CSS_COLOR.text : CSS_COLOR.textMuted,
         fontFamily: T.sans,
         letterSpacing: "0.04em",
         cursor: "pointer",
         borderBottom:
-          tab === id ? `2px solid ${T.accent}` : "2px solid transparent",
+          tab === id ? `2px solid ${CSS_COLOR.accent}` : "2px solid transparent",
         paddingBottom: sp(2),
       }}
     >
@@ -266,7 +272,7 @@ export const TradeL2Panel = ({
       title={title}
       detail={detail}
       loading={loading}
-      tone={loading ? T.accent : undefined}
+      tone={loading ? CSS_COLOR.accent : undefined}
     />
   );
 
@@ -313,7 +319,7 @@ export const TradeL2Panel = ({
           title="Loading IBKR depth"
           detail="Requesting the live contract price ladder from the broker bridge."
           loading
-          tone={T.accent}
+          tone={CSS_COLOR.accent}
         />
       );
     }
@@ -350,7 +356,7 @@ export const TradeL2Panel = ({
             gridTemplateColumns: "1fr 1fr 1fr",
             gap: sp(4),
             padding: sp("4px 0 6px"),
-            borderBottom: `1px solid ${T.border}`,
+            borderBottom: `1px solid ${CSS_COLOR.border}`,
             fontFamily: T.sans,
           }}
         >
@@ -358,13 +364,13 @@ export const TradeL2Panel = ({
             <div
               style={{
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
               BEST BID
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.green }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.green }}>
               {formatQuotePrice(bestBidLevel?.price ?? bid)}
             </div>
           </div>
@@ -372,13 +378,13 @@ export const TradeL2Panel = ({
             <div
               style={{
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
               LEVELS
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.text }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.text }}>
               {depthLevels.length}
             </div>
           </div>
@@ -386,13 +392,13 @@ export const TradeL2Panel = ({
             <div
               style={{
                 fontSize: textSize("caption"),
-                color: T.textMuted,
+                color: CSS_COLOR.textMuted,
                 letterSpacing: "0.04em",
               }}
             >
               BEST ASK
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: T.red }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.red }}>
               {formatQuotePrice(bestAskLevel?.price ?? ask)}
             </div>
           </div>
@@ -404,7 +410,7 @@ export const TradeL2Panel = ({
             gap: sp(4),
             padding: sp("4px 0"),
             fontSize: textSize("caption"),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             letterSpacing: "0.04em",
             fontFamily: T.sans,
           }}
@@ -435,16 +441,16 @@ export const TradeL2Panel = ({
                 padding: sp("3px 0"),
                 fontSize: textSize("caption"),
                 fontFamily: T.sans,
-                borderBottom: `1px solid ${T.border}08`,
-                background: level.isLastTrade ? `${T.accent}10` : "transparent",
+                borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
+                background: level.isLastTrade ? `${cssColorMix(CSS_COLOR.accent, 6)}` : "transparent",
               }}
             >
               <span
                 style={{
                   color:
                     typeof level.bidSize === "number" && level.bidSize > 0
-                      ? T.green
-                      : T.textDim,
+                      ? CSS_COLOR.green
+                      : CSS_COLOR.textDim,
                   textAlign: "right",
                   fontWeight: FONT_WEIGHTS.regular,
                 }}
@@ -453,7 +459,7 @@ export const TradeL2Panel = ({
               </span>
               <span
                 style={{
-                  color: level.isLastTrade ? T.accent : T.text,
+                  color: level.isLastTrade ? CSS_COLOR.accent : CSS_COLOR.text,
                   textAlign: "right",
                   fontWeight: FONT_WEIGHTS.regular,
                 }}
@@ -464,8 +470,8 @@ export const TradeL2Panel = ({
                 style={{
                   color:
                     typeof level.askSize === "number" && level.askSize > 0
-                      ? T.red
-                      : T.textDim,
+                      ? CSS_COLOR.red
+                      : CSS_COLOR.textDim,
                   textAlign: "right",
                   fontWeight: FONT_WEIGHTS.regular,
                 }}
@@ -474,7 +480,7 @@ export const TradeL2Panel = ({
               </span>
               <span
                 style={{
-                  color: T.textDim,
+                  color: CSS_COLOR.textDim,
                   textAlign: "right",
                   fontSize: textSize("body"),
                 }}
@@ -533,7 +539,7 @@ export const TradeL2Panel = ({
           title="Loading IBKR fills"
           detail="Requesting broker executions for the selected option contract."
           loading
-          tone={T.accent}
+          tone={CSS_COLOR.accent}
         />
       );
     }
@@ -562,7 +568,7 @@ export const TradeL2Panel = ({
             gap: sp(4),
             padding: sp("4px 0"),
             fontSize: textSize("caption"),
-            color: T.textMuted,
+            color: CSS_COLOR.textMuted,
             letterSpacing: "0.04em",
             fontFamily: T.sans,
           }}
@@ -584,33 +590,33 @@ export const TradeL2Panel = ({
               padding: sp("4px 0"),
               fontSize: textSize("caption"),
               fontFamily: T.sans,
-              borderBottom: `1px solid ${T.border}08`,
+              borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
             }}
           >
             <span
               style={{
-                color: execution.side === "buy" ? T.green : T.red,
+                color: execution.side === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
                 fontWeight: FONT_WEIGHTS.regular,
               }}
             >
               {execution.side === "buy" ? "BUY" : "SELL"}
             </span>
-            <span style={{ color: T.textDim, textAlign: "right" }}>
+            <span style={{ color: CSS_COLOR.textDim, textAlign: "right" }}>
               {isFiniteNumber(execution.quantity)
                 ? execution.quantity.toFixed(0)
                 : MISSING_VALUE}
             </span>
-            <span style={{ color: T.text, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
+            <span style={{ color: CSS_COLOR.text, textAlign: "right", fontWeight: FONT_WEIGHTS.regular }}>
               {formatQuotePrice(execution.price)}
             </span>
             <span
               style={{
                 color:
                   !isFiniteNumber(execution.netAmount)
-                    ? T.textDim
+                    ? CSS_COLOR.textDim
                     : execution.netAmount >= 0
-                      ? T.green
-                      : T.red,
+                      ? CSS_COLOR.green
+                      : CSS_COLOR.red,
                 textAlign: "right",
               }}
             >
@@ -622,7 +628,7 @@ export const TradeL2Panel = ({
             </span>
             <span
               style={{
-                color: T.textDim,
+                color: CSS_COLOR.textDim,
                 textAlign: "right",
                 fontSize: textSize("body"),
               }}
@@ -638,8 +644,8 @@ export const TradeL2Panel = ({
   return (
     <div
       style={{
-        background: T.bg1,
-        border: `1px solid ${T.border}`,
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
         padding: sp("12px 14px"),
         display: "flex",
@@ -654,7 +660,7 @@ export const TradeL2Panel = ({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          borderBottom: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
           paddingBottom: sp(4),
         }}
       >
@@ -670,11 +676,11 @@ export const TradeL2Panel = ({
               color:
                 tab === "flow"
                   ? effectiveFlowEvents.length
-                    ? T.accent
-                    : T.textDim
+                    ? CSS_COLOR.accent
+                    : CSS_COLOR.textDim
                   : brokerAuthenticated
-                    ? T.green
-                    : T.textDim,
+                    ? CSS_COLOR.green
+                    : CSS_COLOR.textDim,
               fontFamily: T.sans,
             }}
           >
@@ -691,7 +697,7 @@ export const TradeL2Panel = ({
             {contractLabel}
           </span>
           <span
-            style={{ fontSize: textSize("body"), color: T.textDim, fontFamily: T.sans }}
+            style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
           >
             {spread.toFixed(2)} sprd
           </span>
@@ -732,7 +738,7 @@ export const TradeL2Panel = ({
                 <div
                   style={{
                     fontSize: textSize("body"),
-                    color: T.textMuted,
+                    color: CSS_COLOR.textMuted,
                     letterSpacing: "0.04em",
                   }}
                 >
@@ -746,7 +752,7 @@ export const TradeL2Panel = ({
                     fontSize: fs(10),
                   }}
                 >
-                  <span style={{ color: T.green, fontWeight: FONT_WEIGHTS.regular }}>
+                  <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
                     $
                     {(
                       tickerFlow.buyXL +
@@ -756,7 +762,7 @@ export const TradeL2Panel = ({
                     ).toFixed(0)}
                     M
                   </span>
-                  <span style={{ color: T.red, fontWeight: FONT_WEIGHTS.regular }}>
+                  <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
                     $
                     {(
                       tickerFlow.sellXL +
@@ -787,20 +793,20 @@ export const TradeL2Panel = ({
                           height: dim(4),
                           borderRadius: dim(2),
                           overflow: "hidden",
-                          background: T.bg1,
+                          background: CSS_COLOR.bg1,
                         }}
                       >
                         <div
                           style={{
                             width: `${buyPct}%`,
-                            background: T.green,
+                            background: CSS_COLOR.green,
                             opacity: 0.85,
                           }}
                         />
                         <div
                           style={{
                             width: `${100 - buyPct}%`,
-                            background: T.red,
+                            background: CSS_COLOR.red,
                             opacity: 0.85,
                           }}
                         />
@@ -808,7 +814,7 @@ export const TradeL2Panel = ({
                       <div
                         style={{
                           fontSize: textSize("body"),
-                          color: T.textDim,
+                          color: CSS_COLOR.textDim,
                           fontFamily: T.sans,
                         }}
                       >
@@ -820,12 +826,12 @@ export const TradeL2Panel = ({
               </div>
             </div>
             <div
-              style={{ borderTop: `1px solid ${T.border}`, paddingTop: sp(3) }}
+              style={{ borderTop: `1px solid ${CSS_COLOR.border}`, paddingTop: sp(3) }}
             >
               <div
                 style={{
                   fontSize: textSize("body"),
-                  color: T.textMuted,
+                  color: CSS_COLOR.textMuted,
                   letterSpacing: "0.04em",
                   marginBottom: sp(2),
                 }}

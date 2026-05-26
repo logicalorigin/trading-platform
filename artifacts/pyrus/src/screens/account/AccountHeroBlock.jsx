@@ -1,5 +1,8 @@
-import { TrendingDown, TrendingUp } from "lucide-react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
+import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
 import {
   formatAccountMoney,
@@ -37,11 +40,11 @@ const formatRatio = (value, digits = 2, masked = false) => {
   return `${Number(value).toFixed(digits)}x`;
 };
 
-const metricTone = (value, fallback = T.textDim) =>
+const metricTone = (value, fallback = CSS_COLOR.textDim) =>
   value == null || Number.isNaN(Number(value)) ? fallback : toneForValue(value);
 
 const labelCapsStyle = {
-  color: T.textMuted,
+  color: CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   fontFamily: T.sans,
   fontWeight: FONT_WEIGHTS.regular,
@@ -50,7 +53,7 @@ const labelCapsStyle = {
   lineHeight: 1.15,
 };
 
-const HeroMetricPill = ({ label, value, tone = T.text, title, first = false }) => (
+const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = false }) => (
   <AppTooltip content={title}>
     <span
       style={{
@@ -62,7 +65,7 @@ const HeroMetricPill = ({ label, value, tone = T.text, title, first = false }) =
         minWidth: 0,
         flex: "0 0 auto",
         padding: sp("0 5px"),
-        borderLeft: first ? "none" : `1px solid ${T.border}`,
+        borderLeft: first ? "none" : `1px solid ${CSS_COLOR.border}`,
         whiteSpace: "nowrap",
         overflow: "hidden",
       }}
@@ -143,7 +146,7 @@ export const AccountHeroBlock = ({
     {
       label: "Trades",
       value: formatNumber(trades.count, 0),
-      tone: T.text,
+      tone: CSS_COLOR.text,
       title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
         trades.losers,
         0,
@@ -166,10 +169,10 @@ export const AccountHeroBlock = ({
       value: formatAccountPercent(trades.winRate, 0, maskValues),
       tone:
         trades.winRate == null || Number.isNaN(Number(trades.winRate))
-          ? T.textDim
+          ? CSS_COLOR.textDim
           : trades.winRate >= 50
-            ? T.green
-            : T.amber,
+            ? CSS_COLOR.green
+            : CSS_COLOR.amber,
       title: `${formatNumber(trades.winners, 0)} winners / ${formatNumber(
         trades.losers,
         0,
@@ -180,10 +183,10 @@ export const AccountHeroBlock = ({
       value: formatRatio(trades.profitFactor, 2, maskValues),
       tone:
         trades.profitFactor == null || Number.isNaN(Number(trades.profitFactor))
-          ? T.textDim
+          ? CSS_COLOR.textDim
           : trades.profitFactor >= 1
-            ? T.green
-            : T.red,
+            ? CSS_COLOR.green
+            : CSS_COLOR.red,
       title: "Gross profit divided by gross loss.",
     },
     {
@@ -219,7 +222,7 @@ export const AccountHeroBlock = ({
           {
             label: "Vol",
             value: formatAccountPercent(risk.volatilityPercent, 1, maskValues),
-            tone: T.text,
+            tone: CSS_COLOR.text,
             title:
               "Sample standard deviation of point-to-point account equity returns over the selected range, not annualized.",
           },
@@ -241,19 +244,19 @@ export const AccountHeroBlock = ({
     {
       label: "Fees",
       value: formatAccountMoney(cash.feesYtd, currency, true, maskValues),
-      tone: T.amber,
+      tone: CSS_COLOR.amber,
       title: "Year-to-date fees and commissions from account cash activity.",
     },
     {
       label: "Div",
       value: formatAccountMoney(cash.dividendsYtd, currency, true, maskValues),
-      tone: T.green,
+      tone: CSS_COLOR.green,
       title: "Year-to-date dividends.",
     },
     {
       label: "Int",
       value: formatAccountMoney(cash.interestYtd, currency, true, maskValues),
-      tone: T.green,
+      tone: CSS_COLOR.green,
       title: "Year-to-date interest paid or earned.",
     },
   ];
@@ -274,7 +277,7 @@ export const AccountHeroBlock = ({
   const displayDayPnl = animatedDayPnl ?? dayPnl;
   const dayPositive = Number.isFinite(Number(dayPnl)) ? Number(dayPnl) >= 0 : null;
   const dayTone =
-    dayPositive === null ? T.textDim : dayPositive ? T.green : T.red;
+    dayPositive === null ? CSS_COLOR.textDim : dayPositive ? CSS_COLOR.green : CSS_COLOR.red;
   const DayIcon = dayPositive === false ? TrendingDown : TrendingUp;
   return (
     <section
@@ -291,7 +294,7 @@ export const AccountHeroBlock = ({
       <div
         data-testid="account-hero-primary-row"
         style={{
-          color: T.text,
+          color: CSS_COLOR.text,
           fontFamily: T.sans,
           fontSize: fs(isPhone ? 16 : 20),
           fontVariantNumeric: "tabular-nums",
@@ -328,9 +331,9 @@ export const AccountHeroBlock = ({
               gap: sp(3),
               minHeight: dim(18),
               padding: sp("0 5px"),
-              border: `1px solid ${dayTone}40`,
+              border: `1px solid ${cssColorAlpha(dayTone, "40")}`,
               borderRadius: dim(RADII.pill),
-              background: `${dayTone}12`,
+              background: cssColorAlpha(dayTone, "12"),
               color: dayTone,
               flex: "0 0 auto",
               fontFamily: T.sans,
@@ -346,7 +349,7 @@ export const AccountHeroBlock = ({
                 {formatPercent(dayPnlPercent, maskValues)}
               </span>
             ) : null}
-            <span style={{ color: T.textMuted, marginLeft: sp(1) }}>today</span>
+            <span style={{ color: CSS_COLOR.textMuted, marginLeft: sp(1) }}>today</span>
           </span>
         ) : null}
         {performanceRailMetrics.map((metric, index) => (
